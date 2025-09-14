@@ -1,0 +1,231 @@
+.container {
+
+  justify-items: center;
+  line-height: normal;
+}
+
+.navbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  background: #ffffff;
+  padding: 7px;
+  border-bottom: 2px solid #ccc;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+  width: 100%;
+ 
+
+  flex-wrap: wrap; /* important for small screens */
+}
+
+.navbar-logo img {
+  width: 62px;
+  height: 65px;
+  border-radius: 50%;
+}
+
+.navbar-center {
+  text-align: center;
+  flex: 1;
+}
+
+.hospital-name {
+  margin-left: 90px;
+  font-size: 22px;
+  font-weight: bold;
+  color: #2c3e50;
+}
+
+.tagline {
+ margin-left: 90px;
+  font-size: 12px;
+  color: #666;
+}
+
+.navbar-right {
+  text-align: right;
+  font-size: 12px;
+  color: #444;
+  max-width: 300px;
+}
+
+
+/* card */
+.card {
+  max-width: 1000px;
+  
+  padding: 40px;
+  
+  
+  background: #fff;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+}
+
+/* Row structure
+.row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 25px;
+  flex-wrap: wrap;
+  align-items: center; 
+} */
+
+/* Each field (all same size now) */
+.field {
+  flex: 1; 
+  min-width: 250px;
+  
+  
+}
+.pedal{
+  padding: 0px 0px;
+}
+
+.pedal h1{
+position: relative;
+right: 25px;
+
+}
+/* .navbar-doctor{
+  border-radius: initial;
+} */
+
+
+
+
+
+
+
+/* Remove extra flex sizing from gender */
+.field.gender {
+  flex: 1;
+}
+
+/* PrimeReact FloatLabel fix */
+.p-float-label {
+  width: 100%;
+  
+}
+
+/* Input aur Dropdown uniform look */
+.p-inputtext,
+.p-dropdown {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #ccc;
+  font-size: 14px;
+  height: 44px;
+  box-sizing: border-box;
+}
+
+/* Label styling */
+.p-float-label label {
+  font-size: 14px;
+  color: #555;
+
+
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .row {
+    flex-direction: column;
+    gap: 15px;
+  }
+
+  .field {
+    min-width: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .card {
+    padding: 15px;
+  }
+
+  .p-inputtext,
+  .p-dropdown {
+    font-size: 13px;
+    padding: 8px 10px;
+    height: 40px; /* mobile pe thoda compact */
+  }
+
+  .p-float-label label {
+    font-size: 12px;
+  }
+}
+
+
+
+
+
+
+
+/* ✅ Responsive Media Queries */
+
+/* Tablets (<= 992px) */
+@media (max-width: 992px) {
+  .navbar {
+    width: 95%;
+    flex-direction: column;
+    text-align: center;
+    padding: 10px;
+    
+  }
+
+  .navbar-right {
+    text-align: center;
+    max-width: 100%;
+    margin-top: 10px;
+  }
+}
+
+/* Mobile (<= 600px) */
+@media (max-width: 600px) {
+
+ .navbar {
+    position: fixed;   /* fixed so it stays */
+    bottom: 700px;      /* bottom se 20px upar */
+    left: 50%;
+    transform: translateX(-50%);
+    width: 90%;
+    border-radius: 12px;
+  .hospital-name {
+    font-size: 18px;
+ }
+ }
+
+  .tagline {
+    font-size: 11px;
+  }
+
+  .navbar-logo img {
+    width: 50px;
+    height: 50px;
+  }
+
+  .navbar-right p {
+    font-size: 11px;
+    line-height: 1.4;
+  }
+}
+
+
+
+
+
+
+
+.p-multiselect-chip {
+  max-width: 200px;   /* apni requirement ke hisaab se width fix karo */
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+
+.carddata{
+position:"relative";
+top: 15px;
+}

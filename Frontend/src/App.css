@@ -1,0 +1,307 @@
+/* body {
+  /* background: linear-gradient(to right, #0D1452, #182D74, #1E3A8A); */
+
+body {
+  background: #6d737424 !important;
+}
+/* .p-button {
+  padding: 0.55rem 1.25rem !important;
+} */
+.form-label {
+  font-size: 14px;
+  font-weight: 500;
+  font-family: sans-serif;
+  margin-bottom: 4px;
+  letter-spacing: 1px;
+}
+.marginginRight10{
+  margin-right: 10px;
+}
+
+.p-inputtext,
+.p-dropdown {
+  border: 1px solid #464141 !important;
+  /* margin-bottom: 1rem; */
+}
+
+.p-dropdown .p-dropdown-label {
+  top: -11px !important;
+  position: relative !important;
+  border: none !important;
+}
+
+.dateinput button {
+  position: absolute;
+  right: 0;
+  height: 44px;
+  background: #06a4c4;
+}
+
+.tablePagination .custom-datatable .p-dropdown .p-dropdown-label {
+  padding: 17px 8px !important;
+  font-size: 14px !important;
+}
+
+/* {
+    width: 12% !important;
+    top: 11px;
+} */
+
+.custom-datatable .p-datatable-thead > tr > th {
+  background: #06a4c4 !important;
+  color: #ffffff !important;
+  font-weight: 500 !important;
+  padding: 10px !important;
+  /* border-bottom: 2px solid #e5e7eb; */
+  text-align: center;
+  white-space: nowrap;
+  font-size: 16px;
+}
+
+.btn-custom {
+  background-color: #06a4c4;
+}
+
+.colortext {
+  color: #036a7e;
+}
+.mt-6 {
+  margin-top: 4.5rem; /* ya jo bhi value chahiye */
+}
+
+.p-calendar .p-datepicker-trigger .pi {
+  background-color: #06a4c4 !important; /* change this to any color */
+  font-size: 1.2rem; /* optional: change size */
+}
+
+.dashboard {
+  display: flex;
+}
+
+.main-content {
+  flex: 1;
+  margin-left: 250px;
+  transition: margin-left 0.3s ease;
+  padding: 20px;
+}
+
+.sidebar {
+  position: fixed;
+  top: 0;
+  left: -250px;
+  width: 250px;
+  height: 100%;
+  background: #343a40;
+  color: white;
+  transition: left 0.3s ease;
+  z-index: 1000;
+  padding-top: 10px;
+}
+
+.sidebar.open {
+  left: 0;
+}
+
+.sidebar-header {
+  display: flex;
+  justify-content: space-between;
+  padding: 15px;
+  border-bottom: 1px solid #555;
+}
+
+.sidebar-menu {
+  list-style: none;
+  padding: 10px;
+}
+
+.menu-link {
+  display: block;
+  padding: 10px;
+  text-decoration: none;
+  color: white;
+  border-radius: 4px;
+  transition: 0.3s;
+}
+
+.menu-link:hover {
+  background: #007bff;
+  color: #fff;
+}
+
+.menu-link.active {
+  background: #007bff;
+  font-weight: bold;
+}
+
+.close-btn {
+  background: transparent;
+  border: none;
+  color: white;
+  font-size: 18px;
+  cursor: pointer;
+}
+
+/* Topbar */
+.topbar {
+  display: flex;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+/* Registration Form */
+.registration-form {
+  max-width: 500px;
+  margin: auto;
+  background: #fff;
+  border-radius: 8px;
+}
+
+.w-100 {
+  width: 100%;
+}
+
+.custom-input.p-inputtext {
+  width: 50%; /* full width */
+  padding: 10px; /* spacing */
+  border-radius: 8px; /* rounded corners */
+  border: 1px solid #ccc; /* border color */
+  transition: all 0.2s ease;
+}
+
+.custom-input.p-inputtext:focus {
+  border-color: #3b82f6; /* blue border on focus */
+  box-shadow: 0 0 4px #3b82f6;
+}
+
+.p-dropdown {
+  /* width: 100% !important; */
+  border-radius: 8px;
+  border: 1px solid #ccc;
+}
+
+.p-dropdown .p-dropdown-label {
+  padding: 10px;
+}
+
+.p-dropdown-panel .p-dropdown-items .p-dropdown-item {
+  padding: 10px 12px;
+}
+
+.p-dropdown-panel .p-dropdown-items .p-dropdown-item.p-highlight {
+  background: #3b82f6; /* Tailwind Blue */
+  color: white;
+}
+
+/* pain */
+
+/* PrimeReact slider gradient track */
+.pain-slider.p-slider .p-slider-range {
+  background: linear-gradient(90deg, #22c55e, #f59e0b, #ef4444);
+}
+
+/* Handle styling */
+.pain-slider.p-slider .p-slider-handle {
+  border: 2px solid #111827;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+}
+
+/* Tick line + label */
+.pain-tick {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  width: 1.9rem; /* auto-spaced by flex; adjust if needed */
+}
+
+.pain-tick .tick-line {
+  display: block;
+  width: 2px;
+  height: 10px;
+  background: #9ca3af; /* gray-400 */
+}
+
+.pain-tick.active .tick-line {
+  background: #111827; /* gray-900 */
+  height: 14px;
+}
+
+.pain-tick .tick-label {
+  font-size: 0.75rem;
+  color: #6b7280; /* gray-500 */
+  line-height: 1;
+}
+
+.pain-tick.active .tick-label {
+  color: #111827;
+  font-weight: 600;
+}
+
+/* Optional: mute readOnly */
+.opacity-75 {
+  opacity: 0.75;
+  pointer-events: none;
+}
+.pi-search{
+  margin-left: 8px;
+}
+.p-paginator-pages .p-paginator-element {
+  background-color: #06a4c4 !important;
+}
+.p-button-primary{
+background-color: #06a4c4 !important;
+}
+/* .p-datatable .p-datatable-header{
+  padding: 1rem 0rem !important;
+} */
+
+.p-datatable .p-datatable-header{
+  border: none !important;
+}
+
+.custom-datatable {
+    border: none !important;
+    border-radius: 0 !important;
+    overflow: hidden;
+    box-shadow: none !important;
+}
+
+/* print section 👇👇 */
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .print-area,
+  .print-area * {
+    visibility: visible;
+  }
+  .print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+
+  /* Auto page break karne do */
+  .print-area {
+    page-break-inside: avoid;
+  }
+  .no-printbutton {
+    display: none !important;
+  }
+}
+
+.btncss {
+  width: 10rem !important;
+  position: relative;
+  left: 106px;
+}
+
+
+
+
+
+
+
+

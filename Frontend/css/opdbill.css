@@ -1,0 +1,195 @@
+.opd-bill-container * {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.opd-bill-container body {
+  background-color: #f0f5fa;
+  padding: 20px;
+  color: #333;
+}
+
+.opd-bill-container .container {
+  max-width: 800px;
+  margin: 0 auto;
+  background: white;
+  padding: 25px;
+  box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+  border-radius: 10px;
+}
+
+.opd-bill-container .header {
+  text-align: center;
+  margin-bottom: 25px;
+  padding-bottom: 15px;
+  border-bottom: 2px solid #2c7db1;
+}
+
+.opd-bill-container .hospital-name {
+  font-size: 28px;
+  font-weight: bold;
+  color: #2c7db1;
+  margin-bottom: 5px;
+}
+
+.opd-bill-container .hospital-address {
+  font-size: 14px;
+  color: #666;
+}
+
+.opd-bill-container .barcode {
+  text-align: center;
+  margin: 20px 0;
+  padding: 10px;
+  background: #f8f8f8;
+  border-radius: 5px;
+}
+
+.opd-bill-container .section {
+  margin-bottom: 20px;
+}
+
+.opd-bill-container .section-title {
+  font-weight: bold;
+ color: white;
+  padding: 8px 12px;
+  border-left: 4px solid #2c7db1;
+  margin-bottom: 12px;
+  border-radius: 0 4px 4px 0;
+  background-color: #06a4c4;
+}
+
+.opd-bill-container .patient-info {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 15px;
+  line-height: 10px;
+  padding: 20px;
+}
+
+.opd-bill-container .info-item {
+  margin-bottom: 10px;
+  display: flex;
+}
+
+.opd-bill-container .label {
+  font-weight: bold;
+  color: #555;
+  width: 120px;
+  flex-shrink: 0;
+}
+
+.opd-bill-container .doctor-details {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.opd-bill-container .doctor-info {
+  flex: 1;
+  min-width: 250px;
+}
+
+.opd-bill-container .vitals {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 15px;
+}
+
+.opd-bill-container .vital-item {
+  margin-bottom: 10px;
+  display: flex;
+}
+
+.opd-bill-container .bill-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 15px;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+}
+
+.opd-bill-container .bill-table th {
+  background-color: #06a4c4;
+  color: white;
+  text-align: left;
+  padding: 12px 15px;
+}
+
+.opd-bill-container .bill-table td {
+  padding: 12px 15px;
+  border-bottom: 1px solid #ddd;
+}
+
+.opd-bill-container .bill-table tr:nth-child(even) {
+  background-color: #f9f9f9;
+}
+
+.opd-bill-container .bill-table tr:last-child td {
+  border-bottom: none;
+  font-weight: bold;
+  background-color: #e9f2f8;
+}
+
+.opd-bill-container .payment-info {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 15px;
+  margin-top: 20px;
+}
+
+.opd-bill-container .footer {
+  text-align: center;
+  margin-top: 30px;
+  padding-top: 15px;
+  border-top: 1px dashed #ccc;
+  font-size: 14px;
+  color: #777;
+}
+
+.opd-bill-container .print-btn {
+  display: block;
+  margin: 30px auto 10px;
+  padding: 12px 30px;
+  background: linear-gradient(to bottom, #2c7db1, #1c5d8a);
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 16px;
+  transition: all 0.3s;
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.1);
+}
+
+.opd-bill-container .print-btn:hover {
+  background: linear-gradient(to bottom, #1c5d8a, #164c75);
+  transform: translateY(-2px);
+  box-shadow: 0 5px 10px rgba(0, 0, 0, 0.15);
+}
+
+@media print {
+  .opd-bill-container .print-btn {
+    display: none;
+  }
+  
+  .opd-bill-container body {
+    background-color: white;
+    padding: 0;
+  }
+  
+  .opd-bill-container .container {
+    box-shadow: none;
+    padding: 15px;
+  }
+}
+
+.opd-bill-container .highlight {
+  color: #2c7db1;
+  font-weight: bold;
+}
+
+.container {
+ justify-items:normal;
+    line-height: normal;
+}
