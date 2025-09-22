@@ -100,6 +100,7 @@ app.use("/api/RegistrationOPD", RegistrationOPDRoutes);
 
 app.use("/api/Servicebilldata",ServicebillRoutes);
 
+
 // app.use("/api/patients", patientRoutes);👇👇
 //Agar koi request aayi:
 //http://localhost:5000/api/patients/add123

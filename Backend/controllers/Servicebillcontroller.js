@@ -1,13 +1,9 @@
-
-
-
-
 const Servicebilldata = require("../models/servicesbillModel");
 
 // ➕ Add Services (Normal aur TPA alag-alag)
 exports.Servicebillfun = async (req, res) => {
   console.log(req.body);
-  
+
   try {
     let { tpa_name, service } = req.body;
 
@@ -18,7 +14,9 @@ exports.Servicebillfun = async (req, res) => {
 
     // 🟢 Validate service array
     if (!Array.isArray(service) || service.length === 0) {
-      return res.status(400).json({ success: false, message: "Service array is required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Service array is required" });
     }
 
     // 🟢 Format service details
@@ -73,6 +71,33 @@ exports.Servicebillfun = async (req, res) => {
 };
 
 // 📥 Fetch All Services
+// exports.TestName = async (req, res) => {
+//   try {
+
+//     const tests = await Servicebilldata.find({ tpa_name: tpaName });
+//     const tpaName = tests.service.filter((res)=>res.tpa_name == tpaName);
+//      const opdData = {
+//       tpa_name : tests.tpa_name,
+//       opd_price : opd_price,
+//       service:tests.service,
+//     }
+//     res.status(200).json({ success: true, data: tests });
+//   } catch (err) {
+//     res.status(500).json({ error: err.message });
+//   }
+// };
+
+// 📥 Fetch All Services
+
+// exports.TestName = async (req, res) => {
+//   try {
+//     const tests = await Servicebilldata.find(); // Sare TPA + services fetch karega
+//     res.status(200).json({ success: true, data: tests });
+//   } catch (err) {
+//     res.status(500).json({ error: err.message });
+//   }
+// };
+
 exports.TestName = async (req, res) => {
   try {
     const tests = await Servicebilldata.find();
@@ -81,3 +106,48 @@ exports.TestName = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+// ✅ GET API to fetch services by TPA name
+exports.getOPDPrice = async (req, res) => {
+  try {
+    let { _id } = req.query; // Query param le rahe hain
+    if (!_id) {
+      return res
+        .status(400)
+        .json({ success: false, message: "_id is required" });
+    }
+
+    const tpaData = await Servicebilldata.findOne({ _id });
+    if (!tpaData) {
+      return res.status(404).json({ success: false, message: "No data found" });
+    }
+    const opd_price = tpaData.service.filter((res) => res.Name == "OPD");
+
+    const opdData = {
+      tpa_name: tpaData.tpa_name,
+      opd_price: opd_price,
+      id: tpaData._id,
+    };
+    res.status(200).json({ success: true, data: opdData });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.getTpaId = async (req, res) => {
+  console.log(req.params);
+
+  try {
+    const TpaId = await Servicebilldata.findOne({
+      _id:req.params.TpaId,
+    });
+    if (!TpaId) return res.status(404).json({ msg: "TpaID is not Found" });
+    res.json(TpaId);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+
+
+//http://localhost:5000/api/Servicebilldata/getTpaId/68c5b52b6d3289d2ef2f0c73

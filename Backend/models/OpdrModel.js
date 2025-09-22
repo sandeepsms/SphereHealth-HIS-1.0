@@ -18,7 +18,7 @@ const OPDSchema = new mongoose.Schema({
   History_of_Present_Illness: String,
   Physical_Examination: String,
 
-  weight: Number,
+  weight: Number,  
   Temp: Number,
   BP: Number,
   Pulse: Number,

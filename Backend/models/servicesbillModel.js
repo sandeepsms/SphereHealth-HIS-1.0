@@ -12,7 +12,7 @@ const ServiceSchema = new mongoose.Schema(
         },
       ],
   },
-  { timestamps: true }
+  { timestamps: true }  
 );
 
 module.exports = mongoose.model("Services", ServiceSchema); //mongoose ek function hai jo ek Model banata hai.
