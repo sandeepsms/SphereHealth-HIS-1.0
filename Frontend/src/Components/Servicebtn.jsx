@@ -135,7 +135,7 @@ import { InputText } from "primereact/inputtext";
 
 function Servicebtn() {
   const [heading, setHeading] = useState();
- 
+
   const location = useLocation();
 
   const isTPA = location.pathname.includes("/TPA");
@@ -219,20 +219,19 @@ function Servicebtn() {
           }}
           validationSchema={validationSchema}
           onSubmit={async (values, { resetForm }) => {
-            console.log(values,isTPA);
-          
-              try {
-                const ourresponse = await Servicebill(values);
-                toast.success(ourresponse.data.message);
-                resetForm();
+            console.log(values, isTPA);
 
-                console.log("Final Submitted Data:", values);
-              } catch (error) {
-                toast.error(error.response.data.message);
-                console.log("errordata", error);
-                resetForm();
-              }
-            
+            try {
+              const ourresponse = await Servicebill(values);
+              toast.success(ourresponse.data.message);
+              resetForm();
+
+              console.log("Final Submitted Data:", values);
+            } catch (error) {
+              toast.error(error.response.data.message);
+              console.log("errordata", error);
+              resetForm();
+            }
           }}
         >
           {({ values, handleSubmit }) => (

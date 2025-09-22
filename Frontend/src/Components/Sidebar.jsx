@@ -81,9 +81,11 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
     // { name: "Receptionist", path: "/receptionist", icon: <ClipboardList size={18} /> },
     { name: "Nurse", path: "/nurse", icon: <UserRound size={18} /> },  // ✅ fixed
     { name: "Bill Service", path: "/services", icon: <FileText size={18} /> },
-      { name: "OPD Bill Print", path: "/opd", icon: <FileText size={18} /> },
-       { name: "OPD Data Print", path: "/opdprint", icon: <FileText size={18} /> },
+      // { name: "OPD Bill Print", path: "/opd", icon: <FileText size={18} /> },
+      //  { name: "Doctor preception", path: "/doctorpre", icon: <FileText size={18} /> },
         { name: "TPA Service", path: "/TPA", icon: <FileText size={18} /> },
+        { name: "Service Alldata", path: "/ServiceAlldata", icon: <FileText size={18} /> },
+        // { name: "Preception bill", path: "/Preceptionbill", icon: <FileText size={18} /> }
   ];
 
   return (

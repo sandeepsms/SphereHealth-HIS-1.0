@@ -29,11 +29,13 @@ export default function Doctor() {
   const [loading, setLoading] = useState(false);
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedPerson, setSelectedPerson] = useState([]);
-  const [testnames, setTestName] = useState([
- ]);
+  const [TpaId, setTpaId] = useState();
+  const [testnames, setTestName] = useState([]);
 
   const { UHID } = useParams();
   const formRef = useRef();
+
+  console.log("----rr", TpaId); 
 
   const load = () => {
     setLoading(true);
@@ -46,6 +48,7 @@ export default function Doctor() {
     if (!UHID) return;
     getPatientbyID(UHID)
       .then((res) => {
+        setTpaId(res.TPAid);
         setDetail(res);
         console.log("Patient data:", res);
       })
@@ -65,8 +68,8 @@ export default function Doctor() {
         console.log("API Response:", Testdata.data);
 
         const formattedData = Testdata.data.map((item) => ({
-        label: item.Name, 
-        value:  String(item._id),
+          label: item.tpa_name,
+          value: String(item._id),
         }));
         setTestName(formattedData);
         console.log("selectedPerson", selectedPerson);
@@ -78,13 +81,7 @@ export default function Doctor() {
     fetchData();
   }, []);
 
-
-
- 
-
   // console.log(selectedGender);
-
-
 
   const formik = useFormik({
     initialValues: {
@@ -176,7 +173,7 @@ export default function Doctor() {
     enableReinitialize: true,
 
     onSubmit: async (values, { resetForm }) => {
-      console.log("data:",values);
+      console.log("data:", values);
 
       try {
         setLoading(true);
@@ -259,7 +256,10 @@ export default function Doctor() {
           onSubmit={formik.handleSubmit}
           className="card shadow p-4 mt-6 bg-white rounded"
         >
-          <header className="navbar px-5 mx-auto" style={{border:"none",boxShadow:"none"}}>
+          <header
+            className="navbar px-5 mx-auto"
+            style={{ border: "none", boxShadow: "none" }}
+          >
             {/* Left: Logo */}
             <div className="navbar-logo">
               <img src={logo} alt="Hospital Logo" />
@@ -274,15 +274,21 @@ export default function Doctor() {
             </div>
 
             {/* Right: Contact Info */}
-            <div className="navbar-right"   >
+            <div className="navbar-right">
               <p>📞 7988807650, 0130-4052310</p>
               <p>✉️ admin@sukoonhospitals.com</p>
               <p>📍 Mohalla Jatwara, Kumaro Ki Chopal ke Samne, Sonipat (HR)</p>
             </div>
           </header>
 
-          <div className="card space-y-6 "style={{borderRadius:"initial" ,border:"none", boxShadow:"none"}} >
-   
+          <div
+            className="card space-y-6 "
+            style={{
+              borderRadius: "initial",
+              border: "none",
+              boxShadow: "none",
+            }}
+          >
             {/* Name + Gender Row */}
             <div className="row">
               {/* Name with FloatLabel */}
@@ -322,7 +328,6 @@ export default function Doctor() {
                   value={formik.values.Gender}
                   readOnly
                   onChange={formik.handleChange}
-                
                   virtualScrollerOptions={{ itemSize: 38 }}
                   placeholder="Select Gender"
                   className="w-100 fw-bold text-success"
@@ -442,11 +447,10 @@ export default function Doctor() {
             <div>
               {/* <h4 className="border p-2 text-center">History:</h4> */}
               <h5 className="mt-4 p-2 rounded btn-custom text-white text-center">
-            History:
-          </h5>
+                History:
+              </h5>
 
               <div className="row flex">
-
                 <div className="col-md-6 ">
                   <label className="form-label fw-bold">
                     Presenting complaints & Duration:
@@ -460,9 +464,7 @@ export default function Doctor() {
                     className="w-100"
                   />
                 </div>
-             
 
-         
                 <div className="col-md-6 ">
                   <label className="form-label fw-bold">
                     History of Any Allergy:
@@ -476,13 +478,9 @@ export default function Doctor() {
                     className="w-100"
                   />
                 </div>
-
-             </div>
-
-
+              </div>
 
               <div className="row flex">
-
                 <div className="col-md-6 ">
                   <label className="form-label fw-bold">
                     Current Medication (if any):
@@ -496,8 +494,7 @@ export default function Doctor() {
                     className="w-100"
                   />
                 </div>
-             
-             
+
                 <div className="col-md-6 ">
                   <label className="form-label fw-bold">
                     Past history/surgical procedures:
@@ -511,46 +508,43 @@ export default function Doctor() {
                     cols={30}
                     className="w-100"
                   />
-                  </div>
-</div>
-                 <div className=" row flex">
-                    <div className="col-md-6 ">
-                      <label className="form-label fw-bold">
-                        Birth History/Mile Stone:
-                      </label>
-                      <InputText
-                        name="Birth_History_Mile_Stone"
-                        value={formik.values.Birth_History_Mile_Stone}
-                        onChange={formik.handleChange}
-                        placeholder="Enter details"
-                        required
-                        className="w-100"
-                      />
-                    </div>
-                 
-
-                    <div className="col-md-6">
-                      <label className="form-label fw-bold">
-                        Family History/Personal History
-                      </label>
-                      <InputText
-                        name="Family_History_Person_History"
-                        value={formik.values.Family_History_Person_History}
-                        onChange={formik.handleChange}
-                        placeholder="Enter details"
-                        className="w-100"
-                      />
-                    </div>
-                 
                 </div>
-             
+              </div>
+              <div className=" row flex">
+                <div className="col-md-6 ">
+                  <label className="form-label fw-bold">
+                    Birth History/Mile Stone:
+                  </label>
+                  <InputText
+                    name="Birth_History_Mile_Stone"
+                    value={formik.values.Birth_History_Mile_Stone}
+                    onChange={formik.handleChange}
+                    placeholder="Enter details"
+                    required
+                    className="w-100"
+                  />
+                </div>
+
+                <div className="col-md-6">
+                  <label className="form-label fw-bold">
+                    Family History/Personal History
+                  </label>
+                  <InputText
+                    name="Family_History_Person_History"
+                    value={formik.values.Family_History_Person_History}
+                    onChange={formik.handleChange}
+                    placeholder="Enter details"
+                    className="w-100"
+                  />
+                </div>
+              </div>
             </div>
             {/* ON EXAMINATION */}
             <div>
-               <h5 className="mt-4 p-2 rounded btn-custom text-white text-center">
-            ON EXAMINATION:
-          </h5>
-             <div className="row g-3 ">
+              <h5 className="mt-4 p-2 rounded btn-custom text-white text-center">
+                ON EXAMINATION:
+              </h5>
+              <div className="row g-3 ">
                 <div className=" col-md-12  ">
                   <label className="form-label fw-bold">
                     Level of consciousness:
@@ -685,71 +679,52 @@ export default function Doctor() {
                     <h1 className="fs-4">Vitals:</h1>
 
                     <div className="col-md-3 d-flex justify-content-evenly align-items-center">
-                  
-                       <label htmlFor="temp">Weight:</label>
-                        <InputText
-                          id="name1"
-                          name="weight"
-                          value={formik.values.weight}
-                          onChange={formik.handleChange}
-                          placeholder="Kg"
-                          style={{ width: "90px" }}
-                        />
-                       
-
-                       
-                     </div>
-                 
-
-                    <div className="col-md-3 d-flex justify-content-evenly align-items-center">
-                  
-                       <label htmlFor="temp">Temp:</label>
-                        <InputText
-                          id="temp"
-                          name="Temp"
-                          placeholder="(°F)/(°C)"
-                          value={formik.values.Temp}
-                          onChange={formik.handleChange}
-                          style={{ width: "90px" }}
-                        />
-                       
-                       
-                     </div>
-                  
-
-                    <div className="col-md-3 d-flex justify-content-evenly align-items-center">
-                   
-                         <label htmlFor="bp">B.P:</label>
-                        <InputText
-                          id="bp"
-                          name="BP"
-                          placeholder="mmHg"
-                          value={formik.values.BP}
-                          onChange={formik.handleChange}
-                          style={{ width: "90px" }}
-                        />
-                       
-                     
-                     
+                      <label htmlFor="temp">Weight:</label>
+                      <InputText
+                        id="name1"
+                        name="weight"
+                        value={formik.values.weight}
+                        onChange={formik.handleChange}
+                        placeholder="Kg"
+                        style={{ width: "90px" }}
+                      />
                     </div>
-                  
 
                     <div className="col-md-3 d-flex justify-content-evenly align-items-center">
-                    
-                        <label htmlFor="pulse">Pulse:</label>
-                        <InputText
-                          id="pulse"
-                          name="Pulse"
-                          placeholder="bpm"
-                          value={formik.values.Pulse}
-                          onChange={formik.handleChange}
-                          style={{ width: "90px" }}
-                        />
-                       
-                       
-                      
-                     </div>
-                  
+                      <label htmlFor="temp">Temp:</label>
+                      <InputText
+                        id="temp"
+                        name="Temp"
+                        placeholder="(°F)/(°C)"
+                        value={formik.values.Temp}
+                        onChange={formik.handleChange}
+                        style={{ width: "90px" }}
+                      />
+                    </div>
+
+                    <div className="col-md-3 d-flex justify-content-evenly align-items-center">
+                      <label htmlFor="bp">B.P:</label>
+                      <InputText
+                        id="bp"
+                        name="BP"
+                        placeholder="mmHg"
+                        value={formik.values.BP}
+                        onChange={formik.handleChange}
+                        style={{ width: "90px" }}
+                      />
+                    </div>
+
+                    <div className="col-md-3 d-flex justify-content-evenly align-items-center">
+                      <label htmlFor="pulse">Pulse:</label>
+                      <InputText
+                        id="pulse"
+                        name="Pulse"
+                        placeholder="bpm"
+                        value={formik.values.Pulse}
+                        onChange={formik.handleChange}
+                        style={{ width: "90px" }}
+                      />
+                    </div>
                   </div>
 
                   <div className="row flex gap-6 mt-5">
@@ -831,7 +806,7 @@ export default function Doctor() {
                       </div>
 
                       {checkbox ? (
-                       <div className="card flex flex-row align-items-center gap-2 m-2">
+                        <div className="card flex flex-row align-items-center gap-2 m-2">
                           <RadioButton
                             inputId="AbNormal"
                             name="PedalEdema"
@@ -922,7 +897,9 @@ export default function Doctor() {
                     </div>
                   </div>
                   <div>
-                    <h4 className="mt-4 p-2 rounded btn-custom text-white text-center">B.Systemic Examination:</h4>
+                    <h4 className="mt-4 p-2 rounded btn-custom text-white text-center">
+                      B.Systemic Examination:
+                    </h4>
 
                     {/* examination */}
                     <div>
@@ -973,7 +950,7 @@ export default function Doctor() {
                         {formik.values.RespiratorySystem === "Abnormal" ? (
                           <div className="field flex-1">
                             {/* main div of respiratory */}
-                            <div className="card flex flex-col gap-3 m-0 p-3 carddata" >
+                            <div className="card flex flex-col gap-3 m-0 p-3 carddata">
                               <h1 className="fs-5">
                                 Auscultation-Breath Sounds:
                               </h1>
@@ -2141,7 +2118,9 @@ export default function Doctor() {
                           </div>
                         </div>
                         {/* Cradiovascular system */}
-                        <h1 className="fs-5 mt-3 mt-4">Cardiovascular System:</h1>
+                        <h1 className="fs-5 mt-3 mt-4">
+                          Cardiovascular System:
+                        </h1>
                         <div className="d-flex gap-3">
                           <div>
                             <RadioButton
@@ -2182,321 +2161,311 @@ export default function Doctor() {
                             <label htmlFor="abnormal4" className="ms-2">
                               Abnormal
                             </label>
-                            </div>
-                            </div>
-                            {formik.values.Cardiovascular_System ===
-                            "Abnormal" ? (
-                              <div className="field flex-1">
-                                <div className="card flex flex-col gap-3 m-0 p-3 carddata">
-                                  <h1 className="fs-5">Heart Rhythm:</h1>
-                                  <div>
-                                    <RadioButton
-                                      inputId="Regular Sinus Rhythm"
-                                      name="Heart_Rhythm"
-                                      value="Regular Sinus Rhythm"
-                                      checked={
-                                        formik.values.Heart_Rhythm ===
-                                        "Regular Sinus Rhythm"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Heart_Rhythm",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label htmlFor="xnormal1" className="ms-2">
-                                      Regular Sinus Rhythm
-                                    </label>
-                                  </div>
-                                  <div>
-                                    <RadioButton
-                                      inputId="Irregularly Irregular"
-                                      name="Heart_Rhythm"
-                                      value="Irregularly Irregular"
-                                      checked={
-                                        formik.values.Heart_Rhythm ===
-                                        "Irregularly Irregular"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Heart_Rhythm",
-                                          e.value
-                                        )
-                                      }
-                                    />
-                                    <label htmlFor="xnormal1" className="ms-2">
-                                      Irregularly Irregular
-                                    </label>
-                                  </div>
-                                  <div>
-                                    <RadioButton
-                                      inputId="Regularly Irregular"
-                                      name="Heart_Rhythm"
-                                      value="Regularly Irregular"
-                                      checked={
-                                        formik.values.Heart_Rhythm ===
-                                        "Regularly Irregular"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Heart_Rhythm",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label htmlFor="xnormal1" className="ms-2">
-                                      Regularly Irregular
-                                    </label>
-                                  </div>
+                          </div>
+                        </div>
+                        {formik.values.Cardiovascular_System === "Abnormal" ? (
+                          <div className="field flex-1">
+                            <div className="card flex flex-col gap-3 m-0 p-3 carddata">
+                              <h1 className="fs-5">Heart Rhythm:</h1>
+                              <div>
+                                <RadioButton
+                                  inputId="Regular Sinus Rhythm"
+                                  name="Heart_Rhythm"
+                                  value="Regular Sinus Rhythm"
+                                  checked={
+                                    formik.values.Heart_Rhythm ===
+                                    "Regular Sinus Rhythm"
+                                  }
+                                  onChange={(e) =>
+                                    formik.setFieldValue(
+                                      "Heart_Rhythm",
+                                      e.value
+                                    )
+                                  }
+                                />{" "}
+                                <label htmlFor="xnormal1" className="ms-2">
+                                  Regular Sinus Rhythm
+                                </label>
+                              </div>
+                              <div>
+                                <RadioButton
+                                  inputId="Irregularly Irregular"
+                                  name="Heart_Rhythm"
+                                  value="Irregularly Irregular"
+                                  checked={
+                                    formik.values.Heart_Rhythm ===
+                                    "Irregularly Irregular"
+                                  }
+                                  onChange={(e) =>
+                                    formik.setFieldValue(
+                                      "Heart_Rhythm",
+                                      e.value
+                                    )
+                                  }
+                                />
+                                <label htmlFor="xnormal1" className="ms-2">
+                                  Irregularly Irregular
+                                </label>
+                              </div>
+                              <div>
+                                <RadioButton
+                                  inputId="Regularly Irregular"
+                                  name="Heart_Rhythm"
+                                  value="Regularly Irregular"
+                                  checked={
+                                    formik.values.Heart_Rhythm ===
+                                    "Regularly Irregular"
+                                  }
+                                  onChange={(e) =>
+                                    formik.setFieldValue(
+                                      "Heart_Rhythm",
+                                      e.value
+                                    )
+                                  }
+                                />{" "}
+                                <label htmlFor="xnormal1" className="ms-2">
+                                  Regularly Irregular
+                                </label>
+                              </div>
 
-                                  <h1 className="fs-5">
-                                    Heart Sounds – Added::
-                                  </h1>
-                                  <div>
-                                    <RadioButton
-                                      inputId="S3 Gallop"
-                                      name="Heart_Sounds_Added"
-                                      value="S3 Gallop"
-                                      checked={
-                                        formik.values.Heart_Sounds_Added ===
-                                        "S3 Gallop"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Heart_Sounds_Added",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label htmlFor="xnormal1" className="ms-2">
-                                      S3 Gallop
-                                    </label>
-                                  </div>
-                                  <div>
-                                    <RadioButton
-                                      inputId="S4 Gallop"
-                                      name="Heart_Sounds_Added"
-                                      value="S4 Gallop"
-                                      checked={
-                                        formik.values.Heart_Sounds_Added ===
-                                        "S4 Gallop"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Heart_Sounds_Added",
-                                          e.value
-                                        )
-                                      }
-                                    />
-                                    <label htmlFor="xnormal1" className="ms-2">
-                                      S4 Gallop
-                                    </label>
-                                  </div>
-                                  <div>
-                                    <RadioButton
-                                      inputId="Murmur"
-                                      name="Heart_Sounds_Added"
-                                      value="Murmur"
-                                      checked={
-                                        formik.values.Heart_Sounds_Added ===
-                                        "Murmur"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Heart_Sounds_Added",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label htmlFor="xnormal1" className="ms-2">
-                                      Murmur
-                                    </label>
-                                  </div>
-                                  <div>
-                                    <RadioButton
-                                      inputId="Click"
-                                      name="Heart_Sounds_Added"
-                                      value="Click"
-                                      checked={
-                                        formik.values.Heart_Sounds_Added ===
-                                        "Click"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Heart_Sounds_Added",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label htmlFor="xnormal1" className="ms-2">
-                                      Click
-                                    </label>
-                                  </div>
-                                  <div>
-                                    <RadioButton
-                                      inputId="Opening Snap"
-                                      name="Heart_Sounds_Added"
-                                      value="Opening Snap"
-                                      checked={
-                                        formik.values.Heart_Sounds_Added ===
-                                        "Opening Snap"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Heart_Sounds_Added",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label htmlFor="xnormal1" className="ms-2">
-                                      Opening Snap
-                                    </label>
-                                  </div>
+                              <h1 className="fs-5">Heart Sounds – Added::</h1>
+                              <div>
+                                <RadioButton
+                                  inputId="S3 Gallop"
+                                  name="Heart_Sounds_Added"
+                                  value="S3 Gallop"
+                                  checked={
+                                    formik.values.Heart_Sounds_Added ===
+                                    "S3 Gallop"
+                                  }
+                                  onChange={(e) =>
+                                    formik.setFieldValue(
+                                      "Heart_Sounds_Added",
+                                      e.value
+                                    )
+                                  }
+                                />{" "}
+                                <label htmlFor="xnormal1" className="ms-2">
+                                  S3 Gallop
+                                </label>
+                              </div>
+                              <div>
+                                <RadioButton
+                                  inputId="S4 Gallop"
+                                  name="Heart_Sounds_Added"
+                                  value="S4 Gallop"
+                                  checked={
+                                    formik.values.Heart_Sounds_Added ===
+                                    "S4 Gallop"
+                                  }
+                                  onChange={(e) =>
+                                    formik.setFieldValue(
+                                      "Heart_Sounds_Added",
+                                      e.value
+                                    )
+                                  }
+                                />
+                                <label htmlFor="xnormal1" className="ms-2">
+                                  S4 Gallop
+                                </label>
+                              </div>
+                              <div>
+                                <RadioButton
+                                  inputId="Murmur"
+                                  name="Heart_Sounds_Added"
+                                  value="Murmur"
+                                  checked={
+                                    formik.values.Heart_Sounds_Added ===
+                                    "Murmur"
+                                  }
+                                  onChange={(e) =>
+                                    formik.setFieldValue(
+                                      "Heart_Sounds_Added",
+                                      e.value
+                                    )
+                                  }
+                                />{" "}
+                                <label htmlFor="xnormal1" className="ms-2">
+                                  Murmur
+                                </label>
+                              </div>
+                              <div>
+                                <RadioButton
+                                  inputId="Click"
+                                  name="Heart_Sounds_Added"
+                                  value="Click"
+                                  checked={
+                                    formik.values.Heart_Sounds_Added === "Click"
+                                  }
+                                  onChange={(e) =>
+                                    formik.setFieldValue(
+                                      "Heart_Sounds_Added",
+                                      e.value
+                                    )
+                                  }
+                                />{" "}
+                                <label htmlFor="xnormal1" className="ms-2">
+                                  Click
+                                </label>
+                              </div>
+                              <div>
+                                <RadioButton
+                                  inputId="Opening Snap"
+                                  name="Heart_Sounds_Added"
+                                  value="Opening Snap"
+                                  checked={
+                                    formik.values.Heart_Sounds_Added ===
+                                    "Opening Snap"
+                                  }
+                                  onChange={(e) =>
+                                    formik.setFieldValue(
+                                      "Heart_Sounds_Added",
+                                      e.value
+                                    )
+                                  }
+                                />{" "}
+                                <label htmlFor="xnormal1" className="ms-2">
+                                  Opening Snap
+                                </label>
+                              </div>
 
-                                  <h1 className="fs-5">Murmur Timing:</h1>
-                                  <div>
-                                    <RadioButton
-                                      inputId="Systolic"
-                                      name="Murmur_Timing"
-                                      value="Systolic"
-                                      checked={
-                                        formik.values.Murmur_Timing ===
-                                        "Systolic"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Murmur_Timing",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label htmlFor="xnormal1" className="ms-2">
-                                      Systolic
-                                    </label>
-                                  </div>
-                                  <div>
-                                    <RadioButton
-                                      inputId="Diastolic"
-                                      name="Murmur_Timing"
-                                      value="Diastolic"
-                                      checked={
-                                        formik.values.Murmur_Timing ===
-                                        "Diastolic"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Murmur_Timing",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label htmlFor="xnormal1" className="ms-2">
-                                      Diastolic
-                                    </label>
-                                  </div>
-                                  <div>
-                                    <RadioButton
-                                      inputId="Continuous"
-                                      name="Murmur_Timing"
-                                      value="Continuous"
-                                      checked={
-                                        formik.values.Murmur_Timing ===
-                                        "Continuous"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Murmur_Timing",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label htmlFor="xnormal1" className="ms-2">
-                                      Continuous
-                                    </label>
-                                  </div>
-                                  <h1 className="fs-5">Murmur Location:</h1>
-                                  <div>
-                                    <RadioButton
-                                      inputId="Aortic"
-                                      name="Murmur_Location"
-                                      value="Aortic"
-                                      checked={
-                                        formik.values.Murmur_Location ===
-                                        "Aortic"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Murmur_Location",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label htmlFor="xnormal1" className="ms-2">
-                                      Aortic
-                                    </label>
-                                  </div>
-                                  <div>
-                                    <RadioButton
-                                      inputId="Mitral"
-                                      name="Murmur_Location"
-                                      value="Mitral"
-                                      checked={
-                                        formik.values.Murmur_Location ===
-                                        "Mitral"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Murmur_Location",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label htmlFor="xnormal1" className="ms-2">
-                                      Mitral
-                                    </label>
-                                  </div>
-                                  <div>
-                                    <RadioButton
-                                      inputId="Tricuspid"
-                                      name="Murmur_Location"
-                                      value="Tricuspid"
-                                      checked={
-                                        formik.values.Murmur_Location ===
-                                        "Tricuspid"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Murmur_Location",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label htmlFor="xnormal1" className="ms-2">
-                                      Tricuspid
-                                    </label>
-                                  </div>
-                                  <div>
-                                    <RadioButton
-                                      inputId="Pulmonic"
-                                      name="Murmur_Location"
-                                      value="Pulmonic"
-                                      checked={
-                                        formik.values.Murmur_Location ===
-                                        "Pulmonic"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Murmur_Location",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label htmlFor="xnormal1" className="ms-2">
-                                      Pulmonic
-                                    </label>
-                                  </div>
-                                  {/* <h1 className="fs-5">Murmur Radiation:</h1>
+                              <h1 className="fs-5">Murmur Timing:</h1>
+                              <div>
+                                <RadioButton
+                                  inputId="Systolic"
+                                  name="Murmur_Timing"
+                                  value="Systolic"
+                                  checked={
+                                    formik.values.Murmur_Timing === "Systolic"
+                                  }
+                                  onChange={(e) =>
+                                    formik.setFieldValue(
+                                      "Murmur_Timing",
+                                      e.value
+                                    )
+                                  }
+                                />{" "}
+                                <label htmlFor="xnormal1" className="ms-2">
+                                  Systolic
+                                </label>
+                              </div>
+                              <div>
+                                <RadioButton
+                                  inputId="Diastolic"
+                                  name="Murmur_Timing"
+                                  value="Diastolic"
+                                  checked={
+                                    formik.values.Murmur_Timing === "Diastolic"
+                                  }
+                                  onChange={(e) =>
+                                    formik.setFieldValue(
+                                      "Murmur_Timing",
+                                      e.value
+                                    )
+                                  }
+                                />{" "}
+                                <label htmlFor="xnormal1" className="ms-2">
+                                  Diastolic
+                                </label>
+                              </div>
+                              <div>
+                                <RadioButton
+                                  inputId="Continuous"
+                                  name="Murmur_Timing"
+                                  value="Continuous"
+                                  checked={
+                                    formik.values.Murmur_Timing === "Continuous"
+                                  }
+                                  onChange={(e) =>
+                                    formik.setFieldValue(
+                                      "Murmur_Timing",
+                                      e.value
+                                    )
+                                  }
+                                />{" "}
+                                <label htmlFor="xnormal1" className="ms-2">
+                                  Continuous
+                                </label>
+                              </div>
+                              <h1 className="fs-5">Murmur Location:</h1>
+                              <div>
+                                <RadioButton
+                                  inputId="Aortic"
+                                  name="Murmur_Location"
+                                  value="Aortic"
+                                  checked={
+                                    formik.values.Murmur_Location === "Aortic"
+                                  }
+                                  onChange={(e) =>
+                                    formik.setFieldValue(
+                                      "Murmur_Location",
+                                      e.value
+                                    )
+                                  }
+                                />{" "}
+                                <label htmlFor="xnormal1" className="ms-2">
+                                  Aortic
+                                </label>
+                              </div>
+                              <div>
+                                <RadioButton
+                                  inputId="Mitral"
+                                  name="Murmur_Location"
+                                  value="Mitral"
+                                  checked={
+                                    formik.values.Murmur_Location === "Mitral"
+                                  }
+                                  onChange={(e) =>
+                                    formik.setFieldValue(
+                                      "Murmur_Location",
+                                      e.value
+                                    )
+                                  }
+                                />{" "}
+                                <label htmlFor="xnormal1" className="ms-2">
+                                  Mitral
+                                </label>
+                              </div>
+                              <div>
+                                <RadioButton
+                                  inputId="Tricuspid"
+                                  name="Murmur_Location"
+                                  value="Tricuspid"
+                                  checked={
+                                    formik.values.Murmur_Location ===
+                                    "Tricuspid"
+                                  }
+                                  onChange={(e) =>
+                                    formik.setFieldValue(
+                                      "Murmur_Location",
+                                      e.value
+                                    )
+                                  }
+                                />{" "}
+                                <label htmlFor="xnormal1" className="ms-2">
+                                  Tricuspid
+                                </label>
+                              </div>
+                              <div>
+                                <RadioButton
+                                  inputId="Pulmonic"
+                                  name="Murmur_Location"
+                                  value="Pulmonic"
+                                  checked={
+                                    formik.values.Murmur_Location === "Pulmonic"
+                                  }
+                                  onChange={(e) =>
+                                    formik.setFieldValue(
+                                      "Murmur_Location",
+                                      e.value
+                                    )
+                                  }
+                                />{" "}
+                                <label htmlFor="xnormal1" className="ms-2">
+                                  Pulmonic
+                                </label>
+                              </div>
+                              {/* <h1 className="fs-5">Murmur Radiation:</h1>
                                   <div>
                                     <RadioButton
                                       inputId="No Radiation"
@@ -2517,67 +2486,66 @@ export default function Doctor() {
                                       No Radiation
                                     </label>
                                   </div> */}
-                                  <div>
-                                    <RadioButton
-                                      inputId="To Carotids"
-                                      name="Murmur_Radiation"
-                                      value="To Carotids"
-                                      checked={
-                                        formik.values.Murmur_Radiation ===
-                                        "To Carotids"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Murmur_Radiation",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label htmlFor="xnormal1" className="ms-2">
-                                      To Carotids
-                                    </label>
-                                  </div>
-                                  <div>
-                                    <RadioButton
-                                      inputId="To Axilla"
-                                      name="Murmur_Radiation"
-                                      value="To Axilla"
-                                      checked={
-                                        formik.values.Murmur_Radiation ===
-                                        "To Axilla"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Murmur_Radiation",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label htmlFor="xnormal1" className="ms-2">
-                                      To Axilla
-                                    </label>
-                                  </div>
-                                  <div>
-                                    <RadioButton
-                                      inputId="To Back"
-                                      name="Murmur_Radiation"
-                                      value="To Back"
-                                      checked={
-                                        formik.values.Murmur_Radiation ===
-                                        "To Back"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Murmur_Radiation",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label htmlFor="xnormal1" className="ms-2">
-                                      To Back
-                                    </label>
-                                  </div>
-                                  {/* <h1 className="fs-5">Peripheral Edema:</h1>
+                              <div>
+                                <RadioButton
+                                  inputId="To Carotids"
+                                  name="Murmur_Radiation"
+                                  value="To Carotids"
+                                  checked={
+                                    formik.values.Murmur_Radiation ===
+                                    "To Carotids"
+                                  }
+                                  onChange={(e) =>
+                                    formik.setFieldValue(
+                                      "Murmur_Radiation",
+                                      e.value
+                                    )
+                                  }
+                                />{" "}
+                                <label htmlFor="xnormal1" className="ms-2">
+                                  To Carotids
+                                </label>
+                              </div>
+                              <div>
+                                <RadioButton
+                                  inputId="To Axilla"
+                                  name="Murmur_Radiation"
+                                  value="To Axilla"
+                                  checked={
+                                    formik.values.Murmur_Radiation ===
+                                    "To Axilla"
+                                  }
+                                  onChange={(e) =>
+                                    formik.setFieldValue(
+                                      "Murmur_Radiation",
+                                      e.value
+                                    )
+                                  }
+                                />{" "}
+                                <label htmlFor="xnormal1" className="ms-2">
+                                  To Axilla
+                                </label>
+                              </div>
+                              <div>
+                                <RadioButton
+                                  inputId="To Back"
+                                  name="Murmur_Radiation"
+                                  value="To Back"
+                                  checked={
+                                    formik.values.Murmur_Radiation === "To Back"
+                                  }
+                                  onChange={(e) =>
+                                    formik.setFieldValue(
+                                      "Murmur_Radiation",
+                                      e.value
+                                    )
+                                  }
+                                />{" "}
+                                <label htmlFor="xnormal1" className="ms-2">
+                                  To Back
+                                </label>
+                              </div>
+                              {/* <h1 className="fs-5">Peripheral Edema:</h1>
                                   <div>
                                     <RadioButton
                                       inputId="Absent"
@@ -2598,139 +2566,136 @@ export default function Doctor() {
                                       Absent
                                     </label>
                                   </div> */}
-                                  <div>
-                                    <RadioButton
-                                      inputId="Present – Pitting (Ankle)"
-                                      name="Peripheral_Edema"
-                                      value="Present – Pitting (Ankle)"
-                                      checked={
-                                        formik.values.Peripheral_Edema ===
-                                        "Present – Pitting (Ankle)"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Peripheral_Edema",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label htmlFor="xnormal1" className="ms-2">
-                                      Present – Pitting (Ankle)
-                                    </label>
-                                  </div>
-                                  <div>
-                                    <RadioButton
-                                      inputId="Present – Pitting (Pedal)"
-                                      name="Peripheral_Edema"
-                                      value="Present – Pitting (Pedal)"
-                                      checked={
-                                        formik.values.Peripheral_Edema ===
-                                        "Present – Pitting (Pedal)"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Peripheral_Edema",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label htmlFor="xnormal1" className="ms-2">
-                                      Present – Pitting (Pedal)
-                                    </label>
-                                  </div>
-                                  <div>
-                                    <RadioButton
-                                      inputId="Present – Generalized (Anasarca)"
-                                      name="Peripheral_Edema"
-                                      value="Present – Generalized (Anasarca)"
-                                      checked={
-                                        formik.values.Peripheral_Edema ===
-                                        "Present – Generalized (Anasarca)"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Peripheral_Edema",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label htmlFor="xnormal1" className="ms-2">
-                                      Present – Generalized (Anasarca)
-                                    </label>
-                                  </div>
-                                  <h1 className="fs-5">
-                                    Jugular Venous Pressure (JVP):
-                                  </h1>
-                                  <div>
-                                    <RadioButton
-                                      inputId="Normal"
-                                      name="Jugular_Venous_Pressure"
-                                      value="Normal"
-                                      checked={
-                                        formik.values
-                                          .Jugular_Venous_Pressure === "Normal"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Jugular_Venous_Pressure",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label htmlFor="xnormal1" className="ms-2">
-                                      Normal
-                                    </label>
-                                  </div>
-                                  <div>
-                                    <RadioButton
-                                      inputId="Elevated"
-                                      name="Jugular_Venous_Pressure"
-                                      value="Elevated"
-                                      checked={
-                                        formik.values
-                                          .Jugular_Venous_Pressure ===
-                                        "Elevated"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Jugular_Venous_Pressure",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label htmlFor="xnormal1" className="ms-2">
-                                      Elevated
-                                    </label>
-                                  </div>
-                                  <div>
-                                    <RadioButton
-                                      inputId="Not Assessed"
-                                      name="Jugular_Venous_Pressure"
-                                      value="Not Assessed"
-                                      checked={
-                                        formik.values
-                                          .Jugular_Venous_Pressure ===
-                                        "Not Assessed"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Jugular_Venous_Pressure",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label htmlFor="xnormal1" className="ms-2">
-                                      Not Assessed
-                                    </label>
-                                  </div>
-                                </div>
+                              {/* <div>
+                                <RadioButton
+                                  inputId="Present – Pitting (Ankle)"
+                                  name="Peripheral_Edema"
+                                  value="Present – Pitting (Ankle)"
+                                  checked={
+                                    formik.values.Peripheral_Edema ===
+                                    "Present – Pitting (Ankle)"
+                                  }
+                                  onChange={(e) =>
+                                    formik.setFieldValue(
+                                      "Peripheral_Edema",
+                                      e.value
+                                    )
+                                  }
+                                />{" "}
+                                <label htmlFor="xnormal1" className="ms-2">
+                                  Present – Pitting (Ankle)
+                                </label>
                               </div>
-                            ) : (
-                              ""
-                            )}
-                         
-                     
-                        <h1 className="fs-5 mt-4">P/A:</h1>
+                              <div>
+                                <RadioButton
+                                  inputId="Present – Pitting (Pedal)"
+                                  name="Peripheral_Edema"
+                                  value="Present – Pitting (Pedal)"
+                                  checked={
+                                    formik.values.Peripheral_Edema ===
+                                    "Present – Pitting (Pedal)"
+                                  }
+                                  onChange={(e) =>
+                                    formik.setFieldValue(
+                                      "Peripheral_Edema",
+                                      e.value
+                                    )
+                                  }
+                                />{" "}
+                                <label htmlFor="xnormal1" className="ms-2">
+                                  Present – Pitting (Pedal)
+                                </label>
+                              </div>
+                              <div>
+                                <RadioButton
+                                  inputId="Present – Generalized (Anasarca)"
+                                  name="Peripheral_Edema"
+                                  value="Present – Generalized (Anasarca)"
+                                  checked={
+                                    formik.values.Peripheral_Edema ===
+                                    "Present – Generalized (Anasarca)"
+                                  }
+                                  onChange={(e) =>
+                                    formik.setFieldValue(
+                                      "Peripheral_Edema",
+                                      e.value
+                                    )
+                                  }
+                                />{" "}
+                                <label htmlFor="xnormal1" className="ms-2">
+                                  Present – Generalized (Anasarca)
+                                </label>
+                              </div> */}
+                              <h1 className="fs-5">
+                                Jugular Venous Pressure (JVP):
+                              </h1>
+                              <div>
+                                <RadioButton
+                                  inputId="Normal"
+                                  name="Jugular_Venous_Pressure"
+                                  value="Normal"
+                                  checked={
+                                    formik.values.Jugular_Venous_Pressure ===
+                                    "Normal"
+                                  }
+                                  onChange={(e) =>
+                                    formik.setFieldValue(
+                                      "Jugular_Venous_Pressure",
+                                      e.value
+                                    )
+                                  }
+                                />{" "}
+                                <label htmlFor="xnormal1" className="ms-2">
+                                  Normal
+                                </label>
+                              </div>
+                              <div>
+                                <RadioButton
+                                  inputId="Elevated"
+                                  name="Jugular_Venous_Pressure"
+                                  value="Elevated"
+                                  checked={
+                                    formik.values.Jugular_Venous_Pressure ===
+                                    "Elevated"
+                                  }
+                                  onChange={(e) =>
+                                    formik.setFieldValue(
+                                      "Jugular_Venous_Pressure",
+                                      e.value
+                                    )
+                                  }
+                                />{" "}
+                                <label htmlFor="xnormal1" className="ms-2">
+                                  Elevated
+                                </label>
+                              </div>
+                              <div>
+                                <RadioButton
+                                  inputId="Not Assessed"
+                                  name="Jugular_Venous_Pressure"
+                                  value="Not Assessed"
+                                  checked={
+                                    formik.values.Jugular_Venous_Pressure ===
+                                    "Not Assessed"
+                                  }
+                                  onChange={(e) =>
+                                    formik.setFieldValue(
+                                      "Jugular_Venous_Pressure",
+                                      e.value
+                                    )
+                                  }
+                                />{" "}
+                                <label htmlFor="xnormal1" className="ms-2">
+                                  Not Assessed
+                                </label>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          ""
+                        )}
+
+                        {/* <h1 className="fs-5 mt-4">P/A:</h1>
                         <div className="d-flex gap-3">
                           <div>
                             <RadioButton
@@ -2759,28 +2724,27 @@ export default function Doctor() {
                             <label htmlFor="abnormal5" className="ms-2">
                               Abnormal
                             </label>
-                             </div>
-                              </div>
-                            {formik.values.PA === "Abnormal" ? (
-                              <div className="field flex-1 ">
-                                <FloatLabel>
-                                  <InputText
-                                    id="abnormals"
-                                    name="PAdata"
-                                    value={formik.values.PAdata}
-                                    onChange={formik.handleChange}
-                                    className="w-100 mt-2"
-                                  />
-                                  <label htmlFor="abnormals" className="pt-1">
-                                    Enter detail
-                                  </label>
-                                </FloatLabel>
-                              </div>
-                            ) : (
-                              ""
-                            )}
-                         
-                       
+                          </div>
+                        </div>
+                        {formik.values.PA === "Abnormal" ? (
+                          <div className="field flex-1 ">
+                            <FloatLabel>
+                              <InputText
+                                id="abnormals"
+                                name="PAdata"
+                                value={formik.values.PAdata}
+                                onChange={formik.handleChange}
+                                className="w-100 mt-2"
+                              />
+                              <label htmlFor="abnormals" className="pt-1">
+                                Enter detail
+                              </label>
+                            </FloatLabel>
+                          </div>
+                        ) : (
+                          ""
+                        )} */}
+
                         {/* cenetral Nervous */}
 
                         <h1 className="fs-5 mt-3">Central Nervous System:</h1>
@@ -2827,523 +2791,758 @@ export default function Doctor() {
                               Abnormal
                             </label>
                           </div>
-                    </div>
-                    </div>
-                  
-                          {formik.values.Central_Nervous_System ===
-                          "Abnormal" ? (
-                            <div className="field flex-1 mt-3">
-                              {/* main div of respiratory */}
-                              <div className="card flex flex-col gap-3 m-0 p-3">
-                                <h1 className="fs-5">Consciousness Level:</h1>
+                        </div>
+                      </div>
+
+                      {formik.values.Central_Nervous_System === "Abnormal" ? (
+                        <div className="field flex-1 mt-3">
+                          {/* main div of respiratory */}
+                          <div className="card flex flex-col gap-3 m-0 p-3">
+                            <h1 className="fs-5">Consciousness Level:</h1>
+                            <div>
+                              <RadioButton
+                                inputId="Alert"
+                                name="Consciousness_Level"
+                                value="Alert & Oriented"
+                                checked={
+                                  formik.values.Consciousness_Level ===
+                                  "Alert & Oriented"
+                                }
+                                onChange={(e) =>
+                                  formik.setFieldValue(
+                                    "Consciousness_Level",
+                                    e.value
+                                  )
+                                }
+                              />{" "}
+                              <label htmlFor="Alert" className="ms-2">
+                                Alert & Oriented
+                              </label>
+                            </div>
+                            <div>
+                              <RadioButton
+                                inputId="Confused1"
+                                name="Consciousness_Level"
+                                value="Confused"
+                                checked={
+                                  formik.values.Consciousness_Level ===
+                                  "Confused"
+                                }
+                                onChange={(e) =>
+                                  formik.setFieldValue(
+                                    "Consciousness_Level",
+                                    e.value
+                                  )
+                                }
+                              />
+                              <label htmlFor="Confused1" className="ms-2">
+                                Confused
+                              </label>
+                            </div>
+                            <div>
+                              <RadioButton
+                                inputId="drowsy"
+                                name="Consciousness_Level"
+                                value="Drowsy"
+                                checked={
+                                  formik.values.Consciousness_Level === "Drowsy"
+                                }
+                                onChange={(e) =>
+                                  formik.setFieldValue(
+                                    "Consciousness_Level",
+                                    e.value
+                                  )
+                                }
+                              />{" "}
+                              <label htmlFor="drowsy" className="ms-2">
+                                Drowsy
+                              </label>
+                            </div>
+                            <div>
+                              <RadioButton
+                                inputId="stuporous"
+                                name="Consciousness_Level"
+                                value="Stuporous"
+                                checked={
+                                  formik.values.Consciousness_Level ===
+                                  "Stuporous"
+                                }
+                                onChange={(e) =>
+                                  formik.setFieldValue(
+                                    "Consciousness_Level",
+                                    e.value
+                                  )
+                                }
+                              />{" "}
+                              <label htmlFor="stuporous" className="ms-2">
+                                Stuporous
+                              </label>
+                            </div>
+                            <div>
+                              <RadioButton
+                                inputId="unconscious"
+                                name="Consciousness_Level"
+                                value="Unconscious"
+                                checked={
+                                  formik.values.Consciousness_Level ===
+                                  "Unconscious"
+                                }
+                                onChange={(e) =>
+                                  formik.setFieldValue(
+                                    "Consciousness_Level",
+                                    e.value
+                                  )
+                                }
+                              />{" "}
+                              <label htmlFor="unconscious" className="ms-2">
+                                Unconscious
+                              </label>
+                            </div>
+
+                            <h1 className="fs-5">
+                              Motor System – Focal Deficit:
+                            </h1>
+                            <div>
+                              <RadioButton
+                                inputId="none1"
+                                name="Motor_System_Focal_Deficit"
+                                value="None"
+                                checked={
+                                  formik.values.Motor_System_Focal_Deficit ===
+                                  "None"
+                                }
+                                onChange={(e) =>
+                                  formik.setFieldValue(
+                                    "Motor_System_Focal_Deficit",
+                                    e.value,
+                                    console.log(e.value)
+                                  )
+                                }
+                              />
+                              <label htmlFor="none1" className="ms-2">
+                                None
+                              </label>
+                            </div>
+
+                            <div>
+                              <RadioButton
+                                inputId="Hemiparesis"
+                                name="Motor_System_Focal_Deficit"
+                                value="Hemiparesis"
+                                checked={
+                                  formik.values.Motor_System_Focal_Deficit ===
+                                  "Hemiparesis"
+                                }
+                                onChange={(e) =>
+                                  formik.setFieldValue(
+                                    "Motor_System_Focal_Deficit",
+                                    e.value
+                                  )
+                                }
+                              />
+                              <label htmlFor="Hemiparesis" className="ms-2">
+                                Hemiparesis
+                              </label>
+                            </div>
+
+                            {formik.values.Motor_System_Focal_Deficit ===
+                              "Hemiparesis" && (
+                              <div
+                                className="d-flex gap-2 p-2"
+                                style={{ boxShadow: "inherit" }}
+                              >
+                                <RadioButton
+                                  inputId="left2"
+                                  name="Hemiparesis"
+                                  value="Left"
+                                  checked={formik.values.Hemiparesis === "Left"}
+                                  onChange={(e) =>
+                                    formik.setFieldValue("Hemiparesis", e.value)
+                                  }
+                                />{" "}
+                                <label htmlFor="left2" className="ms-2">
+                                  Left
+                                </label>
+                                <RadioButton
+                                  inputId="right1"
+                                  name="Hemiparesis"
+                                  value="Right"
+                                  checked={
+                                    formik.values.Hemiparesis === "Right"
+                                  }
+                                  onChange={(e) =>
+                                    formik.setFieldValue("Hemiparesis", e.value)
+                                  }
+                                />{" "}
+                                <label htmlFor="right1" className="ms-2">
+                                  Right
+                                </label>
+                              </div>
+                            )}
+
+                            <div>
+                              <RadioButton
+                                inputId="hemiplegias"
+                                name="Motor_System_Focal_Deficit"
+                                value="Hemiplegia"
+                                checked={
+                                  formik.values.Motor_System_Focal_Deficit ===
+                                  "Hemiplegia"
+                                }
+                                onChange={(e) =>
+                                  formik.setFieldValue(
+                                    "Motor_System_Focal_Deficit",
+                                    e.value
+                                  )
+                                }
+                              />
+                              <label htmlFor="hemiplegias" className="ms-2">
+                                Hemiplegia
+                              </label>
+                            </div>
+
+                            {formik.values.Motor_System_Focal_Deficit ===
+                              "Hemiplegia" && (
+                              <div
+                                className="d-flex gap-2 p-2"
+                                style={{ boxShadow: "inherit" }}
+                              >
+                                <RadioButton
+                                  inputId="left7"
+                                  name="Hemiplegia"
+                                  value="Left"
+                                  checked={formik.values.Hemiplegia === "Left"}
+                                  onChange={(e) =>
+                                    formik.setFieldValue("Hemiplegia", e.value)
+                                  }
+                                />{" "}
+                                <label htmlFor="left7" className="ms-2">
+                                  Left
+                                </label>
+                                <RadioButton
+                                  inputId="right8"
+                                  name="Hemiplegia"
+                                  value="Right"
+                                  checked={formik.values.Hemiplegia === "Right"}
+                                  onChange={(e) =>
+                                    formik.setFieldValue("Hemiplegia", e.value)
+                                  }
+                                />{" "}
+                                <label htmlFor="right8" className="ms-2">
+                                  Right
+                                </label>
+                              </div>
+                            )}
+
+                            <div>
+                              <RadioButton
+                                inputId="Paraparesis"
+                                name="Motor_System_Focal_Deficit"
+                                value="Paraparesis"
+                                checked={
+                                  formik.values.Motor_System_Focal_Deficit ===
+                                  "Paraparesis"
+                                }
+                                onChange={(e) =>
+                                  formik.setFieldValue(
+                                    "Motor_System_Focal_Deficit",
+                                    e.value
+                                  )
+                                }
+                              />
+                              <label htmlFor="Paraparesis" className="ms-2">
+                                Paraparesis
+                              </label>
+                            </div>
+
+                            {formik.values.Motor_System_Focal_Deficit ===
+                              "Paraparesis" && (
+                              <div
+                                className="d-flex gap-2 p-2"
+                                style={{ boxShadow: "inherit" }}
+                              >
+                                <RadioButton
+                                  inputId="Bilaterals4"
+                                  name="Paraparesis"
+                                  value="Bilateral(Lower limbs)"
+                                  checked={
+                                    formik.values.Paraparesis ===
+                                    "Bilateral(Lower limbs)"
+                                  }
+                                  onChange={(e) =>
+                                    formik.setFieldValue("Paraparesis", e.value)
+                                  }
+                                />{" "}
+                                <label htmlFor="Bilaterals4" className="ms-2">
+                                  Bilateral(Lower limbs)
+                                </label>
+                              </div>
+                            )}
+
+                            <div>
+                              <RadioButton
+                                inputId="Paraplegia"
+                                name="Motor_System_Focal_Deficit"
+                                value="Paraplegia"
+                                checked={
+                                  formik.values.Motor_System_Focal_Deficit ===
+                                  "Paraplegia"
+                                }
+                                onChange={(e) =>
+                                  formik.setFieldValue(
+                                    "Motor_System_Focal_Deficit",
+                                    e.value
+                                  )
+                                }
+                              />
+                              <label htmlFor="Paraplegia" className="ms-2">
+                                Paraplegia
+                              </label>
+                            </div>
+
+                            {formik.values.Motor_System_Focal_Deficit ===
+                              "Paraplegia" && (
+                              <div
+                                className="d-flex gap-2 p-2"
+                                style={{ boxShadow: "inherit" }}
+                              >
+                                <RadioButton
+                                  inputId="Bilaterals"
+                                  name="Paraplegia"
+                                  value="Bilateral(Lower limbs)"
+                                  checked={
+                                    formik.values.Paraplegia ===
+                                    "Bilateral(Lower limbs)"
+                                  }
+                                  onChange={(e) =>
+                                    formik.setFieldValue("Paraplegia", e.value)
+                                  }
+                                />{" "}
+                                <label htmlFor="Bilaterals" className="ms-2">
+                                  Bilateral(Lower limbs)
+                                </label>
+                              </div>
+                            )}
+
+                            <div>
+                              <RadioButton
+                                inputId="Quadriparesis11"
+                                name="Motor_System_Focal_Deficit"
+                                value="Quadriparesis"
+                                checked={
+                                  formik.values.Motor_System_Focal_Deficit ===
+                                  "Quadriparesis"
+                                }
+                                onChange={(e) =>
+                                  formik.setFieldValue(
+                                    "Motor_System_Focal_Deficit",
+                                    e.value
+                                  )
+                                }
+                              />
+                              <label htmlFor="Quadriparesis11" className="ms-2">
+                                Quadripares
+                              </label>
+                            </div>
+
+                            {formik.values.Motor_System_Focal_Deficit ===
+                              "Quadriparesis" && (
+                              <div
+                                className="d-flex gap-2 p-2"
+                                style={{ boxShadow: "inherit" }}
+                              >
+                                <RadioButton
+                                  inputId="Bilaterals2"
+                                  name="Quadriparesis"
+                                  value="Bilateral(All 4 limbs)"
+                                  checked={
+                                    formik.values.Quadriparesis ===
+                                    "Bilateral(All 4 limbs)"
+                                  }
+                                  onChange={(e) =>
+                                    formik.setFieldValue(
+                                      "Quadriparesis",
+                                      e.value
+                                    )
+                                  }
+                                />{" "}
+                                <label htmlFor="Bilaterals2" className="ms-2">
+                                  Bilateral(All 4 limbs)
+                                </label>
+                              </div>
+                            )}
+
+                            <div>
+                              <RadioButton
+                                inputId="quadriplegia"
+                                name="Motor_System_Focal_Deficit"
+                                value="Quadriplegia"
+                                checked={
+                                  formik.values.Motor_System_Focal_Deficit ===
+                                  "Quadriplegia"
+                                }
+                                onChange={(e) =>
+                                  formik.setFieldValue(
+                                    "Motor_System_Focal_Deficit",
+                                    e.value
+                                  )
+                                }
+                              />
+                              <label htmlFor="quadriplegia" className="ms-2">
+                                Quadriplegia
+                              </label>
+                            </div>
+
+                            {formik.values.Motor_System_Focal_Deficit ===
+                              "Quadriplegia" && (
+                              <div
+                                className="d-flex gap-2 p-2"
+                                style={{ boxShadow: "inherit" }}
+                              >
+                                <RadioButton
+                                  inputId="Bilaterals21"
+                                  name="Quadriplegia"
+                                  value="Bilateral(All 4 limbs)"
+                                  checked={
+                                    formik.values.Quadriplegia ===
+                                    "Bilateral(All 4 limbs)"
+                                  }
+                                  onChange={(e) =>
+                                    formik.setFieldValue(
+                                      "Quadriplegia",
+                                      e.value
+                                    )
+                                  }
+                                />{" "}
+                                <label htmlFor="Bilaterals21" className="ms-2">
+                                  Bilateral(All 4 limbs)
+                                </label>
+                              </div>
+                            )}
+
+                            <h1 className="fs-5">
+                              Motor System – Affected Side:
+                            </h1>
+                            <div>
+                              <RadioButton
+                                inputId="Right"
+                                name="Motor_System_Affected_Side"
+                                value="Right"
+                                checked={
+                                  formik.values.Motor_System_Affected_Side ===
+                                  "Right"
+                                }
+                                onChange={(e) =>
+                                  formik.setFieldValue(
+                                    "Motor_System_Affected_Side",
+                                    e.value
+                                  )
+                                }
+                              />
+                              <label htmlFor="Right" className="ms-2">
+                                Right
+                              </label>
+                            </div>
+                            <div>
+                              <RadioButton
+                                inputId="Left21"
+                                name="Motor_System_Affected_Side"
+                                value="Left"
+                                checked={
+                                  formik.values.Motor_System_Affected_Side ===
+                                  "Left"
+                                }
+                                onChange={(e) =>
+                                  formik.setFieldValue(
+                                    "Motor_System_Affected_Side",
+                                    e.value
+                                  )
+                                }
+                              />
+                              <label htmlFor="Left21" className="ms-2">
+                                Left
+                              </label>
+                            </div>
+                            <div>
+                              <RadioButton
+                                inputId="bilateral"
+                                name="Motor_System_Affected_Side"
+                                value="Bilateral"
+                                checked={
+                                  formik.values.Motor_System_Affected_Side ===
+                                  "Bilateral"
+                                }
+                                onChange={(e) =>
+                                  formik.setFieldValue(
+                                    "Motor_System_Affected_Side",
+                                    e.value
+                                  )
+                                }
+                              />{" "}
+                              <label htmlFor="bilateral" className="ms-2">
+                                Bilateral
+                              </label>
+                            </div>
+                            <h1 className="fs-5">Tone:</h1>
+                            <div>
+                              <RadioButton
+                                inputId="Normal"
+                                name="Tone"
+                                value="Normal"
+                                checked={formik.values.Tone === "Normal"}
+                                onChange={(e) =>
+                                  formik.setFieldValue("Tone", e.value)
+                                }
+                              />{" "}
+                              <label htmlFor="Normal" className="ms-2">
+                                Normal
+                              </label>
+                            </div>
+                            <div>
+                              <RadioButton
+                                inputId="Increased12"
+                                name="Tone"
+                                value="Increased (Spasticity/Rigidity)"
+                                checked={
+                                  formik.values.Tone ===
+                                  "Increased (Spasticity/Rigidity)"
+                                }
+                                onChange={(e) =>
+                                  formik.setFieldValue("Tone", e.value)
+                                }
+                              />{" "}
+                              <label htmlFor="Increased12" className="ms-2">
+                                Increased (Spasticity/Rigidity)
+                              </label>
+                            </div>
+                            <div>
+                              <RadioButton
+                                inputId="Decreased"
+                                name="Tone"
+                                value="Decreased (Hypotonia)"
+                                checked={
+                                  formik.values.Tone === "Decreased (Hypotonia)"
+                                }
+                                onChange={(e) =>
+                                  formik.setFieldValue("Tone", e.value)
+                                }
+                              />{" "}
+                              <label htmlFor="Decreased" className="ms-2">
+                                Decreased (Hypotonia)
+                              </label>
+                            </div>
+
+                            <h1 className="fs-5">
+                              Reflexes – Deep Tendon Reflexes:
+                            </h1>
+                            <div>
+                              <RadioButton
+                                inputId="Normal22"
+                                name="Reflexes_Deep_Tendon_Reflexes"
+                                value="Normal"
+                                checked={
+                                  formik.values
+                                    .Reflexes_Deep_Tendon_Reflexes === "Normal"
+                                }
+                                onChange={(e) =>
+                                  formik.setFieldValue(
+                                    "Reflexes_Deep_Tendon_Reflexes",
+                                    e.value
+                                  )
+                                }
+                              />{" "}
+                              <label htmlFor="Normal22" className="ms-2">
+                                Normal
+                              </label>
+                            </div>
+                            <div>
+                              <RadioButton
+                                inputId="Hyporeflexia1"
+                                name="Reflexes_Deep_Tendon_Reflexes"
+                                value="Hyporeflexia"
+                                checked={
+                                  formik.values
+                                    .Reflexes_Deep_Tendon_Reflexes ===
+                                  "Hyporeflexia"
+                                }
+                                onChange={(e) =>
+                                  formik.setFieldValue(
+                                    "Reflexes_Deep_Tendon_Reflexes",
+                                    e.value
+                                  )
+                                }
+                              />{" "}
+                              <label htmlFor="Hyporeflexia1" className="ms-2">
+                                Hyporeflexia
+                              </label>
+                            </div>
+                            <div>
+                              <RadioButton
+                                inputId="hyperreflexia"
+                                name="Reflexes_Deep_Tendon_Reflexes"
+                                value="Hyperreflexia"
+                                checked={
+                                  formik.values
+                                    .Reflexes_Deep_Tendon_Reflexes ===
+                                  "Hyperreflexia"
+                                }
+                                onChange={(e) =>
+                                  formik.setFieldValue(
+                                    "Reflexes_Deep_Tendon_Reflexes",
+                                    e.value
+                                  )
+                                }
+                              />{" "}
+                              <label htmlFor="hyperreflexia" className="ms-2">
+                                Hyperreflexia
+                              </label>
+                            </div>
+                            <div>
+                              <RadioButton
+                                inputId="absent"
+                                name="Reflexes_Deep_Tendon_Reflexes"
+                                value="Absent"
+                                checked={
+                                  formik.values
+                                    .Reflexes_Deep_Tendon_Reflexes === "Absent"
+                                }
+                                onChange={(e) =>
+                                  formik.setFieldValue(
+                                    "Reflexes_Deep_Tendon_Reflexes",
+                                    e.value
+                                  )
+                                }
+                              />{" "}
+                              <label htmlFor="absent" className="ms-2">
+                                Absent
+                              </label>
+                            </div>
+                            <h1 className="fs-5">
+                              Reflexes – Plantar Reflex (Babinski):
+                            </h1>
+
+                            <div>
+                              <RadioButton
+                                inputId="Flexor"
+                                name="Reflexes_Plantar_Reflex_Babinski"
+                                value="Flexor (Normal)"
+                                checked={
+                                  formik.values
+                                    .Reflexes_Plantar_Reflex_Babinski ===
+                                  "Flexor (Normal)"
+                                }
+                                onChange={(e) =>
+                                  formik.setFieldValue(
+                                    "Reflexes_Plantar_Reflex_Babinski",
+                                    e.value
+                                  )
+                                }
+                              />{" "}
+                              <label htmlFor="Flexor" className="ms-2">
+                                Flexor (Normal)
+                              </label>
+                            </div>
+                            <div>
+                              <RadioButton
+                                inputId="Extensor"
+                                name="Reflexes_Plantar_Reflex_Babinski"
+                                value="Extensor (Abnormal)"
+                                checked={
+                                  formik.values
+                                    .Reflexes_Plantar_Reflex_Babinski ===
+                                  "Extensor (Abnormal)"
+                                }
+                                onChange={(e) =>
+                                  formik.setFieldValue(
+                                    "Reflexes_Plantar_Reflex_Babinski",
+                                    e.value
+                                  )
+                                }
+                              />{" "}
+                              <label htmlFor="Extensor" className="ms-2">
+                                Extensor (Abnormal)
+                              </label>
+                            </div>
+                            <div>
+                              <RadioButton
+                                inputId="equivocal"
+                                name="Reflexes_Plantar_Reflex_Babinski"
+                                value="Equivocal"
+                                checked={
+                                  formik.values
+                                    .Reflexes_Plantar_Reflex_Babinski ===
+                                  "Equivocal"
+                                }
+                                onChange={(e) =>
+                                  formik.setFieldValue(
+                                    "Reflexes_Plantar_Reflex_Babinski",
+                                    e.value
+                                  )
+                                }
+                              />{" "}
+                              <label htmlFor="equivocal" className="ms-2">
+                                Equivocal
+                              </label>
+                            </div>
+
+                            {formik.values.Reflexes_Plantar_Reflex_Babinski ===
+                              "Extensor (Abnormal)" ||
+                            formik.values.Reflexes_Plantar_Reflex_Babinski ===
+                              "Equivocal" ? (
+                              <>
+                                <h1 className="fs-5">Reflexes – Side::</h1>
                                 <div>
                                   <RadioButton
-                                    inputId="Alert"
-                                    name="Consciousness_Level"
-                                    value="Alert & Oriented"
-                                    checked={
-                                      formik.values.Consciousness_Level ===
-                                      "Alert & Oriented"
-                                    }
-                                    onChange={(e) =>
-                                      formik.setFieldValue(
-                                        "Consciousness_Level",
-                                        e.value
-                                      )
-                                    }
-                                  />{" "}
-                                  <label htmlFor="Alert" className="ms-2">
-                                    Alert & Oriented
-                                  </label>
-                                </div>
-                                <div>
-                                  <RadioButton
-                                    inputId="Confused1"
-                                    name="Consciousness_Level"
-                                    value="Confused"
-                                    checked={
-                                      formik.values.Consciousness_Level ===
-                                      "Confused"
-                                    }
-                                    onChange={(e) =>
-                                      formik.setFieldValue(
-                                        "Consciousness_Level",
-                                        e.value
-                                      )
-                                    }
-                                  />
-                                  <label htmlFor="Confused1" className="ms-2">
-                                    Confused
-                                  </label>
-                                </div>
-                                <div>
-                                  <RadioButton
-                                    inputId="drowsy"
-                                    name="Consciousness_Level"
-                                    value="Drowsy"
-                                    checked={
-                                      formik.values.Consciousness_Level ===
-                                      "Drowsy"
-                                    }
-                                    onChange={(e) =>
-                                      formik.setFieldValue(
-                                        "Consciousness_Level",
-                                        e.value
-                                      )
-                                    }
-                                  />{" "}
-                                  <label htmlFor="drowsy" className="ms-2">
-                                    Drowsy
-                                  </label>
-                                </div>
-                                <div>
-                                  <RadioButton
-                                    inputId="stuporous"
-                                    name="Consciousness_Level"
-                                    value="Stuporous"
-                                    checked={
-                                      formik.values.Consciousness_Level ===
-                                      "Stuporous"
-                                    }
-                                    onChange={(e) =>
-                                      formik.setFieldValue(
-                                        "Consciousness_Level",
-                                        e.value
-                                      )
-                                    }
-                                  />{" "}
-                                  <label htmlFor="stuporous" className="ms-2">
-                                    Stuporous
-                                  </label>
-                                </div>
-                                <div>
-                                  <RadioButton
-                                    inputId="unconscious"
-                                    name="Consciousness_Level"
-                                    value="Unconscious"
-                                    checked={
-                                      formik.values.Consciousness_Level ===
-                                      "Unconscious"
-                                    }
-                                    onChange={(e) =>
-                                      formik.setFieldValue(
-                                        "Consciousness_Level",
-                                        e.value
-                                      )
-                                    }
-                                  />{" "}
-                                  <label htmlFor="unconscious" className="ms-2">
-                                    Unconscious
-                                  </label>
-                                </div>
-
-                                <h1 className="fs-5">
-                                  Motor System – Focal Deficit:
-                                </h1>
-                                <div>
-                                  <RadioButton
-                                    inputId="none1"
-                                    name="Motor_System_Focal_Deficit"
-                                    value="None"
-                                    checked={
-                                      formik.values
-                                        .Motor_System_Focal_Deficit === "None"
-                                    }
-                                    onChange={(e) =>
-                                      formik.setFieldValue(
-                                        "Motor_System_Focal_Deficit",
-                                        e.value,
-                                        console.log(e.value)
-                                      )
-                                    }
-                                  />
-                                  <label htmlFor="none1" className="ms-2">
-                                    None
-                                  </label>
-                                </div>
-
-                                <div>
-                                  <RadioButton
-                                    inputId="Hemiparesis"
-                                    name="Motor_System_Focal_Deficit"
-                                    value="Hemiparesis"
-                                    checked={
-                                      formik.values
-                                        .Motor_System_Focal_Deficit ===
-                                      "Hemiparesis"
-                                    }
-                                    onChange={(e) =>
-                                      formik.setFieldValue(
-                                        "Motor_System_Focal_Deficit",
-                                        e.value
-                                      )
-                                    }
-                                  />
-                                  <label htmlFor="Hemiparesis" className="ms-2">
-                                    Hemiparesis
-                                  </label>
-                                </div>
-
-                                {formik.values.Motor_System_Focal_Deficit ===
-                                  "Hemiparesis" && (
-                                  <div className="d-flex gap-2 p-2" style={{boxShadow:"inherit"}}>
-                                    <RadioButton
-                                      inputId="left2"
-                                      name="Hemiparesis"
-                                      value="Left"
-                                      checked={
-                                        formik.values.Hemiparesis === "Left"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Hemiparesis",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label htmlFor="left2" className="ms-2">
-                                      Left
-                                    </label>
-                                    <RadioButton
-                                      inputId="right1"
-                                      name="Hemiparesis"
-                                      value="Right"
-                                      checked={
-                                        formik.values.Hemiparesis === "Right"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Hemiparesis",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label htmlFor="right1" className="ms-2">
-                                      Right
-                                    </label>
-                                  </div>
-                                )}
-
-                                <div>
-                                  <RadioButton
-                                    inputId="hemiplegias"
-                                    name="Motor_System_Focal_Deficit"
-                                    value="Hemiplegia"
-                                    checked={
-                                      formik.values
-                                        .Motor_System_Focal_Deficit ===
-                                      "Hemiplegia"
-                                    }
-                                    onChange={(e) =>
-                                      formik.setFieldValue(
-                                        "Motor_System_Focal_Deficit",
-                                        e.value
-                                      )
-                                    }
-                                  />
-                                  <label htmlFor="hemiplegias" className="ms-2">
-                                    Hemiplegia
-                                  </label>
-                                </div>
-
-                                {formik.values.Motor_System_Focal_Deficit ===
-                                  "Hemiplegia" && (
-                                  <div className="d-flex gap-2 p-2" style={{boxShadow:"inherit"}}>
-                                    <RadioButton
-                                      inputId="left7"
-                                      name="Hemiplegia"
-                                      value="Left"
-                                      checked={
-                                        formik.values.Hemiplegia === "Left"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Hemiplegia",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label htmlFor="left7" className="ms-2">
-                                      Left
-                                    </label>
-                                    <RadioButton
-                                      inputId="right8"
-                                      name="Hemiplegia"
-                                      value="Right"
-                                      checked={
-                                        formik.values.Hemiplegia === "Right"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Hemiplegia",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label htmlFor="right8" className="ms-2">
-                                      Right
-                                    </label>
-                                  </div>
-                                )}
-
-                                <div>
-                                  <RadioButton
-                                    inputId="Paraparesis"
-                                    name="Motor_System_Focal_Deficit"
-                                    value="Paraparesis"
-                                    checked={
-                                      formik.values
-                                        .Motor_System_Focal_Deficit ===
-                                      "Paraparesis"
-                                    }
-                                    onChange={(e) =>
-                                      formik.setFieldValue(
-                                        "Motor_System_Focal_Deficit",
-                                        e.value
-                                      )
-                                    }
-                                  />
-                                  <label htmlFor="Paraparesis" className="ms-2">
-                                    Paraparesis
-                                  </label>
-                                </div>
-
-                                {formik.values.Motor_System_Focal_Deficit ===
-                                  "Paraparesis" && (
-                                  <div className="d-flex gap-2 p-2" style={{boxShadow:"inherit"}}>
-                                    <RadioButton
-                                      inputId="Bilaterals4"
-                                      name="Paraparesis"
-                                      value="Bilateral(Lower limbs)"
-                                      checked={
-                                        formik.values.Paraparesis ===
-                                        "Bilateral(Lower limbs)"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Paraparesis",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label
-                                      htmlFor="Bilaterals4"
-                                      className="ms-2"
-                                    >
-                                      Bilateral(Lower limbs)
-                                    </label>
-                                  </div>
-                                )}
-
-                                <div>
-                                  <RadioButton
-                                    inputId="Paraplegia"
-                                    name="Motor_System_Focal_Deficit"
-                                    value="Paraplegia"
-                                    checked={
-                                      formik.values
-                                        .Motor_System_Focal_Deficit ===
-                                      "Paraplegia"
-                                    }
-                                    onChange={(e) =>
-                                      formik.setFieldValue(
-                                        "Motor_System_Focal_Deficit",
-                                        e.value
-                                      )
-                                    }
-                                  />
-                                  <label htmlFor="Paraplegia" className="ms-2">
-                                    Paraplegia
-                                  </label>
-                                </div>
-
-                                {formik.values.Motor_System_Focal_Deficit ===
-                                  "Paraplegia" && (
-                                  <div className="d-flex gap-2 p-2" style={{boxShadow:"inherit"}}>
-                                    <RadioButton
-                                      inputId="Bilaterals"
-                                      name="Paraplegia"
-                                      value="Bilateral(Lower limbs)"
-                                      checked={
-                                        formik.values.Paraplegia ===
-                                        "Bilateral(Lower limbs)"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Paraplegia",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label
-                                      htmlFor="Bilaterals"
-                                      className="ms-2"
-                                    >
-                                      Bilateral(Lower limbs)
-                                    </label>
-                                  </div>
-                                )}
-
-                                <div>
-                                  <RadioButton
-                                    inputId="Quadriparesis11"
-                                    name="Motor_System_Focal_Deficit"
-                                    value="Quadriparesis"
-                                    checked={
-                                      formik.values
-                                        .Motor_System_Focal_Deficit ===
-                                      "Quadriparesis"
-                                    }
-                                    onChange={(e) =>
-                                      formik.setFieldValue(
-                                        "Motor_System_Focal_Deficit",
-                                        e.value
-                                      )
-                                    }
-                                  />
-                                  <label
-                                    htmlFor="Quadriparesis11"
-                                    className="ms-2"
-                                  >
-                                    Quadripares
-                                  </label>
-                                </div>
-
-                                {formik.values.Motor_System_Focal_Deficit ===
-                                  "Quadriparesis" && (
-                                  <div className="d-flex gap-2 p-2" style={{boxShadow:"inherit"}}>
-                                    <RadioButton
-                                      inputId="Bilaterals2"
-                                      name="Quadriparesis"
-                                      value="Bilateral(All 4 limbs)"
-                                      checked={
-                                        formik.values.Quadriparesis ===
-                                        "Bilateral(All 4 limbs)"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Quadriparesis",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label
-                                      htmlFor="Bilaterals2"
-                                      className="ms-2"
-                                    >
-                                      Bilateral(All 4 limbs)
-                                    </label>
-                                  </div>
-                                )}
-
-                                <div>
-                                  <RadioButton
-                                    inputId="quadriplegia"
-                                    name="Motor_System_Focal_Deficit"
-                                    value="Quadriplegia"
-                                    checked={
-                                      formik.values
-                                        .Motor_System_Focal_Deficit ===
-                                      "Quadriplegia"
-                                    }
-                                    onChange={(e) =>
-                                      formik.setFieldValue(
-                                        "Motor_System_Focal_Deficit",
-                                        e.value
-                                      )
-                                    }
-                                  />
-                                  <label
-                                    htmlFor="quadriplegia"
-                                    className="ms-2"
-                                  >
-                                    Quadriplegia
-                                  </label>
-                                </div>
-
-                                {formik.values.Motor_System_Focal_Deficit ===
-                                  "Quadriplegia" && (
-                                  <div className="d-flex gap-2 p-2" style={{boxShadow:"inherit"}}>
-                                    <RadioButton
-                                      inputId="Bilaterals21"
-                                      name="Quadriplegia"
-                                      value="Bilateral(All 4 limbs)"
-                                      checked={
-                                        formik.values.Quadriplegia ===
-                                        "Bilateral(All 4 limbs)"
-                                      }
-                                      onChange={(e) =>
-                                        formik.setFieldValue(
-                                          "Quadriplegia",
-                                          e.value
-                                        )
-                                      }
-                                    />{" "}
-                                    <label
-                                      htmlFor="Bilaterals21"
-                                      className="ms-2"
-                                    >
-                                      Bilateral(All 4 limbs)
-                                    </label>
-                                  </div>
-                                )}
-
-                                <h1 className="fs-5">
-                                  Motor System – Affected Side:
-                                </h1>
-                                <div>
-                                  <RadioButton
-                                    inputId="Right"
-                                    name="Motor_System_Affected_Side"
+                                    inputId="Rights"
+                                    name="Reflexes_Side"
                                     value="Right"
                                     checked={
-                                      formik.values
-                                        .Motor_System_Affected_Side === "Right"
+                                      formik.values.Reflexes_Side === "Right"
                                     }
                                     onChange={(e) =>
                                       formik.setFieldValue(
-                                        "Motor_System_Affected_Side",
+                                        "Reflexes_Side",
                                         e.value
                                       )
                                     }
-                                  />
-                                  <label htmlFor="Right" className="ms-2">
+                                  />{" "}
+                                  <label htmlFor="Rights" className="ms-2">
                                     Right
                                   </label>
                                 </div>
+
                                 <div>
                                   <RadioButton
-                                    inputId="Left21"
-                                    name="Motor_System_Affected_Side"
+                                    inputId="Lefts"
+                                    name="Reflexes_Side"
                                     value="Left"
                                     checked={
-                                      formik.values
-                                        .Motor_System_Affected_Side === "Left"
+                                      formik.values.Reflexes_Side === "Left"
                                     }
                                     onChange={(e) =>
                                       formik.setFieldValue(
-                                        "Motor_System_Affected_Side",
+                                        "Reflexes_Side",
                                         e.value
                                       )
                                     }
-                                  />
-                                  <label htmlFor="Left21" className="ms-2">
+                                  />{" "}
+                                  <label htmlFor="Lefts" className="ms-2">
                                     Left
                                   </label>
                                 </div>
+
                                 <div>
                                   <RadioButton
                                     inputId="bilateral"
-                                    name="Motor_System_Affected_Side"
+                                    name="Reflexes_Side"
                                     value="Bilateral"
                                     checked={
-                                      formik.values
-                                        .Motor_System_Affected_Side ===
+                                      formik.values.Reflexes_Side ===
                                       "Bilateral"
                                     }
                                     onChange={(e) =>
                                       formik.setFieldValue(
-                                        "Motor_System_Affected_Side",
+                                        "Reflexes_Side",
                                         e.value
                                       )
                                     }
@@ -3352,456 +3551,159 @@ export default function Doctor() {
                                     Bilateral
                                   </label>
                                 </div>
-                                <h1 className="fs-5">Tone:</h1>
-                                <div>
-                                  <RadioButton
-                                    inputId="Normal"
-                                    name="Tone"
-                                    value="Normal"
-                                    checked={formik.values.Tone === "Normal"}
-                                    onChange={(e) =>
-                                      formik.setFieldValue("Tone", e.value)
-                                    }
-                                  />{" "}
-                                  <label htmlFor="Normal" className="ms-2">
-                                    Normal
-                                  </label>
-                                </div>
-                                <div>
-                                  <RadioButton
-                                    inputId="Increased12"
-                                    name="Tone"
-                                    value="Increased (Spasticity/Rigidity)"
-                                    checked={
-                                      formik.values.Tone ===
-                                      "Increased (Spasticity/Rigidity)"
-                                    }
-                                    onChange={(e) =>
-                                      formik.setFieldValue("Tone", e.value)
-                                    }
-                                  />{" "}
-                                  <label htmlFor="Increased12" className="ms-2">
-                                    Increased (Spasticity/Rigidity)
-                                  </label>
-                                </div>
-                                <div>
-                                  <RadioButton
-                                    inputId="Decreased"
-                                    name="Tone"
-                                    value="Decreased (Hypotonia)"
-                                    checked={
-                                      formik.values.Tone ===
-                                      "Decreased (Hypotonia)"
-                                    }
-                                    onChange={(e) =>
-                                      formik.setFieldValue("Tone", e.value)
-                                    }
-                                  />{" "}
-                                  <label htmlFor="Decreased" className="ms-2">
-                                    Decreased (Hypotonia)
-                                  </label>
-                                </div>
+                              </>
+                            ) : (
+                              ""
+                            )}
 
-                                <h1 className="fs-5">
-                                  Reflexes – Deep Tendon Reflexes:
-                                </h1>
-                                <div>
-                                  <RadioButton
-                                    inputId="Normal22"
-                                    name="Reflexes_Deep_Tendon_Reflexes"
-                                    value="Normal"
-                                    checked={
-                                      formik.values
-                                        .Reflexes_Deep_Tendon_Reflexes ===
-                                      "Normal"
-                                    }
-                                    onChange={(e) =>
-                                      formik.setFieldValue(
-                                        "Reflexes_Deep_Tendon_Reflexes",
-                                        e.value
-                                      )
-                                    }
-                                  />{" "}
-                                  <label htmlFor="Normal22" className="ms-2">
-                                    Normal
-                                  </label>
-                                </div>
-                                <div>
-                                  <RadioButton
-                                    inputId="Hyporeflexia1"
-                                    name="Reflexes_Deep_Tendon_Reflexes"
-                                    value="Hyporeflexia"
-                                    checked={
-                                      formik.values
-                                        .Reflexes_Deep_Tendon_Reflexes ===
-                                      "Hyporeflexia"
-                                    }
-                                    onChange={(e) =>
-                                      formik.setFieldValue(
-                                        "Reflexes_Deep_Tendon_Reflexes",
-                                        e.value
-                                      )
-                                    }
-                                  />{" "}
-                                  <label
-                                    htmlFor="Hyporeflexia1"
-                                    className="ms-2"
-                                  >
-                                    Hyporeflexia
-                                  </label>
-                                </div>
-                                <div>
-                                  <RadioButton
-                                    inputId="hyperreflexia"
-                                    name="Reflexes_Deep_Tendon_Reflexes"
-                                    value="Hyperreflexia"
-                                    checked={
-                                      formik.values
-                                        .Reflexes_Deep_Tendon_Reflexes ===
-                                      "Hyperreflexia"
-                                    }
-                                    onChange={(e) =>
-                                      formik.setFieldValue(
-                                        "Reflexes_Deep_Tendon_Reflexes",
-                                        e.value
-                                      )
-                                    }
-                                  />{" "}
-                                  <label
-                                    htmlFor="hyperreflexia"
-                                    className="ms-2"
-                                  >
-                                    Hyperreflexia
-                                  </label>
-                                </div>
-                                <div>
-                                  <RadioButton
-                                    inputId="absent"
-                                    name="Reflexes_Deep_Tendon_Reflexes"
-                                    value="Absent"
-                                    checked={
-                                      formik.values
-                                        .Reflexes_Deep_Tendon_Reflexes ===
-                                      "Absent"
-                                    }
-                                    onChange={(e) =>
-                                      formik.setFieldValue(
-                                        "Reflexes_Deep_Tendon_Reflexes",
-                                        e.value
-                                      )
-                                    }
-                                  />{" "}
-                                  <label htmlFor="absent" className="ms-2">
-                                    Absent
-                                  </label>
-                                </div>
-                                <h1 className="fs-5">
-                                  Reflexes – Plantar Reflex (Babinski):
-                                </h1>
-
-                                <div>
-                                  <RadioButton
-                                    inputId="Flexor"
-                                    name="Reflexes_Plantar_Reflex_Babinski"
-                                    value="Flexor (Normal)"
-                                    checked={
-                                      formik.values
-                                        .Reflexes_Plantar_Reflex_Babinski ===
-                                      "Flexor (Normal)"
-                                    }
-                                    onChange={(e) =>
-                                      formik.setFieldValue(
-                                        "Reflexes_Plantar_Reflex_Babinski",
-                                        e.value
-                                      )
-                                    }
-                                  />{" "}
-                                  <label htmlFor="Flexor" className="ms-2">
-                                    Flexor (Normal)
-                                  </label>
-                                </div>
-                                <div>
-                                  <RadioButton
-                                    inputId="Extensor"
-                                    name="Reflexes_Plantar_Reflex_Babinski"
-                                    value="Extensor (Abnormal)"
-                                    checked={
-                                      formik.values
-                                        .Reflexes_Plantar_Reflex_Babinski ===
-                                      "Extensor (Abnormal)"
-                                    }
-                                    onChange={(e) =>
-                                      formik.setFieldValue(
-                                        "Reflexes_Plantar_Reflex_Babinski",
-                                        e.value
-                                      )
-                                    }
-                                  />{" "}
-                                  <label htmlFor="Extensor" className="ms-2">
-                                    Extensor (Abnormal)
-                                  </label>
-                                </div>
-                                <div>
-                                  <RadioButton
-                                    inputId="equivocal"
-                                    name="Reflexes_Plantar_Reflex_Babinski"
-                                    value="Equivocal"
-                                    checked={
-                                      formik.values
-                                        .Reflexes_Plantar_Reflex_Babinski ===
-                                      "Equivocal"
-                                    }
-                                    onChange={(e) =>
-                                      formik.setFieldValue(
-                                        "Reflexes_Plantar_Reflex_Babinski",
-                                        e.value
-                                      )
-                                    }
-                                  />{" "}
-                                  <label htmlFor="equivocal" className="ms-2">
-                                    Equivocal
-                                  </label>
-                                </div>
-
-                                {formik.values
-                                  .Reflexes_Plantar_Reflex_Babinski ===
-                                  "Extensor (Abnormal)" ||
-                                formik.values
-                                  .Reflexes_Plantar_Reflex_Babinski ===
-                                  "Equivocal" ? (
-                                  <>
-                                    <h1 className="fs-5">Reflexes – Side::</h1>
-                                    <div>
-                                      <RadioButton
-                                        inputId="Rights"
-                                        name="Reflexes_Side"
-                                        value="Right"
-                                        checked={
-                                          formik.values.Reflexes_Side ===
-                                          "Right"
-                                        }
-                                        onChange={(e) =>
-                                          formik.setFieldValue(
-                                            "Reflexes_Side",
-                                            e.value
-                                          )
-                                        }
-                                      />{" "}
-                                      <label htmlFor="Rights" className="ms-2">
-                                        Right
-                                      </label>
-                                    </div>
-
-                                    <div>
-                                      <RadioButton
-                                        inputId="Lefts"
-                                        name="Reflexes_Side"
-                                        value="Left"
-                                        checked={
-                                          formik.values.Reflexes_Side === "Left"
-                                        }
-                                        onChange={(e) =>
-                                          formik.setFieldValue(
-                                            "Reflexes_Side",
-                                            e.value
-                                          )
-                                        }
-                                      />{" "}
-                                      <label htmlFor="Lefts" className="ms-2">
-                                        Left
-                                      </label>
-                                    </div>
-
-                                    <div>
-                                      <RadioButton
-                                        inputId="bilateral"
-                                        name="Reflexes_Side"
-                                        value="Bilateral"
-                                        checked={
-                                          formik.values.Reflexes_Side ===
-                                          "Bilateral"
-                                        }
-                                        onChange={(e) =>
-                                          formik.setFieldValue(
-                                            "Reflexes_Side",
-                                            e.value
-                                          )
-                                        }
-                                      />{" "}
-                                      <label
-                                        htmlFor="bilateral"
-                                        className="ms-2"
-                                      >
-                                        Bilateral
-                                      </label>
-                                    </div>
-                                  </>
-                                ) : (
-                                  ""
-                                )}
-
-                                <h1 className="fs-5">Cranial Nerves:</h1>
-                                <div>
-                                  <RadioButton
-                                    inputId="GrosslyIntact"
-                                    name="Cranial_Nerves"
-                                    value="Grossly Intact"
-                                    checked={
-                                      formik.values.Cranial_Nerves ===
-                                      "Grossly Intact"
-                                    }
-                                    onChange={(e) =>
-                                      formik.setFieldValue(
-                                        "Cranial_Nerves",
-                                        e.value
-                                      )
-                                    }
-                                  />{" "}
-                                  <label
-                                    htmlFor="GrosslyIntact"
-                                    className="ms-2"
-                                  >
-                                    Grossly Intact
-                                  </label>
-                                </div>
-                                <div>
-                                  <RadioButton
-                                    inputId="DeficitPresent"
-                                    name="Cranial_Nerves"
-                                    value="Deficit Present (Specify)"
-                                    checked={
-                                      formik.values.Cranial_Nerves ===
-                                      "Deficit Present (Specify)"
-                                    }
-                                    onChange={(e) =>
-                                      formik.setFieldValue(
-                                        "Cranial_Nerves",
-                                        e.value
-                                      )
-                                    }
-                                  />{" "}
-                                  <label
-                                    htmlFor="DeficitPresent"
-                                    className="ms-2"
-                                  >
-                                    Deficit Present (Specify)
-                                  </label>
-                                  {formik.values.Cranial_Nerves ===
-
-
-
-                                    "Deficit Present (Specify)" && (
-                                      <div>
-                                    <textarea
-                                      rows="4"
-                                      cols="70"
-                                      placeholder="Enter Somthing?"
-                                    ></textarea>
-                                    </div>
-                                  )}
-                                </div>
-                                <h1 className="fs-5">Speech:</h1>
-                                <div>
-                                  <RadioButton
-                                    inputId="normal"
-                                    name="Speech"
-                                    value="Normal"
-                                    checked={formik.values.Speech === "Normal"}
-                                    onChange={(e) =>
-                                      formik.setFieldValue("Speech", e.value)
-                                    }
-                                  />{" "}
-                                  <label htmlFor="normal" className="ms-2">
-                                    Normal
-                                  </label>
-                                </div>
-                                <div>
-                                  <RadioButton
-                                    inputId="dysarthria"
-                                    name="Speech"
-                                    value="Dysarthria"
-                                    checked={
-                                      formik.values.Speech === "Dysarthria"
-                                    }
-                                    onChange={(e) =>
-                                      formik.setFieldValue("Speech", e.value)
-                                    }
-                                  />{" "}
-                                  <label htmlFor="dysarthria" className="ms-2">
-                                    Dysarthria
-                                  </label>
-                                </div>
-
-                                <div>
-                                  <RadioButton
-                                    inputId="AphasiaExpressive11"
-                                    name="Speech"
-                                    value="Aphasia – Expressive"
-                                    checked={
-                                      formik.values.Speech ===
-                                      "Aphasia – Expressive"
-                                    }
-                                    onChange={(e) =>
-                                      formik.setFieldValue("Speech", e.value)
-                                    }
-                                  />{" "}
-                                  <label
-                                    htmlFor="AphasiaExpressive11"
-                                    className="ms-2"
-                                  >
-                                    Aphasia – Expressive
-                                  </label>
-                                </div>
-
-                                <div>
-                                  <RadioButton
-                                    inputId="AphasiaReceptive"
-                                    name="Speech"
-                                    value="Aphasia – Receptive"
-                                    checked={
-                                      formik.values.Speech ===
-                                      "Aphasia – Receptive"
-                                    }
-                                    onChange={(e) =>
-                                      formik.setFieldValue("Speech", e.value)
-                                    }
-                                  />{" "}
-                                  <label
-                                    htmlFor="AphasiaReceptive"
-                                    className="ms-2"
-                                  >
-                                    Aphasia – Receptive
-                                  </label>
-                                </div>
-
-                                <div>
-                                  <RadioButton
-                                    inputId="Aphasia – Global"
-                                    name="Speech"
-                                    value="Aphasia – Global"
-                                    checked={
-                                      formik.values.Speech ===
-                                      "Aphasia – Global"
-                                    }
-                                    onChange={(e) =>
-                                      formik.setFieldValue("Speech", e.value)
-                                    }
-                                  />{" "}
-                                  <label
-                                    htmlFor="Aphasia – Global"
-                                    className="ms-2"
-                                  >
-                                    Aphasia – Global
-                                  </label>
-                                </div>
-
-                                {/* end of dropdown */}
-                              </div>
+                            <h1 className="fs-5">Cranial Nerves:</h1>
+                            <div>
+                              <RadioButton
+                                inputId="GrosslyIntact"
+                                name="Cranial_Nerves"
+                                value="Grossly Intact"
+                                checked={
+                                  formik.values.Cranial_Nerves ===
+                                  "Grossly Intact"
+                                }
+                                onChange={(e) =>
+                                  formik.setFieldValue(
+                                    "Cranial_Nerves",
+                                    e.value
+                                  )
+                                }
+                              />{" "}
+                              <label htmlFor="GrosslyIntact" className="ms-2">
+                                Grossly Intact
+                              </label>
                             </div>
-                          ) : (
-                            ""
-                          )}
-                       
+                            <div>
+                              <RadioButton
+                                inputId="DeficitPresent"
+                                name="Cranial_Nerves"
+                                value="Deficit Present (Specify)"
+                                checked={
+                                  formik.values.Cranial_Nerves ===
+                                  "Deficit Present (Specify)"
+                                }
+                                onChange={(e) =>
+                                  formik.setFieldValue(
+                                    "Cranial_Nerves",
+                                    e.value
+                                  )
+                                }
+                              />{" "}
+                              <label htmlFor="DeficitPresent" className="ms-2">
+                                Deficit Present (Specify)
+                              </label>
+                              {formik.values.Cranial_Nerves ===
+                                "Deficit Present (Specify)" && (
+                                <div>
+                                  <textarea
+                                    rows="4"
+                                    cols="70"
+                                    placeholder="Enter Somthing?"
+                                  ></textarea>
+                                </div>
+                              )}
+                            </div>
+                            <h1 className="fs-5">Speech:</h1>
+                            <div>
+                              <RadioButton
+                                inputId="normal"
+                                name="Speech"
+                                value="Normal"
+                                checked={formik.values.Speech === "Normal"}
+                                onChange={(e) =>
+                                  formik.setFieldValue("Speech", e.value)
+                                }
+                              />{" "}
+                              <label htmlFor="normal" className="ms-2">
+                                Normal
+                              </label>
+                            </div>
+                            <div>
+                              <RadioButton
+                                inputId="dysarthria"
+                                name="Speech"
+                                value="Dysarthria"
+                                checked={formik.values.Speech === "Dysarthria"}
+                                onChange={(e) =>
+                                  formik.setFieldValue("Speech", e.value)
+                                }
+                              />{" "}
+                              <label htmlFor="dysarthria" className="ms-2">
+                                Dysarthria
+                              </label>
+                            </div>
+
+                            <div>
+                              <RadioButton
+                                inputId="AphasiaExpressive11"
+                                name="Speech"
+                                value="Aphasia – Expressive"
+                                checked={
+                                  formik.values.Speech ===
+                                  "Aphasia – Expressive"
+                                }
+                                onChange={(e) =>
+                                  formik.setFieldValue("Speech", e.value)
+                                }
+                              />{" "}
+                              <label
+                                htmlFor="AphasiaExpressive11"
+                                className="ms-2"
+                              >
+                                Aphasia – Expressive
+                              </label>
+                            </div>
+
+                            <div>
+                              <RadioButton
+                                inputId="AphasiaReceptive"
+                                name="Speech"
+                                value="Aphasia – Receptive"
+                                checked={
+                                  formik.values.Speech === "Aphasia – Receptive"
+                                }
+                                onChange={(e) =>
+                                  formik.setFieldValue("Speech", e.value)
+                                }
+                              />{" "}
+                              <label
+                                htmlFor="AphasiaReceptive"
+                                className="ms-2"
+                              >
+                                Aphasia – Receptive
+                              </label>
+                            </div>
+
+                            <div>
+                              <RadioButton
+                                inputId="Aphasia – Global"
+                                name="Speech"
+                                value="Aphasia – Global"
+                                checked={
+                                  formik.values.Speech === "Aphasia – Global"
+                                }
+                                onChange={(e) =>
+                                  formik.setFieldValue("Speech", e.value)
+                                }
+                              />{" "}
+                              <label
+                                htmlFor="Aphasia – Global"
+                                className="ms-2"
+                              >
+                                Aphasia – Global
+                              </label>
+                            </div>
+
+                            {/* end of dropdown */}
+                          </div>
+                        </div>
+                      ) : (
+                        ""
+                      )}
                     </div>
 
                     <h1 className="fs-4 mt-3">Plan of Care:</h1>
@@ -3876,7 +3778,6 @@ export default function Doctor() {
                         <div>
                           <Checkbox
                             inputId="patient"
-
                             name="Training1"
                             value="Patient"
                             checked={formik.values.Training === "Patient"}
@@ -3976,10 +3877,8 @@ export default function Doctor() {
                             value={selectedPerson}
                             onChange={(e) => setSelectedPerson(e.value || [])}
                             options={testnames}
-
-                            
                             optionLabel="label"
-                            optionValue="value" 
+                            optionValue="value"
                             placeholder="Select your Test"
                             filter
                             filterDelay={400}
@@ -4013,9 +3912,9 @@ export default function Doctor() {
                     </div>
                     {/* dite */}
 
-                    <h1 className="fs-5">Diet:</h1>
-                    <div className="card flex flex-row ">
-                      <div className="flex flex-row ">
+                    <h1 className="fs-5 mt-3">Diet:</h1>
+                    <div className="row mt-3">
+                      <div className="col d-flex gap-2 ">
                         <label htmlFor="">Normal</label>
                         <Checkbox
                           name="Diet"
@@ -4030,7 +3929,7 @@ export default function Doctor() {
                           }}
                         />
                       </div>
-                      <div className="flex flex-row ">
+                      <div className=" col d-flex gap-2 ">
                         <label htmlFor="">veg</label>
                         <Checkbox
                           name="Diet"
@@ -4045,7 +3944,7 @@ export default function Doctor() {
                           }}
                         />
                       </div>
-                      <div className="flex flex-row ">
+                      <div className="col d-flex gap-2  ">
                         <label htmlFor="">non-veg</label>
                         <Checkbox
                           name="Diet"
@@ -4061,7 +3960,7 @@ export default function Doctor() {
                         />
                       </div>
 
-                      <div className="flex flex-row ">
+                      <div className="col d-flex gap-2 ">
                         <label htmlFor="">special</label>
                         <Checkbox
                           name="Diet"

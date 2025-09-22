@@ -5,41 +5,74 @@ import { useParams } from "react-router-dom";
 import { InputText } from "primereact/inputtext";
 import { Dropdown } from "primereact/dropdown";
 import { InputTextarea } from "primereact/inputtextarea";
-
+import { getPatientbyID } from "../Services/userService";
 import { RegistrationOPD } from "../Services/userService";
 import { Button } from "primereact/button";
 import { toast } from "react-toastify";
+import { getTpaId } from "../Services/TpaIdget";
+import { MultiSelect } from "primereact/multiselect";
 import * as yup from "yup";
 import { Field, FieldArray, Formik, Form, getIn } from "formik";
 
 function Opd() {
   const [value, setValue] = useState("");
   const [selectedGender, setSelectedGender] = useState(null);
-  const [detail, setDetail] = useState(null);
+  const [uhid, setUHID] = useState(null);
   const [currentDate, setCurrentDate] = useState(new Date());
+  const [seviceTpaId, setServiceTpaId] = useState([]);
+  const [tpaservice, setTpaservice] = useState([]);
+  const [tpaId, setTpaId] = useState();
 
-  // const { UHID } = useParams();
-  // console.log("datass:",detail);
-
-  // useEffect(() => {
-  //   if (!UHID) return;
-  //   getPatientbyID(UHID)
-  //     .then((res) => {
-  //       console.log("b",res);
-
-  //       setDetail(res);
-
-  //     })
-  //     .catch((err) => {
-  //       console.error("Error fetching patient:", err);
-  //     });
-  // }, [UHID]);
+  const { UHID, TpaId } = useParams();
+  console.log("ssssss---------", seviceTpaId);
 
   useEffect(() => {
-    if (detail) {
-      setSelectedGender(detail.gender); // 👈 API ka gender set kar diya
+    if (!UHID) return console.log("boss");
+    getPatientbyID(UHID)
+      .then((res) => {
+        // setTpaId(res.TPAid);
+        getTPAid(res.TPAid);
+        setUHID(res);
+      })
+      .catch((err) => {
+        console.error("Error fetching patient:", err);
+      });
+  }, [UHID]);
+
+  useEffect(() => {
+    if (uhid) {
+      setSelectedGender(uhid.gender); // 👈 API ka gender set kar diya
     }
-  }, [detail]);
+  }, [uhid]);
+
+  function getTPAid(TpaId) {
+    getTpaId(TpaId).then((res) => {
+      const serviceArray = res?.service || [];
+
+      const formattedOptions = serviceArray.map((item) => ({
+        label: item.Name,
+        value: item._id,
+      }));
+      setServiceTpaId(formattedOptions);
+    });
+  }
+
+  // useEffect(() => {
+  //   if (!TpaId) return;
+
+  //   getTpaId(TpaId)
+  //     .then((res) => {
+  //       // ✅ Safely access service array
+  //       const serviceArray = res?.service || [];
+  //       // ✅ Map service to MultiSelect format
+  //       const formattedOptions = serviceArray.map((item) => ({
+  //         label: item.Name, // MultiSelect me dikhne wala text
+  //         value: item._id, // Unique identifier
+  //       }));
+  //       setServiceTpaId(formattedOptions);
+  //     })
+  //     .catch((err) => console.error("Error fetching TPA service:", err));
+  // }, [TpaId]);
 
   const validationSchema = yup.object().shape({
     User: yup.array().of(
@@ -75,14 +108,15 @@ function Opd() {
   };
   return (
     <Formik
+      enableReinitialize
       initialValues={{
-        Name: detail?.name || "",
-        Age: detail?.age || "",
-        Gender: detail?.gender || "",
-        Contact: detail?.contact || "",
+        Name: uhid?.name || "",
+        Age: uhid?.age || "",
+        Gender: uhid?.gender || "",
+        Contact: uhid?.contact || "",
         Date: currentDate.toLocaleDateString(),
-        UHID: detail?.UHID || "",
-        Email: detail?.email || "",
+        UHID: uhid?.UHID || "",
+        Email: uhid?.email || "",
         fathername: "",
         Department: "",
         Referred: "",
@@ -98,7 +132,6 @@ function Opd() {
         Advice: "",
         User: [
           {
-            
             Medicine: "",
             Schedule: "",
             Instruction: "",
@@ -190,14 +223,13 @@ function Opd() {
               <div className="col-md-4">
                 <label className="form-label ">Gender</label>
 
-                <Dropdown
+                <InputText
                   id="gender"
                   selected
                   name="Gender"
                   value={values.Gender}
                   readOnly
                   onChange={handleChange}
-                  options={genderOptions}
                   virtualScrollerOptions={{ itemSize: 38 }}
                   placeholder="Select Gender"
                   className="w-100 fw-bold text-success"
@@ -334,14 +366,14 @@ function Opd() {
                 Vitals:
               </h5>
 
-              <div className="col-md-3 d-flex justify-content-evenly align-items-center mt-4">
+              <div className="col-md-3 d-flex justify-content-evenly align-items-center">
                 <label htmlFor="temp">Weight:</label>
                 <InputText
                   id="name1"
                   name="weight"
                   value={values.weight}
                   onChange={handleChange}
-                  placeholder="Kg"
+                  placeholder="Kgs"
                   style={{ width: "90px" }}
                 />
               </div>
@@ -351,7 +383,7 @@ function Opd() {
                 <InputText
                   id="temp"
                   name="Temp"
-                  placeholder="(°F)/(°C)"
+                  placeholder="(°F)"
                   value={values.Temp}
                   onChange={handleChange}
                   style={{ width: "90px" }}
@@ -500,17 +532,37 @@ function Opd() {
               <h5 className="  p-2 rounded btn-custom text-white mt-4">
                 Investigation Advised:
               </h5>
-              <div className="col-md-12 ">
-                <label className="form-label fw-bold">Investigations</label>
-                <InputTextarea
-                  name="Investigations"
-                  value={values.Investigations}
-                  onChange={handleChange}
-                  placeholder="Investigations"
-                  rows={6}
-                  className="w-100"
-                  style={{ height: "90px" }}
-                />
+              <div className="row d-flex">
+                <div className="col-md-3">
+                  <label className="form-label fw-bold">Investigations:</label>
+                </div>
+
+                {/* <div className="col-md-6">
+                 
+                  <InputTextarea
+                    name="Investigations"
+                    value={values.Investigations}
+                    onChange={handleChange}
+                    placeholder="Investigations"
+                    rows={6}
+                    className="w-100"
+                    style={{ height: "90px" }}
+                  />
+                </div> */}
+                <div className="col-md-9 ">
+                  <MultiSelect
+                    value={tpaservice}
+                    onChange={(e) => setTpaservice(e.value || [])}
+                    options={seviceTpaId || []} // ✅ Always pass an array
+                    optionLabel="label"
+                    optionValue="value"
+                    placeholder="Select your Test"
+                    filter
+                    filterDelay={400}
+                    className="w-100 md:w-20rem"
+                    display="chip"
+                  />
+                </div>
               </div>
 
               <h5 className="  p-2 rounded btn-custom text-white mt-4">
@@ -522,7 +574,7 @@ function Opd() {
                   name="Advice"
                   value={values.Advice}
                   onChange={handleChange}
-                  placeholder="Investigations"
+                  placeholder="Advice"
                   rows={6}
                   className="w-100"
                   style={{ height: "90px" }}
@@ -535,14 +587,15 @@ function Opd() {
               <div className="row">
                 <div className="col-md-4">
                   <label className="form-label "> Doctor Name:</label>
-                  <InputText
+                  {/* <InputText
                     id="name"
                     name="Name"
                     value={values.Name}
                     readOnly
                     onChange={handleChange}
-                    className="w-100 text-success"
-                  />
+                    className="w-100 text-success"  
+                  /> */}
+                  <p>{uhid?.DoctorName}</p>   
                 </div>
 
                 <div className="col-md-4">

@@ -56,6 +56,8 @@ export const getPatientbyID = async (UHID) => {
     const response = await axios.get(
       `${API_BASE_URL}/patients/getPatientsbyID/${UHID}`
     );
+    console.log(response);
+    
     return response.data;
   } catch (error) {
     console.error("Error fetching patient data:", error);

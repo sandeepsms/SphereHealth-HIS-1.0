@@ -42,6 +42,8 @@ body {
   font-size: 14px !important;
 }
 
+
+
 /* {
     width: 12% !important;
     top: 11px;
@@ -268,29 +270,6 @@ background-color: #06a4c4 !important;
 
 /* print section 👇👇 */
 
-@media print {
-  body * {
-    visibility: hidden;
-  }
-  .print-area,
-  .print-area * {
-    visibility: visible;
-  }
-  .print-area {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-  }
-
-  /* Auto page break karne do */
-  .print-area {
-    page-break-inside: avoid;
-  }
-  .no-printbutton {
-    display: none !important;
-  }
-}
 
 .btncss {
   width: 10rem !important;

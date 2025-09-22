@@ -56,14 +56,58 @@
 
 // export default Opdprint
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import "../../css/opdbill.css";
 import logo from "../assets/logowebsite11.png";
+import { useParams } from "react-router-dom";
+import { getPatientbyID } from "../Services/userService";
 
 const Opdprint = () => {
   //   const handlePrint = () => {
   //     window.print();
   //   };
+  const [UHIDdetail, setUHIDDetail] = useState([]);
+  const [date, setdate] = useState(new Date());
+  const [datess, setdatess] = useState();
+  console.log("dddddddmmmmmmmm", datess);
+
+  console.log("bossssss", UHIDdetail);
+
+  // setDateByBac(new Date(UHIDdetail.date).toISOString().split("T")[0]);
+
+  // const formatDate = (isoDate) => {
+  //   const date = new Date(isoDate);
+  //   return date.toLocaleDateString("en-GB", {
+  //     day: "2-digit",
+  //     month: "2-digit",
+  //     year: "2-digit",
+  //   });
+  // };
+
+  // const formattedDate = formatDate(UHIDdetail.date);
+  // setdatess(formattedDate);
+
+  const { UHID } = useParams();
+
+  useEffect(() => {
+    if (!UHID) return;
+    getPatientbyID(UHID)
+      .then((res) => {
+        if (res?.date) {
+          const formattedDate = new Date(res.date).toISOString().split("T")[0];
+          setdatess(formattedDate);
+        } else {
+          console.warn("res.date is missing or invalid:", res?.date);
+        }
+
+        setUHIDDetail(res);
+
+        console.log("Patient datassssssssss:", res);
+      })
+      .catch((err) => {
+        console.error("Error fetching patient:", err);
+      });
+  }, [UHID]);
 
   return (
     <div className="opd-bill-container" style={{ marginTop: "100px" }}>
@@ -81,7 +125,7 @@ const Opdprint = () => {
             }}
           >
             {/* Left: Logo */}
-            <div className="navbar-logo ">
+            <div className="navbar-logo " >
               {" "}
               <img src={logo} alt="Hospital Logo" />
             </div>
@@ -89,67 +133,80 @@ const Opdprint = () => {
             {/* Center: Hospital Name */}
             <div className="navbar-center">
               <h1 className="hospital-name " style={{ marginLeft: "80px" }}>
-                SUKOON HOSPITALS{" "}
+                Spherehealth Medical Solutions
               </h1>{" "}
-              <p className="tagline" style={{ marginLeft: "70px" }}>
+              {/* <p className="tagline" style={{ marginLeft: "70px" }}>
                 run by Spherehealth Medical Solutions Pvt. Ltd.
-              </p>
+              </p> */}
             </div>
             {/* Right: Contact Info */}
             <div className="navbar-right">
-              <p>📞 7988807650, 0130-4052310</p>
-              <p>✉️ admin@sukoonhospitals.com</p>
+              <p>📞 7988307850, 0130-4052310</p>
+              <p>✉️ spherehealth@sukoonhospitals.com</p>
               <p>📍 Mohalla Jatwara, Kumaro Ki Chopal ke Samne, Sonipat (HR)</p>
             </div>
           </header>
         </div>
 
-        <div className="barcode">
-          OPD Bill No: <span className="highlight">OPD-2023-08-001</span> |
-          Date: August 15, 2023
-        </div>
+        {/* <div className="barcode p-0 ">
+          Date:{" "}
+          <span className="highlight">{date.toISOString().split("T")[0]}</span>
+        </div> */}
 
         <div className="section">
           <div className="section-title ">PATIENT INFORMATION</div>
           <div className="patient-info">
             <div className="info-item">
               <span className="label">Patient UHID:</span>
-              <span>PT-2023-00125</span>
+              <span>{UHIDdetail.UHID}</span>
             </div>
+            <div className="info-item">
+                <span className="label">Doctor:</span>
+              <span>{UHIDdetail.DoctorName} ({UHIDdetail.DoctorDegree})</span>
+              </div>
+
+           
             <div className="info-item">
               <span className="label">Name:</span>
-              <span>John David Anderson</span>
+              <span>{UHIDdetail.name}</span>
+            </div>
+
+            <div className="info-item">
+              <span className="label">Speciality</span>
+              <span>{UHIDdetail.DoctorSpecilist}</span>
+            </div>
+
+            <div className="info-item">
+              <span className="label">Age/Sex:</span>
+              <span>{UHIDdetail.age}</span>/ <span>{UHIDdetail.gender}</span>
             </div>
             <div className="info-item">
-              <span className="label">Age:</span>
-              <span>42 years</span>
+              <span className="label">Bill No:</span>
+              <span>NA</span>
             </div>
-            <div className="info-item">
-              <span className="label">Gender:</span>
-              <span>Male</span>
-            </div>
-            <div className="info-item">
+              <div className="info-item">
               <span className="label">Phone:</span>
-              <span>(555) 123-4567</span>
+              <span>{UHIDdetail.contact}</span>
             </div>
+              
             <div className="info-item">
-              <span className="label">Visit Date:</span>
-              <span>August 15, 2023</span>
-            </div>
+                <span className="label">Bill Date:</span>
+          <span className="">{date.toISOString().split("T")[0]}</span>
+              </div>
           </div>
         </div>
 
-        <div className="section">
+        {/* <div className="section">
           <div className="section-title">DOCTOR & DEPARTMENT</div>
           <div className="doctor-details">
             <div className="doctor-info">
               <div className="info-item">
                 <span className="label">Doctor:</span>
-                <span>Dr. Sarah Johnson, MD</span>
+              <span>{UHIDdetail.DoctorName}</span>
               </div>
               <div className="info-item">
                 <span className="label">Department:</span>
-                <span>Cardiology</span>
+              <span>{UHIDdetail.DoctorSpecilist}</span>
               </div>
             </div>
             <div className="doctor-info">
@@ -163,7 +220,7 @@ const Opdprint = () => {
               </div>
             </div>
           </div>
-        </div>
+        </div> */}
 
         <div className="section">
           <table className="bill-table">
@@ -178,9 +235,9 @@ const Opdprint = () => {
             <tbody>
               <tr>
                 <td>OPD Charges</td>
-                <td>1000</td>
+                <td>{UHIDdetail.OPDpricedata}</td>
                 <td>0.0</td>
-                <td>1000</td>
+                <td>{UHIDdetail.OPDpricedata}</td>
               </tr>
 
               {/* <tr>
@@ -200,7 +257,7 @@ const Opdprint = () => {
                 >
                   Grand Total:
                 </td>
-                <td>1000 ₹</td>
+                <td>{UHIDdetail.OPDpricedata} ₹</td>
               </tr>
             </tbody>
           </table>
@@ -254,16 +311,16 @@ const Opdprint = () => {
             </div>
           </div>
         </div> */}
-
+        {/* 
         <div className="section">
           <div className="section-title">NEXT APPOINTMENT</div>
           <p>
             Follow-up in 4 weeks (September 12, 2023) for review of
             investigation results and blood pressure control.
           </p>
-        </div>
+        </div> */}
 
-        <div className="footer">
+        <div className="footer mt-0">
           <p>Thank you for visiting SUKOON HOSPITALS</p>
           <p>For emergency care, please contact: 📞7988807650, 0130-4052310</p>
         </div>

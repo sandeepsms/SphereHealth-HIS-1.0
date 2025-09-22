@@ -10,7 +10,9 @@ import Doctor from "./Components/Doctor";
 import Nurse from "./Components/Nurse";
 import Servicebtn from "./Components/Servicebtn";
 import Opdprint from "./Components/Opdprint"
-import Opd from "./Components/Opd";
+import Doctorpre from "./Components/Doctorpreception";
+import ServiceAlldata from "./Components/ServiceAlldata";
+import Preceptionbill from "./Components/Preceptionbill";
 
 
 export default function App() {
@@ -40,8 +42,11 @@ export default function App() {
           <Route path="/doctor/:UHID" element={<Doctor />} />
             <Route path="/nurse" element={<Nurse />} />
              <Route path="*" element={<Servicebtn />} />
-              <Route path="/opd" element={<Opdprint/>} />
-               <Route path="/opdprint" element={<Opd/>} />
+              <Route path="/opd/:UHID" element={<Opdprint/>} />
+               <Route path="/doctorpre/:UHID/:TpaId?" element={<Doctorpre/>} />
+                <Route path="/ServiceAlldata" element={<ServiceAlldata/>} />
+                  <Route path="/Preceptionbill/:UHID" element={<Preceptionbill/>} />
+               
                
           {/* Add more routes here */}
         </Routes>

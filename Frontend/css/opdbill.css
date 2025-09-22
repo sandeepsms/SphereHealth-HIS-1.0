@@ -168,21 +168,7 @@
   box-shadow: 0 5px 10px rgba(0, 0, 0, 0.15);
 }
 
-@media print {
-  .opd-bill-container .print-btn {
-    display: none;
-  }
-  
-  .opd-bill-container body {
-    background-color: white;
-    padding: 0;
-  }
-  
-  .opd-bill-container .container {
-    box-shadow: none;
-    padding: 15px;
-  }
-}
+
 
 .opd-bill-container .highlight {
   color: #2c7db1;

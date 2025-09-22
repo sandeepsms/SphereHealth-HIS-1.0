@@ -220,8 +220,14 @@ function PatientsTable() {
   const [deleteDialogVisible, setDeleteDialogVisible] = useState(false);
   const [selectedPatient, setSelectedPatient] = useState({});
   const [submitted, setSubmitted] = useState(false);
+  const[doctoruhid,setDoctoruhid]=useState();
   const menuRight = useRef(null);
+
   const navigate = useNavigate();
+
+  const GotoRegistration = () => {
+    navigate("/registration"); // ✅ Click pe /about page pe redirect karega
+  };
 
   const getAllPatients = async () => {
     try {
@@ -254,8 +260,8 @@ function PatientsTable() {
   };
 
   // ---------------------- EDIT ----------------------
-  const handleEdit = (rowData) => {
-    setSelectedPatient({ ...rowData });
+  const handleEdit = (row) => {
+    setSelectedPatient({ ...row});
     setEditDialogVisible(true);
   };
 
@@ -285,6 +291,9 @@ function PatientsTable() {
     setDeleteDialogVisible(false);
     setSelectedPatient({});
   };
+   const actionBody = (rowData) => {
+const datas=rowData;
+
 
   const items = [
     {
@@ -300,29 +309,41 @@ function PatientsTable() {
         },
         {
           // icon : 'pi pi-user-plus',
-          template: (item, options) => {
+          template: (rowData, options) => {
             return (
-              <div
-                className="p-menuitem-content"
-                icon="pi pi-user-plus"
-                data-pc-section="content"
-                onMouseMove={(e) => options.onMouseMove(e)}
-              >
-                <a className="p-menuitem-link" onClick={() => navigate(`/doctor/${item.UHID}`)}>
-                  <span className="p-menuitem-icon pi pi-user-plus" />{" "}
-                  {/* 👈 icon here */}
-                  <span className="p-menuitem-text">Doctor</span>
-                </a>
-              </div>
+
+             <div
+  className="p-menuitem-content"
+  icon="pi pi-user-plus"
+  data-pc-section="content"
+  onMouseMove={(e) => options.onMouseMove(e)}  
+>
+  <a
+    className="p-menuitem-link"
+    onClick={() =>
+      navigate(`/doctor/${rowData.UHID}`)   
+     
+      
+    }
+  >
+    <span className="p-menuitem-icon pi pi-user-plus" />
+    <span className="p-menuitem-text">Doctor</span>
+  </a>
+</div>
+
+
+
+      
             );
           },
         },
       ],
     },
   ];
+  
   // ---------------------- ACTION BUTTONS ----------------------
   // 👇 Yeh actionBody function banalo
-  const actionBody = (rowData) => {
+ 
     return (
       <div className="">
         {/* Edit Button */}
@@ -374,9 +395,43 @@ function PatientsTable() {
           severity="success"
           onClick={() => navigate(`/doctor/${rowData.UHID}`)}
         />
+
+
+  <Button
+          label="Bill Print"
+          icon="pi pi-user-plus"
+          rounded
+          outlined
+          severity="success"
+          onClick={() => navigate(`/opd/${rowData.UHID}`)}
+        />
+
+
+  <Button
+          label="Doctor preception"
+          icon="pi pi-user-plus"
+          rounded
+          outlined
+          severity="success"
+          onClick={() => navigate(`/doctorpre/${rowData.UHID}`)}
+        />
+
+ <Button
+          label="DoctorPreception bill"
+          icon="pi pi-user-plus"
+          rounded
+          outlined
+          severity="success"
+          onClick={() => navigate(`/Preceptionbill/${rowData.UHID}`)}
+        />
+
+
+
       </div>
     );
   };
+
+  
 
   // ---------------------- RENDER ----------------------
   const header = (
@@ -395,7 +450,7 @@ function PatientsTable() {
           label="Add Patient"
           icon="pi pi-plus"
           severity="primary"
-          onClick={handleDelete}
+          onClick={GotoRegistration}
           className="addPatientbutton"
         />
       </div>
