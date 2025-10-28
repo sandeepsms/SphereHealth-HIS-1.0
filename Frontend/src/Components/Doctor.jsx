@@ -16,6 +16,8 @@ import { Doctordetail } from "../Services/userService";
 import { Checkbox } from "primereact/checkbox";
 import { MultiSelect } from "primereact/multiselect";
 import { useParams } from "react-router-dom";
+import MLClogo from "../assets/MLC.jpg";
+import Emergencylogo from "../assets/Emergency.jpg";
 import axios from "axios";
 
 // import { number } from "yup";
@@ -31,11 +33,12 @@ export default function Doctor() {
   const [selectedPerson, setSelectedPerson] = useState([]);
   const [TpaId, setTpaId] = useState();
   const [testnames, setTestName] = useState([]);
+  const [MLC, setMLC] = useState();
 
   const { UHID } = useParams();
   const formRef = useRef();
 
-  console.log("----rr", TpaId); 
+  console.log("----rr", TpaId);
 
   const load = () => {
     setLoading(true);
@@ -49,8 +52,9 @@ export default function Doctor() {
     getPatientbyID(UHID)
       .then((res) => {
         setTpaId(res.TPAid);
+        setMLC(res.MLC);
         setDetail(res);
-        console.log("Patient data:", res);
+        console.log("Patient datassssss:", res);
       })
       .catch((err) => {
         console.error("Error fetching patient:", err);
@@ -92,7 +96,7 @@ export default function Doctor() {
       Date: currentDate.toLocaleDateString(),
       UHID: detail?.UHID || "",
       Email: detail?.email || "",
-
+      MLCNumber: detail?.MLCNumber || "",
       fathername: "",
       Provisional_diagnosis1: "",
       IPNO: "",
@@ -117,9 +121,9 @@ export default function Doctor() {
       Icterus: "",
       Cyanosis: "",
       Clibbing: "",
-      LymphNodes: "",
+      Lymphadenopathy: "",
       PedalEdema: "",
-      Painscore: "",
+      Painscore: 0,
       Location: "",
       RespiratorySystem: "",
       Auscultation_Breath_Sounds: "",
@@ -156,9 +160,12 @@ export default function Doctor() {
       Provisional_diagnosis: "",
       Treatment: "",
       Possible_risk: "",
-      Training: "",
+      Training: [],
       PAdata: "",
-      Restraints: "",
+
+      Restraints: "No", // Default value
+      RestraintsSelected: "", // Physical / Chemical
+      ChemicalComment: "",
       Investigation: "",
       Treatment_input: "",
       Diet: "",
@@ -173,7 +180,7 @@ export default function Doctor() {
     enableReinitialize: true,
 
     onSubmit: async (values, { resetForm }) => {
-      console.log("data:", values);
+      console.log("datassssssss:", values);
 
       try {
         setLoading(true);
@@ -442,6 +449,21 @@ export default function Doctor() {
                   className="w-100 fw-bold text-success"
                 />
               </div>
+
+              {formik.values.MLCNumber && (
+                <div className="field flex-1">
+                  <label className="form-label ">MLC Number</label>
+
+                  <InputText
+                    id="MLC"
+                    keyfilter="num"
+                    name="MLCNumber"
+                    value={formik.values.MLCNumber}
+                    readOnly
+                    className="w-100 fw-bold text-success"
+                  />
+                </div>
+              )}
             </div>
             {/* history */}
             <div>
@@ -727,25 +749,39 @@ export default function Doctor() {
                     </div>
                   </div>
 
-                  <div className="row flex gap-6 mt-5">
+                  <div className="row flex mt-5 lh-lg item-center">
                     <h1 className="fs-4">Clinical Signs:</h1>
                     {/* Name with FloatLabel */}
 
-                    <div className="field flex-1">
-                      <FloatLabel>
-                        <InputText
+                    <div className="col-md-4">
+                      {/* <Checkbox
                           id="pallor"
                           name="Pallor"
                           value={formik.values.Pallor}
                           onChange={formik.handleChange}
                         />
-                        <label htmlFor="pallor">Pallor</label>
-                      </FloatLabel>
+                        <label htmlFor="pallor">Pallor</label> */}
+                      <Checkbox
+                        inputId="pallor"
+                        name="Pallor"
+                        value="Pallors"
+                        checked={formik.values.Pallor === "Pallors"}
+                        onChange={(e) => {
+                          if (e.checked) {
+                            formik.setFieldValue("Pallor", e.value); // ✅ sirf yahi select hoga
+                          } else {
+                            formik.setFieldValue("Pallor", ""); // ✅ unselect karne par empty
+                          }
+                        }}
+                      />{" "}
+                      <label htmlFor="pallor" className="ms-2">
+                        Pallor
+                      </label>
                     </div>
 
                     {/* Gender Dropdown */}
-                    <div className="field flex-1">
-                      <FloatLabel>
+                    <div className="col-md-4">
+                      {/* <FloatLabel>
                         <InputText
                           id="icterus"
                           name="Icterus"
@@ -753,13 +789,28 @@ export default function Doctor() {
                           onChange={formik.handleChange}
                         />
                         <label htmlFor="icterus">Icterus</label>
-                      </FloatLabel>
+                      </FloatLabel> */}
+                      <Checkbox
+                        inputId="icterus"
+                        name="Icterus"
+                        value="Icterus"
+                        checked={formik.values.Icterus === "Icterus"}
+                        onChange={(e) => {
+                          if (e.checked) {
+                            formik.setFieldValue("Icterus", e.value); // ✅ sirf yahi select hoga
+                          } else {
+                            formik.setFieldValue("Icterus", ""); // ✅ unselect karne par empty
+                          }
+                        }}
+                      />{" "}
+                      <label htmlFor="icterus" className="ms-2">
+                        Icterus
+                      </label>
                     </div>
-                  </div>
-                  <div className="row flex gap-6 mt-5">
+
                     {/* Name with FloatLabel */}
-                    <div className="field flex-1">
-                      <FloatLabel>
+                    <div className="col-md-4">
+                      {/* <FloatLabel>
                         <InputText
                           id="cyanosis"
                           name="Cyanosis"
@@ -767,11 +818,27 @@ export default function Doctor() {
                           onChange={formik.handleChange}
                         />
                         <label htmlFor="cyanosis">Cyanosis</label>
-                      </FloatLabel>
+                      </FloatLabel> */}
+                      <Checkbox
+                        inputId="cyanosis"
+                        name="Cyanosis"
+                        value="Cyanosis"
+                        checked={formik.values.Cyanosis === "Cyanosis"}
+                        onChange={(e) => {
+                          if (e.checked) {
+                            formik.setFieldValue("Cyanosis", e.value); // ✅ sirf yahi select hoga
+                          } else {
+                            formik.setFieldValue("Cyanosis", ""); // ✅ unselect karne par empty
+                          }
+                        }}
+                      />{" "}
+                      <label htmlFor="cyanosis" className="ms-2">
+                        Cyanosis
+                      </label>
                     </div>
 
-                    <div className="field flex-1">
-                      <FloatLabel>
+                    <div className="col-md-4">
+                      {/* <FloatLabel>
                         <InputText
                           id="clubbing"
                           name="Clibbing"
@@ -779,12 +846,28 @@ export default function Doctor() {
                           onChange={formik.handleChange}
                         />
                         <label htmlFor="clubbing">Clubbing</label>
-                      </FloatLabel>
+                      </FloatLabel> */}
+                      <Checkbox
+                        inputId="clubbing"
+                        name="Clibbing"
+                        value="Clibbing"
+                        checked={formik.values.Clibbing === "Clibbing"}
+                        onChange={(e) => {
+                          if (e.checked) {
+                            formik.setFieldValue("Clibbing", e.value); // ✅ sirf yahi select hoga
+                          } else {
+                            formik.setFieldValue("Clibbing", ""); // ✅ unselect karne par empty
+                          }
+                        }}
+                      />{" "}
+                      <label htmlFor="clubbing" className="ms-2">
+                        Clubbing
+                      </label>
                     </div>
 
                     {/* Gender Dropdown */}
-                    <div className="field flex-1">
-                      <FloatLabel>
+                    <div className="col-md-4">
+                      {/* <FloatLabel>
                         <InputText
                           id="lymphnodes"
                           name="LymphNodes"
@@ -792,76 +875,92 @@ export default function Doctor() {
                           onChange={formik.handleChange}
                         />
                         <label htmlFor="lymphnodes">Lymph nodes</label>
-                      </FloatLabel>
+                      </FloatLabel> */}
+                      <Checkbox
+                        inputId="lymphnodes"
+                        name="Lymphadenopathy"
+                        value="Lymphadenopathy"
+                        checked={
+                          formik.values.Lymphadenopathy === "Lymphadenopathy"
+                        }
+                        onChange={(e) => {
+                          if (e.checked) {
+                            formik.setFieldValue("Lymphadenopathy", e.value); // ✅ sirf yahi select hoga
+                          } else {
+                            formik.setFieldValue("Lymphadenopathy", ""); // ✅ unselect karne par empty
+                          }
+                        }}
+                      />{" "}
+                      <label htmlFor="lymphnodes" className="ms-2">
+                        Lymphadenopathy
+                      </label>
                     </div>
 
                     {/* pedal */}
-                    <div className="pedal">
-                      <div className="card flex flex-row align-items-center m-2">
-                        <h1 className="fs-4 ">Pedal edema:</h1>
-                        <TriStateCheckbox
-                          value={checkbox}
-                          onChange={(e) => pedalCheckboxs(e.value)}
-                        />
-                      </div>
 
-                      {checkbox ? (
-                        <div className="card flex flex-row align-items-center gap-2 m-2">
-                          <RadioButton
-                            inputId="AbNormal"
-                            name="PedalEdema"
-                            value="+1(Mild)"
-                            checked={formik.values.PedalEdema === "+1(Mild)"}
-                            onChange={(e) =>
-                              formik.setFieldValue("PedalEdema", e.value)
-                            }
-                          />
-                          <label htmlFor="AbNormal" className="ms-2">
-                            +1(Mild)
-                          </label>
-                          <RadioButton
-                            inputId="AbNormal2"
-                            name="PedalEdema"
-                            value="+2(Moderate)"
-                            checked={
-                              formik.values.PedalEdema === "+2(Moderate)"
-                            }
-                            onChange={(e) =>
-                              formik.setFieldValue("PedalEdema", e.value)
-                            }
-                          />
-                          <label htmlFor="AbNormal2" className="ms-2">
-                            +2(Moderate)
-                          </label>
-                          <RadioButton
-                            inputId="AbNormal3"
-                            name="PedalEdema"
-                            value="+3(Servere)"
-                            checked={formik.values.PedalEdema === "+3(Servere)"}
-                            onChange={(e) =>
-                              formik.setFieldValue("PedalEdema", e.value)
-                            }
-                          />
-                          <label htmlFor="AbNormal3" className="ms-2">
-                            +3(Servere)
-                          </label>
-                          <RadioButton
-                            inputId="abnormal5"
-                            name="PedalEdema"
-                            value="+4(Pitting)"
-                            checked={formik.values.PedalEdema === "+4(Pitting)"}
-                            onChange={(e) =>
-                              formik.setFieldValue("PedalEdema", e.value)
-                            }
-                          />
-                          <label htmlFor="abnormal5" className="ms-2">
-                            +4(Pitting)
-                          </label>
-                        </div>
-                      ) : (
-                        ""
-                      )}
+                    {/* <div className="card m-2"> */}
+                    <div className="col-md-4  d-flex gap-2 align-items-center">
+                      <TriStateCheckbox
+                        value={checkbox}
+                        onChange={(e) => pedalCheckboxs(e.value)}
+                      />
+                      <label className="fs-5 ">Pedal edema</label>
                     </div>
+
+                    {checkbox ? (
+                      <div className="card flex flex-row align-items-center gap-2 m-2">
+                        <RadioButton
+                          inputId="AbNormal"
+                          name="PedalEdema"
+                          value="+1(Mild)"
+                          checked={formik.values.PedalEdema === "+1(Mild)"}
+                          onChange={(e) =>
+                            formik.setFieldValue("PedalEdema", e.value)
+                          }
+                        />
+                        <label htmlFor="AbNormal" className="ms-2">
+                          +1(Mild)
+                        </label>
+                        <RadioButton
+                          inputId="AbNormal2"
+                          name="PedalEdema"
+                          value="+2(Moderate)"
+                          checked={formik.values.PedalEdema === "+2(Moderate)"}
+                          onChange={(e) =>
+                            formik.setFieldValue("PedalEdema", e.value)
+                          }
+                        />
+                        <label htmlFor="AbNormal2" className="ms-2">
+                          +2(Moderate)
+                        </label>
+                        <RadioButton
+                          inputId="AbNormal3"
+                          name="PedalEdema"
+                          value="+3(Servere)"
+                          checked={formik.values.PedalEdema === "+3(Servere)"}
+                          onChange={(e) =>
+                            formik.setFieldValue("PedalEdema", e.value)
+                          }
+                        />
+                        <label htmlFor="AbNormal3" className="ms-2">
+                          +3(Servere)
+                        </label>
+                        <RadioButton
+                          inputId="abnormal5"
+                          name="PedalEdema"
+                          value="+4(Pitting)"
+                          checked={formik.values.PedalEdema === "+4(Pitting)"}
+                          onChange={(e) =>
+                            formik.setFieldValue("PedalEdema", e.value)
+                          }
+                        />
+                        <label htmlFor="abnormal5" className="ms-2">
+                          +4(Pitting)
+                        </label>
+                      </div>
+                    ) : (
+                      ""
+                    )}
                   </div>
 
                   {/* score */}
@@ -883,19 +982,22 @@ export default function Doctor() {
                     />
                     {getPainLabel(formik.values.score)}
                   </div>
-                  <div className="row">
-                    <div className="col-md-12 ">
-                      <label className="form-label fw-bold">Location:</label>
-                      <InputTextarea
-                        name="Location"
-                        value={formik.values.Location}
-                        onChange={formik.handleChange}
-                        placeholder="Enter the location"
-                        rows={3}
-                        className=""
-                      />
+                  {formik.values.score > 0 && (
+                    <div className="row">
+                      <div className="col-md-12 ">
+                        <label className="form-label fw-bold">Location:</label>
+                        <InputTextarea
+                          name="Location"
+                          value={formik.values.Location}
+                          onChange={formik.handleChange}
+                          placeholder="Enter the location"
+                          rows={3}
+                          className=""
+                        />
+                      </div>
                     </div>
-                  </div>
+                  )}
+
                   <div>
                     <h4 className="mt-4 p-2 rounded btn-custom text-white text-center">
                       B.Systemic Examination:
@@ -3780,9 +3882,17 @@ export default function Doctor() {
                             inputId="patient"
                             name="Training1"
                             value="Patient"
-                            checked={formik.values.Training === "Patient"}
+                            // checked={formik.values.Training === "Patient"}
+                            checked={formik.values.Training.includes("Patient")}
+                            // onChange={(e) =>
+                            //   formik.setFieldValue("Training", e.value)
+                            // }
                             onChange={(e) =>
-                              formik.setFieldValue("Training", e.value)
+                              handleMultiSelectChange(
+                                "Training",
+                                e.value,
+                                e.checked
+                              )
                             }
                           />
                           <label htmlFor="Training1" className="ms-2">
@@ -3794,11 +3904,22 @@ export default function Doctor() {
                             inputId="Training2"
                             name="Training"
                             value="Relative"
-                            checked={formik.values.Training === "Relative"}
+                            // checked={formik.values.Training === "Relative"}
+                            checked={formik.values.Training.includes(
+                              "Relative"
+                            )}
+                            // onChange={(e) =>
+                            //   formik.setFieldValue("Training", e.value)
+                            // }
                             onChange={(e) =>
-                              formik.setFieldValue("Training", e.value)
+                              handleMultiSelectChange(
+                                "Training",
+                                e.value,
+                                e.checked
+                              )
                             }
                           />
+
                           <label htmlFor="Training2" className="ms-2">
                             Relative (Name)
                           </label>
@@ -3817,10 +3938,11 @@ export default function Doctor() {
                     {/* Restraints */}
 
                     <h1 className="fs-5 mt-3">Restraints:Yes/No</h1>
-                    <div className="d-flex gap-3 mt-4 ">
+                    <div className="d-flex gap-3 mt-4 align-items-center">
+                      {/* ✅ Restraints = Yes */}
                       <div>
                         <RadioButton
-                          inputId="XNormal"
+                          inputId="restraintsYes"
                           name="Restraints"
                           value="Yes"
                           checked={formik.values.Restraints === "Yes"}
@@ -3828,42 +3950,105 @@ export default function Doctor() {
                             formik.setFieldValue("Restraints", e.value)
                           }
                         />
-                        <label htmlFor="XNormal" className="ms-2">
+                        <label htmlFor="restraintsYes" className="ms-2">
                           Yes
                         </label>
                       </div>
 
-                      {/* input */}
+                      {/* ✅ If Yes selected → show Physical / Chemical */}
+                      {formik.values.Restraints === "Yes" && (
+                        <div className="d-flex gap-3 align-items-center ms-3">
+                          <div className="d-flex align-items-center gap-2">
+                            <RadioButton
+                              inputId="physical"
+                              name="RestraintsSelected"
+                              value="Physical"
+                              checked={
+                                formik.values.RestraintsSelected === "Physical"
+                              }
+                              onChange={(e) => {
+                                formik.setFieldValue(
+                                  "RestraintsSelected",
+                                  e.value
+                                );
+                                // Clear chemical comment when not Chemical
+                                if (e.value !== "Chemical") {
+                                  formik.setFieldValue("ChemicalComment", "");
+                                }
+                              }}
+                            />
+                            <label htmlFor="physical" className="ms-2">
+                              Physical
+                            </label>
+                          </div>
 
-                      <div>
+                          <div className="d-flex align-items-center gap-2">
+                            <RadioButton
+                              inputId="chemical"
+                              name="RestraintsSelected"
+                              value="Chemical"
+                              checked={
+                                formik.values.RestraintsSelected === "Chemical"
+                              }
+                              onChange={(e) =>
+                                formik.setFieldValue(
+                                  "RestraintsSelected",
+                                  e.value
+                                )
+                              }
+                            />
+                            <label htmlFor="chemical" className="ms-2">
+                              Chemical
+                            </label>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ✅ Restraints = No */}
+                      <div className="ms-4">
                         <RadioButton
-                          inputId="abnormal"
+                          inputId="restraintsNo"
                           name="Restraints"
                           value="No"
                           checked={formik.values.Restraints === "No"}
-                          onChange={(e) =>
-                            formik.setFieldValue("Restraints", e.value)
-                          }
+                          onChange={(e) => {
+                            formik.setFieldValue("Restraints", e.value);
+                            // Clear dependent fields
+                            formik.setFieldValue("RestraintsSelected", "");
+                            formik.setFieldValue("ChemicalComment", "");
+                          }}
                         />
-                        <label htmlFor="abnormal" className="ms-2">
+                        <label htmlFor="restraintsNo" className="ms-2">
                           No
                         </label>
                       </div>
-                      {formik.values.Restraints === "Abnormal" ? (
-                        <div className="field flex-1">
-                          <FloatLabel>
-                            <InputText
-                              id="age"
-                              value={value}
-                              onChange={(e) => setValue(e.value)}
-                            />
-                            <label htmlFor="age">Reasions</label>
-                          </FloatLabel>
-                        </div>
-                      ) : (
-                        ""
-                      )}
                     </div>
+
+                    {/* ✅ If Chemical selected → show comment box */}
+                    {formik.values.Restraints === "Yes" &&
+                      formik.values.RestraintsSelected === "Chemical" && (
+                        <div className="mt-3">
+                          <label
+                            htmlFor="chemicalComment"
+                            className="form-label"
+                          >
+                            Comment (for Chemical)
+                          </label>
+                          <InputTextarea
+                            id="chemicalComment"
+                            value={formik.values.ChemicalComment}
+                            onChange={(e) =>
+                              formik.setFieldValue(
+                                "ChemicalComment",
+                                e.target.value
+                              )
+                            }
+                            rows={3}
+                            cols={50}
+                            placeholder="Enter chemical restraint comment..."
+                          />
+                        </div>
+                      )}
 
                     <div className="col-md-12 mt-4 ">
                       <div className="row">
@@ -3895,7 +4080,7 @@ export default function Doctor() {
                         onChange={formik.handleChange}
                         placeholder="Enter Investigation "
                         rows={3}
-                        className=""
+                        className="mt-3"
                       />
                     </div>
 
@@ -3930,11 +4115,11 @@ export default function Doctor() {
                         />
                       </div>
                       <div className=" col d-flex gap-2 ">
-                        <label htmlFor="">veg</label>
+                        <label htmlFor="">Liguid</label>
                         <Checkbox
                           name="Diet"
-                          value="veg"
-                          checked={formik.values.Diet === "veg"}
+                          value="Liguid"
+                          checked={formik.values.Diet === "Liguid"}
                           onChange={(e) => {
                             if (e.checked) {
                               formik.setFieldValue("Diet", e.value); // ✅ sirf yahi select hoga
@@ -3945,11 +4130,11 @@ export default function Doctor() {
                         />
                       </div>
                       <div className="col d-flex gap-2  ">
-                        <label htmlFor="">non-veg</label>
+                        <label htmlFor="">Semi-Solid</label>
                         <Checkbox
                           name="Diet"
-                          value="non-veg"
-                          checked={formik.values.Diet === "non-veg"}
+                          value="Semi-Solid"
+                          checked={formik.values.Diet === "Semi-Solid"}
                           onChange={(e) => {
                             if (e.checked) {
                               formik.setFieldValue("Diet", e.value); // ✅ sirf yahi select hoga
@@ -3961,11 +4146,11 @@ export default function Doctor() {
                       </div>
 
                       <div className="col d-flex gap-2 ">
-                        <label htmlFor="">special</label>
+                        <label htmlFor="">N.P.O</label>
                         <Checkbox
                           name="Diet"
-                          value="special"
-                          checked={formik.values.Diet === "special"}
+                          value="N.P.O"
+                          checked={formik.values.Diet === "N.P.O"}
                           onChange={(e) => {
                             if (e.checked) {
                               formik.setFieldValue("Diet", e.value); // ✅ sirf yahi select hoga
@@ -3982,25 +4167,48 @@ export default function Doctor() {
             </div>
           </div>
           <div className="container text-center ">
-            <div class="row row-cols-1  ">
+            <div class="row row-cols-1 ">
               {/* Submit */}
-              <div className="text-center mt-4 no-printbutton">
+              <div className=" col-md-10 text-center mt-4 no-printbutton">
                 <Button
                   type="submit"
                   label="Submit"
                   icon="pi pi-check"
                   loading={loading}
-                  className="btn-custom px-5 rounded"
+                  className="btn-custom px-5 rounded "
+                  style={{ position: "relative", left: "27px" }}
                 />
               </div>
 
               {/* Print Button */}
-              <button
-                onClick={handlePrint}
-                className="mt-2 bg-success text-white p-2 rounded no-printbutton fw-bold btncss"
-              >
-                Print Form
-              </button>
+              <div className="col-md-8">
+                <button
+                  onClick={handlePrint}
+                  className="mt-2 bg-success text-white p-2 rounded no-printbutton fw-bold btncss"
+                >
+                  Print Form
+                </button>
+              </div>
+              {MLC ? (
+                <div
+                  className="col-md-3 MLC-image"
+                  style={{ position: "relative", left: "80px", bottom: "50px" }}
+                >
+                  <img src={MLClogo} alt="MLC Image" />
+                </div>
+              ) : (
+                <div
+                  className="Emergency-image"
+                  style={{
+                    position: "relative",
+                    left: "400px",
+                    bottom: "90px",
+                  }}
+                >
+                  {" "}
+                  <img src={Emergencylogo} alt="Emergency Image" />
+                </div>
+              )}
             </div>
           </div>
         </form>

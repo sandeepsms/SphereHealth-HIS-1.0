@@ -1,5 +1,4 @@
 .container {
-
   justify-items: center;
   line-height: normal;
 }
@@ -13,7 +12,6 @@
   border-bottom: 2px solid #ccc;
   box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
   width: 100%;
- 
 
   flex-wrap: wrap; /* important for small screens */
 }
@@ -21,6 +19,18 @@
 .navbar-logo img {
   width: 62px;
   height: 65px;
+  border-radius: 50%;
+}
+
+.MLC-image img {
+  width: 95px;
+  height: 85px;
+  border-radius: 50%;
+}
+
+.Emergency-image img {
+  width: 95px;
+  height: 85px;
   border-radius: 50%;
 }
 
@@ -37,7 +47,7 @@
 }
 
 .tagline {
- margin-left: 90px;
+  margin-left: 90px;
   font-size: 12px;
   color: #666;
 }
@@ -49,14 +59,12 @@
   max-width: 300px;
 }
 
-
 /* card */
 .card {
   max-width: 1000px;
-  
+
   padding: 40px;
-  
-  
+
   background: #fff;
   box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
 }
@@ -72,29 +80,20 @@
 
 /* Each field (all same size now) */
 .field {
-  flex: 1; 
+  flex: 1;
   min-width: 250px;
-  
-  
 }
-.pedal{
+.pedal {
   padding: 0px 0px;
 }
 
-.pedal h1{
-position: relative;
-right: 25px;
-
+.pedal h1 {
+  position: relative;
+  right: 25px;
 }
 /* .navbar-doctor{
   border-radius: initial;
 } */
-
-
-
-
-
-
 
 /* Remove extra flex sizing from gender */
 .field.gender {
@@ -104,7 +103,6 @@ right: 25px;
 /* PrimeReact FloatLabel fix */
 .p-float-label {
   width: 100%;
-  
 }
 
 /* Input aur Dropdown uniform look */
@@ -123,8 +121,6 @@ right: 25px;
 .p-float-label label {
   font-size: 14px;
   color: #555;
-
-
 }
 
 /* Responsive Design */
@@ -156,12 +152,6 @@ right: 25px;
   }
 }
 
-
-
-
-
-
-
 /* ✅ Responsive Media Queries */
 
 /* Tablets (<= 992px) */
@@ -171,7 +161,6 @@ right: 25px;
     flex-direction: column;
     text-align: center;
     padding: 10px;
-    
   }
 
   .navbar-right {
@@ -183,18 +172,17 @@ right: 25px;
 
 /* Mobile (<= 600px) */
 @media (max-width: 600px) {
-
- .navbar {
-    position: fixed;   /* fixed so it stays */
-    bottom: 700px;      /* bottom se 20px upar */
+  .navbar {
+    position: fixed; /* fixed so it stays */
+    bottom: 700px; /* bottom se 20px upar */
     left: 50%;
     transform: translateX(-50%);
     width: 90%;
     border-radius: 12px;
-  .hospital-name {
-    font-size: 18px;
- }
- }
+    .hospital-name {
+      font-size: 18px;
+    }
+  }
 
   .tagline {
     font-size: 11px;
@@ -211,21 +199,14 @@ right: 25px;
   }
 }
 
-
-
-
-
-
-
 .p-multiselect-chip {
-  max-width: 200px;   /* apni requirement ke hisaab se width fix karo */
+  max-width: 200px; /* apni requirement ke hisaab se width fix karo */
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
-
-.carddata{
-position:"relative";
-top: 15px;
+.carddata {
+  position: "relative";
+  top: 15px;
 }

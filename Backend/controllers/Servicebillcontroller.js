@@ -12,7 +12,7 @@ exports.Servicebillfun = async (req, res) => {
       tpa_name = "Normal";
     }
 
-    // 🟢 Validate service array
+    // 🟢 Validate service array   
     if (!Array.isArray(service) || service.length === 0) {
       return res
         .status(400)

@@ -11,6 +11,7 @@ import { Button } from "primereact/button";
 import { MultiSelect } from "primereact/multiselect";
 import { useNavigate } from "react-router-dom";
 import { TriStateCheckbox } from "primereact/tristatecheckbox";
+import { Checkbox } from "primereact/checkbox";
 import "../App.css";
 import * as Yup from "yup";
 import axios from "axios";
@@ -22,6 +23,7 @@ export default function Registration() {
   const [Alltestname, setAllTestname] = useState([]);
   const [tpaname, setTPAname] = useState([]);
   const [appointmentcheckbox, setAppointmentcheckbox] = useState(null);
+  const [MLCcheckbox, setMLCcheckbox] = useState(null);
   const [OPDprice, setOPDprice] = useState();
   // const [isDisabled, setIsDisabled] = useState(true);
   const [UHID, setUHID] = useState(null);
@@ -130,6 +132,8 @@ export default function Registration() {
       city: "",
       state: "",
       blood: "",
+      MLC: false,
+      MLCNumber: "", 
       address: "",
       allergies: "",
       companion: "",
@@ -140,9 +144,9 @@ export default function Registration() {
       ward: "OPD",
       OPDpricedata: "",
       TPAid: "",
-      DoctorName:" Dr.Sandeep",
-      DoctorSpecilist:"General Physician",
-      DoctorDegree:"MBBS",
+      DoctorName: " Dr.Sandeep",
+      DoctorSpecilist: "General Physician",
+      DoctorDegree: "MBBS",
     },
 
     validationSchema: Yup.object({
@@ -169,7 +173,7 @@ export default function Registration() {
 
     onSubmit: async (values, { resetForm }) => {
       values.OPDpricedata = OPDprice;
-      values.TPAid = tpaname;
+      values.TPAid = tpaname;  
 
       console.log("------", values);
 
@@ -342,7 +346,8 @@ export default function Registration() {
         {/* Personal Information */}
         <div className="row ">
           <div className="col-lg-4">
-            <label className="form-label ">Full Name</label> <span className = "text-danger">*</span>
+            <label className="form-label ">Full Name</label>{" "}
+            <span className="text-danger">*</span>
             <InputText
               name="name"
               value={formik.values.name}
@@ -356,7 +361,8 @@ export default function Registration() {
             )}
           </div>
           <div className="col-lg-4">
-            <label className="form-label ">Date of Birth</label><span className = "text-danger">*</span>
+            <label className="form-label ">Date of Birth</label>
+            <span className="text-danger">*</span>
             {/* <Calendar
               name="birth"
               value={formik.values.birth}
@@ -382,7 +388,8 @@ export default function Registration() {
           </div>
 
           <div className="col-lg-4">
-            <label className="form-label ">Gender</label><span className = "text-danger">*</span>
+            <label className="form-label ">Gender</label>
+            <span className="text-danger">*</span>
             <Dropdown
               name="gender"
               value={formik.values.gender}
@@ -398,7 +405,8 @@ export default function Registration() {
           </div>
 
           <div className="col-md-4">
-            <label className="form-label ">Contact Number</label><span className = "text-danger">*</span>
+            <label className="form-label ">Contact Number</label>
+            <span className="text-danger">*</span>
             <InputText
               name="contact"
               maxLength={10}
@@ -415,7 +423,8 @@ export default function Registration() {
           </div>
 
           <div className="col-md-4">
-            <label className="form-label ">Email</label><span className = "text-danger">*</span>
+            <label className="form-label ">Email</label>
+            <span className="text-danger">*</span>
             <InputText
               type="email"
               name="email"
@@ -482,7 +491,8 @@ export default function Registration() {
           </div>
 
           <div className="col-md-4">
-            <label className="form-label ">Blood Group</label><span className = "text-danger">*</span>
+            <label className="form-label ">Blood Group</label>
+            <span className="text-danger">*</span>
             <Dropdown
               name="blood"
               value={formik.values.blood}
@@ -495,6 +505,66 @@ export default function Registration() {
             {formik.errors.blood && (
               <p className="text-danger">{formik.errors.blood}</p>
             )}
+          </div>
+
+          <div
+            className="col-md-4 "
+            style={{ position: "relative", top: "20px" }}
+          >
+            {/* Date input 50% */}
+
+            <div className="d-flex mt-3 gap-2">
+              <p className="fw-bold">MLC:</p>         
+              {/* <Checkbox
+            inputId="MLC"
+            name="MLC"
+            value="MLC"
+              // value={MLCcheckbox}
+              onChange={(e) => setMLCcheckbox(e.value)}
+              style={{ marginLeft: "10px", textAlign: "center" }}
+            /> */}
+
+              {/* <Checkbox
+                        inputId="pallor"
+                        name="Pallor"
+                        value="Pallors"
+                        checked={formik.values.Pallor === "Pallors"}
+                        onChange={(e) => {
+                          if (e.checked) {
+                            formik.setFieldValue("Pallor", e.value); // ✅ sirf yahi select hoga
+                          } else {
+                            formik.setFieldValue("Pallor", ""); // ✅ unselect karne par empty
+                          }
+                        }}
+                      />{" "} */}
+
+              <Checkbox
+                inputId="MLC"
+                name="MLC"
+                checked={formik.values.MLC === true}
+                onChange={(e) => {
+                  formik.setFieldValue("MLC", e.checked); // ✅ true ya false set karega
+                }}
+              />
+
+              {formik.values.MLC === true && (
+                <div className="d-flex">
+                  <InputText
+                    name="MLCNumber"
+                    value={formik.values.MLCNumber}
+                    onChange={formik.handleChange}
+                    placeholder="Enter MLC Number"
+                    onBlur={formik.handleBlur}
+                    style={{
+                      marginLeft: "15px",
+                      position: "relative",
+                      bottom: "6px",
+                      width: "300px",
+                    }}
+                  />
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -513,7 +583,8 @@ export default function Registration() {
           </div>
 
           <div className="col-md-6 ">
-            <label className="form-label ">Known Allergies</label><span className = "text-danger">*</span>
+            <label className="form-label ">Known Allergies</label>
+            <span className="text-danger">*</span>
             <InputTextarea
               name="allergies"
               value={formik.values.allergies}
@@ -546,7 +617,8 @@ export default function Registration() {
             </div>
 
             <div className="col-md-4">
-              <label className="form-label ">Relationship</label><span className = "text-danger">*</span>
+              <label className="form-label ">Relationship</label>
+              <span className="text-danger">*</span>
               <Dropdown
                 name="relationship"
                 value={formik.values.relationship}
@@ -562,7 +634,8 @@ export default function Registration() {
             </div>
 
             <div className="col-md-4">
-              <label className="form-label ">Contact</label><span className = "text-danger">*</span>
+              <label className="form-label ">Contact</label>
+              <span className="text-danger">*</span>
               <InputText
                 name="contactno"
                 value={formik.values.contactno}
@@ -595,7 +668,7 @@ export default function Registration() {
           {appointmentcheckbox && (
             <div className="row">
               <div className="col-md-4 ">
-                 <p className="">Date:</p>
+                <p className="">Date:</p>
                 <Calendar
                   name="date"
                   value={formik.values.date}

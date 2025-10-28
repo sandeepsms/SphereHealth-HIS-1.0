@@ -220,8 +220,9 @@ function PatientsTable() {
   const [deleteDialogVisible, setDeleteDialogVisible] = useState(false);
   const [selectedPatient, setSelectedPatient] = useState({});
   const [submitted, setSubmitted] = useState(false);
-  const[doctoruhid,setDoctoruhid]=useState();
+  const [doctoruhid, setDoctoruhid] = useState();
   const menuRight = useRef(null);
+  const [UHID, setUHID] = useState();
 
   const navigate = useNavigate();
 
@@ -261,7 +262,7 @@ function PatientsTable() {
 
   // ---------------------- EDIT ----------------------
   const handleEdit = (row) => {
-    setSelectedPatient({ ...row});
+    setSelectedPatient({ ...row });
     setEditDialogVisible(true);
   };
 
@@ -291,147 +292,188 @@ function PatientsTable() {
     setDeleteDialogVisible(false);
     setSelectedPatient({});
   };
-   const actionBody = (rowData) => {
-const datas=rowData;
+  const actionBody = (rowData) => {
+    setUHID(rowData.UHID);
 
+    // console.log("dddddddddddddm", datas);
 
-  const items = [
+    // const items = [
+    //   {
+    //     // label: "Options",
+    //     items: [
+    //       {
+    //         label: "Edit",
+    //         icon: "pi pi-pencil",
+    //       },
+    //       {
+    //         label: "Delete",
+    //         icon: "pi pi-trash",
+    //       },
+    //       {
+    //         // icon : 'pi pi-user-plus',
+    //         template: (rowData, options) => {
+    //           return (
+    //             <div
+    //               className="p-menuitem-content"
+    //               icon="pi pi-user-plus"
+    //               data-pc-section="content"
+    //               onMouseMove={(e) => options.onMouseMove(e)}
+    //             >
+    //               <a
+    //                 className="p-menuitem-link"
+    //                 onClick={() => navigate(`/doctor/${UHID}`)}
+    //               >
+    //                 <span className="p-menuitem-icon pi pi-user-plus" />
+    //                 <span className="p-menuitem-text">Doctor</span>
+    //               </a>
+    //             </div>
+    //           );
+    //         },
+    //       },
+    //     ],
+    //   },
+    // ];
+
+    const items = [
     {
-      // label: "Options",
-      items: [
-        {
-          label: "Edit",
-          icon: "pi pi-pencil",
-        },
-        {
-          label: "Delete",
-          icon: "pi pi-trash",
-        },
-        {
-          // icon : 'pi pi-user-plus',
-          template: (rowData, options) => {
-            return (
-
-             <div
-  className="p-menuitem-content"
-  icon="pi pi-user-plus"
-  data-pc-section="content"
-  onMouseMove={(e) => options.onMouseMove(e)}  
->
-  <a
-    className="p-menuitem-link"
-    onClick={() =>
-      navigate(`/doctor/${rowData.UHID}`)   
-     
-      
-    }
-  >
-    <span className="p-menuitem-icon pi pi-user-plus" />
-    <span className="p-menuitem-text">Doctor</span>
-  </a>
-</div>
-
-
-
-      
-            );
-          },
-        },
-      ],
+      label: "Edit",
+      icon: "pi pi-pencil",
+      command: () => handleEdit(rowData),
+    },
+    {
+      label: "Delete",
+      icon: "pi pi-trash",
+    
+      command: () => handleDeleteConfirm(rowData),
+    },
+    {
+      separator: true, // small divider between action & navigation
+    },
+    {
+      label: "Doctor",
+      icon: "pi pi-user-plus",
+      command: () => navigate(`/doctor/${rowData.UHID}`),
+    },
+    {
+      label: "Bill Print",
+      icon: "pi pi-print",
+      command: () => navigate(`/opd/${rowData.UHID}`),
+    },
+    {
+      label: "Doctor Prescription",
+      icon: "pi pi-file-edit",
+      command: () => navigate(`/doctorpre/${rowData.UHID}`),
+    },
+    {
+      label: "Doctor Prescription Bill",
+      icon: "pi pi-file",
+      command: () => navigate(`/Preceptionbill/${rowData.UHID}`),
     },
   ];
-  
-  // ---------------------- ACTION BUTTONS ----------------------
-  // 👇 Yeh actionBody function banalo
- 
-    return (
-      <div className="">
-        {/* Edit Button */}
-        <Menu
-          model={items}
-          popup
-          ref={menuRight}
-          id="popup_menu_right"
-          popupAlignment="right"
-        />
-        {/* <Button
-          label=""
-          icon="pi pi-ellipsis-v"
-          className="mr-2"
-          onClick={(event) => menuRight.current.toggle(event)}
-          aria-controls="popup_menu_right"
-          aria-haspopup
-          severity="primary"
-        /> */}
-        <a onClick={(event) => menuRight.current.toggle(event)}
-          aria-controls="popup_menu_right"
-          aria-haspopup> 
-          <i className="pi pi-ellipsis-v"></i>
-           </a>
 
-        {/* <Button
-          icon="pi pi-pencil"
-          rounded
-          outlined
-          severity="info"
-          onClick={() => handleEdit(rowData)}
-        /> */}
+  return (
+    <div className=" align-items-center justify-content-center ">
+      {/* Menu Popup */}
+      <Menu model={items} popup ref={menuRight} id="popup_menu_right" popupAlignment="right"/>
 
-        {/* Delete Button */}
-        {/* <Button
-          icon="pi pi-trash"
-          rounded
-          outlined
-          severity="danger"
-          onClick={() => handleDeleteConfirm(rowData)}
-        /> */}
+      {/* Three-dot icon button */}
+      <a
+        onClick={(event) => menuRight.current.toggle(event)}
+        aria-controls="popup_menu_right"
+        aria-haspopup
+        style={{ cursor: "pointer" }}
+      >
+        <i className="pi pi-ellipsis-v text-xl"></i>
+      </a>
+    </div>
+  );
 
-        {/* Doctor Assignment Button */}
-        <Button
-          label="doctor"
-          icon="pi pi-user-plus"
-          rounded
-          outlined
-          severity="success"
-          onClick={() => navigate(`/doctor/${rowData.UHID}`)}
-        />
+    // ---------------------- ACTION BUTTONS ----------------------
+    // 👇 Yeh actionBody function banalo
 
+    // return (
+    //   <div className="">
+    //     {/* Edit Button */}
+    //     <Menu
+    //       model={items}
+    //       popup
+    //       ref={menuRight}
+    //       id="popup_menu_right"
+    //       popupAlignment="right"
+    //     />
+    //     {/* <Button
+    //       label=""
+    //       icon="pi pi-ellipsis-v"
+    //       className="mr-2"
+    //       onClick={(event) => menuRight.current.toggle(event)}
+    //       aria-controls="popup_menu_right"
+    //       aria-haspopup
+    //       severity="primary"
+    //     /> */}
+    //     <a
+    //       onClick={(event) => menuRight.current.toggle(event)}
+    //       aria-controls="popup_menu_right"
+    //       aria-haspopup
+    //     >
+    //       <i className="pi pi-ellipsis-v"></i>
+    //     </a>
 
-  <Button
-          label="Bill Print"
-          icon="pi pi-user-plus"
-          rounded
-          outlined
-          severity="success"
-          onClick={() => navigate(`/opd/${rowData.UHID}`)}
-        />
+    //     {/* <Button
+    //       icon="pi pi-pencil"
+    //       rounded
+    //       outlined
+    //       severity="info"
+    //       onClick={() => handleEdit(rowData)}
+    //     /> */}
 
+    //     {/* Delete Button */}
+    //     {/* <Button
+    //       icon="pi pi-trash"
+    //       rounded
+    //       outlined
+    //       severity="danger"
+    //       onClick={() => handleDeleteConfirm(rowData)}
+    //     /> */}
 
-  <Button
-          label="Doctor preception"
-          icon="pi pi-user-plus"
-          rounded
-          outlined
-          severity="success"
-          onClick={() => navigate(`/doctorpre/${rowData.UHID}`)}
-        />
+    //     {/* Doctor Assignment Button */}
+    //     <Button
+    //       label="doctor"
+    //       icon="pi pi-user-plus"
+    //       rounded
+    //       outlined
+    //       severity="success"
+    //       onClick={() => navigate(`/doctor/${rowData.UHID}`)}
+    //     />
 
- <Button
-          label="DoctorPreception bill"
-          icon="pi pi-user-plus"
-          rounded
-          outlined
-          severity="success"
-          onClick={() => navigate(`/Preceptionbill/${rowData.UHID}`)}
-        />
+    //     <Button
+    //       label="Bill Print"
+    //       icon="pi pi-user-plus"
+    //       rounded
+    //       outlined
+    //       severity="success"
+    //       onClick={() => navigate(`/opd/${rowData.UHID}`)}
+    //     />
 
+    //     <Button
+    //       label="Doctor preception"
+    //       icon="pi pi-user-plus"
+    //       rounded
+    //       outlined
+    //       severity="success"
+    //       onClick={() => navigate(`/doctorpre/${rowData.UHID}`)}
+    //     />
 
-
-      </div>
-    );
+    //     <Button
+    //       label="DoctorPreception bill"
+    //       icon="pi pi-user-plus"
+    //       rounded
+    //       outlined
+    //       severity="success"
+    //       onClick={() => navigate(`/Preceptionbill/${rowData.UHID}`)}
+    //     />
+    //   </div>
+    // );
   };
-
-  
 
   // ---------------------- RENDER ----------------------
   const header = (
@@ -483,7 +525,7 @@ const datas=rowData;
             emptyMessage="No patients found."
             header={header}
             className="custom-datatable"
-            tableStyle={{ minWidth: '50rem' }}
+            tableStyle={{ minWidth: "50rem" }}
           >
             <Column field="name" header="Name" sortable />
             <Column field="age" header="Age" sortable />
@@ -495,7 +537,12 @@ const datas=rowData;
               body={(rowData) => formatDate(rowData.birth)}
             />
             <Column field="gender" header="Gender" sortable />
-            <Column field="email" header="Email" sortable style={{ width: '20%' }} />
+            <Column
+              field="email"
+              header="Email"
+              sortable
+              style={{ width: "20%" }}
+            />
 
             {/* ✅ All Actions in Single Column */}
             <Column

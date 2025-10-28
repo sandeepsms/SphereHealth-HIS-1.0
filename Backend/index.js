@@ -95,11 +95,10 @@ app.get("/", (req, res) => {
 
 app.use("/api/patients", patientRoutes);
 
-app.use("/api/doctordetail", doctorRoutes);   
-app.use("/api/RegistrationOPD", RegistrationOPDRoutes); 
+app.use("/api/doctordetail", doctorRoutes);
+app.use("/api/RegistrationOPD", RegistrationOPDRoutes);
 
-app.use("/api/Servicebilldata",ServicebillRoutes);
-
+app.use("/api/Servicebilldata", ServicebillRoutes);
 
 // app.use("/api/patients", patientRoutes);👇👇
 //Agar koi request aayi:
@@ -116,9 +115,6 @@ app.listen(5000, () => {
   console.log("🚀 Server running on port 5000");
 });
 
-
-
-
 // app.get("/api/patients/getallPatients", async (req, res) => {
 //   try {
 //     const patients = await Patient.find();
@@ -128,19 +124,16 @@ app.listen(5000, () => {
 //   }
 // });
 
+// ✅ Simple Example Flow
 
+// Client → POST /api/patients/add123
 
+// Express → Dekhta hai /api/patients → send to patientRoutes
 
-       // ✅ Simple Example Flow
+// Router → Dekhta hai /add123 + POST → call addPatient
 
-       // Client → POST /api/patients/add123
+// Controller → Database me patient add karta hai
 
-       // Express → Dekhta hai /api/patients → send to patientRoutes
+// Database → Ok bolta hai
 
-      // Router → Dekhta hai /add123 + POST → call addPatient
-
-       // Controller → Database me patient add karta hai
-
-      // Database → Ok bolta hai
-
-       // Controller → Client ko reply: "Patient added successfully"
+// Controller → Client ko reply: "Patient added successfully"

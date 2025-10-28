@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import logo from "../assets/logowebsite11.png";
 import { useParams } from "react-router-dom";
 import { getdoctorprecetionbyID } from "../Services/doctorpreceptionapi";
+import "primeicons/primeicons.css";
 
 function Preceptionbill() {
   const [doctorpreceptionUHID, setDoctorpreceptionUHID] = useState(null);
@@ -25,7 +26,10 @@ function Preceptionbill() {
     return <div className="p-3">Loading prescription data...</div>;
   }
   return (
-    <div className="container my-4 p-4 border shadow-sm bg-white" style={{ width: "60%" }}>
+    <div
+      className="container my-4 p-4 border shadow-sm bg-white"
+      style={{ width: "60%" }}
+    >
       {/* ✅ Header */}
       <header className="d-flex justify-content-between align-items-center border-bottom pb-2 mb-3">
         {/* Left: Logo */}
@@ -61,7 +65,8 @@ function Preceptionbill() {
             <strong>UHID:</strong> {doctorpreceptionUHID.UHID}
           </p>
           <p>
-            <strong>Doctor Name:</strong>{doctorpreceptionUHID.DoctorName}
+            <strong>Doctor Name:</strong>
+            {doctorpreceptionUHID.DoctorName}
           </p>
           <p>
             <strong>Department:</strong> {doctorpreceptionUHID.Department}
@@ -105,8 +110,7 @@ function Preceptionbill() {
         <h6 className="fw-bold text-decoration-underline ">
           Physical Examination:
         </h6>
-         <samp> {doctorpreceptionUHID.Physical_Examination
-}</samp>
+        <samp> {doctorpreceptionUHID.Physical_Examination}</samp>
       </div>
 
       <div className="row mb-4">
@@ -114,18 +118,27 @@ function Preceptionbill() {
           {" "}
           <strong className="text-decoration-underline ">Weight:</strong>{" "}
           {doctorpreceptionUHID.weight} kgs
+        
+          {doctorpreceptionUHID.weight>=80 &&<i className="pi pi-sort-amount-up text-danger fw-bold fs-5 mx-1"></i>}
+         
         </div>
         <div className="col-sm-3">
           <strong className="text-decoration-underline ">Temperature:</strong>{" "}
           {doctorpreceptionUHID.Temp} °F
+           {doctorpreceptionUHID.Temp>=102 &&<i className="pi pi-sort-amount-up text-danger fw-bold fs-5 mx-1"></i>}
+           
         </div>
         <div className="col-sm-3">
           <strong className="text-decoration-underline ">B.P:</strong>{" "}
           {doctorpreceptionUHID.BP} mmHg
+           {doctorpreceptionUHID.BP>=80 &&<i className="pi pi-sort-amount-up text-danger fw-bold fs-5 mx-1"></i>}
+         
         </div>
         <div className="col-sm-3">
           <strong className="text-decoration-underline ">Pulse:</strong>{" "}
           {doctorpreceptionUHID.Pulse} bpm
+          {doctorpreceptionUHID.Pulse>=100 &&<i className="pi pi-sort-amount-up text-danger fw-bold fs-5 mx-1"></i>}
+          
         </div>
       </div>
 
@@ -175,10 +188,10 @@ function Preceptionbill() {
         Max Super Speciality Hospital, Shalimar Bagh | Max Healthcare Institute
         Ltd.
       </footer> */}
-       <footer className="">
-          Thank you for visiting SUKOON HOSPITALS
-          For emergency care, please contact: 📞7988307850, 0130-4052310
-        </footer>
+      <footer className="">
+        Thank you for visiting SUKOON HOSPITALS For emergency care, please
+        contact: 📞7988307850, 0130-4052310
+      </footer>
     </div>
   );
 }
