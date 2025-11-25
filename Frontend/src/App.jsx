@@ -13,6 +13,7 @@ import Opdprint from "./Components/Opdprint"
 import Doctorpre from "./Components/Doctorpreception";
 import ServiceAlldata from "./Components/ServiceAlldata";
 import Preceptionbill from "./Components/Preceptionbill";
+import BedManagementSingleFile from "./Components/BedManagementSingleFile"
 
 
 export default function App() {
@@ -46,6 +47,8 @@ export default function App() {
                <Route path="/doctorpre/:UHID/:TpaId?" element={<Doctorpre/>} />
                 <Route path="/ServiceAlldata" element={<ServiceAlldata/>} />
                   <Route path="/Preceptionbill/:UHID" element={<Preceptionbill/>} />
+                   <Route path="/BedManagementSingleFile/:UHID" element={<BedManagementSingleFile/>} />
+
                
                
           {/* Add more routes here */}

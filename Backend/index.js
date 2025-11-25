@@ -81,6 +81,10 @@ const patientRoutes = require("./routes/patientRoutes");
 const doctorRoutes = require("./routes/doctorsRoutes");
 const ServicebillRoutes = require("./routes/ServicebillRoutes");
 const RegistrationOPDRoutes = require("./routes/Opd");
+const BedRoutes=require("./routes/Bedroutes");
+const WardchargesRoutes=require("./routes/WardchargesRoutes")
+
+
 app.use(cors());
 // Middleware
 app.use(express.json()); // Ye middleware JSON data ko parse karta hai.Matlab agar frontend se tum {"name":"Sahil"} bhejo to backend usse samajh paaye.
@@ -99,6 +103,10 @@ app.use("/api/doctordetail", doctorRoutes);
 app.use("/api/RegistrationOPD", RegistrationOPDRoutes);
 
 app.use("/api/Servicebilldata", ServicebillRoutes);
+
+app.use("/api/beds", BedRoutes);
+
+app.use("/api/ward-charges", WardchargesRoutes);
 
 // app.use("/api/patients", patientRoutes);👇👇
 //Agar koi request aayi:

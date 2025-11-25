@@ -85,6 +85,7 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
       //  { name: "Doctor preception", path: "/doctorpre", icon: <FileText size={18} /> },
         { name: "TPA Service", path: "/TPA", icon: <FileText size={18} /> },
         { name: "Service Alldata", path: "/ServiceAlldata", icon: <FileText size={18} /> },
+         { name: "Bed Detail", path: "/BedManagementSingleFile", icon: <FileText size={18} /> },
         // { name: "Preception bill", path: "/Preceptionbill", icon: <FileText size={18} /> }
   ];
 

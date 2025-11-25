@@ -265,7 +265,7 @@ export default function Registration() {
     if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) {
       years--;
     }
-    return years >= 0 ? years : "";
+    return years >= 0 ? years : "";         
   };
 
   const handleDateChange = (e) => {

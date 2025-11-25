@@ -369,6 +369,14 @@ function PatientsTable() {
       icon: "pi pi-file",
       command: () => navigate(`/Preceptionbill/${rowData.UHID}`),
     },
+
+ {
+      label: "Bed Managment",
+      icon: "pi pi-file",
+      command: () => navigate(`/BedManagementSingleFile/${rowData.UHID}`),
+    },
+
+
   ];
 
   return (

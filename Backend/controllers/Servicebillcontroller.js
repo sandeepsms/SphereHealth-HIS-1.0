@@ -1,4 +1,4 @@
-const Servicebilldata = require("../models/servicesbillModel");
+const Servicebilldata = require("../models/servicesModel");
 
 // ➕ Add Services (Normal aur TPA alag-alag)
 exports.Servicebillfun = async (req, res) => {

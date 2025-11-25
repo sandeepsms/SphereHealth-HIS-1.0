@@ -125,6 +125,7 @@ function Preceptionbill() {
         <div className="col-sm-3">
           <strong className="text-decoration-underline ">Temperature:</strong>{" "}
           {doctorpreceptionUHID.Temp} °F
+          
            {doctorpreceptionUHID.Temp>=102 &&<i className="pi pi-sort-amount-up text-danger fw-bold fs-5 mx-1"></i>}
            
         </div>
