@@ -1,0 +1,99 @@
+
+
+
+.form-container {
+  width: 80%;
+  margin: 20px auto;
+  background: #ffffff;
+  padding: 20px;
+  border-radius: 12px;
+  box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.title {
+  text-align: center;
+  margin-bottom: 20px;
+  color: #333;
+}
+
+.custom-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 20px;
+}
+
+.custom-table th,
+.custom-table td {
+  border: 1px solid #ddd;
+  padding: 10px;
+  text-align: center;
+}
+
+.custom-table th {
+  background-color: #06a4c4;
+  color: #fff;
+}
+
+.input-box {
+  width: 90%;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid #ccc;
+  outline: none;
+}
+
+.input-box:focus {
+  border-color: #2196f3;
+  box-shadow: 0px 0px 5px rgba(33, 150, 243, 0.5);
+}
+
+.error-text {
+  color: red;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.btn-row {
+  text-align: right;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.submit-row {
+  text-align: center;
+  margin-top: 20px;
+   
+}
+
+.total-cell {
+  font-weight: bold;
+  color: #4caf50;
+}
+
+.input-with-symbol {
+  display: flex;
+  align-items: center;
+  position: relative;
+}
+
+.input-with-symbol .input-box {
+  padding-right: 24px; /* space for % symbol */
+}
+
+.percent-symbol {
+  position: absolute;
+  right: 8px;
+  color: #555;
+  font-size: 14px;
+  pointer-events: none; /* click block na ho */
+}
+.p-sortable-column-icon {
+  color: #fff !important;
+}
+
+.p-button {
+    background: #06a4c4 !important;
+    border-radius: 3px;
+}
