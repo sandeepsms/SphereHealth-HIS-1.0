@@ -1,0 +1,317 @@
+ .department-page {
+     height: 100vh;
+     display: flex;
+     flex-direction: column;
+     overflow: hidden;
+ }
+
+
+ .page-header {
+     color: black;
+     padding: 20px 30px;
+     margin-top: 60px;
+     text-align: center;
+     flex-shrink: 0;
+     background-color: #fff;
+
+ }
+
+ .page-header h1 {
+     margin: 0;
+     font-size: 24px;
+     font-weight: 700;
+ }
+
+ .page-header p {
+     margin: 6px 0 0 0;
+     font-size: 14px;
+     opacity: 0.9;
+ }
+
+ /* Content Area */
+ .page-content {
+     flex: 1;
+     padding: 20px 30px;
+     overflow: hidden;
+     display: flex;
+     flex-direction: column;
+ }
+
+ .content-card {
+     background: white;
+     border-radius: 8px;
+     padding: 20px;
+     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+     display: flex;
+     flex-direction: column;
+     flex: 1;
+     overflow: hidden;
+ }
+
+ /* Toolbar */
+ .custom-toolbar {
+     background: #fafafa;
+     border: 1px solid #ddd;
+     border-radius: 4px;
+     padding: 12px;
+     margin-bottom: 16px;
+     flex-shrink: 0;
+ }
+
+ /* Table Container - Scrollable */
+ .table-container {
+     flex: 1;
+     overflow: hidden;
+     display: flex;
+     flex-direction: column;
+ }
+
+ .table-container .p-datatable {
+     height: 100%;
+     display: flex;
+     flex-direction: column;
+ }
+
+ .table-container .p-datatable-wrapper {
+     flex: 1;
+     overflow: auto;
+ }
+
+ /* Hide Scrollbar */
+ .table-container .p-datatable-wrapper::-webkit-scrollbar {
+     width: 0px;
+     height: 0px;
+ }
+
+ .table-container .p-datatable-wrapper {
+     scrollbar-width: none;
+     -ms-overflow-style: none;
+ }
+
+ /* Table Header */
+ .p-datatable .p-datatable-thead>tr>th {
+     background: #00bcd4;
+     color: white;
+     padding: 12px;
+     font-weight: 600;
+     font-size: 13px;
+     border: none;
+     position: sticky;
+     top: 0;
+     z-index: 1;
+ }
+
+ /* Table Body */
+ .p-datatable .p-datatable-tbody>tr {
+     border-bottom: 1px solid #eee;
+ }
+
+ .p-datatable .p-datatable-tbody>tr:hover {
+     background: #e0f7fa;
+ }
+
+ .p-datatable .p-datatable-tbody>tr>td {
+     padding: 12px;
+     font-size: 14px;
+ }
+
+ /* Paginator - Compact */
+ .p-paginator {
+     padding: 8px 12px;
+     background: #fafafa;
+     border-top: 1px solid #eee;
+     flex-shrink: 0;
+     margin-top: 10px;
+ }
+
+ .p-paginator .p-paginator-pages {
+     display: flex;
+     gap: 4px;
+ }
+
+ .p-paginator .p-paginator-page {
+     min-width: 32px;
+     height: 32px;
+     padding: 0;
+     font-size: 13px;
+     padding: 10px
+ }
+
+ .p-paginator .p-dropdown {
+     height: 32px;
+     font-size: 13px;
+     margin: 5px
+ }
+
+ .p-paginator .p-paginator-current {
+     font-size: 13px;
+ }
+
+ .p-paginator .p-paginator-first,
+ .p-paginator .p-paginator-prev,
+ .p-paginator .p-paginator-next,
+ .p-paginator .p-paginator-last {
+     min-width: 32px;
+     height: 32px;
+ }
+
+ /* Buttons */
+ .cyan-button {
+     background: #00bcd4 !important;
+     border: 1px solid #00bcd4 !important;
+     color: white !important;
+     padding: 10px 20px;
+     border-radius: 4px;
+     font-weight: 500;
+     font-size: 14px;
+ }
+
+ .cyan-button:hover {
+     background: #00acc1 !important;
+     border-color: #00acc1 !important;
+ }
+
+ /* Dialog */
+ .department-dialog .p-dialog-header {
+     background: #00bcd4;
+     color: white;
+     padding: 16px 20px;
+     border-radius: 8px 8px 0 0;
+ }
+
+ .department-dialog .p-dialog-content {
+     padding: 0;
+ }
+
+ .dialog-content {
+     padding: 20px;
+ }
+
+ /* Form */
+ .form-row {
+     display: grid;
+     grid-template-columns: 1fr 1fr;
+     gap: 16px;
+     margin-bottom: 16px;
+ }
+
+ .form-field {
+     margin-bottom: 16px;
+ }
+
+ .form-field label {
+     display: block;
+     margin-bottom: 6px;
+     font-weight: 500;
+     font-size: 14px;
+     color: #333;
+ }
+
+ .form-field .required {
+     color: #f44336;
+ }
+
+ .form-field input,
+ .form-field textarea,
+ .form-field .p-dropdown {
+     width: 100%;
+     padding: 10px;
+     border: 1px solid #ddd;
+     border-radius: 4px;
+     font-size: 14px;
+ }
+
+ .form-field input:focus,
+ .form-field textarea:focus {
+     border-color: #00bcd4;
+     outline: none;
+ }
+
+ /* Checkboxes */
+ .checkbox-section {
+     margin-top: 20px;
+     padding-top: 20px;
+     border-top: 1px solid #eee;
+ }
+
+ .checkbox-section h4 {
+     margin: 0 0 12px 0;
+     font-size: 15px;
+     font-weight: 600;
+     color: #333;
+ }
+
+ .checkbox-grid {
+     display: grid;
+     grid-template-columns: 1fr 1fr;
+     gap: 12px;
+ }
+
+ .checkbox-item {
+     display: flex;
+     align-items: center;
+     gap: 8px;
+ }
+
+ .checkbox-item label {
+     font-size: 14px;
+     cursor: pointer;
+ }
+
+ /* Tags */
+ .p-tag {
+     padding: 4px 10px;
+     border-radius: 3px;
+     font-size: 12px;
+     font-weight: 500;
+ }
+
+ /* Validation */
+ .p-invalid {
+     border-color: #f44336 !important;
+ }
+
+ .p-error {
+     color: #f44336;
+     font-size: 12px;
+     margin-top: 4px;
+ }
+
+ /* Search Input */
+ .p-input-icon-left>i {
+     left: 12px;
+     color: #00bcd4;
+ }
+
+ .p-input-icon-left>input {
+     padding-left: 36px;
+ }
+
+ /* Responsive */
+ @media (max-width: 768px) {
+     .page-header {
+         padding: 16px 20px;
+     }
+
+     .page-header h1 {
+         font-size: 20px;
+     }
+
+     .page-content {
+         padding: 16px 20px;
+     }
+
+     .form-row,
+     .checkbox-grid {
+         grid-template-columns: 1fr;
+     }
+
+     .department-dialog .p-dialog {
+         width: 95% !important;
+     }
+
+     .p-datatable .p-datatable-tbody>tr>td {
+         padding: 10px 8px;
+         font-size: 13px;
+     }
+ }

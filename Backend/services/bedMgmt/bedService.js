@@ -1,144 +1,131 @@
-const Beds = require("../../models/bedMgmt/bedsModel");
-const Ward = require("../../models/bedMgmt/wardModel");
+// services/bedMgmt/bedService.js
+const Bed = require("../../models/bedMgmt/bedsModel");
 const Room = require("../../models/bedMgmt/roomModel");
+const Ward = require("../../models/bedMgmt/wardModel");
+const Building = require("../../models/bedMgmt/buildingModel");
 const Floor = require("../../models/bedMgmt/floorModel");
 
 class BedService {
-  async createBedes(data) {
-    const { wardId, roomId, beds } = data;
+  async createBeds(data) {
+    const { roomId, beds } = data;
 
-    // ✅ STEP 1: Ward validation
-    const ward = await Ward.findById(wardId)
+    if (!roomId) {
+      throw new Error("Room ID is required");
+    }
+
+    if (!beds || beds.length === 0) {
+      throw new Error("At least one bed is required");
+    }
+
+    const room = await Room.findById(roomId)
       .populate("building")
-      .populate("floor");
+      .populate("floor")
+      .populate("ward")
+      .populate({
+        path: "roomCategory",
+        select: "categoryName roomType defaultPricing",
+      })
+      .populate("services.service");
 
-    if (!ward) throw new Error("Ward not found");
-    if (!ward.floor) throw new Error("Floor not found in ward");
-
-    const floor = await Floor.findById(ward.floor._id);
-    if (floor.totalWards === 0) {
-      throw new Error("Cannot create beds: Floor has no wards assigned");
+    if (!room) {
+      throw new Error("Room not found");
     }
 
-    const buildingId = ward.building?._id || ward.floor.building;
-    const buildingName = ward.buildingName || ward.floor.buildingName;
-
-    if (!buildingId) throw new Error("Building not found");
-
-    // ✅ STEP 2: Room validation (if roomId provided)
-    let room = null;
-    if (roomId) {
-      room = await Room.findById(roomId);
-      if (!room) throw new Error("Room not found");
-
-      // ✅ Check room belongs to the ward
-      if (room.ward.toString() !== wardId.toString()) {
-        throw new Error("Room does not belong to this ward");
-      }
-
-      // ✅ CRITICAL: Check room bed capacity
-      const existingBedsInRoom = await Beds.countDocuments({
-        room: roomId,
-        isActive: true,
-      });
-
-      const newBedsCount = beds.length;
-      const totalAfterCreation = existingBedsInRoom + newBedsCount;
-
-      if (totalAfterCreation > room.totalBeds) {
-        throw new Error(
-          `Cannot create ${newBedsCount} beds. Room "${
-            room.roomName
-          }" has capacity of ${
-            room.totalBeds
-          } beds. Currently ${existingBedsInRoom} beds exist. Only ${
-            room.totalBeds - existingBedsInRoom
-          } slots available.`
-        );
-      }
-    }
-
-    // ✅ STEP 3: Ward bed capacity validation
-    const existingBedsInWard = await Beds.countDocuments({
-      ward: wardId,
+    const existingBedsInRoom = await Bed.countDocuments({
+      room: roomId,
       isActive: true,
     });
 
-    const newBedsCount = beds.length;
-    const totalAfterCreation = existingBedsInWard + newBedsCount;
+    const totalAfterCreation = existingBedsInRoom + beds.length;
 
-    if (totalAfterCreation > ward.totalBeds) {
+    if (totalAfterCreation > room.totalBeds) {
       throw new Error(
-        `Cannot create ${newBedsCount} beds. Ward "${
-          ward.wardName
-        }" has capacity of ${
-          ward.totalBeds
-        } beds. Currently ${existingBedsInWard} beds exist. Only ${
-          ward.totalBeds - existingBedsInWard
+        `Cannot create ${beds.length} beds. Room has ${
+          room.totalBeds - existingBedsInRoom
         } slots available.`
       );
     }
 
-    // ✅ STEP 4: Create beds
     const createdBeds = [];
     const errors = [];
 
     for (let b of beds) {
       try {
-        // Check duplicate bed number in room (if room exists)
-        if (roomId) {
-          const existsInRoom = await Beds.findOne({
-            room: roomId,
+        const exists = await Bed.findOne({
+          room: roomId,
+          bedNumber: b.bedNumber,
+          isActive: true,
+        });
+
+        if (exists) {
+          errors.push({
             bedNumber: b.bedNumber,
-            isActive: true,
+            error: "Bed already exists in this room",
           });
-          if (existsInRoom) {
-            errors.push({
-              bedNumber: b.bedNumber,
-              error: "Bed number already exists in this room",
-            });
-            continue;
-          }
-        } else {
-          // Check duplicate bed number in ward (no room)
-          const existsInWard = await Beds.findOne({
-            ward: wardId,
-            bedNumber: b.bedNumber,
-            room: null,
-            isActive: true,
-          });
-          if (existsInWard) {
-            errors.push({
-              bedNumber: b.bedNumber,
-              error: "Bed number already exists in this ward",
-            });
-            continue;
-          }
+          continue;
         }
 
         const bedData = {
           bedNumber: b.bedNumber,
-          building: buildingId,
-          buildingName: buildingName,
-          floor: ward.floor._id,
-          floorNumber: ward.floor?.floorNumber,
-          ward: wardId,
-          wardName: ward.wardName,
-          wardCode: ward.wardCode,
-          room: room?._id || null,
-          roomNumber: room?.roomNumber || null,
-          roomCode: room?.roomCode || null,
+          building: room.building._id,
+          buildingName: room.buildingName,
+          floor: room.floor._id,
+          floorNumber: room.floorNumber,
+          room: room._id,
+          roomNumber: room.roomNumber,
+          roomCode: room.roomCode,
           status: b.status || "Available",
-          bedType: b.bedType || "General",
           isActive: true,
         };
 
-        const newBed = await Beds.create(bedData);
+        if (room.ward) {
+          bedData.ward = room.ward._id;
+          bedData.wardName = room.wardName;
+          bedData.wardCode = room.wardCode;
+        } else {
+          bedData.ward = undefined;
+          bedData.wardName = null;
+          bedData.wardCode = null;
+        }
+
+        if (room.pricing) {
+          bedData.pricing = {
+            perBedDailyRate: room.pricing.perBedDailyRate || 0,
+            nursingCharges: room.pricing.nursingCharges || 0,
+            equipmentCharges: room.pricing.equipmentCharges || 0,
+            securityDeposit: room.pricing.securityDeposit || 0,
+            currency: room.pricing.currency || "INR",
+          };
+        } else if (room.roomCategory?.defaultPricing) {
+          const categoryPricing = room.roomCategory.defaultPricing;
+          bedData.pricing = {
+            perBedDailyRate: categoryPricing.perBedDailyRate || 0,
+            nursingCharges: categoryPricing.nursingCharges || 0,
+            equipmentCharges: categoryPricing.equipmentCharges || 0,
+            securityDeposit: categoryPricing.securityDeposit || 0,
+            currency: categoryPricing.currency || "INR",
+          };
+        }
+
+        if (room.services && room.services.length > 0) {
+          bedData.services = room.services.map((s) => ({
+            service: s.service._id || s.service,
+            serviceName: s.service.serviceName || "",
+            price: s.price || 0,
+            isIncluded: s.isIncluded || false,
+          }));
+        }
+
+        const newBed = await Bed.create(bedData);
         createdBeds.push(newBed);
       } catch (err) {
         console.error("Error creating bed:", err);
         errors.push({ bedNumber: b.bedNumber, error: err.message });
       }
+    }
+
+    if (createdBeds.length > 0) {
+      await this._updateRoomAvailability(roomId);
     }
 
     return {
@@ -152,29 +139,204 @@ class BedService {
 
   async getAllBeds(filters = {}) {
     const query = { isActive: true };
+
     if (filters.wardId) query.ward = filters.wardId;
     if (filters.roomId) query.room = filters.roomId;
     if (filters.status) query.status = filters.status;
     if (filters.buildingId) query.building = filters.buildingId;
     if (filters.floorId) query.floor = filters.floorId;
 
-    return await Beds.find(query)
+    return await Bed.find(query)
       .populate("building", "buildingName buildingCode")
-      .populate("ward", "wardName wardCode totalBeds")
+      .populate("ward", "wardName wardCode")
       .populate("floor", "floorNumber floorName")
-      .populate("room", "roomNumber roomName totalBeds")
+      .populate({
+        path: "room",
+        select: "roomNumber roomName roomCode",
+        populate: {
+          path: "roomCategory",
+          select: "categoryName roomType",
+        },
+      })
+      .populate("patient", "firstName lastName patientId")
+      .populate("services.service", "serviceName serviceCode")
       .sort({ bedNumber: 1 });
   }
 
   async getBedById(id) {
-    const bed = await Beds.findById(id)
+    const bed = await Bed.findById(id)
       .populate("building")
       .populate("ward")
       .populate("floor")
-      .populate("room");
+      .populate({
+        path: "room",
+        populate: {
+          path: "roomCategory",
+          select: "categoryName roomType defaultPricing",
+        },
+      })
+      .populate("patient", "firstName lastName patientId")
+      .populate("admission")
+      .populate("services.service");
 
-    if (!bed) throw new Error("Bed not found");
+    if (!bed) {
+      throw new Error("Bed not found");
+    }
+
     return bed;
+  }
+
+  async getBedPricing(id) {
+    const bed = await this.getBedById(id);
+
+    const includedServices = bed.services.filter((s) => s.isIncluded);
+    const optionalServices = bed.services.filter((s) => !s.isIncluded);
+
+    return {
+      bedNumber: bed.bedNumber,
+      roomCode: bed.roomCode,
+      wardCode: bed.wardCode || null,
+      categoryName: bed.room?.roomCategory?.categoryName,
+
+      pricing: {
+        perBedDailyRate: bed.pricing.perBedDailyRate,
+        nursingCharges: bed.pricing.nursingCharges,
+        equipmentCharges: bed.pricing.equipmentCharges,
+        securityDeposit: bed.pricing.securityDeposit,
+        currency: bed.pricing.currency,
+      },
+
+      dailyCharges: {
+        baseCharges: bed.dailyBaseCharges,
+        includedServices: bed.includedServicesTotal,
+        total: bed.totalDailyRate,
+      },
+
+      includedServices: includedServices.map((s) => ({
+        name: s.serviceName,
+        price: s.price,
+      })),
+
+      optionalServices: optionalServices.map((s) => ({
+        name: s.serviceName,
+        price: s.price,
+      })),
+    };
+  }
+
+  async bookBed(bedId, bookingData) {
+    const { patientId, admissionId, admittedDate, expectedDischargeDate } =
+      bookingData;
+
+    if (!patientId || !admissionId || !admittedDate) {
+      throw new Error("Patient, admission, and admitted date are required");
+    }
+
+    const bed = await Bed.findById(bedId);
+    if (!bed) {
+      throw new Error("Bed not found");
+    }
+
+    if (bed.status !== "Available") {
+      throw new Error(`Bed is ${bed.status}. Cannot book.`);
+    }
+
+    bed.status = "Occupied";
+    bed.patient = patientId;
+    bed.admission = admissionId;
+    bed.currentBooking = {
+      admittedDate: new Date(admittedDate),
+      expectedDischargeDate: expectedDischargeDate
+        ? new Date(expectedDischargeDate)
+        : null,
+      actualDischargeDate: null,
+      totalDays: 0,
+    };
+
+    await bed.save();
+    await this._updateRoomAvailability(bed.room);
+
+    return await this.getBedById(bedId);
+  }
+
+  async dischargeBed(bedId, dischargeDate) {
+    const bed = await Bed.findById(bedId);
+    if (!bed) {
+      throw new Error("Bed not found");
+    }
+
+    if (bed.status !== "Occupied") {
+      throw new Error("Bed is not occupied");
+    }
+
+    const admitDate = new Date(bed.currentBooking.admittedDate);
+    const disDate = new Date(dischargeDate);
+    const days = Math.ceil((disDate - admitDate) / (1000 * 60 * 60 * 24)) || 1;
+
+    const dailyBaseCharges = bed.dailyBaseCharges;
+    const dailyServicesCharges = bed.includedServicesTotal;
+
+    bed.status = "Available";
+    bed.patient = null;
+    bed.admission = null;
+    bed.currentBooking.actualDischargeDate = disDate;
+    bed.currentBooking.totalDays = days;
+
+    await bed.save();
+    await this._updateRoomAvailability(bed.room);
+
+    const baseCharges = dailyBaseCharges * days;
+    const servicesCharges = dailyServicesCharges * days;
+    const total = baseCharges + servicesCharges;
+
+    return {
+      bed: await this.getBedById(bedId),
+      finalCharges: {
+        admittedDate: admitDate,
+        dischargeDate: disDate,
+        totalDays: days,
+        breakdown: {
+          baseCharges: {
+            perDay: dailyBaseCharges,
+            total: baseCharges,
+          },
+          includedServices: {
+            perDay: dailyServicesCharges,
+            total: servicesCharges,
+          },
+        },
+        grandTotal: total,
+        securityDeposit: bed.pricing.securityDeposit,
+      },
+    };
+  }
+
+  async estimateCharges(bedId) {
+    const bed = await Bed.findById(bedId);
+    if (!bed) {
+      throw new Error("Bed not found");
+    }
+
+    if (bed.status !== "Occupied") {
+      throw new Error("Bed is not occupied");
+    }
+
+    const days = bed.daysOccupied;
+    const dailyRate = bed.totalDailyRate;
+
+    return {
+      bedNumber: bed.bedNumber,
+      admittedDate: bed.currentBooking.admittedDate,
+      currentDate: new Date(),
+      daysOccupied: days,
+      dailyRate: dailyRate,
+      breakdown: {
+        baseCharges: bed.dailyBaseCharges * days,
+        includedServices: bed.includedServicesTotal * days,
+      },
+      estimatedTotal: dailyRate * days,
+      securityDeposit: bed.pricing.securityDeposit,
+    };
   }
 
   async updateBedStatus(id, status) {
@@ -185,59 +347,97 @@ class BedService {
       "Blocked",
       "Reserved",
     ];
+
     if (!validStatuses.includes(status)) {
       throw new Error(
         `Invalid status. Must be one of: ${validStatuses.join(", ")}`
       );
     }
 
-    const bed = await Beds.findByIdAndUpdate(
-      id,
-      { status },
-      { new: true, runValidators: true }
-    );
+    const bed = await Bed.findById(id);
+    if (!bed) {
+      throw new Error("Bed not found");
+    }
 
-    if (!bed) throw new Error("Bed not found");
-    return bed;
+    if (bed.status === "Occupied" && status !== "Occupied") {
+      throw new Error("Cannot change status of occupied bed. Discharge first.");
+    }
+
+    bed.status = status;
+    await bed.save();
+
+    await this._updateRoomAvailability(bed.room);
+
+    return await this.getBedById(id);
   }
 
   async updateBed(id, data) {
-    const bed = await Beds.findByIdAndUpdate(id, data, {
-      new: true,
-      runValidators: true,
+    const bed = await Bed.findById(id);
+    if (!bed) {
+      throw new Error("Bed not found");
+    }
+
+    const allowedUpdates = ["bedNumber", "status", "notes"];
+    const updates = {};
+
+    allowedUpdates.forEach((field) => {
+      if (data[field] !== undefined) {
+        updates[field] = data[field];
+      }
     });
-    if (!bed) throw new Error("Bed not found");
-    return bed;
+
+    Object.assign(bed, updates);
+    await bed.save();
+
+    return await this.getBedById(id);
   }
 
   async deleteBed(id) {
-    const bed = await Beds.findByIdAndUpdate(
-      id,
-      { isActive: false },
-      { new: true }
-    );
-    if (!bed) throw new Error("Bed not found");
+    const bed = await Bed.findById(id);
+    if (!bed) {
+      throw new Error("Bed not found");
+    }
+
+    if (bed.status === "Occupied") {
+      throw new Error("Cannot delete occupied bed");
+    }
+
+    bed.isActive = false;
+    await bed.save();
+
+    await this._updateRoomAvailability(bed.room);
+
     return bed;
   }
 
-  // ✅ BONUS: Get room bed capacity
   async getRoomBedCapacity(roomId) {
-    const room = await Room.findById(roomId).populate("ward");
-    if (!room) throw new Error("Room not found");
+    const room = await Room.findById(roomId)
+      .populate("ward")
+      .populate("roomCategory", "categoryName roomType");
 
-    const existingBeds = await Beds.countDocuments({
+    if (!room) {
+      throw new Error("Room not found");
+    }
+
+    const existingBeds = await Bed.countDocuments({
       room: roomId,
       isActive: true,
     });
 
-    const bedsByStatus = await Beds.aggregate([
-      { $match: { room: room._id, isActive: true } },
+    const bedsByStatus = await Bed.aggregate([
+      {
+        $match: {
+          room: new require("mongoose").Types.ObjectId(roomId),
+          isActive: true,
+        },
+      },
       { $group: { _id: "$status", count: { $sum: 1 } } },
     ]);
 
     return {
       roomName: room.roomName,
       roomCode: room.roomCode,
+      roomType: room.roomCategory?.roomType,
       totalCapacity: room.totalBeds,
       currentBeds: existingBeds,
       availableSlots: room.totalBeds - existingBeds,
@@ -249,24 +449,31 @@ class BedService {
     };
   }
 
-  // ✅ Get ward bed capacity
   async getWardBedCapacity(wardId) {
     const ward = await Ward.findById(wardId);
-    if (!ward) throw new Error("Ward not found");
+    if (!ward) {
+      throw new Error("Ward not found");
+    }
 
-    const existingBeds = await Beds.countDocuments({
+    const existingBeds = await Bed.countDocuments({
       ward: wardId,
       isActive: true,
     });
 
-    const bedsByStatus = await Beds.aggregate([
-      { $match: { ward: ward._id, isActive: true } },
+    const bedsByStatus = await Bed.aggregate([
+      {
+        $match: {
+          ward: new require("mongoose").Types.ObjectId(wardId),
+          isActive: true,
+        },
+      },
       { $group: { _id: "$status", count: { $sum: 1 } } },
     ]);
 
     return {
       wardName: ward.wardName,
       wardCode: ward.wardCode,
+      wardType: ward.wardType,
       totalCapacity: ward.totalBeds,
       currentBeds: existingBeds,
       availableSlots: ward.totalBeds - existingBeds,
@@ -276,6 +483,52 @@ class BedService {
         return acc;
       }, {}),
     };
+  }
+
+  async getAvailableBeds(filters = {}) {
+    const query = {
+      status: "Available",
+      isActive: true,
+    };
+
+    if (filters.wardId) query.ward = filters.wardId;
+    if (filters.roomId) query.room = filters.roomId;
+    if (filters.buildingId) query.building = filters.buildingId;
+    if (filters.floorId) query.floor = filters.floorId;
+
+    return await Bed.find(query)
+      .populate("building", "buildingName")
+      .populate("floor", "floorNumber")
+      .populate("ward", "wardName wardCode")
+      .populate({
+        path: "room",
+        select: "roomNumber roomCode",
+        populate: {
+          path: "roomCategory",
+          select: "categoryName",
+        },
+      })
+      .sort({ bedNumber: 1 });
+  }
+
+  async _updateRoomAvailability(roomId) {
+    if (!roomId) return;
+
+    const occupiedBeds = await Bed.countDocuments({
+      room: roomId,
+      status: "Occupied",
+      isActive: true,
+    });
+
+    const totalBeds = await Bed.countDocuments({
+      room: roomId,
+      isActive: true,
+    });
+
+    await Room.findByIdAndUpdate(roomId, {
+      occupiedBeds: occupiedBeds,
+      availableBeds: totalBeds - occupiedBeds,
+    });
   }
 }
 

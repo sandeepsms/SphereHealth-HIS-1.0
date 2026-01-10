@@ -5,12 +5,12 @@ require("dotenv").config();
 
 const app = express();
 
-const patientRoutes = require("./routes/patientRoutes");
-const doctorRoutes = require("./routes/doctorsRoutes");
-const ServicebillRoutes = require("./routes/ServicebillRoutes");
-const RegistrationOPDRoutes = require("./routes/Opd");
-const BedRoutes = require("./routes/Bedroutes");
-const WardchargesRoutes = require("./routes/WardchargesRoutes");
+// const patientRoutes = require("./routes/patientRoutes");
+// const doctorRoutes = require("./routes/doctorsRoutes");
+// const ServicebillRoutes = require("./routes/ServicebillRoutes");
+// const RegistrationOPDRoutes = require("./routes/Opd");
+// const BedRoutes = require("./routes/Bedroutes");
+// const WardchargesRoutes = require("./routes/WardchargesRoutes");
 
 app.use(cors());
 app.use(express.json());
@@ -22,13 +22,15 @@ app.get("/", (req, res) => {
   res.send("Server is running with MongoDB");
 });
 
-app.use("/api/patients", patientRoutes);
-app.use("/api/doctordetail", doctorRoutes);
-app.use("/api/RegistrationOPD", RegistrationOPDRoutes);
-app.use("/api/Servicebilldata", ServicebillRoutes);
-app.use("/api/beds", BedRoutes);
-app.use("/api/ward-charges", WardchargesRoutes);
-app.use("/api", require("./routes/bedMgmt/index"));
+// app.use("/api/patients", patientRoutes);
+// app.use("/api/doctordetail", doctorRoutes);
+// app.use("/api/RegistrationOPD", RegistrationOPDRoutes);
+// app.use("/api/Servicebilldata", ServicebillRoutes);
+// app.use("/api/beds", BedRoutes);
+// app.use("/api/ward-charges", WardchargesRoutes);
+
+//my work
+app.use("/api", require("./routes/index"));
 
 app.use((err, req, res, next) => {
   console.error(err.stack);

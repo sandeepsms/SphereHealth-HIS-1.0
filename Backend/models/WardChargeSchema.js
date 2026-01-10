@@ -3,16 +3,16 @@ const mongoose = require("mongoose");
 const WardChargesSchema = new mongoose.Schema({
   category: {
     type: [String],
-    required: true
+    required: true,
   },
   price: {
     type: Number,
-    required: true
+    required: true,
   },
   createdAt: {
     type: Date,
-    default: Date.now
-  }
+    default: Date.now,
+  },
 });
 
 module.exports = mongoose.model("WardCharges", WardChargesSchema);

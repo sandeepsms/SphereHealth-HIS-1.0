@@ -1,0 +1,24 @@
+const express = require("express");
+const router = express.Router();
+const billingController = require("../../controllers/billing/billingController");
+
+router.post("/", billingController.createBill);
+router.get("/", billingController.getAllBills);
+router.get("/pending", billingController.getPendingBills);
+router.get("/paid", billingController.getPaidBills);
+router.get("/revenue", billingController.getRevenue);
+router.get("/bill-number/:billNumber", billingController.getBillByNumber);
+router.get("/admission/:admissionId", billingController.getBillByAdmission);
+router.get("/patient/:patientId", billingController.getPatientBills);
+router.get("/:id", billingController.getBillById);
+router.get("/:id/summary", billingController.getBillSummary);
+router.put("/:id", billingController.updateBill);
+router.delete("/:id", billingController.deleteBill);
+router.post("/:id/service", billingController.addService);
+router.post("/:id/investigation", billingController.addInvestigation);
+router.post("/:id/medication", billingController.addMedication);
+router.post("/:id/procedure", billingController.addProcedure);
+router.put("/:id/discount", billingController.applyDiscount);
+router.post("/:id/payment", billingController.addPayment);
+router.put("/:id/cancel", billingController.cancelBill);
+module.exports = router;

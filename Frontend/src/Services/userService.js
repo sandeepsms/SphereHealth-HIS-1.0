@@ -14,7 +14,7 @@ export const addPatient = async (data) => {
 export const Doctordetail = async (data) => {
   try {
     const response = await axios.post(
-      `${API_BASE_URL}/doctordetail/doctoradd`, 
+      `${API_BASE_URL}/doctordetail/doctoradd`,
       data
     );
     return response;
@@ -23,12 +23,11 @@ export const Doctordetail = async (data) => {
     throw error;
   }
 };
-
 
 export const RegistrationOPD = async (data) => {
   try {
     const response = await axios.post(
-      `${API_BASE_URL}/RegistrationOPD/Registraiondata`, 
+      `${API_BASE_URL}/RegistrationOPD/Registraiondata`,
       data
     );
     return response;
@@ -37,9 +36,6 @@ export const RegistrationOPD = async (data) => {
     throw error;
   }
 };
-
-
-
 
 export const getPatients = async (data) => {
   try {
@@ -57,7 +53,7 @@ export const getPatientbyID = async (UHID) => {
       `${API_BASE_URL}/patients/getPatientsbyID/${UHID}`
     );
     console.log(response);
-    
+
     return response.data;
   } catch (error) {
     console.error("Error fetching patient data:", error);

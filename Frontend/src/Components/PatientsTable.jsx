@@ -1,211 +1,21 @@
-// import React, { useEffect, useState } from "react";
-// import { getPatients } from "../Services/userService";
-// import { DataTable } from "primereact/datatable";
-// import { Column } from "primereact/column";
-// import { FilterMatchMode, FilterOperator } from "primereact/api";
-// import { InputText } from "primereact/inputtext";
-// import { IconField } from "primereact/iconfield";
-// import { InputIcon } from "primereact/inputicon";
-// import { Button } from "primereact/button";
-// import "../../css/Patient.css"; // import custom css
-// import { getPatientbyID } from "../Services/userService";
-
-// import { Sidebar } from "primereact/sidebar";
-// import { useNavigate } from "react-router-dom";
-// import ProductActions from "./ProductActions";
-
-// function PatientsTable() {
-//   const [patients, setPatients] = useState([]);
-//   const [filters, setFilters] = useState({
-//     global: { value: null, matchMode: FilterMatchMode.CONTAINS }, //search method all
-//     name: { value: null, matchMode: FilterMatchMode.STARTS_WITH },
-//     age: { value: null, matchMode: FilterMatchMode.STARTS_WITH },
-//     contact: { value: null, matchMode: FilterMatchMode.IN },
-//     birth: { value: null, matchMode: FilterMatchMode.EQUALS },
-//     gender: { value: null, matchMode: FilterMatchMode.EQUALS },
-//     blood: { value: null, matchMode: FilterMatchMode.EQUALS },
-//     martial: { value: null, matchMode: FilterMatchMode.EQUALS },
-//     address: { value: null, matchMode: FilterMatchMode.EQUALS },
-//     email: { value: null, matchMode: FilterMatchMode.EQUALS },
-//   });
-//   const [loading, setLoading] = useState(true);
-//   const [globalFilterValue, setGlobalFilterValue] = useState("");
-//   const [PatientUHID, setpatientUHID] = useState();
-
-//   const navigate = useNavigate();
-
-//   const onGlobalFilterChange = (e) => {
-//     const value = e.target.value;
-//     let _filters = { ...filters };
-
-//     _filters["global"].value = value;
-
-//     setFilters(_filters);
-//     setGlobalFilterValue(value);
-//   };
-//   const getAllPatients = async () => {
-//     try {
-//       const getPatient = await getPatients();
-//       console.log("User Data:", getPatient);
-//       if (getPatient.length > 0) {
-//         setLoading(false);
-//       }
-//       setPatients(getPatient); // ✅ store data in state
-//     } catch (error) {
-//       console.error(error);
-//     }
-//   };
-//   const formatDate = (birth) => {
-//     if (!birth) return "";
-//     return birth.split("T")[0]; // sirf date
-//   };
-//   useEffect(() => {
-//     getAllPatients();
-//   }, []);
-//   const renderHeader = () => {
-//     return (
-//       <div className="flex justify-content-end">
-//         <IconField iconPosition="left">
-//           <InputIcon className="pi pi-search" />
-//           <InputText
-//             value={globalFilterValue}
-//             onChange={onGlobalFilterChange}
-//             placeholder="Keyword Search"
-//           />
-//         </IconField>
-//       </div>
-//     );
-//   };
-//   return (
-//     <div className="p-5">
-//       <div className="p-5">
-//         {/* 🔹 Heading + Search in one row */}
-//         <div className="flex justify-between items-center mb-4">
-//           <h2 className="text-2xl font-bold">Patients List</h2>
-
-//           <span className="p-input-icon-left ">
-//             <i className="pi pi-search relative left-6 items-center " />
-//             <InputText
-//               value={globalFilterValue}
-//               onChange={onGlobalFilterChange}
-//               placeholder="Search patients..."
-//             />
-//           </span>
-//         </div>
-//       </div>
-//       <DataTable
-//         value={patients}
-//         paginator
-//         rows={10}
-//         stripedRows
-//         rowsPerPageOptions={[5, 10, 25, 50]}
-//         currentPageReportTemplate="{first} to {last} of {totalRecords}"
-//         filters={filters}
-//         filterDisplay="row"
-//         loading={loading}
-
-//         globalFilterFields={[
-//           "name",
-//           "age",
-//           "contact",
-//           "birth",
-//           "gender",
-//           "blood",
-//           "martial",
-//           "address",
-//           "email",
-//           "UHID",
-//         ]}
-//         emptyMessage=" Patient are not found."
-//         className="custom-datatable"
-//       >
-//         <Column field="name" filterField="name" header="Name" sortable></Column>
-//         <Column field="age" filterField="age" header="Age" sortable></Column>
-//         <Column
-//           field="contact"
-//           filterField="contact"
-//           header="Contact"
-//           sortable
-//         ></Column>
-//         <Column
-//           field="birth"
-//           filterField="birth"
-//           header="D.O.B"
-//           sortable
-//           body={(rowData) => formatDate(rowData.birth)}
-//         ></Column>
-//         <Column
-//           field="gender"
-//           filterField="gender"
-//           header="Gender"
-//           sortable
-//         ></Column>
-//         <Column
-//           field="blood"
-//           filterField="blood"
-//           header="Blood Group"
-//           sortable
-//         ></Column>
-//         <Column
-//           field="martial"
-//           filterField="martial"
-//           header="Martial Status"
-//           sortable
-//         ></Column>
-//         <Column
-//           field="address"
-//           filterField="address"
-//           header="Address"
-//           sortable
-//         ></Column>
-//         <Column
-//           field="email"
-//           filterField="email"
-//           header="Email"
-//           sortable
-//         ></Column>
-
-//           <Column
-//           field="uhid"
-//           filterField="uhid"
-//           header="UHID"
-//           sortable
-//         ></Column>
-
-//         <Column
-//           header="Actions"
-//           body={(rowData) => {
-//             return (
-//               <Button
-//                 icon="pi pi-pencil"
-//                 className="p-button-rounded p-button-success mr-2"
-//                 onClick={() => navigate(`/doctor/${rowData.UHID}`)}
-//               />
-//             );
-//           }}
-//           style={{ textAlign: "center", width: "8em" }}
-//         />
-//       </DataTable>
-//     </div>
-//   );
-// }
-
-// export default PatientsTable;
-
-import React, { useEffect, useState, useRef } from "react";
-import { getPatients } from "../Services/userService";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import { DataTable } from "primereact/datatable";
 import { Column } from "primereact/column";
 import { FilterMatchMode } from "primereact/api";
 import { InputText } from "primereact/inputtext";
 import { Button } from "primereact/button";
 import { Dialog } from "primereact/dialog";
-import { InputTextarea } from "primereact/inputtextarea";
-import { InputNumber } from "primereact/inputnumber";
-import { classNames } from "primereact/utils";
 import { useNavigate } from "react-router-dom";
 import { Menu } from "primereact/menu";
-import "../../css/Patient.css"; // custom css
+import { Toast } from "primereact/toast";
+import { Card } from "primereact/card";
+import { Badge } from "primereact/badge";
+import { Tag } from "primereact/tag";
+import { ProgressSpinner } from "primereact/progressspinner";
+import patientService from "../Services/patient/patientService";
+import "primereact/resources/themes/lara-light-blue/theme.css";
+import "primereact/resources/primereact.min.css";
+import "primeicons/primeicons.css";
 
 function PatientsTable() {
   const [patients, setPatients] = useState([]);
@@ -214,498 +24,495 @@ function PatientsTable() {
   });
   const [loading, setLoading] = useState(true);
   const [globalFilterValue, setGlobalFilterValue] = useState("");
-
-  // states for dialogs
-  const [editDialogVisible, setEditDialogVisible] = useState(false);
   const [deleteDialogVisible, setDeleteDialogVisible] = useState(false);
-  const [selectedPatient, setSelectedPatient] = useState({});
-  const [submitted, setSubmitted] = useState(false);
-  const [doctoruhid, setDoctoruhid] = useState();
-  const menuRight = useRef(null);
-  const [UHID, setUHID] = useState();
+  const [selectedPatient, setSelectedPatient] = useState(null);
+  const [hoveredRow, setHoveredRow] = useState(null);
 
+  const toast = useRef(null);
+  const menuRefs = useRef({});
   const navigate = useNavigate();
 
-  const GotoRegistration = () => {
-    navigate("/registration"); // ✅ Click pe /about page pe redirect karega
-  };
-
-  const getAllPatients = async () => {
+  // Data fetching
+  const getAllPatients = useCallback(async () => {
     try {
-      const getPatient = await getPatients();
-      if (getPatient.length > 0) {
-        setLoading(false);
-      }
-      setPatients(getPatient);
-    } catch (error) {
-      console.error(error);
-    }
-  };
+      setLoading(true);
+      let patientsData = [];
 
-  const formatDate = (birth) => {
-    if (!birth) return "";
-    return birth.split("T")[0];
+      try {
+        const response = await patientService.getAllPatients();
+        patientsData = response.data || response;
+      } catch (error) {
+        const response = await fetch(
+          "http://localhost:5000/api/patients/getAllPatients"
+        );
+        patientsData = await response.json();
+      }
+
+      const formattedPatients = (
+        Array.isArray(patientsData) ? patientsData : []
+      )
+        .map((patient, index) => ({
+          id: patient._id || patient.UHID || `p-${index}`,
+          UHID:
+            patient.UHID || patient.patientId || patient._id || `UHID-${index}`,
+          name: patient.fullName || patient.name || "N/A",
+          phone: patient.contactNumber || patient.phone || "N/A",
+          email: patient.email || "",
+          gender: patient.gender || "N/A",
+          birth: patient.dateOfBirth || patient.birth || null,
+          department:
+            patient.department?.departmentName || patient.department || "N/A",
+          registrationType: patient.registrationType || "OPD",
+          ...patient,
+        }))
+        .filter((patient) => patient.name !== "N/A");
+
+      setPatients(formattedPatients);
+      if (formattedPatients.length > 0) {
+        toast.current?.show({
+          severity: "success",
+          summary: "Loaded",
+          detail: `${formattedPatients.length} patients`,
+          life: 2000,
+        });
+      }
+    } catch (error) {
+      toast.current?.show({
+        severity: "error",
+        summary: "Failed",
+        detail: "No patients found",
+        life: 3000,
+      });
+      setPatients([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const formatDate = (date) => {
+    if (!date) return <span className="text-400">—</span>;
+    try {
+      const d = new Date(date);
+      const day = String(d.getDate()).padStart(2, "0");
+      const month = String(d.getMonth() + 1).padStart(2, "0");
+      const year = d.getFullYear();
+      return `${day}/${month}/${year}`;
+    } catch {
+      return <span className="text-400">—</span>;
+    }
   };
 
   useEffect(() => {
     getAllPatients();
-  }, []);
+    const interval = setInterval(getAllPatients, 60000);
+    return () => clearInterval(interval);
+  }, [getAllPatients]);
 
-  // global search
   const onGlobalFilterChange = (e) => {
     const value = e.target.value;
-    let _filters = { ...filters };
-    _filters["global"].value = value;
+    const _filters = { ...filters };
+    _filters.global.value = value;
     setFilters(_filters);
     setGlobalFilterValue(value);
   };
 
-  // ---------------------- EDIT ----------------------
   const handleEdit = (row) => {
-    setSelectedPatient({ ...row });
-    setEditDialogVisible(true);
+    navigate("/registration", { state: { patientData: row } });
   };
 
-  const handleSave = () => {
-    setSubmitted(true);
-    if (!selectedPatient.name) return; // validation
-
-    let updated = [...patients];
-    const index = updated.findIndex((p) => p.UHID === selectedPatient.UHID);
-    if (index >= 0) {
-      updated[index] = selectedPatient;
-    }
-    setPatients(updated);
-    setEditDialogVisible(false);
-    setSelectedPatient({});
-    setSubmitted(false);
-  };
-
-  // ---------------------- DELETE ----------------------
   const handleDeleteConfirm = (rowData) => {
     setSelectedPatient(rowData);
     setDeleteDialogVisible(true);
   };
 
-  const handleDelete = () => {
-    setPatients(patients.filter((p) => p.UHID !== selectedPatient.UHID));
-    setDeleteDialogVisible(false);
-    setSelectedPatient({});
+  const handleDelete = async () => {
+    try {
+      await patientService.deletePatient(selectedPatient.id);
+      toast.current?.show({
+        severity: "success",
+        detail: "Deleted successfully",
+      });
+      getAllPatients();
+    } catch (error) {
+      toast.current?.show({ severity: "error", detail: "Delete failed" });
+    } finally {
+      setDeleteDialogVisible(false);
+      setSelectedPatient(null);
+    }
   };
+
+  // ✅ FIXED GENDER TAG WITH #07bc0c GREEN COLOR
+  const genderBody = (row) => {
+    const getGenderColor = (gender) => {
+      return (
+        {
+          Male: {
+            severity: "success",
+            style: { backgroundColor: "#07bc0c", color: "white" },
+          },
+          Female: {
+            severity: "info",
+            style: { backgroundColor: "#07bc0c", color: "white" },
+          },
+          Other: {
+            severity: "secondary",
+            style: { backgroundColor: "#07bc0c", color: "white" },
+          },
+        }[gender] || {
+          severity: "secondary",
+          style: { backgroundColor: "#07bc0c", color: "white" },
+        }
+      );
+    };
+
+    const genderInfo = getGenderColor(row.gender);
+    return (
+      <Tag
+        value={row.gender}
+        rounded
+        severity={genderInfo.severity}
+        style={genderInfo.style}
+      />
+    );
+  };
+
+  // 3-DOT MENU with hover
   const actionBody = (rowData) => {
-    setUHID(rowData.UHID);
-
-    // console.log("dddddddddddddm", datas);
-
-    // const items = [
-    //   {
-    //     // label: "Options",
-    //     items: [
-    //       {
-    //         label: "Edit",
-    //         icon: "pi pi-pencil",
-    //       },
-    //       {
-    //         label: "Delete",
-    //         icon: "pi pi-trash",
-    //       },
-    //       {
-    //         // icon : 'pi pi-user-plus',
-    //         template: (rowData, options) => {
-    //           return (
-    //             <div
-    //               className="p-menuitem-content"
-    //               icon="pi pi-user-plus"
-    //               data-pc-section="content"
-    //               onMouseMove={(e) => options.onMouseMove(e)}
-    //             >
-    //               <a
-    //                 className="p-menuitem-link"
-    //                 onClick={() => navigate(`/doctor/${UHID}`)}
-    //               >
-    //                 <span className="p-menuitem-icon pi pi-user-plus" />
-    //                 <span className="p-menuitem-text">Doctor</span>
-    //               </a>
-    //             </div>
-    //           );
-    //         },
-    //       },
-    //     ],
-    //   },
-    // ];
-
     const items = [
-    {
-      label: "Edit",
-      icon: "pi pi-pencil",
-      command: () => handleEdit(rowData),
-    },
-    {
-      label: "Delete",
-      icon: "pi pi-trash",
-    
-      command: () => handleDeleteConfirm(rowData),
-    },
-    {
-      separator: true, // small divider between action & navigation
-    },
-    {
-      label: "Doctor",
-      icon: "pi pi-user-plus",
-      command: () => navigate(`/doctor/${rowData.UHID}`),
-    },
-    {
-      label: "Bill Print",
-      icon: "pi pi-print",
-      command: () => navigate(`/opd/${rowData.UHID}`),
-    },
-    {
-      label: "Doctor Prescription",
-      icon: "pi pi-file-edit",
-      command: () => navigate(`/doctorpre/${rowData.UHID}`),
-    },
-    {
-      label: "Doctor Prescription Bill",
-      icon: "pi pi-file",
-      command: () => navigate(`/Preceptionbill/${rowData.UHID}`),
-    },
+      {
+        label: "Edit Details",
+        icon: "pi pi-pencil",
+        template: () => (
+          <div className="flex items-center gap-2 p-2 cursor-pointer hover:bg-blue-50 rounded-lg transition-all">
+            <i className="pi pi-pencil text-blue-500"></i>
+            <span>Edit Details</span>
+          </div>
+        ),
+        command: () => handleEdit(rowData),
+      },
+      {
+        label: "Delete Patient",
+        icon: "pi pi-trash",
+        template: () => (
+          <div className="flex items-center gap-2 p-2 cursor-pointer hover:bg-red-50 rounded-lg transition-all text-red-500">
+            <i className="pi pi-trash"></i>
+            <span>Delete Patient</span>
+          </div>
+        ),
+        command: () => handleDeleteConfirm(rowData),
+      },
+      { separator: true },
+      {
+        label: "Doctor Details",
+        icon: "pi pi-user-md",
+        template: () => (
+          <div className="flex items-center gap-2 p-2 cursor-pointer hover:bg-gray-50 rounded-lg transition-all">
+            <i className="pi pi-user-md text-green-500"></i>
+            <span>Doctor Details</span>
+          </div>
+        ),
+        command: () => navigate(`/doctor/${rowData.UHID}`),
+      },
+      {
+        label: "OPD Bill",
+        icon: "pi pi-receipt",
+        template: () => (
+          <div className="flex items-center gap-2 p-2 cursor-pointer hover:bg-gray-50 rounded-lg transition-all">
+            <i className="pi pi-receipt text-orange-500"></i>
+            <span>OPD Bill</span>
+          </div>
+        ),
+        command: () => navigate(`/opd/${rowData.UHID}`),
+      },
+      {
+        label: "Bed Management",
+        icon: "pi pi-bed",
+        template: () => (
+          <div className="flex items-center gap-2 p-2 cursor-pointer hover:bg-gray-50 rounded-lg transition-all">
+            <i className="pi pi-bed text-purple-500"></i>
+            <span>Bed Management</span>
+          </div>
+        ),
+        command: () => navigate(`/BedManagementSingleFile/${rowData.UHID}`),
+      },
+    ];
 
- {
-      label: "Bed Managment",
-      icon: "pi pi-file",
-      command: () => navigate(`/BedManagementSingleFile/${rowData.UHID}`),
-    },
-
-
-  ];
-
-  return (
-    <div className=" align-items-center justify-content-center ">
-      {/* Menu Popup */}
-      <Menu model={items} popup ref={menuRight} id="popup_menu_right" popupAlignment="right"/>
-
-      {/* Three-dot icon button */}
-      <a
-        onClick={(event) => menuRight.current.toggle(event)}
-        aria-controls="popup_menu_right"
-        aria-haspopup
-        style={{ cursor: "pointer" }}
+    return (
+      <div
+        className="flex justify-content-center p-1"
+        onMouseEnter={() => setHoveredRow(rowData.id)}
+        onMouseLeave={() => setHoveredRow(null)}
       >
-        <i className="pi pi-ellipsis-v text-xl"></i>
-      </a>
-    </div>
-  );
-
-    // ---------------------- ACTION BUTTONS ----------------------
-    // 👇 Yeh actionBody function banalo
-
-    // return (
-    //   <div className="">
-    //     {/* Edit Button */}
-    //     <Menu
-    //       model={items}
-    //       popup
-    //       ref={menuRight}
-    //       id="popup_menu_right"
-    //       popupAlignment="right"
-    //     />
-    //     {/* <Button
-    //       label=""
-    //       icon="pi pi-ellipsis-v"
-    //       className="mr-2"
-    //       onClick={(event) => menuRight.current.toggle(event)}
-    //       aria-controls="popup_menu_right"
-    //       aria-haspopup
-    //       severity="primary"
-    //     /> */}
-    //     <a
-    //       onClick={(event) => menuRight.current.toggle(event)}
-    //       aria-controls="popup_menu_right"
-    //       aria-haspopup
-    //     >
-    //       <i className="pi pi-ellipsis-v"></i>
-    //     </a>
-
-    //     {/* <Button
-    //       icon="pi pi-pencil"
-    //       rounded
-    //       outlined
-    //       severity="info"
-    //       onClick={() => handleEdit(rowData)}
-    //     /> */}
-
-    //     {/* Delete Button */}
-    //     {/* <Button
-    //       icon="pi pi-trash"
-    //       rounded
-    //       outlined
-    //       severity="danger"
-    //       onClick={() => handleDeleteConfirm(rowData)}
-    //     /> */}
-
-    //     {/* Doctor Assignment Button */}
-    //     <Button
-    //       label="doctor"
-    //       icon="pi pi-user-plus"
-    //       rounded
-    //       outlined
-    //       severity="success"
-    //       onClick={() => navigate(`/doctor/${rowData.UHID}`)}
-    //     />
-
-    //     <Button
-    //       label="Bill Print"
-    //       icon="pi pi-user-plus"
-    //       rounded
-    //       outlined
-    //       severity="success"
-    //       onClick={() => navigate(`/opd/${rowData.UHID}`)}
-    //     />
-
-    //     <Button
-    //       label="Doctor preception"
-    //       icon="pi pi-user-plus"
-    //       rounded
-    //       outlined
-    //       severity="success"
-    //       onClick={() => navigate(`/doctorpre/${rowData.UHID}`)}
-    //     />
-
-    //     <Button
-    //       label="DoctorPreception bill"
-    //       icon="pi pi-user-plus"
-    //       rounded
-    //       outlined
-    //       severity="success"
-    //       onClick={() => navigate(`/Preceptionbill/${rowData.UHID}`)}
-    //     />
-    //   </div>
-    // );
+        <Button
+          icon="pi pi-ellipsis-v"
+          severity="secondary"
+          text
+          rounded
+          size="small"
+          className="w-2.5rem h-2.5rem transition-all p-button-plain cursor-pointer shadow-none hover:bg-gray-100"
+          style={{
+            backgroundColor:
+              hoveredRow === rowData.id ? "#f3f4f6" : "transparent",
+          }}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!menuRefs.current[rowData.id]) {
+              menuRefs.current[rowData.id] = React.createRef();
+            }
+            menuRefs.current[rowData.id]?.current?.toggle(e);
+          }}
+          aria-haspopup="true"
+          aria-controls={`patient-menu-${rowData.id}`}
+        />
+        <Menu
+          ref={(el) => {
+            if (!menuRefs.current[rowData.id]) {
+              menuRefs.current[rowData.id] = { current: null };
+            }
+            menuRefs.current[rowData.id].current = el;
+          }}
+          id={`patient-menu-${rowData.id}`}
+          model={items}
+          popup
+          style={{
+            minWidth: "240px",
+            borderRadius: "12px",
+            boxShadow: "0 10px 25px rgba(0,0,0,0.1)",
+          }}
+          pt={{
+            root: { className: "border-round-2xl shadow-md bg-white" },
+            menuitem: {
+              root: {
+                className:
+                  "cursor-pointer hover:bg-gray-50 m-1 p-2 border-round-lg transition-all hover:shadow-sm",
+              },
+            },
+          }}
+        />
+      </div>
+    );
   };
 
-  // ---------------------- RENDER ----------------------
+  const emailBody = (rowData) => {
+    return rowData.email || <span className="text-400">—</span>;
+  };
+
   const header = (
-    <div className="d-flex justify-content-between align-items-center">
-      <h5 className=" colortext">Patients List</h5>
-      <div className="topHeaderSeacrh">
-        <span className="p-input-icon-left">
-          <i className="pi pi-search" />
+    <div
+      className="flex flex-wrap lg:flex-row align-items-center justify-content-between gap-3 p-4 shadow-none"
+      style={{
+        background: "#0984e3",
+        color: "white",
+        borderRadius: "12px 12px 0 0",
+      }}
+    >
+      <div className="flex align-items-center gap-3">
+        <i className="pi pi-users text-3xl"></i>
+        <div>
+          <h1 className="m-0 text-2xl font-bold mb-1">Patients Dashboard</h1>
+          <div className="text-sm opacity-90">
+            Total:{" "}
+            <Badge
+              value={patients.length}
+              severity="secondary"
+              className="ml-2"
+            />
+          </div>
+        </div>
+      </div>
+      <div className="flex align-items-center gap-2 flex-wrap">
+        <span
+          className="p-input-icon-left surface-0"
+          style={{ width: "clamp(250px, 30vw, 400px)" }}
+        >
+          <i className="pi pi-search text-500"></i>
           <InputText
             value={globalFilterValue}
             onChange={onGlobalFilterChange}
-            placeholder="Search patients..."
+            placeholder="Search patients by name, UHID, phone..."
+            className="w-full shadow-none"
           />
         </span>
         <Button
-          label="Add Patient"
+          icon="pi pi-refresh"
+          severity="secondary"
+          text
+          rounded
+          tooltip="Refresh"
+          onClick={getAllPatients}
+          loading={loading}
+          size="small"
+          className="shadow-none hover:shadow-sm"
+        />
+        <Button
           icon="pi pi-plus"
-          severity="primary"
-          onClick={GotoRegistration}
-          className="addPatientbutton"
+          label="Add Patient"
+          severity="success"
+          size="small"
+          onClick={() => navigate("/registration")}
+          className="shadow-none hover:shadow-sm"
         />
       </div>
     </div>
   );
 
-  return (
-    <div className="container-fluid">
-      <div className="p-4 mt-6 bg-white rounded">
-        {/* main div */}
-        <div className="tablePagination">
-          <DataTable
-            value={patients}
-            paginator
-            rows={10}
-            stripedRows
-            rowsPerPageOptions={[5, 10, 25, 50]}
-            filters={filters}
-            loading={loading}
-            globalFilterFields={[
-              "name",
-              "age",
-              "contact",
-              "birth",
-              "gender",
-              "email",
-              "UHID",
-            ]}
-            filterDisplay="menu"
-            emptyMessage="No patients found."
-            header={header}
-            className="custom-datatable"
-            tableStyle={{ minWidth: "50rem" }}
-          >
-            <Column field="name" header="Name" sortable />
-            <Column field="age" header="Age" sortable />
-            <Column field="contact" header="Contact" sortable />
-            <Column
-              field="birth"
-              header="D.O.B"
-              sortable
-              body={(rowData) => formatDate(rowData.birth)}
-            />
-            <Column field="gender" header="Gender" sortable />
-            <Column
-              field="email"
-              header="Email"
-              sortable
-              style={{ width: "20%" }}
-            />
-
-            {/* ✅ All Actions in Single Column */}
-            <Column
-              header="Actions"
-              body={actionBody}
-              style={{ width: "18em" }}
-            />
-          </DataTable>
+  if (loading && patients.length === 0) {
+    return (
+      <div className="min-h-screen flex justify-content-center align-items-center p-6 bg-gray-50">
+        <div className="surface-card p-6 text-center shadow-none">
+          <ProgressSpinner style={{ width: "60px", height: "60px" }} />
+          <h3 className="mt-3 font-bold text-xl">Loading Patients...</h3>
+          <p className="text-500 mt-1">Fetching data from server</p>
         </div>
-
-        {/* ----------------- Edit Dialog ----------------- */}
-        <Dialog
-          visible={editDialogVisible}
-          style={{ width: "32rem" }}
-          header="Edit Patient"
-          modal
-          className="p-fluid"
-          onHide={() => setEditDialogVisible(false)}
-          footer={
-            <>
-              <Button
-                label="Cancel"
-                icon="pi pi-times"
-                outlined
-                onClick={() => setEditDialogVisible(false)}
-              />
-              <Button label="Save" icon="pi pi-check" onClick={handleSave} />
-            </>
-          }
-        >
-          <div className="field">
-            <label htmlFor="name" className="font-bold">
-              Name
-            </label>
-            <InputText
-              id="name"
-              value={selectedPatient.name || ""}
-              onChange={(e) =>
-                setSelectedPatient({ ...selectedPatient, name: e.target.value })
-              }
-              required
-              autoFocus
-              className={classNames({
-                "p-invalid": submitted && !selectedPatient.name,
-              })}
-            />
-            {submitted && !selectedPatient.name && (
-              <small className="p-error">Name is required.</small>
-            )}
-          </div>
-
-          <div className="field">
-            <label htmlFor="age" className="font-bold">
-              Age
-            </label>
-            <InputNumber
-              id="age"
-              value={selectedPatient.age || 0}
-              onValueChange={(e) =>
-                setSelectedPatient({ ...selectedPatient, age: e.value })
-              }
-            />
-          </div>
-
-          <div className="field">
-            <label htmlFor="contact" className="font-bold">
-              Contact
-            </label>
-            <InputNumber
-              id="contact"
-              value={selectedPatient.contact || 0}
-              onValueChange={(e) =>
-                setSelectedPatient({ ...selectedPatient, contact: e.value })
-              }
-              useGrouping={false} // 👈disables commas
-            />
-          </div>
-
-          <div className="field">
-            <label htmlFor="email" className="font-bold">
-              Email
-            </label>
-            <InputText
-              id="email"
-              value={selectedPatient.email || ""}
-              onChange={(e) =>
-                setSelectedPatient({
-                  ...selectedPatient,
-                  email: e.target.value,
-                })
-              }
-              required
-              autoFocus
-              className={classNames({
-                "p-invalid": submitted && !selectedPatient.email,
-              })}
-            />
-          </div>
-
-          <div className="field">
-            <label htmlFor="address" className="font-bold">
-              Address
-            </label>
-            <InputTextarea
-              id="address"
-              value={selectedPatient.address || ""}
-              onChange={(e) =>
-                setSelectedPatient({
-                  ...selectedPatient,
-                  address: e.target.value,
-                })
-              }
-              rows={3}
-              cols={20}
-            />
-          </div>
-        </Dialog>
-
-        {/* ----------------- Delete Dialog ----------------- */}
-        <Dialog
-          visible={deleteDialogVisible}
-          style={{ width: "28rem" }}
-          header="Confirm Delete"
-          modal
-          onHide={() => setDeleteDialogVisible(false)}
-          footer={
-            <>
-              <Button
-                label="No"
-                icon="pi pi-times"
-                outlined
-                onClick={() => setDeleteDialogVisible(false)}
-              />
-              <Button
-                label="Yes"
-                icon="pi pi-check"
-                severity="danger"
-                onClick={handleDelete}
-              />
-            </>
-          }
-        >
-          <div className="confirmation-content">
-            <i
-              className="pi pi-exclamation-triangle mr-3"
-              style={{ fontSize: "2rem" }}
-            />
-            {selectedPatient && (
-              <span>
-                Are you sure you want to delete <b>{selectedPatient.name}</b>?
-              </span>
-            )}
-          </div>
-        </Dialog>
       </div>
+    );
+  }
+
+  return (
+    <div
+      className="min-h-screen bg-gray-50 px-4 sm:px-6 lg:px-8"
+      style={{ paddingTop: "1rem", paddingBottom: "2rem" }}
+    >
+      <Toast ref={toast} position="top-right" />
+
+      <Card className="shadow-none border-round-lg p-2 bg-white">
+        {header}
+
+        <DataTable
+          value={patients}
+          paginator
+          rows={10}
+          rowsPerPageOptions={[10, 25, 50]}
+          paginatorTemplate="FirstPageLink PrevPageLink CurrentPageReport NextPageLink LastPageLink RowsPerPageDropdown"
+          currentPageReportTemplate="Showing {first} to {last} of {totalRecords} patients"
+          filters={filters}
+          globalFilterFields={["name", "UHID", "phone", "email", "gender"]}
+          filterDisplay="menu"
+          stripedRows
+          removableSort
+          sortMode="single"
+          loading={loading}
+          dataKey="id"
+          emptyMessage={
+            <div className="py-8 text-center">
+              <i className="pi pi-users text-6xl text-300 mb-4 block" />
+              <h3 className="text-3xl font-bold text-900 mb-3">
+                No Patients Found
+              </h3>
+              <p className="text-xl text-600 mb-6">
+                Start by registering your first patient
+              </p>
+              <Button
+                label="Add First Patient"
+                icon="pi pi-plus"
+                severity="success"
+                size="large"
+                onClick={() => navigate("/registration")}
+                className="shadow-none"
+              />
+            </div>
+          }
+          tableStyle={{ minWidth: "100%" }}
+          className="p-datatable-sm shadow-none"
+        >
+          <Column
+            field="name"
+            header="Patient Name"
+            sortable
+            filter
+            style={{ minWidth: "220px" }}
+          />
+          <Column
+            field="UHID"
+            header="UHID"
+            sortable
+            filter
+            style={{ minWidth: "150px" }}
+          />
+          <Column
+            field="phone"
+            header="Phone"
+            sortable
+            filter
+            style={{ minWidth: "150px" }}
+          />
+          <Column
+            field="birth"
+            header="DOB"
+            body={(row) => formatDate(row.birth)}
+            sortable
+            style={{ minWidth: "140px" }}
+          />
+          {/* ✅ GENDER COLUMN - NOW GREEN #07bc0c FOR ALL */}
+          <Column
+            field="gender"
+            header="Gender"
+            sortable
+            filter
+            body={genderBody}
+            style={{ minWidth: "120px" }}
+          />
+          <Column
+            field="email"
+            header="Email"
+            body={emailBody}
+            sortable
+            filter
+            style={{ minWidth: "240px" }}
+          />
+          <Column
+            header="Actions"
+            body={actionBody}
+            style={{ minWidth: "100px", maxWidth: "100px" }}
+            headerStyle={{ textAlign: "center" }}
+            bodyStyle={{ textAlign: "center" }}
+          />
+        </DataTable>
+      </Card>
+
+      {/* Delete Dialog */}
+      <Dialog
+        visible={deleteDialogVisible}
+        style={{ width: "clamp(400px, 40vw, 500px)" }}
+        header="Confirm Delete"
+        modal
+        onHide={() => {
+          setDeleteDialogVisible(false);
+          setSelectedPatient(null);
+        }}
+        footer={
+          <div className="flex gap-3 justify-content-end">
+            <Button
+              label="Cancel"
+              icon="pi pi-times"
+              severity="secondary"
+              outlined
+              className="shadow-none"
+              onClick={() => setDeleteDialogVisible(false)}
+            />
+            <Button
+              label="Delete Patient"
+              icon="pi pi-trash"
+              severity="danger"
+              className="shadow-none"
+              onClick={handleDelete}
+            />
+          </div>
+        }
+      >
+        <div className="p-4 text-center">
+          <i className="pi pi-exclamation-triangle text-5xl text-orange-500 mb-4 block"></i>
+          <h3 className="font-bold text-xl mb-3">
+            Delete <span className="text-red-500">{selectedPatient?.name}</span>
+            ?
+          </h3>
+          <p className="text-600 mb-4">
+            UHID: <code>{selectedPatient?.UHID}</code>
+          </p>
+          <p className="text-500">This action cannot be undone.</p>
+        </div>
+      </Dialog>
     </div>
   );
 }

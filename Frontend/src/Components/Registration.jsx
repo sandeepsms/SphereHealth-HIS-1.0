@@ -1,759 +1,1067 @@
-import { useFormik } from "formik";
-import React, { useState, useEffect } from "react";
-import { toast } from "react-toastify";
-import { addPatient } from "../Services/userService";
-import { Dropdown } from "primereact/dropdown";
+// PatientRegistration.jsx - Complete Code
+import React, { useState, useEffect, useRef } from "react";
 import { InputText } from "primereact/inputtext";
+import { Dropdown } from "primereact/dropdown";
 import { Calendar } from "primereact/calendar";
 import { InputTextarea } from "primereact/inputtextarea";
+import { Checkbox } from "primereact/checkbox";
 import { RadioButton } from "primereact/radiobutton";
 import { Button } from "primereact/button";
-import { MultiSelect } from "primereact/multiselect";
-import { useNavigate } from "react-router-dom";
-import { TriStateCheckbox } from "primereact/tristatecheckbox";
-import { Checkbox } from "primereact/checkbox";
-import "../App.css";
-import * as Yup from "yup";
-import axios from "axios";
-import { getPatientbyID } from "../Services/userService";
+import { Toast } from "primereact/toast";
+import { ProgressSpinner } from "primereact/progressspinner";
+import { Card } from "primereact/card";
+import { Divider } from "primereact/divider";
+import { useLocation, useNavigate } from "react-router-dom";
+import { departmentService } from "../Services/departmentService";
+import { doctorService } from "../Services/Doctor/doctorService";
+import { tpaService } from "../Services/tpa/tpaService";
+import "primereact/resources/themes/lara-light-blue/theme.css";
+import "primereact/resources/primereact.min.css";
+import "primeicons/primeicons.css";
 
-export default function Registration() {
-  const [loading, setLoading] = useState(false);
-  const [showbutton, setshowbutton] = useState(false);
-  const [Alltestname, setAllTestname] = useState([]);
-  const [tpaname, setTPAname] = useState([]);
-  const [appointmentcheckbox, setAppointmentcheckbox] = useState(null);
-  const [MLCcheckbox, setMLCcheckbox] = useState(null);
-  const [OPDprice, setOPDprice] = useState();
-  // const [isDisabled, setIsDisabled] = useState(true);
-  const [UHID, setUHID] = useState(null);
-  const [age, setAge] = useState("");
-
-  // const labels = Alltestname.map(item => item.label);
-
+export default function PatientRegistration() {
+  const toast = useRef(null);
+  const location = useLocation();
   const navigate = useNavigate();
-  // useEffect(() => {
-  //   UHIDdata();
-  // },[]);
 
-  const UHIDdata = async () => {
-    try {
-      const res = await fetch(
-        `http://localhost:5000/api/patients/getPatientsbyID/${UHID}`
-      );
-      if (!res.ok) {
-        console.error("Network error:", res.status);
-        return;
+  const [formData, setFormData] = useState({
+    registrationType: "OPD",
+    title: "",
+    fullName: "",
+    gender: "",
+    dateOfBirth: null,
+    maritalStatus: "",
+    contactNumber: "",
+    email: "",
+    address: {
+      completeAddress: "",
+      pincode: "",
+      city: "",
+      state: "",
+      district: "",
+    },
+    bloodGroup: "",
+    knownAllergies: "",
+    tpa: null,
+    department: "",
+    doctor: "",
+    isMLC: false,
+    mlcNumber: "",
+    companionName: "",
+    companionRelationship: "",
+    companionContact: "",
+    hasAppointment: false,
+    appointmentDate: null,
+    appointmentTime: null,
+  });
+
+  const [errors, setErrors] = useState({});
+  const [tpaList, setTpaList] = useState([]);
+  const [departments, setDepartments] = useState([]);
+  const [doctors, setDoctors] = useState([]);
+  const [filteredDoctors, setFilteredDoctors] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [pincodeLoading, setPincodeLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [patientId, setPatientId] = useState(null);
+
+  const API_BASE_URL = "http://localhost:5000/api";
+
+  useEffect(() => {
+    const initializeForm = async () => {
+      await loadInitialData();
+
+      // Check if patient data is passed for editing
+      if (location.state?.patientData) {
+        const patientData = location.state.patientData;
+        setIsEditMode(true);
+        setPatientId(patientData.id);
+
+        // Populate form with patient data after departments and doctors are loaded
+        setFormData({
+          registrationType: patientData.registrationType || "OPD",
+          title: patientData.title || "",
+          fullName: patientData.name || patientData.fullName || "",
+          gender: patientData.gender || "",
+          dateOfBirth: patientData.birth ? new Date(patientData.birth) : null,
+          maritalStatus: patientData.maritalStatus || "",
+          contactNumber: patientData.phone || patientData.contactNumber || "",
+          email: patientData.email || "",
+          address: {
+            completeAddress: patientData.address?.completeAddress || "",
+            pincode: patientData.address?.pincode || "",
+            city: patientData.address?.city || "",
+            state: patientData.address?.state || "",
+            district: patientData.address?.district || "",
+          },
+          bloodGroup: patientData.bloodGroup || "",
+          knownAllergies: patientData.knownAllergies || "",
+          tpa: patientData.tpa || null,
+          department:
+            typeof patientData.department === "object"
+              ? patientData.department._id
+              : patientData.department || "",
+          doctor:
+            typeof patientData.doctor === "object"
+              ? patientData.doctor._id
+              : patientData.doctor || "",
+          isMLC: patientData.isMLC || false,
+          mlcNumber: patientData.mlcNumber || "",
+          companionName: patientData.companionName || "",
+          companionRelationship: patientData.companionRelationship || "",
+          companionContact: patientData.companionContact || "",
+          hasAppointment: patientData.hasAppointment || false,
+          appointmentDate: patientData.appointmentDate
+            ? new Date(patientData.appointmentDate)
+            : null,
+          appointmentTime: patientData.appointmentTime
+            ? new Date(patientData.appointmentTime)
+            : null,
+        });
       }
-      const data = await res.json(); // ✅ JSON parse karo
-      console.log("API Datassssssssss:", data);
-      setUHID(data.UHID); // ✅ Ab parsed data set karo
+    };
+
+    initializeForm();
+  }, [location]);
+
+  const loadInitialData = async () => {
+    setInitialLoading(true);
+    try {
+      await Promise.all([fetchTPA(), fetchDepartments(), fetchDoctors()]);
     } catch (error) {
-      console.error("Error fetching UHID:", error);
+      console.error("Error loading initial data:", error);
+      toast.current?.show({
+        severity: "error",
+        summary: "Error",
+        detail: "Failed to load initial data",
+        life: 3000,
+      });
+    } finally {
+      setInitialLoading(false);
     }
   };
 
-  function fetchOPDPrice(selectedId) {
-    setTPAname(selectedId);
-    console.log("id", selectedId);
+  useEffect(() => {
+    if (formData.department) {
+      const filtered = doctors.filter(
+        (doc) => doc.department === formData.department
+      );
+      setFilteredDoctors(filtered);
+      if (
+        formData.doctor &&
+        !filtered.find((d) => d.value === formData.doctor)
+      ) {
+        setFormData((prev) => ({ ...prev, doctor: "" }));
+      }
+    } else {
+      setFilteredDoctors([]);
+    }
+  }, [formData.department, doctors]);
 
-    fetch(
-      `http://localhost:5000/api/Servicebilldata/getOPDPrice?_id=${selectedId}`
-    ).then((res) => {
-      res
-        .json()
-        .then((data) => setOPDprice(data.data.opd_price[0].Totalamount));
-    });
-  }
-
-  // {Alltestname.map((val,index)=>{
-
-  //   if(val[tpaname]===val[tpaname]){
-  // return console.log("lll",val[tpaname].services)
-
-  //   }
-  // console.log("jjjj",Alltestname[index]===);
-
-  // })}
-
-  // const filterdata=Alltestname.filter((val)=>{
-  // if(val.label===Alltestname){
-
-  // }
-
-  // })
-
-  const load = () => {
-    setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
-    }, 2000);
+  const fetchTPA = async () => {
+    try {
+      const data = await tpaService.getActiveTPAs();
+      if (data.success) {
+        const formattedTPA = data.data.map((tpa) => ({
+          label: tpa.tpaName,
+          value: tpa._id,
+        }));
+        setTpaList(formattedTPA);
+      } else {
+        console.error("No TPA data received:", data);
+        setTpaList([]);
+      }
+    } catch (error) {
+      console.error("Error fetching TPA:", error);
+      toast.current?.show({
+        severity: "warn",
+        summary: "Warning",
+        detail: "TPA data unavailable",
+        life: 3000,
+      });
+      setTpaList([]);
+    }
   };
 
-  const genderLists = [
+  const fetchDepartments = async () => {
+    try {
+      const res = await departmentService.getAllDepartments();
+      const deptList = Array.isArray(res) ? res : res.data || [];
+      const formattedDepts = deptList
+        .filter((dept) => dept.isActive)
+        .map((dept) => ({
+          label: dept.departmentName,
+          value: dept._id,
+        }));
+      setDepartments(formattedDepts);
+    } catch (error) {
+      console.error("Error fetching departments:", error);
+      setDepartments([]);
+    }
+  };
+
+  const fetchDoctors = async () => {
+    try {
+      const res = await doctorService.getAllDoctors();
+      const doctorsList = Array.isArray(res) ? res : res.data || [];
+      const allDoctors = doctorsList
+        .filter((doc) => doc.isActive)
+        .map((doc) => ({
+          label: `Dr. ${doc.personalInfo?.firstName || ""} ${
+            doc.personalInfo?.lastName || ""
+          } (${doc.professional?.specialization || ""})`,
+          value: doc._id,
+          department:
+            typeof doc.department === "object"
+              ? doc.department._id
+              : doc.department,
+        }));
+      setDoctors(allDoctors);
+    } catch (error) {
+      console.error("Error fetching doctors:", error);
+      setDoctors([]);
+    }
+  };
+
+  const fetchPincodeData = async (pincode) => {
+    if (pincode.length !== 6) return;
+
+    setPincodeLoading(true);
+    try {
+      const response = await fetch(
+        `https://api.postalpincode.in/pincode/${pincode}`
+      );
+      const data = await response.json();
+
+      if (data[0].Status === "Success" && data[0].PostOffice) {
+        const postOffice = data[0].PostOffice[0];
+        setFormData((prev) => ({
+          ...prev,
+          address: {
+            ...prev.address,
+            city: postOffice.District,
+            state: postOffice.State,
+            district: postOffice.Block || postOffice.District,
+          },
+        }));
+        toast.current?.show({
+          severity: "success",
+          summary: "Success",
+          detail: "Address details fetched successfully",
+          life: 3000,
+        });
+      } else {
+        toast.current?.show({
+          severity: "error",
+          summary: "Error",
+          detail: "Invalid pincode",
+          life: 3000,
+        });
+      }
+    } catch (error) {
+      console.error("Error fetching pincode data:", error);
+      toast.current?.show({
+        severity: "error",
+        summary: "Error",
+        detail: "Failed to fetch address details",
+        life: 3000,
+      });
+    } finally {
+      setPincodeLoading(false);
+    }
+  };
+
+  // Static data arrays
+  const titles = [
+    { label: "Mr.", value: "Mr.", gender: "Male" },
+    { label: "Mrs.", value: "Mrs.", gender: "Female" },
+    { label: "Miss", value: "Miss", gender: "Female" },
+    { label: "Master", value: "Master", gender: "Male" },
+    { label: "Baby", value: "Baby", gender: "" },
+    { label: "Dr.", value: "Dr.", gender: "" },
+  ];
+
+  const genders = [
     { label: "Male", value: "Male" },
     { label: "Female", value: "Female" },
     { label: "Other", value: "Other" },
   ];
 
-  const maritalStatus = [
+  const maritalStatuses = [
     { label: "Single", value: "Single" },
     { label: "Married", value: "Married" },
     { label: "Divorced", value: "Divorced" },
+    { label: "Widowed", value: "Widowed" },
+    { label: "Other", value: "Other" },
   ];
 
-  const bloodGroups = ["A+", "B+", "AB+", "O+", "O-", "AB-", "B-"].map((b) => ({
-    label: b,
-    value: b,
-  }));
+  const bloodGroups = [
+    { label: "A+", value: "A+" },
+    { label: "A-", value: "A-" },
+    { label: "B+", value: "B+" },
+    { label: "B-", value: "B-" },
+    { label: "AB+", value: "AB+" },
+    { label: "AB-", value: "AB-" },
+    { label: "O+", value: "O+" },
+    { label: "O-", value: "O-" },
+    { label: "Not Known", value: "Not Known" },
+  ];
 
-  const relationshipOptions = [
-    { label: "Parent", value: "Parent" },
-    { label: "Guardian", value: "Guardian" },
+  const relationships = [
+    { label: "Father", value: "Father" },
+    { label: "Mother", value: "Mother" },
+    { label: "Spouse", value: "Spouse" },
+    { label: "Son", value: "Son" },
+    { label: "Daughter", value: "Daughter" },
+    { label: "Brother", value: "Brother" },
+    { label: "Sister", value: "Sister" },
     { label: "Friend", value: "Friend" },
-    { label: "Sibling", value: "Sibling" },
+    { label: "Other", value: "Other" },
   ];
 
-  //   useEffect(() => {
-  //   if (Alltestname && Alltestname.length > 0) {
-  //     formik.setFieldValue("TPAname", Alltestname.label); // ✅ सही तरीका
-  //   }
-  // }, [Alltestname]);
-
-  const formik = useFormik({
-    initialValues: {
-      name: "",
-      email: "",
-      age: "",
-      gender: "",
-      contact: "",
-      birth: "",
-      marital: "",
-      city: "",
-      state: "",
-      blood: "",
-      MLC: false,
-      MLCNumber: "", 
-      address: "",
-      allergies: "",
-      companion: "",
-      relationship: "",
-      contactno: "",
-      time: "",
-      date: "",
-      ward: "OPD",
-      OPDpricedata: "",
-      TPAid: "",
-      DoctorName: " Dr.Sandeep",
-      DoctorSpecilist: "General Physician",
-      DoctorDegree: "MBBS",
-    },
-
-    validationSchema: Yup.object({
-      name: Yup.string().required(" Please enter the Full name"),
-      age: Yup.number(),
-      gender: Yup.string().required(" Please select your gender"),
-      email: Yup.string()
-        .email("Invalid email format")
-        .required("Email is required"),
-      contact: Yup.number()
-        .typeError("Invalid number format")
-        .required("Number is required"),
-
-      birth: Yup.date().required(" Select your DOB"),
-
-      blood: Yup.string().required(" Select your blood group"),
-      relationship: Yup.string().required("Select your relationship"),
-      contactno: Yup.number().required("Contact is requird"),
-      time: Yup.string().required("Time is required"),
-
-      date: Yup.date().required(" Date is required"),
-      ward: Yup.string().required("Ward is required"),
-    }),
-
-    onSubmit: async (values, { resetForm }) => {
-      values.OPDpricedata = OPDprice;
-      values.TPAid = tpaname;  
-
-      console.log("------", values);
-
-      await UHIDdata();
-
-      try {
-        setLoading(true);
-        const user = await addPatient(values);
-        // resetForm();
-        // setIsDisabled(false);
-        // setuhid("");
-        if (showbutton) {
-          setshowbutton(false);
-        }
-
-        toast.success(user.data.message);
-      } catch (error) {
-        toast.error("Something went wrong!");
-      } finally {
-        setLoading(false);
-      }
-    },
-  });
-
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const AllTestdata = await axios.get(
-          "http://localhost:5000/api/Servicebilldata/getAllTestNames"
-        );
-
-        console.log("API Response:", AllTestdata.data);
-
-        let testArray = [];
-        // If backend sends {data: [..]}
-        if (Array.isArray(AllTestdata.data)) {
-          testArray = AllTestdata.data;
-        }
-        // If backend sends {data: {tests: [..]}}
-        else if (Array.isArray(AllTestdata.data.data)) {
-          testArray = AllTestdata.data.data;
-        } else {
-          console.error("Unexpected API format:", AllTestdata.data);
-        }
-
-        const formattedData = testArray.map((item) => ({
-          label: item.tpa_name,
-          value: String(item._id),
-          services: item.service,
+  const handleInputChange = (name, value) => {
+    if (name === "title") {
+      const selectedTitle = titles.find((t) => t.value === value);
+      if (selectedTitle && selectedTitle.gender) {
+        setFormData((prev) => ({
+          ...prev,
+          title: value,
+          gender: selectedTitle.gender,
         }));
-
-        setAllTestname(formattedData);
-      } catch (error) {
-        console.error("Error fetching data:", error);
+      } else {
+        setFormData((prev) => ({ ...prev, title: value }));
       }
-    };
+    } else if (name.startsWith("address.")) {
+      const addressField = name.split(".")[1];
+      setFormData((prev) => ({
+        ...prev,
+        address: {
+          ...prev.address,
+          [addressField]: value,
+        },
+      }));
 
-    fetchData();
-  }, []);
-
-  // ✅ Fixed UHID generate
-  // function generateuhid() {
-  //   if (!formik.values.name) {
-  //     toast.error("Please enter name first!");
-  //     return;
-  //   }
-  //   const firstname = formik.values.name.split(" ")[0]; // first word
-  //   const RandomNumber = Math.floor(1000 + Math.random() * 9000);
-  //   const newUHID = firstname.toUpperCase() + RandomNumber;
-  //   setuhid(newUHID);
-
-  //   // ✅ formik value update so backend gets UHID
-  //   formik.setFieldValue("UHID", newUHID);
-
-  //   // disable button
-  //   setshowbutton(true);
-  // }
-
-  // 🧮 Function to calculate age or days
-
-  const calculateAge = (date) => {
-    if (!date) return "";
-    const today = new Date();
-    const birth = new Date(date);
-    if (birth > today) return "Invalid"; // ❌ Prevent future dates
-
-    let years = today.getFullYear() - birth.getFullYear();
-    const m = today.getMonth() - birth.getMonth();
-    if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) {
-      years--;
+      if (addressField === "pincode" && value.length === 6) {
+        fetchPincodeData(value);
+      }
+    } else {
+      setFormData((prev) => ({ ...prev, [name]: value }));
     }
-    return years >= 0 ? years : "";         
+
+    if (errors[name]) {
+      setErrors((prev) => ({ ...prev, [name]: "" }));
+    }
   };
 
-  const handleDateChange = (e) => {
-    const selectedDate = e.value;
-    formik.setFieldValue("birth", selectedDate);
-    const calculatedAge = calculateAge(selectedDate);
-    formik.setFieldValue("age", calculatedAge);
-    setAge(calculatedAge);
+  const validateForm = () => {
+    const newErrors = {};
+
+    if (!formData.title) newErrors.title = "Title is required";
+    if (!formData.fullName.trim()) newErrors.fullName = "Full name is required";
+    if (!formData.gender) newErrors.gender = "Gender is required";
+    if (!formData.dateOfBirth)
+      newErrors.dateOfBirth = "Date of birth is required";
+    if (!formData.contactNumber.trim())
+      newErrors.contactNumber = "Contact number is required";
+    if (!formData.address.pincode.trim())
+      newErrors.pincode = "Pincode is required";
+    if (!formData.bloodGroup) newErrors.bloodGroup = "Blood group is required";
+    if (!formData.knownAllergies.trim())
+      newErrors.knownAllergies = "Known allergies field is required";
+    if (!formData.department) newErrors.department = "Department is required";
+    if (!formData.doctor) newErrors.doctor = "Doctor is required";
+
+    if (formData.hasAppointment) {
+      if (!formData.appointmentDate)
+        newErrors.appointmentDate = "Date is required";
+      if (!formData.appointmentTime)
+        newErrors.appointmentTime = "Time is required";
+    }
+
+    if (formData.companionRelationship && !formData.companionContact.trim()) {
+      newErrors.companionContact = "Contact is required";
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
   };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+
+    if (!validateForm()) {
+      toast.current?.show({
+        severity: "error",
+        summary: "Validation Error",
+        detail: "Please fill all required fields",
+        life: 3000,
+      });
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const cleanedFormData = { ...formData };
+
+      if (!cleanedFormData.tpa) {
+        cleanedFormData.tpa = null;
+      }
+
+      if (!cleanedFormData.email) {
+        cleanedFormData.email = null;
+      }
+
+      if (!cleanedFormData.maritalStatus) {
+        cleanedFormData.maritalStatus = null;
+      }
+
+      if (!cleanedFormData.mlcNumber) {
+        cleanedFormData.mlcNumber = null;
+      }
+
+      let response;
+      if (isEditMode && patientId) {
+        // Update existing patient
+        response = await fetch(`${API_BASE_URL}/patients/${patientId}`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(cleanedFormData),
+        });
+      } else {
+        // Create new patient
+        response = await fetch(`${API_BASE_URL}/patients`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(cleanedFormData),
+        });
+      }
+
+      const data = await response.json();
+
+      if (data.success) {
+        toast.current?.show({
+          severity: "success",
+          summary: "Success",
+          detail:
+            data.message ||
+            (isEditMode
+              ? "Patient updated successfully"
+              : "Patient registered successfully"),
+          life: 3000,
+        });
+        setTimeout(() => {
+          navigate("/allpatient");
+        }, 2000);
+      } else {
+        toast.current?.show({
+          severity: "error",
+          summary: "Error",
+          detail:
+            data.message ||
+            (isEditMode
+              ? "Failed to update patient"
+              : "Failed to register patient"),
+          life: 3000,
+        });
+      }
+    } catch (error) {
+      console.error("Error submitting form:", error);
+      toast.current?.show({
+        severity: "error",
+        summary: "Error",
+        detail: isEditMode
+          ? "Failed to update patient"
+          : "Failed to register patient",
+        life: 3000,
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (initialLoading) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          height: "400px",
+        }}
+      >
+        <ProgressSpinner style={{ width: "50px", height: "50px" }} />
+      </div>
+    );
+  }
 
   return (
-    <div className="container-fluid">
-      <form
-        onSubmit={formik.handleSubmit}
-        className="shadow p-4 mt-6 bg-white rounded"
-      >
-        <div className="row">
-          <div className="col">
-            <h5 className="mb-4 colortext">
-              Spherehealth Patient Registration
-            </h5>
-          </div>
-          <div className="d-flex col  justify-content-end ">
-            <div className=" mx-4 mb-3">
-              <Dropdown
-                name="TPAname"
-                value={tpaname}
-                onChange={(e) => {
-                  const selectedId = e.target.value;
-                  formik.setFieldValue("TPAname", e.target.optionValue);
-                  fetchOPDPrice(selectedId);
-                }}
-                options={Alltestname}
-                optionLabel="label"
-                optionValue="value"
-                placeholder="Select your Test"
-                filter
-                filterDelay={400}
-                className="w-full md:w-20rem"
-                display="chip"
-              />
-            </div>
+    <div className="p-4" style={{ maxWidth: "1400px", margin: "0 auto" }}>
+      <Toast ref={toast} position="top-right" />
 
-            <div className="marginginRight10">
+      {/* Header Card */}
+      <Card
+        className="mb-5"
+        style={{
+          background: "linear-gradient(135deg, #1e88e5 0%, #42a5f5 100%)",
+          color: "white",
+        }}
+      >
+        <div className="flex justify-content-between align-items-center">
+          <div>
+            <h1 className="m-0 text-2xl font-bold">
+              Spherehealth Medical Solutions
+            </h1>
+            <p className="m-0 mt-1 opacity-90">
+              {isEditMode
+                ? "Edit Patient Details"
+                : "Patient Registration Portal"}
+            </p>
+            <small>Dr. Sandeep</small>
+          </div>
+          {isEditMode && (
+            <Button
+              label="Back to Patients"
+              icon="pi pi-arrow-left"
+              severity="secondary"
+              outlined
+              onClick={() => navigate("/allpatient")}
+            />
+          )}
+        </div>
+      </Card>
+
+      <form onSubmit={handleSubmit}>
+        {/* Registration Type */}
+        <Card className="mb-4">
+          <div className="flex align-items-center gap-3 mb-3">
+            <i className="pi pi-user-plus text-primary mr-2"></i>
+            <h3 className="m-0 font-semibold text-xl">Registration Details</h3>
+          </div>
+
+          <div className="flex flex-wrap gap-4">
+            <div className="flex align-items-center gap-2">
               <RadioButton
                 inputId="opd"
-                name="ward"
                 value="OPD"
-                checked={formik.values.ward === "OPD"}
-                onChange={(e) => formik.setFieldValue("ward", e.value)}
+                onChange={(e) => handleInputChange("registrationType", e.value)}
+                checked={formData.registrationType === "OPD"}
               />
-              <label htmlFor="opd" className="ms-2">
+              <label htmlFor="opd" className="font-medium">
                 OPD
               </label>
             </div>
-            <div>
+            <div className="flex align-items-center gap-2">
               <RadioButton
                 inputId="emergency"
-                name="ward"
                 value="Emergency"
-                checked={formik.values.ward === "Emergency"}
-                onBlur={formik.handleBlur}
-                onChange={(e) => formik.setFieldValue("ward", e.value)}
+                onChange={(e) => handleInputChange("registrationType", e.value)}
+                checked={formData.registrationType === "Emergency"}
               />
-              <label htmlFor="emergency" className="ms-2">
+              <label htmlFor="emergency" className="font-medium">
                 Emergency
               </label>
             </div>
-            {formik.errors.ward && (
-              <p className="text-danger">{formik.errors.ward}</p>
-            )}
-          </div>
-        </div>
-        <h5 className="  p-2 rounded btn-custom text-white">
-          Patients Information Details
-        </h5>
-
-        {/* Personal Information */}
-        <div className="row ">
-          <div className="col-lg-4">
-            <label className="form-label ">Full Name</label>{" "}
-            <span className="text-danger">*</span>
-            <InputText
-              name="name"
-              value={formik.values.name}
-              onChange={formik.handleChange}
-              placeholder="Enter Full Name"
-              onBlur={formik.handleBlur}
-              className="w-100"
-            />
-            {formik.errors.name && (
-              <p className="text-danger">{formik.errors.name}</p>
-            )}
-          </div>
-          <div className="col-lg-4">
-            <label className="form-label ">Date of Birth</label>
-            <span className="text-danger">*</span>
-            {/* <Calendar
-              name="birth"
-              value={formik.values.birth}
-              // onChange={(e) => formik.setFieldValue("birth", e.value)}
-              onChange={handleDateChange}
-              dateFormat="dd-mm-yy"
-              showIcon
-              placeholder="Select your DOB"
-              className="w-100 dateinput"
-            /> */}
-            <Calendar
-              name="birth"
-              value={formik.values.birth}
-              onChange={handleDateChange}
-              dateFormat="dd-mm-yy"
-              showIcon
-              placeholder="Select your DOB"
-              className="w-100 dateinput"
-            />
-            {formik.errors.birth && (
-              <p className="text-danger">{formik.errors.birth}</p>
-            )}
-          </div>
-
-          <div className="col-lg-4">
-            <label className="form-label ">Gender</label>
-            <span className="text-danger">*</span>
-            <Dropdown
-              name="gender"
-              value={formik.values.gender}
-              onChange={(e) => formik.setFieldValue("gender", e.value)}
-              options={genderLists}
-              placeholder="Select Gender"
-              onBlur={formik.handleBlur}
-              className="w-100"
-            />
-            {formik.errors.gender && (
-              <p className="text-danger">{formik.errors.gender}</p>
-            )}
-          </div>
-
-          <div className="col-md-4">
-            <label className="form-label ">Contact Number</label>
-            <span className="text-danger">*</span>
-            <InputText
-              name="contact"
-              maxLength={10}
-              keyfilter="int"
-              placeholder="+91 XXXXX XXXXX"
-              value={formik.values.contact}
-              onChange={formik.handleChange}
-              onBlur={formik.handleBlur}
-              className="w-100"
-            />
-            {formik.errors.contact && (
-              <p className="text-danger">{formik.errors.contact}</p>
-            )}
-          </div>
-
-          <div className="col-md-4">
-            <label className="form-label ">Email</label>
-            <span className="text-danger">*</span>
-            <InputText
-              type="email"
-              name="email"
-              value={formik.values.email}
-              onChange={formik.handleChange}
-              placeholder="Enter Email"
-              onBlur={formik.handleBlur}
-              className="w-100"
-            />
-            {formik.errors.email && (
-              <p className="text-danger">{formik.errors.email}</p>
-            )}
-          </div>
-
-          <div className="col-md-4">
-            <label className="form-label ">Age</label>
-            <InputText
-              type="number"
-              name="age"
-              value={age}
-              readOnly
-              //  onChange={formik.handleChange}
-              onBlur={formik.handleBlur}
-              placeholder="Age"
-              className="w-100"
-            />
-            {formik.errors.age && (
-              <p className="text-danger">{formik.errors.age}</p>
-            )}
-          </div>
-
-          <div className="col-md-4">
-            <label className="form-label ">Marital Status</label>
-            <Dropdown
-              name="marital"
-              value={formik.values.marital}
-              options={maritalStatus}
-              onChange={(e) => formik.setFieldValue("marital", e.value)}
-              placeholder="Select"
-              className="w-100"
-            />
-          </div>
-
-          <div className="col-md-4">
-            <label className="form-label ">City</label>
-            <InputText
-              name="city"
-              value={formik.values.city}
-              onChange={formik.handleChange}
-              placeholder="Enter City"
-              className="w-100"
-            />
-          </div>
-
-          <div className="col-md-4">
-            <label className="form-label ">State</label>
-            <InputText
-              name="state"
-              value={formik.values.state}
-              onChange={formik.handleChange}
-              placeholder="Enter State"
-              className="w-100"
-            />
-          </div>
-
-          <div className="col-md-4">
-            <label className="form-label ">Blood Group</label>
-            <span className="text-danger">*</span>
-            <Dropdown
-              name="blood"
-              value={formik.values.blood}
-              options={bloodGroups}
-              onChange={(e) => formik.setFieldValue("blood", e.value)}
-              placeholder="Select"
-              className="w-100"
-              onBlur={formik.handleBlur}
-            />
-            {formik.errors.blood && (
-              <p className="text-danger">{formik.errors.blood}</p>
-            )}
-          </div>
-
-          <div
-            className="col-md-4 "
-            style={{ position: "relative", top: "20px" }}
-          >
-            {/* Date input 50% */}
-
-            <div className="d-flex mt-3 gap-2">
-              <p className="fw-bold">MLC:</p>         
-              {/* <Checkbox
-            inputId="MLC"
-            name="MLC"
-            value="MLC"
-              // value={MLCcheckbox}
-              onChange={(e) => setMLCcheckbox(e.value)}
-              style={{ marginLeft: "10px", textAlign: "center" }}
-            /> */}
-
-              {/* <Checkbox
-                        inputId="pallor"
-                        name="Pallor"
-                        value="Pallors"
-                        checked={formik.values.Pallor === "Pallors"}
-                        onChange={(e) => {
-                          if (e.checked) {
-                            formik.setFieldValue("Pallor", e.value); // ✅ sirf yahi select hoga
-                          } else {
-                            formik.setFieldValue("Pallor", ""); // ✅ unselect karne par empty
-                          }
-                        }}
-                      />{" "} */}
-
-              <Checkbox
-                inputId="MLC"
-                name="MLC"
-                checked={formik.values.MLC === true}
-                onChange={(e) => {
-                  formik.setFieldValue("MLC", e.checked); // ✅ true ya false set karega
-                }}
+            <div className="flex align-items-center gap-2">
+              <RadioButton
+                inputId="ipd"
+                value="IPD"
+                onChange={(e) => handleInputChange("registrationType", e.value)}
+                checked={formData.registrationType === "IPD"}
               />
+              <label htmlFor="ipd" className="font-medium">
+                IPD
+              </label>
+            </div>
+          </div>
+        </Card>
 
-              {formik.values.MLC === true && (
-                <div className="d-flex">
-                  <InputText
-                    name="MLCNumber"
-                    value={formik.values.MLCNumber}
-                    onChange={formik.handleChange}
-                    placeholder="Enter MLC Number"
-                    onBlur={formik.handleBlur}
+        {/* TPA Section */}
+        <Card className="mb-4">
+          <div className="p-field p-col-12">
+            <label className="font-semibold block mb-2">TPA (Optional)</label>
+            <Dropdown
+              value={formData.tpa}
+              options={tpaList}
+              onChange={(e) => handleInputChange("tpa", e.value)}
+              placeholder={
+                tpaList.length ? "Select TPA" : "TPA data loading..."
+              }
+              filter
+              showClear
+              className={errors.tpa ? "p-invalid" : ""}
+              style={{ width: "100%" }}
+            />
+            {tpaList.length === 0 && !initialLoading && (
+              <small className="text-500 block mt-1">No TPA available</small>
+            )}
+          </div>
+        </Card>
+
+        {/* Personal Details */}
+        <Card className="mb-4">
+          <div className="flex align-items-center gap-3 mb-4">
+            <i className="pi pi-user text-primary"></i>
+            <h3 className="m-0 font-semibold text-xl">Personal Details</h3>
+          </div>
+
+          <div className="grid">
+            <div className="field col-12 md:col-4">
+              <label className="font-semibold block mb-2">
+                Title <span className="text-red-500">*</span>
+              </label>
+              <Dropdown
+                value={formData.title}
+                options={titles}
+                onChange={(e) => handleInputChange("title", e.value)}
+                placeholder="Select Title"
+                className={errors.title ? "p-invalid" : ""}
+                style={{ width: "100%" }}
+              />
+              {errors.title && (
+                <small className="p-error block">{errors.title}</small>
+              )}
+            </div>
+
+            <div className="field col-12 md:col-4">
+              <label className="font-semibold block mb-2">
+                Full Name <span className="text-red-500">*</span>
+              </label>
+              <InputText
+                value={formData.fullName}
+                onChange={(e) => handleInputChange("fullName", e.target.value)}
+                placeholder="Enter Full Name"
+                className={errors.fullName ? "p-invalid" : ""}
+              />
+              {errors.fullName && (
+                <small className="p-error block">{errors.fullName}</small>
+              )}
+            </div>
+
+            <div className="field col-12 md:col-4">
+              <label className="font-semibold block mb-2">
+                Gender <span className="text-red-500">*</span>
+              </label>
+              <Dropdown
+                value={formData.gender}
+                options={genders}
+                onChange={(e) => handleInputChange("gender", e.value)}
+                placeholder="Select Gender"
+                className={errors.gender ? "p-invalid" : ""}
+                style={{ width: "100%" }}
+              />
+              {errors.gender && (
+                <small className="p-error block">{errors.gender}</small>
+              )}
+            </div>
+
+            <div className="field col-12 md:col-4">
+              <label className="font-semibold block mb-2">
+                Date of Birth <span className="text-red-500">*</span>
+              </label>
+              <Calendar
+                value={formData.dateOfBirth}
+                onChange={(e) => handleInputChange("dateOfBirth", e.value)}
+                dateFormat="dd/mm/yy"
+                showIcon
+                maxDate={new Date()}
+                placeholder="Select DOB"
+                className={errors.dateOfBirth ? "p-invalid" : ""}
+                style={{ width: "100%" }}
+              />
+              {errors.dateOfBirth && (
+                <small className="p-error block">{errors.dateOfBirth}</small>
+              )}
+            </div>
+
+            <div className="field col-12 md:col-4">
+              <label className="font-semibold block mb-2">
+                Contact Number <span className="text-red-500">*</span>
+              </label>
+              <InputText
+                value={formData.contactNumber}
+                onChange={(e) =>
+                  handleInputChange("contactNumber", e.target.value)
+                }
+                placeholder="Enter Contact Number"
+                maxLength={10}
+                className={errors.contactNumber ? "p-invalid" : ""}
+              />
+              {errors.contactNumber && (
+                <small className="p-error block">{errors.contactNumber}</small>
+              )}
+            </div>
+
+            <div className="field col-12 md:col-4">
+              <label className="font-semibold block mb-2">Marital Status</label>
+              <Dropdown
+                value={formData.maritalStatus}
+                options={maritalStatuses}
+                onChange={(e) => handleInputChange("maritalStatus", e.value)}
+                placeholder="Select Status"
+                style={{ width: "100%" }}
+              />
+            </div>
+
+            <div className="field col-12 md:col-4">
+              <label className="font-semibold block mb-2">Email</label>
+              <InputText
+                value={formData.email}
+                onChange={(e) => handleInputChange("email", e.target.value)}
+                type="email"
+                placeholder="Enter Email"
+              />
+            </div>
+          </div>
+        </Card>
+
+        {/* Address Section */}
+        <Card className="mb-4">
+          <div className="flex align-items-center gap-3 mb-4">
+            <i className="pi pi-map-marker text-primary"></i>
+            <h3 className="m-0 font-semibold text-xl">Address Details</h3>
+          </div>
+
+          <div className="grid">
+            <div className="field col-12 md:col-3">
+              <label className="font-semibold block mb-2">
+                Pincode <span className="text-red-500">*</span>
+              </label>
+              <div className="relative">
+                <InputText
+                  value={formData.address.pincode}
+                  onChange={(e) =>
+                    handleInputChange("address.pincode", e.target.value)
+                  }
+                  placeholder="Enter 6 digit pincode"
+                  maxLength={6}
+                  className={errors.pincode ? "p-invalid" : ""}
+                />
+                {pincodeLoading && (
+                  <ProgressSpinner
                     style={{
-                      marginLeft: "15px",
-                      position: "relative",
-                      bottom: "6px",
-                      width: "300px",
+                      width: "20px",
+                      height: "20px",
+                      position: "absolute",
+                      right: "10px",
+                      top: "50%",
+                      transform: "translateY(-50%)",
                     }}
                   />
-                </div>
+                )}
+              </div>
+              {errors.pincode && (
+                <small className="p-error block">{errors.pincode}</small>
               )}
             </div>
-          </div>
-        </div>
 
-        {/* Address */}
-        <div className="row ">
-          <div className="col-md-6 ">
-            <label className="form-label ">Address</label>
-            <InputTextarea
-              name="address"
-              value={formik.values.address}
-              onChange={formik.handleChange}
-              placeholder="Enter complete address"
-              rows={3}
-              className="w-100"
-            />
-          </div>
-
-          <div className="col-md-6 ">
-            <label className="form-label ">Known Allergies</label>
-            <span className="text-danger">*</span>
-            <InputTextarea
-              name="allergies"
-              value={formik.values.allergies}
-              onChange={formik.handleChange}
-              placeholder="List any known allergies"
-              rows={1}
-              className="w-100 "
-            />
-            {formik.errors.allergies && (
-              <p className="text-danger">{formik.errors.allergies}</p>
-            )}
-          </div>
-        </div>
-
-        {/* Companion Info */}
-        <div className="mt-4">
-          <h5 className="  p-2 rounded btn-custom text-white">
-            Companion Information
-          </h5>
-          <div className="row">
-            <div className="col-md-4">
-              <label className="form-label ">Companion Name</label>
+            <div className="field col-12 md:col-3">
+              <label className="font-semibold block mb-2">City</label>
               <InputText
-                name="companion"
-                value={formik.values.companion}
-                onChange={formik.handleChange}
-                placeholder="Enter Name"
-                className="w-100"
+                value={formData.address.city}
+                readOnly
+                placeholder="Auto-filled"
               />
             </div>
 
-            <div className="col-md-4">
-              <label className="form-label ">Relationship</label>
-              <span className="text-danger">*</span>
+            <div className="field col-12 md:col-3">
+              <label className="font-semibold block mb-2">State</label>
+              <InputText
+                value={formData.address.state}
+                readOnly
+                placeholder="Auto-filled"
+              />
+            </div>
+
+            <div className="field col-12 md:col-3">
+              <label className="font-semibold block mb-2">District</label>
+              <InputText
+                value={formData.address.district}
+                readOnly
+                placeholder="Auto-filled"
+              />
+            </div>
+
+            <div className="field col-12">
+              <label className="font-semibold block mb-2">
+                Complete Address
+              </label>
+              <InputTextarea
+                value={formData.address.completeAddress}
+                onChange={(e) =>
+                  handleInputChange("address.completeAddress", e.target.value)
+                }
+                rows={3}
+                placeholder="Enter complete address details"
+              />
+            </div>
+          </div>
+        </Card>
+
+        {/* Medical Details */}
+        <Card className="mb-4">
+          <div className="flex align-items-center gap-3 mb-4">
+            <i className="pi pi-heart text-primary"></i>
+            <h3 className="m-0 font-semibold text-xl">Medical Details</h3>
+          </div>
+
+          <div className="grid">
+            <div className="field col-12 md:col-6">
+              <label className="font-semibold block mb-2">
+                Department <span className="text-red-500">*</span>
+              </label>
               <Dropdown
-                name="relationship"
-                value={formik.values.relationship}
-                options={relationshipOptions}
-                onChange={(e) => formik.setFieldValue("relationship", e.value)}
-                placeholder="Select"
-                onBlur={formik.handleBlur}
-                className="w-100"
+                value={formData.department}
+                options={departments}
+                onChange={(e) => handleInputChange("department", e.value)}
+                placeholder="Select Department"
+                filter
+                className={errors.department ? "p-invalid" : ""}
+                style={{ width: "100%" }}
               />
-              {formik.errors.relationship && (
-                <p className="text-danger">{formik.errors.relationship}</p>
+              {errors.department && (
+                <small className="p-error block">{errors.department}</small>
               )}
             </div>
 
-            <div className="col-md-4">
-              <label className="form-label ">Contact</label>
-              <span className="text-danger">*</span>
-              <InputText
-                name="contactno"
-                value={formik.values.contactno}
-                onChange={formik.handleChange}
-                maxLength={10}
-                keyfilter="int"
-                placeholder="+91 XXXXX XXXXX"
-                className="w-100"
-                onBlur={formik.handleBlur}
+            <div className="field col-12 md:col-6">
+              <label className="font-semibold block mb-2">
+                Doctor <span className="text-red-500">*</span>
+              </label>
+              <Dropdown
+                value={formData.doctor}
+                options={filteredDoctors}
+                onChange={(e) => handleInputChange("doctor", e.value)}
+                placeholder={
+                  formData.department
+                    ? "Select Doctor"
+                    : "Select Department First"
+                }
+                filter
+                disabled={!formData.department}
+                className={errors.doctor ? "p-invalid" : ""}
+                style={{ width: "100%" }}
               />
-              {formik.errors.contactno && (
-                <p className="text-danger">{formik.errors.contactno}</p>
+              {errors.doctor && (
+                <small className="p-error block">{errors.doctor}</small>
+              )}
+            </div>
+
+            <div className="field col-12 md:col-6">
+              <label className="font-semibold block mb-2">
+                Blood Group <span className="text-red-500">*</span>
+              </label>
+              <Dropdown
+                value={formData.bloodGroup}
+                options={bloodGroups}
+                onChange={(e) => handleInputChange("bloodGroup", e.value)}
+                placeholder="Select Blood Group"
+                className={errors.bloodGroup ? "p-invalid" : ""}
+                style={{ width: "100%" }}
+              />
+              {errors.bloodGroup && (
+                <small className="p-error block">{errors.bloodGroup}</small>
+              )}
+            </div>
+
+            <div className="field col-12 md:col-6">
+              <label className="font-semibold block mb-2">
+                Known Allergies <span className="text-red-500">*</span>
+              </label>
+              <InputTextarea
+                value={formData.knownAllergies}
+                onChange={(e) =>
+                  handleInputChange("knownAllergies", e.target.value)
+                }
+                rows={3}
+                placeholder="List any known allergies (e.g., Penicillin, Dust, etc.)"
+                className={errors.knownAllergies ? "p-invalid" : ""}
+              />
+              {errors.knownAllergies && (
+                <small className="p-error block">{errors.knownAllergies}</small>
               )}
             </div>
           </div>
-        </div>
 
-        {/* Ward & Appointment */}
-        <div className="row ">
-          {/* Date input 50% */}
-
-          <div className="d-flex mt-3">
-            <p className="fw-bold">Appointment:</p>
-            <TriStateCheckbox
-              value={appointmentcheckbox}
-              onChange={(e) => setAppointmentcheckbox(e.value)}
-              style={{ marginLeft: "10px", textAlign: "center" }}
+          {/* MLC Section */}
+          <Divider className="my-4">
+            <span className="p-tag p-tag-info">MLC Case</span>
+          </Divider>
+          <div className="flex align-items-center gap-2 mb-3">
+            <Checkbox
+              inputId="mlc"
+              checked={formData.isMLC}
+              onChange={(e) => handleInputChange("isMLC", e.checked)}
             />
+            <label htmlFor="mlc" className="font-medium">
+              Is this an MLC case?
+            </label>
           </div>
-          {appointmentcheckbox && (
-            <div className="row">
-              <div className="col-md-4 ">
-                <p className="">Date:</p>
+          {formData.isMLC && (
+            <div className="field col-12 md:col-6">
+              <label className="font-semibold block mb-2">MLC Number</label>
+              <InputText
+                value={formData.mlcNumber}
+                onChange={(e) => handleInputChange("mlcNumber", e.target.value)}
+                placeholder="Enter MLC Number"
+              />
+            </div>
+          )}
+        </Card>
+
+        {/* Companion Details */}
+        <Card className="mb-4">
+          <div className="flex align-items-center gap-3 mb-4">
+            <i className="pi pi-users text-primary"></i>
+            <h3 className="m-0 font-semibold text-xl">Companion Details</h3>
+          </div>
+
+          <div className="grid">
+            <div className="field col-12 md:col-4">
+              <label className="font-semibold block mb-2">Companion Name</label>
+              <InputText
+                value={formData.companionName}
+                onChange={(e) =>
+                  handleInputChange("companionName", e.target.value)
+                }
+                placeholder="Enter Companion Name"
+              />
+            </div>
+
+            <div className="field col-12 md:col-4">
+              <label className="font-semibold block mb-2">Relationship</label>
+              <Dropdown
+                value={formData.companionRelationship}
+                options={relationships}
+                onChange={(e) =>
+                  handleInputChange("companionRelationship", e.value)
+                }
+                placeholder="Select Relationship"
+                style={{ width: "100%" }}
+              />
+            </div>
+
+            <div className="field col-12 md:col-4">
+              <label className="font-semibold block mb-2">
+                Contact Number{" "}
+                {formData.companionRelationship && (
+                  <span className="text-red-500">*</span>
+                )}
+              </label>
+              <InputText
+                value={formData.companionContact}
+                onChange={(e) =>
+                  handleInputChange("companionContact", e.target.value)
+                }
+                placeholder="Enter Contact Number"
+                maxLength={10}
+                className={errors.companionContact ? "p-invalid" : ""}
+              />
+              {errors.companionContact && (
+                <small className="p-error block">
+                  {errors.companionContact}
+                </small>
+              )}
+            </div>
+          </div>
+        </Card>
+
+        {/* Appointment Details */}
+        <Card className="mb-5">
+          <div className="flex align-items-center gap-3 mb-4">
+            <i className="pi pi-calendar-plus text-primary"></i>
+            <h3 className="m-0 font-semibold text-xl">Appointment Details</h3>
+          </div>
+
+          <div className="flex align-items-center gap-2 mb-4">
+            <Checkbox
+              inputId="hasAppointment"
+              checked={formData.hasAppointment}
+              onChange={(e) => handleInputChange("hasAppointment", e.checked)}
+            />
+            <label htmlFor="hasAppointment" className="font-medium">
+              Has Prior Appointment
+            </label>
+          </div>
+
+          {formData.hasAppointment && (
+            <div className="grid">
+              <div className="field col-12 md:col-6">
+                <label className="font-semibold block mb-2">
+                  Appointment Date <span className="text-red-500">*</span>
+                </label>
                 <Calendar
-                  name="date"
-                  value={formik.values.date}
-                  onChange={(e) => formik.setFieldValue("date", e.value)}
+                  value={formData.appointmentDate}
+                  onChange={(e) =>
+                    handleInputChange("appointmentDate", e.value)
+                  }
+                  dateFormat="dd/mm/yy"
                   showIcon
                   placeholder="Select Date"
-                  onBlur={formik.handleBlur}
-                  className="w-100 dateinput"
+                  className={errors.appointmentDate ? "p-invalid" : ""}
+                  style={{ width: "100%" }}
                 />
-                {formik.errors.date && (
-                  <p className="text-danger">{formik.errors.date}</p>
+                {errors.appointmentDate && (
+                  <small className="p-error block">
+                    {errors.appointmentDate}
+                  </small>
                 )}
               </div>
 
-              {/* Time input 50% */}
-              <div className="col-md-4 ">
-                <p className="">Time:</p>
+              <div className="field col-12 md:col-6">
+                <label className="font-semibold block mb-2">
+                  Appointment Time <span className="text-red-500">*</span>
+                </label>
                 <Calendar
-                  name="time"
-                  value={formik.values.time}
-                  onChange={(e) => formik.setFieldValue("time", e.value)}
+                  value={formData.appointmentTime}
+                  onChange={(e) =>
+                    handleInputChange("appointmentTime", e.value)
+                  }
                   timeOnly
-                  hourFormat="12"
-                  placeholder="Select Time"
-                  className="w-100 dateinput"
                   showIcon
-                  onBlur={formik.handleBlur}
-                  icon={<i className="pi pi-clock btn-custom text-xl"></i>}
+                  placeholder="Select Time"
+                  className={errors.appointmentTime ? "p-invalid" : ""}
+                  style={{ width: "100%" }}
                 />
-                {formik.errors.time && (
-                  <p className="text-danger">{formik.errors.time}</p>
+                {errors.appointmentTime && (
+                  <small className="p-error block">
+                    {errors.appointmentTime}
+                  </small>
                 )}
               </div>
             </div>
           )}
+        </Card>
 
-          {/* UHID Section */}
-          {/* <div>
-              <div className="card flex flex-row m-3 p-2 gap-3">
-                <h1 className="fs-5">UHID:</h1>
-                {UHID && (
-                  <span className="text-success fw-bold">{UHID}</span>
-                )}
-              </div>
-              <button
-                type="button"
-                className="mx-4 btn-custom text-white p-2 rounded border"
-                onClick={generateuhid}
-                onBlur={formik.handleBlur}
-                disabled={showbutton}
-                style={{
-                  cursor: showbutton ? "not-allowed" : "pointer",
-                  opacity: showbutton ? 0.5 : 1 ,
-                }}
-              >
-                Generate UHID
-              </button>
-               {formik.errors.UHID&& <p className="text-danger">{formik.errors.UHID}</p>}
-            </div> */}
-        </div>
-
-        {/* Submit */}
-        <div className="text-center mt-4">
+        {/* Action Buttons */}
+        <div className="flex gap-3 justify-content-center">
           <Button
-            type="submit"
-            label="Registration"
-            icon="pi pi-check"
-            loading={loading}
-            className="btn-custom px-5 rounded"
+            label="Cancel"
+            icon="pi pi-times"
+            severity="secondary"
+            type="button"
+            onClick={() => navigate("/allpatient")}
+            className="p-button-outlined"
           />
-        </div>
-
-        <div className="d-flex justify-content-end">
-          <button
-            className="px-3 py-2 bg-success rounded border-0 text-white fw-bold"
-            // disabled={isDisabled}
-            onClick={() => navigate(`/opd/${UHID}`)}
-            // style={{
-            //   opacity: isDisabled ? 0.6 : 1, // disabled हो तो dim
-
-            //   cursor: isDisabled ? "not-allowed" : "pointer",
-            // }}
-          >
-            Print
-          </button>
+          <Button
+            label={
+              loading
+                ? "Submitting..."
+                : isEditMode
+                ? "Update Patient"
+                : "Register Patient"
+            }
+            icon={loading ? "pi pi-spin pi-spinner" : "pi pi-check"}
+            severity="success"
+            type="submit"
+            loading={loading}
+            disabled={loading}
+          />
         </div>
       </form>
     </div>
