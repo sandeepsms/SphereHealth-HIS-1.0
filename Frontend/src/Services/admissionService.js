@@ -1,4 +1,4 @@
-const API_BASE = "http://localhost:5000/api";
+import API_ENDPOINTS from "../config/api";
 
 const extractId = (obj) => {
   if (!obj) return null;
@@ -26,7 +26,9 @@ export const admissionService = {
   getAllAdmissions: async (params = {}) => {
     try {
       const queryString = new URLSearchParams(params).toString();
-      const response = await fetch(`${API_BASE}/admissions?${queryString}`);
+      const response = await fetch(
+        `${API_ENDPOINTS.ADMISSIONS}?${queryString}`
+      );
       const data = await response.json();
       const admissions = Array.isArray(data)
         ? data
@@ -40,7 +42,7 @@ export const admissionService = {
 
   getAdmissionById: async (id) => {
     try {
-      const response = await fetch(`${API_BASE}/admissions/${id}`);
+      const response = await fetch(`${API_ENDPOINTS.ADMISSIONS}/${id}`);
       const admission = await response.json();
       return normalizeAdmission(admission);
     } catch (error) {
@@ -52,7 +54,7 @@ export const admissionService = {
   getAdmissionByNumber: async (admissionNumber) => {
     try {
       const response = await fetch(
-        `${API_BASE}/admissions/number/${admissionNumber}`
+        `${API_ENDPOINTS.ADMISSIONS}/number/${admissionNumber}`
       );
       const admission = await response.json();
       return normalizeAdmission(admission);
@@ -64,7 +66,7 @@ export const admissionService = {
 
   createAdmission: async (data) => {
     try {
-      const response = await fetch(`${API_BASE}/admissions`, {
+      const response = await fetch(API_ENDPOINTS.ADMISSIONS, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
@@ -79,7 +81,7 @@ export const admissionService = {
 
   updateAdmission: async (id, data) => {
     try {
-      const response = await fetch(`${API_BASE}/admissions/${id}`, {
+      const response = await fetch(`${API_ENDPOINTS.ADMISSIONS}/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
@@ -94,7 +96,7 @@ export const admissionService = {
 
   deleteAdmission: async (id) => {
     try {
-      const response = await fetch(`${API_BASE}/admissions/${id}`, {
+      const response = await fetch(`${API_ENDPOINTS.ADMISSIONS}/${id}`, {
         method: "DELETE",
       });
       return await response.json();
@@ -106,7 +108,9 @@ export const admissionService = {
 
   searchAdmissions: async (query) => {
     try {
-      const response = await fetch(`${API_BASE}/admissions/search?q=${query}`);
+      const response = await fetch(
+        `${API_ENDPOINTS.ADMISSIONS}/search?q=${query}`
+      );
       const data = await response.json();
       const admissions = Array.isArray(data) ? data : [];
       return admissions.map(normalizeAdmission);
@@ -120,7 +124,7 @@ export const admissionService = {
     try {
       const queryString = new URLSearchParams(filters).toString();
       const response = await fetch(
-        `${API_BASE}/admissions/active?${queryString}`
+        `${API_ENDPOINTS.ADMISSIONS}/active?${queryString}`
       );
       const data = await response.json();
       const admissions = Array.isArray(data) ? data : [];
@@ -133,7 +137,7 @@ export const admissionService = {
 
   getTodayAdmissions: async () => {
     try {
-      const response = await fetch(`${API_BASE}/admissions/today`);
+      const response = await fetch(`${API_ENDPOINTS.ADMISSIONS}/today`);
       const data = await response.json();
       const admissions = Array.isArray(data) ? data : [];
       return admissions.map(normalizeAdmission);
@@ -145,7 +149,9 @@ export const admissionService = {
 
   getTodayDischarges: async () => {
     try {
-      const response = await fetch(`${API_BASE}/admissions/discharges/today`);
+      const response = await fetch(
+        `${API_ENDPOINTS.ADMISSIONS}/discharges/today`
+      );
       const data = await response.json();
       const admissions = Array.isArray(data) ? data : [];
       return admissions.map(normalizeAdmission);
@@ -158,7 +164,7 @@ export const admissionService = {
   getExpectedDischarges: async (date) => {
     try {
       const response = await fetch(
-        `${API_BASE}/admissions/discharges/expected?date=${date}`
+        `${API_ENDPOINTS.ADMISSIONS}/discharges/expected?date=${date}`
       );
       const data = await response.json();
       const admissions = Array.isArray(data) ? data : [];
@@ -171,7 +177,7 @@ export const admissionService = {
 
   getAdmissionStatistics: async (startDate, endDate) => {
     try {
-      let url = `${API_BASE}/admissions/statistics`;
+      let url = `${API_ENDPOINTS.ADMISSIONS}/statistics`;
       if (startDate && endDate) {
         url += `?startDate=${startDate}&endDate=${endDate}`;
       }
@@ -185,7 +191,9 @@ export const admissionService = {
 
   getDepartmentWiseCount: async () => {
     try {
-      const response = await fetch(`${API_BASE}/admissions/departments/count`);
+      const response = await fetch(
+        `${API_ENDPOINTS.ADMISSIONS}/departments/count`
+      );
       return await response.json();
     } catch (error) {
       console.error("Error:", error);
@@ -196,7 +204,7 @@ export const admissionService = {
   getPatientAdmissionHistory: async (patientId) => {
     try {
       const response = await fetch(
-        `${API_BASE}/admissions/patient/${patientId}/history`
+        `${API_ENDPOINTS.ADMISSIONS}/patient/${patientId}/history`
       );
       const data = await response.json();
       const admissions = Array.isArray(data) ? data : [];
@@ -209,11 +217,14 @@ export const admissionService = {
 
   transferBed: async (id, data) => {
     try {
-      const response = await fetch(`${API_BASE}/admissions/${id}/transfer`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
+      const response = await fetch(
+        `${API_ENDPOINTS.ADMISSIONS}/${id}/transfer`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        }
+      );
       const admission = await response.json();
       return normalizeAdmission(admission);
     } catch (error) {
@@ -224,11 +235,14 @@ export const admissionService = {
 
   dischargePatient: async (id, data) => {
     try {
-      const response = await fetch(`${API_BASE}/admissions/${id}/discharge`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
+      const response = await fetch(
+        `${API_ENDPOINTS.ADMISSIONS}/${id}/discharge`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        }
+      );
       const admission = await response.json();
       return normalizeAdmission(admission);
     } catch (error) {
@@ -239,7 +253,7 @@ export const admissionService = {
 
   cancelAdmission: async (id, reason) => {
     try {
-      const response = await fetch(`${API_BASE}/admissions/${id}/cancel`, {
+      const response = await fetch(`${API_ENDPOINTS.ADMISSIONS}/${id}/cancel`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reason }),

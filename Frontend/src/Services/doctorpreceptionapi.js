@@ -7,7 +7,7 @@ export const getdoctorprecetionbyID = async (UHID) => {
       `${API_BASE_URL}/RegistrationOPD/getPreceptionreport/${UHID}`
     );
     console.log(response);
-    
+
     return response.data;
   } catch (error) {
     console.error("Error fetching patient data:", error);

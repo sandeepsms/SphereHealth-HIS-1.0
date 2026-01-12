@@ -1,4 +1,4 @@
-const API_BASE = "http://localhost:5000/api";
+import API_ENDPOINTS from "../config/api";
 
 const extractId = (obj) => {
   if (!obj) return null;
@@ -23,7 +23,7 @@ const normalizeRoom = (room) => {
 export const roomService = {
   getAllRooms: async () => {
     try {
-      const response = await fetch(`${API_BASE}/rooms`);
+      const response = await fetch(API_ENDPOINTS.ROOMS);
       const data = await response.json();
       const rooms = Array.isArray(data) ? data : data.data || data.rooms || [];
       return rooms.map(normalizeRoom);
@@ -35,7 +35,7 @@ export const roomService = {
 
   getRoomById: async (id) => {
     try {
-      const response = await fetch(`${API_BASE}/rooms/${id}`);
+      const response = await fetch(`${API_ENDPOINTS.ROOMS}/${id}`);
       const room = await response.json();
       return normalizeRoom(room);
     } catch (error) {
@@ -46,7 +46,7 @@ export const roomService = {
 
   getRoomDetails: async (id) => {
     try {
-      const response = await fetch(`${API_BASE}/rooms/details/${id}`);
+      const response = await fetch(`${API_ENDPOINTS.ROOMS}/details/${id}`);
       const room = await response.json();
       return normalizeRoom(room);
     } catch (error) {
@@ -57,7 +57,7 @@ export const roomService = {
 
   createRoom: async (data) => {
     try {
-      const response = await fetch(`${API_BASE}/rooms`, {
+      const response = await fetch(API_ENDPOINTS.ROOMS, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
@@ -72,7 +72,7 @@ export const roomService = {
 
   updateRoom: async (id, data) => {
     try {
-      const response = await fetch(`${API_BASE}/rooms/${id}`, {
+      const response = await fetch(`${API_ENDPOINTS.ROOMS}/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
@@ -87,7 +87,7 @@ export const roomService = {
 
   deleteRoom: async (id) => {
     try {
-      const response = await fetch(`${API_BASE}/rooms/${id}`, {
+      const response = await fetch(`${API_ENDPOINTS.ROOMS}/${id}`, {
         method: "DELETE",
       });
       return await response.json();
@@ -99,7 +99,7 @@ export const roomService = {
 
   getRoomsWithLowAvailability: async () => {
     try {
-      const response = await fetch(`${API_BASE}/rooms/availability/low`);
+      const response = await fetch(`${API_ENDPOINTS.ROOMS}/availability/low`);
       const data = await response.json();
       const rooms = Array.isArray(data) ? data : [];
       return rooms.map(normalizeRoom);
@@ -111,7 +111,7 @@ export const roomService = {
 
   getFullyOccupiedRooms: async () => {
     try {
-      const response = await fetch(`${API_BASE}/rooms/availability/full`);
+      const response = await fetch(`${API_ENDPOINTS.ROOMS}/availability/full`);
       const data = await response.json();
       const rooms = Array.isArray(data) ? data : [];
       return rooms.map(normalizeRoom);
@@ -123,7 +123,9 @@ export const roomService = {
 
   getRoomsByCategory: async (categoryId) => {
     try {
-      const response = await fetch(`${API_BASE}/rooms/category/${categoryId}`);
+      const response = await fetch(
+        `${API_ENDPOINTS.ROOMS}/category/${categoryId}`
+      );
       const data = await response.json();
       const rooms = Array.isArray(data) ? data : [];
       return rooms.map(normalizeRoom);
@@ -136,7 +138,7 @@ export const roomService = {
   getAvailableRoomsByCategory: async (categoryId) => {
     try {
       const response = await fetch(
-        `${API_BASE}/rooms/category/${categoryId}/available`
+        `${API_ENDPOINTS.ROOMS}/category/${categoryId}/available`
       );
       const data = await response.json();
       const rooms = Array.isArray(data) ? data : [];
@@ -150,7 +152,7 @@ export const roomService = {
   getRoomStatsByCategory: async (categoryId) => {
     try {
       const response = await fetch(
-        `${API_BASE}/rooms/category/${categoryId}/stats`
+        `${API_ENDPOINTS.ROOMS}/category/${categoryId}/stats`
       );
       return await response.json();
     } catch (error) {
@@ -161,7 +163,7 @@ export const roomService = {
 
   updateRoomServices: async (id, services) => {
     try {
-      const response = await fetch(`${API_BASE}/rooms/${id}/services`, {
+      const response = await fetch(`${API_ENDPOINTS.ROOMS}/${id}/services`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ services }),
@@ -176,7 +178,7 @@ export const roomService = {
 
   updateBedOccupancy: async (id, occupancy) => {
     try {
-      const response = await fetch(`${API_BASE}/rooms/${id}/occupancy`, {
+      const response = await fetch(`${API_ENDPOINTS.ROOMS}/${id}/occupancy`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(occupancy),

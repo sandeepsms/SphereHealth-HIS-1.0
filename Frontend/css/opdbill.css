@@ -7,7 +7,7 @@
 
 .opd-bill-container body {
   background-color: #f0f5fa;
-  padding: 20px;
+  padding: 5px;
   color: #333;
 }
 
@@ -53,7 +53,7 @@
 
 .opd-bill-container .section-title {
   font-weight: bold;
- color: white;
+  color: white;
   padding: 8px 12px;
   border-left: 4px solid #2c7db1;
   margin-bottom: 12px;
@@ -176,6 +176,6 @@
 }
 
 .container {
- justify-items:normal;
-    line-height: normal;
+  justify-items: normal;
+  line-height: normal;
 }

@@ -1,10 +1,9 @@
-// services/tpaService.js (React)
 import axios from "axios";
+import { API_ENDPOINTS } from "../../config/api.js";
 
-const API_URL = "http://localhost:5000/api/tpa";
+const API_URL = API_ENDPOINTS.TPA;
 
 export const tpaService = {
-  // Get all TPAs
   getAllTPAs: async (filters = {}) => {
     try {
       const response = await axios.get(API_URL, { params: filters });
@@ -15,7 +14,6 @@ export const tpaService = {
     }
   },
 
-  // Get active TPAs (for dropdown)
   getActiveTPAs: async () => {
     try {
       const response = await axios.get(`${API_URL}/active`);
@@ -26,7 +24,6 @@ export const tpaService = {
     }
   },
 
-  // Get TPA by ID
   getTPAById: async (id) => {
     try {
       const response = await axios.get(`${API_URL}/${id}`);
@@ -37,7 +34,6 @@ export const tpaService = {
     }
   },
 
-  // Create TPA
   createTPA: async (data) => {
     try {
       const response = await axios.post(API_URL, data);
@@ -48,7 +44,6 @@ export const tpaService = {
     }
   },
 
-  // Update TPA
   updateTPA: async (id, data) => {
     try {
       const response = await axios.put(`${API_URL}/${id}`, data);
@@ -59,7 +54,6 @@ export const tpaService = {
     }
   },
 
-  // Delete TPA
   deleteTPA: async (id) => {
     try {
       const response = await axios.delete(`${API_URL}/${id}`);
@@ -70,7 +64,6 @@ export const tpaService = {
     }
   },
 
-  // Search TPAs
   searchTPAs: async (searchTerm) => {
     try {
       const response = await axios.get(`${API_URL}/search`, {

@@ -29,7 +29,7 @@ class DoctorController {
         data: doctor,
       });
     } catch (error) {
-      console.error("❌ Error creating doctor:", error);
+      console.error("Error creating doctor:", error);
 
       if (error.code === 11000) {
         return res.status(400).json({
@@ -57,7 +57,6 @@ class DoctorController {
   async getAllDoctors(req, res) {
     try {
       const { page = 1, limit = 10, ...filters } = req.query;
-      console.log("📋 Fetching doctors - Page:", page, "Limit:", limit);
 
       const result = await doctorService.getAllDoctors(
         parseInt(page),
@@ -87,14 +86,11 @@ class DoctorController {
       const doctor = await doctorService.getDoctorById(doctorId);
 
       if (!doctor) {
-        console.log("❌ Doctor not found:", doctorId);
         return res.status(404).json({
           success: false,
           message: "Doctor not found",
         });
       }
-
-      console.log("✅ Doctor found:", doctor.doctorId);
       res.status(200).json({
         success: true,
         data: doctor,
@@ -111,7 +107,6 @@ class DoctorController {
   async updateDoctor(req, res) {
     try {
       const { doctorId } = req.params;
-      console.log("📝 Updating doctor:", doctorId);
 
       const doctor = await doctorService.updateDoctor(doctorId, req.body);
 

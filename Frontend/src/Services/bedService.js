@@ -1,6 +1,7 @@
-const API_BASE = "http://localhost:5000/api";
+import { API_ENDPOINTS } from "../config/api";
 
-// Helper function to extract ObjectId
+const API_BASE = API_ENDPOINTS.BEDS;
+
 const extractId = (obj) => {
   if (!obj) return null;
   if (typeof obj === "string") return obj;
@@ -9,7 +10,6 @@ const extractId = (obj) => {
   return obj;
 };
 
-// Helper to normalize bed data
 const normalizeBed = (bed) => {
   if (!bed) return bed;
   return {
@@ -27,11 +27,9 @@ const normalizeBed = (bed) => {
 export const bedService = {
   getAllBeds: async () => {
     try {
-      const response = await fetch(`${API_BASE}/bedss`);
+      const response = await fetch(API_BASE);
       const data = await response.json();
-      console.log("Raw beds response:", data);
       const beds = Array.isArray(data) ? data : data.data || data.beds || [];
-      console.log("Parsed beds:", beds);
       return beds.map(normalizeBed);
     } catch (error) {
       console.error("Error fetching beds:", error);
@@ -41,7 +39,7 @@ export const bedService = {
 
   getAvailableBeds: async () => {
     try {
-      const response = await fetch(`${API_BASE}/bedss/available`);
+      const response = await fetch(`${API_BASE}/available`);
       const data = await response.json();
       const beds = Array.isArray(data) ? data : data.data || [];
       return beds.map(normalizeBed);
@@ -53,7 +51,7 @@ export const bedService = {
 
   getBedById: async (id) => {
     try {
-      const response = await fetch(`${API_BASE}/bedss/${id}`);
+      const response = await fetch(`${API_BASE}/${id}`);
       const bed = await response.json();
       return normalizeBed(bed);
     } catch (error) {
@@ -64,10 +62,6 @@ export const bedService = {
 
   createBed: async (formData) => {
     try {
-      console.log("=== CREATE BED START ===");
-      console.log("Form data received:", formData);
-
-      // Transform data to match backend API format
       const payload = {
         roomId: formData.room,
         beds: [
@@ -86,85 +80,51 @@ export const bedService = {
         ],
       };
 
-      console.log(
-        "Transformed payload for API:",
-        JSON.stringify(payload, null, 2)
-      );
-
-      const response = await fetch(`${API_BASE}/bedss`, {
+      const response = await fetch(API_BASE, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
 
-      console.log("Response status:", response.status);
-      console.log("Response ok:", response.ok);
-
       if (!response.ok) {
         const errorText = await response.text();
-        console.error("API Error Response:", errorText);
         throw new Error(
           `HTTP error! status: ${response.status}, message: ${errorText}`
         );
       }
 
       const result = await response.json();
-      console.log("Full API response:", JSON.stringify(result, null, 2));
 
-      // Handle different response formats
       if (result.success === true) {
-        console.log("Success response detected");
-
         if (
           result.createdBeds &&
           Array.isArray(result.createdBeds) &&
           result.createdBeds.length > 0
         ) {
-          console.log("Found createdBeds array with beds");
           return normalizeBed(result.createdBeds[0]);
         } else if (result.data) {
-          console.log("Found data object");
           return normalizeBed(result.data);
-        } else {
-          console.log("Success but no beds data found");
-          console.log("Result keys:", Object.keys(result));
         }
       }
 
-      // Try other response formats
       if (result.data) {
-        console.log("Found data in result");
         return normalizeBed(result.data);
       } else if (Array.isArray(result) && result.length > 0) {
-        console.log("Result is array");
         return normalizeBed(result[0]);
       } else if (result._id) {
-        console.log("Result has _id, treating as bed object");
         return normalizeBed(result);
       }
 
-      // If we got here, something unexpected happened
-      console.error("=== UNEXPECTED RESPONSE FORMAT ===");
-      console.error("Result:", result);
-      console.error("Result type:", typeof result);
-      console.error("Result keys:", Object.keys(result));
-      throw new Error(
-        result.message ||
-          result.error ||
-          "Failed to create bed - unexpected response format"
-      );
+      throw new Error(result.message || result.error || "Failed to create bed");
     } catch (error) {
-      console.error("=== CREATE BED ERROR ===");
-      console.error("Error object:", error);
-      console.error("Error message:", error.message);
-      console.error("Error stack:", error.stack);
+      console.error("Error creating bed:", error);
       throw error;
     }
   },
 
   updateBed: async (id, data) => {
     try {
-      const response = await fetch(`${API_BASE}/bedss/${id}`, {
+      const response = await fetch(`${API_BASE}/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
@@ -179,7 +139,7 @@ export const bedService = {
 
   deleteBed: async (id) => {
     try {
-      const response = await fetch(`${API_BASE}/bedss/${id}`, {
+      const response = await fetch(`${API_BASE}/${id}`, {
         method: "DELETE",
       });
       return await response.json();
@@ -191,7 +151,7 @@ export const bedService = {
 
   bookBed: async (id, data) => {
     try {
-      const response = await fetch(`${API_BASE}/bedss/${id}/book`, {
+      const response = await fetch(`${API_BASE}/${id}/book`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
@@ -206,7 +166,7 @@ export const bedService = {
 
   dischargeBed: async (id) => {
     try {
-      const response = await fetch(`${API_BASE}/bedss/${id}/discharge`, {
+      const response = await fetch(`${API_BASE}/${id}/discharge`, {
         method: "POST",
       });
       const bed = await response.json();
@@ -219,7 +179,7 @@ export const bedService = {
 
   updateBedStatus: async (id, status) => {
     try {
-      const response = await fetch(`${API_BASE}/bedss/${id}/status`, {
+      const response = await fetch(`${API_BASE}/${id}/status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
@@ -234,7 +194,7 @@ export const bedService = {
 
   getBedPricing: async (id) => {
     try {
-      const response = await fetch(`${API_BASE}/bedss/${id}/pricing`);
+      const response = await fetch(`${API_BASE}/${id}/pricing`);
       return await response.json();
     } catch (error) {
       console.error("Error:", error);
@@ -244,9 +204,7 @@ export const bedService = {
 
   estimateCharges: async (id, days) => {
     try {
-      const response = await fetch(
-        `${API_BASE}/bedss/${id}/estimate?days=${days}`
-      );
+      const response = await fetch(`${API_BASE}/${id}/estimate?days=${days}`);
       return await response.json();
     } catch (error) {
       console.error("Error:", error);

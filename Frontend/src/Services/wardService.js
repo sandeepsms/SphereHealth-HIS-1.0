@@ -1,4 +1,4 @@
-const API_BASE = "http://localhost:5000/api";
+import API_ENDPOINTS from "../config/api";
 
 const extractId = (obj) => {
   if (!obj) return null;
@@ -23,18 +23,16 @@ export const wardService = {
     try {
       console.log("Fetching all wards with filters:", filters);
 
-      // Build query string
       const queryParams = new URLSearchParams(filters).toString();
       const url = queryParams
-        ? `${API_BASE}/wards?${queryParams}`
-        : `${API_BASE}/wards`;
+        ? `${API_ENDPOINTS.WARDS}?${queryParams}`
+        : API_ENDPOINTS.WARDS;
 
       const response = await fetch(url);
       const result = await response.json();
 
       console.log("Raw API response:", result);
 
-      // Extract wards array from response
       let wards = [];
       if (Array.isArray(result)) {
         wards = result;
@@ -58,12 +56,11 @@ export const wardService = {
     try {
       console.log("Fetching ward by ID:", id);
 
-      const response = await fetch(`${API_BASE}/wards/${id}`);
+      const response = await fetch(`${API_ENDPOINTS.WARDS}/${id}`);
       const result = await response.json();
 
       console.log("Ward by ID response:", result);
 
-      // Extract ward from response
       const ward = result.data || result;
       return normalizeWard(ward);
     } catch (error) {
@@ -76,12 +73,11 @@ export const wardService = {
     try {
       console.log("Fetching ward details:", id);
 
-      const response = await fetch(`${API_BASE}/wards/details/${id}`);
+      const response = await fetch(`${API_ENDPOINTS.WARDS}/details/${id}`);
       const result = await response.json();
 
       console.log("Ward details response:", result);
 
-      // Extract ward details from response
       const details = result.data || result;
       return details;
     } catch (error) {
@@ -94,7 +90,6 @@ export const wardService = {
     try {
       console.log("Creating ward with data:", data);
 
-      // Transform data to match backend expectations
       const payload = {
         buildingId: data.building,
         floorId: data.floor,
@@ -111,7 +106,7 @@ export const wardService = {
 
       console.log("Transformed payload:", payload);
 
-      const response = await fetch(`${API_BASE}/wards`, {
+      const response = await fetch(API_ENDPOINTS.WARDS, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -126,7 +121,6 @@ export const wardService = {
       const result = await response.json();
       console.log("Create ward response:", result);
 
-      // Extract ward from response
       const ward = result.data || result;
       return normalizeWard(ward);
     } catch (error) {
@@ -139,7 +133,6 @@ export const wardService = {
     try {
       console.log("Updating ward:", id, "with data:", data);
 
-      // Transform data to match backend expectations
       const payload = {
         buildingId: data.building,
         floorId: data.floor,
@@ -156,7 +149,7 @@ export const wardService = {
 
       console.log("Transformed payload:", payload);
 
-      const response = await fetch(`${API_BASE}/wards/${id}`, {
+      const response = await fetch(`${API_ENDPOINTS.WARDS}/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -171,7 +164,6 @@ export const wardService = {
       const result = await response.json();
       console.log("Update ward response:", result);
 
-      // Extract ward from response
       const ward = result.data || result;
       return normalizeWard(ward);
     } catch (error) {
@@ -184,7 +176,7 @@ export const wardService = {
     try {
       console.log("Deleting ward:", id);
 
-      const response = await fetch(`${API_BASE}/wards/${id}`, {
+      const response = await fetch(`${API_ENDPOINTS.WARDS}/${id}`, {
         method: "DELETE",
       });
 

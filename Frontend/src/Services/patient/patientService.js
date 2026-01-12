@@ -1,14 +1,13 @@
-// Services/patientService.js (Your service - FIXED)
 import axios from "axios";
+import { API_ENDPOINTS } from "../../config/api.js";
 
-const API_URL = "http://localhost:5000/api";
+const API_URL = API_ENDPOINTS.PATIENTS;
 
 const patientService = {
-  // FIXED: Use correct endpoint from your service
   getAllPatients: async () => {
     try {
-      const response = await axios.get(`${API_URL}/patients`, {
-        params: { limit: 1000, active: true }, // Add sensible defaults
+      const response = await axios.get(API_URL, {
+        params: { limit: 1000, active: true },
       });
       return response.data;
     } catch (error) {
@@ -17,10 +16,9 @@ const patientService = {
     }
   },
 
-  // For your specific route if needed
   getAllPatientsLegacy: async () => {
     try {
-      const response = await axios.get(`${API_URL}/patients/getAllPatients`);
+      const response = await axios.get(`${API_URL}/getAllPatients`);
       return response.data;
     } catch (error) {
       console.error("PatientService.getAllPatientsLegacy error:", error);
@@ -28,14 +26,34 @@ const patientService = {
     }
   },
 
+  getPatientById: async (id) => {
+    try {
+      const response = await axios.get(`${API_URL}/${id}`);
+      return response.data;
+    } catch (error) {
+      console.error("PatientService.getPatientById error:", error);
+      throw error;
+    }
+  },
+
   deletePatient: async (id) => {
-    const response = await axios.delete(`${API_URL}/patients/${id}`);
-    return response.data;
+    try {
+      const response = await axios.delete(`${API_URL}/${id}`);
+      return response.data;
+    } catch (error) {
+      console.error("PatientService.deletePatient error:", error);
+      throw error;
+    }
   },
 
   updatePatient: async (id, data) => {
-    const response = await axios.put(`${API_URL}/patients/${id}`, data);
-    return response.data;
+    try {
+      const response = await axios.put(`${API_URL}/${id}`, data);
+      return response.data;
+    } catch (error) {
+      console.error("PatientService.updatePatient error:", error);
+      throw error;
+    }
   },
 };
 

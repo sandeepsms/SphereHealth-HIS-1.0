@@ -1,4 +1,6 @@
-const API_BASE = "http://localhost:5000/api";
+import API_ENDPOINTS from "../config/api";
+
+const API_BASE = API_ENDPOINTS.BASE;
 
 const extractId = (obj) => {
   if (!obj) return null;
@@ -19,7 +21,7 @@ const normalizeBuilding = (building) => {
 export const buildingService = {
   getAllBuildings: async () => {
     try {
-      const response = await fetch(`${API_BASE}/buildings`);
+      const response = await fetch(API_ENDPOINTS.BUILDINGS);
       const data = await response.json();
       const buildings = Array.isArray(data)
         ? data
@@ -33,7 +35,7 @@ export const buildingService = {
 
   getBuildingById: async (id) => {
     try {
-      const response = await fetch(`${API_BASE}/buildings/${id}`);
+      const response = await fetch(`${API_ENDPOINTS.BUILDINGS}/${id}`);
       const building = await response.json();
       return normalizeBuilding(building);
     } catch (error) {
@@ -44,7 +46,7 @@ export const buildingService = {
 
   getBuildingDetails: async (id) => {
     try {
-      const response = await fetch(`${API_BASE}/buildings/details/${id}`);
+      const response = await fetch(`${API_ENDPOINTS.BUILDINGS}/details/${id}`);
       const building = await response.json();
       return normalizeBuilding(building);
     } catch (error) {
@@ -55,7 +57,7 @@ export const buildingService = {
 
   createBuilding: async (data) => {
     try {
-      const response = await fetch(`${API_BASE}/buildings`, {
+      const response = await fetch(API_ENDPOINTS.BUILDINGS, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
@@ -70,7 +72,7 @@ export const buildingService = {
 
   updateBuilding: async (id, data) => {
     try {
-      const response = await fetch(`${API_BASE}/buildings/${id}`, {
+      const response = await fetch(`${API_ENDPOINTS.BUILDINGS}/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
@@ -85,7 +87,7 @@ export const buildingService = {
 
   deleteBuilding: async (id) => {
     try {
-      const response = await fetch(`${API_BASE}/buildings/${id}`, {
+      const response = await fetch(`${API_ENDPOINTS.BUILDINGS}/${id}`, {
         method: "DELETE",
       });
       return await response.json();

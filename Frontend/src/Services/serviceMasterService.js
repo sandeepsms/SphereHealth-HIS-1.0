@@ -1,4 +1,4 @@
-const API_BASE = "http://localhost:5000/api";
+import API_ENDPOINTS from '../config/api';
 
 const extractId = (obj) => {
   if (!obj) return null;
@@ -19,7 +19,7 @@ const normalizeService = (service) => {
 export const serviceMasterService = {
   getAllServices: async () => {
     try {
-      const response = await fetch(`${API_BASE}/services`);
+      const response = await fetch(API_ENDPOINTS.SERVICES);
       const data = await response.json();
       const services = Array.isArray(data)
         ? data
@@ -33,7 +33,7 @@ export const serviceMasterService = {
 
   getServiceById: async (id) => {
     try {
-      const response = await fetch(`${API_BASE}/services/${id}`);
+      const response = await fetch(`${API_ENDPOINTS.SERVICES}/${id}`);
       const service = await response.json();
       return normalizeService(service);
     } catch (error) {
@@ -44,69 +44,65 @@ export const serviceMasterService = {
 
   getServicesByCategory: async (category) => {
     try {
-      const response = await fetch(`${API_BASE}/services/category/${category}`);
+      const response = await fetch(`${API_ENDPOINTS.SERVICES}/category/${category}`);
       const data = await response.json();
-      const services = Array.isArray(data) ? data : [];
-      return services.map(normalizeService);
-    } catch (error) {
-      console.error("Error:", error);
-      return [];
-    }
-  },
-
-  createService: async (data) => {
-    try {
-      const response = await fetch(`${API_BASE}/services`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      const service = await response.json();
-      return normalizeService(service);
-    } catch (error) {
-      console.error("Error:", error);
-      throw error;
-    }
-  },
-
-  updateService: async (id, data) => {
-    try {
-      const response = await fetch(`${API_BASE}/services/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      const service = await response.json();
-      return normalizeService(service);
-    } catch (error) {
-      console.error("Error:", error);
-      throw error;
-    }
-  },
-
-  deleteService: async (id) => {
-    try {
-      const response = await fetch(`${API_BASE}/services/${id}`, {
-        method: "DELETE",
-      });
-      return await response.json();
-    } catch (error) {
-      console.error("Error:", error);
-      throw error;
-    }
-  },
-
-  seedDefaultServices: async () => {
-    try {
-      const response = await fetch(`${API_BASE}/services/seed`, {
-        method: "POST",
-      });
-      const data = await response.json();
-      const services = Array.isArray(data) ? data : data.data || [];
-      return services.map(normalizeService);
-    } catch (error) {
-      console.error("Error:", error);
-      throw error;
-    }
-  },
+      const services = Array.is(data) ? data : [];
+return services.map(normalizeService);
+} catch (error) {
+console.error("Error:", error);
+return [];
+}
+},
+createService: async (data) => {
+try {
+const response = await fetch(API_ENDPOINTS.SERVICES, {
+method: "POST",
+headers: { "Content-Type": "application/json" },
+body: JSON.stringify(data),
+});
+const service = await response.json();
+return normalizeService(service);
+} catch (error) {
+console.error("Error:", error);
+throw error;
+}
+},
+updateService: async (id, data) => {
+try {
+const response = await fetch(${API_ENDPOINTS.SERVICES}/${id}, {
+method: "PUT",
+headers: { "Content-Type": "application/json" },
+body: JSON.stringify(data),
+});
+const service = await response.json();
+return normalizeService(service);
+} catch (error) {
+console.error("Error:", error);
+throw error;
+}
+},
+deleteService: async (id) => {
+try {
+const response = await fetch(${API_ENDPOINTS.SERVICES}/${id}, {
+method: "DELETE",
+});
+return await response.json();
+} catch (error) {
+console.error("Error:", error);
+throw error;
+}
+},
+seedDefaultServices: async () => {
+try {
+const response = await fetch(${API_ENDPOINTS.SERVICES}/seed, {
+method: "POST",
+});
+const data = await response.json();
+const services = Array.isArray(data) ? data : data.data || [];
+return services.map(normalizeService);
+} catch (error) {
+console.error("Error:", error);
+throw error;
+}
+},
 };
