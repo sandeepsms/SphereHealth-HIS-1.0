@@ -1,6 +1,6 @@
 const Ward = require("../../models/bedMgmt/wardModel");
 const BuildingService = require("./buildingService");
-const FloorService = require("./FloorService");
+const FloorService = require("./floorService");
 const Room = require("../../models/bedMgmt/roomModel");
 const Beds = require("../../models/bedMgmt/bedsModel");
 
