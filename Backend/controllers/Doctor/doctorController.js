@@ -1,8 +1,6 @@
-// Backend: controllers/Doctor/doctorController.js
 const doctorService = require("../../services/Doctor/doctorService");
 
 class DoctorController {
-  // Helper for duplicate errors
   handleDuplicateKeyError(error) {
     if (error.code === 11000) {
       const field = Object.keys(error.keyPattern)[0];

@@ -1,7 +1,3 @@
-// ============================================
-// TPA SERVICE
-// ============================================
-// services/tpa/tpaService.js
 const TPA = require("../../models/tpa/tpaModel");
 
 class TPAService {

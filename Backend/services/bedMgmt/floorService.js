@@ -1,5 +1,5 @@
 const Floor = require("../../models/bedMgmt/floorModel");
-const BuildingService = require("./BuildingService");
+const BuildingService = require("./buildingService");
 const Ward = require("../../models/bedMgmt/wardModel");
 
 class FloorService {

@@ -1,4 +1,4 @@
-const billingService = require("../../services/Billing/BillingService");
+const billingService = require("../../services/Billing/billingService");
 
 class BillingController {
   async createBill(req, res) {
