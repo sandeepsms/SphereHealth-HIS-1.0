@@ -1,4 +1,4 @@
-const Billing = require("../../models/billing/billingModel");
+const Billing = require("../../models/Billing/billingModel");
 const Admission = require("../../models/Patient/admissionModel");
 const Patient = require("../../models/Patient/patientModel");
 

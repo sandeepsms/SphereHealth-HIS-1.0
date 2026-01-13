@@ -12,11 +12,11 @@ const serviceMasterRoutes = require("./bedMgmt/serviceMasterRoutes");
 
 // other modules
 const patientRoutes = require("./Patient/patientRoutes");
-const opdRoutes = require("./patient/OPDRoutes");
+const opdRoutes = require("./Patient/OPDRoutes");
 const doctorRoutes = require("./Doctor/doctorRoutes");
 const emergencyRoutes = require("./Patient/emergencyRoutes");
 const billingRoutes = require("./Billing/billingRoutes");
-const admissionRoutes = require("./patient/admissionRoutes");
+const admissionRoutes = require("./Patient/admissionRoutes");
 const departmentRoutes = require("./Department/department");
 const tpaRoutes = require("./tpa/tpaRoutes");
 

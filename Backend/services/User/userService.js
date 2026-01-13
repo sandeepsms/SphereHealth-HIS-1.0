@@ -1,5 +1,5 @@
-const User = require("../models/userModel");
-const Department = require("../models/departmentModel");
+const User = require("../../models/User/userModel");
+const Department = require("../../models/Department/department");
 
 class UserService {
   async createUser(userData) {

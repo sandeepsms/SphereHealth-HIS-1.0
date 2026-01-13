@@ -1,4 +1,4 @@
-const Patient = require("../../models/patient/patientModel");
+const Patient = require("../../models/Patient/patientModel");
 const Department = require("../../models/Department/department");
 const Doctor = require("../../models/Doctor/doctorModel");
 const TPA = require("../../models/tpa/tpaModel");

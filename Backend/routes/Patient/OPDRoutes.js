@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const opdController = require("../../controllers/patient/opdController");
+const opdController = require("../../controllers/Patient/opdController");
 
 router.post("/", opdController.createOPDVisit);
 router.get("/", opdController.getAllOPDVisits);

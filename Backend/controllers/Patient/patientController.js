@@ -1,4 +1,4 @@
-const patientService = require("../../services/patient/patientService");
+const patientService = require("../../services/Patient/patientService");
 
 exports.createPatient = async (req, res) => {
   try {
