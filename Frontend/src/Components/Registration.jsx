@@ -18,6 +18,7 @@ import { tpaService } from "../Services/tpa/tpaService";
 import "primereact/resources/themes/lara-light-blue/theme.css";
 import "primereact/resources/primereact.min.css";
 import "primeicons/primeicons.css";
+import { API_ENDPOINTS } from "../config/api";
 
 export default function PatientRegistration() {
   const toast = useRef(null);
@@ -65,8 +66,6 @@ export default function PatientRegistration() {
   const [initialLoading, setInitialLoading] = useState(true);
   const [isEditMode, setIsEditMode] = useState(false);
   const [patientId, setPatientId] = useState(null);
-
-  const API_BASE_URL = "http://localhost:5000/api";
 
   useEffect(() => {
     const initializeForm = async () => {
@@ -424,7 +423,7 @@ export default function PatientRegistration() {
       let response;
       if (isEditMode && patientId) {
         // Update existing patient
-        response = await fetch(`${API_BASE_URL}/patients/${patientId}`, {
+        response = await fetch(`${API_ENDPOINTS.PATIENTS}/${patientId}`, {
           method: "PUT",
           headers: {
             "Content-Type": "application/json",
@@ -433,7 +432,8 @@ export default function PatientRegistration() {
         });
       } else {
         // Create new patient
-        response = await fetch(`${API_BASE_URL}/patients`, {
+
+        response = await fetch(API_ENDPOINTS.PATIENTS, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

@@ -12,6 +12,7 @@ import { Card } from "primereact/card";
 import { Badge } from "primereact/badge";
 import { Tag } from "primereact/tag";
 import { ProgressSpinner } from "primereact/progressspinner";
+import { API_ENDPOINTS } from "../config/api";
 import patientService from "../Services/patient/patientService";
 import "primereact/resources/themes/lara-light-blue/theme.css";
 import "primereact/resources/primereact.min.css";
@@ -26,7 +27,6 @@ function PatientsTable() {
   const [globalFilterValue, setGlobalFilterValue] = useState("");
   const [deleteDialogVisible, setDeleteDialogVisible] = useState(false);
   const [selectedPatient, setSelectedPatient] = useState(null);
-  const [hoveredRow, setHoveredRow] = useState(null);
 
   const toast = useRef(null);
   const menuRefs = useRef({});
@@ -43,7 +43,7 @@ function PatientsTable() {
         patientsData = response.data || response;
       } catch (error) {
         const response = await fetch(
-          "http://localhost:5000/api/patients/getAllPatients"
+          `${API_ENDPOINTS.PATIENTS}/getAllPatients`
         );
         patientsData = await response.json();
       }
@@ -141,119 +141,61 @@ function PatientsTable() {
     }
   };
 
-  // ✅ FIXED GENDER TAG WITH #07bc0c GREEN COLOR
   const genderBody = (row) => {
     const getGenderColor = (gender) => {
       return (
         {
-          Male: {
-            severity: "success",
-            style: { backgroundColor: "#07bc0c", color: "white" },
-          },
-          Female: {
-            severity: "info",
-            style: { backgroundColor: "#07bc0c", color: "white" },
-          },
-          Other: {
-            severity: "secondary",
-            style: { backgroundColor: "#07bc0c", color: "white" },
-          },
-        }[gender] || {
-          severity: "secondary",
-          style: { backgroundColor: "#07bc0c", color: "white" },
-        }
+          Male: "info",
+          Female: "danger",
+          Other: "warning",
+        }[gender] || "secondary"
       );
     };
 
-    const genderInfo = getGenderColor(row.gender);
     return (
-      <Tag
-        value={row.gender}
-        rounded
-        severity={genderInfo.severity}
-        style={genderInfo.style}
-      />
+      <Tag value={row.gender} rounded severity={getGenderColor(row.gender)} />
     );
   };
 
-  // 3-DOT MENU with hover
+  // ✅ FIXED: 3-DOT MENU - ONLY CLICK, NO HOVER
   const actionBody = (rowData) => {
     const items = [
       {
         label: "Edit Details",
         icon: "pi pi-pencil",
-        template: () => (
-          <div className="flex items-center gap-2 p-2 cursor-pointer hover:bg-blue-50 rounded-lg transition-all">
-            <i className="pi pi-pencil text-blue-500"></i>
-            <span>Edit Details</span>
-          </div>
-        ),
         command: () => handleEdit(rowData),
       },
       {
         label: "Delete Patient",
         icon: "pi pi-trash",
-        template: () => (
-          <div className="flex items-center gap-2 p-2 cursor-pointer hover:bg-red-50 rounded-lg transition-all text-red-500">
-            <i className="pi pi-trash"></i>
-            <span>Delete Patient</span>
-          </div>
-        ),
         command: () => handleDeleteConfirm(rowData),
       },
       { separator: true },
       {
         label: "Doctor Details",
         icon: "pi pi-user-md",
-        template: () => (
-          <div className="flex items-center gap-2 p-2 cursor-pointer hover:bg-gray-50 rounded-lg transition-all">
-            <i className="pi pi-user-md text-green-500"></i>
-            <span>Doctor Details</span>
-          </div>
-        ),
         command: () => navigate(`/doctor/${rowData.UHID}`),
       },
       {
         label: "OPD Bill",
         icon: "pi pi-receipt",
-        template: () => (
-          <div className="flex items-center gap-2 p-2 cursor-pointer hover:bg-gray-50 rounded-lg transition-all">
-            <i className="pi pi-receipt text-orange-500"></i>
-            <span>OPD Bill</span>
-          </div>
-        ),
         command: () => navigate(`/opd/${rowData.UHID}`),
       },
       {
         label: "Bed Management",
         icon: "pi pi-bed",
-        template: () => (
-          <div className="flex items-center gap-2 p-2 cursor-pointer hover:bg-gray-50 rounded-lg transition-all">
-            <i className="pi pi-bed text-purple-500"></i>
-            <span>Bed Management</span>
-          </div>
-        ),
         command: () => navigate(`/BedManagementSingleFile/${rowData.UHID}`),
       },
     ];
 
     return (
-      <div
-        className="flex justify-content-center p-1"
-        onMouseEnter={() => setHoveredRow(rowData.id)}
-        onMouseLeave={() => setHoveredRow(null)}
-      >
+      <div className="flex justify-content-center">
         <Button
           icon="pi pi-ellipsis-v"
           severity="secondary"
           text
           rounded
           size="small"
-          className="w-2.5rem h-2.5rem transition-all p-button-plain cursor-pointer shadow-none hover:bg-gray-100"
-          style={{
-            backgroundColor:
-              hoveredRow === rowData.id ? "#f3f4f6" : "transparent",
-          }}
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -275,20 +217,6 @@ function PatientsTable() {
           id={`patient-menu-${rowData.id}`}
           model={items}
           popup
-          style={{
-            minWidth: "240px",
-            borderRadius: "12px",
-            boxShadow: "0 10px 25px rgba(0,0,0,0.1)",
-          }}
-          pt={{
-            root: { className: "border-round-2xl shadow-md bg-white" },
-            menuitem: {
-              root: {
-                className:
-                  "cursor-pointer hover:bg-gray-50 m-1 p-2 border-round-lg transition-all hover:shadow-sm",
-              },
-            },
-          }}
         />
       </div>
     );
@@ -300,9 +228,9 @@ function PatientsTable() {
 
   const header = (
     <div
-      className="flex flex-wrap lg:flex-row align-items-center justify-content-between gap-3 p-4 shadow-none"
+      className="flex flex-wrap lg:flex-row align-items-center justify-content-between gap-3 p-4"
       style={{
-        background: "#0984e3",
+        background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
         color: "white",
         borderRadius: "12px 12px 0 0",
       }}
@@ -313,11 +241,7 @@ function PatientsTable() {
           <h1 className="m-0 text-2xl font-bold mb-1">Patients Dashboard</h1>
           <div className="text-sm opacity-90">
             Total:{" "}
-            <Badge
-              value={patients.length}
-              severity="secondary"
-              className="ml-2"
-            />
+            <Badge value={patients.length} severity="info" className="ml-2" />
           </div>
         </div>
       </div>
@@ -330,8 +254,8 @@ function PatientsTable() {
           <InputText
             value={globalFilterValue}
             onChange={onGlobalFilterChange}
-            placeholder="Search patients by name, UHID, phone..."
-            className="w-full shadow-none"
+            placeholder="Search patients..."
+            className="w-full"
           />
         </span>
         <Button
@@ -343,7 +267,6 @@ function PatientsTable() {
           onClick={getAllPatients}
           loading={loading}
           size="small"
-          className="shadow-none hover:shadow-sm"
         />
         <Button
           icon="pi pi-plus"
@@ -351,7 +274,6 @@ function PatientsTable() {
           severity="success"
           size="small"
           onClick={() => navigate("/registration")}
-          className="shadow-none hover:shadow-sm"
         />
       </div>
     </div>
@@ -360,7 +282,7 @@ function PatientsTable() {
   if (loading && patients.length === 0) {
     return (
       <div className="min-h-screen flex justify-content-center align-items-center p-6 bg-gray-50">
-        <div className="surface-card p-6 text-center shadow-none">
+        <div className="surface-card p-6 text-center shadow-2 border-round">
           <ProgressSpinner style={{ width: "60px", height: "60px" }} />
           <h3 className="mt-3 font-bold text-xl">Loading Patients...</h3>
           <p className="text-500 mt-1">Fetching data from server</p>
@@ -376,7 +298,7 @@ function PatientsTable() {
     >
       <Toast ref={toast} position="top-right" />
 
-      <Card className="shadow-none border-round-lg p-2 bg-white">
+      <Card className="shadow-2 border-round-lg p-2 bg-white">
         {header}
 
         <DataTable
@@ -409,12 +331,11 @@ function PatientsTable() {
                 severity="success"
                 size="large"
                 onClick={() => navigate("/registration")}
-                className="shadow-none"
               />
             </div>
           }
           tableStyle={{ minWidth: "100%" }}
-          className="p-datatable-sm shadow-none"
+          className="p-datatable-sm"
         >
           <Column
             field="name"
@@ -444,7 +365,6 @@ function PatientsTable() {
             sortable
             style={{ minWidth: "140px" }}
           />
-          {/* ✅ GENDER COLUMN - NOW GREEN #07bc0c FOR ALL */}
           <Column
             field="gender"
             header="Gender"
@@ -488,14 +408,12 @@ function PatientsTable() {
               icon="pi pi-times"
               severity="secondary"
               outlined
-              className="shadow-none"
               onClick={() => setDeleteDialogVisible(false)}
             />
             <Button
               label="Delete Patient"
               icon="pi pi-trash"
               severity="danger"
-              className="shadow-none"
               onClick={handleDelete}
             />
           </div>
