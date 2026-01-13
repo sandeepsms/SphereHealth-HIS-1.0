@@ -5,7 +5,7 @@ import {
   Route,
   Navigate,
 } from "react-router-dom";
-import "./app.css";
+import "./App.css";
 import Sidebar from "./Components/Sidebar";
 import Registration from "./Components/Registration";
 import Header from "./Components/Header";
