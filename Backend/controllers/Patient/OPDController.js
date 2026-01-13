@@ -1,4 +1,4 @@
-const opdService = require("../../services/Patient/opdService");
+const opdService = require("../../services/Patient/OPDService");
 class OPDController {
   async createOPDVisit(req, res) {
     try {
