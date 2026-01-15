@@ -1,5 +1,6 @@
-const OPD = require("../../models/Patient/OPDModels");
-const patientService = require("./patientService");
+const OPD = require("../../models/patient/OPDModels");
+const patientService = require("../patient/patientService");
+
 
 class OPDService {
   async createOPDVisit(opdData) {

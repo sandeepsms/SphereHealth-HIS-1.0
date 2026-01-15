@@ -14,10 +14,12 @@ import "bootstrap/dist/css/bootstrap.css";
 import Doctor from "./Components/Doctor";
 import Nurse from "./Components/Nurse";
 import Servicebtn from "./Components/Servicebtn";
-import Opdprint from "./Components/Opdprint";
-import Doctorpre from "./Components/Doctorpreception";
+// import OPDPrint from "./Components/Opdprint";
+import OPDPrint from "./pages/OPD/OPDPrint";
+// import Doctorpre from "./Components/Doctorpreception";
+import DoctorPreceptionPrint from "./pages/doctor/DoctorPreceptionPrint";
 import ServiceAlldata from "./Components/ServiceAlldata";
-import Preceptionbill from "./Components/Preceptionbill";
+// import Preceptionbill from "./Components/Preceptionbill";
 import BedManagementSingleFile from "./Components/BedManagementSingleFile";
 import DepartmentManagement from "../src/pages/Department/DepartmentManagement";
 
@@ -27,9 +29,15 @@ import RoomManagement from "./pages/RoomManagement";
 import WardManagement from "./pages/WardManagement";
 import BuildingManagement from "./pages/BuildingManagement";
 import FloorManagement from "./pages/FloorManagement";
+
+
 import BedVisualLayout from "./components/bed/BedVisualLayout";
-import Dashboard from "./pages/Dashboard";
-import Dashboard1 from "./pages/Patient/Dashboard";
+
+
+
+// import Dashboard from "./pages/Dashboard";
+import Dashboard1 from "./pages/patient/Dashboard";
+// import Dashboard from "./pages/patient/Dashboard";
 
 // Import PrimeReact CSS (for bed management pages)
 import "primereact/resources/themes/lara-light-blue/theme.css";
@@ -55,7 +63,9 @@ import EmergencyDetails from "./pages/Emergency/EmergencyDetails";
 //doctors
 import DoctorFormPage from "./pages/doctor/DoctorFormPage";
 import DoctorListPage from "./pages/doctor/DoctorListPage";
-import DoctorForm from "./components/doctor/DoctorForm";
+import DoctorForm from "./Components/doctor/DoctorForm";
+
+import DoctorPreception from "./Components/doctor/DoctorPreception";
 
 //admissions
 // import AdmissionList from "./pages/admissions/AdmissionList";
@@ -87,10 +97,17 @@ export default function App() {
           <Route path="/doctor/:UHID" element={<Doctor />} />
           <Route path="/nurse" element={<Nurse />} />
           <Route path="/servicebtn" element={<Servicebtn />} />
-          <Route path="/opd/:UHID" element={<Opdprint />} />
-          <Route path="/doctorpre/:UHID/:TpaId?" element={<Doctorpre />} />
+          <Route path="/opd/:UHID" element={<OPDPrint />} />
+          <Route path="/doctorpre/:UHID" element={<DoctorPreception />} />
+          <Route
+            path="/doctorpre/:UHID/:TpaId?"
+            element={<DoctorPreception />}
+          />
           <Route path="/ServiceAlldata" element={<ServiceAlldata />} />
-          <Route path="/Preceptionbill/:UHID" element={<Preceptionbill />} />
+          <Route
+            path="/Preceptionbill/:UHID"
+            element={<DoctorPreceptionPrint />}
+          />
           {/* <Route
             path="/BedManagementSingleFile/:UHID"
             element={<BedManagementSingleFile />}

@@ -19,7 +19,7 @@ exports.OPDform = async (req, res) => {
 
 exports.getPreceptionreport = async (req, res) => {
   try {
-    const Preceptionreport = await Form.findOne({ UHID: req.params.UHID });
+    const Preceptionreport = await Form.findOne({ UHID: req.params.UHID }); 
 
     if (!Preceptionreport) {
       // ✅ Agar UHID se koi record nahi mila

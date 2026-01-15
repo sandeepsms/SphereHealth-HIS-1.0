@@ -134,4 +134,5 @@ OPDSchema.pre("save", async function (next) {
   next();
 });
 
-module.exports = mongoose.model("OPD", OPDSchema);
+// module.exports = mongoose.model("OPD", OPDSchema);
+module.exports = mongoose.model("OPDReegistration", OPDSchema);

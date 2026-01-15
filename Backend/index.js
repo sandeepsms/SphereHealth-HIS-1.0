@@ -5,10 +5,10 @@ require("dotenv").config();
 
 const app = express();
 
-// const patientRoutes = require("./routes/patientRoutes");
+const patientRoutes = require("./routes/Patient/patientRoutes");
 // const doctorRoutes = require("./routes/doctorsRoutes");
 // const ServicebillRoutes = require("./routes/ServicebillRoutes");
-// const RegistrationOPDRoutes = require("./routes/Opd");
+const RegistrationOPDRoutes = require("./routes/Doctor/DoctorPeceptionRoutes");/////////////////////////////////////////////////////////////
 // const BedRoutes = require("./routes/Bedroutes");
 // const WardchargesRoutes = require("./routes/WardchargesRoutes");
 
@@ -24,7 +24,7 @@ app.get("/", (req, res) => {
 
 // app.use("/api/patients", patientRoutes);
 // app.use("/api/doctordetail", doctorRoutes);
-// app.use("/api/RegistrationOPD", RegistrationOPDRoutes);
+app.use("/api/RegistrationOPD", RegistrationOPDRoutes);   ////////////////////////////////////////////////////
 // app.use("/api/Servicebilldata", ServicebillRoutes);
 // app.use("/api/beds", BedRoutes);
 // app.use("/api/ward-charges", WardchargesRoutes);

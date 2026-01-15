@@ -10,9 +10,13 @@ import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
 import { Tag } from "primereact/tag";
 import { doctorService } from "../../Services/Doctor/doctorService";
 
+
 const DoctorListPage = () => {
   const navigate = useNavigate();
   const toast = useRef(null);
+
+ 
+  
 
   const [doctors, setDoctors] = useState([]);
   const [loading, setLoading] = useState(true);

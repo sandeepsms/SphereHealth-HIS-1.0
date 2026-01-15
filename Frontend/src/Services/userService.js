@@ -47,19 +47,33 @@ export const getPatients = async (data) => {
   }
 };
 
+// export const getPatientbyID = async (UHID) => {
+//   try {
+//     const response = await axios.get(
+//       `${API_BASE_URL}/  /getPatientsbyID/${UHID}`
+//     );
+//     console.log(response);
+
+//     return response.data;
+//   } catch (error) {
+//     console.error("Error fetching patient data:", error);
+//     throw error;
+//   }
+// };
+
+
 export const getPatientbyID = async (UHID) => {
   try {
     const response = await axios.get(
-      `${API_BASE_URL}/patients/getPatientsbyID/${UHID}`
+      `${API_BASE_URL}/patients/${UHID}`
     );
-    console.log(response);
-
     return response.data;
   } catch (error) {
     console.error("Error fetching patient data:", error);
     throw error;
   }
 };
+
 
 export const getdoctorpatientbyID = async (UHID) => {
   try {

@@ -165,6 +165,7 @@ function PatientsTable() {
         icon: "pi pi-pencil",
         command: () => handleEdit(rowData),
       },
+      
       {
         label: "Delete Patient",
         icon: "pi pi-trash",
@@ -176,11 +177,22 @@ function PatientsTable() {
         icon: "pi pi-user-md",
         command: () => navigate(`/doctor/${rowData.UHID}`),
       },
-      {
-        label: "OPD Bill",
-        icon: "pi pi-receipt",
-        command: () => navigate(`/opd/${rowData.UHID}`),
-      },
+{
+  label: "OPD Bill Print",
+  icon: "pi pi-print text-primary",
+  command: () => navigate(`/opd/${rowData.UHID}`),
+},
+ {
+      label: "Doctor Prescription",
+      icon: "pi pi-file-edit",
+      command: () => navigate(`/doctorpre/${rowData.UHID}`),
+    },
+  {
+      label: " Doctor Prescription Print",
+      icon: "pi pi-print text-primary",
+      command: () => navigate(`/Preceptionbill/${rowData.UHID}`),
+    },
+
       {
         label: "Bed Management",
         icon: "pi pi-bed",

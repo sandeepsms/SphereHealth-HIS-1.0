@@ -1,5 +1,5 @@
 const Emergency = require("../../models/Patient/emergencyModel");
-const patientService = require("./patientService");
+const patientService = require("../patient/patientService");
 
 class EmergencyService {
   async createEmergencyVisit(emergencyData) {

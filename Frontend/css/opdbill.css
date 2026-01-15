@@ -1,4 +1,4 @@
-.opd-bill-container * {
+/* .opd-bill-container * {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
@@ -176,6 +176,26 @@
 }
 
 .container {
+<<<<<<< Updated upstream
   justify-items: normal;
   line-height: normal;
 }
+=======
+ justify-items:normal;
+    line-height: normal;
+} */
+
+
+
+.opd-page {
+  max-width: 210mm;
+}
+
+@media print {
+  button {
+    display: none;
+  }
+}
+
+
+

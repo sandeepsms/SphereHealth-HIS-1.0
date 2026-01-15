@@ -37,4 +37,4 @@ const OPDSchema = new mongoose.Schema({
     },
   ],
 });
-module.exports = mongoose.model("OPDReegistration", OPDSchema);
+module.exports = mongoose.model("DoctorPreception", OPDSchema);

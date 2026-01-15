@@ -10,7 +10,10 @@ import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
 
 import BedForm from "../components/bed/BedForm";
 import BedStats from "../components/bed/BedStats";
+
 import BedVisualLayout from "../components/bed/BedVisualLayout";
+
+
 import { bedService } from "../services/bedService";
 
 const BedManagement = () => {

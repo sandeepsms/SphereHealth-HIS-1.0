@@ -14,11 +14,13 @@ const serviceMasterRoutes = require("./bedMgmt/serviceMasterRoutes");
 const patientRoutes = require("./Patient/patientRoutes");
 const opdRoutes = require("./Patient/OPDRoutes");
 const doctorRoutes = require("./Doctor/doctorRoutes");
+// const RegistrationOPDRoutes = require("./Doctor/DoctorPeceptionRoutes");
 const emergencyRoutes = require("./Patient/emergencyRoutes");
 const billingRoutes = require("./Billing/billingRoutes");
 const admissionRoutes = require("./Patient/admissionRoutes");
 const departmentRoutes = require("./Department/department");
 const tpaRoutes = require("./tpa/tpaRoutes");
+
 
 // routes mapping
 router.use("/buildings", buildingRoutes);
@@ -33,6 +35,7 @@ router.use("/patients", patientRoutes);
 router.use("/opd", opdRoutes);
 router.use("/emergency", emergencyRoutes);
 router.use("/doctors", doctorRoutes);
+// router.use("/api/RegistrationOPD", RegistrationOPDRoutes);
 router.use("/billing", billingRoutes);
 router.use("/admissions", admissionRoutes);
 router.use("/department", departmentRoutes);

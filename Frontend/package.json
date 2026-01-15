@@ -16,6 +16,7 @@
     "bootstrap": "^5.3.7",
     "chart.js": "^4.5.1",
     "formik": "^2.4.6",
+    "html2pdf.js": "^0.13.0",
     "lucide-react": "^0.542.0",
     "primeflex": "^4.0.0",
     "primeicons": "^7.0.0",

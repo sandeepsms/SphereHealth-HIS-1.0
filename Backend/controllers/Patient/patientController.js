@@ -1,4 +1,4 @@
-const patientService = require("../../services/Patient/patientService");
+const patientService = require("../../services/patient/patientService");
 
 exports.createPatient = async (req, res) => {
   try {
@@ -47,6 +47,7 @@ exports.getAllPatients = async (req, res) => {
 exports.getPatientById = async (req, res) => {
   try {
     const patient = await patientService.getPatientById(req.params.id);
+
 
     res.status(200).json({
       success: true,

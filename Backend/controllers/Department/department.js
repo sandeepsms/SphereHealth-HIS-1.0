@@ -212,6 +212,7 @@ class DepartmentController {
         success: false,
         message: error.message,
       });
+      
     }
   }
 

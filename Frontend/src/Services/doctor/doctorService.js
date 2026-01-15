@@ -1,7 +1,22 @@
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api.js";
 
+
 const API_URL = API_ENDPOINTS.DOCTORS;
+
+
+// const API_URL = "http://localhost:5000/api/doctors";
+
+
+
+
+
+
+
+
+// ⭐ Debug log
+console.log("🔧 doctorService.js loaded, API_URL:", API_URL);
+
 
 export const doctorService = {
   getAllDoctors: async (filters = {}) => {
