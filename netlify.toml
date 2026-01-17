@@ -1,4 +1,4 @@
- build[
+ build:
      base: /opt/build/repo/Frontend
      command: npm install && npm run build
      commandOrigin: config
@@ -6,4 +6,4 @@
        - VITE_API_BASE_URL
     publish: /opt/build/repo/Frontend/dist
     publishOrigin: config
-]
+
