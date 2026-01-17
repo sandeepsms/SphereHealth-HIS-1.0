@@ -1,4 +1,4 @@
- build:
+ [build]
      base: /opt/build/repo/Frontend
      command: npm install && npm run build
      commandOrigin: config
