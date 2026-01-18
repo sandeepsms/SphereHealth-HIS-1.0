@@ -7,4 +7,6 @@ router.post("/Registraiondata", OPDform);
 
 router.get("/getPreceptionreport/:UHID", getPreceptionreport);
 
+
+
 module.exports = router;
