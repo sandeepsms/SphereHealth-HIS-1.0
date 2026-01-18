@@ -11,7 +11,7 @@ import { Toolbar } from "primereact/toolbar";
 import { Checkbox } from "primereact/checkbox";
 import { Tag } from "primereact/tag";
 import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
-import { departmentService } from "../../services/departmentService";
+import { departmentService } from "../../Services/departmentService";
 import "../../styles/Department.css";
 
 const DepartmentManagement = () => {

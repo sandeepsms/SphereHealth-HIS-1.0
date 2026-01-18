@@ -19,7 +19,8 @@ export const API_ENDPOINTS = {
   SERVICES: `${API_BASE_URL}/services`,
   OPD: `${API_BASE_URL}/opd`,
   EMERGENCY: `${API_BASE_URL}/emergency`,
-  DOCTORPRECEPTION:`${API_BASE_URL}/RegistrationOPD/getPreceptionreport`
+  // DOCTORPRECEPTION:`${API_BASE_URL}/RegistrationOPD/getPreceptionreport`
+   DOCTORPRECEPTION:`${API_BASE_URL}/patients/getPatientsbyID`
 
 };
 

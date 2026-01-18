@@ -289,6 +289,7 @@ function PatientsTable() {
           severity="success"
           size="small"
           onClick={() => navigate("/registration")}
+          className="border "
         />
       </div>
     </div>

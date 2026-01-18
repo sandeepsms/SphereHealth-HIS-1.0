@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { wardService } from "../services/wardService";
+import { wardService } from "../Services/wardService";
 
 export const useWards = () => {
   const [wards, setWards] = useState([]);

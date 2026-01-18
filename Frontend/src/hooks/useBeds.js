@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { bedService } from "../services/bedService";
+import { bedService } from "../Services/bedService";
 
 export const useBeds = () => {
   const [beds, setBeds] = useState([]);
