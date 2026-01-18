@@ -203,7 +203,7 @@ const PatientList = () => {
           <Column
             header="Actions"
             body={actionTemplate}
-            style={{ minWidth: "200px" }}
+            style={{ minWidth: "200px"}}
             frozen
             alignFrozen="right"
           />

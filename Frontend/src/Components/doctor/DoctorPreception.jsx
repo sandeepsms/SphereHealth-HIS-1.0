@@ -29,6 +29,7 @@ function DoctorPreception() {
 
   const { UHID, TpaId } = useParams();
   console.log("ssssss---------", seviceTpaId);
+console.log("000000000000-------------",uhid);
 
   useEffect(() => {
     if (!UHID) return console.log("boss");

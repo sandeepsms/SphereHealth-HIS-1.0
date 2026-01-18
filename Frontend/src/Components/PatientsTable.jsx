@@ -17,6 +17,7 @@ import patientService from "../Services/patient/patientService";
 import "primereact/resources/themes/lara-light-blue/theme.css";
 import "primereact/resources/primereact.min.css";
 import "primeicons/primeicons.css";
+import "../../css/Radiobutton.css"
 
 function PatientsTable() {
   const [patients, setPatients] = useState([]);
@@ -43,7 +44,7 @@ function PatientsTable() {
         patientsData = response.data || response;
       } catch (error) {
         const response = await fetch(
-          `${API_ENDPOINTS.PATIENTS}/getAllPatients`
+          `${API_ENDPOINTS.PATIENTS}/getAllPatients`,
         );
         patientsData = await response.json();
       }
@@ -145,8 +146,9 @@ function PatientsTable() {
     const getGenderColor = (gender) => {
       return (
         {
+       
           Male: "info",
-          Female: "danger",
+          Female: "info",
           Other: "warning",
         }[gender] || "secondary"
       );
@@ -165,7 +167,7 @@ function PatientsTable() {
         icon: "pi pi-pencil",
         command: () => handleEdit(rowData),
       },
-      
+
       {
         label: "Delete Patient",
         icon: "pi pi-trash",
@@ -177,21 +179,21 @@ function PatientsTable() {
         icon: "pi pi-user-md",
         command: () => navigate(`/doctor/${rowData.UHID}`),
       },
-{
-  label: "OPD Bill Print",
-  icon: "pi pi-print text-primary",
-  command: () => navigate(`/opd/${rowData.UHID}`),
-},
- {
-      label: "Doctor Prescription",
-      icon: "pi pi-file-edit",
-      command: () => navigate(`/doctorpre/${rowData.UHID}`),
-    },
-  {
-      label: " Doctor Prescription Print",
-      icon: "pi pi-print text-primary",
-      command: () => navigate(`/Preceptionbill/${rowData.UHID}`),
-    },
+      {
+        label: "OPD Bill Print",
+        icon: "pi pi-print text-primary",
+        command: () => navigate(`/opd/${rowData.UHID}`),
+      },
+      {
+        label: "Doctor Prescription",
+        icon: "pi pi-file-edit",
+        command: () => navigate(`/doctorpre/${rowData.UHID}`),
+      },
+      {
+        label: " Doctor Prescription Print",
+        icon: "pi pi-print text-primary",
+        command: () => navigate(`/Preceptionbill/${rowData.UHID}`),
+      },
 
       {
         label: "Bed Management",
@@ -240,14 +242,13 @@ function PatientsTable() {
 
   const header = (
     <div
-      className="flex flex-wrap lg:flex-row align-items-center justify-content-between gap-3 p-4"
+      className="flex flex-wrap lg:flex-row align-items-center justify-content-between gap-3 p-4  btn-custom mb-2"
       style={{
-        background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
         color: "white",
         borderRadius: "12px 12px 0 0",
       }}
     >
-      <div className="flex align-items-center gap-3">
+      <div className="flex align-items-center gap-3  ">
         <i className="pi pi-users text-3xl"></i>
         <div>
           <h1 className="m-0 text-2xl font-bold mb-1">Patients Dashboard</h1>
@@ -257,17 +258,18 @@ function PatientsTable() {
           </div>
         </div>
       </div>
-      <div className="flex align-items-center gap-2 flex-wrap">
+      <div className="flex align-items-center gap-2 flex-wrap ">
         <span
           className="p-input-icon-left surface-0"
           style={{ width: "clamp(250px, 30vw, 400px)" }}
         >
-          <i className="pi pi-search text-500"></i>
+          <i className="pi pi-search text-500"></i> 
           <InputText
             value={globalFilterValue}
             onChange={onGlobalFilterChange}
+          
             placeholder="Search patients..."
-            className="w-full"
+            className="w-full border-none"
           />
         </span>
         <Button
@@ -279,6 +281,7 @@ function PatientsTable() {
           onClick={getAllPatients}
           loading={loading}
           size="small"
+          className="text-white"
         />
         <Button
           icon="pi pi-plus"
@@ -295,7 +298,8 @@ function PatientsTable() {
     return (
       <div className="min-h-screen flex justify-content-center align-items-center p-6 bg-gray-50">
         <div className="surface-card p-6 text-center shadow-2 border-round">
-          <ProgressSpinner style={{ width: "60px", height: "60px" }} />
+          {/* <ProgressSpinner style={{ width: "60px", height: "60px" }} /> */}
+          <span class="loader" style={{ width: "50px", height: "50px" }}></span>
           <h3 className="mt-3 font-bold text-xl">Loading Patients...</h3>
           <p className="text-500 mt-1">Fetching data from server</p>
         </div>
@@ -396,9 +400,10 @@ function PatientsTable() {
           <Column
             header="Actions"
             body={actionBody}
-            style={{ minWidth: "100px", maxWidth: "100px" }}
-            headerStyle={{ textAlign: "center" }}
-            bodyStyle={{ textAlign: "center" }}
+            style={{ minWidth: "100px", maxWidth: "100px",  }}
+            headerStyle={{ textAlign: "center", }}
+            bodyStyle={{ textAlign: "center"  }}
+            
           />
         </DataTable>
       </Card>
@@ -421,6 +426,7 @@ function PatientsTable() {
               severity="secondary"
               outlined
               onClick={() => setDeleteDialogVisible(false)}
+            
             />
             <Button
               label="Delete Patient"

@@ -1,5 +1,7 @@
 import axios from "axios";
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+import { API_ENDPOINTS } from "../config/api";
+const API_URL = API_ENDPOINTS.DOCTORPRECEPTION;
 
 export const addPatient = async (data) => {
   try {
@@ -65,7 +67,7 @@ export const getPatients = async (data) => {
 export const getPatientbyID = async (UHID) => {
   try {
     const response = await axios.get(
-      `${API_BASE_URL}/patients/${UHID}`
+      `${API_URL}/${UHID}`
     );
     return response.data;
   } catch (error) {

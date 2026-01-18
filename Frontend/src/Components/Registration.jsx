@@ -19,6 +19,7 @@ import "primereact/resources/themes/lara-light-blue/theme.css";
 import "primereact/resources/primereact.min.css";
 import "primeicons/primeicons.css";
 import { API_ENDPOINTS } from "../config/api";
+import "../../css/Radiobutton.css";
 
 export default function PatientRegistration() {
   const toast = useRef(null);
@@ -495,7 +496,8 @@ export default function PatientRegistration() {
           height: "400px",
         }}
       >
-        <ProgressSpinner style={{ width: "50px", height: "50px" }} />
+        {/* <ProgressSpinner style={{ width: "50px", height: "50px" }} /> */}
+        <span class="loader"  style={{ width: "50px", height: "50px" }} ></span>
       </div>
     );
   }
@@ -506,9 +508,9 @@ export default function PatientRegistration() {
 
       {/* Header Card */}
       <Card
-        className="mb-5"
+        className="mb-5  btn-custom"
         style={{
-          background: "linear-gradient(135deg, #1e88e5 0%, #42a5f5 100%)",
+         
           color: "white",
         }}
       >
@@ -517,7 +519,7 @@ export default function PatientRegistration() {
             <h1 className="m-0 text-2xl font-bold">
               Spherehealth Medical Solutions
             </h1>
-            <p className="m-0 mt-1 opacity-90">
+            <p   className="m-0 mt-1 opacity-90">
               {isEditMode
                 ? "Edit Patient Details"
                 : "Patient Registration Portal"}
@@ -551,6 +553,7 @@ export default function PatientRegistration() {
                 value="OPD"
                 onChange={(e) => handleInputChange("registrationType", e.value)}
                 checked={formData.registrationType === "OPD"}
+                className="opd-radio"
               />
               <label htmlFor="opd" className="font-medium">
                 OPD
@@ -890,7 +893,7 @@ export default function PatientRegistration() {
 
           {/* MLC Section */}
           <Divider className="my-4">
-            <span className="p-tag p-tag-info">MLC Case</span>
+            <span className="p-tag p-tag-info  btn-custom">MLC Case</span>
           </Divider>
           <div className="flex align-items-center gap-2 mb-3">
             <Checkbox
@@ -1046,7 +1049,7 @@ export default function PatientRegistration() {
             severity="secondary"
             type="button"
             onClick={() => navigate("/allpatient")}
-            className="p-button-outlined"
+            className="p-button-outlined text-white"
           />
           <Button
             label={

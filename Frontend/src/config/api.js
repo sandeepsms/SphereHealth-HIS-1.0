@@ -1,3 +1,5 @@
+
+
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
 
@@ -17,6 +19,8 @@ export const API_ENDPOINTS = {
   SERVICES: `${API_BASE_URL}/services`,
   OPD: `${API_BASE_URL}/opd`,
   EMERGENCY: `${API_BASE_URL}/emergency`,
+  DOCTORPRECEPTION:`${API_BASE_URL}/RegistrationOPD/getPreceptionreport`
+
 };
 
 console.log("🌐 API Config Loaded:", API_BASE_URL);

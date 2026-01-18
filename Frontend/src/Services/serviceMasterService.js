@@ -68,8 +68,8 @@ throw error;
 }
 },
 updateService: async (id, data) => {
-try {
-const response = await fetch(${API_ENDPOINTS.SERVICES}/${id}, {
+  try {
+    const response = await fetch(`${API_ENDPOINTS.SERVICES}/${id}`, {
 method: "PUT",
 headers: { "Content-Type": "application/json" },
 body: JSON.stringify(data),
@@ -82,8 +82,8 @@ throw error;
 }
 },
 deleteService: async (id) => {
-try {
-const response = await fetch(${API_ENDPOINTS.SERVICES}/${id}, {
+  try {
+    const response = await fetch(`${API_ENDPOINTS.SERVICES}/${id}`, {
 method: "DELETE",
 });
 return await response.json();
@@ -93,8 +93,8 @@ throw error;
 }
 },
 seedDefaultServices: async () => {
-try {
-const response = await fetch(${API_ENDPOINTS.SERVICES}/seed, {
+  try {
+    const response = await fetch(`${API_ENDPOINTS.SERVICES}/seed`, {
 method: "POST",
 });
 const data = await response.json();
