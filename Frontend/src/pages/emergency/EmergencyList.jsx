@@ -8,7 +8,7 @@ import { Card } from "primereact/card";
 import { Tag } from "primereact/tag";
 import { FilterMatchMode } from "primereact/api";
 import { useNavigate } from "react-router-dom";
-import emergencyService from "../../services/patient/emergencyService";
+import emergencyService from "../../Services/patient/emergencyService";
 
 const EmergencyList = () => {
   const navigate = useNavigate();

@@ -8,8 +8,8 @@ import { Toast } from "primereact/toast";
 import { InputTextarea } from "primereact/inputtextarea";
 import { Checkbox } from "primereact/checkbox";
 import { AutoComplete } from "primereact/autocomplete";
-import emergencyService from "../../services/patient/emergencyService";
-import patientService from "../../services/patient/patientService";
+import emergencyService from "../../Services/patient/emergencyService";
+import patientService from "../../Services/patient/patientService";
 
 const EmergencyForm = () => {
   const navigate = useNavigate();
