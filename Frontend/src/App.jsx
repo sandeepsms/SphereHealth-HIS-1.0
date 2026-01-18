@@ -31,7 +31,7 @@ import BuildingManagement from "./pages/BuildingManagement";
 import FloorManagement from "./pages/FloorManagement";
 
 
-import BedVisualLayout from "./components/bed/BedVisualLayout";
+import BedVisualLayout from "./Components/bed/BedVisualLayout";
 
 
 
