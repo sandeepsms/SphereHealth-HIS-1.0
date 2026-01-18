@@ -13,7 +13,7 @@ import { Card } from "primereact/card";
 import { Divider } from "primereact/divider";
 import { useLocation, useNavigate } from "react-router-dom";
 import { departmentService } from "../Services/departmentService";
-import { doctorService } from "../Services/Doctor/doctorService";
+import { doctorService } from "../Services/doctor/doctorService";
 import { tpaService } from "../Services/tpa/tpaService";
 import "primereact/resources/themes/lara-light-blue/theme.css";
 import "primereact/resources/primereact.min.css";
