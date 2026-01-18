@@ -6,11 +6,11 @@ import { Dropdown } from "primereact/dropdown";
 import { Checkbox } from "primereact/checkbox";
 import { Button } from "primereact/button";
 import { InputTextarea } from "primereact/inputtextarea";
-import { roomService } from "../../services/roomService";
-import { buildingService } from "../../services/buildingService";
-import { floorService } from "../../services/floorService";
-import { wardService } from "../../services/wardService";
-import { roomCategoryService } from "../../services/roomCategoryService";
+import { roomService } from "../../Services/roomService";
+import { buildingService } from "../../Services/buildingService";
+import { floorService } from "../../Services/floorService";
+import { wardService } from "../../Services/wardService";
+import { roomCategoryService } from "../../Services/roomCategoryService";
 
 const RoomForm = ({ visible, onHide, room, onSave }) => {
   const [formData, setFormData] = useState({

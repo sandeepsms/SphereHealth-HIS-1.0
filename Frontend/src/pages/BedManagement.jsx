@@ -14,7 +14,7 @@ import BedStats from "../components/bed/BedStats";
 import BedVisualLayout from "../Components/bed/BedVisualLayout";
 
 
-import { bedService } from "../services/bedService";
+import { bedService } from "../Services/bedService";
 
 const BedManagement = () => {
   const toast = useRef(null);

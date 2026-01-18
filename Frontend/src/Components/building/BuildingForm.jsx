@@ -5,7 +5,7 @@ import { InputNumber } from "primereact/inputnumber";
 import { InputTextarea } from "primereact/inputtextarea";
 import { Checkbox } from "primereact/checkbox";
 import { Button } from "primereact/button";
-import { buildingService } from "../../services/buildingService";
+import { buildingService } from "../../Services/buildingService";
 
 const BuildingForm = ({ visible, onHide, building, onSave }) => {
   const [formData, setFormData] = useState({

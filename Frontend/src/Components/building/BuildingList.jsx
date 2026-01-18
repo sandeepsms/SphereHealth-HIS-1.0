@@ -5,7 +5,7 @@ import { Button } from "primereact/button";
 import { Tag } from "primereact/tag";
 import { Toast } from "primereact/toast";
 import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
-import { buildingService } from "../../services/buildingService";
+import { buildingService } from "../../Services/buildingService";
 import { formatDateTime } from "../../utils/helpers";
 
 const BuildingList = ({ onEdit, onRefresh }) => {

@@ -6,8 +6,8 @@ import { InputTextarea } from "primereact/inputtextarea";
 import { Dropdown } from "primereact/dropdown";
 import { Checkbox } from "primereact/checkbox";
 import { Button } from "primereact/button";
-import { floorService } from "../../services/floorService";
-import { buildingService } from "../../services/buildingService";
+import { floorService } from "../../Services/floorService";
+import { buildingService } from "../../Services/buildingService";
 
 const FloorForm = ({ visible, onHide, floor, onSave }) => {
   const [formData, setFormData] = useState({

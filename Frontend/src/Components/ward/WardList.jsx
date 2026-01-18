@@ -5,7 +5,7 @@ import { Button } from "primereact/button";
 import { Tag } from "primereact/tag";
 import { Toast } from "primereact/toast";
 import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
-import { wardService } from "../../services/wardService";
+import { wardService } from "../../Services/wardService";
 import { formatDateTime } from "../../utils/helpers";
 
 const WardList = ({ onEdit, onRefresh }) => {

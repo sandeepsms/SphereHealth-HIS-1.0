@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Card } from "primereact/card";
 import { Chart } from "primereact/chart";
 import { ProgressBar } from "primereact/progressbar";
-import { bedService } from "../../services/bedService";
+import { bedService } from "../../Services/bedService";
 import { BED_STATUS_COLORS } from "../../utils/constants";
 
 const BedStats = () => {

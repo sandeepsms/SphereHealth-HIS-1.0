@@ -7,9 +7,9 @@ import { Checkbox } from "primereact/checkbox";
 import { Button } from "primereact/button";
 import { Chips } from "primereact/chips";
 import { Toast } from "primereact/toast";
-import { wardService } from "../../services/wardService";
-import { buildingService } from "../../services/buildingService";
-import { floorService } from "../../services/floorService";
+import { wardService } from "../../Services/wardService";
+import { buildingService } from "../../Services/buildingService";
+import { floorService } from "../../Services/floorService";
 import { WARD_TYPES } from "../../utils/constants";
 
 const WardForm = ({ visible, onHide, ward, onSave }) => {

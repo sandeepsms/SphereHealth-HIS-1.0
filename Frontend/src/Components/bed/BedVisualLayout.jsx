@@ -5,11 +5,11 @@ import { Dropdown } from "primereact/dropdown";
 import { InputText } from "primereact/inputtext";
 import { InputTextarea } from "primereact/inputtextarea";
 import { Toast } from "primereact/toast";
-import { bedService } from "../../services/bedService";
-import { wardService } from "../../services/wardService";
-import { roomService } from "../../services/roomService";
-import { buildingService } from "../../services/buildingService";
-import { floorService } from "../../services/floorService";
+import { bedService } from "../../Services/bedService";
+import { wardService } from "../../Services/wardService";
+import { roomService } from "../../Services/roomService";
+import { buildingService } from "../../Services/buildingService";
+import { floorService } from "../../Services/floorService";
 
 const labelStyle = {
   display: "block",

@@ -7,11 +7,11 @@ import { Checkbox } from "primereact/checkbox";
 import { Button } from "primereact/button";
 import { InputTextarea } from "primereact/inputtextarea";
 import { Toast } from "primereact/toast";
-import { bedService } from "../../services/bedService";
-import { buildingService } from "../../services/buildingService";
-import { floorService } from "../../services/floorService";
-import { wardService } from "../../services/wardService";
-import { roomService } from "../../services/roomService";
+import { bedService } from "../../Services/bedService";
+import { buildingService } from "../../Services/buildingService";
+import { floorService } from "../../Services/floorService";
+import { wardService } from "../../Services/wardService";
+import { roomService } from "../../Services/roomService";
 import { BED_STATUS } from "../../utils/constants";
 
 const BedForm = ({ visible, onHide, bed, onSave }) => {

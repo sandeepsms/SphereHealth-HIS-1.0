@@ -5,7 +5,7 @@ import { Dropdown } from "primereact/dropdown";
 import { Calendar } from "primereact/calendar";
 import { InputText } from "primereact/inputtext";
 import { InputTextarea } from "primereact/inputtextarea";
-import { admissionService } from "../../services/admissionService";
+import { admissionService } from "../../Services/admissionService";
 import { formatCurrency } from "../../utils/helpers";
 import { ADMISSION_TYPES } from "../../utils/constants";
 

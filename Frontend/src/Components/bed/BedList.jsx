@@ -5,7 +5,7 @@ import { Button } from "primereact/button";
 import { Tag } from "primereact/tag";
 import { Toast } from "primereact/toast";
 import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
-import { bedService } from "../../services/bedService";
+import { bedService } from "../../Services/bedService";
 import { formatDateTime, formatCurrency } from "../../utils/helpers";
 import { BED_STATUS_COLORS } from "../../utils/constants";
 

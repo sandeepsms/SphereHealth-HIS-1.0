@@ -6,7 +6,7 @@ import { Tag } from "primereact/tag";
 import { Toast } from "primereact/toast";
 import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
 import { ProgressBar } from "primereact/progressbar";
-import { roomService } from "../../services/roomService";
+import { roomService } from "../../Services/roomService";
 import { formatDateTime } from "../../utils/helpers";
 
 const RoomList = ({ onEdit, onRefresh }) => {
