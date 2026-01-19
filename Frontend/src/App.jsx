@@ -58,7 +58,7 @@ import OPDDetails from "./pages/OPD/OPDDetails";
 //emergency
 import Emergencylist from "./pages/emergency/EmergencyList";
 import EmergencyForm from "./pages/emergency/EmergencyForm";
-import EmergencyDetails from "./pages/emergency/EmergencyDetails";
+import EmergencyDetails from "./pages/Emergency/EmergencyDetails";
 
 //doctors
 import DoctorFormPage from "./pages/doctor/DoctorFormPage";
