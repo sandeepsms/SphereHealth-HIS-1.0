@@ -12,7 +12,7 @@ import { Checkbox } from "primereact/checkbox";
 import { Tag } from "primereact/tag";
 import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
 import { departmentService } from "../../Services/departmentService";
-import "../../styles/Department.css";
+import "../../styles/department.css";
 
 const DepartmentManagement = () => {
   const [departments, setDepartments] = useState([]);
