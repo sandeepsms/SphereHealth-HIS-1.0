@@ -8,8 +8,8 @@ import { Tag } from "primereact/tag";
 import { Toast } from "primereact/toast";
 import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
 
-import BedForm from "../components/bed/BedForm";
-import BedStats from "../components/bed/BedStats";
+import BedForm from "../Components/bed/BedForm";
+import BedStats from "../Components/bed/BedStats";
 
 import BedVisualLayout from "../Components/bed/BedVisualLayout";
 
