@@ -10,8 +10,8 @@ import { Tag } from "primereact/tag";
 import { Card } from "primereact/card";
 import { Toast } from "primereact/toast";
 import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
-import BuildingForm from "../components/building/BuildingForm";
-import { buildingService } from "../services/buildingService";
+import BuildingForm from "../Components/building/BuildingForm";
+import { buildingService } from "../Services/buildingService";
 
 const BuildingManagement = () => {
   const [buildings, setBuildings] = useState([]);
