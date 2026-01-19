@@ -4,7 +4,7 @@ import { Card } from "primereact/card";
 import { Button } from "primereact/button";
 import { Tag } from "primereact/tag";
 import { Badge } from "primereact/badge";
-import emergencyService from "../../services/patient/emergencyService";
+import emergencyService from "../../Services/patient/emergencyService";
 
 const EmergencyDetails = () => {
   const { emergencyNumber } = useParams();
