@@ -2,10 +2,10 @@ import React, { useState } from "react";
 import { Card } from "primereact/card";
 import { Button } from "primereact/button";
 import { TabView, TabPanel } from "primereact/tabview";
-import FloorList from "../components/floor/FloorList";
-import FloorForm from "../components/floor/FloorForm";
-import FloorCard from "../components/floor/FloorCard";
-import { floorService } from "../services/floorService";
+import FloorList from "../Components/floor/FloorList";
+import FloorForm from "../Components/floor/FloorForm";
+import FloorCard from "../Components/floor/FloorCard";
+import { floorService } from "../Services/floorService";
 
 const FloorManagement = () => {
   const [showForm, setShowForm] = useState(false);
