@@ -7,8 +7,8 @@ import { Tag } from "primereact/tag";
 import { Card } from "primereact/card";
 import { Toast } from "primereact/toast";
 import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
-import WardForm from "../components/ward/WardForm";
-import { wardService } from "../services/wardService";
+import WardForm from "../Components/ward/WardForm";
+import { wardService } from "../Services/wardService";
 
 const WardManagement = () => {
   const [wards, setWards] = useState([]);
