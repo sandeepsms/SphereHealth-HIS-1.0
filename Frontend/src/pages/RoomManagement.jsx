@@ -7,8 +7,8 @@ import { Tag } from "primereact/tag";
 import { Card } from "primereact/card";
 import { Toast } from "primereact/toast";
 import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
-import RoomForm from "../components/room/RoomForm";
-import { roomService } from "../services/roomService";
+import RoomForm from "../Components/room/RoomForm";
+import { roomService } from "../Services/roomService";
 
 const RoomManagement = () => {
   const [rooms, setRooms] = useState([]);
