@@ -33,11 +33,11 @@ console.log("000000000000-------------",uhid);
 
   useEffect(() => {
     if (!UHID) return console.log("boss");
-    getPatientbyID(UHID)
+    getPatientbyID(UHID) 
       .then((res) => {
         // setTpaId(res.TPAid);
         getTPAid(res.TPAid);
-        setUHID(res);
+        setUHID(res.data);
       })
       .catch((err) => {
         console.error("Error fetching patient:", err);
@@ -116,14 +116,14 @@ console.log("000000000000-------------",uhid);
       enableReinitialize
       initialValues={{
         Name: uhid?.fullName || "",
-        Age: uhid?.age || "",
+        Age: uhid?.age || "0",
         Gender: uhid?.gender || "",
         Contact: uhid?.contact || "",
         Date: currentDate.toLocaleDateString(),
         UHID: uhid?.UHID || "",
         Email: uhid?.email || "",
         fathername: "",
-        Department: "",
+        Department: uhid?.department.departmentName||"",
         Referred: "",
         History_of_Any_Allergy: "",
         History_of_Present_Illness: "",
@@ -300,6 +300,7 @@ console.log("000000000000-------------",uhid);
                   name="Department"
                   value={values.Department}
                   onChange={handleChange}
+                  readOnly
                   className="w-100 fw-bold text-success"
                 />
               </div>

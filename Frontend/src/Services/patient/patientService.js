@@ -3,6 +3,7 @@ import { API_ENDPOINTS } from "../../config/api.js";
 
 const API_URL = API_ENDPOINTS.PATIENTS;
 
+
 const patientService = {
   getAllPatients: async () => {
     try {
@@ -35,6 +36,18 @@ const patientService = {
       throw error;
     }
   },
+
+
+  getPatientByUHID: async (uhid) => {
+    try {
+      const response = await axios.get(`${API_URL}/${uhid}`);
+      return response.data;
+    } catch (error) {
+      console.error("PatientService.getPatientByuhid error:", error);
+      throw error;
+    }
+  },
+
 
   deletePatient: async (id) => {
     try {
