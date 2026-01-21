@@ -64,10 +64,10 @@ export const getPatients = async (data) => {
 // };
 
 
-export const getPatientbyID = async (UHID) => {
+export const getPatientbyID = async (UHID) => {  
   try {
     const response = await axios.get(
-      `${API_URL}/${UHID}`
+      `${API_URL}/${UHID}` 
     );
     return response.data;
   } catch (error) {

@@ -5,7 +5,7 @@ const { OPDform, getPreceptionreport } = require("../../controllers/OpdR");
 
 router.post("/Registraiondata", OPDform);
 
-router.get("/getPreceptionreport/:UHID", getPreceptionreport);
+router.get("/RegistrationOPD/getPreceptionreport/:UHID", getPreceptionreport);
 
 
 

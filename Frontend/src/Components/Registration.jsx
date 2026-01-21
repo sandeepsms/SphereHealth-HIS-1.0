@@ -20,6 +20,8 @@ import "primereact/resources/primereact.min.css";
 import "primeicons/primeicons.css";
 import { API_ENDPOINTS } from "../config/api";
 import "../../css/Radiobutton.css";
+import { Formik, Form, Field, FieldArray, getIn } from "formik";
+
 
 export default function PatientRegistration() {
   const toast = useRef(null);
@@ -66,7 +68,22 @@ export default function PatientRegistration() {
   const [pincodeLoading, setPincodeLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const [isEditMode, setIsEditMode] = useState(false);
-  const [patientId, setPatientId] = useState(null);
+  // const [patientId, setPatientId] = useState(null);
+  // const [OPDprice, setOPDprice] = useState();
+  // const [tpaname, setTPAname] = useState([]);
+
+  // function fetchOPDPrice(selectedId) {
+  //   setTPAname(selectedId);
+  //   console.log("id", selectedId);
+
+  //   fetch(
+  //     `http://localhost:5000/api/Servicebilldata/getOPDPrice?_id=${selectedId}`,
+  //   ).then((res) => {
+  //     res
+  //       .json()
+  //       .then((data) => setOPDprice(data.data.opd_price[0].Totalamount));
+  //   });
+  // }
 
   useEffect(() => {
     const initializeForm = async () => {
@@ -145,7 +162,7 @@ export default function PatientRegistration() {
   useEffect(() => {
     if (formData.department) {
       const filtered = doctors.filter(
-        (doc) => doc.department === formData.department
+        (doc) => doc.department === formData.department,
       );
       setFilteredDoctors(filtered);
       if (
@@ -230,7 +247,7 @@ export default function PatientRegistration() {
     setPincodeLoading(true);
     try {
       const response = await fetch(
-        `https://api.postalpincode.in/pincode/${pincode}`
+        `https://api.postalpincode.in/pincode/${pincode}`,
       );
       const data = await response.json();
 
@@ -497,7 +514,7 @@ export default function PatientRegistration() {
         }}
       >
         {/* <ProgressSpinner style={{ width: "50px", height: "50px" }} /> */}
-        <span class="loader"  style={{ width: "50px", height: "50px" }} ></span>
+        <span class="loader" style={{ width: "50px", height: "50px" }}></span>
       </div>
     );
   }
@@ -510,7 +527,6 @@ export default function PatientRegistration() {
       <Card
         className="mb-5  btn-custom"
         style={{
-         
           color: "white",
         }}
       >
@@ -519,7 +535,7 @@ export default function PatientRegistration() {
             <h1 className="m-0 text-2xl font-bold">
               Spherehealth Medical Solutions
             </h1>
-            <p   className="m-0 mt-1 opacity-90">
+            <p className="m-0 mt-1 opacity-90">
               {isEditMode
                 ? "Edit Patient Details"
                 : "Patient Registration Portal"}
@@ -585,7 +601,9 @@ export default function PatientRegistration() {
         </Card>
 
         {/* TPA Section */}
-        <Card className="mb-4">
+
+
+         <Card className="mb-4">
           <div className="p-field p-col-12">
             <label className="font-semibold block mb-2">TPA (Optional)</label>
             <Dropdown
@@ -605,6 +623,29 @@ export default function PatientRegistration() {
             )}
           </div>
         </Card>
+
+        {/* <Card className="mb-4">
+          <div className="p-field p-col-12">
+            <label className="font-semibold block mb-2">TPA (Optional)</label>
+            <Dropdown
+        value={tpaname}          // Formik value bind   
+        options={tpaList}           // { label, value } array
+        onChange={(e) => {
+          const selectedId = e.value;       // ✅ PrimeReact me e.value       
+          setFieldValue("tpa", selectedId); // ✅ Formik update
+          fetchOPDPrice(selectedId);        // ✅ tumhara fetch function call
+        }}
+        placeholder={tpaList.length ? "Select TPA" : "Loading..."}        
+        filter
+        showClear
+        className={errors.tpa ? "p-invalid" : ""}
+        style={{ width: "100%" }}
+      />
+            {tpaList.length === 0 && !initialLoading && (
+              <small className="text-500 block mt-1">No TPA available</small>
+            )}
+          </div>
+        </Card> */}
 
         {/* Personal Details */}
         <Card className="mb-4">
@@ -1056,8 +1097,8 @@ export default function PatientRegistration() {
               loading
                 ? "Submitting..."
                 : isEditMode
-                ? "Update Patient"
-                : "Register Patient"
+                  ? "Update Patient"
+                  : "Register Patient"
             }
             icon={loading ? "pi pi-spin pi-spinner" : "pi pi-check"}
             severity="success"

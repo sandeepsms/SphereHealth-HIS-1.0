@@ -30,10 +30,7 @@ import WardManagement from "./pages/WardManagement";
 import BuildingManagement from "./pages/BuildingManagement";
 import FloorManagement from "./pages/FloorManagement";
 
-
 import BedVisualLayout from "./Components/bed/BedVisualLayout";
-
-
 
 // import Dashboard from "./pages/Dashboard";
 import Dashboard1 from "./pages/patient/Dashboard";
@@ -66,6 +63,9 @@ import DoctorListPage from "./pages/doctor/DoctorListPage";
 import DoctorForm from "./Components/doctor/DoctorForm";
 
 import DoctorPreception from "./Components/doctor/DoctorPreception";
+import ServiceAdd from "./Components/Tpa/ServiceAdd";
+
+import AddTpa from "./Components/Tpa/AddTpa";
 
 //admissions
 // import AdmissionList from "./pages/admissions/AdmissionList";
@@ -96,7 +96,9 @@ export default function App() {
           <Route path="/allpatient" element={<PatientsTable />} />
           <Route path="/doctor/:UHID" element={<Doctor />} />
           <Route path="/nurse" element={<Nurse />} />
-          <Route path="/servicebtn" element={<Servicebtn />} />
+          {/* <Route path="/servicebtn" element={<Servicebtn />} /> */}
+          <Route path="/addservice" element={<ServiceAdd />} />
+          <Route path="/addtpa" element={<AddTpa />} />
           <Route path="/opd/:UHID" element={<OPDPrint />} />
           <Route path="/doctorpre/:UHID" element={<DoctorPreception />} />
           <Route

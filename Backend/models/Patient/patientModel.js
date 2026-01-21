@@ -92,7 +92,7 @@ const PatientSchema = new mongoose.Schema(
     },
 
     // ⭐ TPA REFERENCE - NEW FIELD
-    tpa: {
+    tpa: {  
       type: mongoose.Schema.Types.ObjectId,
       ref: "TPA",
     },

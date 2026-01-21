@@ -165,6 +165,35 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
         
       ],
     },
+
+    {
+      label: "TPA Service",
+      icon: "pi pi-user",
+      items: [
+        {
+          label: "Add Service",
+          icon: "pi pi-user-plus",
+          command: () => {
+            navigate("/addservice");
+            toggleSidebar();
+          },
+        },
+
+        {
+          label: "Add TPA",
+          icon: "pi pi-user-plus",
+          command: () => {
+            navigate("/addtpa");
+            toggleSidebar();
+          },
+        },
+
+
+        
+      ],
+    },
+
+
   ];
 
   return (

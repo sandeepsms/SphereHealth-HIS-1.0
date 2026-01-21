@@ -8,12 +8,13 @@ const TPASchema = new mongoose.Schema(
   {
     tpaName: {
       type: String,
-      required: [true, "TPA name is required"],
+      // required: [true, "TPAsssssssssss name is required"],
       trim: true,
     },
+
     tpaCode: {
       type: String,
-      required: [true, "TPA code is required"],
+      // required: [true, "TPA code is requiredsssssssssss"],
       unique: true,
       uppercase: true,
       trim: true,
@@ -24,7 +25,7 @@ const TPASchema = new mongoose.Schema(
     },
     phone: {
       type: String,
-      required: [true, "Phone number is required"],
+      // required: [true, "Phone number is requiredssssssss"],
       match: [/^[0-9]{10}$/, "Valid 10 digit phone number required"],
     },
     email: {
@@ -43,7 +44,7 @@ const TPASchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Indexes
