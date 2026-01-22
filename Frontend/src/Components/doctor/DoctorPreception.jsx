@@ -31,36 +31,45 @@ function DoctorPreception() {
   console.log("ssssss---------", seviceTpaId);
 console.log("000000000000-------------",uhid);
 
-  useEffect(() => {
-    if (!UHID) return console.log("boss");
-    getPatientbyID(UHID) 
-      .then((res) => {
-        // setTpaId(res.TPAid);
-        getTPAid(res.TPAid);
-        setUHID(res.data);
-      })
-      .catch((err) => {
-        console.error("Error fetching patient:", err);
-      });
-  }, [UHID]);
+  // useEffect(() => {
+  //   if (!UHID) return console.log("boss");
+  //   getPatientbyID(UHID) 
+  //     .then((res) => {
 
-  useEffect(() => {
-    if (uhid) {
-      setSelectedGender(uhid.gender); // 👈 API ka gender set kar diya
-    }
-  }, [uhid]);
+  //     //   console.log("555544444444--------",res);
+  //     //  console.log( "tpa id bhai",res.data.tpa._id);
+  //     //  console.log("---==1111",res.data.tpa.tpaName);
+       
+  //       // setTpaId(res.TPAid);
+  //       // getTPAid(res.TPAid);
+  //        getTPAid(res.data.tpa._id);
+  //       setUHID(res.data);
+  //     })
+  //     .catch((err) => {
+  //       console.error("Error fetching patient:", err);
+  //     });
+  // }, [UHID]);
 
-  function getTPAid(TpaId) {
-    getTpaId(TpaId).then((res) => {
-      const serviceArray = res?.service || [];
+  // useEffect(() => {
+  //   if (uhid) {
+  //     setSelectedGender(uhid.gender); // 👈 API ka gender set kar diya
+  //   }
+  // }, [uhid]);
 
-      const formattedOptions = serviceArray.map((item) => ({
-        label: item.Name,
-        value: item._id,
-      }));
-      setServiceTpaId(formattedOptions);
-    });
-  }
+  // function getTPAid(TpaId) {
+  //   getTpaId(TpaId).then((res) => {
+
+  //     console.log("aagggg",res);
+      
+  //     const serviceArray = res?.service || [];
+
+  //     const formattedOptions = serviceArray.map((item) => ({
+  //       label: item.Name,
+  //       value: item._id,
+  //     }));
+  //     setServiceTpaId(formattedOptions);
+  //   });
+  // }
 
   // useEffect(() => {
   //   if (!TpaId) return;
@@ -78,6 +87,50 @@ console.log("000000000000-------------",uhid);
   //     })
   //     .catch((err) => console.error("Error fetching TPA service:", err));
   // }, [TpaId]);
+
+
+useEffect(() => {
+  if (!UHID) return console.log("boss");
+
+  getPatientbyID(UHID)
+    .then((res) => {
+      const patientData = res.data;
+
+      setUHID(patientData);                // ✅ patient data alag state
+      setSelectedGender(patientData.gender);
+
+      if (patientData?.tpa?._id) {
+       
+        getTPAid(patientData.tpa._id);     // ✅ TPA ID sahi ja rahi
+      }
+    })
+    .catch((err) => {
+      console.error("Error fetching patient:", err);
+    });
+}, [UHID]);   // ✅ sirf ID pe depend
+
+useEffect(() => {
+  if (uhid) {
+    setSelectedGender(uhid.gender);
+  }
+}, [uhid]);
+
+
+function getTPAid(TpaId) {
+  getTpaId(TpaId).then((res) => {
+    console.log("TPA RESPONSE", res);
+
+    const serviceArray = res?.service || [];
+
+    const formattedOptions = serviceArray.map((item) => ({
+      label: item.Name,
+      value: item._id,
+    }));
+
+    setServiceTpaId(formattedOptions);
+  });
+}
+
 
   const validationSchema = yup.object().shape({
     User: yup.array().of(

@@ -17,7 +17,7 @@ import Servicebtn from "./Components/Servicebtn";
 // import OPDPrint from "./Components/Opdprint";
 import OPDPrint from "./pages/OPD/OPDPrint";
 // import Doctorpre from "./Components/Doctorpreception";
-import DoctorPreceptionPrint from "./pages/doctor/DoctorPreceptionPrint";
+import DoctorPreceptionPrint from "./pages/doctor/DoctorPrePrint";
 import ServiceAlldata from "./Components/ServiceAlldata";
 // import Preceptionbill from "./Components/Preceptionbill";
 import BedManagementSingleFile from "./Components/BedManagementSingleFile";

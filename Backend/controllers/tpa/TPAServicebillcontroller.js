@@ -98,16 +98,9 @@
 // //   }
 // // };
 
-
-
-
-
-
-
-
-
 const Servicebilldata = require("../../models/tpa/TPAServicesModel");
 const TPAModel = require("../../models/tpa/tpaModel");
+const patientmodel=require("../../models/Patient/patientModel")
 
 exports.Servicebillfun = async (req, res) => {
   try {
@@ -159,8 +152,8 @@ exports.Servicebillfun = async (req, res) => {
       // 🔴 Duplicate service check
       const duplicateServices = formattedServices.filter((newService) =>
         existingDoc.service.some(
-          (oldService) => oldService.Name === newService.Name
-        )
+          (oldService) => oldService.Name === newService.Name,
+        ),
       );
 
       if (duplicateServices.length > 0) {
@@ -203,7 +196,6 @@ exports.Servicebillfun = async (req, res) => {
   }
 };
 
-
 exports.TestName = async (req, res) => {
   try {
     const tests = await Servicebilldata.find();
@@ -244,7 +236,7 @@ exports.getTpaId = async (req, res) => {
   console.log(req.params);
 
   try {
-    const TpaId = await Servicebilldata.findOne({
+    const TpaId = await TPAModel.findOne({
       _id: req.params.TpaId,
     });
     if (!TpaId) return res.status(404).json({ msg: "TpaID is not Found" });
@@ -253,5 +245,32 @@ exports.getTpaId = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+// exports.getTpaId = async (req, res) => {
+//   console.log("PARAMS 👉", req.params);
+
+//   try {
+//     const { TpaId } = req.params;
+
+//     if (!TpaId) {
+//       return res.status(400).json({ msg: "TpaID is missing in params" });
+//     }
+
+//     // ✅ TPA model use karo (NOT Servicebilldata)
+//     const tpaData = await TPAModel.findById(TpaId);
+
+//     if (!tpaData) {
+//       return res.status(404).json({ msg: "TpaID is not Found in DB" });
+//     }
+
+//     // ✅ Sirf services bhejna ho to
+//     res.status(200).json({
+//       success: true,
+//       service: tpaData.service,
+//     });
+//   } catch (err) {
+//     res.status(500).json({ error: err.message });
+//   }
+// };
 
 //http://localhost:5000/api/Servicebilldata/getTpaId/68c5b52b6d3289d2ef2f0c73

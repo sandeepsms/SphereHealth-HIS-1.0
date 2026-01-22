@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from "react";
-import logo from "../assets/logowebsite11.png";
+import logo from "../../assets/logowebsite11.png";
 import { useParams } from "react-router-dom";
-import { getdoctorprecetionbyID } from "../Services/doctorpreceptionapi";
+import { getdoctorprecetionbyID } from "../../Services/doctorpreceptionapi";
 import "primeicons/primeicons.css";
-import "../../css/opdbill.css";
 import html2pdf from "html2pdf.js";
 
 function Preceptionbill() {
