@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from "react";
-import logo from "../assets/logowebsite11.png";
+import logo from "../../assets/logowebsite11.png";
 import { useParams } from "react-router-dom";
-import { getdoctorprecetionbyID } from "../Services/doctorpreceptionapi";
+import { getdoctorprecetionbyID } from "../../Services/doctor/doctorpreceptionapi";
 import "primeicons/primeicons.css";
-import "../../css/opdbill.css";
+import "../../../css/opdbill.css";
 import html2pdf from "html2pdf.js";
 
 function Preceptionbill() {
@@ -11,11 +11,11 @@ function Preceptionbill() {
 
   const { UHID } = useParams();
   useEffect(() => {
-    if (!UHID) return; // Agar UHID nahi mila to call mat karo
+    if (!UHID) return;
 
     getdoctorprecetionbyID(UHID)
       .then((res) => {
-        setDoctorpreceptionUHID(res); // ✅ API data state me store
+        setDoctorpreceptionUHID(res);
         console.log("Patient dataggg:", res);
       })
       .catch((err) => {
@@ -23,7 +23,6 @@ function Preceptionbill() {
       });
   }, [UHID]);
 
-  // 🟢 Loading / Error Handling
   if (!doctorpreceptionUHID) {
     return <div className="p-3">Loading prescription data...</div>;
   }
@@ -36,8 +35,8 @@ function Preceptionbill() {
       .from(element)
       .set({
         margin: 10,
-        filename: `DoctorPreception.pdf`, // required internally
-        html2canvas: { scale: 2 }, // enough quality + fast
+        filename: `DoctorPreception.pdf`,
+        html2canvas: { scale: 2 },
         jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
       })
       .toPdf()

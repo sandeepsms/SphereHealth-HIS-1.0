@@ -1,6 +1,3 @@
-
-
-
 .form-container {
   width: 80%;
   margin: 20px auto;
@@ -64,7 +61,7 @@
 .submit-row {
   text-align: center;
   margin-top: 20px;
-   
+
 }
 
 .total-cell {
@@ -79,7 +76,8 @@
 }
 
 .input-with-symbol .input-box {
-  padding-right: 24px; /* space for % symbol */
+  padding-right: 24px;
+  /* space for % symbol */
 }
 
 .percent-symbol {
@@ -87,13 +85,15 @@
   right: 8px;
   color: #555;
   font-size: 14px;
-  pointer-events: none; /* click block na ho */
+  pointer-events: none;
+  /* click block na ho */
 }
+
 .p-sortable-column-icon {
   color: #fff !important;
 }
 
 .p-button {
-    background: #06a4c4 !important;
-    border-radius: 3px;
+  background: #06a4c4 !important;
+  border-radius: 3px;
 }

@@ -29,11 +29,11 @@ function DoctorPreception() {
 
   const { UHID, TpaId } = useParams();
   console.log("ssssss---------", seviceTpaId);
-console.log("000000000000-------------",uhid);
+  console.log("000000000000-------------", uhid);
 
   useEffect(() => {
     if (!UHID) return console.log("boss");
-    getPatientbyID(UHID) 
+    getPatientbyID(UHID)
       .then((res) => {
         // setTpaId(res.TPAid);
         getTPAid(res.TPAid);
@@ -92,7 +92,7 @@ console.log("000000000000-------------",uhid);
           .required("Enter the Amount"),
         Discount: yup.number().typeError("Amount must be a number"),
         Totalamount: yup.number(),
-      })
+      }),
     ),
   });
 
@@ -123,7 +123,7 @@ console.log("000000000000-------------",uhid);
         UHID: uhid?.UHID || "",
         Email: uhid?.email || "",
         fathername: "",
-        Department: uhid?.department.departmentName||"",
+        Department: uhid?.department.departmentName || "",
         Referred: "",
         History_of_Any_Allergy: "",
         History_of_Present_Illness: "",
