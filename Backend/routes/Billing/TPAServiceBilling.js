@@ -19,3 +19,11 @@ router.get("/getTpaId/:TpaId", getTpaId);
 // router.get("/getallservicefromregistrationtpaName",RegistrationTpaService)
 
 module.exports = router;
+
+
+
+
+// http://localhost:5000/api/servicebilldata/getAllTestNames
+
+
+// http://localhost:5000/api/servicebilldata/getTpaId/6970a1824eac0c5744d5dcba

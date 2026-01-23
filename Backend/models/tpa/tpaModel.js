@@ -1,7 +1,3 @@
-// ============================================
-// TPA MODEL
-// ============================================
-// models/tpa/tpaModel.js
 const mongoose = require("mongoose");
 
 const TPASchema = new mongoose.Schema(

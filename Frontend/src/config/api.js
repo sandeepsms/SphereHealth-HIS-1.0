@@ -21,6 +21,8 @@ export const API_ENDPOINTS = {
   EMERGENCY: `${API_BASE_URL}/emergency`,
   // DOCTORPRECEPTION:`${API_BASE_URL}/RegistrationOPD/getPreceptionreport`
   DOCTORPRECEPTION: `${API_BASE_URL}/patients/uhid`,
+  TPA_SERVICES: `${API_BASE_URL}/tpaservice`,
+  PRESCRIPTIONS: `${API_BASE_URL}/prescriptions`,
 };
 
 console.log("🌐 API Config Loaded:", API_BASE_URL);

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import logo from "../../assets/logowebsite11.png";
 import { useParams } from "react-router-dom";
-import { getdoctorprecetionbyID } from "../../Services/doctor/doctorpreceptionapi";
+import { prescriptionService } from "../../Services/doctor/prescriptionService";
 import "primeicons/primeicons.css";
 import "../../../css/opdbill.css";
 import html2pdf from "html2pdf.js";
@@ -178,8 +178,6 @@ function Preceptionbill() {
             </samp>
           </div>
 
-          {/* ✅ History of Illness */}
-
           {/* ✅ Physical Examination */}
           <div
             className="mt-2 mb-4"
@@ -282,10 +280,6 @@ function Preceptionbill() {
         </div>
 
         {/* ✅ Footer */}
-        {/* <footer className="text-center mt-4 text-muted small">
-        Max Super Speciality Hospital, Shalimar Bagh | Max Healthcare Institute
-        Ltd.
-      </footer> */}
         <footer className="">
           Thank you for visiting SUKOON HOSPITALS For emergency care, please
           contact: 📞7988307850, 0130-4052310

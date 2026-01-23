@@ -16,7 +16,6 @@ import Nurse from "./Components/Nurse";
 import Servicebtn from "./Components/Servicebtn";
 // import OPDPrint from "./Components/Opdprint";
 import OPDPrint from "./pages/OPD/OPDPrint";
-// // import Doctorpre from "./Components/Doctorpreception";
 import DoctorPreceptionPrint from "./pages/doctor/DoctorPrePrint";
 import ServiceAlldata from "./Components/ServiceAlldata";
 // import Preceptionbill from "./Components/Preceptionbill";
@@ -63,7 +62,7 @@ import DoctorListPage from "./pages/doctor/DoctorListPage";
 import DoctorForm from "./Components/doctor/DoctorForm";
 
 import DoctorPreception from "./Components/doctor/DoctorPreception";
-import ServiceAdd from "./Components/Tpa/ServiceAdd";
+import ServiceAdd from "./Components/Tpa/TPAServiceManagement";
 
 import AddTpa from "./Components/Tpa/AddTpa";
 

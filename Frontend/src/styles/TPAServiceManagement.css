@@ -1,0 +1,138 @@
+.tpa-service-container {
+    padding: 20px;
+    background-color: #f5f7fa;
+    min-height: 100vh;
+}
+
+.page-header {
+    margin-bottom: 30px;
+}
+
+.page-title {
+    font-size: 28px;
+    font-weight: 600;
+    color: #2c3e50;
+    margin: 0;
+}
+
+.form-card,
+.table-card {
+    background: white;
+    border-radius: 8px;
+    padding: 30px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    margin-bottom: 30px;
+}
+
+.form-title {
+    font-size: 20px;
+    font-weight: 600;
+    color: #2c3e50;
+    margin-bottom: 25px;
+}
+
+.services-section {
+    margin-top: 30px;
+}
+
+.services-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.services-header h3 {
+    font-size: 18px;
+    font-weight: 600;
+    color: #2c3e50;
+    margin: 0;
+}
+
+.services-table {
+    margin-top: 15px;
+}
+
+.form-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 30px;
+}
+
+.search-section {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+    gap: 15px;
+}
+
+.search-input {
+    width: 400px;
+}
+
+.result-count {
+    color: #6c757d;
+    font-size: 14px;
+}
+
+.service-count-badge {
+    background-color: #17a2b8;
+    color: white;
+    padding: 5px 12px;
+    border-radius: 12px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.tpa-code-badge {
+    background-color: #6c757d;
+    color: white;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.view-dialog-content {
+    padding: 15px 0;
+}
+
+.detail-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 12px 0;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.detail-row strong {
+    color: #495057;
+    font-weight: 600;
+}
+
+.services-list {
+    margin-top: 20px;
+}
+
+.services-list h4 {
+    font-size: 16px;
+    font-weight: 600;
+    color: #2c3e50;
+    margin-bottom: 15px;
+}
+
+@media (max-width: 768px) {
+    .tpa-service-container {
+        padding: 10px;
+    }
+
+    .form-card,
+    .table-card {
+        padding: 15px;
+    }
+
+    .search-input {
+        width: 100%;
+    }
+}
