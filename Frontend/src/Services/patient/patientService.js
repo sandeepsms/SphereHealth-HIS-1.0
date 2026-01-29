@@ -40,7 +40,7 @@ const patientService = {
 
   getPatientByUHID: async (uhid) => {
     try {
-      const response = await axios.get(`${API_URL}/${uhid}`);
+      const response = await axios.get(`${API_URL}/uhid/${uhid}`);
       return response.data;
     } catch (error) {
       console.error("PatientService.getPatientByuhid error:", error);

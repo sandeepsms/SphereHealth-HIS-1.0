@@ -4,10 +4,10 @@ const Doctor = require("../../models/Doctor/doctorModel");
 
 exports.createPrescription = async (req, res) => {
   try {
-    const prescriptionData = req.body;
+    const data = req.body;
 
-    // Validate patient exists
-    const patient = await Patient.findById(prescriptionData.patient);
+    // 🔍 Validate patient
+    const patient = await Patient.findById(data.patient);
     if (!patient) {
       return res.status(404).json({
         success: false,
@@ -15,10 +15,39 @@ exports.createPrescription = async (req, res) => {
       });
     }
 
-    // Create prescription
-    const prescription = await Prescription.create(prescriptionData);
+    // 🔥 Build clean prescription object
+    const prescriptionPayload = {
+      // IDs
+      patient: patient._id,
+      UHID: patient.UHID,
 
-    // Populate references
+      // AUTO patient info
+      patientName: patient.fullName,
+      age: patient.age,
+      gender: patient.gender,
+      contactNumber: patient.contactNumber,
+      fatherName: patient.fatherName || "",
+      department: patient.department?.departmentName || "",
+
+      // doctor
+      doctor: data.doctor,
+      referredBy: data.referredBy || "",
+
+      registrationType: data.registrationType || "OPD",
+
+      clinicalDetails: data.clinicalDetails,
+      vitals: data.vitals,
+      provisionalDiagnosis: data.provisionalDiagnosis,
+
+      medicines: data.medicines || [],
+      investigations: data.investigations || [],
+      advice: data.advice || "",
+    };
+
+    // 💾 Save
+    const prescription = await Prescription.create(prescriptionPayload);
+
+    // 📦 Populate for response only
     await prescription.populate([
       { path: "patient", select: "fullName UHID gender age" },
       {

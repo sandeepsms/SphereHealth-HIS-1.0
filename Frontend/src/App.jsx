@@ -16,7 +16,7 @@ import Nurse from "./Components/Nurse";
 import Servicebtn from "./Components/Servicebtn";
 // import OPDPrint from "./Components/Opdprint";
 import OPDPrint from "./pages/OPD/OPDPrint";
-import DoctorPreceptionPrint from "./pages/doctor/DoctorPrePrint";
+import DoctorPrePrint from "./pages/doctor/DoctorPrePrint";
 import ServiceAlldata from "./Components/ServiceAlldata";
 // import Preceptionbill from "./Components/Preceptionbill";
 import BedManagementSingleFile from "./Components/BedManagementSingleFile";
@@ -107,7 +107,7 @@ export default function App() {
           <Route path="/ServiceAlldata" element={<ServiceAlldata />} />
           <Route
             path="/Preceptionbill/:UHID"
-            element={<DoctorPreceptionPrint />}
+            element={<DoctorPrePrint />}
           />
           {/* <Route
             path="/BedManagementSingleFile/:UHID"

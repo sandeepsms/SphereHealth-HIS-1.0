@@ -48,7 +48,6 @@ exports.getPatientById = async (req, res) => {
   try {
     const patient = await patientService.getPatientById(req.params.id);
 
-
     res.status(200).json({
       success: true,
       data: patient,
@@ -135,7 +134,7 @@ exports.getPatientsByTPA = async (req, res) => {
   try {
     const patients = await patientService.getPatientsByTPA(
       req.params.tpaId,
-      req.query
+      req.query,
     );
 
     res.status(200).json({

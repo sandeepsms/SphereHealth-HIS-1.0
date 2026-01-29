@@ -4,7 +4,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { Toast } from "primereact/toast";
 import { Card } from "primereact/card";
 import DoctorForm from "../../Components/doctor/DoctorForm";
-import { doctorService } from "../../Services/doctor/doctorService";
+import { doctorService } from "../../Services/Doctor/doctorService";
 
 const DoctorFormPage = () => {
   const navigate = useNavigate();

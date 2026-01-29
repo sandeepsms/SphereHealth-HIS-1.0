@@ -11,7 +11,7 @@ import { Field, FieldArray, Formik, Form, getIn } from "formik";
 import * as yup from "yup";
 import patientService from "../../Services/patient/patientService";
 import { doctorService } from "../../Services/Doctor/doctorService";
-import { tpaService } from "../../Services/tpa/tpaService";
+import { tpaServiceService } from "../../Services/tpa/tpaServiceService";
 import { prescriptionService } from "../../Services/doctor/prescriptionService";
 
 function DoctorPrescription() {
@@ -25,6 +25,11 @@ function DoctorPrescription() {
   const { UHID } = useParams();
   const navigate = useNavigate();
 
+  console.log("--------tttttt", UHID);
+
+  // console.log("333333333333",selectedServices);
+  // console.log("333333333333-------------------",serviceOptions);
+
   // Fetch patient data
   useEffect(() => {
     if (!UHID) return;
@@ -33,10 +38,15 @@ function DoctorPrescription() {
       .getPatientByUHID(UHID)
       .then((res) => {
         const patientData = res.data;
+        console.log("tpaidddddddddddd", patientData);
+
         setUHID(patientData);
 
         // Fetch TPA services if patient has TPA
+
         if (patientData?.tpa?._id) {
+          console.log("bosssssssssssss", patientData?.tpa?._id);
+
           fetchTPAServices(patientData.tpa._id);
         }
 
@@ -52,14 +62,19 @@ function DoctorPrescription() {
   }, [UHID]);
 
   const fetchTPAServices = (tpaId) => {
-    tpaService
-      .getTPAById(tpaId)
+    tpaServiceService
+      .getTPAServiceById(tpaId)
       .then((res) => {
+        console.log("ressssssssssppppppppp", res);
+
         const serviceArray = res.data?.service || res.service || [];
+
         const formattedOptions = serviceArray.map((item) => ({
           label: item.Name,
           value: item._id,
         }));
+        console.log("fffffffffff", formattedOptions);
+
         setServiceOptions(formattedOptions);
       })
       .catch((err) => {
@@ -105,6 +120,7 @@ function DoctorPrescription() {
     <Formik
       enableReinitialize
       initialValues={{
+        
         // Patient Info
         patient: uhid?._id || "",
         UHID: uhid?.UHID || "",

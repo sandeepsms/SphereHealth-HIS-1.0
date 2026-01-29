@@ -147,10 +147,11 @@ exports.getAllTPAServices = async (req, res) => {
   }
 };
 
-// Get TPA Service by ID
+//Get TPA Service by ID
 exports.getTPAServiceById = async (req, res) => {
   try {
-    const tpaService = await TPAService.findById(req.params.id).populate(
+     const { id } = req.params;
+    const tpaService = await TPAService.findOne({ tpa: id }).populate(
       "tpa",
       "tpaName tpaCode phone email contactPerson",
     );
@@ -158,7 +159,7 @@ exports.getTPAServiceById = async (req, res) => {
     if (!tpaService) {
       return res.status(404).json({
         success: false,
-        message: "TPA Service not found",
+        message: "TPA Service not foundssssssssss",
       });
     }
 
@@ -174,6 +175,53 @@ exports.getTPAServiceById = async (req, res) => {
     });
   }
 };
+
+
+
+
+
+// const mongoose = require("mongoose");
+
+// // Get TPA Service by TPA ID
+// exports.getTPAServiceById = async (req, res) => {
+//   try {
+//     const { id } = req.params;
+
+//     // ✅ ObjectId validation
+//     if (!mongoose.Types.ObjectId.isValid(id)) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Invalid TPA ID",
+//       });
+//     }
+
+//     // 🔥 MAIN FIX: findOne instead of findById
+//     const tpaService = await TPAService.findOne({ tpa: id }).populate(
+//       "tpa",
+//       "tpaName tpaCode phone email contactPerson"
+//     );
+
+//     if (!tpaService) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "TPA Service not found",
+//       });
+//     }
+
+//     res.status(200).json({
+//       success: true,
+//       data: tpaService, // or tpaService.service if sirf services chahiye
+//     });
+
+//   } catch (error) {
+//     console.error("Error fetching TPA Service by TPA ID:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: error.message,
+//     });
+//   }
+// };
+
 
 // Get TPA Services by TPA ID
 exports.getTPAServicesByTPAId = async (req, res) => {

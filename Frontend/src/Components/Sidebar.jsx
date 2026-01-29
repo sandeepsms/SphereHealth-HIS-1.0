@@ -57,74 +57,74 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
         // },
       ],
     },
-    // {
-    //   label: "Billing",
-    //   icon: "pi pi-money-bill",
-    //   items: [
-    //     {
-    //       label: "Bill Service",
-    //       icon: "pi pi-file",
-    //       command: () => {
-    //         navigate("/services");
-    //         toggleSidebar();
-    //       },
-    //     },
-    //     {
-    //       label: "TPA Service",
-    //       icon: "pi pi-file-edit",
-    //       command: () => {
-    //         navigate("/TPA");
-    //         toggleSidebar();
-    //       },
-    //     },
-    //   ],
-    // },
-    // {
-    //   label: "Master Data",
-    //   icon: "pi pi-database",
-    //   items: [
-    //     {
-    //       label: "Buildings",
-    //       icon: "pi pi-building",
-    //       command: () => {
-    //         navigate("/buildings");
-    //         toggleSidebar();
-    //       },
-    //     },
-    //     {
-    //       label: "Floors",
-    //       icon: "pi pi-arrows-v",
-    //       command: () => {
-    //         navigate("/floors");
-    //         toggleSidebar();
-    //       },
-    //     },
-    //     {
-    //       label: "Wards",
-    //       icon: "pi pi-home",
-    //       command: () => {
-    //         navigate("/wards");
-    //         toggleSidebar();
-    //       },
-    //     },
-    //     {
-    //       label: "Rooms",
-    //       icon: "pi pi-box",
-    //       command: () => {
-    //         navigate("/rooms");
-    //         toggleSidebar();
-    //       },
-    //     },
-    //     {
-    //       label: "Department",
-    //       icon: "pi pi-sitemap",
-    //       command: () => {
-    //         navigate("/department");
-    //         toggleSidebar();
-    //       },
-    //     },
-    //   ],
-    // },
+    {
+      label: "Billing",
+      icon: "pi pi-money-bill",
+      items: [
+        //     {
+        //       label: "Bill Service",
+        //       icon: "pi pi-file",
+        //       command: () => {
+        //         navigate("/services");
+        //         toggleSidebar();
+        //       },
+        //     },
+        //     {
+        //       label: "TPA Service",
+        //       icon: "pi pi-file-edit",
+        //       command: () => {
+        //         navigate("/TPA");
+        //         toggleSidebar();
+        //       },
+        //     },
+        //   ],
+        // },
+        // {
+        //   label: "Master Data",
+        //   icon: "pi pi-database",
+        //   items: [
+        //     {
+        //       label: "Buildings",
+        //       icon: "pi pi-building",
+        //       command: () => {
+        //         navigate("/buildings");
+        //         toggleSidebar();
+        //       },
+        //     },
+        //     {
+        //       label: "Floors",
+        //       icon: "pi pi-arrows-v",
+        //       command: () => {
+        //         navigate("/floors");
+        //         toggleSidebar();
+        //       },
+        //     },
+        //     {
+        //       label: "Wards",
+        //       icon: "pi pi-home",
+        //       command: () => {
+        //         navigate("/wards");
+        //         toggleSidebar();
+        //       },
+        //     },
+        //     {
+        //       label: "Rooms",
+        //       icon: "pi pi-box",
+        //       command: () => {
+        //         navigate("/rooms");
+        //         toggleSidebar();
+        //       },
+        //     },
+        {
+          label: "Department",
+          icon: "pi pi-sitemap",
+          command: () => {
+            navigate("/department");
+            toggleSidebar();
+          },
+        },
+      ],
+    },
     // {
     //   label: "Bed Management",
     //   icon: "pi pi-th-large",
@@ -160,9 +160,6 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
             toggleSidebar();
           },
         },
-
-
-        
       ],
     },
 
@@ -187,13 +184,8 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
             toggleSidebar();
           },
         },
-
-
-        
       ],
     },
-
-
   ];
 
   return (
