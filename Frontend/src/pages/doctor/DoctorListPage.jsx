@@ -8,7 +8,7 @@ import { InputText } from "primereact/inputtext";
 import { Toast } from "primereact/toast";
 import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
 import { Tag } from "primereact/tag";
-import { doctorService } from "../../Services/Doctor/doctorService";
+import { doctorService } from "../../Services/doctor/doctorService";
 
 
 const DoctorListPage = () => {

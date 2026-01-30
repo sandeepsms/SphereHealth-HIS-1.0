@@ -12,7 +12,7 @@ import { Toast } from "primereact/toast";
 import * as yup from "yup";
 import { tpaServiceService } from "../../Services/tpa/tpaServiceService";
 import { tpaService } from "../../Services/tpa/tpaService";
-import "../../styles/tpaServiceManagement.css";
+import "../../styles/TPAServiceManagement.css";
 
 function TPAServiceManagement() {
   const [tpaServiceList, setTPAServiceList] = useState([]);
@@ -50,7 +50,7 @@ function TPAServiceManagement() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [tpaRes, serviceRes] = await Promise.all([
+      const [tpaRes, serviceRes] = await Promise.all([  
         tpaService.getAllTPAs(),
         tpaServiceService.getAllTPAServices(),
       ]);

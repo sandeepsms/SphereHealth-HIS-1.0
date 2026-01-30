@@ -10,7 +10,7 @@ import { MultiSelect } from "primereact/multiselect";
 import { Field, FieldArray, Formik, Form, getIn } from "formik";
 import * as yup from "yup";
 import patientService from "../../Services/patient/patientService";
-import { doctorService } from "../../Services/Doctor/doctorService";
+import { doctorService } from "../../Services/doctor/doctorService";
 import { tpaServiceService } from "../../Services/tpa/tpaServiceService";
 import { prescriptionService } from "../../Services/doctor/prescriptionService";
 
