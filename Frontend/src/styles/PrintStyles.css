@@ -1,0 +1,559 @@
+/* PrintStyles.css - Professional Hospital Prescription Design */
+
+/* ==================== SCREEN STYLES ==================== */
+.prescription-print-container {
+    max-width: 210mm;
+    /* A4 width */
+    margin: 0 auto;
+    padding: 10px;
+    background: #f5f5f5;
+}
+
+.prescription-page {
+    background: white;
+    padding: 0;
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+    min-height: 297mm;
+    /* A4 height */
+    position: relative;
+}
+
+/* ==================== PROFESSIONAL HEADER ==================== */
+.prescription-header-professional {
+    background: linear-gradient(135deg, #dc143c 0%, #b22222 100%);
+    color: white;
+    padding: 15px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: relative;
+}
+
+.prescription-header-professional::after {
+    content: '';
+    position: absolute;
+    bottom: -20px;
+    right: 0;
+    width: 0;
+    height: 0;
+    border-style: solid;
+    border-width: 20px 80px 0 0;
+    border-color: #dc143c transparent transparent transparent;
+}
+
+.header-left-section .hospital-logo {
+    width: 70px;
+    height: auto;
+    filter: brightness(0) invert(1);
+}
+
+.header-center-section {
+    flex: 1;
+    text-align: center;
+    padding: 0 20px;
+}
+
+.hospital-name-main {
+    font-size: 32px;
+    font-weight: 900;
+    margin: 0;
+    letter-spacing: 3px;
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.hospital-subtitle {
+    font-size: 11px;
+    margin: 5px 0 0 0;
+    font-style: italic;
+    opacity: 0.95;
+}
+
+.header-right-section {
+    text-align: right;
+}
+
+.contact-info {
+    font-size: 10px;
+    line-height: 1.6;
+}
+
+.contact-info p {
+    margin: 3px 0;
+}
+
+.contact-info strong {
+    margin-right: 3px;
+}
+
+.red-divider {
+    height: 3px;
+    background: linear-gradient(90deg, #dc143c 0%, transparent 100%);
+    margin: 0;
+}
+
+/* ==================== SECTION TITLES ==================== */
+.section-title-red {
+    background: #dc143c;
+    color: white;
+    padding: 8px 15px;
+    margin: 20px 0 10px 0;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    border-radius: 3px;
+    position: relative;
+}
+
+.section-title-red::after {
+    content: '';
+    position: absolute;
+    right: -8px;
+    top: 0;
+    width: 0;
+    height: 0;
+    border-style: solid;
+    border-width: 15px 0 15px 8px;
+    border-color: transparent transparent transparent #dc143c;
+}
+
+/* ==================== PATIENT INFO TABLE ==================== */
+.patient-info-compact {
+    padding: 0 20px;
+}
+
+.info-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+    font-size: 13px;
+}
+
+.info-table td {
+    padding: 8px 10px;
+    border: 1px solid #e0e0e0;
+}
+
+.label-cell {
+    background: #f8f8f8;
+    font-weight: 600;
+    color: #333;
+    width: 20%;
+}
+
+.value-cell {
+    background: white;
+    color: #000;
+    font-weight: 500;
+    width: 30%;
+}
+
+/* ==================== CLINICAL DETAILS ==================== */
+.clinical-section {
+    padding: 0 20px;
+    margin-bottom: 15px;
+}
+
+.clinical-item {
+    margin-bottom: 12px;
+    padding: 10px;
+    background: #fafafa;
+    border-left: 4px solid #dc143c;
+    border-radius: 3px;
+}
+
+.clinical-item strong {
+    display: block;
+    color: #333;
+    margin-bottom: 5px;
+    font-size: 13px;
+}
+
+.clinical-item p {
+    margin: 0;
+    color: #555;
+    line-height: 1.6;
+    font-size: 12px;
+}
+
+/* ==================== VITALS ==================== */
+.vitals-section {
+    padding: 0 20px;
+    margin-bottom: 15px;
+}
+
+.vitals-row {
+    display: flex;
+    gap: 15px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+}
+
+.vital-badge {
+    padding: 10px 20px;
+    background: white;
+    border: 2px solid #dc143c;
+    border-radius: 25px;
+    font-size: 12px;
+    color: #333;
+}
+
+.vital-badge strong {
+    color: #dc143c;
+    margin-right: 5px;
+}
+
+/* ==================== DIAGNOSIS ==================== */
+.diagnosis-section {
+    padding: 0 20px;
+    margin-bottom: 15px;
+}
+
+.diagnosis-box {
+    padding: 15px;
+    background: #fff9e6;
+    border: 2px solid #ffd700;
+    border-radius: 5px;
+    font-weight: 600;
+    color: #333;
+    font-size: 13px;
+    margin-top: 10px;
+}
+
+/* ==================== MEDICINES TABLE ==================== */
+.medicines-section {
+    padding: 0 20px;
+    margin-bottom: 15px;
+}
+
+.medicine-table-professional {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+    font-size: 11px;
+}
+
+.medicine-table-professional thead {
+    background: #dc143c;
+    color: white;
+}
+
+.medicine-table-professional th {
+    padding: 10px 8px;
+    text-align: left;
+    font-weight: 600;
+    border: 1px solid #b22222;
+}
+
+.medicine-table-professional td {
+    padding: 10px 8px;
+    border: 1px solid #ddd;
+    color: #333;
+}
+
+.medicine-table-professional tbody tr:nth-child(odd) {
+    background: #fafafa;
+}
+
+.medicine-table-professional tbody tr:hover {
+    background: #f0f0f0;
+}
+
+/* ==================== INVESTIGATIONS ==================== */
+.investigations-section {
+    padding: 0 20px;
+    margin-bottom: 15px;
+}
+
+.investigations-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.investigation-badge {
+    padding: 8px 12px;
+    background: #e8f5e9;
+    border-left: 3px solid #4caf50;
+    border-radius: 3px;
+    font-size: 12px;
+    color: #2e7d32;
+}
+
+/* ==================== ADVICE ==================== */
+.advice-section {
+    padding: 0 20px;
+    margin-bottom: 15px;
+}
+
+.advice-box {
+    padding: 15px;
+    background: #e3f2fd;
+    border-left: 4px solid #2196f3;
+    border-radius: 3px;
+    line-height: 1.8;
+    color: #1565c0;
+    font-size: 12px;
+    margin-top: 10px;
+}
+
+/* ==================== DOCTOR SIGNATURE ==================== */
+.doctor-signature-professional {
+    padding: 20px 20px;
+    margin-top: 40px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+}
+
+.doctor-details-box {
+    flex: 1;
+}
+
+.doctor-details-box p {
+    margin: 5px 0;
+    font-size: 12px;
+    color: #333;
+}
+
+.doctor-details-box strong {
+    color: #dc143c;
+}
+
+.signature-box {
+    text-align: center;
+    min-width: 200px;
+}
+
+.signature-line {
+    width: 180px;
+    height: 60px;
+    border-bottom: 2px solid #333;
+    margin: 0 auto 5px auto;
+}
+
+.signature-label {
+    margin: 0;
+    font-size: 11px;
+    color: #666;
+    font-weight: 600;
+}
+
+/* ==================== FOOTER ==================== */
+.prescription-footer-professional {
+    padding: 15px 20px;
+    margin-top: 30px;
+    border-top: 3px solid #dc143c;
+    text-align: center;
+}
+
+.footer-divider {
+    height: 2px;
+    background: linear-gradient(90deg, transparent 0%, #dc143c 50%, transparent 100%);
+    margin-bottom: 10px;
+}
+
+.footer-text {
+    font-size: 10px;
+    color: #666;
+    margin: 5px 0;
+    font-style: italic;
+}
+
+.footer-date {
+    font-size: 10px;
+    color: #333;
+    margin: 5px 0;
+    font-weight: 600;
+}
+
+/* ==================== PRINT STYLES ==================== */
+@media print {
+
+    /* Hide non-printable elements */
+    .no-print {
+        display: none !important;
+    }
+
+    body {
+        margin: 0;
+        padding: 0;
+        background: white;
+    }
+
+    .prescription-print-container {
+        max-width: 100%;
+        margin: 0;
+        padding: 0;
+        background: white;
+    }
+
+    .prescription-page {
+        box-shadow: none;
+        padding: 0;
+        page-break-after: always;
+    }
+
+    /* Page setup */
+    @page {
+        size: A4;
+        margin: 8mm;
+    }
+
+    /* Ensure colors print */
+    * {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+    }
+
+    /* Header colors */
+    .prescription-header-professional {
+        background: #dc143c !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    .prescription-header-professional::after {
+        border-color: #dc143c transparent transparent transparent !important;
+    }
+
+    /* Section titles */
+    .section-title-red {
+        background: #dc143c !important;
+        color: white !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    .section-title-red::after {
+        border-color: transparent transparent transparent #dc143c !important;
+    }
+
+    /* Table headers */
+    .medicine-table-professional thead {
+        background: #dc143c !important;
+        color: white !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    /* Prevent page breaks inside elements */
+    .patient-info-compact,
+    .clinical-section,
+    .vitals-section,
+    .diagnosis-section,
+    .medicines-section,
+    .investigations-section,
+    .advice-section,
+    .doctor-signature-professional {
+        page-break-inside: avoid;
+    }
+
+    /* Table rows */
+    .medicine-table-professional tbody tr {
+        page-break-inside: avoid;
+    }
+
+    .medicine-table-professional tbody tr:nth-child(odd) {
+        background: #fafafa !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    /* Colored boxes */
+    .clinical-item {
+        background: #fafafa !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    .diagnosis-box {
+        background: #fff9e6 !important;
+        border-color: #ffd700 !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    .investigation-badge {
+        background: #e8f5e9 !important;
+        border-color: #4caf50 !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    .advice-box {
+        background: #e3f2fd !important;
+        border-color: #2196f3 !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    .vital-badge {
+        border-color: #dc143c !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    /* Footer */
+    .prescription-footer-professional {
+        border-top-color: #dc143c !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    /* Font sizes for print */
+    .hospital-name-main {
+        font-size: 28px;
+    }
+
+    .info-table {
+        font-size: 11px;
+    }
+
+    .medicine-table-professional {
+        font-size: 10px;
+    }
+}
+
+/* ==================== LOADING SPINNER ==================== */
+.loader {
+    width: 48px;
+    height: 48px;
+    border: 5px solid #dc143c;
+    border-bottom-color: transparent;
+    border-radius: 50%;
+    display: inline-block;
+    box-sizing: border-box;
+    animation: rotation 1s linear infinite;
+}
+
+@keyframes rotation {
+    0% {
+        transform: rotate(0deg);
+    }
+
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+/* ==================== UTILITY CLASSES ==================== */
+.text-center {
+    text-align: center;
+}
+
+.text-right {
+    text-align: right;
+}
+
+.text-left {
+    text-align: left;
+}
+
+.mb-0 {
+    margin-bottom: 0;
+}
+
+.mt-0 {
+    margin-top: 0;
+}

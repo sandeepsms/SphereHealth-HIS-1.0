@@ -1,101 +1,116 @@
 // import { useFormik } from "formik";
 // import React, { useEffect, useState } from "react";
-// import logo from "../assets/logowebsite11.png";
-// import { useParams } from "react-router-dom";
+// import logo from "../../assets/logowebsite11.png";
+// import { useParams, useNavigate } from "react-router-dom";
 // import { InputText } from "primereact/inputtext";
-// import { Dropdown } from "primereact/dropdown";
 // import { InputTextarea } from "primereact/inputtextarea";
-// import { getPatientbyID } from "../Services/userService";
-// import { RegistrationOPD } from "../Services/userService";
 // import { Button } from "primereact/button";
 // import { toast } from "react-toastify";
-// import { getTpaId } from "../Services/TpaIdget";
 // import { MultiSelect } from "primereact/multiselect";
-// import * as yup from "yup";
 // import { Field, FieldArray, Formik, Form, getIn } from "formik";
+// import * as yup from "yup";
+// import patientService from "../../Services/patient/patientService";
+// import { doctorService } from "../../Services/doctor/doctorService";
+// import { tpaServiceService } from "../../Services/tpa/tpaServiceService";
+// import { prescriptionService } from "../../Services/doctor/prescriptionService";
 
-// function Opd() {
-//   const [value, setValue] = useState("");
-//   const [selectedGender, setSelectedGender] = useState(null);
+// function DoctorPrescription() {
 //   const [uhid, setUHID] = useState(null);
-//   const [currentDate, setCurrentDate] = useState(new Date());
-//   const [seviceTpaId, setServiceTpaId] = useState([]);
-//   const [tpaservice, setTpaservice] = useState([]);
-//   const [tpaId, setTpaId] = useState();
+//   const [currentDate] = useState(new Date());
+//   const [serviceOptions, setServiceOptions] = useState([]);
+//   const [selectedServices, setSelectedServices] = useState([]);
+//   const [loading, setLoading] = useState(false);
+//   const [doctorData, setDoctorData] = useState(null);
 
-//   const { UHID, TpaId } = useParams();
-//   console.log("ssssss---------", seviceTpaId);
+//   const { UHID } = useParams();
+//   const navigate = useNavigate();
 
+//   console.log("DoctorPrescription - UHID from URL:", UHID);
+
+//   // Fetch patient data
 //   useEffect(() => {
-//     if (!UHID) return console.log("boss");
-//     getPatientbyID(UHID)
+//     if (!UHID) {
+//       console.error("❌ No UHID in URL!");
+//       toast.error("UHID is missing!");
+//       return;
+//     }
+
+//     console.log("✅ Fetching patient data for UHID:", UHID);
+
+//     patientService
+//       .getPatientByUHID(UHID)
 //       .then((res) => {
-//         // setTpaId(res.TPAid);
-//         getTPAid(res.TPAid);
-//         setUHID(res);
+//         const patientData = res.data;
+//         console.log("✅ Patient Data Loaded:", patientData);
+
+//         setUHID(patientData);
+
+//         // Fetch TPA services if patient has TPA
+//         if (patientData?.tpa?._id) {
+//           console.log("TPA ID found:", patientData?.tpa?._id);
+//           fetchTPAServices(patientData.tpa._id);
+//         }
+
+//         // Fetch doctor details
+//         if (patientData?.doctor?._id) {
+//           fetchDoctorDetails(patientData.doctor._id);
+//         }
 //       })
 //       .catch((err) => {
-//         console.error("Error fetching patient:", err);
+//         console.error("❌ Error fetching patient:", err);
+//         toast.error("Failed to load patient data");
 //       });
 //   }, [UHID]);
 
-//   useEffect(() => {
-//     if (uhid) {
-//       setSelectedGender(uhid.gender); // 👈 API ka gender set kar diya
-//     }
-//   }, [uhid]);
+//   const fetchTPAServices = (tpaId) => {
+//     console.log("Fetching TPA Services for TPA ID:", tpaId);
 
-//   function getTPAid(TpaId) {
-//     getTpaId(TpaId).then((res) => {
-//       const serviceArray = res?.service || [];
+//     tpaServiceService
+//       .getTPAServiceById(tpaId)
+//       .then((res) => {
+//         console.log("TPA Services Response:", res);
 
-//       const formattedOptions = serviceArray.map((item) => ({
-//         label: item.Name,
-//         value: item._id,
-//       }));
-//       setServiceTpaId(formattedOptions);
-//     });
-//   }
+//         const serviceArray = res.data?.service || res.service || [];
 
-//   // useEffect(() => {
-//   //   if (!TpaId) return;
+//         const formattedOptions = serviceArray.map((item) => ({
+//           label: item.Name,
+//           value: item._id,
+//         }));
 
-//   //   getTpaId(TpaId)
-//   //     .then((res) => {
-//   //       // ✅ Safely access service array
-//   //       const serviceArray = res?.service || [];
-//   //       // ✅ Map service to MultiSelect format
-//   //       const formattedOptions = serviceArray.map((item) => ({
-//   //         label: item.Name, // MultiSelect me dikhne wala text
-//   //         value: item._id, // Unique identifier
-//   //       }));
-//   //       setServiceTpaId(formattedOptions);
-//   //     })
-//   //     .catch((err) => console.error("Error fetching TPA service:", err));
-//   // }, [TpaId]);
+//         console.log("Formatted Service Options:", formattedOptions);
+//         setServiceOptions(formattedOptions);
+//       })
+//       .catch((err) => {
+//         console.error("❌ Error fetching TPA services:", err);
+//       });
+//   };
+
+//   const fetchDoctorDetails = (doctorId) => {
+//     console.log("Fetching Doctor Details for Doctor ID:", doctorId);
+
+//     doctorService
+//       .getDoctorById(doctorId)
+//       .then((res) => {
+//         console.log("Doctor Data Loaded:", res.data || res);
+//         setDoctorData(res.data || res);
+//       })
+//       .catch((err) => {
+//         console.error("❌ Error fetching doctor details:", err);
+//       });
+//   };
 
 //   const validationSchema = yup.object().shape({
-//     User: yup.array().of(
+//     provisionalDiagnosis: yup.string().required("Diagnosis is required"),
+//     medicines: yup.array().of(
 //       yup.object().shape({
-//         Name: yup
-//           .string()
-//           .max(15, "Max 15 chars allowed")
-//           .required("Enter the Name"),
-//         Amount: yup
-//           .number()
-//           .typeError("Amount must be a number")
-//           .required("Enter the Amount"),
-//         Discount: yup.number().typeError("Amount must be a number"),
-//         Totalamount: yup.number(),
-//       })
+//         medicineName: yup.string().required("Medicine name is required"),
+//         schedule: yup.string(),
+//         instruction: yup.string(),
+//         route: yup.string(),
+//         days: yup.number().typeError("Must be a number"),
+//       }),
 //     ),
 //   });
-
-//   const genderOptions = [
-//     { label: "Male", value: "male" },
-//     { label: "Female", value: "female" },
-//     { label: "Other", value: "other" },
-//   ];
 
 //   const Input = ({ field, form, placeholder }) => {
 //     const errorMessage = getIn(form.errors, field.name);
@@ -106,57 +121,137 @@
 //       </div>
 //     );
 //   };
+
 //   return (
 //     <Formik
 //       enableReinitialize
 //       initialValues={{
-//         Name: uhid?.name || "",
-//         Age: uhid?.age || "",
-//         Gender: uhid?.gender || "",
-//         Contact: uhid?.contact || "",
-//         Date: currentDate.toLocaleDateString(),
+//         // Patient Info
+//         patient: uhid?._id || "",
 //         UHID: uhid?.UHID || "",
-//         Email: uhid?.email || "",
-//         fathername: "",
-//         Department: "",
-//         Referred: "",
-//         History_of_Any_Allergy: "",
-//         History_of_Present_Illness: "",
-//         Physical_Examination: "",
+//         patientName: uhid?.fullName || "",
+//         age: uhid?.age || "0",
+//         gender: uhid?.gender || "",
+//         contactNumber: uhid?.contactNumber || "",
+//         date: currentDate.toLocaleDateString(),
+//         fatherName: "",
+//         department: uhid?.department?.departmentName || "",
+//         registrationType: uhid?.registrationType || "OPD",
+
+//         // Doctor Info
+//         doctor: uhid?.doctor?._id || "",
+//         referredBy: "",
+
+//         // Clinical Details
+//         historyOfAllergy: "",
+//         historyOfPresentIllness: "",
+//         physicalExamination: "",
+
+//         // Vitals
 //         weight: "",
-//         Temp: "",
-//         BP: "",
-//         Pulse: "",
-//         Provisional_diagnosis: "",
-//         Investigations: "",
-//         Advice: "",
-//         User: [
+//         temperature: "",
+//         bloodPressure: "",
+//         pulse: "",
+
+//         // Diagnosis & Treatment
+//         provisionalDiagnosis: "",
+//         medicines: [
 //           {
-//             Medicine: "",
-//             Schedule: "",
-//             Instruction: "",
-//             Route: "",
-//             Days: "",
+//             medicineName: "",
+//             schedule: "",
+//             instruction: "",
+//             route: "",
+//             days: "",
 //           },
 //         ],
+
+//         // Investigations
+//         investigations: [],
+
+//         // Advice
+//         advice: "",
 //       }}
-//       onSubmit={async (values) => {
-//         console.log(values);
+//       validationSchema={validationSchema}
+//       onSubmit={async (values, { setSubmitting }) => {
+//         setLoading(true);
 
 //         try {
-//           const users = await RegistrationOPD(values);
+//           const prescriptionData = {
+//             patient: values.patient,
+//             UHID: values.UHID,
+//             doctor: values.doctor,
+//             registrationType: values.registrationType,
 
-//           toast.success(users.data.message);
+//             clinicalDetails: {
+//               historyOfAllergy: values.historyOfAllergy,
+//               historyOfPresentIllness: values.historyOfPresentIllness,
+//               physicalExamination: values.physicalExamination,
+//             },
+
+//             vitals: {
+//               weight: values.weight,
+//               temperature: values.temperature,
+//               bloodPressure: values.bloodPressure,
+//               pulse: values.pulse,
+//             },
+
+//             provisionalDiagnosis: values.provisionalDiagnosis,
+//             medicines: values.medicines,
+//             investigations: selectedServices,
+//             advice: values.advice,
+//             referredBy: values.referredBy,
+//           };
+
+//           console.log("=== PRESCRIPTION SUBMISSION DEBUG ===");
+//           console.log("Submitting Prescription Data:", prescriptionData);
+//           console.log("UHID Value:", values.UHID);
+//           console.log("Target URL will be:", `/Preceptionbill/${values.UHID}`);
+
+//           const response =
+//             await prescriptionService.createPrescription(prescriptionData);
+
+//           console.log("Prescription Created Successfully:", response);
+//           console.log("Response Success:", response.success);
+//           console.log("Response Data:", response.data);
+
+//           toast.success(
+//             response.message || "Prescription created successfully!",
+//           );
+
+//           // ✅ CRITICAL: Check UHID before navigation
+//           if (!values.UHID) {
+//             console.error("❌ ERROR: UHID is empty! Cannot navigate.");
+//             toast.error("UHID is missing. Cannot navigate to print page.");
+//             return;
+//           }
+
+//           const printUrl = `/Preceptionbill/${values.UHID}`;
+//           console.log("✅ Navigating to:", printUrl);
+
+//           // Navigate to print view after 1.5 seconds
+//           setTimeout(() => {
+//             console.log("🚀 Navigation executing to:", printUrl);
+//             navigate(printUrl);
+//           }, 1500);
 //         } catch (error) {
-//           toast.error("Something went wrongs!");
-//           console.log(error);
+//           console.error("❌ Error creating prescription:", error);
+//           console.error("Error details:", error.response?.data);
+//           toast.error(
+//             error.response?.data?.message || "Failed to create prescription",
+//           );
 //         } finally {
+//           setLoading(false);
+//           setSubmitting(false);
 //         }
 //       }}
 //     >
-//       {({ values, handleChange }) => (
+//       {({ values, handleChange, setFieldValue }) => (
 //         <Form className="d-flex justify-content-center">
-//           <div className="card p-5 bg-white" style={{ marginTop: "100px" }}>
+//           <div
+//             className="card p-5 bg-white"
+//             style={{ marginTop: "10px", maxWidth: "1200px" }}
+//           >
+//             {/* Header */}
 //             <header
 //               className="navbar p-3 rounded"
 //               style={{
@@ -165,22 +260,19 @@
 //                 justifyItems: "center",
 //               }}
 //             >
-//               {/* Left: Logo */}
-//               <div className="navbar-logo ">
-//                 {" "}
-//                 <img src={logo} alt="Hospital Logo" />
+//               <div className="navbar-logo">
+//                 <img src={logo} alt="Hospital Logo" style={{ width: "80px" }} />
 //               </div>
 
-//               {/* Center: Hospital Name */}
 //               <div className="navbar-center">
-//                 <h1 className="hospital-name " style={{ marginLeft: "80px" }}>
-//                   SUKOON HOSPITALS{" "}
-//                 </h1>{" "}
+//                 <h1 className="hospital-name" style={{ marginLeft: "80px" }}>
+//                   SUKOON HOSPITALS
+//                 </h1>
 //                 <p className="tagline" style={{ marginLeft: "70px" }}>
 //                   run by Spherehealth Medical Solutions Pvt. Ltd.
 //                 </p>
 //               </div>
-//               {/* Right: Contact Info */}
+
 //               <div className="navbar-right">
 //                 <p>📞 7988807650, 0130-4052310</p>
 //                 <p>✉️ admin@sukoonhospitals.com</p>
@@ -189,21 +281,20 @@
 //                 </p>
 //               </div>
 //             </header>
-//             <h5 className="  p-2 rounded btn-custom text-white mb-3">
-//               Patients Information Details:
+
+//             {/* Patient Information */}
+//             <h5 className="p-2 rounded btn-custom text-white mb-3">
+//               Patient Information Details:
 //             </h5>
 //             <div className="row">
-//               {/* Name with FloatLabel */}
-
 //               <div className="col-md-4">
-//                 <label className="form-label ">Name</label>
+//                 <label className="form-label">Name</label>
 //                 <InputText
 //                   id="name"
-//                   name="Name"
-//                   value={values.Name}
+//                   name="patientName"
+//                   value={values.patientName}
 //                   readOnly
-//                   onChange={handleChange}
-//                   className="w-100 text-success"
+//                   className="w-100 text-success fw-bold"
 //                 />
 //               </div>
 
@@ -211,165 +302,155 @@
 //                 <label className="form-label">Age</label>
 //                 <InputText
 //                   id="age"
-//                   name="Age"
-//                   value={values.Age}
+//                   name="age"
+//                   value={values.age}
 //                   readOnly
-//                   className="w-100 text-success"
-//                   onChange={handleChange}
+//                   className="w-100 text-success fw-bold"
 //                 />
 //               </div>
 
-//               {/* Gender Dropdown */}
 //               <div className="col-md-4">
-//                 <label className="form-label ">Gender</label>
-
+//                 <label className="form-label">Gender</label>
 //                 <InputText
 //                   id="gender"
-//                   selected
-//                   name="Gender"
-//                   value={values.Gender}
+//                   name="gender"
+//                   value={values.gender}
 //                   readOnly
-//                   onChange={handleChange}
-//                   virtualScrollerOptions={{ itemSize: 38 }}
-//                   placeholder="Select Gender"
-//                   className="w-100 fw-bold text-success"
+//                   className="w-100 text-success fw-bold"
 //                 />
 //               </div>
 
 //               <div className="col-md-4">
-//                 <label className="form-label "> Father/Guardian Name:</label>
-
+//                 <label className="form-label">Father/Guardian Name:</label>
 //                 <InputText
-//                   id="Father"
-//                   name="fathername"
-//                   value={values.fathername}
+//                   id="fatherName"
+//                   name="fatherName"
+//                   value={values.fatherName}
 //                   onChange={handleChange}
 //                   className="w-100"
 //                 />
 //               </div>
 
 //               <div className="col-md-4">
-//                 <label className="form-label ">Number</label>
-
+//                 <label className="form-label">Contact Number</label>
 //                 <InputText
-//                   id="number"
-//                   keyfilter="num"
-//                   name="Contact"
-//                   value={values.Contact}
-//                   onChange={handleChange}
-//                   className="w-100 fw-bold text-success"
-//                 />
-//               </div>
-
-//               <div className="col-md-4">
-//                 <label className="form-label">DOB</label>
-
-//                 <InputText
-//                   id="dof"
-//                   name="Date"
-//                   value={values.Date}
+//                   id="contactNumber"
+//                   name="contactNumber"
+//                   value={values.contactNumber}
 //                   readOnly
-//                   className="w-100 fw-bold text-success"
+//                   className="w-100 text-success fw-bold"
 //                 />
 //               </div>
 
 //               <div className="col-md-4">
-//                 <label className="form-label ">UHID No:</label>
-
+//                 <label className="form-label">Date</label>
 //                 <InputText
-//                   id="alphabetic"
-//                   keyfilter="alpha"
+//                   id="date"
+//                   name="date"
+//                   value={values.date}
+//                   readOnly
+//                   className="w-100 text-success fw-bold"
+//                 />
+//               </div>
+
+//               <div className="col-md-4">
+//                 <label className="form-label">UHID No:</label>
+//                 <InputText
+//                   id="UHID"
 //                   name="UHID"
 //                   value={values.UHID}
 //                   readOnly
-//                   className="w-100 fw-bold text-success"
+//                   className="w-100 text-success fw-bold"
 //                 />
 //               </div>
 
 //               <div className="col-md-4">
-//                 <label className="form-label ">Department:</label>
-
+//                 <label className="form-label">Department:</label>
 //                 <InputText
-//                   id="alphabetic"
-//                   keyfilter="alpha"
-//                   name="Department"
-//                   value={values.Department}
-//                   onChange={handleChange}
-//                   className="w-100 fw-bold text-success"
+//                   id="department"
+//                   name="department"
+//                   value={values.department}
+//                   readOnly
+//                   className="w-100 text-success fw-bold"
 //                 />
 //               </div>
 
 //               <div className="col-md-4">
-//                 <label className="form-label ">Referred BY:</label>
-
+//                 <label className="form-label">Registration Type:</label>
 //                 <InputText
-//                   id="alphabetic"
-//                   keyfilter="alpha"
-//                   name="Referred"
-//                   value={values.Referred}
+//                   id="registrationType"
+//                   name="registrationType"
+//                   value={values.registrationType}
+//                   readOnly
+//                   className="w-100 text-success fw-bold"
+//                 />
+//               </div>
+
+//               <div className="col-md-4">
+//                 <label className="form-label">Referred By:</label>
+//                 <InputText
+//                   id="referredBy"
+//                   name="referredBy"
+//                   value={values.referredBy}
 //                   onChange={handleChange}
-//                   className="w-100 fw-bold text-success"
+//                   className="w-100"
 //                 />
 //               </div>
 //             </div>
-//             <h5 className="  p-2 rounded btn-custom text-white mt-4">
+
+//             {/* Clinical Details */}
+//             <h5 className="p-2 rounded btn-custom text-white mt-4">
 //               Clinical Details:
 //             </h5>
-//             <div className="col-md-12 ">
+//             <div className="col-md-12">
 //               <label className="form-label fw-bold">
 //                 History of Any Allergy:
 //               </label>
 //               <InputTextarea
-//                 name="History_of_Any_Allergy"
-//                 value={values.History_of_Any_Allergy}
+//                 name="historyOfAllergy"
+//                 value={values.historyOfAllergy}
 //                 onChange={handleChange}
 //                 placeholder="Enter the History of Any Allergy"
-//                 rows={6}
+//                 rows={3}
 //                 className="w-100"
-//                 style={{ height: "90px" }}
 //               />
 //             </div>
 
-//             <div className="col-md-12 ">
+//             <div className="col-md-12 mt-3">
 //               <label className="form-label fw-bold">
 //                 History of Present Illness:
 //               </label>
 //               <InputTextarea
-//                 name="History_of_Present_Illness"
-//                 value={values.History_of_Present_Illness}
+//                 name="historyOfPresentIllness"
+//                 value={values.historyOfPresentIllness}
 //                 onChange={handleChange}
 //                 placeholder="Enter the Present Illness"
-//                 rows={6}
+//                 rows={3}
 //                 className="w-100"
-//                 style={{ height: "90px" }}
 //               />
 //             </div>
 
-//             <div className="col-md-12 ">
+//             <div className="col-md-12 mt-3">
 //               <label className="form-label fw-bold">
 //                 Physical Examination:
 //               </label>
 //               <InputTextarea
-//                 name="Physical_Examination"
-//                 value={values.Physical_Examination}
+//                 name="physicalExamination"
+//                 value={values.physicalExamination}
 //                 onChange={handleChange}
 //                 placeholder="Enter the Physical Examination"
-//                 rows={6}
+//                 rows={3}
 //                 className="w-100"
-//                 style={{ height: "90px" }}
 //               />
 //             </div>
 
-//             <div className="row flex mt-3  justify-content-between w-100% ">
-//               {/* Name with FloatLabel */}
-//               <h5 className="  p-2 rounded btn-custom text-white mt-4">
-//                 Vitals:
-//               </h5>
-
+//             {/* Vitals */}
+//             <h5 className="p-2 rounded btn-custom text-white mt-4">Vitals:</h5>
+//             <div className="row mt-3">
 //               <div className="col-md-3 d-flex justify-content-evenly align-items-center">
-//                 <label htmlFor="temp">Weight:</label>
+//                 <label htmlFor="weight">Weight:</label>
 //                 <InputText
-//                   id="name1"
+//                   id="weight"
 //                   name="weight"
 //                   value={values.weight}
 //                   onChange={handleChange}
@@ -379,24 +460,24 @@
 //               </div>
 
 //               <div className="col-md-3 d-flex justify-content-evenly align-items-center">
-//                 <label htmlFor="temp">Temp:</label>
+//                 <label htmlFor="temperature">Temp:</label>
 //                 <InputText
-//                   id="temp"
-//                   name="Temp"
+//                   id="temperature"
+//                   name="temperature"
 //                   placeholder="(°F)"
-//                   value={values.Temp}
+//                   value={values.temperature}
 //                   onChange={handleChange}
 //                   style={{ width: "90px" }}
 //                 />
 //               </div>
 
 //               <div className="col-md-3 d-flex justify-content-evenly align-items-center">
-//                 <label htmlFor="bp">B.P:</label>
+//                 <label htmlFor="bloodPressure">B.P:</label>
 //                 <InputText
-//                   id="bp"
-//                   name="BP"
+//                   id="bloodPressure"
+//                   name="bloodPressure"
 //                   placeholder="mmHg"
-//                   value={values.BP}
+//                   value={values.bloodPressure}
 //                   onChange={handleChange}
 //                   style={{ width: "90px" }}
 //                 />
@@ -406,56 +487,58 @@
 //                 <label htmlFor="pulse">Pulse:</label>
 //                 <InputText
 //                   id="pulse"
-//                   name="Pulse"
+//                   name="pulse"
 //                   placeholder="bpm"
-//                   value={values.Pulse}
+//                   value={values.pulse}
 //                   onChange={handleChange}
 //                   style={{ width: "90px" }}
 //                 />
 //               </div>
 //             </div>
-//             <h5 className="  p-2 rounded btn-custom text-white mt-4">
+
+//             {/* Plan of Care */}
+//             <h5 className="p-2 rounded btn-custom text-white mt-4">
 //               Plan of Care:
 //             </h5>
-//             {/* plan of care */}
 //             <div className="mt-4">
-//               <div className="col-md-12 ">
+//               <div className="col-md-12">
 //                 <label className="form-label fw-bold">
-//                   Provisional diagnosis:
+//                   Provisional Diagnosis: <span className="text-danger">*</span>
 //                 </label>
 //                 <InputText
-//                   name="Provisional_diagnosis"
-//                   value={values.Provisional_diagnosis}
+//                   name="provisionalDiagnosis"
+//                   value={values.provisionalDiagnosis}
 //                   onChange={handleChange}
-//                   placeholder="Enter Detail"
+//                   placeholder="Enter Diagnosis"
 //                   required
 //                   className="w-100"
 //                 />
 //               </div>
-//               <FieldArray name="User">
+
+//               {/* Medicine Table */}
+//               <FieldArray name="medicines">
 //                 {({ remove, push }) => (
 //                   <div className="mt-4">
-//                     <div className="btn-row">
-//                       <h4 className="title">Medicine Advised</h4>
+//                     <div className="d-flex justify-content-between align-items-center mb-3">
+//                       <h4>Medicine Advised</h4>
 //                       <Button
 //                         type="button"
 //                         severity="success"
 //                         onClick={() =>
 //                           push({
-//                             id: Date.now(),
-//                             Medicine: "",
-//                             Schedule: "",
-//                             Instruction: "",
-//                             Route: "",
-//                             Days: "",
+//                             medicineName: "",
+//                             schedule: "",
+//                             instruction: "",
+//                             route: "",
+//                             days: "",
 //                           })
 //                         }
 //                       >
-//                         + Add
+//                         + Add Medicine
 //                       </Button>
 //                     </div>
-//                     <table className="custom-table">
-//                       <thead>
+//                     <table className="table table-bordered">
+//                       <thead className="table-primary">
 //                         <tr>
 //                           <th>Medicine (Brand & Generic)</th>
 //                           <th>Schedule</th>
@@ -466,60 +549,52 @@
 //                         </tr>
 //                       </thead>
 //                       <tbody>
-//                         {values.User.map((val, index) => (
-//                           <tr key={val.id}>
+//                         {values.medicines.map((medicine, index) => (
+//                           <tr key={index}>
 //                             <td>
 //                               <Field
-//                                 name={`User[${index}].Medicine`}
+//                                 name={`medicines[${index}].medicineName`}
 //                                 component={Input}
 //                                 placeholder="Enter Medicine"
 //                               />
 //                             </td>
 //                             <td>
 //                               <Field
-//                                 name={`User[${index}].Schedule`}
+//                                 name={`medicines[${index}].schedule`}
 //                                 component={Input}
-//                                 placeholder="Enter Schedule"
-//                               />
-//                             </td>
-
-//                             <td className="discount-cell">
-//                               <Field
-//                                 name={`User[${index}].Instruction`}
-//                                 component={Input}
-//                                 placeholder="Instruction"
+//                                 placeholder="e.g., 1-0-1"
 //                               />
 //                             </td>
 //                             <td>
 //                               <Field
-//                                 name={`User[${index}].Route`}
-//                                 value={values.User[index].Route}
-//                                 onChange={(e) =>
-//                                   setFieldValue(`User[${index}].Route`)
-//                                 }
+//                                 name={`medicines[${index}].instruction`}
 //                                 component={Input}
-//                                 placeholder="Route"
+//                                 placeholder="Before/After food"
 //                               />
 //                             </td>
 //                             <td>
 //                               <Field
-//                                 name={`User[${index}].Days`}
+//                                 name={`medicines[${index}].route`}
 //                                 component={Input}
-//                                 placeholder="	Days"
+//                                 placeholder="Oral/IV"
+//                               />
+//                             </td>
+//                             <td>
+//                               <Field
+//                                 name={`medicines[${index}].days`}
+//                                 component={Input}
+//                                 placeholder="Days"
 //                                 type="number"
 //                               />
 //                             </td>
-//                             {/* <span className="percent-symbol">%</span> */}
-
-//                             {/* <td className="total-cell">
-//                           {val.Amount && val.Discount
-//                             ? val.Amount - (val.Amount * val.Discount) / 100
-//                             : val.Amount}
-//                         </td> */}
-//                             <td>
-//                               <a onClick={() => remove(index)}>
-//                                 <i className="pi pi-trash text-danger"></i>
-//                               </a>
+//                             <td className="text-center">
+//                               <Button
+//                                 type="button"
+//                                 icon="pi pi-trash"
+//                                 severity="danger"
+//                                 text
+//                                 onClick={() => remove(index)}
+//                               />
 //                             </td>
 //                           </tr>
 //                         ))}
@@ -529,105 +604,84 @@
 //                 )}
 //               </FieldArray>
 
-//               <h5 className="  p-2 rounded btn-custom text-white mt-4">
+//               {/* Investigation Advised */}
+//               <h5 className="p-2 rounded btn-custom text-white mt-4">
 //                 Investigation Advised:
 //               </h5>
-//               <div className="row d-flex">
-//                 <div className="col-md-3">
+//               <div className="row mt-3">
+//                 <div className="col-md-12">
 //                   <label className="form-label fw-bold">Investigations:</label>
-//                 </div>
-
-//                 {/* <div className="col-md-6">
-                 
-//                   <InputTextarea
-//                     name="Investigations"
-//                     value={values.Investigations}
-//                     onChange={handleChange}
-//                     placeholder="Investigations"
-//                     rows={6}
-//                     className="w-100"
-//                     style={{ height: "90px" }}
-//                   />
-//                 </div> */}
-//                 <div className="col-md-9 ">
 //                   <MultiSelect
-//                     value={tpaservice}
-//                     onChange={(e) => setTpaservice(e.value || [])}
-//                     options={seviceTpaId || []} // ✅ Always pass an array
+//                     value={selectedServices}
+//                     onChange={(e) => {
+//                       setSelectedServices(e.value || []);
+//                       setFieldValue("investigations", e.value || []);
+//                     }}
+//                     options={serviceOptions}
 //                     optionLabel="label"
 //                     optionValue="value"
-//                     placeholder="Select your Test"
+//                     placeholder="Select Tests"
 //                     filter
-//                     filterDelay={400}
-//                     className="w-100 md:w-20rem"
+//                     className="w-100"
 //                     display="chip"
 //                   />
 //                 </div>
 //               </div>
 
-//               <h5 className="  p-2 rounded btn-custom text-white mt-4">
+//               {/* Advice & Follow-up */}
+//               <h5 className="p-2 rounded btn-custom text-white mt-4">
 //                 Advice & Follow-up:
 //               </h5>
-//               <div className="col-md-12 ">
+//               <div className="col-md-12 mt-3">
 //                 <label className="form-label fw-bold">Advice</label>
 //                 <InputTextarea
-//                   name="Advice"
-//                   value={values.Advice}
+//                   name="advice"
+//                   value={values.advice}
 //                   onChange={handleChange}
-//                   placeholder="Advice"
-//                   rows={6}
+//                   placeholder="Enter Advice and Follow-up Instructions"
+//                   rows={4}
 //                   className="w-100"
-//                   style={{ height: "90px" }}
 //                 />
 //               </div>
 
-//               <h5 className="  p-2 rounded btn-custom text-white mt-4">
+//               {/* Doctor Details */}
+//               <h5 className="p-2 rounded btn-custom text-white mt-4">
 //                 Doctor Details:
 //               </h5>
-//               <div className="row">
+//               <div className="row mt-3">
 //                 <div className="col-md-4">
-//                   <label className="form-label "> Doctor Name:</label>
-//                   {/* <InputText
-//                     id="name"
-//                     name="Name"
-//                     value={values.Name}
-//                     readOnly
-//                     onChange={handleChange}
-//                     className="w-100 text-success"  
-//                   /> */}
-//                   <p>{uhid?.DoctorName}</p>   
+//                   <label className="form-label fw-bold">Doctor Name:</label>
+//                   <p className="text-success fw-bold">
+//                     {doctorData?.personalInfo?.firstName}{" "}
+//                     {doctorData?.personalInfo?.lastName}
+//                   </p>
 //                 </div>
 
 //                 <div className="col-md-4">
-//                   <label className="form-label ">Speciality:</label>
-//                   <InputText
-//                     id="name"
-//                     name="Name"
-//                     value={values.Name}
-//                     readOnly
-//                     onChange={handleChange}
-//                     className="w-100 text-success"
-//                   />
+//                   <label className="form-label fw-bold">Speciality:</label>
+//                   <p className="text-success fw-bold">
+//                     {doctorData?.professional?.specialization || "N/A"}
+//                   </p>
 //                 </div>
 
 //                 <div className="col-md-4">
-//                   <label className="form-label ">Qualifications</label>
-//                   <InputText
-//                     id="name"
-//                     name="Name"
-//                     value={values.Name}
-//                     readOnly
-//                     onChange={handleChange}
-//                     className="w-100 text-success"
-//                   />
+//                   <label className="form-label fw-bold">Qualifications:</label>
+//                   <p className="text-success fw-bold">
+//                     {doctorData?.professional?.qualification || "N/A"}
+//                   </p>
 //                 </div>
-//                 <div className="text-center mt-4">
-//                   <Button
-//                     type="submit"
-//                     label="Generate & Print"
-//                     className="btn-custom px-5 rounded"
-//                   />
-//                 </div>
+//               </div>
+
+//               {/* Submit Button */}
+//               <div className="text-center mt-4">
+//                 <Button
+//                   type="submit"
+//                   label={loading ? "Generating..." : "Generate & Print"}
+//                   icon={loading ? "pi pi-spin pi-spinner" : "pi pi-check"}
+//                   className="btn-custom px-5 rounded"
+//                   loading={loading}
+//                   disabled={loading}
+//                 />
 //               </div>
 //             </div>
 //           </div>
@@ -637,4 +691,4 @@
 //   );
 // }
 
-// export default Opd;
+// export default DoctorPrescription;

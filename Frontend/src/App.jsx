@@ -86,51 +86,42 @@ export default function App() {
         className={`transition-all duration-300 ${isOpen ? "ml-64" : "ml-0"}`}
         style={{
           minHeight: "calc(100vh - 64px)",
-
           padding: "20px",
         }}
       >
         <Routes>
+          {/* Dashboard */}
+          <Route path="/dashboard1" element={<Dashboard1 />} />
+          <Route path="/dash" element={<Dashboard1 />} />
+
+          {/* ✅ Patient Registration Routes - Edit route MUST come before the base route */}
+          <Route path="/registration/:id" element={<Registration />} />
           <Route path="/registration" element={<Registration />} />
           <Route path="/allpatient" element={<PatientsTable />} />
-          <Route path="/doctor/:UHID" element={<Doctor />} />
-          <Route path="/nurse" element={<Nurse />} />
-          {/* <Route path="/servicebtn" element={<Servicebtn />} /> */}
-          <Route path="/addservice" element={<ServiceAdd />} />
-          <Route path="/addtpa" element={<AddTpa />} />
-          <Route path="/opd/:UHID" element={<OPDPrint />} />
-          <Route path="/doctorpre/:UHID" element={<DoctorPreception />} />
+
+          {/* ✅ CRITICAL: Prescription routes BEFORE catch-all */}
           <Route
             path="/doctorpre/:UHID/:TpaId?"
             element={<DoctorPreception />}
           />
-          <Route path="/ServiceAlldata" element={<ServiceAlldata />} />
-          <Route
-            path="/Preceptionbill/:UHID"
-            element={<DoctorPrePrint />}
-          />
-          {/* <Route
-            path="/BedManagementSingleFile/:UHID"
-            element={<BedManagementSingleFile />}
-          /> */}
-          <Route path="/department" element={<DepartmentManagement />} />
-          <Route path="/" element={<Navigate to="/registration" replace />} />
-          <Route path="/dashboard1" element={<Dashboard1 />} />
-          <Route path="/beds" element={<BedManagement />} />
-          <Route path="/bed-visual" element={<BedVisualLayout />} />
-          <Route path="/rooms" element={<RoomManagement />} />
-          <Route path="/wards" element={<WardManagement />} />
-          <Route path="/buildings" element={<BuildingManagement />} />
-          <Route path="/floors" element={<FloorManagement />} />
-          <Route path="/dash" element={<Dashboard1 />} />
-          <Route path="/patients" element={<PatientList />} />
-          <Route path="/patients/new" element={<PatientForm />} />
-          <Route path="/patients/edit/:id" element={<PatientForm />} />
-          <Route path="/patients/:id" element={<PatientDetails />} />
+          <Route path="/doctorpre/:UHID" element={<DoctorPreception />} />
+          <Route path="/preceptionprint/:UHID" element={<DoctorPrePrint />} />
+
+          {/* Doctor & Medical Staff */}
+          <Route path="/doctor/:UHID" element={<Doctor />} />
+          <Route path="/doctors" element={<DoctorListPage />} />
+          <Route path="/doctors/new" element={<DoctorFormPage />} />
+          <Route path="/doctors/:doctorId/edit" element={<DoctorFormPage />} />
+          <Route path="/nurse" element={<Nurse />} />
+
+          {/* OPD */}
+          <Route path="/opd/:UHID" element={<OPDPrint />} />
           <Route path="/opd" element={<OPList />} />
           <Route path="/opd/new" element={<OPDForm />} />
           <Route path="/opd/edit/:visitNumber" element={<OPDForm />} />
           <Route path="/opd/:visitNumber" element={<OPDDetails />} />
+
+          {/* Emergency */}
           <Route path="/emergency" element={<Emergencylist />} />
           <Route path="/emergency/new" element={<EmergencyForm />} />
           <Route
@@ -141,15 +132,32 @@ export default function App() {
             path="/emergency/:emergencyNumber"
             element={<EmergencyDetails />}
           />
-          <Route path="/doctors" element={<DoctorListPage />} />
-          <Route path="/doctors/new" element={<DoctorFormPage />} />
-          <Route path="/doctors/:doctorId/edit" element={<DoctorFormPage />} />
-          {/* 
-          <Route path="/admissions" element={<AdmissionList />} />
-          <Route path="/admissions/new" element={<AdmissionFoout />} />
-          <Route path="/admissions/bed-layout" element={<BedVisualLayout />} />
-          <Route path="/admissions/:id" element={<AdmissionDetails />} /> */}
-          <Route path="*" element={<Navigate to="/" replace />} />
+
+          {/* Patients Module */}
+          <Route path="/patients" element={<PatientList />} />
+          <Route path="/patients/new" element={<PatientForm />} />
+          <Route path="/patients/edit/:id" element={<PatientForm />} />
+          <Route path="/patients/:id" element={<PatientDetails />} />
+
+          {/* Services & TPA */}
+          <Route path="/addservice" element={<ServiceAdd />} />
+          <Route path="/addtpa" element={<AddTpa />} />
+          <Route path="/ServiceAlldata" element={<ServiceAlldata />} />
+
+          {/* Department */}
+          <Route path="/department" element={<DepartmentManagement />} />
+
+          {/* Bed Management */}
+          <Route path="/beds" element={<BedManagement />} />
+          <Route path="/bed-visual" element={<BedVisualLayout />} />
+          <Route path="/rooms" element={<RoomManagement />} />
+          <Route path="/wards" element={<WardManagement />} />
+          <Route path="/buildings" element={<BuildingManagement />} />
+          <Route path="/floors" element={<FloorManagement />} />
+
+          {/* Default & Catch-all Routes */}
+          <Route path="/" element={<Navigate to="/dashboard1" replace />} />
+          <Route path="*" element={<Navigate to="/dashboard1" replace />} />
         </Routes>
       </div>
     </Router>

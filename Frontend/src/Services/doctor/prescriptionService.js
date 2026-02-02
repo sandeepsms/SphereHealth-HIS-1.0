@@ -16,7 +16,7 @@ export const prescriptionService = {
   // },
 
 
-createPrescription: async (UHID,data) => {
+createPrescription: async (UHID,data) => {  
     try {
       // const response = await axios.post(API_URL, data);
        const response = await axios.post(`${API_URL}/uhid/${UHID}`,data)

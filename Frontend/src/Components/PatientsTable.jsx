@@ -17,7 +17,7 @@ import patientService from "../Services/patient/patientService";
 import "primereact/resources/themes/lara-light-blue/theme.css";
 import "primereact/resources/primereact.min.css";
 import "primeicons/primeicons.css";
-import "../../css/Radiobutton.css"
+import "../../css/Radiobutton.css";
 
 function PatientsTable() {
   const [patients, setPatients] = useState([]);
@@ -27,6 +27,7 @@ function PatientsTable() {
   const [loading, setLoading] = useState(true);
   const [globalFilterValue, setGlobalFilterValue] = useState("");
   const [deleteDialogVisible, setDeleteDialogVisible] = useState(false);
+  const [viewDialogVisible, setViewDialogVisible] = useState(false);
   const [selectedPatient, setSelectedPatient] = useState(null);
 
   const toast = useRef(null);
@@ -117,12 +118,42 @@ function PatientsTable() {
     setGlobalFilterValue(value);
   };
 
-  const handleEdit = (row) => {
-console.log("rowwwwwwww-----",row);
+// Edit handler - Navigate with patient ID in URL
+const handleEdit = (rowData) => {
+  console.log("Editing patient with ID:", rowData.id);
+  // Navigate to /registration/:id route
+  navigate(`/registration/${rowData.id}`);
+};
 
+const handleView = async (rowData) => {
+  try {
+    console.log("Fetching complete patient data for:", rowData.id);
+    // Fetch complete patient data from API
+    const response = await fetch(`${API_ENDPOINTS.PATIENTS}/${rowData.id}`);
+    const data = await response.json();
 
-    navigate("/registration", { state: { patientsData: row }  });
-  };
+    if (data.success && data.data) {
+      console.log("Complete patient data:", data.data);
+      setSelectedPatient(data.data);
+      setViewDialogVisible(true);
+    } else {
+      // Fallback to table data if API fails
+      setSelectedPatient(rowData);
+      setViewDialogVisible(true);
+    }
+  } catch (error) {
+    console.error("Error fetching patient details:", error);
+    toast.current?.show({
+      severity: "error",
+      summary: "Error",
+      detail: "Failed to fetch patient details",
+      life: 3000,
+    });
+    // Fallback to table data
+    setSelectedPatient(rowData);
+    setViewDialogVisible(true);
+  }
+};
 
   const handleDeleteConfirm = (rowData) => {
     setSelectedPatient(rowData);
@@ -149,7 +180,6 @@ console.log("rowwwwwwww-----",row);
     const getGenderColor = (gender) => {
       return (
         {
-       
           Male: "info",
           Female: "info",
           Other: "warning",
@@ -162,18 +192,12 @@ console.log("rowwwwwwww-----",row);
     );
   };
 
-  // ✅ FIXED: 3-DOT MENU - ONLY CLICK, NO HOVER
+  // ✅ Action body with three dot menu
   const actionBody = (rowData) => {
 
     console.log("row data---------",rowData);
     
     const items = [
-      {
-        label: "Edit Details",
-        icon: "pi pi-pencil",
-        command: () => handleEdit(rowData),
-      },
-
       {
         label: "Delete Patient",
         icon: "pi pi-trash",
@@ -196,11 +220,10 @@ console.log("rowwwwwwww-----",row);
         command: () => navigate(`/doctorpre/${rowData.UHID}`),
       },
       {
-        label: " Doctor Prescription Print",
+        label: "Doctor Prescription Print",
         icon: "pi pi-print text-primary",
         command: () => navigate(`/Preceptionbill/${rowData.UHID}`),
       },
-
       {
         label: "Bed Management",
         icon: "pi pi-bed",
@@ -209,35 +232,63 @@ console.log("rowwwwwwww-----",row);
     ];
 
     return (
-      <div className="flex justify-content-center">
+      <div className="flex justify-content-center align-items-center gap-2">
+        {/* View Icon */}
         <Button
-          icon="pi pi-ellipsis-v"
-          severity="secondary"
+          icon="pi pi-eye"
+          severity="info"
           text
           rounded
           size="small"
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
+          tooltip="View Patient"
+          tooltipOptions={{ position: "top" }}
+          onClick={() => handleView(rowData)}
+        />
+
+        {/* Edit Icon */}
+        <Button
+          icon="pi pi-pencil"
+          severity="success"
+          text
+          rounded
+          size="small"
+          tooltip="Edit Patient"
+          tooltipOptions={{ position: "top" }}
+          onClick={() => handleEdit(rowData)}
+        />
+
+        {/* Three Dot Menu with Hover */}
+        <div
+          onMouseEnter={(e) => {
             if (!menuRefs.current[rowData.id]) {
               menuRefs.current[rowData.id] = React.createRef();
             }
             menuRefs.current[rowData.id]?.current?.toggle(e);
           }}
-          aria-haspopup="true"
-          aria-controls={`patient-menu-${rowData.id}`}
-        />
-        <Menu
-          ref={(el) => {
-            if (!menuRefs.current[rowData.id]) {
-              menuRefs.current[rowData.id] = { current: null };
-            }
-            menuRefs.current[rowData.id].current = el;
-          }}
-          id={`patient-menu-${rowData.id}`}
-          model={items}
-          popup
-        />
+        >
+          <Button
+            icon="pi pi-ellipsis-v"
+            severity="secondary"
+            text
+            rounded
+            size="small"
+            tooltip="More Actions"
+            tooltipOptions={{ position: "top" }}
+            aria-haspopup="true"
+            aria-controls={`patient-menu-${rowData.id}`}
+          />
+          <Menu
+            ref={(el) => {
+              if (!menuRefs.current[rowData.id]) {
+                menuRefs.current[rowData.id] = { current: null };
+              }
+              menuRefs.current[rowData.id].current = el;
+            }}
+            id={`patient-menu-${rowData.id}`}
+            model={items}
+            popup
+          />
+        </div>
       </div>
     );
   };
@@ -269,11 +320,10 @@ console.log("rowwwwwwww-----",row);
           className="p-input-icon-left surface-0"
           style={{ width: "clamp(250px, 30vw, 400px)" }}
         >
-          <i className="pi pi-search text-500"></i> 
+          <i className="pi pi-search text-500"></i>
           <InputText
             value={globalFilterValue}
             onChange={onGlobalFilterChange}
-          
             placeholder="Search patients..."
             className="w-full border-none"
           />
@@ -305,8 +355,10 @@ console.log("rowwwwwwww-----",row);
     return (
       <div className="min-h-screen flex justify-content-center align-items-center p-6 bg-gray-50">
         <div className="surface-card p-6 text-center shadow-2 border-round">
-          {/* <ProgressSpinner style={{ width: "60px", height: "60px" }} /> */}
-          <span class="loader" style={{ width: "50px", height: "50px" }}></span>
+          <span
+            className="loader"
+            style={{ width: "50px", height: "50px" }}
+          ></span>
           <h3 className="mt-3 font-bold text-xl">Loading Patients...</h3>
           <p className="text-500 mt-1">Fetching data from server</p>
         </div>
@@ -407,13 +459,326 @@ console.log("rowwwwwwww-----",row);
           <Column
             header="Actions"
             body={actionBody}
-            style={{ minWidth: "100px", maxWidth: "100px",  }}
-            headerStyle={{ textAlign: "center", }}
-            bodyStyle={{ textAlign: "center"  }}
-            
+            style={{ minWidth: "150px", maxWidth: "150px" }}
+            headerStyle={{ textAlign: "center" }}
+            bodyStyle={{ textAlign: "center" }}
           />
         </DataTable>
       </Card>
+
+      {/* View Patient Dialog */}
+      <Dialog
+        visible={viewDialogVisible}
+        style={{ width: "clamp(500px, 60vw, 800px)" }}
+        header={
+          <div className="flex align-items-center gap-3">
+            <i className="pi pi-user text-2xl text-primary"></i>
+            <span className="text-xl font-bold">Patient Details</span>
+          </div>
+        }
+        modal
+        onHide={() => {
+          setViewDialogVisible(false);
+          setSelectedPatient(null);
+        }}
+        footer={
+          <div className="flex gap-3 justify-content-end">
+            <Button
+              label="Close"
+              icon="pi pi-times"
+              severity="secondary"
+              outlined
+              onClick={() => setViewDialogVisible(false)}
+            />
+            <Button
+              label="Edit Patient"
+              icon="pi pi-pencil"
+              severity="success"
+              onClick={() => {
+                setViewDialogVisible(false);
+                handleEdit(selectedPatient);
+              }}
+            />
+          </div>
+        }
+      >
+        {selectedPatient && (
+          <div className="p-4">
+            <div className="grid">
+              {/* Personal Information */}
+              <div className="col-12">
+                <h3 className="text-primary mb-3 border-bottom-1 border-300 pb-2">
+                  <i className="pi pi-user mr-2"></i>Personal Information
+                </h3>
+              </div>
+
+              <div className="col-12 md:col-6 mb-3">
+                <label className="font-semibold text-700 block mb-2">
+                  Full Name
+                </label>
+                <div className="p-3 surface-100 border-round">
+                  <i className="pi pi-user mr-2 text-500"></i>
+                  {selectedPatient.fullName || selectedPatient.name || "N/A"}
+                </div>
+              </div>
+
+              <div className="col-12 md:col-6 mb-3">
+                <label className="font-semibold text-700 block mb-2">
+                  UHID
+                </label>
+                <div className="p-3 surface-100 border-round">
+                  <i className="pi pi-id-card mr-2 text-500"></i>
+                  {selectedPatient.UHID || "N/A"}
+                </div>
+              </div>
+
+              <div className="col-12 md:col-6 mb-3">
+                <label className="font-semibold text-700 block mb-2">
+                  Phone Number
+                </label>
+                <div className="p-3 surface-100 border-round">
+                  <i className="pi pi-phone mr-2 text-500"></i>
+                  {selectedPatient.contactNumber ||
+                    selectedPatient.phone ||
+                    "N/A"}
+                </div>
+              </div>
+
+              <div className="col-12 md:col-6 mb-3">
+                <label className="font-semibold text-700 block mb-2">
+                  Email
+                </label>
+                <div className="p-3 surface-100 border-round">
+                  <i className="pi pi-envelope mr-2 text-500"></i>
+                  {selectedPatient.email || "Not provided"}
+                </div>
+              </div>
+
+              <div className="col-12 md:col-6 mb-3">
+                <label className="font-semibold text-700 block mb-2">
+                  Date of Birth
+                </label>
+                <div className="p-3 surface-100 border-round">
+                  <i className="pi pi-calendar mr-2 text-500"></i>
+                  {formatDate(
+                    selectedPatient.dateOfBirth || selectedPatient.birth,
+                  )}
+                </div>
+              </div>
+
+              <div className="col-12 md:col-6 mb-3">
+                <label className="font-semibold text-700 block mb-2">
+                  Gender
+                </label>
+                <div className="p-3 surface-100 border-round">
+                  <i className="pi pi-venus-mars mr-2 text-500"></i>
+                  {selectedPatient.gender || "N/A"}
+                </div>
+              </div>
+
+              <div className="col-12 md:col-6 mb-3">
+                <label className="font-semibold text-700 block mb-2">
+                  Blood Group
+                </label>
+                <div className="p-3 surface-100 border-round">
+                  <i className="pi pi-tint mr-2 text-500"></i>
+                  {selectedPatient.bloodGroup || "N/A"}
+                </div>
+              </div>
+
+              <div className="col-12 md:col-6 mb-3">
+                <label className="font-semibold text-700 block mb-2">
+                  Marital Status
+                </label>
+                <div className="p-3 surface-100 border-round">
+                  <i className="pi pi-users mr-2 text-500"></i>
+                  {selectedPatient.maritalStatus || "N/A"}
+                </div>
+              </div>
+
+              {/* Address Information */}
+              <div className="col-12 mt-3">
+                <h3 className="text-primary mb-3 border-bottom-1 border-300 pb-2">
+                  <i className="pi pi-map-marker mr-2"></i>Address Information
+                </h3>
+              </div>
+
+              <div className="col-12 mb-3">
+                <label className="font-semibold text-700 block mb-2">
+                  Complete Address
+                </label>
+                <div className="p-3 surface-100 border-round">
+                  <i className="pi pi-home mr-2 text-500"></i>
+                  {selectedPatient.address?.completeAddress || "Not provided"}
+                </div>
+              </div>
+
+              <div className="col-12 md:col-4 mb-3">
+                <label className="font-semibold text-700 block mb-2">
+                  City
+                </label>
+                <div className="p-3 surface-100 border-round">
+                  {selectedPatient.address?.city || "N/A"}
+                </div>
+              </div>
+
+              <div className="col-12 md:col-4 mb-3">
+                <label className="font-semibold text-700 block mb-2">
+                  State
+                </label>
+                <div className="p-3 surface-100 border-round">
+                  {selectedPatient.address?.state || "N/A"}
+                </div>
+              </div>
+
+              <div className="col-12 md:col-4 mb-3">
+                <label className="font-semibold text-700 block mb-2">
+                  Pincode
+                </label>
+                <div className="p-3 surface-100 border-round">
+                  {selectedPatient.address?.pincode || "N/A"}
+                </div>
+              </div>
+
+              {/* Medical Information */}
+              <div className="col-12 mt-3">
+                <h3 className="text-primary mb-3 border-bottom-1 border-300 pb-2">
+                  <i className="pi pi-heart mr-2"></i>Medical Information
+                </h3>
+              </div>
+
+              <div className="col-12 md:col-6 mb-3">
+                <label className="font-semibold text-700 block mb-2">
+                  Department
+                </label>
+                <div className="p-3 surface-100 border-round">
+                  <i className="pi pi-building mr-2 text-500"></i>
+                  {selectedPatient.department?.departmentName ||
+                    selectedPatient.department ||
+                    "N/A"}
+                </div>
+              </div>
+
+              <div className="col-12 md:col-6 mb-3">
+                <label className="font-semibold text-700 block mb-2">
+                  Doctor
+                </label>
+                <div className="p-3 surface-100 border-round">
+                  <i className="pi pi-user-md mr-2 text-500"></i>
+                  {selectedPatient.doctor?.personalInfo
+                    ? `Dr. ${selectedPatient.doctor.personalInfo.firstName} ${selectedPatient.doctor.personalInfo.lastName}`
+                    : "N/A"}
+                </div>
+              </div>
+
+              <div className="col-12 md:col-6 mb-3">
+                <label className="font-semibold text-700 block mb-2">
+                  Registration Type
+                </label>
+                <div className="p-3 surface-100 border-round">
+                  <i className="pi pi-bookmark mr-2 text-500"></i>
+                  <Tag
+                    value={selectedPatient.registrationType || "OPD"}
+                    severity={
+                      selectedPatient.registrationType === "OPD"
+                        ? "info"
+                        : selectedPatient.registrationType === "Emergency"
+                          ? "danger"
+                          : "warning"
+                    }
+                  />
+                </div>
+              </div>
+
+              <div className="col-12 md:col-6 mb-3">
+                <label className="font-semibold text-700 block mb-2">TPA</label>
+                <div className="p-3 surface-100 border-round">
+                  <i className="pi pi-shield mr-2 text-500"></i>
+                  {selectedPatient.tpa?.tpaName || "Cash Patient"}
+                </div>
+              </div>
+
+              <div className="col-12 mb-3">
+                <label className="font-semibold text-700 block mb-2">
+                  Known Allergies
+                </label>
+                <div className="p-3 surface-100 border-round">
+                  <i className="pi pi-exclamation-circle mr-2 text-500"></i>
+                  {selectedPatient.knownAllergies || "None"}
+                </div>
+              </div>
+
+              {/* MLC Information */}
+              {selectedPatient.isMLC && (
+                <>
+                  <div className="col-12 mt-3">
+                    <h3 className="text-primary mb-3 border-bottom-1 border-300 pb-2">
+                      <i className="pi pi-exclamation-triangle mr-2"></i>MLC
+                      Information
+                    </h3>
+                  </div>
+
+                  <div className="col-12 md:col-6 mb-3">
+                    <label className="font-semibold text-700 block mb-2">
+                      MLC Case
+                    </label>
+                    <div className="p-3 surface-100 border-round">
+                      <Tag value="YES" severity="danger" />
+                    </div>
+                  </div>
+
+                  <div className="col-12 md:col-6 mb-3">
+                    <label className="font-semibold text-700 block mb-2">
+                      MLC Number
+                    </label>
+                    <div className="p-3 surface-100 border-round">
+                      {selectedPatient.mlcNumber || "N/A"}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* Companion Information */}
+              {selectedPatient.companionName && (
+                <>
+                  <div className="col-12 mt-3">
+                    <h3 className="text-primary mb-3 border-bottom-1 border-300 pb-2">
+                      <i className="pi pi-users mr-2"></i>Companion Information
+                    </h3>
+                  </div>
+
+                  <div className="col-12 md:col-4 mb-3">
+                    <label className="font-semibold text-700 block mb-2">
+                      Name
+                    </label>
+                    <div className="p-3 surface-100 border-round">
+                      {selectedPatient.companionName}
+                    </div>
+                  </div>
+
+                  <div className="col-12 md:col-4 mb-3">
+                    <label className="font-semibold text-700 block mb-2">
+                      Relationship
+                    </label>
+                    <div className="p-3 surface-100 border-round">
+                      {selectedPatient.companionRelationship}
+                    </div>
+                  </div>
+
+                  <div className="col-12 md:col-4 mb-3">
+                    <label className="font-semibold text-700 block mb-2">
+                      Contact
+                    </label>
+                    <div className="p-3 surface-100 border-round">
+                      {selectedPatient.companionContact}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+      </Dialog>
 
       {/* Delete Dialog */}
       <Dialog
@@ -433,7 +798,6 @@ console.log("rowwwwwwww-----",row);
               severity="secondary"
               outlined
               onClick={() => setDeleteDialogVisible(false)}
-            
             />
             <Button
               label="Delete Patient"

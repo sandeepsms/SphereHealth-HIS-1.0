@@ -19,6 +19,9 @@ router.post("/", createTPAService);
 // Get all TPA Services
 router.get("/", getAllTPAServices);
 
+
+
+
 // Get TPA Service by ID
 router.get("/:id", getTPAServiceById);
 
