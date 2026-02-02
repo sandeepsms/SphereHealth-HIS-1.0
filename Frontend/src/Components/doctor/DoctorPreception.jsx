@@ -198,7 +198,8 @@ function DoctorPrescription() {
           };
 
           const response =
-            await prescriptionService.createPrescription(prescriptionData);
+            // await prescriptionService.createPrescription(prescriptionData);
+             await prescriptionService.createPrescription(UHID,prescriptionData);
 
           toast.success(
             response.message || "Prescription created successfully!",
@@ -650,7 +651,7 @@ function DoctorPrescription() {
               <div className="text-center mt-4">
                 <Button
                   type="submit"
-                  label={loading ? "Generating..." : "Generate & Print"}
+                  label={loading ? "Generating..." : "Generate & Printssssssss"}
                   icon={loading ? "pi pi-spin pi-spinner" : "pi pi-check"}
                   className="btn-custom px-5 rounded"
                   loading={loading}

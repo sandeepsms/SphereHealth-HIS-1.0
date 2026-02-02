@@ -118,7 +118,10 @@ function PatientsTable() {
   };
 
   const handleEdit = (row) => {
-    navigate("/registration", { state: { patientData: row } });
+console.log("rowwwwwwww-----",row);
+
+
+    navigate("/registration", { state: { patientsData: row }  });
   };
 
   const handleDeleteConfirm = (rowData) => {
@@ -161,6 +164,9 @@ function PatientsTable() {
 
   // ✅ FIXED: 3-DOT MENU - ONLY CLICK, NO HOVER
   const actionBody = (rowData) => {
+
+    console.log("row data---------",rowData);
+    
     const items = [
       {
         label: "Edit Details",

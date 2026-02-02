@@ -22,7 +22,6 @@ import { API_ENDPOINTS } from "../config/api";
 import "../../css/Radiobutton.css";
 import { Formik, Form, Field, FieldArray, getIn } from "formik";
 
-
 export default function PatientRegistration() {
   const toast = useRef(null);
   const location = useLocation();
@@ -46,7 +45,7 @@ export default function PatientRegistration() {
     },
     bloodGroup: "",
     knownAllergies: "",
-    tpa: null,
+    tpa: "",
     department: "",
     doctor: "",
     isMLC: false,
@@ -68,7 +67,7 @@ export default function PatientRegistration() {
   const [pincodeLoading, setPincodeLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const [isEditMode, setIsEditMode] = useState(false);
-  // const [patientId, setPatientId] = useState(null);
+  const [patientId, setPatientId] = useState(null);
   // const [OPDprice, setOPDprice] = useState();
   // const [tpaname, setTPAname] = useState([]);
 
@@ -89,9 +88,13 @@ export default function PatientRegistration() {
     const initializeForm = async () => {
       await loadInitialData();
 
+      console.log("yyyyyyuuuuuuuuuuu", location.state?.patientsData);
+
       // Check if patient data is passed for editing
-      if (location.state?.patientData) {
-        const patientData = location.state.patientData;
+      if (location.state?.patientsData) {
+        const patientData = location.state.patientsData;
+        console.log("ppppppppppp------======", patientData);
+
         setIsEditMode(true);
         setPatientId(patientData.id);
 
@@ -114,7 +117,12 @@ export default function PatientRegistration() {
           },
           bloodGroup: patientData.bloodGroup || "",
           knownAllergies: patientData.knownAllergies || "",
-          tpa: patientData.tpa || null,
+          // tpa:
+          //   typeof patientData.tpa === "object"
+          //     ? patientData.tpa._id
+          //     : patientData.tpaName || "",
+          tpa: patientData?.tpa?._id ?? patientData?.tpa ?? null,
+
           department:
             typeof patientData.department === "object"
               ? patientData.department._id
@@ -140,7 +148,7 @@ export default function PatientRegistration() {
     };
 
     initializeForm();
-  }, [location]);
+  }, [location.state?.patientsData]);
 
   const loadInitialData = async () => {
     setInitialLoading(true);
@@ -602,8 +610,7 @@ export default function PatientRegistration() {
 
         {/* TPA Section */}
 
-
-         <Card className="mb-4">
+        <Card className="mb-4">
           <div className="p-field p-col-12">
             <label className="font-semibold block mb-2">TPA (Optional)</label>
             <Dropdown
