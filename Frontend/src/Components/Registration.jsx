@@ -1,4 +1,4 @@
-// PatientRegistration.jsx - Complete Code
+// PatientRegistration.jsx - Fixed Version
 import React, { useState, useEffect, useRef } from "react";
 import { InputText } from "primereact/inputtext";
 import { Dropdown } from "primereact/dropdown";
@@ -11,7 +11,7 @@ import { Toast } from "primereact/toast";
 import { ProgressSpinner } from "primereact/progressspinner";
 import { Card } from "primereact/card";
 import { Divider } from "primereact/divider";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { departmentService } from "../Services/departmentService";
 import { doctorService } from "../Services/doctor/doctorService";
 import { tpaService } from "../Services/tpa/tpaService";
@@ -20,13 +20,12 @@ import "primereact/resources/primereact.min.css";
 import "primeicons/primeicons.css";
 import { API_ENDPOINTS } from "../config/api";
 import "../../css/Radiobutton.css";
-import { Formik, Form, Field, FieldArray, getIn } from "formik";
-
 
 export default function PatientRegistration() {
   const toast = useRef(null);
   const location = useLocation();
   const navigate = useNavigate();
+  const { id: patientId } = useParams(); // URL से patient ID लेना
 
   const [formData, setFormData] = useState({
     registrationType: "OPD",
@@ -68,79 +67,35 @@ export default function PatientRegistration() {
   const [pincodeLoading, setPincodeLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const [isEditMode, setIsEditMode] = useState(false);
-  // const [patientId, setPatientId] = useState(null);
-  // const [OPDprice, setOPDprice] = useState();
-  // const [tpaname, setTPAname] = useState([]);
+  const [OPDprice, setOPDprice] = useState();
 
-  // function fetchOPDPrice(selectedId) {
-  //   setTPAname(selectedId);
-  //   console.log("id", selectedId);
+  function fetchOPDPrice(selectedId) {
+    console.log("Fetching OPD Price for TPA ID:", selectedId);
+    fetch(
+      `http://localhost:5000/api/Servicebilldata/getOPDPrice?_id=${selectedId}`,
+    )
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.data?.opd_price?.[0]?.Totalamount) {
+          setOPDprice(data.data.opd_price[0].Totalamount);
+        }
+      })
+      .catch((error) => {
+        console.error("Error fetching OPD price:", error);
+      });
+  }
 
-  //   fetch(
-  //     `http://localhost:5000/api/Servicebilldata/getOPDPrice?_id=${selectedId}`,
-  //   ).then((res) => {
-  //     res
-  //       .json()
-  //       .then((data) => setOPDprice(data.data.opd_price[0].Totalamount));
-  //   });
-  // }
-
+  // Initial data load
   useEffect(() => {
-    const initializeForm = async () => {
-      await loadInitialData();
+    loadInitialData();
+  }, []);
 
-      // Check if patient data is passed for editing
-      if (location.state?.patientData) {
-        const patientData = location.state.patientData;
-        setIsEditMode(true);
-        setPatientId(patientData.id);
-
-        // Populate form with patient data after departments and doctors are loaded
-        setFormData({
-          registrationType: patientData.registrationType || "OPD",
-          title: patientData.title || "",
-          fullName: patientData.name || patientData.fullName || "",
-          gender: patientData.gender || "",
-          dateOfBirth: patientData.birth ? new Date(patientData.birth) : null,
-          maritalStatus: patientData.maritalStatus || "",
-          contactNumber: patientData.phone || patientData.contactNumber || "",
-          email: patientData.email || "",
-          address: {
-            completeAddress: patientData.address?.completeAddress || "",
-            pincode: patientData.address?.pincode || "",
-            city: patientData.address?.city || "",
-            state: patientData.address?.state || "",
-            district: patientData.address?.district || "",
-          },
-          bloodGroup: patientData.bloodGroup || "",
-          knownAllergies: patientData.knownAllergies || "",
-          tpa: patientData.tpa || null,
-          department:
-            typeof patientData.department === "object"
-              ? patientData.department._id
-              : patientData.department || "",
-          doctor:
-            typeof patientData.doctor === "object"
-              ? patientData.doctor._id
-              : patientData.doctor || "",
-          isMLC: patientData.isMLC || false,
-          mlcNumber: patientData.mlcNumber || "",
-          companionName: patientData.companionName || "",
-          companionRelationship: patientData.companionRelationship || "",
-          companionContact: patientData.companionContact || "",
-          hasAppointment: patientData.hasAppointment || false,
-          appointmentDate: patientData.appointmentDate
-            ? new Date(patientData.appointmentDate)
-            : null,
-          appointmentTime: patientData.appointmentTime
-            ? new Date(patientData.appointmentTime)
-            : null,
-        });
-      }
-    };
-
-    initializeForm();
-  }, [location]);
+  // Patient data load करना जब departments और doctors load हो जाएं
+  useEffect(() => {
+    if (patientId && departments.length > 0 && doctors.length > 0) {
+      fetchPatientData(patientId);
+    }
+  }, [patientId, departments.length, doctors.length]);
 
   const loadInitialData = async () => {
     setInitialLoading(true);
@@ -159,12 +114,106 @@ export default function PatientRegistration() {
     }
   };
 
+  const fetchPatientData = async (id) => {
+    try {
+      setLoading(true);
+      const response = await fetch(`${API_ENDPOINTS.PATIENTS}/${id}`);
+      const data = await response.json();
+
+      if (data.success && data.data) {
+        const patientData = data.data;
+        setIsEditMode(true);
+
+        // TPA ID extract करना
+        const tpaId =
+          typeof patientData.tpa === "object" && patientData.tpa !== null
+            ? patientData.tpa._id
+            : patientData.tpa;
+
+        // Department ID extract करना
+        const deptId =
+          typeof patientData.department === "object" &&
+          patientData.department !== null
+            ? patientData.department._id
+            : patientData.department;
+
+        // Doctor ID extract करना
+        const docId =
+          typeof patientData.doctor === "object" && patientData.doctor !== null
+            ? patientData.doctor._id
+            : patientData.doctor;
+
+        console.log("Patient Data Loaded:", {
+          tpaId,
+          deptId,
+          docId,
+          fullData: patientData,
+        });
+
+        // Form data set करना
+        setFormData({
+          registrationType: patientData.registrationType || "OPD",
+          title: patientData.title || "",
+          fullName: patientData.fullName || "",
+          gender: patientData.gender || "",
+          dateOfBirth: patientData.dateOfBirth
+            ? new Date(patientData.dateOfBirth)
+            : null,
+          maritalStatus: patientData.maritalStatus || "",
+          contactNumber: patientData.contactNumber || "",
+          email: patientData.email || "",
+          address: {
+            completeAddress: patientData.address?.completeAddress || "",
+            pincode: patientData.address?.pincode || "",
+            city: patientData.address?.city || "",
+            state: patientData.address?.state || "",
+            district: patientData.address?.district || "",
+          },
+          bloodGroup: patientData.bloodGroup || "",
+          knownAllergies: patientData.knownAllergies || "",
+          tpa: tpaId || null,
+          department: deptId || "",
+          doctor: docId || "",
+          isMLC: patientData.isMLC || false,
+          mlcNumber: patientData.mlcNumber || "",
+          companionName: patientData.companionName || "",
+          companionRelationship: patientData.companionRelationship || "",
+          companionContact: patientData.companionContact || "",
+          hasAppointment: patientData.hasAppointment || false,
+          appointmentDate: patientData.appointmentDate
+            ? new Date(patientData.appointmentDate)
+            : null,
+          appointmentTime: patientData.appointmentTime
+            ? new Date(patientData.appointmentTime)
+            : null,
+        });
+
+        // TPA के लिए OPD price fetch करना
+        if (tpaId) {
+          fetchOPDPrice(tpaId);
+        }
+      }
+    } catch (error) {
+      console.error("Error fetching patient data:", error);
+      toast.current?.show({
+        severity: "error",
+        summary: "Error",
+        detail: "Failed to load patient data",
+        life: 3000,
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    if (formData.department) {
+    if (formData.department && doctors.length > 0) {
       const filtered = doctors.filter(
         (doc) => doc.department === formData.department,
       );
       setFilteredDoctors(filtered);
+
+      // अगर selected doctor current department में नहीं है तो clear करें
       if (
         formData.doctor &&
         !filtered.find((d) => d.value === formData.doctor)
@@ -450,7 +499,6 @@ export default function PatientRegistration() {
         });
       } else {
         // Create new patient
-
         response = await fetch(API_ENDPOINTS.PATIENTS, {
           method: "POST",
           headers: {
@@ -513,8 +561,10 @@ export default function PatientRegistration() {
           height: "400px",
         }}
       >
-        {/* <ProgressSpinner style={{ width: "50px", height: "50px" }} /> */}
-        <span class="loader" style={{ width: "50px", height: "50px" }}></span>
+        <span
+          className="loader"
+          style={{ width: "50px", height: "50px" }}
+        ></span>
       </div>
     );
   }
@@ -525,7 +575,7 @@ export default function PatientRegistration() {
 
       {/* Header Card */}
       <Card
-        className="mb-5  btn-custom"
+        className="mb-5 btn-custom"
         style={{
           color: "white",
         }}
@@ -601,18 +651,20 @@ export default function PatientRegistration() {
         </Card>
 
         {/* TPA Section */}
-
-
-         <Card className="mb-4">
+        <Card className="mb-4">
           <div className="p-field p-col-12">
             <label className="font-semibold block mb-2">TPA (Optional)</label>
             <Dropdown
               value={formData.tpa}
               options={tpaList}
-              onChange={(e) => handleInputChange("tpa", e.value)}
-              placeholder={
-                tpaList.length ? "Select TPA" : "TPA data loading..."
-              }
+              onChange={(e) => {
+                const selectedId = e.value;
+                handleInputChange("tpa", selectedId);
+                if (selectedId) {
+                  fetchOPDPrice(selectedId);
+                }
+              }}
+              placeholder={tpaList.length ? "Select TPA" : "Loading..."}
               filter
               showClear
               className={errors.tpa ? "p-invalid" : ""}
@@ -621,31 +673,13 @@ export default function PatientRegistration() {
             {tpaList.length === 0 && !initialLoading && (
               <small className="text-500 block mt-1">No TPA available</small>
             )}
-          </div>
-        </Card>
-
-        {/* <Card className="mb-4">
-          <div className="p-field p-col-12">
-            <label className="font-semibold block mb-2">TPA (Optional)</label>
-            <Dropdown
-        value={tpaname}          // Formik value bind   
-        options={tpaList}           // { label, value } array
-        onChange={(e) => {
-          const selectedId = e.value;       // ✅ PrimeReact me e.value       
-          setFieldValue("tpa", selectedId); // ✅ Formik update
-          fetchOPDPrice(selectedId);        // ✅ tumhara fetch function call
-        }}
-        placeholder={tpaList.length ? "Select TPA" : "Loading..."}        
-        filter
-        showClear
-        className={errors.tpa ? "p-invalid" : ""}
-        style={{ width: "100%" }}
-      />
-            {tpaList.length === 0 && !initialLoading && (
-              <small className="text-500 block mt-1">No TPA available</small>
+            {OPDprice && (
+              <small className="text-primary block mt-2">
+                OPD Price: ₹{OPDprice}
+              </small>
             )}
           </div>
-        </Card> */}
+        </Card>
 
         {/* Personal Details */}
         <Card className="mb-4">
@@ -934,7 +968,7 @@ export default function PatientRegistration() {
 
           {/* MLC Section */}
           <Divider className="my-4">
-            <span className="p-tag p-tag-info  btn-custom">MLC Case</span>
+            <span className="p-tag p-tag-info btn-custom">MLC Case</span>
           </Divider>
           <div className="flex align-items-center gap-2 mb-3">
             <Checkbox

@@ -1,488 +1,461 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState, useRef } from "react";
+import { useParams, useNavigate } from "react-router-dom";
+import { Button } from "primereact/button";
+import { toast } from "react-toastify";
 import logo from "../../assets/logowebsite11.png";
-import { useParams } from "react-router-dom";
-import "primeicons/primeicons.css";
-import "../../../css/opdbill.css";
-import html2pdf from "html2pdf.js";
 import { prescriptionService } from "../../Services/doctor/prescriptionService";
+import "../../styles/PrintStyles.css";
 
-function Preceptionbill() {
-  // 🔥 FIX 1: state OBJECT hona chahiye, array nahi
-  const [doctorpreceptionUHID, setDoctorpreceptionUHID] = useState([]);
-
+function DoctorPrePrint() {
+  const [prescription, setPrescription] = useState(null);
+  const [loading, setLoading] = useState(true);
   const { UHID } = useParams();
+  const navigate = useNavigate();
+  const printRef = useRef();
 
   useEffect(() => {
-    if (!UHID) return;
+    console.log("=== DoctorPrePrint Component Loaded ===");
+    console.log("UHID from URL:", UHID);
 
-    prescriptionService
-      .getPrescriptionsByUHID(UHID)
-      .then((res) => {
-        console.log("API RESPONSE 👉", res.data[0]);
-        setDoctorpreceptionUHID(res.data[0]);
-      })
-      .catch((err) => {
-        console.error("Error fetching prescription:", err);
-      });
+    if (!UHID) {
+      console.error("❌ UHID not found in URL");
+      toast.error("UHID not found");
+      setTimeout(() => navigate(-1), 2000);
+      return;
+    }
+
+    fetchPrescription();
   }, [UHID]);
 
-  // 🔥 FIX 2: loading guard
-  if (!doctorpreceptionUHID) {
-    return <div className="p-3">Loading prescription data...</div>;
+  const fetchPrescription = async () => {
+    try {
+      setLoading(true);
+      console.log("🔄 Fetching prescription for UHID:", UHID);
+
+      const response = await prescriptionService.getPrescriptionsByUHID(UHID);
+
+      console.log("📋 Prescription API Response:", response);
+
+      if (response.success) {
+        const prescriptionData = Array.isArray(response.data)
+          ? response.data[0]
+          : response.data;
+
+        console.log("✅ Prescription Data:", prescriptionData);
+
+        if (prescriptionData) {
+          setPrescription(prescriptionData);
+        } else {
+          console.error("❌ No prescription data found");
+          toast.error("No prescription found for this UHID");
+          setTimeout(() => navigate(-1), 2000);
+        }
+      } else {
+        console.error("❌ API returned success: false");
+        toast.error("No prescription found for this UHID");
+        setTimeout(() => navigate(-1), 2000);
+      }
+    } catch (error) {
+      console.error("❌ Error fetching prescription:", error);
+      console.error("Error details:", error.response?.data);
+      toast.error("Failed to load prescription");
+      setTimeout(() => navigate(-1), 2000);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePrint = () => {
+    window.print();
+  };
+
+  const formatDate = (dateString) => {
+    if (!dateString) return "N/A";
+    const date = new Date(dateString);
+    return date.toLocaleDateString("en-IN");
+  };
+
+  // ✅ Calculate age from date of birth
+  const calculateAge = (dateOfBirth) => {
+    if (!dateOfBirth) return "N/A";
+
+    try {
+      const dob = new Date(dateOfBirth);
+      const today = new Date();
+
+      let age = today.getFullYear() - dob.getFullYear();
+      const monthDiff = today.getMonth() - dob.getMonth();
+
+      // Adjust age if birthday hasn't occurred this year
+      if (
+        monthDiff < 0 ||
+        (monthDiff === 0 && today.getDate() < dob.getDate())
+      ) {
+        age--;
+      }
+
+      return age > 0 ? `${age} Years` : "N/A";
+    } catch (error) {
+      console.error("Error calculating age:", error);
+      return "N/A";
+    }
+  };
+
+  if (loading) {
+    return (
+      <div
+        className="d-flex justify-content-center align-items-center"
+        style={{ height: "100vh" }}
+      >
+        <div className="text-center">
+          <span
+            className="loader"
+            style={{ width: "50px", height: "50px" }}
+          ></span>
+          <h3 className="mt-3">Loading Prescription...</h3>
+        </div>
+      </div>
+    );
   }
 
-  const handlePdf = () => {
-    const element = document.getElementById("print-area");
-    if (!element) return;
+  if (!prescription) {
+    return (
+      <div
+        className="d-flex justify-content-center align-items-center"
+        style={{ height: "100vh" }}
+      >
+        <div className="text-center">
+          <i
+            className="pi pi-exclamation-triangle"
+            style={{ fontSize: "4rem", color: "#f0ad4e" }}
+          ></i>
+          <h3 className="mt-3">No Prescription Found</h3>
+          <Button
+            label="Go Back"
+            icon="pi pi-arrow-left"
+            onClick={() => navigate(-1)}
+            className="mt-3"
+          />
+        </div>
+      </div>
+    );
+  }
 
-    html2pdf()
-      .from(element)
-      .set({
-        margin: 10,
-        filename: `DoctorPrescription.pdf`,
-        html2canvas: { scale: 2 },
-        jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-      })
-      .toPdf()
-      .get("pdf")
-      .then((pdf) => {
-        const blobUrl = pdf.output("bloburl");
-        const printWindow = window.open(blobUrl);
-        if (!printWindow) return;
-        printWindow.onload = () => {
-          printWindow.focus();
-          printWindow.print();
-        };
-      });
-  };
+  console.log("🖨️ Rendering prescription:", prescription);
+
+  // Get age - try multiple sources
+  const patientAge =
+    prescription.patient?.age ||
+    prescription.age ||
+    calculateAge(prescription.patient?.dateOfBirth);
 
   return (
     <>
-      <div className="container d-flex justify-content-center my-3">
-        <div
-          id="print-area"
-          className="bg-white px-4 py-3"
-          style={{
-            width: "210mm",
-            minHeight: "297mm",
-            fontSize: "13px",
-            lineHeight: "1.4",
-          }}
-        >
-          {/* ================= HEADER ================= */}
-        <div className="row align-items-center border-bottom pb-2 mb-3 px-2">
-  <div className="col-2">
-    <img src={logo} alt="logo" className="img-fluid" />
-  </div>
-
-  <div className="col-6 text-center">
-    <h5 className="fw-bold mb-0">SUKOON HOSPITALS</h5>
-    <small className="text-muted">
-      run by Spherehealth Medical Solutions Pvt. Ltd.
-    </small>
-  </div>
-
-  <div
-    className="col-3 small text-end"
-    style={{ whiteSpace: "normal", wordBreak: "break-word" }}
-  >
-    <div>📞 7988807650</div>
-    <div>✉ admin@sukoonhospitals.com</div>
-    <div>📍 Sonipat (HR)</div>
-  </div>
-</div>
-
-
-          {/* ================= PATIENT INFO ================= */}
-          <div className="row mb-2">
-            <div className="col-8">
-              <div>
-                <b>Patient:</b> {doctorpreceptionUHID.patientName}
-              </div>
-              <div>
-                <b>Age:</b> {doctorpreceptionUHID.patient?.age ?? 0}
-              </div>
-              <div>
-                <b>UHID:</b> {doctorpreceptionUHID.UHID}
-              </div>
-              <div>
-                <b>Doctor:</b>{" "}
-                {doctorpreceptionUHID.doctor?.personalInfo?.firstName}{" "} 
-                {doctorpreceptionUHID.doctor?.personalInfo?.lastName}
-              </div>
-            </div>
-
-            <div className="col-4 text-end">
-              <div>
-                <b>Date:</b>{" "}
-                {new Date(doctorpreceptionUHID.createdAt).toLocaleDateString()}
-              </div>
-              <div>
-                <b>Referred By:</b> {doctorpreceptionUHID.referredBy || "-"}
-              </div>
-            </div>
-          </div>
-
-          <hr className="my-2" />
-
-          {/* ================= CLINICAL DETAILS ================= */}
-          <h6 className="fw-bold border-bottom pb-1">Clinical Details</h6>
-          <p className="mb-1">
-            <b>Allergy:</b>{" "}
-            {doctorpreceptionUHID.clinicalDetails?.historyOfAllergy}
-          </p>
-          <p className="mb-1">
-            <b>Present Illness:</b>{" "}
-            {doctorpreceptionUHID.clinicalDetails?.historyOfPresentIllness}
-          </p>
-          <p className="mb-2">
-            <b>Examination:</b>{" "}
-            {doctorpreceptionUHID.clinicalDetails?.physicalExamination}
-          </p>
-
-          {/* ================= VITALS ================= */}
-          {/* <div className="row text-center border py-2 mb-3">
-            <div className="col">
-              <b>Weight</b>
-              <br />
-              {doctorpreceptionUHID.vitals?.weight}
-            </div>
-            <div className="col">
-              <b>Temp</b>
-              <br />
-              {doctorpreceptionUHID.vitals?.temperature}
-            </div>
-            <div className="col">
-              <b>BP</b>
-              <br />
-              {doctorpreceptionUHID.vitals?.bloodPressure}
-            </div>
-            <div className="col">
-              <b>Pulse</b>
-              <br />
-              {doctorpreceptionUHID.vitals?.pulse}
-            </div>
-          </div> */}
-
-
-
-          <div className="row text-center border py-2 mb-3">
-  <div className="col">
-    <b>Weight</b><br />
-    {doctorpreceptionUHID.vitals?.weight || "-"}
-  </div>
-
-  {/* ===== TEMPERATURE ===== */}
-  <div className="col">
-    <b>Temp (°C)</b><br />
-    <span
-      className={
-        doctorpreceptionUHID.vitals?.temperature > 37.2 ||
-        doctorpreceptionUHID.vitals?.temperature < 36.1
-          ? "text-danger fw-bold"
-          : "text-success fw-bold"
-      }
-    >
-      {doctorpreceptionUHID.vitals?.temperature || "-"}{" "}
-      {doctorpreceptionUHID.vitals?.temperature > 37.2
-        ? "🔺"
-        : doctorpreceptionUHID.vitals?.temperature < 36.1
-        ? "🔻"
-        : "✔"}
-    </span>
-  </div>
-
-  {/* ===== BP ===== */}
-  <div className="col">
-    <b>BP</b><br />
-    <span
-      className={
-        doctorpreceptionUHID.vitals?.bloodPressure &&
-        (
-          Number(doctorpreceptionUHID.vitals.bloodPressure.split("/")[0]) > 140 ||
-          Number(doctorpreceptionUHID.vitals.bloodPressure.split("/")[1]) > 90
-        )
-          ? "text-danger fw-bold"
-          : "text-success fw-bold"
-      }
-    >
-      {doctorpreceptionUHID.vitals?.bloodPressure || "-"}{" "}
-      {doctorpreceptionUHID.vitals?.bloodPressure &&
-      (
-        Number(doctorpreceptionUHID.vitals.bloodPressure.split("/")[0]) > 140 ||
-        Number(doctorpreceptionUHID.vitals.bloodPressure.split("/")[1]) > 90
-      )
-        ? "🔺"
-        : "✔"}
-    </span>
-  </div>
-
-  {/* ===== PULSE ===== */}
-  <div className="col">
-    <b>Pulse</b><br />
-    <span
-      className={
-        doctorpreceptionUHID.vitals?.pulse > 100 ||
-        doctorpreceptionUHID.vitals?.pulse < 60
-          ? "text-danger fw-bold"
-          : "text-success fw-bold"
-      }
-    >
-      {doctorpreceptionUHID.vitals?.pulse || "-"}{" "}
-      {doctorpreceptionUHID.vitals?.pulse > 100
-        ? "🔺"
-        : doctorpreceptionUHID.vitals?.pulse < 60
-        ? "🔻"
-        : "✔"}
-    </span>
-  </div>
-</div>
-
-
-          {/* ================= MEDICINES ================= */}
-          <h6 className="fw-bold border-bottom pb-1">Medicines Advised</h6>
-          <div className="table-responsive">
-            <table className="table table-bordered table-sm text-center align-middle">
-              <thead className="table-light">
-                <tr>
-                  <th>#</th>
-                  <th>Medicine</th>
-                  <th>Schedule</th>
-                  <th>Instruction</th>
-                  <th>Route</th>
-                  <th>Days</th>
-                </tr>
-              </thead>
-              <tbody>
-                {doctorpreceptionUHID.medicines?.length > 0 ? (
-                  doctorpreceptionUHID.medicines.map((med, i) => (
-                    <tr key={i}>
-                      <td>{i + 1}</td>
-                      <td className="text-start">{med.medicineName}</td>
-                      <td>{med.schedule}</td>
-                      <td className="text-start">{med.instruction}</td>
-                      <td>{med.route}</td>
-                      <td>{med.days}</td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan="6">No medicines prescribed</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          {/* ================= ADVICE ================= */}
-          <h6 className="fw-bold border-bottom pb-1 mt-3">Advice</h6>
-          <p>{doctorpreceptionUHID.advice}</p>
-
-          {/* ================= SIGNATURE ================= */}
-          <div className="text-end mt-5">
-            <div className="fw-bold">{doctorpreceptionUHID.doctor?.name}</div>
-            <div className="small text-muted">
-              {doctorpreceptionUHID.doctor?.specialization}
-            </div>
-          </div>
-        </div>
+      {/* Print Button - Hidden on print */}
+      <div
+        className="no-print text-center mb-3"
+        style={{
+          position: "sticky",
+          top: 0,
+          background: "white",
+          zIndex: 1000,
+          padding: "10px",
+          boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
+        }}
+      >
+        <Button
+          label="Print Prescription"
+          icon="pi pi-print"
+          severity="success"
+          onClick={handlePrint}
+          className="me-2"
+          size="large"
+        />
+        <Button
+          label="Back to Dashboard"
+          icon="pi pi-arrow-left"
+          severity="secondary"
+          outlined
+          onClick={() => navigate("/dashboard1")}
+          size="large"
+        />
       </div>
 
-      <div className="container text-end mb-3">
-        <button className="btn btn-primary px-4" onClick={handlePdf}>
-          🖨 Print
-        </button>
+      {/* Printable Content */}
+      <div ref={printRef} className="prescription-print-container">
+        <div className="prescription-page">
+          {/* Professional Header with Red Design */}
+          <header className="prescription-header-professional">
+            <div className="header-left-section">
+              <div className="logo-section">
+                <img src={logo} alt="Hospital Logo" className="hospital-logo" />
+              </div>
+            </div>
+
+            <div className="header-center-section">
+              <h1 className="hospital-name-main">SUKOON HOSPITALS</h1>
+              <p className="hospital-subtitle">
+                run by Spherehealth Medical Solutions Pvt. Ltd.
+              </p>
+            </div>
+
+            <div className="header-right-section">
+              <div className="contact-info">
+                <p>
+                  <strong>📞</strong> 7988807650, 0130-4052310
+                </p>
+                <p>
+                  <strong>✉️</strong> admin@sukoonhospitals.com
+                </p>
+                <p>
+                  <strong>📍</strong> Mohalla Jatwara, Kumaro Ki Chopal,
+                  <br />
+                  Sonipat (Haryana)
+                </p>
+              </div>
+            </div>
+          </header>
+
+          <div className="red-divider"></div>
+
+          {/* Patient Information - Compact Table Format */}
+          <section className="patient-info-compact">
+            <h5 className="section-title-red">PATIENT INFORMATION</h5>
+            <table className="info-table">
+              <tbody>
+                <tr>
+                  <td className="label-cell">Patient Name:</td>
+                  <td className="value-cell">
+                    {prescription.patient?.fullName ||
+                      prescription.patientName ||
+                      "N/A"}
+                  </td>
+                  <td className="label-cell">UHID:</td>
+                  <td className="value-cell">{prescription.UHID || "N/A"}</td>
+                </tr>
+                <tr>
+                  <td className="label-cell">Age:</td>
+                  <td className="value-cell">{patientAge}</td>
+                  <td className="label-cell">Gender:</td>
+                  <td className="value-cell">
+                    {prescription.patient?.gender ||
+                      prescription.gender ||
+                      "N/A"}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="label-cell">Father/Guardian:</td>
+                  <td className="value-cell">
+                    {prescription.fatherName || "N/A"}
+                  </td>
+                  <td className="label-cell">Contact:</td>
+                  <td className="value-cell">
+                    {prescription.patient?.contactNumber ||
+                      prescription.contactNumber ||
+                      "N/A"}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="label-cell">Department:</td>
+                  <td className="value-cell">
+                    {prescription.patient?.department?.departmentName ||
+                      prescription.department?.departmentName ||
+                      prescription.department ||
+                      "N/A"}
+                  </td>
+                  <td className="label-cell">Date:</td>
+                  <td className="value-cell">
+                    {formatDate(prescription.createdAt)}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="label-cell">Type:</td>
+                  <td className="value-cell">
+                    {prescription.registrationType || "OPD"}
+                  </td>
+                  {prescription.referredBy && (
+                    <>
+                      <td className="label-cell">Referred By:</td>
+                      <td className="value-cell">{prescription.referredBy}</td>
+                    </>
+                  )}
+                </tr>
+              </tbody>
+            </table>
+          </section>
+
+          {/* Clinical Details */}
+          {(prescription.clinicalDetails?.historyOfAllergy ||
+            prescription.clinicalDetails?.historyOfPresentIllness ||
+            prescription.clinicalDetails?.physicalExamination) && (
+            <section className="clinical-section">
+              <h5 className="section-title-red">CLINICAL DETAILS</h5>
+
+              {prescription.clinicalDetails?.historyOfAllergy && (
+                <div className="clinical-item">
+                  <strong>History of Allergy:</strong>
+                  <p>{prescription.clinicalDetails.historyOfAllergy}</p>
+                </div>
+              )}
+
+              {prescription.clinicalDetails?.historyOfPresentIllness && (
+                <div className="clinical-item">
+                  <strong>History of Present Illness:</strong>
+                  <p>{prescription.clinicalDetails.historyOfPresentIllness}</p>
+                </div>
+              )}
+
+              {prescription.clinicalDetails?.physicalExamination && (
+                <div className="clinical-item">
+                  <strong>Physical Examination:</strong>
+                  <p>{prescription.clinicalDetails.physicalExamination}</p>
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* Vitals - Compact Format */}
+          {prescription.vitals &&
+            Object.values(prescription.vitals).some((val) => val) && (
+              <section className="vitals-section">
+                <h5 className="section-title-red">VITALS</h5>
+                <div className="vitals-row">
+                  {prescription.vitals.weight && (
+                    <span className="vital-badge">
+                      <strong>Weight:</strong> {prescription.vitals.weight} Kgs
+                    </span>
+                  )}
+                  {prescription.vitals.temperature && (
+                    <span className="vital-badge">
+                      <strong>Temp:</strong> {prescription.vitals.temperature}°F
+                    </span>
+                  )}
+                  {prescription.vitals.bloodPressure && (
+                    <span className="vital-badge">
+                      <strong>BP:</strong> {prescription.vitals.bloodPressure}{" "}
+                      mmHg
+                    </span>
+                  )}
+                  {prescription.vitals.pulse && (
+                    <span className="vital-badge">
+                      <strong>Pulse:</strong> {prescription.vitals.pulse} bpm
+                    </span>
+                  )}
+                </div>
+              </section>
+            )}
+
+          {/* Diagnosis */}
+          {prescription.provisionalDiagnosis && (
+            <section className="diagnosis-section">
+              <h5 className="section-title-red">PROVISIONAL DIAGNOSIS</h5>
+              <div className="diagnosis-box">
+                {prescription.provisionalDiagnosis}
+              </div>
+            </section>
+          )}
+
+          {/* Medicines */}
+          {prescription.medicines && prescription.medicines.length > 0 && (
+            <section className="medicines-section">
+              <h5 className="section-title-red">MEDICINE ADVISED</h5>
+              <table className="medicine-table-professional">
+                <thead>
+                  <tr>
+                    <th style={{ width: "5%" }}>S.No</th>
+                    <th style={{ width: "30%" }}>Medicine Name</th>
+                    <th style={{ width: "15%" }}>Schedule</th>
+                    <th style={{ width: "20%" }}>Instruction</th>
+                    <th style={{ width: "15%" }}>Route</th>
+                    <th style={{ width: "15%" }}>Days</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {prescription.medicines.map((medicine, index) => (
+                    <tr key={index}>
+                      <td className="text-center">{index + 1}</td>
+                      <td>{medicine.medicineName || "N/A"}</td>
+                      <td className="text-center">
+                        {medicine.schedule || "-"}
+                      </td>
+                      <td>{medicine.instruction || "-"}</td>
+                      <td className="text-center">{medicine.route || "-"}</td>
+                      <td className="text-center">{medicine.days || "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          )}
+
+          {/* Investigations */}
+          {prescription.investigations &&
+            prescription.investigations.length > 0 && (
+              <section className="investigations-section">
+                <h5 className="section-title-red">INVESTIGATION ADVISED</h5>
+                <div className="investigations-grid">
+                  {prescription.investigations.map((investigation, index) => (
+                    <div key={index} className="investigation-badge">
+                      ✓{" "}
+                      {investigation.Name ||
+                        investigation.label ||
+                        investigation}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+          {/* Advice */}
+          {prescription.advice && (
+            <section className="advice-section">
+              <h5 className="section-title-red">ADVICE & FOLLOW-UP</h5>
+              <div className="advice-box">{prescription.advice}</div>
+            </section>
+          )}
+
+          {/* Doctor Signature - Professional Format */}
+          <section className="doctor-signature-professional">
+            <div className="doctor-details-box">
+              <p>
+                <strong>Doctor:</strong> Dr.{" "}
+                {prescription.doctor?.personalInfo?.firstName || ""}{" "}
+                {prescription.doctor?.personalInfo?.lastName || ""}
+              </p>
+              <p>
+                <strong>Specialization:</strong>{" "}
+                {prescription.doctor?.professional?.specialization || "N/A"}
+              </p>
+              <p>
+                <strong>Qualification:</strong>{" "}
+                {prescription.doctor?.professional?.qualification || "N/A"}
+              </p>
+              <p>
+                <strong>Reg. No:</strong>{" "}
+                {prescription.doctor?.professional?.registrationNumber || "N/A"}
+              </p>
+            </div>
+            <div className="signature-box">
+              <div className="signature-line"></div>
+              <p className="signature-label">Doctor's Signature</p>
+            </div>
+          </section>
+
+          {/* Footer */}
+          <footer className="prescription-footer-professional">
+            <div className="footer-divider"></div>
+            <p className="footer-text">
+              This is a computer-generated prescription. For any queries, please
+              contact the hospital.
+            </p>
+            <p className="footer-date">
+              Date: {formatDate(prescription.createdAt)}
+            </p>
+          </footer>
+        </div>
       </div>
     </>
   );
 }
 
-export default Preceptionbill;
-
-// import React, { useState, useEffect } from "react";
-// import logo from "../../assets/logowebsite11.png";
-// import { useParams } from "react-router-dom";
-// import html2pdf from "html2pdf.js";
-// import { prescriptionService } from "../../Services/doctor/prescriptionService";
-// import "../../../css/opdbill.css";
-
-// function Preceptionbill() {
-//   const { UHID } = useParams();
-//   const [prescription, setPrescription] = useState(null);
-
-//   // ================= FETCH DATA =================
-//   useEffect(() => {
-//     if (!UHID) return;
-
-//     const fetchData = async () => {
-//       try {
-//         const res = await prescriptionService.getPrescriptionsByUHID(UHID);
-
-//         console.log("API RESPONSE 👉", res.data);
-
-//         const list = res?.data?.data || [];
-
-//         if (list.length > 0) {
-//           // 🔥 last/latest prescription
-//           setPrescription(list[list.length - 1]);
-//         }
-//       } catch (err) {
-//         console.error("Fetch error:", err);
-//       }
-//     };
-
-//     fetchData();
-//   }, [UHID]);
-
-//   // ================= LOADING =================
-//   if (!prescription) {
-//     return <div className="p-3">Loading prescription...</div>;
-//   }
-
-//   // ================= PDF =================
-//   const handlePdf = () => {
-//     const element = document.getElementById("print-area");
-//     if (!element) return;
-
-//     html2pdf()
-//       .from(element)
-//       .set({
-//         margin: 10,
-//         filename: "Prescription.pdf",
-//         html2canvas: { scale: 2 },
-//         jsPDF: { unit: "mm", format: "a4" },
-//       })
-//       .save();
-//   };
-
-//   return (
-//     <>
-//       <div id="print-area" className="container my-4 p-4 border bg-white">
-//         {/* ================= HEADER ================= */}
-//         <header className="d-flex justify-content-between align-items-center mb-3">
-//           <img src={logo} alt="logo" width={80} />
-//           <div className="text-center">
-//             <h5 className="mb-0 fw-bold">SUKOON HOSPITAL</h5>
-//             <small>Spherehealth Medical Solutions Pvt Ltd</small>
-//           </div>
-//           <div className="text-end">
-//             <small>📞 7988807650</small>
-//           </div>
-//         </header>
-
-//         <hr />
-
-//         {/* ================= PATIENT INFO ================= */}
-//         <div className="row">
-//           <div className="col-md-8">
-//             <p><b>Patient:</b> {prescription.patientName}</p>
-//             <p><b>Age:</b> {prescription.age}</p>
-//             <p><b>Gender:</b> {prescription.gender}</p>
-//             <p><b>UHID:</b> {prescription.UHID}</p>
-//             <p>
-//               <b>Doctor:</b>{" "}
-//               {prescription.doctor?.personalInfo?.firstName}{" "}
-//               {prescription.doctor?.personalInfo?.lastName}
-//             </p>
-//           </div>
-
-//           <div className="col-md-4">
-//             <p>
-//               <b>Date:</b>{" "}
-//               {new Date(prescription.createdAt).toLocaleDateString()}
-//             </p>
-//             <p><b>Referred By:</b> {prescription.referredBy || "-"}</p>
-//           </div>
-//         </div>
-
-//         <hr />
-
-//         {/* ================= CLINICAL ================= */}
-//         <h6 className="fw-bold">Clinical Details</h6>
-//         <p><b>Allergy:</b> {prescription.clinicalDetails?.historyOfAllergy}</p>
-//         <p>
-//           <b>Present Illness:</b>{" "}
-//           {prescription.clinicalDetails?.historyOfPresentIllness}
-//         </p>
-
-//         <hr />
-
-//         {/* ================= VITALS ================= */}
-//         <div className="row mb-3">
-//           <div className="col">Weight: {prescription.vitals?.weight}</div>
-//           <div className="col">Temp: {prescription.vitals?.temperature}</div>
-//           <div className="col">BP: {prescription.vitals?.bloodPressure}</div>
-//           <div className="col">Pulse: {prescription.vitals?.pulse}</div>
-//         </div>
-
-//         {/* ================= MEDICINES ================= */}
-//         <h6 className="fw-bold">Medicines</h6>
-//         <table className="table table-bordered">
-//           <thead>
-//             <tr>
-//               <th>#</th>
-//               <th>Name</th>
-//               <th>Schedule</th>
-//               <th>Instruction</th>
-//               <th>Route</th>
-//               <th>Days</th>
-//             </tr>
-//           </thead>
-//           <tbody>
-//             {(prescription.medicines || []).length > 0 ? (
-//               prescription.medicines.map((m, i) => (
-//                 <tr key={i}>
-//                   <td>{i + 1}</td>
-//                   <td>{m.medicineName}</td>
-//                   <td>{m.schedule}</td>
-//                   <td>{m.instruction}</td>
-//                   <td>{m.route}</td>
-//                   <td>{m.days}</td>
-//                 </tr>
-//               ))
-//             ) : (
-//               <tr>
-//                 <td colSpan="6" className="text-center">
-//                   No medicines
-//                 </td>
-//               </tr>
-//             )}
-//           </tbody>
-//         </table>
-
-//         {/* ================= INVESTIGATIONS ================= */}
-//         <h6 className="fw-bold">Investigations</h6>
-//         {(prescription.investigations || []).length > 0 ? (
-//           prescription.investigations.map((inv, i) => (
-//             <p key={i}>• {inv.Name || inv}</p>
-//           ))
-//         ) : (
-//           <p>No investigations</p>
-//         )}
-
-//         <hr />
-
-//         {/* ================= ADVICE ================= */}
-//         <h6 className="fw-bold">Advice</h6>
-//         <p>{prescription.advice}</p>
-
-//         {/* ================= SIGN ================= */}
-//         <div className="text-end mt-4">
-//           <b>
-//             {prescription.doctor?.personalInfo?.firstName}{" "}
-//             {prescription.doctor?.personalInfo?.lastName}
-//           </b>
-//           <p>{prescription.doctor?.professional?.specialization}</p>
-//         </div>
-//       </div>
-
-//       <div className="container text-end">
-//         <button className="btn btn-primary" onClick={handlePdf}>
-//           🖨 Print
-//         </button>
-//       </div>
-//     </>
-//   );
-// }
-
-// export default Preceptionbill;
+export default DoctorPrePrint;

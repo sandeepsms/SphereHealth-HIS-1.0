@@ -25,28 +25,29 @@ function DoctorPrescription() {
   const { UHID } = useParams();
   const navigate = useNavigate();
 
-  console.log("--------tttttt", UHID);
-
-  // console.log("333333333333",selectedServices);
-  // console.log("333333333333-------------------",serviceOptions);
+  console.log("DoctorPrescription - UHID from URL:", UHID);
 
   // Fetch patient data
   useEffect(() => {
-    if (!UHID) return;
+    if (!UHID) {
+      console.error("❌ No UHID in URL!");
+      toast.error("UHID is missing!");
+      return;
+    }
+
+    console.log("✅ Fetching patient data for UHID:", UHID);
 
     patientService
       .getPatientByUHID(UHID)
       .then((res) => {
         const patientData = res.data;
-        console.log("tpaidddddddddddd", patientData);
+        console.log("✅ Patient Data Loaded:", patientData);
 
         setUHID(patientData);
 
         // Fetch TPA services if patient has TPA
-
         if (patientData?.tpa?._id) {
-          console.log("bosssssssssssss", patientData?.tpa?._id);
-
+          console.log("TPA ID found:", patientData?.tpa?._id);
           fetchTPAServices(patientData.tpa._id);
         }
 
@@ -56,16 +57,18 @@ function DoctorPrescription() {
         }
       })
       .catch((err) => {
-        console.error("Error fetching patient:", err);
+        console.error("❌ Error fetching patient:", err);
         toast.error("Failed to load patient data");
       });
   }, [UHID]);
 
   const fetchTPAServices = (tpaId) => {
+    console.log("Fetching TPA Services for TPA ID:", tpaId);
+
     tpaServiceService
       .getTPAServiceById(tpaId)
       .then((res) => {
-        console.log("ressssssssssppppppppp", res);
+        console.log("TPA Services Response:", res);
 
         const serviceArray = res.data?.service || res.service || [];
 
@@ -73,23 +76,26 @@ function DoctorPrescription() {
           label: item.Name,
           value: item._id,
         }));
-        console.log("fffffffffff", formattedOptions);
 
+        console.log("Formatted Service Options:", formattedOptions);
         setServiceOptions(formattedOptions);
       })
       .catch((err) => {
-        console.error("Error fetching TPA services:", err);
+        console.error("❌ Error fetching TPA services:", err);
       });
   };
 
   const fetchDoctorDetails = (doctorId) => {
+    console.log("Fetching Doctor Details for Doctor ID:", doctorId);
+
     doctorService
       .getDoctorById(doctorId)
       .then((res) => {
+        console.log("Doctor Data Loaded:", res.data || res);
         setDoctorData(res.data || res);
       })
       .catch((err) => {
-        console.error("Error fetching doctor details:", err);
+        console.error("❌ Error fetching doctor details:", err);
       });
   };
 
@@ -120,7 +126,6 @@ function DoctorPrescription() {
     <Formik
       enableReinitialize
       initialValues={{
-        
         // Patient Info
         patient: uhid?._id || "",
         UHID: uhid?.UHID || "",
@@ -168,6 +173,26 @@ function DoctorPrescription() {
       }}
       validationSchema={validationSchema}
       onSubmit={async (values, { setSubmitting }) => {
+        console.log("=== PRESCRIPTION SUBMISSION STARTED ===");
+        console.log("Form Values:", values);
+        console.log("UHID:", values.UHID);
+        console.log("Patient ID:", values.patient);
+
+        // ✅ Validation before submission
+        if (!values.UHID) {
+          console.error("❌ UHID is missing in form values!");
+          toast.error("UHID is missing. Cannot create prescription.");
+          setSubmitting(false);
+          return;
+        }
+
+        if (!values.patient) {
+          console.error("❌ Patient ID is missing in form values!");
+          toast.error("Patient ID is missing. Cannot create prescription.");
+          setSubmitting(false);
+          return;
+        }
+
         setLoading(true);
 
         try {
@@ -197,21 +222,38 @@ function DoctorPrescription() {
             referredBy: values.referredBy,
           };
 
+          console.log("Submitting Prescription Data:", prescriptionData);
+
           const response =
             await prescriptionService.createPrescription(prescriptionData);
 
-          toast.success(
-            response.message || "Prescription created successfully!",
-          );
+          console.log("✅ Prescription Created Successfully:", response);
 
-          // Navigate to prescription list or print view
-          setTimeout(() => {
-            navigate(`/prescriptions/${response.data._id}`);
-          }, 2000);
+          if (response.success) {
+            toast.success(
+              response.message || "Prescription created successfully!",
+            );
+
+            // ✅ Construct the print URL
+            const printUrl = `/PreceptionPrint/${values.UHID}`;
+            console.log("✅ Navigating to Print Page:", printUrl);
+
+            // Navigate to print page after short delay
+            setTimeout(() => {
+              navigate(printUrl);
+            }, 1000);
+          } else {
+            throw new Error(
+              response.message || "Failed to create prescription",
+            );
+          }
         } catch (error) {
-          console.error("Error creating prescription:", error);
+          console.error("❌ Error creating prescription:", error);
+          console.error("Error details:", error.response?.data);
           toast.error(
-            error.response?.data?.message || "Failed to create prescription",
+            error.response?.data?.message ||
+              error.message ||
+              "Failed to create prescription",
           );
         } finally {
           setLoading(false);
