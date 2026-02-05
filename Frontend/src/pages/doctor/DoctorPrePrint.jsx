@@ -426,14 +426,14 @@ function DoctorPrePrint() {
                 <strong>Specialization:</strong>{" "}
                 {prescription.doctor?.professional?.specialization || "N/A"}
               </p>
-              <p>
+              {/* <p>
                 <strong>Qualification:</strong>{" "}
                 {prescription.doctor?.professional?.qualification || "N/A"}
-              </p>
-              <p>
+              </p> */}
+              {/* <p>
                 <strong>Reg. No:</strong>{" "}
                 {prescription.doctor?.professional?.registrationNumber || "N/A"}
-              </p>
+              </p> */}
             </div>
             <div className="signature-box">
               <div className="signature-line"></div>

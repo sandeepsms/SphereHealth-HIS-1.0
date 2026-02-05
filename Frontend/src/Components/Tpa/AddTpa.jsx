@@ -102,7 +102,7 @@ function AddTpa() {
     }
   };
 
-  const handleEdit = (tpa) => {
+  const handleEdit = (tpa) => {        
     console.log("Editing TPA:", tpa);
     setEditingTPA(tpa);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -194,7 +194,7 @@ function AddTpa() {
         modal
       >
         <div style={{ padding: "10px" }}>
-          <table style={{ width: "100%" }}>
+          <table style={{ width: "100%"  }}>
             <tbody>
               <tr>
                 <td
@@ -712,7 +712,7 @@ function AddTpa() {
                     className="pi pi-spin pi-spinner"
                     style={{ fontSize: "2rem" }}
                   />
-                  <div style={{ marginTop: "10px" }}>Loading...</div>
+                  <div style={{ marginTop: "10px" }}>TPA is Loading...</div>
                 </td>
               </tr>
             ) : currentItems.length > 0 ? (
@@ -842,7 +842,7 @@ function AddTpa() {
                     fontSize: "16px",
                   }}
                 >
-                  No TPAs found
+                  No TPAs found                                                             
                 </td>
               </tr>
             )}
@@ -862,13 +862,18 @@ function AddTpa() {
               backgroundColor: "white",
             }}
           >
+
+
             <Button
               icon="pi pi-angle-double-left"
               className="p-button-outlined"
-              onClick={() => setCurrentPage(1)}
+              onClick={() => setCurrentPage(1)}                          
               disabled={currentPage === 1}
               style={{ minWidth: "40px", height: "40px" }}
             />
+
+
+
             <Button
               icon="pi pi-angle-left"
               className="p-button-outlined"
@@ -877,6 +882,9 @@ function AddTpa() {
               style={{ minWidth: "40px", height: "40px" }}
             />
 
+
+           
+           
             {[...Array(totalPages)].map((_, i) => {
               const page = i + 1;
               if (

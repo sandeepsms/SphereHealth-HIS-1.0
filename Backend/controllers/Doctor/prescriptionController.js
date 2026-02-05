@@ -2,32 +2,124 @@ const Prescription = require("../../models/Doctor/prescription");
 const Patient = require("../../models/Patient/patientModel");
 const Doctor = require("../../models/Doctor/doctorModel");
 
+// exports.createPrescription = async (req, res) => {
+//   try {
+//     const data = req.body;
+
+//     // 🔍 Validate patient
+//     const patient = await Patient.findById(data.patient);
+//     if (!patient) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "Patient not found",
+//       });
+//     }
+
+//     // 🔥 Build clean prescription object
+//     const prescriptionPayload = {
+//       // IDs
+//       patient: patient._id,
+//       UHID: patient.UHID,
+
+//       // AUTO patient info
+//       patientName: patient.fullName,
+//       age: patient.age,
+//       gender: patient.gender,
+//       contactNumber: patient.contactNumber,
+//       fatherName: patient.fatherName || "",
+//       department: patient.department?.departmentName || "",
+
+//       // doctor
+//       doctor: data.doctor,
+//       referredBy: data.referredBy || "",
+
+//       registrationType: data.registrationType || "OPD",
+
+//       clinicalDetails: data.clinicalDetails,
+//       vitals: data.vitals,
+//       provisionalDiagnosis: data.provisionalDiagnosis,
+
+//       medicines: data.medicines || [],
+//       investigations: data.investigations || [],
+//       advice: data.advice || "",
+//     };
+
+//     // 💾 Save
+//     const prescription = await Prescription.create(prescriptionPayload);
+
+//     // 📦 Populate for response only
+//     await prescription.populate([
+//       { path: "patient", select: "fullName UHID gender age" },
+//       {
+//         path: "doctor",
+//         select:
+//           "personalInfo.firstName personalInfo.lastName professional.specialization",
+//       },
+//       { path: "investigations", select: "Name" },
+//     ]);
+
+//     res.status(201).json({
+//       success: true,
+//       message: "Prescription created successfully",
+//       data: prescription,
+//     });
+//   } catch (error) {
+//     console.error("Create prescription error:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: error.message || "Failed to create prescription",
+//     });
+//   }
+// };
+
 exports.createPrescription = async (req, res) => {
   try {
-    const data = req.body;
+    const { uhid } = req.params;
 
-    // 🔍 Validate patient
-    const patient = await Patient.findById(data.patient);
-    if (!patient) {
-      return res.status(404).json({
+    if (!uhid) {
+      return res.status(400).json({
         success: false,
-        message: "Patient not found",
+        status: "ERROR",
+        message: "UHID is required in params",
       });
     }
 
-    // 🔥 Build clean prescription object
+    const data = req.body;
+
+    // 🔴 Required fields check (minimum)
+    if (!data.patient || !data.doctor || !data.provisionalDiagnosis) {
+      return res.status(400).json({
+        success: false,
+        status: "ERROR",
+        message: "Required fields missing",
+      });
+    }
+
+    // 🔍 Check existing prescription by UHID
+    const existingPrescription = await Prescription.findOne({ UHID: uhid });
+
+    // 🔒 FINAL lock check
+    if (existingPrescription && existingPrescription.status === "FINAL") {
+      return res.status(400).json({
+        success: false,
+        status: "FINAL",
+        message: "Prescription already printed and locked",
+      });
+    }
+
+    // 🧾 Common payload (schema aligned)
     const prescriptionPayload = {
       // IDs
-      patient: patient._id,
-      UHID: patient.UHID,
+      patient: data.patient,
+      UHID: uhid,
 
       // AUTO patient info
-      patientName: patient.fullName,
-      age: patient.age,
-      gender: patient.gender,
-      contactNumber: patient.contactNumber,
-      fatherName: patient.fatherName || "",
-      department: patient.department?.departmentName || "",
+      patientName: data.patientName,
+      age: data.age,
+      gender: data.gender,
+      contactNumber: data.contactNumber,
+      fatherName: data.fatherName || "",
+      department: data.department || "",
 
       // doctor
       doctor: data.doctor,
@@ -42,32 +134,41 @@ exports.createPrescription = async (req, res) => {
       medicines: data.medicines || [],
       investigations: data.investigations || [],
       advice: data.advice || "",
+
+      updatedAt: new Date(),
     };
 
-    // 💾 Save
-    const prescription = await Prescription.create(prescriptionPayload);
+    // 🆕 CREATE
+    if (!existingPrescription) {
+      await Prescription.create({
+        ...prescriptionPayload,
+        status: "DRAFT",
+      });
 
-    // 📦 Populate for response only
-    await prescription.populate([
-      { path: "patient", select: "fullName UHID gender age" },
-      {
-        path: "doctor",
-        select:
-          "personalInfo.firstName personalInfo.lastName professional.specialization",
-      },
-      { path: "investigations", select: "Name" },
-    ]);
+      return res.status(201).json({
+        success: true,
+        status: "CREATED",
+        message: "Prescription created successfully",
+      });
+    }
 
-    res.status(201).json({
+    // ✏️ UPDATE
+    await Prescription.findOneAndUpdate({ UHID: uhid }, prescriptionPayload, {
+      new: true,
+    });
+
+    return res.status(200).json({
       success: true,
-      message: "Prescription created successfully",
-      data: prescription,
+      status: "UPDATED",
+      message: "Prescription updated successfully",
     });
   } catch (error) {
-    console.error("Create prescription error:", error);
+    console.error("❌ upsertPrescription error:", error);
+
     res.status(500).json({
       success: false,
-      message: error.message || "Failed to create prescription",
+      status: "ERROR",
+      message: error.message,
     });
   }
 };

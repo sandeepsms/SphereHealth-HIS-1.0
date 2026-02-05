@@ -45,7 +45,7 @@ export default function PatientRegistration() {
     },
     bloodGroup: "",
     knownAllergies: "",
-    tpa: null,
+    tpa: "",
     department: "",
     doctor: "",
     isMLC: false,
@@ -63,11 +63,11 @@ export default function PatientRegistration() {
   const [departments, setDepartments] = useState([]);
   const [doctors, setDoctors] = useState([]);
   const [filteredDoctors, setFilteredDoctors] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [pincodeLoading, setPincodeLoading] = useState(false);
-  const [initialLoading, setInitialLoading] = useState(true);
-  const [isEditMode, setIsEditMode] = useState(false);
-  const [OPDprice, setOPDprice] = useState();
+const [loading, setLoading] = useState(false);
+const [pincodeLoading, setPincodeLoading] = useState(false);
+const [initialLoading, setInitialLoading] = useState(true);
+const [isEditMode, setIsEditMode] = useState(false);
+const [OPDprice, setOPDprice] = useState();
 
   function fetchOPDPrice(selectedId) {
     console.log("Fetching OPD Price for TPA ID:", selectedId);
@@ -85,17 +85,17 @@ export default function PatientRegistration() {
       });
   }
 
-  // Initial data load
-  useEffect(() => {
-    loadInitialData();
-  }, []);
+// Initial data load
+useEffect(() => {
+  loadInitialData();
+}, []);
 
-  // Patient data load करना जब departments और doctors load हो जाएं
-  useEffect(() => {
-    if (patientId && departments.length > 0 && doctors.length > 0) {
-      fetchPatientData(patientId);
-    }
-  }, [patientId, departments.length, doctors.length]);
+// Patient data load करना जब departments और doctors load हो जाएं
+useEffect(() => {
+  if (patientId && departments.length > 0 && doctors.length > 0) {
+    fetchPatientData(patientId);
+  }
+}, [patientId, departments.length, doctors.length]);
 
   const loadInitialData = async () => {
     setInitialLoading(true);
@@ -650,8 +650,8 @@ export default function PatientRegistration() {
           </div>
         </Card>
 
-        {/* TPA Section */}
-        <Card className="mb-4">
+{/* TPA Section */}
+<Card className="mb-4">
           <div className="p-field p-col-12">
             <label className="font-semibold block mb-2">TPA (Optional)</label>
             <Dropdown

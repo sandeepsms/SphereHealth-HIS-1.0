@@ -118,42 +118,42 @@ function PatientsTable() {
     setGlobalFilterValue(value);
   };
 
-  // ✅ FIXED: Edit handler - Navigate with patient ID in URL
-  const handleEdit = (rowData) => {
-    console.log("Editing patient with ID:", rowData.id);
-    // Navigate to /registration/:id route
-    navigate(`/registration/${rowData.id}`);
-  };
+// Edit handler - Navigate with patient ID in URL
+const handleEdit = (rowData) => {
+  console.log("Editing patient with ID:", rowData.id);
+  // Navigate to /registration/:id route
+  navigate(`/registration/${rowData.id}`);
+};
 
-  const handleView = async (rowData) => {
-    try {
-      console.log("Fetching complete patient data for:", rowData.id);
-      // Fetch complete patient data from API
-      const response = await fetch(`${API_ENDPOINTS.PATIENTS}/${rowData.id}`);
-      const data = await response.json();
+const handleView = async (rowData) => {
+  try {
+    console.log("Fetching complete patient data for:", rowData.id);
+    // Fetch complete patient data from API
+    const response = await fetch(`${API_ENDPOINTS.PATIENTS}/${rowData.id}`);
+    const data = await response.json();
 
-      if (data.success && data.data) {
-        console.log("Complete patient data:", data.data);
-        setSelectedPatient(data.data);
-        setViewDialogVisible(true);
-      } else {
-        // Fallback to table data if API fails
-        setSelectedPatient(rowData);
-        setViewDialogVisible(true);
-      }
-    } catch (error) {
-      console.error("Error fetching patient details:", error);
-      toast.current?.show({
-        severity: "error",
-        summary: "Error",
-        detail: "Failed to fetch patient details",
-        life: 3000,
-      });
-      // Fallback to table data
+    if (data.success && data.data) {
+      console.log("Complete patient data:", data.data);
+      setSelectedPatient(data.data);
+      setViewDialogVisible(true);
+    } else {
+      // Fallback to table data if API fails
       setSelectedPatient(rowData);
       setViewDialogVisible(true);
     }
-  };
+  } catch (error) {
+    console.error("Error fetching patient details:", error);
+    toast.current?.show({
+      severity: "error",
+      summary: "Error",
+      detail: "Failed to fetch patient details",
+      life: 3000,
+    });
+    // Fallback to table data
+    setSelectedPatient(rowData);
+    setViewDialogVisible(true);
+  }
+};
 
   const handleDeleteConfirm = (rowData) => {
     setSelectedPatient(rowData);
@@ -194,6 +194,9 @@ function PatientsTable() {
 
   // ✅ Action body with three dot menu
   const actionBody = (rowData) => {
+
+    console.log("row data---------",rowData);
+    
     const items = [
       {
         label: "Delete Patient",

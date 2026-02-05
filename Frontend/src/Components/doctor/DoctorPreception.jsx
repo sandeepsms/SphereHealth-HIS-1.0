@@ -74,8 +74,10 @@ function DoctorPrescription() {
 
         const formattedOptions = serviceArray.map((item) => ({
           label: item.Name,
+
           value: item._id,
         }));
+        // console.log("label======",label);
 
         console.log("Formatted Service Options:", formattedOptions);
         setServiceOptions(formattedOptions);
@@ -134,7 +136,7 @@ function DoctorPrescription() {
         gender: uhid?.gender || "",
         contactNumber: uhid?.contactNumber || "",
         date: currentDate.toLocaleDateString(),
-        fatherName: "",
+        fatherName: uhid?.companionName || "",
         department: uhid?.department?.departmentName || "",
         registrationType: uhid?.registrationType || "OPD",
 
@@ -175,9 +177,10 @@ function DoctorPrescription() {
       onSubmit={async (values, { setSubmitting }) => {
         console.log("=== PRESCRIPTION SUBMISSION STARTED ===");
         console.log("Form Values:", values);
+
         console.log("UHID:", values.UHID);
         console.log("Patient ID:", values.patient);
-
+        console.log("Patient test:", values.investigations);
         // ✅ Validation before submission
         if (!values.UHID) {
           console.error("❌ UHID is missing in form values!");
@@ -198,10 +201,16 @@ function DoctorPrescription() {
         try {
           const prescriptionData = {
             patient: values.patient,
+            patientName: uhid?.fullName || "",
+            age: uhid?.age || "0",
+            gender: uhid?.gender || "",
+            contactNumber: uhid?.contactNumber || "",
+            department: uhid?.department?.departmentName || "",
+            doctor: uhid?.doctor?._id || "",
             UHID: values.UHID,
             doctor: values.doctor,
             registrationType: values.registrationType,
-
+            fatherName: uhid?.companionName || "",
             clinicalDetails: {
               historyOfAllergy: values.historyOfAllergy,
               historyOfPresentIllness: values.historyOfPresentIllness,
@@ -217,7 +226,7 @@ function DoctorPrescription() {
 
             provisionalDiagnosis: values.provisionalDiagnosis,
             medicines: values.medicines,
-            investigations: selectedServices,
+            investigations: [],
             advice: values.advice,
             referredBy: values.referredBy,
           };
@@ -225,7 +234,11 @@ function DoctorPrescription() {
           console.log("Submitting Prescription Data:", prescriptionData);
 
           const response =
-            await prescriptionService.createPrescription(prescriptionData);
+            // await prescriptionService.createPrescription(prescriptionData);
+            await prescriptionService.createPrescription(
+              UHID,
+              prescriptionData,
+            );
 
           console.log("✅ Prescription Created Successfully:", response);
 
@@ -342,8 +355,9 @@ function DoctorPrescription() {
                   id="fatherName"
                   name="fatherName"
                   value={values.fatherName}
-                  onChange={handleChange}
-                  className="w-100"
+                  // onChange={handleChange}
+                  readOnly
+                  className="w-100 text-success fw-bold"
                 />
               </div>
 
@@ -627,15 +641,35 @@ function DoctorPrescription() {
               <div className="row mt-3">
                 <div className="col-md-12">
                   <label className="form-label fw-bold">Investigations:</label>
-                  <MultiSelect
+                  {/* <MultiSelect
                     value={selectedServices}
+                    // value={values.investigations}
                     onChange={(e) => {
+                      console.log("value like========2222221111", e.value);
+
                       setSelectedServices(e.value || []);
                       setFieldValue("investigations", e.value || []);
                     }}
                     options={serviceOptions}
                     optionLabel="label"
-                    optionValue="value"
+                    optionValue="label"
+                    placeholder="Select Tests"
+                    filter
+                    className="w-100"
+                    display="chip"
+                  /> */}
+
+                  <MultiSelect
+                    value={values.investigations}
+                    onChange={(e) => {
+                      console.log("Selected Tests:", e.value);
+
+                      setSelectedServices(e.value || []); // UI state
+                      setFieldValue("investigations", e.value || []); // Formik state
+                    }}
+                    options={serviceOptions}
+                    optionLabel="label"
+                    optionValue="label"
                     placeholder="Select Tests"
                     filter
                     className="w-100"
@@ -692,7 +726,7 @@ function DoctorPrescription() {
               <div className="text-center mt-4">
                 <Button
                   type="submit"
-                  label={loading ? "Generating..." : "Generate & Print"}
+                  label={loading ? "Generating..." : "Generate & Printssssssss"}
                   icon={loading ? "pi pi-spin pi-spinner" : "pi pi-check"}
                   className="btn-custom px-5 rounded"
                   loading={loading}
