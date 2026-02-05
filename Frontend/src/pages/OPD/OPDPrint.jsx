@@ -1,10 +1,7 @@
 import React, { useEffect, useState } from "react";
-// import "../../css/opdbill.css";
 import "../../../css/opdbill.css";
-// import logo from "../assets/logowebsite11.png";
 import logo from "../../assets/logowebsite11.png";
 import { useParams } from "react-router-dom";
-// import { getPatientbyID } from "../Services/userService";
 import { getPatientbyID } from "../../Services/userService";
 import html2pdf from "html2pdf.js";
 import { Fullscreen } from "lucide-react";
@@ -13,25 +10,11 @@ const OPDPrint = () => {
   const { UHID } = useParams();
   const [patient, setPatient] = useState({});
   const today = new Date().toISOString().split("T")[0];
-  console.log("--------========", patient);
 
   useEffect(() => {
     if (!UHID) return;
     getPatientbyID(UHID).then((res) => setPatient(res || {}));
   }, [UHID]);
-
-  //  const handlePdf = () => {
-  //   const element = document.getElementById("print-area");
-  //   html2pdf()
-  //     .from(element)
-  //     .set({
-  //       margin: 10,
-  //       filename: `OPD_Bill_${patient?.UHID || "Patient"}.pdf`,
-  //       html2canvas: { scale: 3 },
-  //       jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-  //     })
-  //     .save();
-  // };
 
   const handlePdf = () => {
     const element = document.getElementById("print-area");

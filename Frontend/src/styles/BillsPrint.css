@@ -1,0 +1,283 @@
+.bill-print {
+    font-family: "Arial", sans-serif;
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 30px;
+    background: white;
+    color: #000;
+}
+
+/* Header */
+.bill-header {
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.hospital-info h1 {
+    margin: 0;
+    font-size: 28px;
+    color: #2c3e50;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+}
+
+.hospital-info p {
+    margin: 5px 0;
+    font-size: 12px;
+    color: #555;
+}
+
+.bill-title h2 {
+    margin: 10px 0 5px;
+    font-size: 22px;
+    color: #2c3e50;
+    text-transform: uppercase;
+}
+
+.bill-title h3 {
+    margin: 0;
+    font-size: 16px;
+    color: #555;
+    font-weight: normal;
+}
+
+.divider {
+    border: none;
+    border-top: 2px solid #2c3e50;
+    margin: 20px 0;
+}
+
+/* Patient & TPA Details */
+.bill-section {
+    margin-bottom: 25px;
+    page-break-inside: avoid;
+}
+
+.patient-details,
+.tpa-details {
+    display: inline-block;
+    width: 48%;
+    vertical-align: top;
+}
+
+.patient-details {
+    margin-right: 4%;
+}
+
+.bill-section h3 {
+    font-size: 14px;
+    color: #2c3e50;
+    text-transform: uppercase;
+    border-bottom: 1px solid #ddd;
+    padding-bottom: 5px;
+    margin-bottom: 10px;
+}
+
+.bill-section table {
+    width: 100%;
+    font-size: 12px;
+}
+
+.bill-section table td {
+    padding: 4px 8px;
+}
+
+/* Charges Table */
+.charges-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    margin-top: 10px;
+}
+
+.charges-table thead {
+    background-color: #2c3e50;
+    color: white;
+}
+
+.charges-table th {
+    padding: 10px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+}
+
+.charges-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid #ddd;
+}
+
+.charges-table tbody tr:hover {
+    background-color: #f8f9fa;
+}
+
+.charges-table .amount {
+    text-align: right;
+    font-weight: 600;
+}
+
+/* Subtotal Row */
+.subtotal-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 10px;
+    background-color: #f8f9fa;
+    margin-top: 5px;
+    font-size: 13px;
+}
+
+/* Outside Section */
+.outside-section {
+    background-color: #fff3cd;
+    padding: 15px;
+    border-left: 4px solid #ffc107;
+    border-radius: 4px;
+}
+
+.outside-section .note {
+    font-style: italic;
+    color: #856404;
+    margin-bottom: 10px;
+    font-size: 12px;
+}
+
+/* Summary Table */
+.summary-table {
+    float: right;
+    width: 400px;
+    margin-top: 20px;
+}
+
+.summary-table table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.summary-table td {
+    padding: 8px 15px;
+    font-size: 13px;
+}
+
+.summary-label {
+    text-align: right;
+    width: 60%;
+}
+
+.summary-value {
+    text-align: right;
+    width: 40%;
+    font-weight: 600;
+}
+
+.discount-row {
+    color: #28a745;
+}
+
+.total-row {
+    border-top: 2px solid #2c3e50;
+    background-color: #f8f9fa;
+}
+
+.total-row td {
+    font-size: 16px;
+    padding: 12px 15px;
+}
+
+.paid-row {
+    color: #28a745;
+}
+
+.balance-row {
+    border-top: 1px solid #ddd;
+    color: #dc3545;
+}
+
+.balance-row td {
+    font-size: 15px;
+    padding-top: 10px;
+}
+
+/* Terms & Conditions */
+.terms h4 {
+    font-size: 13px;
+    margin-bottom: 10px;
+    color: #2c3e50;
+}
+
+.terms ul {
+    padding-left: 20px;
+    margin: 0;
+}
+
+.terms li {
+    font-size: 11px;
+    margin-bottom: 5px;
+    color: #555;
+}
+
+/* Footer */
+.bill-footer {
+    margin-top: 50px;
+    page-break-inside: avoid;
+}
+
+.signatures {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 30px;
+}
+
+.signatures div {
+    text-align: center;
+}
+
+.signatures p {
+    margin: 5px 0;
+    font-size: 12px;
+}
+
+.thank-you {
+    text-align: center;
+    font-size: 14px;
+    font-weight: 600;
+    color: #2c3e50;
+    margin-top: 20px;
+}
+
+/* Print Styles */
+@media print {
+    .bill-print {
+        padding: 0;
+        max-width: 100%;
+    }
+
+    .bill-section {
+        page-break-inside: avoid;
+    }
+
+    .charges-table thead {
+        background-color: #2c3e50 !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    .outside-section {
+        background-color: #fff3cd !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    .total-row {
+        background-color: #f8f9fa !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+}
+
+/* Clear floats */
+.bill-section::after {
+    content: "";
+    display: table;
+    clear: both;
+}

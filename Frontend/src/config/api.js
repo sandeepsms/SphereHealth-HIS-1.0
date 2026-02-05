@@ -22,9 +22,9 @@ export const API_ENDPOINTS = {
   // DOCTORPRECEPTION:`${API_BASE_URL}/RegistrationOPD/getPreceptionreport`
   DOCTORPRECEPTION: `${API_BASE_URL}/patients/uhid`,
   TPA_SERVICES: `${API_BASE_URL}/tpaservice`,
+  HOSPITAL_CHARGES: `${API_BASE_URL}/hospital-charges`,
   PRESCRIPTIONS: `${API_BASE_URL}/prescriptions`,
+  BILLING: `${API_BASE_URL}/billing`,
 };
-
-console.log("🌐 API Config Loaded:", API_BASE_URL);
 
 export default API_ENDPOINTS;

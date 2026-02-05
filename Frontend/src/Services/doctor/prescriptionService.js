@@ -1,7 +1,7 @@
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api.js";
 
-const API_URL = `${API_ENDPOINTS.BASE}/prescriptions`;
+const API_URL = API_ENDPOINTS.PRESCRIPTIONS;
 
 export const prescriptionService = {
   createPrescription: async (data) => {

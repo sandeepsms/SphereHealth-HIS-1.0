@@ -1,26 +1,31 @@
+// routes/tpaRoutes.js - INDIVIDUAL METHOD STYLE
 const express = require("express");
 const router = express.Router();
-const tpaController = require("./../../controllers/tpa/tpaController");
+const {
+  createTPA,
+  getAllTPAs,
+  getTPAById,
+  updateTPA,
+  deleteTPA,
+  getChargesByRoomCategory,
+  getTPAByCode,
+} = require("../../controllers/tpa/tpaController");
 
-// Create TPA
-router.post("/", tpaController.createTPA);
+// Test endpoint
+router.get("/test", (req, res) => {
+  res.json({ message: "TPA routes working perfectly!" });
+});
 
-// Get all TPAs
-router.get("/", tpaController.getAllTPAs);
+router.get("/", getAllTPAs);
+router.post("/", createTPA);
 
-// Get active TPAs (for dropdown)
-router.get("/active", tpaController.getActiveTPAs);
+router.get("/:id", getTPAById);
+router.put("/:id", updateTPA);
+router.delete("/:id", deleteTPA);
 
-// Search TPAs
-router.get("/search", tpaController.searchTPAs);
+// Billing helpers
+router.get("/:tpaId/charges/:roomCategoryId", getChargesByRoomCategory);
 
-// Get TPA by ID
-router.get("/:id", tpaController.getTPAById);
-
-// Update TPA
-router.put("/:id", tpaController.updateTPA);
-
-// Delete TPA (soft delete)
-router.delete("/:id", tpaController.deleteTPA);
+router.get("/code/:code", getTPAByCode);
 
 module.exports = router;

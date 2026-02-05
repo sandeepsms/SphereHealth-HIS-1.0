@@ -1,328 +1,421 @@
 const billingService = require("../../services/Billing/billingService");
 
-class BillingController {
-  async createBill(req, res) {
-    try {
-      const bill = await billingService.createBill(req.body);
-      res.status(201).json({
-        success: true,
-        message: "Bill created successfully",
-        data: bill,
-      });
-    } catch (error) {
-      res.status(400).json({
+/**
+ * 🎯 Create Bill from Prescription
+ * POST /api/billing/from-prescription
+ */
+exports.createBillFromPrescription = async (req, res) => {
+  try {
+    const { prescriptionId } = req.body;
+
+    if (!prescriptionId) {
+      return res.status(400).json({
         success: false,
-        message: error.message,
+        message: "Prescription ID is required",
       });
     }
-  }
 
-  async getAllBills(req, res) {
-    try {
-      const { page = 1, limit = 10, ...filters } = req.query;
-      const result = await billingService.getAllBills(
-        parseInt(page),
-        parseInt(limit),
-        filters
-      );
-      res.status(200).json({
-        success: true,
-        data: result.bills,
-        pagination: result.pagination,
-      });
-    } catch (error) {
-      res.status(500).json({
+    const bill = await billingService.createFromPrescription(prescriptionId);
+
+    res.status(201).json({
+      success: true,
+      message: "Bill created successfully",
+      data: bill,
+    });
+  } catch (error) {
+    console.error("Error creating bill:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+/**
+ * 📄 Get Bill by ID
+ * GET /api/billing/:id
+ */
+exports.getBillById = async (req, res) => {
+  try {
+    const bill = await billingService.getBillById(req.params.id);
+
+    res.status(200).json({
+      success: true,
+      data: bill,
+    });
+  } catch (error) {
+    console.error("Error fetching bill:", error);
+    const statusCode = error.message === "Bill not found" ? 404 : 500;
+    res.status(statusCode).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+/**
+ * 📋 Get All Bills with Filters
+ * GET /api/billing?status=draft&page=1&limit=20
+ */
+exports.getAllBills = async (req, res) => {
+  try {
+    const { page = 1, limit = 20, ...filters } = req.query;
+
+    const result = await billingService.getAllBills(
+      filters,
+      parseInt(page),
+      parseInt(limit),
+    );
+
+    res.status(200).json({
+      success: true,
+      ...result,
+    });
+  } catch (error) {
+    console.error("Error fetching bills:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+/**
+ * ✏️ Update Bill (Draft stage only)
+ * PUT /api/billing/:id
+ */
+exports.updateBill = async (req, res) => {
+  try {
+    const bill = await billingService.updateBill(req.params.id, req.body);
+
+    res.status(200).json({
+      success: true,
+      message: "Bill updated successfully",
+      data: bill,
+    });
+  } catch (error) {
+    console.error("Error updating bill:", error);
+    res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+/**
+ * 🎫 Generate Final Bill (with Bill Number)
+ * POST /api/billing/:id/generate
+ */
+exports.generateBill = async (req, res) => {
+  try {
+    const bill = await billingService.generateBill(req.params.id);
+
+    res.status(200).json({
+      success: true,
+      message: "Bill generated successfully",
+      data: bill,
+    });
+  } catch (error) {
+    console.error("Error generating bill:", error);
+    res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+/**
+ * 🔄 Toggle Investigation (In-house vs Outside)
+ * PATCH /api/billing/:billId/investigation/:investigationId/toggle
+ */
+exports.toggleInvestigation = async (req, res) => {
+  try {
+    const { billId, investigationId } = req.params;
+    const { performInHouse, outsideDetails } = req.body;
+
+    const bill = await billingService.toggleInvestigation(
+      billId,
+      investigationId,
+      performInHouse,
+      outsideDetails,
+    );
+
+    res.status(200).json({
+      success: true,
+      message: performInHouse
+        ? "Investigation marked as in-house"
+        : "Investigation marked as outside",
+      data: bill,
+    });
+  } catch (error) {
+    console.error("Error toggling investigation:", error);
+    res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+/**
+ * 💳 Add Payment to Bill
+ * POST /api/billing/:id/payment
+ */
+exports.addPayment = async (req, res) => {
+  try {
+    const { amount, method, transactionId, status } = req.body;
+
+    if (!amount || !method) {
+      return res.status(400).json({
         success: false,
-        message: error.message,
+        message: "Amount and payment method are required",
       });
     }
-  }
 
-  async getBillById(req, res) {
-    try {
-      const bill = await billingService.getBillById(req.params.id);
-      res.status(200).json({
-        success: true,
-        data: bill,
-      });
-    } catch (error) {
-      res.status(404).json({
+    const bill = await billingService.addPayment(req.params.id, {
+      amount,
+      method,
+      transactionId,
+      status,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Payment added successfully",
+      data: bill,
+    });
+  } catch (error) {
+    console.error("Error adding payment:", error);
+    res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+/**
+ * ❌ Cancel Bill
+ * DELETE /api/billing/:id/cancel
+ */
+exports.cancelBill = async (req, res) => {
+  try {
+    const { reason } = req.body;
+
+    if (!reason) {
+      return res.status(400).json({
         success: false,
-        message: error.message,
+        message: "Cancellation reason is required",
       });
     }
-  }
 
-  async getBillByNumber(req, res) {
-    try {
-      const bill = await billingService.getBillByNumber(req.params.billNumber);
-      res.status(200).json({
-        success: true,
-        data: bill,
-      });
-    } catch (error) {
-      res.status(404).json({
+    const bill = await billingService.cancelBill(req.params.id, reason);
+
+    res.status(200).json({
+      success: true,
+      message: "Bill cancelled successfully",
+      data: bill,
+    });
+  } catch (error) {
+    console.error("Error cancelling bill:", error);
+    res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+/**
+ * 📊 Get Bill Statistics
+ * GET /api/billing/stats/summary
+ */
+exports.getBillStats = async (req, res) => {
+  try {
+    const stats = await billingService.getBillStats(req.query);
+
+    res.status(200).json({
+      success: true,
+      data: stats,
+    });
+  } catch (error) {
+    console.error("Error fetching bill stats:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+/**
+ * 🔍 Get Outside Investigations for a Bill
+ * GET /api/billing/:id/outside-investigations
+ */
+exports.getOutsideInvestigations = async (req, res) => {
+  try {
+    const bill = await billingService.getBillById(req.params.id);
+
+    const outsideTests = bill.investigations
+      .filter((inv) => !inv.performedInHouse)
+      .map((inv) => ({
+        _id: inv._id,
+        serviceName: inv.serviceName,
+        baseAmount: inv.baseAmount,
+        reason: inv.outsideDetails?.reason,
+        suggestedLab: inv.outsideDetails?.suggestedLab,
+        estimatedCost: inv.outsideDetails?.estimatedCost,
+      }));
+
+    res.status(200).json({
+      success: true,
+      count: outsideTests.length,
+      data: outsideTests,
+    });
+  } catch (error) {
+    console.error("Error fetching outside investigations:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+/**
+ * 🧮 Recalculate Bill Totals
+ * POST /api/billing/:id/recalculate
+ */
+exports.recalculateBill = async (req, res) => {
+  try {
+    const bill = await billingService.getBillById(req.params.id);
+    await bill.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Bill recalculated successfully",
+      data: bill,
+    });
+  } catch (error) {
+    console.error("Error recalculating bill:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+/**
+ * 🆕 Get Available Charges for this Bill
+ * GET /api/billing/:id/available-charges
+ * Returns all charges that can be manually added to this bill
+ */
+exports.getAvailableCharges = async (req, res) => {
+  try {
+    const charges = await billingService.getAvailableCharges(req.params.id);
+
+    res.status(200).json({
+      success: true,
+      count: charges.length,
+      data: charges,
+    });
+  } catch (error) {
+    console.error("Error fetching available charges:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+/**
+ * 🆕 Add Charge to Existing Bill
+ * POST /api/billing/:id/add-charge
+ * Body: {
+ *   chargeId: "...",
+ *   chargeName: "Nurse Charge",
+ *   chargeType: "NURSE",
+ *   baseAmount: 500,
+ *   discount: 10,
+ *   finalAmount: 450,
+ *   perUnit: "per day",
+ *   quantity: 3
+ * }
+ */
+exports.addChargeToBill = async (req, res) => {
+  try {
+    const {
+      chargeId,
+      chargeName,
+      chargeType,
+      baseAmount,
+      discount,
+      finalAmount,
+      perUnit,
+      quantity,
+    } = req.body;
+
+    if (!chargeName || !chargeType || !baseAmount) {
+      return res.status(400).json({
         success: false,
-        message: error.message,
+        message: "Charge name, type, and amount are required",
       });
     }
-  }
 
-  async getBillByAdmission(req, res) {
-    try {
-      const bill = await billingService.getBillByAdmission(
-        req.params.admissionId
-      );
-      if (!bill) {
-        return res.status(404).json({
-          success: false,
-          message: "Bill not found for this admission",
-        });
-      }
-      res.status(200).json({
-        success: true,
-        data: bill,
-      });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: error.message,
-      });
-    }
-  }
+    const bill = await billingService.addChargeToExistingBill(req.params.id, {
+      chargeId,
+      chargeName,
+      chargeType,
+      baseAmount,
+      discount: discount || 0,
+      finalAmount: finalAmount || baseAmount,
+      perUnit: perUnit || "one time",
+      quantity: quantity || 1,
+    });
 
-  async updateBill(req, res) {
-    try {
-      const bill = await billingService.updateBill(req.params.id, req.body);
-      res.status(200).json({
-        success: true,
-        message: "Bill updated successfully",
-        data: bill,
-      });
-    } catch (error) {
-      res.status(400).json({
-        success: false,
-        message: error.message,
-      });
-    }
+    res.status(200).json({
+      success: true,
+      message: "Charge added successfully",
+      data: bill,
+    });
+  } catch (error) {
+    console.error("Error adding charge:", error);
+    res.status(400).json({
+      success: false,
+      message: error.message,
+    });
   }
+};
 
-  async addService(req, res) {
-    try {
-      const bill = await billingService.addService(req.params.id, req.body);
-      res.status(200).json({
-        success: true,
-        message: "Service added successfully",
-        data: bill,
-      });
-    } catch (error) {
-      res.status(400).json({
-        success: false,
-        message: error.message,
-      });
-    }
+/**
+ * 🆕 Remove Charge from Bill
+ * DELETE /api/billing/:id/remove-charge/:chargeIndex
+ */
+
+exports.getBillsByTPA = async (req, res) => {
+  try {
+    const { tpaId } = req.params;
+    const Billing = require("../../models/Billing/billingModel");
+    const bills = await Billing.find({ tpa: tpaId });
+    res.json({ success: true, data: bills });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
+};
+exports.removeChargeFromBill = async (req, res) => {
+  try {
+    const { id, chargeIndex } = req.params;
 
-  async addInvestigation(req, res) {
-    try {
-      const bill = await billingService.addInvestigation(
-        req.params.id,
-        req.body
-      );
-      res.status(200).json({
-        success: true,
-        message: "Investigation added successfully",
-        data: bill,
-      });
-    } catch (error) {
-      res.status(400).json({
-        success: false,
-        message: error.message,
-      });
-    }
+    const bill = await billingService.removeChargeFromBill(
+      id,
+      parseInt(chargeIndex),
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Charge removed successfully",
+      data: bill,
+    });
+  } catch (error) {
+    console.error("Error removing charge:", error);
+    res.status(400).json({
+      success: false,
+      message: error.message,
+    });
   }
-
-  async addMedication(req, res) {
-    try {
-      const bill = await billingService.addMedication(req.params.id, req.body);
-      res.status(200).json({
-        success: true,
-        message: "Medication added successfully",
-        data: bill,
-      });
-    } catch (error) {
-      res.status(400).json({
-        success: false,
-        message: error.message,
-      });
-    }
-  }
-
-  async addProcedure(req, res) {
-    try {
-      const bill = await billingService.addProcedure(req.params.id, req.body);
-      res.status(200).json({
-        success: true,
-        message: "Procedure added successfully",
-        data: bill,
-      });
-    } catch (error) {
-      res.status(400).json({
-        success: false,
-        message: error.message,
-      });
-    }
-  }
-
-  async applyDiscount(req, res) {
-    try {
-      const { discountAmount } = req.body;
-      const bill = await billingService.applyDiscount(
-        req.params.id,
-        discountAmount
-      );
-      res.status(200).json({
-        success: true,
-        message: "Discount applied successfully",
-        data: bill,
-      });
-    } catch (error) {
-      res.status(400).json({
-        success: false,
-        message: error.message,
-      });
-    }
-  }
-
-  async addPayment(req, res) {
-    try {
-      const bill = await billingService.addPayment(req.params.id, req.body);
-      res.status(200).json({
-        success: true,
-        message: "Payment added successfully",
-        data: bill,
-      });
-    } catch (error) {
-      res.status(400).json({
-        success: false,
-        message: error.message,
-      });
-    }
-  }
-
-  async cancelBill(req, res) {
-    try {
-      const bill = await billingService.cancelBill(req.params.id);
-      res.status(200).json({
-        success: true,
-        message: "Bill cancelled successfully",
-        data: bill,
-      });
-    } catch (error) {
-      res.status(400).json({
-        success: false,
-        message: error.message,
-      });
-    }
-  }
-
-  async getPendingBills(req, res) {
-    try {
-      const bills = await billingService.getPendingBills();
-      res.status(200).json({
-        success: true,
-        data: bills,
-      });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: error.message,
-      });
-    }
-  }
-
-  async getPaidBills(req, res) {
-    try {
-      const bills = await billingService.getPaidBills();
-      res.status(200).json({
-        success: true,
-        data: bills,
-      });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: error.message,
-      });
-    }
-  }
-
-  async getPatientBills(req, res) {
-    try {
-      const bills = await billingService.getPatientBills(req.params.patientId);
-      res.status(200).json({
-        success: true,
-        data: bills,
-      });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: error.message,
-      });
-    }
-  }
-
-  async getBillSummary(req, res) {
-    try {
-      const summary = await billingService.getBillSummary(req.params.id);
-      res.status(200).json({
-        success: true,
-        data: summary,
-      });
-    } catch (error) {
-      res.status(404).json({
-        success: false,
-        message: error.message,
-      });
-    }
-  }
-
-  async getRevenue(req, res) {
-    try {
-      const { startDate, endDate } = req.query;
-      if (!startDate || !endDate) {
-        return res.status(400).json({
-          success: false,
-          message: "Start date and end date are required",
-        });
-      }
-      const revenue = await billingService.getRevenue(startDate, endDate);
-      res.status(200).json({
-        success: true,
-        data: revenue,
-      });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: error.message,
-      });
-    }
-  }
-
-  async deleteBill(req, res) {
-    try {
-      const bill = await billingService.deleteBill(req.params.id);
-      res.status(200).json({
-        success: true,
-        message: "Bill deleted successfully",
-        data: bill,
-      });
-    } catch (error) {
-      res.status(400).json({
-        success: false,
-        message: error.message,
-      });
-    }
-  }
-}
-
-module.exports = new BillingController();
+};
