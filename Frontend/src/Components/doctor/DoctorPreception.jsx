@@ -10,9 +10,10 @@ import { MultiSelect } from "primereact/multiselect";
 import { Field, FieldArray, Formik, Form, getIn } from "formik";
 import * as yup from "yup";
 import patientService from "../../Services/patient/patientService";
-import { doctorService } from "../../Services/doctor/doctorService";
+import { doctorService } from "../../Services/doctors/doctorService";
 import { tpaServiceService } from "../../Services/tpa/tpaServiceService";
-import { prescriptionService } from "../../Services/doctor/prescriptionService";
+import { prescriptionService } from "../../Services/doctors/prescriptionService";
+import DoctorPrePrint from "../../pages/doctor/DoctorPrePrint";
 
 function DoctorPrescription() {
   const [uhid, setUHID] = useState(null);
@@ -21,11 +22,40 @@ function DoctorPrescription() {
   const [selectedServices, setSelectedServices] = useState([]);
   const [loading, setLoading] = useState(false);
   const [doctorData, setDoctorData] = useState(null);
+  const [TesttotalPrice, setTestTotalPrice] = useState(0);
+  const [Testprice, setTestprice] = useState();
+  const [buttonmode, setButtonMode] = useState();
 
   const { UHID } = useParams();
   const navigate = useNavigate();
 
   console.log("DoctorPrescription - UHID from URL:", UHID);
+
+  console.log("testprice------000000", TesttotalPrice);
+
+  useEffect(() => {
+    if (UHID == null || UHID === "") return; // jab tak UHID na aaye
+
+    const fetchPrescription = async () => {
+      try {
+        const responsedata =
+          await prescriptionService.checkCreateOrUpdate(UHID);
+        setButtonMode(responsedata.data.mode);
+      } catch (error) {
+        console.error("Error while checking prescription", error);
+      }
+    };
+
+    fetchPrescription();
+  }, [UHID]);
+
+  useEffect(() => {
+    const total = selectedServices.reduce((sum, test) => {
+      return sum + (test.price || 0);
+    }, 0);
+
+    setTestTotalPrice(total);
+  }, [setSelectedServices]);
 
   // Fetch patient data
   useEffect(() => {
@@ -73,13 +103,16 @@ function DoctorPrescription() {
         const serviceArray = res.data?.service || res.service || [];
 
         const formattedOptions = serviceArray.map((item) => ({
+          // label: [item.Name,item.Totalamount],
           label: item.Name,
-
           value: item._id,
+          price: item.Totalamount,
         }));
-        // console.log("label======",label);
 
-        console.log("Formatted Service Options:", formattedOptions);
+        console.log(
+          "Formatted Service Options====================================:",
+          formattedOptions,
+        );
         setServiceOptions(formattedOptions);
       })
       .catch((err) => {
@@ -167,7 +200,7 @@ function DoctorPrescription() {
           },
         ],
 
-        // Investigations
+        /** @type {any[]} */
         investigations: [],
 
         // Advice
@@ -208,7 +241,7 @@ function DoctorPrescription() {
             department: uhid?.department?.departmentName || "",
             doctor: uhid?.doctor?._id || "",
             UHID: values.UHID,
-            doctor: values.doctor,
+            // doctor: values.doctor,
             registrationType: values.registrationType,
             fatherName: uhid?.companionName || "",
             clinicalDetails: {
@@ -226,7 +259,7 @@ function DoctorPrescription() {
 
             provisionalDiagnosis: values.provisionalDiagnosis,
             medicines: values.medicines,
-            investigations: [],
+            investigations: values.investigations,
             advice: values.advice,
             referredBy: values.referredBy,
           };
@@ -643,7 +676,7 @@ function DoctorPrescription() {
                   <label className="form-label fw-bold">Investigations:</label>
                   {/* <MultiSelect
                     value={selectedServices}
-                    // value={values.investigations}
+                    // value={formik.values.investigations}
                     onChange={(e) => {
                       console.log("value like========2222221111", e.value);
 
@@ -652,7 +685,7 @@ function DoctorPrescription() {
                     }}
                     options={serviceOptions}
                     optionLabel="label"
-                    optionValue="label"
+                    optionValue="value"
                     placeholder="Select Tests"
                     filter
                     className="w-100"
@@ -662,7 +695,7 @@ function DoctorPrescription() {
                   <MultiSelect
                     value={values.investigations}
                     onChange={(e) => {
-                      console.log("Selected Tests:", e.value);
+                      console.log("Selected Tests000000000000:", e.value);
 
                       setSelectedServices(e.value || []); // UI state
                       setFieldValue("investigations", e.value || []); // Formik state
@@ -726,7 +759,7 @@ function DoctorPrescription() {
               <div className="text-center mt-4">
                 <Button
                   type="submit"
-                  label={loading ? "Generating..." : "Generate & Printssssssss"}
+                  label={buttonmode==="CREATE" ?"CREATE & Print" :"UPDATE & Print"}
                   icon={loading ? "pi pi-spin pi-spinner" : "pi pi-check"}
                   className="btn-custom px-5 rounded"
                   loading={loading}

@@ -1,8 +1,8 @@
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api.js";
 
-const API_URL = `${API_ENDPOINTS.BASE}/prescriptions`;
-
+// const API_URL = `${API_ENDPOINTS.BASE}/prescriptions`;
+const API_URL = API_ENDPOINTS.PRESCRIPTIONS;
 export const prescriptionService = {
   
   // createPrescription: async (data) => {
@@ -14,6 +14,22 @@ export const prescriptionService = {
   //     throw error;
   //   }
   // },
+
+
+
+
+
+checkCreateOrUpdate: async (UHID) => {  
+    try {
+      // const response = await axios.post(API_URL, data);
+       const response = await axios.get(`${API_URL}/checkByuhid/${UHID}`)
+      return response;
+    } catch (error) {
+      console.error("Failed to create prescription:", error);
+      throw error;
+    }
+  },
+
 
 
 createPrescription: async (UHID,data) => {  

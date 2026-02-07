@@ -107,14 +107,14 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
         //         toggleSidebar();
         //       },
         //     },
-        //     {
-        //       label: "Rooms",
-        //       icon: "pi pi-box",
-        //       command: () => {
-        //         navigate("/rooms");
-        //         toggleSidebar();
-        //       },
-        //     },
+            {
+              label: "Rooms",
+              icon: "pi pi-box",
+              command: () => {
+                navigate("/rooms");
+                toggleSidebar();
+              },
+            },
         {
           label: "Department",
           icon: "pi pi-sitemap",
@@ -186,6 +186,28 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
         },
       ],
     },
+
+
+
+
+
+
+{
+  label:" Room Category",
+  icon:"pi pi-room",
+  items:[
+    {
+    label:"Add Room Category",
+    icon:"pi pi-room",
+    command:()=>{
+      navigate("/roomcategory");
+      toggleSidebar();
+    }
+  }
+]
+}
+
+
   ];
 
   return (

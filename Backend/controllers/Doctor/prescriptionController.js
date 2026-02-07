@@ -72,6 +72,56 @@ const Doctor = require("../../models/Doctor/doctorModel");
 //   }
 // };
 
+exports.checkCreateOrUpdate = async (req, res) => {
+  try {
+    const { uhid } = req.params;
+
+    // 🔹 Case 1: UHID hi nahi aaya → CREATE
+    if (!uhid) {
+      return res.status(200).json({
+        success: true,
+        status: "OK",
+        mode: "CREATE",
+        data: null,
+        message: "UHID not provided, create new prescription",
+      });
+    }
+
+    // 🔹 Case 2: UHID aaya → DB check
+    const existingPrescription = await Prescription.findOne({ UHID: uhid });
+
+    // 🔹 Case 2a: Prescription already exists → UPDATE
+    if (existingPrescription) {
+      return res.status(200).json({
+        success: true,
+        status: "OK",
+        mode: "UPDATE",
+        data: existingPrescription,
+        message: "Prescription found, update mode",
+      });
+    }
+
+    // 🔹 Case 2b: Prescription nahi mila → CREATE
+    return res.status(200).json({
+      success: true,
+      status: "OK",
+      mode: "CREATE",
+      data: null,
+      message: "No prescription found, create new",
+    });
+
+  } catch (error) {
+    console.error("❌ checkCreateOrUpdate error:", error);
+    return res.status(500).json({
+      success: false,
+      status: "ERROR",
+      message: error.message,
+    });
+  }
+};
+
+
+
 exports.createPrescription = async (req, res) => {
   try {
     const { uhid } = req.params;
@@ -175,11 +225,19 @@ exports.createPrescription = async (req, res) => {
 
 exports.getAllPrescriptions = async (req, res) => {
   try {
-    const { patient, doctor, registrationType, startDate, endDate } = req.query;
+    const {
+      patient,
+      doctor,
+      registrationType,
+      investigations,
+      startDate,
+      endDate,
+    } = req.query;
 
     const filter = {};
     if (patient) filter.patient = patient;
     if (doctor) filter.doctor = doctor;
+    if (investigations) filter.investigations = investigations;
     if (registrationType) filter.registrationType = registrationType;
     if (startDate && endDate) {
       filter.prescriptionDate = {
@@ -246,7 +304,7 @@ exports.getPrescriptionsByUHID = async (req, res) => {
         "doctor",
         "personalInfo.firstName personalInfo.lastName professional.specialization",
       )
-      .populate("investigations", "Name")
+      // .populate("investigations", "Name")
       .sort({ createdAt: -1 });
 
     res.status(200).json({

@@ -19,6 +19,7 @@ import "primereact/resources/primereact.min.css";
 import "primeicons/primeicons.css";
 import "../../css/Radiobutton.css";
 
+
 function PatientsTable() {
   const [patients, setPatients] = useState([]);
   const [filters, setFilters] = useState({
@@ -29,6 +30,8 @@ function PatientsTable() {
   const [deleteDialogVisible, setDeleteDialogVisible] = useState(false);
   const [viewDialogVisible, setViewDialogVisible] = useState(false);
   const [selectedPatient, setSelectedPatient] = useState(null);
+  console.log("mmmmmmmmmmmmmmmmmmccccccccccccccccc",selectedPatient);
+  
 
   const toast = useRef(null);
   const menuRefs = useRef({});
@@ -356,10 +359,10 @@ const handleView = async (rowData) => {
       <div className="min-h-screen flex justify-content-center align-items-center p-6 bg-gray-50">
         <div className="surface-card p-6 text-center shadow-2 border-round">
           <span
-            className="loader"
+            className="loaders"
             style={{ width: "50px", height: "50px" }}
           ></span>
-          <h3 className="mt-3 font-bold text-xl">Loading Patients...</h3>
+          <h3 className="mt-3 font-bold text-xl">Loading Patients...</h3>   
           <p className="text-500 mt-1">Fetching data from server</p>
         </div>
       </div>

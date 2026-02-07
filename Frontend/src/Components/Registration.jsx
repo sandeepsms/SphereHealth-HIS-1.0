@@ -13,7 +13,7 @@ import { Card } from "primereact/card";
 import { Divider } from "primereact/divider";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { departmentService } from "../Services/departmentService";
-import { doctorService } from "../Services/doctor/doctorService";
+import { doctorService } from "../Services/doctors/doctorService";
 import { tpaService } from "../Services/tpa/tpaService";
 import "primereact/resources/themes/lara-light-blue/theme.css";
 import "primereact/resources/primereact.min.css";
@@ -147,10 +147,10 @@ useEffect(() => {
           tpaId,
           deptId,
           docId,
-          fullData: patientData,
+          fullData: patientData,     
         });
 
-        // Form data set करना
+        // Form data set करना................................................
         setFormData({
           registrationType: patientData.registrationType || "OPD",
           title: patientData.title || "",
@@ -556,16 +556,19 @@ useEffect(() => {
       <div
         style={{
           display: "flex",
+          flexDirection:"column",
           justifyContent: "center",
           alignItems: "center",
           height: "400px",
         }}
       >
         <span
-          className="loader"
+          className="loaders"
           style={{ width: "50px", height: "50px" }}
         ></span>
+         <h3 className="mt-3 font-bold text-xl">Loading...</h3>
       </div>
+     
     );
   }
 

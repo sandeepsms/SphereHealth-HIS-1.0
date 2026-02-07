@@ -2,8 +2,7 @@
 
 /* ==================== SCREEN STYLES ==================== */
 .prescription-print-container {
-    max-width: 210mm;
-    /* A4 width */
+   max-width: 210mm;
     margin: 0 auto;
     padding: 10px;
     background: #f5f5f5;
@@ -12,15 +11,17 @@
 .prescription-page {
     background: white;
     padding: 0;
-    box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
-    min-height: 297mm;
+    /* box-shadow: 0 0 20px rgba(0, 0, 0, 0.1); */
+    min-height: 200mm;
     /* A4 height */
     position: relative;
 }
 
+
+ 
 /* ==================== PROFESSIONAL HEADER ==================== */
 .prescription-header-professional {
-    background: linear-gradient(135deg, #dc143c 0%, #b22222 100%);
+    background: linear-gradient(135deg, #06a4c4 0%, #06a4c4  100%);
     color: white;
     padding: 15px 20px;
     display: flex;
@@ -38,13 +39,15 @@
     height: 0;
     border-style: solid;
     border-width: 20px 80px 0 0;
-    border-color: #dc143c transparent transparent transparent;
+    border-color: #06a4c4  transparent transparent transparent;
 }
 
 .header-left-section .hospital-logo {
     width: 70px;
-    height: auto;
-    filter: brightness(0) invert(1);
+    height: 75px;
+   
+   
+   
 }
 
 .header-center-section {
@@ -87,16 +90,16 @@
 
 .red-divider {
     height: 3px;
-    background: linear-gradient(90deg, #dc143c 0%, transparent 100%);
+    background: linear-gradient(90deg, #06a4c4 0%, transparent 100%);
     margin: 0;
 }
 
 /* ==================== SECTION TITLES ==================== */
 .section-title-red {
-    background: #dc143c;
+    background: #06a4c4 ;
     color: white;
     padding: 8px 15px;
-    margin: 20px 0 10px 0;
+    margin: 10px 0 5px 0;
     font-size: 14px;
     font-weight: 700;
     letter-spacing: 1px;
@@ -113,7 +116,7 @@
     height: 0;
     border-style: solid;
     border-width: 15px 0 15px 8px;
-    border-color: transparent transparent transparent #dc143c;
+    border-color: transparent transparent transparent #06a4c4 ;
 }
 
 /* ==================== PATIENT INFO TABLE ==================== */
@@ -124,7 +127,7 @@
 .info-table {
     width: 100%;
     border-collapse: collapse;
-    margin-top: 10px;
+    margin-top: 6px;
     font-size: 13px;
 }
 
@@ -150,15 +153,20 @@
 /* ==================== CLINICAL DETAILS ==================== */
 .clinical-section {
     padding: 0 20px;
-    margin-bottom: 15px;
+    margin-bottom: 6px;
 }
 
 .clinical-item {
-    margin-bottom: 12px;
+    margin-bottom: 4px;
     padding: 10px;
     background: #fafafa;
-    border-left: 4px solid #dc143c;
+    border-left: 4px solid #06a4c4 !important;
     border-radius: 3px;
+     white-space: normal;
+  word-break: break-word;
+  overflow-wrap: break-word;
+
+  overflow: hidden;
 }
 
 .clinical-item strong {
@@ -172,13 +180,13 @@
     margin: 0;
     color: #555;
     line-height: 1.6;
-    font-size: 12px;
+    font-size: 8px;
 }
 
 /* ==================== VITALS ==================== */
 .vitals-section {
     padding: 0 20px;
-    margin-bottom: 15px;
+    margin-bottom: 7px;
 }
 
 .vitals-row {
@@ -191,21 +199,21 @@
 .vital-badge {
     padding: 10px 20px;
     background: white;
-    border: 2px solid #dc143c;
+    border: 2px solid #06a4c4 !important;
     border-radius: 25px;
     font-size: 12px;
     color: #333;
 }
 
 .vital-badge strong {
-    color: #dc143c;
+    color: #06a4c4 !important;
     margin-right: 5px;
 }
 
 /* ==================== DIAGNOSIS ==================== */
 .diagnosis-section {
     padding: 0 20px;
-    margin-bottom: 15px;
+    margin-bottom: 7px;
 }
 
 .diagnosis-box {
@@ -216,24 +224,29 @@
     font-weight: 600;
     color: #333;
     font-size: 13px;
-    margin-top: 10px;
+    margin-top: 6px;
+     white-space: normal;
+  word-break: break-word;
+  overflow-wrap: break-word;
+
+  overflow: hidden;
 }
 
 /* ==================== MEDICINES TABLE ==================== */
 .medicines-section {
     padding: 0 20px;
-    margin-bottom: 15px;
+    margin-bottom: 7px;
 }
 
 .medicine-table-professional {
     width: 100%;
     border-collapse: collapse;
-    margin-top: 10px;
+    margin-top: 6px;
     font-size: 11px;
 }
 
 .medicine-table-professional thead {
-    background: #dc143c;
+    background: #06a4c4 !important;
     color: white;
 }
 
@@ -241,7 +254,7 @@
     padding: 10px 8px;
     text-align: left;
     font-weight: 600;
-    border: 1px solid #b22222;
+    border: 1px solid #06a4c4 !important;
 }
 
 .medicine-table-professional td {
@@ -261,14 +274,14 @@
 /* ==================== INVESTIGATIONS ==================== */
 .investigations-section {
     padding: 0 20px;
-    margin-bottom: 15px;
+    margin-bottom: 6px;
 }
 
 .investigations-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
     gap: 10px;
-    margin-top: 10px;
+    margin-top: 5px;
 }
 
 .investigation-badge {
@@ -283,24 +296,32 @@
 /* ==================== ADVICE ==================== */
 .advice-section {
     padding: 0 20px;
-    margin-bottom: 15px;
+    margin-bottom: 7px;
 }
 
 .advice-box {
-    padding: 15px;
-    background: #e3f2fd;
-    border-left: 4px solid #2196f3;
-    border-radius: 3px;
-    line-height: 1.8;
-    color: #1565c0;
-    font-size: 12px;
-    margin-top: 10px;
+  padding: 15px;
+  background: #e3f2fd;
+  border-left: 4px solid #2196f3;
+  border-radius: 3px;
+  line-height: 1.6;
+  color: #1565c0;
+  font-size: 12px;
+  margin-top: 5px;
+
+  /* 🔥 TEXT WRAP FIX (PAGE KE LIYE) */
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: break-word;
+
+  overflow: hidden;
 }
+
 
 /* ==================== DOCTOR SIGNATURE ==================== */
 .doctor-signature-professional {
-    padding: 20px 20px;
-    margin-top: 40px;
+    padding:15px;
+    margin-top: 5px;
     display: flex;
     justify-content: space-between;
     align-items: flex-end;
@@ -317,25 +338,26 @@
 }
 
 .doctor-details-box strong {
-    color: #dc143c;
+    color: #06a4c4 !important;
 }
 
 .signature-box {
     text-align: center;
     min-width: 200px;
+    
 }
 
 .signature-line {
     width: 180px;
     height: 60px;
-    border-bottom: 2px solid #333;
+    border-bottom: 2px solid #06a4c4;
     margin: 0 auto 5px auto;
 }
 
 .signature-label {
     margin: 0;
     font-size: 11px;
-    color: #666;
+    color: #ec1717;
     font-weight: 600;
 }
 
@@ -343,13 +365,13 @@
 .prescription-footer-professional {
     padding: 15px 20px;
     margin-top: 30px;
-    border-top: 3px solid #dc143c;
+    border-top: 3px solid #06a4c4 ;
     text-align: center;
 }
 
 .footer-divider {
     height: 2px;
-    background: linear-gradient(90deg, transparent 0%, #dc143c 50%, transparent 100%);
+    background: linear-gradient(90deg, transparent 0%, #06a4c4 50%, transparent 100%);
     margin-bottom: 10px;
 }
 
@@ -366,154 +388,175 @@
     margin: 5px 0;
     font-weight: 600;
 }
+/* --------------------------------------------------------------- */
 
-/* ==================== PRINT STYLES ==================== */
 @media print {
 
-    /* Hide non-printable elements */
-    .no-print {
-        display: none !important;
-    }
+  /* ================= RESET ================= */
+  html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white !important;
+  }
 
-    body {
-        margin: 0;
-        padding: 0;
-        background: white;
-    }
+  @page {
+    size: A4;
+    margin: 6mm;   /* 🔥 little breathing space */
+  }
 
-    .prescription-print-container {
-        max-width: 100%;
-        margin: 0;
-        padding: 0;
-        background: white;
-    }
+  body {
+    zoom: 0.95;   /* 🔥 0.92 se better readability */
+    color: #000 !important;
+    font-family: Arial, Helvetica, sans-serif !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
 
-    .prescription-page {
-        box-shadow: none;
-        padding: 0;
-        page-break-after: always;
-    }
+  /* ================= PAGE ================= */
+  .prescription-page {
+    width: 100%;
+    min-height: auto;
+    padding: 0;
+    box-sizing: border-box;
+    background: white !important;
+  }
 
-    /* Page setup */
-    @page {
-        size: A4;
-        margin: 8mm;
-    }
+  /* ================= TEXT VISIBILITY FIX ================= */
+ td, li {
+    font-size: 10px ;
+    line-height: 1.4 !important;
+    color: #000 !important;
+  }
 
-    /* Ensure colors print */
-    * {
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-    }
+  h1 {
+    font-size: 10px !important;
+    font-weight: bold !important;
+  }
 
-    /* Header colors */
-    .prescription-header-professional {
-        background: #dc143c !important;
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
-    }
+  h5 {
+    font-size: 5px !important;
+    font-weight: bold !important;
+  }
 
-    .prescription-header-professional::after {
-        border-color: #dc143c transparent transparent transparent !important;
-    }
+  /* ================= SECTIONS ================= */
+  section {
+    margin-bottom: 3px !important;
+    page-break-inside: avoid !important;
+  }
 
-    /* Section titles */
-    .section-title-red {
-        background: #dc143c !important;
-        color: white !important;
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
-    }
+  /* ================= COLORS ================= */
+  .prescription-header-professional {
+    background: #06a4c4 !important;
+    color: #fff !important;
+  }
 
-    .section-title-red::after {
-        border-color: transparent transparent transparent #dc143c !important;
-    }
+  .section-title-red {
+    background: #06a4c4 !important;
+    color: #fff !important;
+    padding: 4px 8px !important;
+    margin-bottom: 6px !important;
+  }
 
-    /* Table headers */
-    .medicine-table-professional thead {
-        background: #dc143c !important;
-        color: white !important;
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
-    }
+  .medicine-table-professional thead {
+    background: #06a4c4 !important;
+    color: #fff !important;
+  }
 
-    /* Prevent page breaks inside elements */
-    .patient-info-compact,
-    .clinical-section,
-    .vitals-section,
-    .diagnosis-section,
-    .medicines-section,
-    .investigations-section,
-    .advice-section,
-    .doctor-signature-professional {
-        page-break-inside: avoid;
-    }
+  /* ================= TABLE READABILITY ================= */
+  table {
+    border-collapse: collapse !important;
+  }
 
-    /* Table rows */
-    .medicine-table-professional tbody tr {
-        page-break-inside: avoid;
-    }
+  td, th {
+    border: 1px solid #333 !important;
+    padding: 4px 6px !important;
+  }
 
-    .medicine-table-professional tbody tr:nth-child(odd) {
-        background: #fafafa !important;
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
-    }
+  /* ================= BOXES ================= */
+  .clinical-item,
+  .diagnosis-box,
+  .advice-box {
+    padding: 6px !important;
+    border: 1px solid #ccc !important;
+    margin-bottom: 6px !important;
+  }
 
-    /* Colored boxes */
-    .clinical-item {
-        background: #fafafa !important;
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
-    }
+  .clinical-item {
+    background: #f7f7f7 !important;
+  }
 
-    .diagnosis-box {
-        background: #fff9e6 !important;
-        border-color: #ffd700 !important;
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
-    }
+  .diagnosis-box {
+    background: #fff9e6 !important;
+    border-color: #ffd700 !important;
+  }
 
-    .investigation-badge {
-        background: #e8f5e9 !important;
-        border-color: #4caf50 !important;
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
-    }
+  .advice-box {
+    background: #e3f2fd !important;
+    border-color: #2196f3 !important;
+  }
 
-    .advice-box {
-        background: #e3f2fd !important;
-        border-color: #2196f3 !important;
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
-    }
+  /* ================= VITAL / BADGES ================= */
+  .vital-badge,
+  .investigation-badge {
+    font-size: 11px !important;
+    padding: 3px 6px !important;
+    border: 1px solid #333 !important;
+  }
 
-    .vital-badge {
-        border-color: #dc143c !important;
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
-    }
+  /* ================= PAGE BREAK CONTROL ================= */
+  section,
+  table,
+  tr {
+    page-break-inside: avoid !important;
+  }
 
-    /* Footer */
-    .prescription-footer-professional {
-        border-top-color: #dc143c !important;
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
-    }
+  /* ================= HIDE BUTTONS ================= */
+  .no-print {
+    display: none !important;
+  }
 
-    /* Font sizes for print */
-    .hospital-name-main {
-        font-size: 28px;
-    }
-
-    .info-table {
-        font-size: 11px;
-    }
-
-    .medicine-table-professional {
-        font-size: 10px;
-    }
+  /* ================= REMOVE DECORATIONS ================= */
+  *::before,
+  *::after {
+    display: none !important;
+    content: none !important;
+  }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/* ==================== PRINT STYLES ==================== */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* ==================== LOADING SPINNER ==================== */
 .loader {

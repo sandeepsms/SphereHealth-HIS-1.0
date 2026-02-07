@@ -200,8 +200,10 @@ const prescriptionSchema = new mongoose.Schema(
     // ================= INVESTIGATIONS =================
     investigations: [
       {
-        type: mongoose.Schema.Types.ObjectId,
+        // type: mongoose.Schema.Types.ObjectId,
+        type:String,
         ref: "TPAServices",
+      
       },
     ],
 

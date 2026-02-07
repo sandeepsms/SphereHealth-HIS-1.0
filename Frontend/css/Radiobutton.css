@@ -3,7 +3,7 @@
   border-color: rgb(2, 142, 166);
 }
 
-.loader {
+.loaders {
   width: 48px;
   height: 48px;
   border-radius: 50%;
@@ -13,7 +13,7 @@
   box-sizing: border-box;
   animation: rotation 1s linear infinite;
 }
-.loader::after {
+.loaders::after {
   content: '';  
   box-sizing: border-box;
   position: absolute;
@@ -43,3 +43,8 @@
 .p-button{
     color: white;
 }
+
+
+
+
+

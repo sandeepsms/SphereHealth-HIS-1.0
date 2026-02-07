@@ -54,7 +54,7 @@ import OPDDetails from "./pages/OPD/OPDDetails";
 //emergency
 import Emergencylist from "./pages/emergency/EmergencyList";
 import EmergencyForm from "./pages/emergency/EmergencyForm";
-import EmergencyDetails from "./pages/Emergency/EmergencyDetails";
+import EmergencyDetails from "./pages/emergency/EmergencyDetails";
 
 //doctors
 import DoctorFormPage from "./pages/doctor/DoctorFormPage";
@@ -65,6 +65,7 @@ import DoctorPreception from "./Components/doctor/DoctorPreception";
 import ServiceAdd from "./Components/Tpa/TPAServiceManagement";
 
 import AddTpa from "./Components/Tpa/AddTpa";
+import AddRoomCategory from "./Components/room/AddRoomCategory";
 
 //admissions
 // import AdmissionList from "./pages/admissions/AdmissionList";
@@ -151,6 +152,7 @@ export default function App() {
           <Route path="/beds" element={<BedManagement />} />
           <Route path="/bed-visual" element={<BedVisualLayout />} />
           <Route path="/rooms" element={<RoomManagement />} />
+           <Route path="/roomcategory" element={<AddRoomCategory />} />
           <Route path="/wards" element={<WardManagement />} />
           <Route path="/buildings" element={<BuildingManagement />} />
           <Route path="/floors" element={<FloorManagement />} />

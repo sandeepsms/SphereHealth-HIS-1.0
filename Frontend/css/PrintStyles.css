@@ -1,0 +1,23 @@
+/* Print me sirf prescription content dikhana hai */
+@media print {
+  body * {
+    visibility: hidden; /* pehle sab hide */
+  }
+
+  .prescription-print-container, .prescription-print-container * {
+    visibility: visible;
+    /* sirf prescription dikhaye */
+  }
+
+  .prescription-print-container {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+
+  /* Buttons ya sticky header hide karne ke liye */
+  .no-print {
+    display: none !important;
+  }
+}
