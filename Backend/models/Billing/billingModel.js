@@ -2,180 +2,280 @@ const mongoose = require("mongoose");
 
 const BillingSchema = new mongoose.Schema(
   {
-    billNumber: {
-      type: String,
-      unique: true,
-    },
     patient: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Patient",
       required: true,
     },
-    admission: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Admission",
+    UHID: {
+      type: String,
+      required: true,
+      index: true,
+    },
+    patientName: {
+      type: String,
       required: true,
     },
-    admissionDate: Date,
-    dischargeDate: Date,
-    totalDays: {
-      type: Number,
-      default: 1,
+    prescription: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Prescription",
     },
-    bedCharges: {
-      type: Number,
-      default: 0,
+    tpa: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "TPA",
     },
-    additionalServices: [
+    tpaName: {
+      type: String,
+      default: "Normal",
+    },
+    tpaCode: {
+      type: String,
+    },
+    billingType: {
+      type: String,
+      enum: ["OPD", "IPD", "Emergency", "Investigation"],
+      required: true,
+    },
+    hospitalChargesRef: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "HospitalCharges",
+    },
+    selectedCharges: [
       {
-        serviceName: String,
-        quantity: {
-          type: Number,
-          default: 1,
+        chargeId: String,
+        chargeName: String,
+        chargeType: String,
+        baseAmount: Number,
+        discount: { type: Number, default: 0 },
+        finalAmount: Number,
+        quantity: { type: Number, default: 1 },
+        perUnit: {
+          type: String,
+          enum: ["one time", "per day", "per visit"],
+          default: "one time",
         },
-        pricePerUnit: Number,
-        total: Number,
-        addedDate: {
-          type: Date,
-          default: Date.now,
-        },
+        isActive: { type: Boolean, default: true },
       },
     ],
     investigations: [
       {
-        investigationName: String,
-        charges: Number,
-        performedDate: Date,
+        serviceRef: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "TPAServices",
+        },
+        serviceName: String,
+        baseAmount: Number,
+        discount: { type: Number, default: 0 },
+        finalAmount: Number,
+        performedInHouse: { type: Boolean, default: true },
+        outsideDetails: {
+          reason: String,
+          suggestedLab: String,
+          estimatedCost: Number,
+        },
+        isActive: { type: Boolean, default: true },
       },
     ],
-    medications: [
+    additionalItems: [
       {
-        medicationName: String,
-        quantity: Number,
-        pricePerUnit: Number,
-        total: Number,
+        description: String,
+        baseAmount: Number,
+        discount: { type: Number, default: 0 },
+        finalAmount: Number,
       },
     ],
-    procedures: [
-      {
-        procedureName: String,
-        charges: Number,
-        performedDate: Date,
-      },
-    ],
-    subtotal: {
-      type: Number,
-      default: 0,
-    },
-    discount: {
-      type: Number,
-      default: 0,
-    },
-    tax: {
-      type: Number,
-      default: 0,
-    },
-    grandTotal: {
-      type: Number,
-      default: 0,
-    },
-    totalPaid: {
-      type: Number,
-      default: 0,
-    },
-    balanceDue: {
-      type: Number,
-      default: 0,
+    financials: {
+      chargesSubtotal: { type: Number, default: 0 },
+      investigationsSubtotal: { type: Number, default: 0 },
+      additionalSubtotal: { type: Number, default: 0 },
+      subtotal: { type: Number, default: 0 },
+      discountPercent: { type: Number, default: 0, min: 0, max: 100 },
+      discountAmount: { type: Number, default: 0 },
+      taxPercent: { type: Number, default: 0 },
+      taxAmount: { type: Number, default: 0 },
+      total: { type: Number, default: 0 },
+      paid: { type: Number, default: 0 },
+      balance: { type: Number, default: 0 },
     },
     payments: [
       {
-        amount: Number,
-        paymentMethod: {
+        amount: { type: Number, required: true },
+        method: {
           type: String,
-          enum: ["Cash", "Card", "UPI", "Net Banking"],
-        },
-        paymentDate: {
-          type: Date,
-          default: Date.now,
+          enum: ["Cash", "Card", "UPI", "NetBanking", "Cheque"],
+          required: true,
         },
         transactionId: String,
+        status: {
+          type: String,
+          enum: ["pending", "success", "failed"],
+          default: "success",
+        },
+        paidAt: { type: Date, default: Date.now },
       },
     ],
-    billStatus: {
+    status: {
       type: String,
-      enum: ["Draft", "Paid", "Cancelled"],
-      default: "Draft",
+      enum: ["draft", "generated", "partial", "paid", "cancelled"],
+      default: "draft",
+      index: true,
     },
-    generatedDate: Date,
+    billNumber: {
+      type: String,
+      unique: true,
+      sparse: true,
+    },
+    generatedAt: Date,
+    notes: String,
+    metadata: {
+      cancellationReason: String,
+    },
   },
   {
     timestamps: true,
-  }
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
+  },
 );
 
+BillingSchema.index({ patient: 1, createdAt: -1 });
 BillingSchema.index({ billNumber: 1 });
-BillingSchema.index({ patient: 1 });
-BillingSchema.index({ admission: 1 });
+BillingSchema.index({ status: 1 });
 
-BillingSchema.pre("save", async function (next) {
-  if (this.isNew && !this.billNumber) {
-    const count = await mongoose.model("Billing").countDocuments();
-    const year = new Date().getFullYear();
-    this.billNumber = `BILL-${year}-${String(count + 1).padStart(6, "0")}`;
+BillingSchema.pre("save", function (next) {
+  this.financials.chargesSubtotal = this.selectedCharges
+    .filter((c) => c.isActive)
+    .reduce((sum, c) => sum + c.finalAmount * c.quantity, 0);
+
+  this.financials.investigationsSubtotal = this.investigations
+    .filter((i) => i.performedInHouse && i.isActive)
+    .reduce((sum, i) => sum + i.finalAmount, 0);
+
+  this.financials.additionalSubtotal = this.additionalItems.reduce(
+    (sum, item) => sum + item.finalAmount,
+    0,
+  );
+
+  this.financials.subtotal =
+    this.financials.chargesSubtotal +
+    this.financials.investigationsSubtotal +
+    this.financials.additionalSubtotal;
+
+  this.financials.discountAmount =
+    (this.financials.subtotal * this.financials.discountPercent) / 100;
+
+  const afterDiscount =
+    this.financials.subtotal - this.financials.discountAmount;
+
+  this.financials.taxAmount =
+    (afterDiscount * this.financials.taxPercent) / 100;
+
+  this.financials.total = afterDiscount + this.financials.taxAmount;
+
+  const successfulPayments = this.payments.filter(
+    (p) => p.status === "success",
+  );
+  this.financials.paid = successfulPayments.reduce(
+    (sum, p) => sum + p.amount,
+    0,
+  );
+
+  this.financials.balance = this.financials.total - this.financials.paid;
+
+  if (this.financials.balance <= 0 && this.financials.paid > 0) {
+    this.status = "paid";
+  } else if (this.financials.paid > 0 && this.financials.balance > 0) {
+    this.status = "partial";
   }
+
   next();
 });
 
-BillingSchema.methods.recalculateTotals = function () {
-  const servicesTotal = this.additionalServices.reduce(
-    (sum, s) => sum + (s.total || 0),
-    0
-  );
-  const investigationsTotal = this.investigations.reduce(
-    (sum, i) => sum + (i.charges || 0),
-    0
-  );
-  const medicationsTotal = this.medications.reduce(
-    (sum, m) => sum + (m.total || 0),
-    0
-  );
-  const proceduresTotal = this.procedures.reduce(
-    (sum, p) => sum + (p.charges || 0),
-    0
-  );
+BillingSchema.methods.generateBillNumber = async function () {
+  const year = new Date().getFullYear().toString().slice(-2);
+  const month = String(new Date().getMonth() + 1).padStart(2, "0");
 
-  this.subtotal =
-    this.bedCharges +
-    servicesTotal +
-    investigationsTotal +
-    medicationsTotal +
-    proceduresTotal;
+  const count = await this.constructor.countDocuments({
+    createdAt: {
+      $gte: new Date(new Date().getFullYear(), 0, 1),
+    },
+  });
 
-  const discountedAmount = this.subtotal - (this.discount || 0);
-  this.tax = (discountedAmount * 5) / 100;
-  this.grandTotal = discountedAmount + this.tax;
-  this.balanceDue = this.grandTotal - (this.totalPaid || 0);
+  const sequence = String(count + 1).padStart(5, "0");
+  this.billNumber = `BL${year}${month}${sequence}`;
+  this.generatedAt = new Date();
+  this.status = "generated";
 
-  if (this.balanceDue <= 0) {
-    this.billStatus = "Paid";
+  return this.billNumber;
+};
+
+BillingSchema.methods.addPayment = async function (paymentData) {
+  this.payments.push({
+    amount: paymentData.amount,
+    method: paymentData.method,
+    transactionId: paymentData.transactionId || "",
+    status: paymentData.status || "success",
+  });
+
+  await this.save();
+  return this;
+};
+
+BillingSchema.methods.markInvestigationExternal = function (
+  investigationId,
+  details,
+) {
+  const investigation = this.investigations.id(investigationId);
+  if (!investigation) return null;
+
+  investigation.performedInHouse = false;
+  investigation.isActive = false;
+  investigation.outsideDetails = {
+    reason: details.reason,
+    suggestedLab: details.suggestedLab,
+    estimatedCost: details.estimatedCost || investigation.finalAmount,
+  };
+
+  return investigation;
+};
+
+BillingSchema.methods.cancel = function (reason) {
+  if (this.status === "paid") {
+    throw new Error("Cannot cancel a fully paid bill");
   }
+
+  this.status = "cancelled";
+  this.metadata.cancellationReason = reason;
 
   return this;
 };
 
-BillingSchema.methods.addPayment = function (paymentDetails) {
-  this.payments.push(paymentDetails);
-  this.totalPaid = this.payments.reduce(
-    (sum, payment) => sum + payment.amount,
-    0
-  );
-  this.balanceDue = this.grandTotal - this.totalPaid;
+BillingSchema.virtual("outsideInvestigations").get(function () {
+  return this.investigations
+    .filter((inv) => !inv.performedInHouse)
+    .map((inv) => ({
+      serviceName: inv.serviceName,
+      reason: inv.outsideDetails?.reason,
+      suggestedLab: inv.outsideDetails?.suggestedLab,
+      estimatedCost: inv.outsideDetails?.estimatedCost,
+    }));
+});
 
-  if (this.balanceDue <= 0) {
-    this.billStatus = "Paid";
-  }
+BillingSchema.virtual("paymentSummary").get(function () {
+  const summary = {
+    total: this.financials.paid,
+    methods: {},
+    transactions: this.payments.filter((p) => p.status === "success").length,
+  };
 
-  return this;
-};
+  this.payments
+    .filter((p) => p.status === "success")
+    .forEach((payment) => {
+      summary.methods[payment.method] =
+        (summary.methods[payment.method] || 0) + payment.amount;
+    });
+
+  return summary;
+});
 
 module.exports = mongoose.model("Billing", BillingSchema);

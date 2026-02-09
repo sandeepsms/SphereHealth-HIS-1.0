@@ -1,7 +1,3 @@
-// ============================================
-// MODEL: Patient with TPA Integration
-// ============================================
-// models/patient/patientModel.js
 const mongoose = require("mongoose");
 
 const PatientSchema = new mongoose.Schema(
@@ -92,7 +88,7 @@ const PatientSchema = new mongoose.Schema(
     },
 
     // ⭐ TPA REFERENCE - NEW FIELD
-    tpa: {  
+    tpa: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "TPA",
     },
@@ -155,7 +151,7 @@ const PatientSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Indexes
@@ -181,11 +177,11 @@ PatientSchema.pre("save", async function (next) {
           this.registrationType === "OPD"
             ? "OPD"
             : this.registrationType === "Emergency"
-            ? "EMG"
-            : "IPD";
+              ? "EMG"
+              : "IPD";
         this.patientId = `${prefix}-${year}-${String(count + 1).padStart(
           6,
-          "0"
+          "0",
         )}`;
       }
 

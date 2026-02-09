@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
-import { Formik, Form } from "formik";
+import { Formik, Form, useFormik } from "formik";
 import { Button } from "primereact/button";
 import { Dialog } from "primereact/dialog";
+import { Dropdown } from "primereact/dropdown";
 import { InputText } from "primereact/inputtext";
 import { InputTextarea } from "primereact/inputtextarea";
 import * as yup from "yup";
@@ -11,6 +12,7 @@ import "primereact/resources/themes/lara-light-blue/theme.css";
 import "primereact/resources/primereact.min.css";
 import "primeicons/primeicons.css";
 import "../../styles/AddTpa.css";
+import { roomCategoryService } from "../../Services/roomCategoryService";
 
 function AddTpa() {
   const [tpaList, setTpaList] = useState([]);
@@ -26,6 +28,11 @@ function AddTpa() {
   const [deleting, setDeleting] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [showDeleted, setShowDeleted] = useState(false);
+  const [Roomcategory, setRoomcategory] = useState(null);
+  const [selectedRoomCategory, setRoomcategorydata] = useState([]);
+  const [CategoryName, setCategoryName] = useState(null);
+  // const [selectedcategoryName, setselectedcategoryName] = useState();
+
   const itemsPerPage = 10;
 
   const validationSchema = yup.object({
@@ -63,7 +70,37 @@ function AddTpa() {
 
   useEffect(() => {
     fetchTPAs();
+    fetchRoomdata();
   }, [showDeleted]);
+
+  const fetchRoomdata = async () => {
+    setLoading(true);
+    try {
+      const response = await roomCategoryService.getAllCategories();
+
+      // console.log("------------------------", response[0]);
+
+      const options = response.map((item) => ({
+        labelcategoryName: `${item.categoryName}`,
+
+        labelroomtype: `${item.roomType}`,
+        value: item._id,
+        roomType: item.roomType,
+        categoryName: item.categoryName,
+      }));
+      console.log("-------=========", options);
+
+      setRoomcategorydata(options);
+    } catch (error) {
+      toast.error("Error fetching room data");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+
+
+// create search method in TPA Data...................................
 
   useEffect(() => {
     const filtered = tpaList.filter(
@@ -76,6 +113,7 @@ function AddTpa() {
     setFilteredList(filtered);
     setCurrentPage(1);
   }, [searchTerm, tpaList]);
+
 
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
@@ -102,7 +140,7 @@ function AddTpa() {
     }
   };
 
-  const handleEdit = (tpa) => {        
+  const handleEdit = (tpa) => {
     console.log("Editing TPA:", tpa);
     setEditingTPA(tpa);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -194,7 +232,7 @@ function AddTpa() {
         modal
       >
         <div style={{ padding: "10px" }}>
-          <table style={{ width: "100%"  }}>
+          <table style={{ width: "100%" }}>
             <tbody>
               <tr>
                 <td
@@ -339,6 +377,18 @@ function AddTpa() {
             email: editingTPA?.email || "",
             contactPerson: editingTPA?.contactPerson || "",
             address: editingTPA?.address || "",
+
+            roomCharges: [
+              {
+                roomCategory:
+                  editingTPA?.roomCharges?.[0]?.roomCategory?._id || "",
+                categoryName: editingTPA?.roomCharges?.[0]?.categoryName || "",
+                doctorVisit: editingTPA?.roomCharges?.[0]?.doctorVisit || 0,
+                nursingCharge: editingTPA?.roomCharges?.[0]?.nursingCharge || 0,
+                roomRent: editingTPA?.roomCharges?.[0]?.roomRent || 0,
+                rmoCharge: editingTPA?.roomCharges?.[0]?.rmoCharge || 0,
+              },
+            ],
           }}
           enableReinitialize
           validationSchema={validationSchema}
@@ -351,6 +401,7 @@ function AddTpa() {
             handleChange,
             handleBlur,
             resetForm,
+            setFieldValue,
           }) => (
             <Form>
               <div
@@ -539,6 +590,191 @@ function AddTpa() {
                     rows={3}
                   />
                 </div>
+
+                {/* <div className="field col-12 md:col-6">
+                  <label className="font-semibold block mb-2">
+                    Room Category <span className="text-red-500">*</span>
+                  </label>
+                  <Dropdown
+                    value={Roomcategory}
+                    options={selectedRoomCategory}
+
+                    // onChange={(e) => handleInputChange("department", e.value)}
+                    onChange={(e) => setRoomcategory(e.value)}
+                    placeholder="Select Room Category"
+                    filter
+                    optionLabel="labelroomtype"
+                     optionValue="value"
+                    className={errors.roomCategory ? "p-invalid" : ""}
+                    style={{ width: "100%" }}
+                  />
+                  {errors.roomCategory && (
+                    <small className="p-error block">
+                      {errors.roomCategory}
+                    </small>
+                  )}
+                </div> */}
+
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                  <label
+                    style={{
+                      fontSize: "14px",
+                      fontWeight: 600,
+                      color: "#495057",
+                      marginBottom: "8px",
+                    }}
+                  >
+                    Room Category <span style={{ color: "#dc3545" }}>*</span>
+                  </label>
+
+                  <Dropdown
+                    value={values.roomCharges[0].roomCategory}
+                    options={selectedRoomCategory}
+                    optionLabel="labelroomtype"
+                    optionValue="value"
+                    placeholder="Select Room Category"
+                    filter
+                    onChange={(e) =>
+                   
+
+                      setFieldValue("roomCharges[0].roomCategory", e.value)
+                    }
+                    className={
+                      touched?.roomCharges?.[0]?.roomCategory &&
+                      errors?.roomCharges?.[0]?.roomCategory
+                        ? "p-invalid"
+                        : ""
+                    }
+                    style={{ width: "100%" }}
+                  />
+
+                  {touched?.roomCharges?.[0]?.roomCategory &&
+                    errors?.roomCharges?.[0]?.roomCategory && (
+                      <small className="p-error block">
+                        {errors.roomCharges[0].roomCategory}
+                      </small>
+                    )}
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                  <label
+                    style={{
+                      fontSize: "14px",
+                      fontWeight: 600,
+                      color: "#495057",
+                      marginBottom: "8px",
+                    }}
+                  >
+                    Category Name <span style={{ color: "#dc3545" }}>*</span>
+                  </label>
+                  <Dropdown
+                    value={values.roomCharges[0].categoryName}
+                    options={selectedRoomCategory}
+                    onChange={(e) =>
+                      // console.log("............",e.value)
+
+                      setFieldValue("roomCharges[0].categoryName", e.value)
+                    }
+                    optionLabel="labelcategoryName"
+                    optionValue="labelcategoryName"
+                    placeholder="Select Category Name"
+                    filter
+                    className={
+                      touched?.roomCharges?.[0]?.categoryName &&
+                      errors?.roomCharges?.[0]?.categoryName
+                        ? "p-invalid"
+                        : ""
+                    }
+                    style={{ width: "100%" }}
+                  />
+
+                  {touched?.roomCharges?.[0]?.categoryName &&
+                    errors?.roomCharges?.[0]?.categoryName && (
+                      <small className="p-error block">
+                        {errors.roomCharges[0].categoryName}
+                      </small>
+                    )}
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                  <label
+                    style={{
+                      fontSize: "14px",
+                      fontWeight: 600,
+                      color: "#495057",
+                      marginBottom: "8px",
+                    }}
+                  >
+                    Doctor Visit
+                  </label>
+                  <InputText
+                    name="roomCharges[0].doctorVisit"
+                    value={values.roomCharges[0].doctorVisit}
+                    onChange={handleChange}
+                    onBlur={handleBlur}
+                    placeholder="Enter Doctor Visit"
+                  />
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                  <label
+                    style={{
+                      fontSize: "14px",
+                      fontWeight: 600,
+                      color: "#495057",
+                      marginBottom: "8px",
+                    }}
+                  >
+                    Nursing Charge
+                  </label>
+                  <InputText
+                    name="roomCharges[0].nursingCharge"
+                    value={values.roomCharges[0].nursingCharge}
+                    onChange={handleChange}
+                    onBlur={handleBlur}
+                    placeholder="Enter Nursing Charges"
+                  />
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                  <label
+                    style={{
+                      fontSize: "14px",
+                      fontWeight: 600,
+                      color: "#495057",
+                      marginBottom: "8px",
+                    }}
+                  >
+                    Room Rent
+                  </label>
+                  <InputText
+                    name="roomCharges[0].roomRent"
+                    value={values.roomCharges[0].roomRent}
+                    onChange={handleChange}
+                    onBlur={handleBlur}
+                    placeholder="Enter Room Rent"
+                  />
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                  <label
+                    style={{
+                      fontSize: "14px",
+                      fontWeight: 600,
+                      color: "#495057",
+                      marginBottom: "8px",
+                    }}
+                  >
+                    Rmo Charge
+                  </label>
+                  <InputText
+                    name="roomCharges[0].rmoCharge"
+                    value={values.roomCharges[0].rmoCharge}
+                    onChange={handleChange}
+                    onBlur={handleBlur}
+                    placeholder="Enter Room Charge"
+                  />
+                </div>
               </div>
 
               <div style={{ display: "flex", gap: "10px" }}>
@@ -614,7 +850,7 @@ function AddTpa() {
               onChange={(e) => setShowDeleted(e.target.checked)}
               style={{ cursor: "pointer" }}
             />
-            Show Deleted
+            Show Deletedss
           </label>
 
           <span style={{ color: "#6c757d", fontSize: "14px" }}>
@@ -842,7 +1078,7 @@ function AddTpa() {
                     fontSize: "16px",
                   }}
                 >
-                  No TPAs found                                                             
+                  No TPAs found
                 </td>
               </tr>
             )}
@@ -862,17 +1098,13 @@ function AddTpa() {
               backgroundColor: "white",
             }}
           >
-
-
             <Button
               icon="pi pi-angle-double-left"
               className="p-button-outlined"
-              onClick={() => setCurrentPage(1)}                          
+              onClick={() => setCurrentPage(1)}
               disabled={currentPage === 1}
               style={{ minWidth: "40px", height: "40px" }}
             />
-
-
 
             <Button
               icon="pi pi-angle-left"
@@ -882,9 +1114,6 @@ function AddTpa() {
               style={{ minWidth: "40px", height: "40px" }}
             />
 
-
-           
-           
             {[...Array(totalPages)].map((_, i) => {
               const page = i + 1;
               if (

@@ -67,6 +67,15 @@ import ServiceAdd from "./Components/Tpa/TPAServiceManagement";
 import AddTpa from "./Components/Tpa/AddTpa";
 import AddRoomCategory from "./Components/room/AddRoomCategory";
 
+//hospital charges
+import HospitalChargesList from "./pages/charges/HospitalChargesList";
+import CreateHospitalCharges from "./pages/charges/CreateHospitalCharges";
+import EditHospitalCharges from "./pages/charges/EditHospitalCharges";
+
+//billing
+import BillsList from "./pages/billing/BillsList";
+import BillGeneration from "./pages/billing/Billgeneration";
+
 //admissions
 // import AdmissionList from "./pages/admissions/AdmissionList";
 // import AdmissionFoout from "./pages/admissions/AdmissionFoout";
@@ -94,12 +103,10 @@ export default function App() {
           {/* Dashboard */}
           <Route path="/dashboard1" element={<Dashboard1 />} />
           <Route path="/dash" element={<Dashboard1 />} />
-
           {/* ✅ Patient Registration Routes - Edit route MUST come before the base route */}
           <Route path="/registration/:id" element={<Registration />} />
           <Route path="/registration" element={<Registration />} />
           <Route path="/allpatient" element={<PatientsTable />} />
-
           {/* ✅ CRITICAL: Prescription routes BEFORE catch-all */}
           <Route
             path="/doctorpre/:UHID/:TpaId?"
@@ -107,21 +114,18 @@ export default function App() {
           />
           <Route path="/doctorpre/:UHID" element={<DoctorPreception />} />
           <Route path="/preceptionprint/:UHID" element={<DoctorPrePrint />} />
-
           {/* Doctor & Medical Staff */}
           <Route path="/doctor/:UHID" element={<Doctor />} />
           <Route path="/doctors" element={<DoctorListPage />} />
           <Route path="/doctors/new" element={<DoctorFormPage />} />
           <Route path="/doctors/:doctorId/edit" element={<DoctorFormPage />} />
           <Route path="/nurse" element={<Nurse />} />
-
           {/* OPD */}
           <Route path="/opd/:UHID" element={<OPDPrint />} />
           <Route path="/opd" element={<OPList />} />
           <Route path="/opd/new" element={<OPDForm />} />
           <Route path="/opd/edit/:visitNumber" element={<OPDForm />} />
           <Route path="/opd/:visitNumber" element={<OPDDetails />} />
-
           {/* Emergency */}
           <Route path="/emergency" element={<Emergencylist />} />
           <Route path="/emergency/new" element={<EmergencyForm />} />
@@ -133,21 +137,17 @@ export default function App() {
             path="/emergency/:emergencyNumber"
             element={<EmergencyDetails />}
           />
-
           {/* Patients Module */}
           <Route path="/patients" element={<PatientList />} />
           <Route path="/patients/new" element={<PatientForm />} />
           <Route path="/patients/edit/:id" element={<PatientForm />} />
           <Route path="/patients/:id" element={<PatientDetails />} />
-
           {/* Services & TPA */}
           <Route path="/addservice" element={<ServiceAdd />} />
           <Route path="/addtpa" element={<AddTpa />} />
           <Route path="/ServiceAlldata" element={<ServiceAlldata />} />
-
           {/* Department */}
           <Route path="/department" element={<DepartmentManagement />} />
-
           {/* Bed Management */}
           <Route path="/beds" element={<BedManagement />} />
           <Route path="/bed-visual" element={<BedVisualLayout />} />
@@ -157,9 +157,31 @@ export default function App() {
           <Route path="/buildings" element={<BuildingManagement />} />
           <Route path="/floors" element={<FloorManagement />} />
 
+          {/* Hospital Charges Routes */}
+          <Route path="/hospital-charges" element={<HospitalChargesList />} />
+          <Route
+            path="/hospital-charges/create"
+            element={<CreateHospitalCharges />}
+          />
+          <Route
+            path="/hospital-charges/edit/:id"
+            element={<EditHospitalCharges />}
+          />
+
+          {/* BILLING ROUTES - NEW */}
+          <Route path="/billing" element={<BillsList />} />
+
+          <Route
+            path="/billing/create/:prescriptionId"
+            element={<BillGeneration />}
+          />
+          <Route path="/billing/view/:billId" element={<BillGeneration />} />
+          <Route path="/billing/edit/:billId" element={<BillGeneration />} />
+          <Route path="/bills" element={<Navigate to="/billing" replace />} />
+
           {/* Default & Catch-all Routes */}
-          <Route path="/" element={<Navigate to="/dashboard1" replace />} />
-          <Route path="*" element={<Navigate to="/dashboard1" replace />} />
+          {/* <Route path="/" element={<Navigate to="/dashboard1" replace />} />
+          <Route path="*" element={<Navigate to="/dashboard1" replace />} /> */}
         </Routes>
       </div>
     </Router>

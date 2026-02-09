@@ -12,7 +12,7 @@ const serviceMasterRoutes = require("./bedMgmt/serviceMasterRoutes");
 
 // other modules
 const patientRoutes = require("./Patient/patientRoutes");
-const opdRoutes = require("./patient/OPDRoutes");
+const opdRoutes = require("./Patient/OPDRoutes");
 const doctorRoutes = require("./Doctor/doctorRoutes");
 const emergencyRoutes = require("./Patient/emergencyRoutes");
 const billingRoutes = require("./Billing/billingRoutes");
@@ -22,6 +22,7 @@ const tpaRoutes = require("./tpa/tpaRoutes");
 const tpaServiceRoutes = require("./tpa/tpaServiceRoutes");
 const TPAServicebill = require("./Billing/TPAServiceBilling");
 const doctorPrescriptionRoutes = require("../routes/Doctor/doctorPrescriptionRoutes");
+const hospitalChargesRoutes = require("../routes/charges/hospitalChargesRoutes");
 
 // routes mapping
 router.use("/buildings", buildingRoutes);
@@ -42,6 +43,7 @@ router.use("/department", departmentRoutes);
 router.use("/tpa", tpaRoutes);
 router.use("/tpaservice", tpaServiceRoutes);
 router.use("/prescriptions", doctorPrescriptionRoutes);
-
 router.use("/servicebilldata", TPAServicebill);
+router.use("/hospital-charges", hospitalChargesRoutes);
+
 module.exports = router;

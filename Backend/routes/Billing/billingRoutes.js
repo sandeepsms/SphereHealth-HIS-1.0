@@ -2,23 +2,46 @@ const express = require("express");
 const router = express.Router();
 const billingController = require("../../controllers/Billing/billingController");
 
-router.post("/", billingController.createBill);
-router.get("/", billingController.getAllBills);
-router.get("/pending", billingController.getPendingBills);
-router.get("/paid", billingController.getPaidBills);
-router.get("/revenue", billingController.getRevenue);
-router.get("/bill-number/:billNumber", billingController.getBillByNumber);
-router.get("/admission/:admissionId", billingController.getBillByAdmission);
-router.get("/patient/:patientId", billingController.getPatientBills);
+// 🎯 Create bill from prescription
+router.post("/from-prescription", billingController.createBillFromPrescription);
+
+// 📄 Get single bill
 router.get("/:id", billingController.getBillById);
-router.get("/:id/summary", billingController.getBillSummary);
+
+// 📋 Get all bills with filters
+router.get("/", billingController.getAllBills);
+
+// ✏️ Update bill (draft only)
 router.put("/:id", billingController.updateBill);
-router.delete("/:id", billingController.deleteBill);
-router.post("/:id/service", billingController.addService);
-router.post("/:id/investigation", billingController.addInvestigation);
-router.post("/:id/medication", billingController.addMedication);
-router.post("/:id/procedure", billingController.addProcedure);
-router.put("/:id/discount", billingController.applyDiscount);
+
+// 🎫 Generate final bill
+router.post("/:id/generate", billingController.generateBill);
+
+// 🔄 Toggle investigation (in-house vs outside)
+router.patch(
+  "/:billId/investigation/:investigationId/toggle",
+  billingController.toggleInvestigation,
+);
+
+// 💳 Add payment
 router.post("/:id/payment", billingController.addPayment);
-router.put("/:id/cancel", billingController.cancelBill);
+
+// ❌ Cancel bill
+router.delete("/:id/cancel", billingController.cancelBill);
+
+// 📊 Get statistics
+router.get("/stats/summary", billingController.getBillStats);
+
+// 🏥 Get bills by TPA
+router.get("/tpa/:tpaId", billingController.getBillsByTPA);
+
+// 📝 Get outside investigations
+router.get(
+  "/:id/outside-investigations",
+  billingController.getOutsideInvestigations,
+);
+
+// 🧮 Recalculate bill
+router.post("/:id/recalculate", billingController.recalculateBill);
+
 module.exports = router;

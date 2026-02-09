@@ -285,7 +285,7 @@ useEffect(() => {
         }));
       setDoctors(allDoctors);
     } catch (error) {
-      console.error("Error fetching doctors:", error);
+      console.error("Error fetching doctors:", error);                                             
       setDoctors([]);
     }
   };

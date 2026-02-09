@@ -1,5 +1,5 @@
-const OPD = require("../../models/patient/OPDModels");
-const patientService = require("../patient/patientService");
+const OPD = require("../../models/Patient/OPDModels");
+const patientService = require("../Patient/patientService");
 
 
 class OPDService {
