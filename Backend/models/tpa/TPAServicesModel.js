@@ -5,23 +5,20 @@ const ServiceSchema = new mongoose.Schema(
     tpa: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "TPA",
-      // required: [true, "TPA reference is required"],
+      required: true,
     },
-    tpaName: {
-      type: String,
-      // required: [true, "TPA Name is required"],
-    },
-    tpaCode: {
-      type: String,
-      // required: [true, "TPA Code is required"],
-      unique: true,
-      uppercase: true,
-    },
-    service: [
+    services: [
       {
         Name: {
           type: String,
           required: [true, "Service name is required"],
+          trim: true,
+        },
+        serviceType: {
+          type: String,
+          enum: ["fixed", "quantity", "hourly"],
+          default: "fixed",
+          required: true,
         },
         Amount: {
           type: Number,
@@ -32,11 +29,12 @@ const ServiceSchema = new mongoose.Schema(
           type: Number,
           default: 0,
           min: [0, "Discount cannot be negative"],
-          max: [100, "Discount cannot exceed 100%"],
+          max: [20, "Discount cannot exceed 20%"],
         },
         Totalamount: {
           type: Number,
           required: [true, "Total amount is required"],
+          min: [0, "Total amount must be positive"],
         },
       },
     ],
@@ -48,17 +46,16 @@ const ServiceSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-// Index for faster queries
+// ✅ Indexes
 ServiceSchema.index({ tpa: 1 });
-ServiceSchema.index({ tpaCode: 1 });
 ServiceSchema.index({ isActive: 1 });
 
-// Pre-save hook to calculate total amount
 ServiceSchema.pre("save", function (next) {
-  if (this.service && this.service.length > 0) {
-    this.service.forEach((item) => {
+  if (this.services && this.services.length > 0) {
+    this.services.forEach((item) => {
       if (item.Amount && item.Discount !== undefined) {
-        item.Totalamount = item.Amount - (item.Amount * item.Discount) / 100;
+        const discount = Math.min(item.Discount, 20);
+        item.Totalamount = item.Amount - (item.Amount * discount) / 100;
       }
     });
   }

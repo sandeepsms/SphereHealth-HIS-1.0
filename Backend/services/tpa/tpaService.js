@@ -1,4 +1,3 @@
-// services/tpaService.js - WITH 20% DISCOUNT VALIDATION
 const TPA = require("../../models/tpa/tpaModel");
 const RoomCategory = require("../../models/bedMgmt/roomCategoryModel");
 
@@ -17,8 +16,6 @@ class TPAService {
     const finalCode =
       tpaCode ||
       `${tpaName.slice(0, 4).toUpperCase()}${Date.now().toString().slice(-4)}`;
-
-    // 🚨 NEW: Get RoomCategories WITH default pricing for discount validation
     const ids = roomCharges.map((rc) => rc.roomCategory);
     const categories = await RoomCategory.find({
       _id: { $in: ids },
@@ -31,7 +28,6 @@ class TPAService {
       throw new Error("One or more room categories not found / inactive");
     }
 
-    // 🚨 NEW: Create category map with pricing
     const categoryMap = {};
     categories.forEach((c) => {
       categoryMap[c._id.toString()] = {
@@ -40,7 +36,6 @@ class TPAService {
       };
     });
 
-    // 🚨 NEW: Validate MAX 20% DISCOUNT for each room charge
     for (let i = 0; i < roomCharges.length; i++) {
       const rc = roomCharges[i];
       const cat = categoryMap[rc.roomCategory.toString()];
@@ -87,13 +82,11 @@ class TPAService {
     return saved.populate("roomCharges.roomCategory");
   }
 
-  // UpdateTPA me bhi same validation
   static async updateTPA(id, data) {
     const tpa = await TPA.findById(id);
     if (!tpa || !tpa.isActive) throw new Error("TPA not found or inactive");
 
     if (data.roomCharges) {
-      // Same validation logic as createTPA
       const ids = data.roomCharges.map((rc) => rc.roomCategory);
       const categories = await RoomCategory.find({
         _id: { $in: ids },
@@ -114,7 +107,6 @@ class TPAService {
         };
       });
 
-      // 🚨 20% DISCOUNT VALIDATION
       for (let i = 0; i < data.roomCharges.length; i++) {
         const rc = data.roomCharges[i];
         const cat = categoryMap[rc.roomCategory.toString()];
@@ -158,7 +150,6 @@ class TPAService {
     return updated;
   }
 
-  // Baaki methods same...
   static async getAllTPAs(filters = {}) {
     const query = { isActive: true };
     if (filters.tpaName) {

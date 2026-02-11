@@ -1,12 +1,10 @@
-// models/TPA.js - Production Ready with Validations
 const mongoose = require("mongoose");
 
 const roomChargeSchema = new mongoose.Schema(
   {
     roomCategory: {
       type: mongoose.Schema.Types.ObjectId,
-      // ref: "RoomCategoryModel",
-      ref:"RoomCategory",
+      ref: "RoomCategoryModel",
       required: [true, "Room category is required"],
     },
     categoryName: {

@@ -1,339 +1,112 @@
-const Prescription = require("../../models/Doctor/prescription");
-const Patient = require("../../models/Patient/patientModel");
-const Doctor = require("../../models/Doctor/doctorModel");
-
-// exports.createPrescription = async (req, res) => {
-//   try {
-//     const data = req.body;
-
-//     // 🔍 Validate patient
-//     const patient = await Patient.findById(data.patient);
-//     if (!patient) {
-//       return res.status(404).json({
-//         success: false,
-//         message: "Patient not found",
-//       });
-//     }
-
-//     // 🔥 Build clean prescription object
-//     const prescriptionPayload = {
-//       // IDs
-//       patient: patient._id,
-//       UHID: patient.UHID,
-
-//       // AUTO patient info
-//       patientName: patient.fullName,
-//       age: patient.age,
-//       gender: patient.gender,
-//       contactNumber: patient.contactNumber,
-//       fatherName: patient.fatherName || "",
-//       department: patient.department?.departmentName || "",
-
-//       // doctor
-//       doctor: data.doctor,
-//       referredBy: data.referredBy || "",
-
-//       registrationType: data.registrationType || "OPD",
-
-//       clinicalDetails: data.clinicalDetails,
-//       vitals: data.vitals,
-//       provisionalDiagnosis: data.provisionalDiagnosis,
-
-//       medicines: data.medicines || [],
-//       investigations: data.investigations || [],
-//       advice: data.advice || "",
-//     };
-
-//     // 💾 Save
-//     const prescription = await Prescription.create(prescriptionPayload);
-
-//     // 📦 Populate for response only
-//     await prescription.populate([
-//       { path: "patient", select: "fullName UHID gender age" },
-//       {
-//         path: "doctor",
-//         select:
-//           "personalInfo.firstName personalInfo.lastName professional.specialization",
-//       },
-//       { path: "investigations", select: "Name" },
-//     ]);
-
-//     res.status(201).json({
-//       success: true,
-//       message: "Prescription created successfully",
-//       data: prescription,
-//     });
-//   } catch (error) {
-//     console.error("Create prescription error:", error);
-//     res.status(500).json({
-//       success: false,
-//       message: error.message || "Failed to create prescription",
-//     });
-//   }
-// };
-
-exports.checkCreateOrUpdate = async (req, res) => {
-  try {
-    const { uhid } = req.params;
-
-    // 🔹 Case 1: UHID hi nahi aaya → CREATE
-    if (!uhid) {
-      return res.status(200).json({
-        success: true,
-        status: "OK",
-        mode: "CREATE",
-        data: null,
-        message: "UHID not provided, create new prescription",
-      });
-    }
-
-    // 🔹 Case 2: UHID aaya → DB check
-    const existingPrescription = await Prescription.findOne({ UHID: uhid });
-
-    // 🔹 Case 2a: Prescription already exists → UPDATE
-    if (existingPrescription) {
-      return res.status(200).json({
-        success: true,
-        status: "OK",
-        mode: "UPDATE",
-        data: existingPrescription,
-        message: "Prescription found, update mode",
-      });
-    }
-
-    // 🔹 Case 2b: Prescription nahi mila → CREATE
-    return res.status(200).json({
-      success: true,
-      status: "OK",
-      mode: "CREATE",
-      data: null,
-      message: "No prescription found, create new",
-    });
-
-  } catch (error) {
-    console.error("❌ checkCreateOrUpdate error:", error);
-    return res.status(500).json({
-      success: false,
-      status: "ERROR",
-      message: error.message,
-    });
-  }
-};
-
-
-
+const PrescriptionService = require("../../services/Doctor/PrescriptionService");
 exports.createPrescription = async (req, res) => {
   try {
-    const { uhid } = req.params;
+    const prescription = await PrescriptionService.createPrescription(req.body);
 
-    if (!uhid) {
-      return res.status(400).json({
-        success: false,
-        status: "ERROR",
-        message: "UHID is required in params",
-      });
-    }
-
-    const data = req.body;
-
-    // 🔴 Required fields check (minimum)
-    if (!data.patient || !data.doctor || !data.provisionalDiagnosis) {
-      return res.status(400).json({
-        success: false,
-        status: "ERROR",
-        message: "Required fields missing",
-      });
-    }
-
-    // 🔍 Check existing prescription by UHID
-    const existingPrescription = await Prescription.findOne({ UHID: uhid });
-
-    // 🔒 FINAL lock check
-    if (existingPrescription && existingPrescription.status === "FINAL") {
-      return res.status(400).json({
-        success: false,
-        status: "FINAL",
-        message: "Prescription already printed and locked",
-      });
-    }
-
-    // 🧾 Common payload (schema aligned)
-    const prescriptionPayload = {
-      // IDs
-      patient: data.patient,
-      UHID: uhid,
-
-      // AUTO patient info
-      patientName: data.patientName,
-      age: data.age,
-      gender: data.gender,
-      contactNumber: data.contactNumber,
-      fatherName: data.fatherName || "",
-      department: data.department || "",
-
-      // doctor
-      doctor: data.doctor,
-      referredBy: data.referredBy || "",
-
-      registrationType: data.registrationType || "OPD",
-
-      clinicalDetails: data.clinicalDetails,
-      vitals: data.vitals,
-      provisionalDiagnosis: data.provisionalDiagnosis,
-
-      medicines: data.medicines || [],
-      investigations: data.investigations || [],
-      advice: data.advice || "",
-
-      updatedAt: new Date(),
-    };
-
-    // 🆕 CREATE
-    if (!existingPrescription) {
-      await Prescription.create({
-        ...prescriptionPayload,
-        status: "DRAFT",
-      });
-
-      return res.status(201).json({
-        success: true,
-        status: "CREATED",
-        message: "Prescription created successfully",
-      });
-    }
-
-    // ✏️ UPDATE
-    await Prescription.findOneAndUpdate({ UHID: uhid }, prescriptionPayload, {
-      new: true,
-    });
-
-    return res.status(200).json({
+    res.status(201).json({
       success: true,
-      status: "UPDATED",
-      message: "Prescription updated successfully",
+      message: "Prescription created successfully",
+      data: prescription,
     });
   } catch (error) {
-    console.error("❌ upsertPrescription error:", error);
-
-    res.status(500).json({
+    console.error("Error creating prescription:", error);
+    res.status(400).json({
       success: false,
-      status: "ERROR",
       message: error.message,
     });
   }
 };
 
+// Get All Prescriptions
 exports.getAllPrescriptions = async (req, res) => {
   try {
-    const {
-      patient,
-      doctor,
-      registrationType,
-      investigations,
-      startDate,
-      endDate,
-    } = req.query;
-
-    const filter = {};
-    if (patient) filter.patient = patient;
-    if (doctor) filter.doctor = doctor;
-    if (investigations) filter.investigations = investigations;
-    if (registrationType) filter.registrationType = registrationType;
-    if (startDate && endDate) {
-      filter.prescriptionDate = {
-        $gte: new Date(startDate),
-        $lte: new Date(endDate),
-      };
-    }
-
-    const prescriptions = await Prescription.find(filter)
-      .populate("patient", "fullName UHID gender age")
-      .populate(
-        "doctor",
-        "personalInfo.firstName personalInfo.lastName professional.specialization",
-      )
-      .populate("investigations", "Name")
-      .sort({ createdAt: -1 });
+    const prescriptions = await PrescriptionService.getAllPrescriptions(
+      req.query,
+    );
 
     res.status(200).json({
       success: true,
-      data: prescriptions,
       count: prescriptions.length,
+      data: prescriptions,
     });
   } catch (error) {
-    console.error("Get prescriptions error:", error);
+    console.error("Error fetching prescriptions:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to fetch prescriptions",
+      message: error.message,
     });
   }
 };
 
+// Get Prescription by ID
 exports.getPrescriptionById = async (req, res) => {
   try {
-    const prescription = await Prescription.findById(req.params.id)
-      .populate("patient")
-      .populate("doctor")
-      .populate("investigations");
-
-    if (!prescription) {
-      return res.status(404).json({
-        success: false,
-        message: "Prescription not found",
-      });
-    }
+    const prescription = await PrescriptionService.getPrescriptionById(
+      req.params.id,
+    );
 
     res.status(200).json({
       success: true,
       data: prescription,
     });
   } catch (error) {
-    res.status(500).json({
+    console.error("Error fetching prescription:", error);
+    res.status(error.message === "Prescription not found" ? 404 : 500).json({
       success: false,
-      message: "Failed to fetch prescription",
+      message: error.message,
     });
   }
 };
 
-exports.getPrescriptionsByUHID = async (req, res) => {
+// Get Prescriptions by Patient (UHID or ID)
+exports.getPrescriptionsByPatient = async (req, res) => {
   try {
-    const { uhid } = req.params;
-
-    const prescriptions = await Prescription.find({ UHID: uhid })
-      .populate(
-        "doctor",
-        "personalInfo.firstName personalInfo.lastName professional.specialization",
-      )
-      // .populate("investigations", "Name")
-      .sort({ createdAt: -1 });
+    const prescriptions = await PrescriptionService.getPrescriptionsByPatient(
+      req.params.patientIdentifier,
+    );
 
     res.status(200).json({
       success: true,
-      data: prescriptions,
       count: prescriptions.length,
+      data: prescriptions,
     });
   } catch (error) {
+    console.error("Error fetching patient prescriptions:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to fetch prescriptions",
+      message: error.message,
     });
   }
 };
 
+// Get Prescriptions by Doctor
+exports.getPrescriptionsByDoctor = async (req, res) => {
+  try {
+    const prescriptions = await PrescriptionService.getPrescriptionsByDoctor(
+      req.params.doctorId,
+    );
+
+    res.status(200).json({
+      success: true,
+      count: prescriptions.length,
+      data: prescriptions,
+    });
+  } catch (error) {
+    console.error("Error fetching doctor prescriptions:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+// Update Prescription
 exports.updatePrescription = async (req, res) => {
   try {
-    const prescription = await Prescription.findByIdAndUpdate(
+    const prescription = await PrescriptionService.updatePrescription(
       req.params.id,
       req.body,
-      { new: true, runValidators: true },
-    ).populate(["patient", "doctor", "investigations"]);
-
-    if (!prescription) {
-      return res.status(404).json({
-        success: false,
-        message: "Prescription not found",
-      });
-    }
+    );
 
     res.status(200).json({
       success: true,
@@ -341,32 +114,79 @@ exports.updatePrescription = async (req, res) => {
       data: prescription,
     });
   } catch (error) {
-    res.status(500).json({
+    console.error("Error updating prescription:", error);
+    res.status(error.message === "Prescription not found" ? 404 : 400).json({
       success: false,
-      message: "Failed to update prescription",
+      message: error.message,
     });
   }
 };
 
+// Delete Prescription
 exports.deletePrescription = async (req, res) => {
   try {
-    const prescription = await Prescription.findByIdAndDelete(req.params.id);
-
-    if (!prescription) {
-      return res.status(404).json({
-        success: false,
-        message: "Prescription not found",
-      });
-    }
+    await PrescriptionService.deletePrescription(req.params.id);
 
     res.status(200).json({
       success: true,
       message: "Prescription deleted successfully",
     });
   } catch (error) {
-    res.status(500).json({
+    console.error("Error deleting prescription:", error);
+    res.status(error.message === "Prescription not found" ? 404 : 500).json({
       success: false,
-      message: "Failed to delete prescription",
+      message: error.message,
     });
   }
 };
+
+// Update Prescription Status
+exports.updatePrescriptionStatus = async (req, res) => {
+  try {
+    const { status } = req.body;
+
+    if (!status) {
+      return res.status(400).json({
+        success: false,
+        message: "Status is required",
+      });
+    }
+
+    const prescription = await PrescriptionService.updatePrescriptionStatus(
+      req.params.id,
+      status,
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Prescription status updated successfully",
+      data: prescription,
+    });
+  } catch (error) {
+    console.error("Error updating prescription status:", error);
+    res.status(error.message === "Prescription not found" ? 404 : 400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+// Get Prescription Statistics
+exports.getPrescriptionStats = async (req, res) => {
+  try {
+    const stats = await PrescriptionService.getPrescriptionStats(req.query);
+
+    res.status(200).json({
+      success: true,
+      data: stats,
+    });
+  } catch (error) {
+    console.error("Error fetching prescription stats:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+module.exports = exports;

@@ -1,46 +1,46 @@
 // routes/tpa/tpaServiceRoutes.js
+
 const express = require("express");
 const router = express.Router();
-const {
-  createTPAService,
-  getAllTPAServices,
-  getTPAServiceById,
-  getTPAServicesByTPAId,
-  updateTPAService,
-  deleteTPAService,
-  addService,
-  removeService,
-  toggleActiveStatus,
-} = require("../../controllers/tpa/TPAServicesController");
+const tpaServiceController = require("../../controllers/tpa/TPAServicesController");
 
-// Create TPA Service (with tests)
-router.post("/", createTPAService);
+// Create TPA Service
+router.post("/", tpaServiceController.createTPAService);
 
 // Get all TPA Services
-router.get("/", getAllTPAServices);
+router.get("/", tpaServiceController.getAllTPAServices);
 
+// Search TPA Services
+router.get("/search", tpaServiceController.searchTPAServices);
 
+// Get all services (flattened)
+router.get("/all-services", tpaServiceController.getAllServices);
 
+// Get services by type
+router.get("/type/:serviceType", tpaServiceController.getServicesByType);
 
-// Get TPA Service by ID
-router.get("/:id", getTPAServiceById);
+// Get TPA Service stats
+router.get("/stats/:tpaId", tpaServiceController.getTPAServiceStats);
 
-// Get TPA Services by TPA ID
-router.get("/tpa/:tpaId", getTPAServicesByTPAId);
+// Get TPA Service by TPA ID
+router.get("/tpa/:id", tpaServiceController.getTPAServiceById);
+
+// Get TPA Services by TPA ID (alternative)
+router.get("/by-tpa/:tpaId", tpaServiceController.getTPAServicesByTPAId);
 
 // Update TPA Service
-router.put("/:id", updateTPAService);
+router.put("/:id", tpaServiceController.updateTPAService);
 
 // Delete TPA Service
-router.delete("/:id", deleteTPAService);
+router.delete("/:id", tpaServiceController.deleteTPAService);
 
-// Add single test to TPA Service
-router.post("/:id/service", addService);
+// Add single service
+router.post("/:id/add-service", tpaServiceController.addService);
 
-// Remove single test from TPA Service
-router.delete("/:id/service/:serviceId", removeService);
+// Remove service
+router.delete("/:id/service/:serviceId", tpaServiceController.removeService);
 
 // Toggle active status
-router.patch("/:id/toggle-status", toggleActiveStatus);
+router.patch("/:id/toggle-status", tpaServiceController.toggleActiveStatus);
 
 module.exports = router;

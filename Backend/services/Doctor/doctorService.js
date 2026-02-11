@@ -1,4 +1,3 @@
-// Backend: services/Doctor/doctorService.js
 const Doctor = require("../../models/Doctor/doctorModel");
 const mongoose = require("mongoose");
 
@@ -39,7 +38,7 @@ class DoctorService {
     }
 
     return await Doctor.findOne({ doctorId: id, isActive: true }).populate(
-      "department"
+      "department",
     );
   }
 
@@ -63,7 +62,7 @@ class DoctorService {
       const doctor = await Doctor.findByIdAndUpdate(
         id,
         { isActive: false },
-        { new: true }
+        { new: true },
       ).populate("department");
       if (doctor) return doctor;
     }
@@ -71,7 +70,7 @@ class DoctorService {
     return await Doctor.findOneAndUpdate(
       { doctorId: id },
       { isActive: false },
-      { new: true }
+      { new: true },
     ).populate("department");
   }
 
@@ -121,7 +120,7 @@ class DoctorService {
           "consultationFee.opd": opdFee,
           "consultationFee.emergency": emergencyFee,
         },
-        { new: true }
+        { new: true },
       ).populate("department");
       if (doctor) return doctor;
     }
@@ -132,7 +131,7 @@ class DoctorService {
         "consultationFee.opd": opdFee,
         "consultationFee.emergency": emergencyFee,
       },
-      { new: true }
+      { new: true },
     ).populate("department");
   }
 
