@@ -3,26 +3,38 @@ const TPAServiceService = require("../../services/tpa/tpaServiceService");
 // Create TPA Service
 exports.createTPAService = async (req, res) => {
   try {
+    console.log("Incoming request body:", req.body);
+
     const result = await TPAServiceService.createTPAService(req.body);
 
-    res.status(201).json({
+    const response = {
       success: true,
-      message: "TPA Service created successfully",
+      message: result._duplicateWarning || "TPA Service created successfully",
       data: result,
-    });
+    };
+
+    res.status(201).json(response);
   } catch (error) {
     console.error("Error creating TPA Service:", error);
 
-    if (error.message.includes("already exists")) {
-      return res.status(400).json({
-        success: false,
-        message: error.message,
-      });
+    let statusCode = 500;
+    let errorMessage = error.message || "Internal server error";
+
+    if (error.message.includes("already exist")) {
+      statusCode = 400;
+    } else if (error.message.includes("not found")) {
+      statusCode = 404;
+    } else if (error.message.includes("required")) {
+      statusCode = 400;
+    } else if (error.code === 11000) {
+      statusCode = 409;
+      errorMessage = "This TPA service already exists";
     }
 
-    res.status(400).json({
+    res.status(statusCode).json({
       success: false,
-      message: error.message,
+      message: errorMessage,
+      error: process.env.NODE_ENV === "development" ? error.stack : undefined,
     });
   }
 };

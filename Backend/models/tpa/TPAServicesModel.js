@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 
 const ServiceSchema = new mongoose.Schema(
   {
-    tpa: {
+    tpaId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "TPA",
       required: true,
@@ -46,8 +46,7 @@ const ServiceSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-// ✅ Indexes
-ServiceSchema.index({ tpa: 1 });
+ServiceSchema.index({ tpaId: 1 });
 ServiceSchema.index({ isActive: 1 });
 
 ServiceSchema.pre("save", function (next) {

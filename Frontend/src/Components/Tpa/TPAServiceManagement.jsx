@@ -50,7 +50,7 @@ function TPAServiceManagement() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [tpaRes, serviceRes] = await Promise.all([  
+      const [tpaRes, serviceRes] = await Promise.all([
         tpaService.getAllTPAs(),
         tpaServiceService.getAllTPAServices(),
       ]);

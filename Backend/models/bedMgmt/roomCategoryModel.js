@@ -130,7 +130,7 @@ const RoomCategorySchema = new mongoose.Schema(
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
-  }
+  },
 );
 
 // ========== INDEXES ==========
@@ -215,4 +215,4 @@ RoomCategorySchema.pre("save", function (next) {
   next();
 });
 
-module.exports = mongoose.model("RoomCategory", RoomCategorySchema);
+module.exports = mongoose.model("RoomCategoryModel", RoomCategorySchema);
