@@ -14,6 +14,7 @@ import { doctorService } from "../../Services/doctors/doctorService";
 import { tpaServiceService } from "../../Services/tpa/tpaServiceService";
 import { prescriptionService } from "../../Services/doctors/prescriptionService";
 import DoctorPrePrint from "../../pages/doctor/DoctorPrePrint";
+import { Dropdown } from "primereact/dropdown";
 
 function DoctorPrescription() {
   const [uhid, setUHID] = useState(null);
@@ -25,6 +26,7 @@ function DoctorPrescription() {
   const [TesttotalPrice, setTestTotalPrice] = useState(0);
   const [Testprice, setTestprice] = useState();
   const [buttonmode, setButtonMode] = useState();
+  const[errors ,seterrors ]=useState();
 
   const { UHID } = useParams();
   const navigate = useNavigate();
@@ -142,7 +144,7 @@ function DoctorPrescription() {
         schedule: yup.string(),
         instruction: yup.string(),
         route: yup.string(),
-        days: yup.number().typeError("Must be a number"),
+        days: yup.string(),
       }),
     ),
   });
@@ -157,6 +159,50 @@ function DoctorPrescription() {
     );
   };
 
+  const scheduledata = [
+    { label: "1-0-0(Morning)", value: "1-0-0(Morning)" },
+    { label: "1-0-0(Afternoon)", value: "1-0-0(Afternoon)" },
+    { label: "1-0-0(Night)", value: "1-0-0(Night)" },
+    { label: "1-1-1", value: "1-1-1" },
+    { label: "OD", value: "OD" },
+    { label: "BD", value: "BD" },
+    { label: "TDS", value: "TDS" },
+    { label: "QID", value: "QID" },
+    { label: "SOS", value: "SOS" },
+    { label: "STAT", value: "STAT" },
+  ];
+
+  const instructiondata = [
+    { label: "Before Food", value: "Before Food" },
+    { label: "After Food", value: "After Food" },
+    { label: "With Food", value: "With Food" },
+    { label: "Empty Stomach", value: "Empty Stomach" },
+    { label: "At Bedtime", value: "At Bedtime" },
+    { label: "Do Not Crush/Chew", value: "Do Not Crush/Chew" },
+  ];
+
+  const Routedata = [
+    { label: "Oral", value: "Oral" },
+    { label: "IV", value: "IV" },
+    { label: "IM", value: "IM" },
+    { label: "SC", value: "SC" },
+    { label: "Topical", value: "Topical" },
+    { label: "Inhalation", value: "Inhalation" },
+    { label: "Sublingual", value: "Sublingual" },
+    { label: "Nasal", value: "Nasal" },
+  ];
+
+  const daysdata = [
+    { label: "1 Day", value: "1 Day" },
+    { label: "3 Day", value: "3 Day" },
+    { label: "5 Day", value: "5 Day" },
+    { label: "7 Day", value: "7 Day" },
+    { label: "10 Day", value: "10 Day" },
+    { label: "14 Day", value: "14 Day" },
+    { label: "30 Day", value: "30 Day" },
+    { label: "Once Weekly", value: "Once Weekly" },
+    { label: "Custom", value: "Custom" },
+  ];
   return (
     <Formik
       enableReinitialize
@@ -175,10 +221,10 @@ function DoctorPrescription() {
 
         // Doctor Info
         doctor: uhid?.doctor?._id || "",
-        referredBy: "",
+        referredBy: uhid?.referredBy || "Self",
 
         // Clinical Details
-        historyOfAllergy: "",
+        historyOfAllergy: uhid?.knownAllergies,
         historyOfPresentIllness: "",
         physicalExamination: "",
 
@@ -281,7 +327,7 @@ function DoctorPrescription() {
             );
 
             // ✅ Construct the print URL
-            const printUrl = `/PreceptionPrint/${values.UHID}`;
+            const printUrl = `/preceptionprint/${values.UHID}`;
             console.log("✅ Navigating to Print Page:", printUrl);
 
             // Navigate to print page after short delay
@@ -622,33 +668,117 @@ function DoctorPrescription() {
                               />
                             </td>
                             <td>
-                              <Field
-                                name={`medicines[${index}].schedule`}
-                                component={Input}
-                                placeholder="e.g., 1-0-1"
+                              <Dropdown
+                                value={
+                                  values?.medicines?.[index]?.schedule || ""
+                                }
+                                options={scheduledata}
+                                onChange={(e) =>
+                                  setFieldValue(
+                                    `medicines[${index}].schedule`,
+                                    e.value,
+                                  )
+                                }
+                                placeholder="Select Schedule"
+                                className={
+                                  errors?.medicines?.[index]?.schedule
+                                    ? "p-invalid"
+                                    : ""
+                                }
+                                style={{ width: "100%" }}
                               />
+
+                              {errors?.medicines?.[index]?.schedule && (
+                                <small className="p-error block">
+                                  {errors.medicines[index].schedule}
+                                </small>
+                              )}
                             </td>
                             <td>
-                              <Field
-                                name={`medicines[${index}].instruction`}
-                                component={Input}
-                                placeholder="Before/After food"
+                              <Dropdown
+                                value={
+                                  values?.medicines?.[index]?.instruction || ""
+                                }
+                                options={instructiondata}
+                                onChange={(e) =>
+                                  setFieldValue(
+                                    `medicines[${index}].instruction`,
+                                    e.value,
+                                  )
+                                }
+                                placeholder="Select instruction"
+                                className={
+                                  errors?.medicines?.[index]?.instruction
+                                    ? "p-invalid"
+                                    : ""
+                                }
+                                style={{ width: "100%" }}
                               />
+
+                              {errors?.medicines?.[index]?.instruction && (
+                                <small className="p-error block">
+                                  {errors.medicines[index].instruction}
+                                </small>
+                              )}
                             </td>
                             <td>
-                              <Field
+                              {/* <Field
                                 name={`medicines[${index}].route`}
                                 component={Input}
                                 placeholder="Oral/IV"
+                              /> */}
+
+                              <Dropdown
+                                value={values?.medicines?.[index]?.route || ""}
+                                options={Routedata}
+                                onChange={(e) =>
+                                  setFieldValue(
+                                    `medicines[${index}].route`,
+                                    e.value,
+                                  )
+                                }
+                                placeholder="Select route"
+                                className={
+                                  errors?.medicines?.[index]?.route
+                                    ? "p-invalid"
+                                    : ""
+                                }
+                                style={{ width: "100%" }}
                               />
+
+                              {errors?.medicines?.[index]?.route && (
+                                <small className="p-error block">
+                                  {errors.medicines[index].route}
+                                </small>
+                              )}
                             </td>
                             <td>
-                              <Field
-                                name={`medicines[${index}].days`}
-                                component={Input}
-                                placeholder="Days"
-                                type="number"
+                              <Dropdown
+                                key={index}
+                                value={values?.medicines?.[index]?.days}
+                                options={daysdata}
+                                optionLabel="label"
+                                optionValue="value"
+                                onChange={(e) =>
+                                  setFieldValue(
+                                    `medicines[${index}].days`,
+                                    e.value,
+                                  )
+                                }
+                                placeholder="Select days"
+                                className={
+                                  errors?.medicines?.[index]?.days
+                                    ? "p-invalid"
+                                    : ""
+                                }
+                                style={{ width: "100%" }}
                               />
+
+                              {errors?.medicines?.[index]?.days && (
+                                <small className="p-error block">
+                                  {errors.medicines[index].days}
+                                </small>
+                              )}
                             </td>
                             <td className="text-center">
                               <Button
@@ -759,7 +889,11 @@ function DoctorPrescription() {
               <div className="text-center mt-4">
                 <Button
                   type="submit"
-                  label={buttonmode==="CREATE" ?"CREATE & Print" :"UPDATE & Print"}
+                  label={
+                    buttonmode === "CREATE"
+                      ? "CREATE & Print"
+                      : "UPDATE & Print"
+                  }
                   icon={loading ? "pi pi-spin pi-spinner" : "pi pi-check"}
                   className="btn-custom px-5 rounded"
                   loading={loading}

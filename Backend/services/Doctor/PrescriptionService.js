@@ -101,6 +101,19 @@ class PrescriptionService {
     return prescription;
   }
 
+
+   static async getPrescriptionByUHID(uhid) {
+    const prescription = await Prescription.findOne({ UHID: uhid})
+      .populate("patient")
+      .populate("doctor");
+
+    if (!prescription || !prescription.isActive) {
+      throw new Error("Prescription not found");
+    }
+
+    return prescription;
+  }
+
   // Get Prescriptions by Patient (UHID or ID)
   static async getPrescriptionsByPatient(patientIdentifier) {
     let query = { isActive: true };

@@ -4,17 +4,18 @@ const router = express.Router();
 const prescriptionController = require("../../controllers/Doctor/prescriptionController");
 
 // Create prescription
-router.post("/", prescriptionController.createPrescription);
+router.post("/uhid/:uhid", prescriptionController.createPrescription);
+router.get("/checkByuhid/:uhid", prescriptionController.checkCreateOrUpdate);
 
 // Get all prescriptions (with filters)
 router.get("/", prescriptionController.getAllPrescriptions);
 
 // Get prescription statistics
-router.get("/stats", prescriptionController.getPrescriptionStats);
+router.get("/stats", prescriptionController.getPrescriptionStats);       
 
-// Get prescription by ID
+// Get prescription by ID and UHID
 router.get("/:id", prescriptionController.getPrescriptionById);
-
+router.get("/uhid/:uhid", prescriptionController.getPrescriptionByUHID);
 // Get prescriptions by patient (UHID or ID)
 router.get(
   "/patient/:patientIdentifier",

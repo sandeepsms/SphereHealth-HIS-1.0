@@ -74,7 +74,7 @@ const prescriptionSchema = new mongoose.Schema(
           default: "Oral",
         },
         days: {
-          type: Number,
+          type: String,
           default: 1,
         },
       },

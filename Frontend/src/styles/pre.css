@@ -1,0 +1,213 @@
+
+
+.prescription-print-container {
+  max-width: 210mm;
+  margin: 0 auto;
+  padding: 12px;
+  background: #f5f5f5;
+}
+
+#printArea {
+  width: 210mm;
+  min-height: 297mm;
+  padding: 10mm;
+  background: white;
+}
+
+
+
+
+.prescription-page {
+  width: 100%;
+  background: #fff;
+ 
+  box-sizing: border-box;
+  font-family: "Times New Roman", serif;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #000;
+}
+
+
+
+.prescription-header-professional {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.patient-info-compact{
+margin-top: 30px;
+}
+
+.hospital-name-main {
+  font-size: 22px;
+  font-weight: bold;
+  margin: 0;
+}
+
+.hospital-subtitle {
+  font-size: 12px;
+  margin: 2px 0 0 0;
+}
+
+.red-divider {
+  border-top: 1px solid #000;
+  margin: 8px 0 12px;
+}
+
+
+
+section {
+  margin-bottom: 10px;
+}
+
+.section-title-red {
+  font-size: 14px;
+  font-weight: bold;
+  margin-bottom: 4px;
+  text-decoration: underline;
+}
+
+
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 5px;
+}
+
+th,
+td {
+  border: 1px solid #000;
+  padding: 5px;
+  font-size: 12px;
+  vertical-align: top;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+
+th {
+  font-weight: bold;
+}
+
+
+
+.label-cell {
+  width: 18%;
+  font-weight: bold;
+  
+}
+
+.value-cell {
+  width: 32%;
+}
+
+
+
+.vitals-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.vital-badge {
+  border: 1px solid #000;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+
+.diagnosis-box,
+.advice-box {
+ 
+  padding: 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+
+
+.doctor-signature-professional {
+  margin-top: 25px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.signature-line {
+  width: 180px;
+  border-top: 1px solid #c00e0e;
+  margin: 10px 0 4px;
+}
+
+.signature-label {
+  font-size: 12px;
+  margin-right: 36px;
+  color: #c00e0e;
+}
+
+
+
+.prescription-footer-professional {
+  margin-top: 12px;
+  font-size: 11px;
+  text-align: center;
+}
+
+.footer-divider {
+  border-top: 1px solid #000;
+  margin-bottom: 4px;
+}
+
+.clinical-section{
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+
+.info-table td{
+  border: none !important;
+}
+
+
+
+
+
+@media print {
+
+  html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .prescription-page {
+    height: 297mm !important;
+    overflow: hidden !important;
+  }
+
+  .prescription-print-container {
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .signature-label {
+  font-size: 12px;
+  margin-right: 36px;
+  color: #c00e0e;
+}
+  /* 🔥 REMOVE EXTRA SPACE */
+  p, h1, h2, h3, h4, h5, h6 {
+    margin: 0 ;
+  }
+
+  section {
+    margin-bottom: 6px !important;
+  }
+
+  /* REMOVE LAST ELEMENT EXTRA SPACE */
+  .prescription-footer-professional {
+    margin-bottom: 0 !important;
+  }
+
+}
+
