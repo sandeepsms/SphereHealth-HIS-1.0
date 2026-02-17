@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { hospitalChargesService } from "../../services/charges/hospitalChargesService";
+import { hospitalChargesService } from "../../Services/charges/hospitalChargesService";
 
 // PrimeReact Imports
 import { DataTable } from "primereact/datatable";
