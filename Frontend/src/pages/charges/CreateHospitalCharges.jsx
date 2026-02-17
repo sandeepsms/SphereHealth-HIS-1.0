@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { hospitalChargesService } from "../../services/charges/hospitalChargesService";
+import { hospitalChargesService } from "../../Services/charges/hospitalChargesService";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 
