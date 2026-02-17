@@ -14,6 +14,12 @@ import { tpaServiceService } from "../../Services/tpa/tpaServiceService";
 import { tpaService } from "../../Services/tpa/tpaService";
 import "../../styles/TPAServiceManagement.css";
 
+const SERVICE_TYPES = [
+  { label: "Fixed", value: "fixed" },
+  { label: "Quantity", value: "quantity" },
+  { label: "Hourly", value: "hourly" },
+];
+
 function TPAServiceManagement() {
   const [tpaServiceList, setTPAServiceList] = useState([]);
   const [tpaList, setTPAList] = useState([]);
@@ -25,14 +31,14 @@ function TPAServiceManagement() {
   const [loading, setLoading] = useState(false);
   const toast = React.useRef(null);
 
-  // Validation Schema
   const validationSchema = yup.object({
-    tpaName: yup.string().required("TPA is required"),
-    service: yup
+    tpaId: yup.string().required("TPA is required"),
+    services: yup
       .array()
       .of(
         yup.object({
           Name: yup.string().required("Test name is required"),
+          serviceType: yup.string().required("Service type is required"),
           Amount: yup
             .number()
             .min(0, "Amount must be positive")
@@ -46,7 +52,6 @@ function TPAServiceManagement() {
       .min(1, "At least one test is required"),
   });
 
-  // Fetch TPAs and Services
   const fetchData = async () => {
     setLoading(true);
     try {
@@ -55,14 +60,14 @@ function TPAServiceManagement() {
         tpaServiceService.getAllTPAServices(),
       ]);
 
-      // Filter only active TPAs
       const activeTpas = (tpaRes.data || []).filter(
         (tpa) => tpa.isActive !== false,
       );
       setTPAList(activeTpas);
 
-      setTPAServiceList(serviceRes.data || []);
-      setFilteredList(serviceRes.data || []);
+      const serviceData = serviceRes.data || [];
+      setTPAServiceList(serviceData);
+      setFilteredList(serviceData);
     } catch (error) {
       toast.current.show({
         severity: "error",
@@ -79,22 +84,24 @@ function TPAServiceManagement() {
     fetchData();
   }, []);
 
-  // Search Filter
   useEffect(() => {
     const filtered = tpaServiceList.filter(
       (service) =>
-        service.tpaName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        service.tpaCode?.toLowerCase().includes(searchTerm.toLowerCase()),
+        service.tpaId?.tpaName
+          ?.toLowerCase()
+          .includes(searchTerm.toLowerCase()) ||
+        service.tpaId?.tpaCode
+          ?.toLowerCase()
+          .includes(searchTerm.toLowerCase()),
     );
     setFilteredList(filtered);
   }, [searchTerm, tpaServiceList]);
 
-  // Submit Handler
   const handleSubmit = async (values, { resetForm }) => {
     try {
       const payload = {
-        tpaName: values.tpaName,
-        service: values.service,
+        tpaId: values.tpaId,
+        services: values.services,
       };
 
       if (editingService) {
@@ -107,11 +114,11 @@ function TPAServiceManagement() {
         });
         setEditingService(null);
       } else {
-        await tpaServiceService.createTPAService(payload);
+        const res = await tpaServiceService.createTPAService(payload);
         toast.current.show({
           severity: "success",
           summary: "Success",
-          detail: "TPA Service created successfully",
+          detail: res.message || "TPA Service created successfully",
           life: 3000,
         });
       }
@@ -127,16 +134,14 @@ function TPAServiceManagement() {
     }
   };
 
-  // Edit Handler
   const handleEdit = (service) => {
     setEditingService(service);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  // Delete Handler
   const handleDelete = (service) => {
     confirmDialog({
-      message: `Are you sure you want to delete ${service.tpaName}?`,
+      message: `Are you sure you want to delete ${service.tpaId?.tpaName}?`,
       header: "Delete Confirmation",
       icon: "pi pi-exclamation-triangle",
       accept: async () => {
@@ -161,19 +166,38 @@ function TPAServiceManagement() {
     });
   };
 
-  // View Handler
   const handleView = (service) => {
     setViewingService(service);
     setViewDialog(true);
   };
 
-  // Calculate Total
   const calculateTotal = (amount, discount) => {
     const discountAmount = (amount * (discount || 0)) / 100;
     return amount - discountAmount;
   };
 
-  // DataTable Templates
+  const getServiceTypeBadge = (type) => {
+    const styles = {
+      fixed: { background: "#e8eaff", color: "#4f46e5" },
+      quantity: { background: "#e6f7f2", color: "#10b981" },
+      hourly: { background: "#fff8e6", color: "#f59e0b" },
+    };
+    const labels = { fixed: "Fixed", quantity: "Quantity", hourly: "Hourly" };
+    return (
+      <span
+        style={{
+          padding: "3px 10px",
+          borderRadius: "12px",
+          fontSize: "12px",
+          fontWeight: 600,
+          ...(styles[type] || { background: "#f0f0f0", color: "#666" }),
+        }}
+      >
+        {labels[type] || type}
+      </span>
+    );
+  };
+
   const actionBodyTemplate = (rowData) => {
     return (
       <div className="flex gap-2">
@@ -208,13 +232,13 @@ function TPAServiceManagement() {
   const servicesBodyTemplate = (rowData) => {
     return (
       <span className="service-count-badge">
-        {rowData.service?.length || 0} Tests
+        {rowData.services?.length || 0} Tests
       </span>
     );
   };
 
   const codeBodyTemplate = (rowData) => {
-    return <span className="tpa-code-badge">{rowData.tpaCode}</span>;
+    return <span className="tpa-code-badge">{rowData.tpaId?.tpaCode}</span>;
   };
 
   return (
@@ -222,12 +246,10 @@ function TPAServiceManagement() {
       <Toast ref={toast} />
       <ConfirmDialog />
 
-      {/* Header */}
       <div className="page-header" style={{ marginTop: "10px" }}>
         <h1 className="page-title">TPA Service Management</h1>
       </div>
 
-      {/* Add/Edit Form */}
       <div className="form-card" style={{ marginTop: "15px" }}>
         <h2 className="form-title">
           {editingService ? "Edit TPA Service" : "Add New TPA Service"}
@@ -235,9 +257,21 @@ function TPAServiceManagement() {
 
         <Formik
           initialValues={{
-            tpaName: editingService?.tpaName || "",
-            service: editingService?.service || [
-              { Name: "", Amount: "", Discount: 0, Totalamount: 0 },
+            tpaId: editingService?.tpaId?._id || editingService?.tpaId || "",
+            services: editingService?.services?.map((s) => ({
+              Name: s.Name,
+              serviceType: s.serviceType || "fixed",
+              Amount: s.Amount,
+              Discount: s.Discount,
+              Totalamount: s.Totalamount,
+            })) || [
+              {
+                Name: "",
+                serviceType: "fixed",
+                Amount: 0,
+                Discount: 0,
+                Totalamount: 0,
+              },
             ],
           }}
           validationSchema={validationSchema}
@@ -249,30 +283,28 @@ function TPAServiceManagement() {
               {/* TPA Selection */}
               <div className="p-fluid">
                 <div className="field">
-                  <label htmlFor="tpaName">Select TPA *</label>
+                  <label htmlFor="tpaId">Select TPA *</label>
                   <Dropdown
-                    id="tpaName"
-                    value={values.tpaName}
+                    id="tpaId"
+                    value={values.tpaId}
                     options={tpaList.map((tpa) => ({
                       label: `${tpa.tpaName} (${tpa.tpaCode})`,
-                      value: tpa.tpaName,
+                      value: tpa._id,
                     }))}
-                    onChange={(e) => setFieldValue("tpaName", e.value)}
+                    onChange={(e) => setFieldValue("tpaId", e.value)}
                     placeholder="Select TPA"
                     filter
-                    className={
-                      errors.tpaName && touched.tpaName ? "p-invalid" : ""
-                    }
+                    className={errors.tpaId && touched.tpaId ? "p-invalid" : ""}
                     disabled={editingService !== null}
                   />
-                  {errors.tpaName && touched.tpaName && (
-                    <small className="p-error">{errors.tpaName}</small>
+                  {errors.tpaId && touched.tpaId && (
+                    <small className="p-error">{errors.tpaId}</small>
                   )}
                 </div>
               </div>
 
               {/* Services Array */}
-              <FieldArray name="service">
+              <FieldArray name="services">
                 {({ push, remove }) => (
                   <div
                     className="services-section"
@@ -288,6 +320,7 @@ function TPAServiceManagement() {
                         onClick={() =>
                           push({
                             Name: "",
+                            serviceType: "fixed",
                             Amount: 0,
                             Discount: 0,
                             Totalamount: 0,
@@ -298,46 +331,98 @@ function TPAServiceManagement() {
 
                     <div className="services-table">
                       <DataTable
-                        value={values.service}
+                        value={values.services}
                         responsiveLayout="scroll"
                       >
+                        {/* Test Name */}
                         <Column
                           header="Test Name"
                           body={(rowData, options) => (
-                            <InputText
-                              value={values.service[options.rowIndex].Name}
-                              onChange={(e) =>
-                                setFieldValue(
-                                  `service[${options.rowIndex}].Name`,
-                                  e.target.value,
-                                )
-                              }
-                              placeholder="Enter test name"
-                              className={
-                                errors.service?.[options.rowIndex]?.Name &&
-                                touched.service?.[options.rowIndex]?.Name
-                                  ? "p-invalid w-full"
-                                  : "w-full"
-                              }
-                            />
+                            <div>
+                              <InputText
+                                value={values.services[options.rowIndex].Name}
+                                onChange={(e) =>
+                                  setFieldValue(
+                                    `services[${options.rowIndex}].Name`,
+                                    e.target.value,
+                                  )
+                                }
+                                placeholder="Enter test name"
+                                className={
+                                  errors.services?.[options.rowIndex]?.Name &&
+                                  touched.services?.[options.rowIndex]?.Name
+                                    ? "p-invalid w-full"
+                                    : "w-full"
+                                }
+                              />
+                              {errors.services?.[options.rowIndex]?.Name &&
+                                touched.services?.[options.rowIndex]?.Name && (
+                                  <small className="p-error">
+                                    {errors.services[options.rowIndex].Name}
+                                  </small>
+                                )}
+                            </div>
                           )}
                         />
+
+                        {/* Service Type */}
                         <Column
-                          header="Amount"
+                          header="Type"
+                          body={(rowData, options) => (
+                            <div>
+                              <Dropdown
+                                value={
+                                  values.services[options.rowIndex].serviceType
+                                }
+                                options={SERVICE_TYPES}
+                                onChange={(e) =>
+                                  setFieldValue(
+                                    `services[${options.rowIndex}].serviceType`,
+                                    e.value,
+                                  )
+                                }
+                                placeholder="Select type"
+                                className={
+                                  errors.services?.[options.rowIndex]
+                                    ?.serviceType &&
+                                  touched.services?.[options.rowIndex]
+                                    ?.serviceType
+                                    ? "p-invalid w-full"
+                                    : "w-full"
+                                }
+                              />
+                              {errors.services?.[options.rowIndex]
+                                ?.serviceType &&
+                                touched.services?.[options.rowIndex]
+                                  ?.serviceType && (
+                                  <small className="p-error">
+                                    {
+                                      errors.services[options.rowIndex]
+                                        .serviceType
+                                    }
+                                  </small>
+                                )}
+                            </div>
+                          )}
+                        />
+
+                        {/* Amount */}
+                        <Column
+                          header="Amount (₹)"
                           body={(rowData, options) => (
                             <InputNumber
-                              value={values.service[options.rowIndex].Amount}
+                              value={values.services[options.rowIndex].Amount}
                               onValueChange={(e) => {
                                 setFieldValue(
-                                  `service[${options.rowIndex}].Amount`,
+                                  `services[${options.rowIndex}].Amount`,
                                   e.value,
                                 );
                                 const total = calculateTotal(
                                   e.value,
-                                  values.service[options.rowIndex].Discount,
+                                  values.services[options.rowIndex].Discount,
                                 );
                                 setFieldValue(
-                                  `service[${options.rowIndex}].Totalamount`,
+                                  `services[${options.rowIndex}].Totalamount`,
                                   total,
                                 );
                               }}
@@ -345,30 +430,32 @@ function TPAServiceManagement() {
                               currency="INR"
                               locale="en-IN"
                               className={
-                                errors.service?.[options.rowIndex]?.Amount &&
-                                touched.service?.[options.rowIndex]?.Amount
+                                errors.services?.[options.rowIndex]?.Amount &&
+                                touched.services?.[options.rowIndex]?.Amount
                                   ? "p-invalid w-full"
                                   : "w-full"
                               }
                             />
                           )}
                         />
+
+                        {/* Discount */}
                         <Column
                           header="Discount (%)"
                           body={(rowData, options) => (
                             <InputNumber
-                              value={values.service[options.rowIndex].Discount}
+                              value={values.services[options.rowIndex].Discount}
                               onValueChange={(e) => {
                                 setFieldValue(
-                                  `service[${options.rowIndex}].Discount`,
+                                  `services[${options.rowIndex}].Discount`,
                                   e.value,
                                 );
                                 const total = calculateTotal(
-                                  values.service[options.rowIndex].Amount,
+                                  values.services[options.rowIndex].Amount,
                                   e.value,
                                 );
                                 setFieldValue(
-                                  `service[${options.rowIndex}].Totalamount`,
+                                  `services[${options.rowIndex}].Totalamount`,
                                   total,
                                 );
                               }}
@@ -379,12 +466,14 @@ function TPAServiceManagement() {
                             />
                           )}
                         />
+
+                        {/* Total */}
                         <Column
                           header="Total Amount"
                           body={(rowData, options) => (
                             <InputNumber
                               value={
-                                values.service[options.rowIndex].Totalamount
+                                values.services[options.rowIndex].Totalamount
                               }
                               mode="currency"
                               currency="INR"
@@ -394,6 +483,8 @@ function TPAServiceManagement() {
                             />
                           )}
                         />
+
+                        {/* Remove */}
                         <Column
                           header="Actions"
                           body={(rowData, options) => (
@@ -402,8 +493,9 @@ function TPAServiceManagement() {
                               severity="danger"
                               rounded
                               outlined
+                              type="button"
                               onClick={() => remove(options.rowIndex)}
-                              disabled={values.service.length === 1}
+                              disabled={values.services.length === 1}
                             />
                           )}
                         />
@@ -440,7 +532,7 @@ function TPAServiceManagement() {
         </Formik>
       </div>
 
-      {/* Search Bar */}
+      {/* Search */}
       <div className="search-section" style={{ marginTop: "20px" }}>
         <span className="p-input-icon-left">
           <i className="pi pi-search" />
@@ -456,7 +548,7 @@ function TPAServiceManagement() {
         </span>
       </div>
 
-      {/* Data Table */}
+      {/* Main Table */}
       <div className="table-card" style={{ marginTop: "20px" }}>
         <DataTable
           value={filteredList}
@@ -466,7 +558,11 @@ function TPAServiceManagement() {
           emptyMessage="No TPA Services found"
           responsiveLayout="scroll"
         >
-          <Column field="tpaName" header="TPA Name" sortable />
+          <Column
+            header="TPA Name"
+            body={(rowData) => rowData.tpaId?.tpaName || "N/A"}
+            sortable
+          />
           <Column header="TPA Code" body={codeBodyTemplate} sortable />
           <Column header="Tests" body={servicesBodyTemplate} />
           <Column header="Actions" body={actionBodyTemplate} />
@@ -477,7 +573,7 @@ function TPAServiceManagement() {
       <Dialog
         header="TPA Service Details"
         visible={viewDialog}
-        style={{ width: "50vw" }}
+        style={{ width: "60vw" }}
         onHide={() => setViewDialog(false)}
         breakpoints={{ "960px": "75vw", "641px": "90vw" }}
       >
@@ -485,24 +581,32 @@ function TPAServiceManagement() {
           <div className="view-dialog-content">
             <div className="detail-row">
               <strong>TPA Name:</strong>
-              <span>{viewingService.tpaName}</span>
+              <span>{viewingService.tpaId?.tpaName}</span>
             </div>
             <div className="detail-row">
               <strong>TPA Code:</strong>
-              <span className="tpa-code-badge">{viewingService.tpaCode}</span>
+              <span className="tpa-code-badge">
+                {viewingService.tpaId?.tpaCode}
+              </span>
             </div>
             <div className="detail-row">
               <strong>Total Tests:</strong>
-              <span>{viewingService.service?.length || 0}</span>
+              <span>{viewingService.services?.length || 0}</span>
             </div>
             <div className="services-list">
               <h4>Tests:</h4>
-              <DataTable value={viewingService.service}>
+              <DataTable value={viewingService.services}>
                 <Column field="Name" header="Test Name" />
+                <Column
+                  header="Type"
+                  body={(rowData) => getServiceTypeBadge(rowData.serviceType)}
+                />
                 <Column
                   field="Amount"
                   header="Amount"
-                  body={(rowData) => `₹${rowData.Amount}`}
+                  body={(rowData) =>
+                    `₹${rowData.Amount?.toLocaleString("en-IN")}`
+                  }
                 />
                 <Column
                   field="Discount"
@@ -512,7 +616,9 @@ function TPAServiceManagement() {
                 <Column
                   field="Totalamount"
                   header="Total"
-                  body={(rowData) => `₹${rowData.Totalamount}`}
+                  body={(rowData) =>
+                    `₹${rowData.Totalamount?.toLocaleString("en-IN")}`
+                  }
                 />
               </DataTable>
             </div>

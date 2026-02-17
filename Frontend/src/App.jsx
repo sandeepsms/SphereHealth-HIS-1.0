@@ -152,7 +152,7 @@ export default function App() {
           <Route path="/beds" element={<BedManagement />} />
           <Route path="/bed-visual" element={<BedVisualLayout />} />
           <Route path="/rooms" element={<RoomManagement />} />
-           <Route path="/roomcategory" element={<AddRoomCategory />} />
+          <Route path="/roomcategory" element={<AddRoomCategory />} />
           <Route path="/wards" element={<WardManagement />} />
           <Route path="/buildings" element={<BuildingManagement />} />
           <Route path="/floors" element={<FloorManagement />} />
