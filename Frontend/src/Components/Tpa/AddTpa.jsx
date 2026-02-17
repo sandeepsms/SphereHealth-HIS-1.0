@@ -98,9 +98,7 @@ function AddTpa() {
     }
   };
 
-
-
-// create search method in TPA Data...................................
+  // create search method in TPA Data...................................
 
   useEffect(() => {
     const filtered = tpaList.filter(
@@ -113,7 +111,6 @@ function AddTpa() {
     setFilteredList(filtered);
     setCurrentPage(1);
   }, [searchTerm, tpaList]);
-
 
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
@@ -635,8 +632,6 @@ function AddTpa() {
                     placeholder="Select Room Category"
                     filter
                     onChange={(e) =>
-                   
-
                       setFieldValue("roomCharges[0].roomCategory", e.value)
                     }
                     className={
