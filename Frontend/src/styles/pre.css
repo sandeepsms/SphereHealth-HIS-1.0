@@ -1,5 +1,3 @@
-
-
 .prescription-print-container {
   max-width: 210mm;
   margin: 0 auto;
@@ -20,7 +18,7 @@
 .prescription-page {
   width: 100%;
   background: #fff;
- 
+
   box-sizing: border-box;
   font-family: "Times New Roman", serif;
   font-size: 13px;
@@ -36,8 +34,8 @@
   gap: 12px;
 }
 
-.patient-info-compact{
-margin-top: 30px;
+.patient-info-compact {
+  margin-top: 30px;
 }
 
 .hospital-name-main {
@@ -96,7 +94,7 @@ th {
 .label-cell {
   width: 18%;
   font-weight: bold;
-  
+
 }
 
 .value-cell {
@@ -120,7 +118,7 @@ th {
 
 .diagnosis-box,
 .advice-box {
- 
+
   padding: 6px;
   white-space: pre-wrap;
   word-break: break-word;
@@ -159,13 +157,13 @@ th {
   margin-bottom: 4px;
 }
 
-.clinical-section{
+.clinical-section {
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: break-word;
 }
 
-.info-table td{
+.info-table td {
   border: none !important;
 }
 
@@ -175,7 +173,8 @@ th {
 
 @media print {
 
-  html, body {
+  html,
+  body {
     margin: 0 !important;
     padding: 0 !important;
   }
@@ -191,13 +190,20 @@ th {
   }
 
   .signature-label {
-  font-size: 12px;
-  margin-right: 36px;
-  color: #c00e0e;
-}
+    font-size: 12px;
+    margin-right: 36px;
+    color: #c00e0e;
+  }
+
   /* 🔥 REMOVE EXTRA SPACE */
-  p, h1, h2, h3, h4, h5, h6 {
-    margin: 0 ;
+  p,
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    margin: 0;
   }
 
   section {
@@ -210,4 +216,3 @@ th {
   }
 
 }
-

@@ -44,7 +44,7 @@ const RoomSchema = new mongoose.Schema(
 
     roomCategory: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "RoomCategory",
+      ref: "RoomCategoryModel",
       required: [true, "Room category is required"],
     },
 
@@ -100,7 +100,7 @@ const RoomSchema = new mongoose.Schema(
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
-  }
+  },
 );
 
 RoomSchema.index({ building: 1, floor: 1 });

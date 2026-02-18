@@ -11,14 +11,6 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
   const location = useLocation();
 
   const menuModel = [
-    // {
-    //   label: "Dashboard",
-    //   icon: "pi pi-home",
-    //   command: () => {
-    //     navigate("/dashboard");
-    //     toggleSidebar();
-    //   },
-    // },
     {
       label: "Patient Management",
       icon: "pi pi-users",
@@ -39,82 +31,82 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
             toggleSidebar();
           },
         },
-        // {
-        //   label: "Nurse",
-        //   icon: "pi pi-user",
-        //   command: () => {
-        //     navigate("/nurse");
-        //     toggleSidebar();
-        //   },
-        // },
-        // {
-        //   label: "Service Alldata",
-        //   icon: "pi pi-list",
-        //   command: () => {
-        //     navigate("/ServiceAlldata");
-        //     toggleSidebar();
-        //   },
-        // },
       ],
     },
+
+    // ══════════════════════════════════════════════════════════════════════
+    // BILLING
+    // ══════════════════════════════════════════════════════════════════════
     {
       label: "Billing",
       icon: "pi pi-money-bill",
       items: [
-        //     {
-        //       label: "Bill Service",
-        //       icon: "pi pi-file",
-        //       command: () => {
-        //         navigate("/services");
-        //         toggleSidebar();
-        //       },
-        //     },
-        //     {
-        //       label: "TPA Service",
-        //       icon: "pi pi-file-edit",
-        //       command: () => {
-        //         navigate("/TPA");
-        //         toggleSidebar();
-        //       },
-        //     },
-        //   ],
-        // },
-        // {
-        //   label: "Master Data",
-        //   icon: "pi pi-database",
-        //   items: [
-        //     {
-        //       label: "Buildings",
-        //       icon: "pi pi-building",
-        //       command: () => {
-        //         navigate("/buildings");
-        //         toggleSidebar();
-        //       },
-        //     },
-        //     {
-        //       label: "Floors",
-        //       icon: "pi pi-arrows-v",
-        //       command: () => {
-        //         navigate("/floors");
-        //         toggleSidebar();
-        //       },
-        //     },
-        //     {
-        //       label: "Wards",
-        //       icon: "pi pi-home",
-        //       command: () => {
-        //         navigate("/wards");
-        //         toggleSidebar();
-        //       },
-        //     },
-            {
-              label: "Rooms",
-              icon: "pi pi-box",
-              command: () => {
-                navigate("/rooms");
-                toggleSidebar();
-              },
-            },
+        {
+          label: "Bills List",
+          icon: "pi pi-list",
+          command: () => {
+            navigate("/billing");
+            toggleSidebar();
+          },
+        },
+        {
+          label: "Generate Bill",
+          icon: "pi pi-file-plus",
+          command: () => {
+            navigate("/billing/create");
+            toggleSidebar();
+          },
+        },
+      ],
+    },
+
+    // ══════════════════════════════════════════════════════════════════════
+    // MASTER DATA (Buildings, Floors, Wards, Rooms, Room Category, Department)
+    // ══════════════════════════════════════════════════════════════════════
+    {
+      label: "Master Data",
+      icon: "pi pi-database",
+      items: [
+        {
+          label: "Buildings",
+          icon: "pi pi-building",
+          command: () => {
+            navigate("/buildings");
+            toggleSidebar();
+          },
+        },
+        {
+          label: "Floors",
+          icon: "pi pi-arrows-v",
+          command: () => {
+            navigate("/floors");
+            toggleSidebar();
+          },
+        },
+        {
+          label: "Wards",
+          icon: "pi pi-home",
+          command: () => {
+            navigate("/wards");
+            toggleSidebar();
+          },
+        },
+        {
+          label: "Rooms",
+          icon: "pi pi-box",
+          command: () => {
+            navigate("/rooms");
+            toggleSidebar();
+          },
+        },
+        {
+          label: "Room Category",
+          icon: "pi pi-th-large",
+          command: () => {
+            navigate("/roomcategory");
+            toggleSidebar();
+          },
+        },
         {
           label: "Department",
           icon: "pi pi-sitemap",
@@ -125,32 +117,39 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
         },
       ],
     },
-    // {
-    //   label: "Bed Management",
-    //   icon: "pi pi-th-large",
-    //   items: [
-    //     {
-    //       label: "Manage Beds",
-    //       icon: "pi pi-list",
-    //       command: () => {
-    //         navigate("/beds");
-    //         toggleSidebar();
-    //       },
-    //     },
-    //     {
-    //       label: "Bed Visual Layout",
-    //       icon: "pi pi-eye",
-    //       command: () => {
-    //         navigate("/bed-visual");
-    //         toggleSidebar();
-    //       },
-    //     },
-    //   ],
-    // },
 
+    // ══════════════════════════════════════════════════════════════════════
+    // BED MANAGEMENT
+    // ══════════════════════════════════════════════════════════════════════
+    {
+      label: "Bed Management",
+      icon: "pi pi-table",
+      items: [
+        {
+          label: "Manage Beds",
+          icon: "pi pi-list",
+          command: () => {
+            navigate("/beds");
+            toggleSidebar();
+          },
+        },
+        {
+          label: "Bed Visual Layout",
+          icon: "pi pi-eye",
+          command: () => {
+            navigate("/bed-visual");
+            toggleSidebar();
+          },
+        },
+      ],
+    },
+
+    // ══════════════════════════════════════════════════════════════════════
+    // DOCTOR MANAGEMENT
+    // ══════════════════════════════════════════════════════════════════════
     {
       label: "Doctor Management",
-      icon: "pi pi-user",
+      icon: "pi pi-user-edit",
       items: [
         {
           label: "Create Doctor",
@@ -163,22 +162,24 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
       ],
     },
 
+    // ══════════════════════════════════════════════════════════════════════
+    // TPA SERVICES
+    // ══════════════════════════════════════════════════════════════════════
     {
-      label: "TPA Service",
-      icon: "pi pi-user",
+      label: "TPA Services",
+      icon: "pi pi-briefcase",
       items: [
         {
           label: "Add Service",
-          icon: "pi pi-user-plus",
+          icon: "pi pi-plus-circle",
           command: () => {
             navigate("/addservice");
             toggleSidebar();
           },
         },
-
         {
           label: "Add TPA",
-          icon: "pi pi-user-plus",
+          icon: "pi pi-building",
           command: () => {
             navigate("/addtpa");
             toggleSidebar();
@@ -187,27 +188,31 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
       ],
     },
 
-
-
-
-
-
-{
-  label:" Room Category",
-  icon:"pi pi-room",
-  items:[
+    // ══════════════════════════════════════════════════════════════════════
+    // HOSPITAL CHARGES
+    // ══════════════════════════════════════════════════════════════════════
     {
-    label:"Add Room Category",
-    icon:"pi pi-room",
-    command:()=>{
-      navigate("/roomcategory");
-      toggleSidebar();
-    }
-  }
-]
-}
-
-
+      label: "Hospital Charges",
+      icon: "pi pi-dollar",
+      items: [
+        {
+          label: "Charges List",
+          icon: "pi pi-list",
+          command: () => {
+            navigate("/hospital-charges");
+            toggleSidebar();
+          },
+        },
+        {
+          label: "Create Charges",
+          icon: "pi pi-plus",
+          command: () => {
+            navigate("/hospital-charges/create");
+            toggleSidebar();
+          },
+        },
+      ],
+    },
   ];
 
   return (
@@ -218,7 +223,7 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
       style={{ width: "280px" }}
       className="modern-sidebar"
     >
-      {/* Header */}
+      {/* ═══ Header ═══ */}
       <div
         style={{
           padding: "25px 20px",
@@ -250,15 +255,15 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
         </p>
       </div>
 
-      {/* Menu */}
-      <div style={{ padding: "0 10px" }}>
+      {/* ═══ Menu ═══ */}
+      <div style={{ padding: "0 10px", paddingBottom: "80px" }}>
         <PanelMenu
           model={menuModel}
           style={{ width: "100%", border: "none" }}
         />
       </div>
 
-      {/* Footer */}
+      {/* ═══ Footer ═══ */}
       <div
         style={{
           position: "absolute",
@@ -284,9 +289,8 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
         <div style={{ fontSize: "12px", color: "#6c757d" }}>Version 1.0.0</div>
       </div>
 
-      {/* Custom Styles */}
+      {/* ═══ Custom Styles ═══ */}
       <style>{`
-        /* Remove all default borders and backgrounds */
         .modern-sidebar .p-sidebar-content {
           padding: 0 !important;
           background: #ffffff !important;
@@ -302,7 +306,6 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
           border: none !important;
         }
         
-        /* Header Links - No underline, clean look */
         .modern-sidebar .p-panelmenu-header-link {
           background-color: transparent !important;
           border: none !important;
@@ -327,7 +330,6 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
           outline: none !important;
         }
         
-        /* Active/Expanded state */
         .modern-sidebar .p-panelmenu-header-link.p-highlight {
           background: linear-gradient(135deg, #0891b2 0%, #0e7490 100%) !important;
           color: white !important;
@@ -338,7 +340,6 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
           color: white !important;
         }
         
-        /* Submenu container */
         .modern-sidebar .p-panelmenu-content {
           background-color: #f8f9fa !important;
           border: none !important;
@@ -347,7 +348,6 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
           margin-top: 5px !important;
         }
         
-        /* Submenu items - No underline */
         .modern-sidebar .p-menuitem-link {
           color: #4b5563 !important;
           padding: 11px 15px 11px 40px !important;
@@ -372,7 +372,6 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
           outline: none !important;
         }
         
-        /* Active submenu item */
         .modern-sidebar .p-menuitem-link.p-menuitem-link-active {
           background: linear-gradient(135deg, #0891b2 0%, #0e7490 100%) !important;
           color: white !important;
@@ -383,7 +382,6 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
           color: white !important;
         }
         
-        /* Icons */
         .modern-sidebar .p-menuitem-icon {
           margin-right: 12px !important;
           font-size: 16px !important;
@@ -401,12 +399,10 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
           transform: scale(1.1);
         }
         
-        /* Remove all focus outlines */
         .modern-sidebar * {
           outline: none !important;
         }
         
-        /* Smooth animations */
         .modern-sidebar .p-panelmenu-content {
           animation: slideDown 0.3s ease-out;
         }
@@ -422,7 +418,6 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
           }
         }
         
-        /* Remove any underlines globally */
         .modern-sidebar a,
         .modern-sidebar button,
         .modern-sidebar .p-menuitem-link,
