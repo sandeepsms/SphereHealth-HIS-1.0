@@ -1,6 +1,6 @@
 import { useFormik } from "formik";
 import React, { useEffect, useState, useRef } from "react";
-import logo from "../assets/logowebsite11.png";
+import logo from "../assets/BIMSLOGO.png";
 import "../../css/doctor.css";
 import { InputText } from "primereact/inputtext";
 import { FloatLabel } from "primereact/floatlabel";
@@ -66,7 +66,7 @@ export default function Doctor() {
     const fetchData = async () => {
       try {
         const Testdata = await axios.get(
-          "http://localhost:5000/api/Servicebilldata/getAllTestNames"
+          "http://localhost:5000/api/Servicebilldata/getAllTestNames",
         );
         // setTestDetail(Testdata.data); // .data use करना जरूरी है
         console.log("API Response:", Testdata.data);
@@ -274,17 +274,15 @@ export default function Doctor() {
 
             {/* Center: Hospital Name */}
             <div className="navbar-center">
-              <h1 className="hospital-name">SUKOON HOSPITALS</h1>
-              <p className="tagline">
-                run by Spherehealth Medical Solutions Pvt. Ltd.
-              </p>
+              <h1 className="hospital-name">BIMS</h1>
+              <p className="tagline">Bright Institute of Medical Sciences</p>
             </div>
 
             {/* Right: Contact Info */}
             <div className="navbar-right">
-              <p>📞 7988807650, 0130-4052310</p>
-              <p>✉️ admin@sukoonhospitals.com</p>
-              <p>📍 Mohalla Jatwara, Kumaro Ki Chopal ke Samne, Sonipat (HR)</p>
+              <p>📞 +91 - 7988307850</p>
+              <p>✉️ query.bims@gmail.com</p>
+              <p>📍Gau Shala Road, Jatawara, Sonipat - 131001</p>
             </div>
           </header>
 
@@ -585,7 +583,7 @@ export default function Doctor() {
                         onChange={(e) =>
                           formik.setFieldValue(
                             "Level_of_consciousness",
-                            e.value
+                            e.value,
                           )
                         }
                       />
@@ -606,7 +604,7 @@ export default function Doctor() {
                         onChange={(e) =>
                           formik.setFieldValue(
                             "Level_of_consciousness",
-                            e.value
+                            e.value,
                           )
                         }
                       />
@@ -626,7 +624,7 @@ export default function Doctor() {
                         onChange={(e) =>
                           formik.setFieldValue(
                             "Level_of_consciousness",
-                            e.value
+                            e.value,
                           )
                         }
                       />
@@ -1019,7 +1017,7 @@ export default function Doctor() {
                               onChange={(e) =>
                                 formik.setFieldValue(
                                   "RespiratorySystem",
-                                  e.value
+                                  e.value,
                                 )
                               }
                             />
@@ -1039,7 +1037,7 @@ export default function Doctor() {
                               onChange={(e) =>
                                 formik.setFieldValue(
                                   "RespiratorySystem",
-                                  e.value
+                                  e.value,
                                 )
                               }
                             />
@@ -1068,7 +1066,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Auscultation_Breath_Sounds",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -1089,7 +1087,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Auscultation_Breath_Sounds",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />
@@ -1109,7 +1107,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Auscultation_Breath_Sounds",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -1129,7 +1127,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Auscultation_Breath_Sounds",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -1149,7 +1147,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Auscultation_Breath_Sounds",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -1181,12 +1179,12 @@ export default function Doctor() {
                                         if (e.checked) {
                                           formik.setFieldValue(
                                             "Auscultation_Added_Sounds",
-                                            e.value
+                                            e.value,
                                           ); // ✅ sirf yahi select hoga
                                         } else {
                                           formik.setFieldValue(
                                             "Auscultation_Added_Sounds",
-                                            ""
+                                            "",
                                           ); // ✅ unselect karne par empty
                                         }
                                       }}
@@ -1210,12 +1208,12 @@ export default function Doctor() {
                                         if (e.checked) {
                                           formik.setFieldValue(
                                             "Auscultation_Added_Sounds",
-                                            e.value
+                                            e.value,
                                           ); // ✅ sirf yahi select hoga
                                         } else {
                                           formik.setFieldValue(
                                             "Auscultation_Added_Sounds",
-                                            ""
+                                            "",
                                           ); // ✅ unselect karne par empty
                                         }
                                       }}
@@ -1241,12 +1239,12 @@ export default function Doctor() {
                                         if (e.checked) {
                                           formik.setFieldValue(
                                             "Auscultation_Added_Sounds",
-                                            e.value
+                                            e.value,
                                           ); // ✅ sirf yahi select hoga
                                         } else {
                                           formik.setFieldValue(
                                             "Auscultation_Added_Sounds",
-                                            ""
+                                            "",
                                           ); // ✅ unselect karne par empty
                                         }
                                       }}
@@ -1272,12 +1270,12 @@ export default function Doctor() {
                                         if (e.checked) {
                                           formik.setFieldValue(
                                             "Auscultation_Added_Sounds",
-                                            e.value
+                                            e.value,
                                           ); // ✅ sirf yahi select hoga
                                         } else {
                                           formik.setFieldValue(
                                             "Auscultation_Added_Sounds",
-                                            ""
+                                            "",
                                           ); // ✅ unselect karne par empty
                                         }
                                       }}
@@ -1303,12 +1301,12 @@ export default function Doctor() {
                                         if (e.checked) {
                                           formik.setFieldValue(
                                             "Auscultation_Added_Sounds",
-                                            e.value
+                                            e.value,
                                           ); // ✅ sirf yahi select hoga
                                         } else {
                                           formik.setFieldValue(
                                             "Auscultation_Added_Sounds",
-                                            ""
+                                            "",
                                           ); // ✅ unselect karne par empty
                                         }
                                       }}
@@ -1331,12 +1329,12 @@ export default function Doctor() {
                                         if (e.checked) {
                                           formik.setFieldValue(
                                             "Auscultation_Added_Sounds",
-                                            e.value
+                                            e.value,
                                           ); // ✅ sirf yahi select hoga
                                         } else {
                                           formik.setFieldValue(
                                             "Auscultation_Added_Sounds",
-                                            ""
+                                            "",
                                           ); // ✅ unselect karne par empty
                                         }
                                       }}
@@ -1359,12 +1357,12 @@ export default function Doctor() {
                                         if (e.checked) {
                                           formik.setFieldValue(
                                             "Auscultation_Added_Sounds",
-                                            e.value
+                                            e.value,
                                           ); // ✅ sirf yahi select hoga
                                         } else {
                                           formik.setFieldValue(
                                             "Auscultation_Added_Sounds",
-                                            ""
+                                            "",
                                           ); // ✅ unselect karne par empty
                                         }
                                       }}
@@ -1389,7 +1387,7 @@ export default function Doctor() {
                                       onChange={(e) =>
                                         formik.setFieldValue(
                                           "Location_of_Findings_Lungs",
-                                          e.value
+                                          e.value,
                                         )
                                       }
                                     />{" "}
@@ -1409,7 +1407,7 @@ export default function Doctor() {
                                       onChange={(e) =>
                                         formik.setFieldValue(
                                           "Location_of_Findings_Lungs",
-                                          e.value
+                                          e.value,
                                         )
                                       }
                                     />{" "}
@@ -1430,7 +1428,7 @@ export default function Doctor() {
                                       onChange={(e) =>
                                         formik.setFieldValue(
                                           "Location_of_Findings_Lungs",
-                                          e.value
+                                          e.value,
                                         )
                                       }
                                     />{" "}
@@ -1453,7 +1451,7 @@ export default function Doctor() {
                                       onChange={(e) =>
                                         formik.setFieldValue(
                                           "Location_of_Findings_Zone",
-                                          e.value
+                                          e.value,
                                         )
                                       }
                                     />{" "}
@@ -1473,7 +1471,7 @@ export default function Doctor() {
                                       onChange={(e) =>
                                         formik.setFieldValue(
                                           "Location_of_Findings_Zone",
-                                          e.value
+                                          e.value,
                                         )
                                       }
                                     />{" "}
@@ -1494,7 +1492,7 @@ export default function Doctor() {
                                       onChange={(e) =>
                                         formik.setFieldValue(
                                           "Location_of_Findings_Zone",
-                                          e.value
+                                          e.value,
                                         )
                                       }
                                     />{" "}
@@ -1515,7 +1513,7 @@ export default function Doctor() {
                                       onChange={(e) =>
                                         formik.setFieldValue(
                                           "Location_of_Findings_Zone",
-                                          e.value
+                                          e.value,
                                         )
                                       }
                                     />{" "}
@@ -1542,7 +1540,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Percussion_Note",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -1561,7 +1559,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Percussion_Note",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -1581,7 +1579,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Percussion_Note",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -1601,7 +1599,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Percussion_Note",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -1621,7 +1619,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Trachea_Position",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -1641,7 +1639,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Trachea_Position",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -1661,7 +1659,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Trachea_Position",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -1726,7 +1724,7 @@ export default function Doctor() {
                                       onChange={(e) =>
                                         formik.setFieldValue(
                                           "Tenderness",
-                                          e.value
+                                          e.value,
                                         )
                                       }
                                     />{" "}
@@ -1746,7 +1744,7 @@ export default function Doctor() {
                                       onChange={(e) =>
                                         formik.setFieldValue(
                                           "Tenderness",
-                                          e.value
+                                          e.value,
                                         )
                                       }
                                     />
@@ -1773,7 +1771,7 @@ export default function Doctor() {
                                           onChange={(e) =>
                                             formik.setFieldValue(
                                               "Location_of_Tenderness",
-                                              e.value
+                                              e.value,
                                             )
                                           }
                                         />{" "}
@@ -1797,7 +1795,7 @@ export default function Doctor() {
                                           onChange={(e) =>
                                             formik.setFieldValue(
                                               "Location_of_Tenderness",
-                                              e.value
+                                              e.value,
                                             )
                                           }
                                         />
@@ -1818,7 +1816,7 @@ export default function Doctor() {
                                           onChange={(e) =>
                                             formik.setFieldValue(
                                               "Location_of_Tenderness",
-                                              e.value
+                                              e.value,
                                             )
                                           }
                                         />{" "}
@@ -1839,7 +1837,7 @@ export default function Doctor() {
                                           onChange={(e) =>
                                             formik.setFieldValue(
                                               "Location_of_Tenderness",
-                                              e.value
+                                              e.value,
                                             )
                                           }
                                         />{" "}
@@ -1860,7 +1858,7 @@ export default function Doctor() {
                                           onChange={(e) =>
                                             formik.setFieldValue(
                                               "Location_of_Tenderness",
-                                              e.value
+                                              e.value,
                                             )
                                           }
                                         />{" "}
@@ -1881,7 +1879,7 @@ export default function Doctor() {
                                           onChange={(e) =>
                                             formik.setFieldValue(
                                               "Location_of_Tenderness",
-                                              e.value
+                                              e.value,
                                             )
                                           }
                                         />{" "}
@@ -1905,7 +1903,7 @@ export default function Doctor() {
                                           onChange={(e) =>
                                             formik.setFieldValue(
                                               "Location_of_Tenderness",
-                                              e.value
+                                              e.value,
                                             )
                                           }
                                         />{" "}
@@ -1929,7 +1927,7 @@ export default function Doctor() {
                                           onChange={(e) =>
                                             formik.setFieldValue(
                                               "Location_of_Tenderness",
-                                              e.value
+                                              e.value,
                                             )
                                           }
                                         />{" "}
@@ -1954,13 +1952,13 @@ export default function Doctor() {
                                       name="Organomegaly"
                                       value="Hepatomegaly (Enlarged Liver)"
                                       checked={formik.values.Organomegaly.includes(
-                                        "Hepatomegaly (Enlarged Liver)"
+                                        "Hepatomegaly (Enlarged Liver)",
                                       )}
                                       onChange={(e) =>
                                         handleMultiSelectChange(
                                           "Organomegaly",
                                           e.value,
-                                          e.checked
+                                          e.checked,
                                         )
                                       }
                                     />{" "}
@@ -1977,13 +1975,13 @@ export default function Doctor() {
                                       name="Organomegaly"
                                       value="Liver Tenderness"
                                       checked={formik.values.Organomegaly.includes(
-                                        "Liver Tenderness"
+                                        "Liver Tenderness",
                                       )}
                                       onChange={(e) =>
                                         handleMultiSelectChange(
                                           "Organomegaly",
                                           e.value,
-                                          e.checked
+                                          e.checked,
                                         )
                                       }
                                     />
@@ -2000,13 +1998,13 @@ export default function Doctor() {
                                       name="Organomegaly"
                                       value="Liver Nodularity"
                                       checked={formik.values.Organomegaly.includes(
-                                        "Liver Nodularity"
+                                        "Liver Nodularity",
                                       )}
                                       onChange={(e) =>
                                         handleMultiSelectChange(
                                           "Organomegaly",
                                           e.value,
-                                          e.checked
+                                          e.checked,
                                         )
                                       }
                                     />{" "}
@@ -2020,13 +2018,13 @@ export default function Doctor() {
                                       name="Organomegaly"
                                       value="Splenomegaly (Enlarged Spleen)"
                                       checked={formik.values.Organomegaly.includes(
-                                        "Splenomegaly (Enlarged Spleen)"
+                                        "Splenomegaly (Enlarged Spleen)",
                                       )}
                                       onChange={(e) =>
                                         handleMultiSelectChange(
                                           "Organomegaly",
                                           e.value,
-                                          e.checked
+                                          e.checked,
                                         )
                                       }
                                     />{" "}
@@ -2040,13 +2038,13 @@ export default function Doctor() {
                                       name="Organomegaly"
                                       value="Kidney Enlargement"
                                       checked={formik.values.Organomegaly.includes(
-                                        "Kidney Enlargement"
+                                        "Kidney Enlargement",
                                       )}
                                       onChange={(e) =>
                                         handleMultiSelectChange(
                                           "Organomegaly",
                                           e.value,
-                                          e.checked
+                                          e.checked,
                                         )
                                       }
                                     />{" "}
@@ -2060,13 +2058,13 @@ export default function Doctor() {
                                       name="Organomegaly"
                                       value="Palpable Mass (Other)"
                                       checked={formik.values.Organomegaly.includes(
-                                        "Palpable Mass (Other)"
+                                        "Palpable Mass (Other)",
                                       )}
                                       onChange={(e) =>
                                         handleMultiSelectChange(
                                           "Organomegaly",
                                           e.value,
-                                          e.checked
+                                          e.checked,
                                         )
                                       }
                                     />{" "}
@@ -2090,7 +2088,7 @@ export default function Doctor() {
                                       onChange={(e) =>
                                         formik.setFieldValue(
                                           "Bowel_Sounds",
-                                          e.value
+                                          e.value,
                                         )
                                       }
                                     />{" "}
@@ -2110,7 +2108,7 @@ export default function Doctor() {
                                       onChange={(e) =>
                                         formik.setFieldValue(
                                           "Bowel_Sounds",
-                                          e.value
+                                          e.value,
                                         )
                                       }
                                     />{" "}
@@ -2130,7 +2128,7 @@ export default function Doctor() {
                                       onChange={(e) =>
                                         formik.setFieldValue(
                                           "Bowel_Sounds",
-                                          e.value
+                                          e.value,
                                         )
                                       }
                                     />{" "}
@@ -2149,7 +2147,7 @@ export default function Doctor() {
                                       onChange={(e) =>
                                         formik.setFieldValue(
                                           "Bowel_Sounds",
-                                          e.value
+                                          e.value,
                                         )
                                       }
                                     />{" "}
@@ -2236,7 +2234,7 @@ export default function Doctor() {
                               onChange={(e) =>
                                 formik.setFieldValue(
                                   "Cardiovascular_System",
-                                  e.value
+                                  e.value,
                                 )
                               }
                             />
@@ -2256,7 +2254,7 @@ export default function Doctor() {
                               onChange={(e) =>
                                 formik.setFieldValue(
                                   "Cardiovascular_System",
-                                  e.value
+                                  e.value,
                                 )
                               }
                             />
@@ -2281,7 +2279,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Heart_Rhythm",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -2301,7 +2299,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Heart_Rhythm",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />
@@ -2321,7 +2319,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Heart_Rhythm",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -2343,7 +2341,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Heart_Sounds_Added",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -2363,7 +2361,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Heart_Sounds_Added",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />
@@ -2383,7 +2381,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Heart_Sounds_Added",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -2402,7 +2400,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Heart_Sounds_Added",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -2422,7 +2420,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Heart_Sounds_Added",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -2443,7 +2441,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Murmur_Timing",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -2462,7 +2460,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Murmur_Timing",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -2481,7 +2479,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Murmur_Timing",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -2501,7 +2499,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Murmur_Location",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -2520,7 +2518,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Murmur_Location",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -2540,7 +2538,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Murmur_Location",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -2559,7 +2557,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Murmur_Location",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -2600,7 +2598,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Murmur_Radiation",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -2620,7 +2618,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Murmur_Radiation",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -2639,7 +2637,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Murmur_Radiation",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -2743,7 +2741,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Jugular_Venous_Pressure",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -2763,7 +2761,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Jugular_Venous_Pressure",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -2783,7 +2781,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Jugular_Venous_Pressure",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -2863,7 +2861,7 @@ export default function Doctor() {
                               onChange={(e) =>
                                 formik.setFieldValue(
                                   "Central_Nervous_System",
-                                  e.value
+                                  e.value,
                                 )
                               }
                             />
@@ -2885,7 +2883,7 @@ export default function Doctor() {
                               onChange={(e) =>
                                 formik.setFieldValue(
                                   "Central_Nervous_System",
-                                  e.value
+                                  e.value,
                                 )
                               }
                             />
@@ -2913,7 +2911,7 @@ export default function Doctor() {
                                 onChange={(e) =>
                                   formik.setFieldValue(
                                     "Consciousness_Level",
-                                    e.value
+                                    e.value,
                                   )
                                 }
                               />{" "}
@@ -2933,7 +2931,7 @@ export default function Doctor() {
                                 onChange={(e) =>
                                   formik.setFieldValue(
                                     "Consciousness_Level",
-                                    e.value
+                                    e.value,
                                   )
                                 }
                               />
@@ -2952,7 +2950,7 @@ export default function Doctor() {
                                 onChange={(e) =>
                                   formik.setFieldValue(
                                     "Consciousness_Level",
-                                    e.value
+                                    e.value,
                                   )
                                 }
                               />{" "}
@@ -2972,7 +2970,7 @@ export default function Doctor() {
                                 onChange={(e) =>
                                   formik.setFieldValue(
                                     "Consciousness_Level",
-                                    e.value
+                                    e.value,
                                   )
                                 }
                               />{" "}
@@ -2992,7 +2990,7 @@ export default function Doctor() {
                                 onChange={(e) =>
                                   formik.setFieldValue(
                                     "Consciousness_Level",
-                                    e.value
+                                    e.value,
                                   )
                                 }
                               />{" "}
@@ -3017,7 +3015,7 @@ export default function Doctor() {
                                   formik.setFieldValue(
                                     "Motor_System_Focal_Deficit",
                                     e.value,
-                                    console.log(e.value)
+                                    console.log(e.value),
                                   )
                                 }
                               />
@@ -3038,7 +3036,7 @@ export default function Doctor() {
                                 onChange={(e) =>
                                   formik.setFieldValue(
                                     "Motor_System_Focal_Deficit",
-                                    e.value
+                                    e.value,
                                   )
                                 }
                               />
@@ -3094,7 +3092,7 @@ export default function Doctor() {
                                 onChange={(e) =>
                                   formik.setFieldValue(
                                     "Motor_System_Focal_Deficit",
-                                    e.value
+                                    e.value,
                                   )
                                 }
                               />
@@ -3148,7 +3146,7 @@ export default function Doctor() {
                                 onChange={(e) =>
                                   formik.setFieldValue(
                                     "Motor_System_Focal_Deficit",
-                                    e.value
+                                    e.value,
                                   )
                                 }
                               />
@@ -3193,7 +3191,7 @@ export default function Doctor() {
                                 onChange={(e) =>
                                   formik.setFieldValue(
                                     "Motor_System_Focal_Deficit",
-                                    e.value
+                                    e.value,
                                   )
                                 }
                               />
@@ -3238,7 +3236,7 @@ export default function Doctor() {
                                 onChange={(e) =>
                                   formik.setFieldValue(
                                     "Motor_System_Focal_Deficit",
-                                    e.value
+                                    e.value,
                                   )
                                 }
                               />
@@ -3264,7 +3262,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Quadriparesis",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -3286,7 +3284,7 @@ export default function Doctor() {
                                 onChange={(e) =>
                                   formik.setFieldValue(
                                     "Motor_System_Focal_Deficit",
-                                    e.value
+                                    e.value,
                                   )
                                 }
                               />
@@ -3312,7 +3310,7 @@ export default function Doctor() {
                                   onChange={(e) =>
                                     formik.setFieldValue(
                                       "Quadriplegia",
-                                      e.value
+                                      e.value,
                                     )
                                   }
                                 />{" "}
@@ -3337,7 +3335,7 @@ export default function Doctor() {
                                 onChange={(e) =>
                                   formik.setFieldValue(
                                     "Motor_System_Affected_Side",
-                                    e.value
+                                    e.value,
                                   )
                                 }
                               />
@@ -3357,7 +3355,7 @@ export default function Doctor() {
                                 onChange={(e) =>
                                   formik.setFieldValue(
                                     "Motor_System_Affected_Side",
-                                    e.value
+                                    e.value,
                                   )
                                 }
                               />
@@ -3377,7 +3375,7 @@ export default function Doctor() {
                                 onChange={(e) =>
                                   formik.setFieldValue(
                                     "Motor_System_Affected_Side",
-                                    e.value
+                                    e.value,
                                   )
                                 }
                               />{" "}
@@ -3449,7 +3447,7 @@ export default function Doctor() {
                                 onChange={(e) =>
                                   formik.setFieldValue(
                                     "Reflexes_Deep_Tendon_Reflexes",
-                                    e.value
+                                    e.value,
                                   )
                                 }
                               />{" "}
@@ -3470,7 +3468,7 @@ export default function Doctor() {
                                 onChange={(e) =>
                                   formik.setFieldValue(
                                     "Reflexes_Deep_Tendon_Reflexes",
-                                    e.value
+                                    e.value,
                                   )
                                 }
                               />{" "}
@@ -3491,7 +3489,7 @@ export default function Doctor() {
                                 onChange={(e) =>
                                   formik.setFieldValue(
                                     "Reflexes_Deep_Tendon_Reflexes",
-                                    e.value
+                                    e.value,
                                   )
                                 }
                               />{" "}
@@ -3511,7 +3509,7 @@ export default function Doctor() {
                                 onChange={(e) =>
                                   formik.setFieldValue(
                                     "Reflexes_Deep_Tendon_Reflexes",
-                                    e.value
+                                    e.value,
                                   )
                                 }
                               />{" "}
@@ -3536,7 +3534,7 @@ export default function Doctor() {
                                 onChange={(e) =>
                                   formik.setFieldValue(
                                     "Reflexes_Plantar_Reflex_Babinski",
-                                    e.value
+                                    e.value,
                                   )
                                 }
                               />{" "}
@@ -3557,7 +3555,7 @@ export default function Doctor() {
                                 onChange={(e) =>
                                   formik.setFieldValue(
                                     "Reflexes_Plantar_Reflex_Babinski",
-                                    e.value
+                                    e.value,
                                   )
                                 }
                               />{" "}
@@ -3578,7 +3576,7 @@ export default function Doctor() {
                                 onChange={(e) =>
                                   formik.setFieldValue(
                                     "Reflexes_Plantar_Reflex_Babinski",
-                                    e.value
+                                    e.value,
                                   )
                                 }
                               />{" "}
@@ -3604,7 +3602,7 @@ export default function Doctor() {
                                     onChange={(e) =>
                                       formik.setFieldValue(
                                         "Reflexes_Side",
-                                        e.value
+                                        e.value,
                                       )
                                     }
                                   />{" "}
@@ -3624,7 +3622,7 @@ export default function Doctor() {
                                     onChange={(e) =>
                                       formik.setFieldValue(
                                         "Reflexes_Side",
-                                        e.value
+                                        e.value,
                                       )
                                     }
                                   />{" "}
@@ -3645,7 +3643,7 @@ export default function Doctor() {
                                     onChange={(e) =>
                                       formik.setFieldValue(
                                         "Reflexes_Side",
-                                        e.value
+                                        e.value,
                                       )
                                     }
                                   />{" "}
@@ -3671,7 +3669,7 @@ export default function Doctor() {
                                 onChange={(e) =>
                                   formik.setFieldValue(
                                     "Cranial_Nerves",
-                                    e.value
+                                    e.value,
                                   )
                                 }
                               />{" "}
@@ -3691,7 +3689,7 @@ export default function Doctor() {
                                 onChange={(e) =>
                                   formik.setFieldValue(
                                     "Cranial_Nerves",
-                                    e.value
+                                    e.value,
                                   )
                                 }
                               />{" "}
@@ -3891,7 +3889,7 @@ export default function Doctor() {
                               handleMultiSelectChange(
                                 "Training",
                                 e.value,
-                                e.checked
+                                e.checked,
                               )
                             }
                           />
@@ -3906,7 +3904,7 @@ export default function Doctor() {
                             value="Relative"
                             // checked={formik.values.Training === "Relative"}
                             checked={formik.values.Training.includes(
-                              "Relative"
+                              "Relative",
                             )}
                             // onChange={(e) =>
                             //   formik.setFieldValue("Training", e.value)
@@ -3915,7 +3913,7 @@ export default function Doctor() {
                               handleMultiSelectChange(
                                 "Training",
                                 e.value,
-                                e.checked
+                                e.checked,
                               )
                             }
                           />
@@ -3969,7 +3967,7 @@ export default function Doctor() {
                               onChange={(e) => {
                                 formik.setFieldValue(
                                   "RestraintsSelected",
-                                  e.value
+                                  e.value,
                                 );
                                 // Clear chemical comment when not Chemical
                                 if (e.value !== "Chemical") {
@@ -3993,7 +3991,7 @@ export default function Doctor() {
                               onChange={(e) =>
                                 formik.setFieldValue(
                                   "RestraintsSelected",
-                                  e.value
+                                  e.value,
                                 )
                               }
                             />
@@ -4040,7 +4038,7 @@ export default function Doctor() {
                             onChange={(e) =>
                               formik.setFieldValue(
                                 "ChemicalComment",
-                                e.target.value
+                                e.target.value,
                               )
                             }
                             rows={3}

@@ -466,7 +466,7 @@ class RoomCategoryService {
 
     const totalCategories = categories.length;
     const criticalCare = categories.filter((c) =>
-      ["ICU", "NICU", "CCU", "HDU"].includes(c.roomType)
+      ["ICU", "NICU", "CCU", "HDU"].includes(c.roomType),
     ).length;
 
     const avgPrice =

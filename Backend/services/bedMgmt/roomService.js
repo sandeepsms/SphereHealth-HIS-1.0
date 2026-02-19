@@ -126,7 +126,7 @@ class RoomService {
         building.buildingCode,
         floor.floorNumber,
         wardCode,
-        data.roomNumber
+        data.roomNumber,
       );
 
       // Check for duplicate room code
@@ -180,7 +180,7 @@ class RoomService {
 
         data.services = data.services.map((serviceData) => {
           const masterService = validServices.find(
-            (s) => s._id.toString() === serviceData.service.toString()
+            (s) => s._id.toString() === serviceData.service.toString(),
           );
           return {
             service: serviceData.service,
@@ -237,7 +237,7 @@ class RoomService {
       .populate("roomCategory", "categoryName categoryCode roomType")
       .populate(
         "services.service",
-        "serviceName serviceCode basePrice unit category"
+        "serviceName serviceCode basePrice unit category",
       )
       .sort({ roomCode: 1 });
   }
@@ -252,11 +252,11 @@ class RoomService {
       .populate("ward", "wardName wardCode")
       .populate(
         "roomCategory",
-        "categoryName categoryCode roomType defaultPricing"
+        "categoryName categoryCode roomType defaultPricing",
       )
       .populate(
         "services.service",
-        "serviceName serviceCode basePrice unit category"
+        "serviceName serviceCode basePrice unit category",
       );
 
     if (!room) {
@@ -339,7 +339,7 @@ class RoomService {
       // Regenerate room code if needed
       if (needsRoomCodeUpdate || data.roomNumber) {
         const building = await Building.findById(
-          data.building || room.building
+          data.building || room.building,
         );
         const floor = await Floor.findById(data.floor || room.floor);
         const wardCode = data.wardCode || room.wardCode;
@@ -349,7 +349,7 @@ class RoomService {
           building.buildingCode,
           floor.floorNumber,
           wardCode,
-          roomNumber
+          roomNumber,
         );
 
         // Check for duplicate room code
@@ -490,11 +490,11 @@ class RoomService {
     const totalBeds = rooms.reduce((sum, room) => sum + room.totalBeds, 0);
     const occupiedBeds = rooms.reduce(
       (sum, room) => sum + room.occupiedBeds,
-      0
+      0,
     );
     const availableBeds = rooms.reduce(
       (sum, room) => sum + room.availableBeds,
-      0
+      0,
     );
 
     return {
@@ -576,7 +576,7 @@ class RoomService {
       fullyOccupied: rooms.filter((r) => r.availableBeds === 0).length,
       fullyAvailable: rooms.filter((r) => r.occupiedBeds === 0).length,
       partiallyOccupied: rooms.filter(
-        (r) => r.availableBeds > 0 && r.occupiedBeds > 0
+        (r) => r.availableBeds > 0 && r.occupiedBeds > 0,
       ).length,
     };
   }

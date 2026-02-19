@@ -14,16 +14,19 @@
 
 
 
+
 .prescription-page {
   width: 100%;
   background: #fff;
 
   box-sizing: border-box;
   font-family: "Times New Roman", serif;
-  font-size: 16px;
+  font-size: 13px;
   line-height: 1.4;
   color: #000;
 }
+
+
 
 .prescription-header-professional {
   display: flex;
@@ -36,13 +39,13 @@
 }
 
 .hospital-name-main {
-  font-size: 25px;
+  font-size: 30px;
   font-weight: bold;
   margin: 0;
 }
 
 .hospital-subtitle {
-  font-size: 14px;
+  font-size: 12px;
   margin: 2px 0 0 0;
 }
 
@@ -50,6 +53,8 @@
   border-top: 1px solid #000;
   margin: 8px 0 12px;
 }
+
+
 
 section {
   margin-bottom: 10px;
@@ -62,6 +67,8 @@ section {
   text-decoration: underline;
 }
 
+
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -70,10 +77,11 @@ table {
 
 th,
 td {
+
   padding: 5px;
-  font-size: 14px;
+  font-size: 12px;
   vertical-align: top;
-  /* word-break: break-word; */
+  word-break: break-word;
   overflow-wrap: break-word;
 }
 
@@ -81,16 +89,19 @@ th {
   font-weight: bold;
 }
 
+
+
 .label-cell {
   width: 18%;
   font-weight: bold;
-    font-size: 14px;
+
 }
 
 .value-cell {
   width: 32%;
-    font-size: 14px;
 }
+
+
 
 .vitals-row {
   display: flex;
@@ -104,12 +115,16 @@ th {
   font-size: 12px;
 }
 
+
 .diagnosis-box,
 .advice-box {
+
   padding: 6px;
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+
 
 .doctor-signature-professional {
   margin-top: 25px;
@@ -125,9 +140,11 @@ th {
 
 .signature-label {
   font-size: 12px;
-  margin-right: 82px;
+  margin-right: 36px;
   color: #c00e0e;
 }
+
+
 
 .prescription-footer-professional {
   margin-top: 12px;
@@ -150,7 +167,12 @@ th {
   border: none !important;
 }
 
+
+
+
+
 @media print {
+
   html,
   body {
     margin: 0 !important;
@@ -172,6 +194,7 @@ th {
     margin-right: 36px;
     color: #c00e0e;
   }
+
   /* 🔥 REMOVE EXTRA SPACE */
   p,
   h1,
@@ -191,4 +214,5 @@ th {
   .prescription-footer-professional {
     margin-bottom: 0 !important;
   }
+
 }

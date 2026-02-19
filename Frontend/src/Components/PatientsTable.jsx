@@ -197,7 +197,9 @@ const handleView = async (rowData) => {
 
   // ✅ Action body with three dot menu
   const actionBody = (rowData) => {
-
+  if (!menuRefs.current[rowData.id]) {
+    menuRefs.current[rowData.id] = React.createRef();
+  }
     console.log("row data---------",rowData);
     
     const items = [
@@ -262,35 +264,26 @@ const handleView = async (rowData) => {
 
         {/* Three Dot Menu with Hover */}
         <div
-          onMouseEnter={(e) => {
-            if (!menuRefs.current[rowData.id]) {
-              menuRefs.current[rowData.id] = React.createRef();
-            }
-            menuRefs.current[rowData.id]?.current?.toggle(e);
-          }}
+        
         >
-          <Button
-            icon="pi pi-ellipsis-v"
-            severity="secondary"
-            text
-            rounded
-            size="small"
-            tooltip="More Actions"
-            tooltipOptions={{ position: "top" }}
-            aria-haspopup="true"
-            aria-controls={`patient-menu-${rowData.id}`}
-          />
+           <Button
+        icon="pi pi-ellipsis-v"
+        severity="secondary"
+        text
+        rounded
+        size="small"
+        tooltip="More Actions"
+        tooltipOptions={{ position: "top" }}
+        onClick={(e) =>
+          menuRefs.current[rowData.id].current.toggle(e)
+        }
+      />
           <Menu
-            ref={(el) => {
-              if (!menuRefs.current[rowData.id]) {
-                menuRefs.current[rowData.id] = { current: null };
-              }
-              menuRefs.current[rowData.id].current = el;
-            }}
-            id={`patient-menu-${rowData.id}`}
-            model={items}
-            popup
-          />
+        ref={menuRefs.current[rowData.id]}
+        model={items}
+        popup
+          appendTo={document.body}  
+      />
         </div>
       </div>
     );
@@ -472,16 +465,16 @@ const handleView = async (rowData) => {
       {/* View Patient Dialog */}
       <Dialog
         visible={viewDialogVisible}
-        style={{ width: "clamp(500px, 60vw, 800px)" }}
+        style={{ width: "clamp(500px, 60vw, 800px)" }}                                                     
         header={
           <div className="flex align-items-center gap-3">
-            <i className="pi pi-user text-2xl text-primary"></i>
-            <span className="text-xl font-bold">Patient Details</span>
+            <i className="pi pi-user text-2xl text-primary"></i>                      
+            <span className="text-xl font-bold">Patient Details</span>                  
           </div>
         }
         modal
         onHide={() => {
-          setViewDialogVisible(false);
+          setViewDialogVisible(false);                  
           setSelectedPatient(null);
         }}
         footer={
@@ -494,8 +487,8 @@ const handleView = async (rowData) => {
               onClick={() => setViewDialogVisible(false)}
             />
             <Button
-              label="Edit Patient"
-              icon="pi pi-pencil"
+              label="Edit Patient"    
+              icon="pi pi-pencil"  
               severity="success"
               onClick={() => {
                 setViewDialogVisible(false);

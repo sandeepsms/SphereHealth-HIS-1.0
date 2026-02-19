@@ -1,6 +1,6 @@
 import { useFormik } from "formik";
 import React, { useEffect, useState } from "react";
-import logo from "../../assets/logowebsite11.png";
+import logo from "../../assets/BIMSLOGO.png";
 import { useParams, useNavigate } from "react-router-dom";
 import { InputText } from "primereact/inputtext";
 import { InputTextarea } from "primereact/inputtextarea";
@@ -374,19 +374,17 @@ function DoctorPrescription() {
 
               <div className="navbar-center">
                 <h1 className="hospital-name" style={{ marginLeft: "80px" }}>
-                  SUKOON HOSPITALS
+                  BIMS
                 </h1>
                 <p className="tagline" style={{ marginLeft: "70px" }}>
-                  run by Spherehealth Medical Solutions Pvt. Ltd.
+                  Bright Institute of Medical Sciences
                 </p>
               </div>
 
               <div className="navbar-right">
-                <p>📞 7988807650, 0130-4052310</p>
-                <p>✉️ admin@sukoonhospitals.com</p>
-                <p>
-                  📍 Mohalla Jatwara, Kumaro Ki Chopal ke Samne, Sonipat (HR)
-                </p>
+                <p>📞 +91 - 7988307850</p>
+                <p>✉️ query.bims@gmail.com</p>
+                <p>📍Gau Shala Road, Jatawara, Sonipat - 131001</p>
               </div>
             </header>
 
@@ -660,7 +658,7 @@ function DoctorPrescription() {
                       <tbody>
                         {values.medicines.map((medicine, index) => (
                           <tr key={index}>
-                            <td>
+                            <td style={{ lineHeight: "28px", width: "100%" }}>
                               <Field
                                 name={`medicines[${index}].medicineName`}
                                 component={Input}
@@ -802,7 +800,7 @@ function DoctorPrescription() {
                 Investigation Advised:
               </h5>
               <div className="row mt-3">
-                <div className="col-md-12">
+                <div className="col-md-12 ">
                   <label className="form-label fw-bold">Investigations:</label>
                   {/* <MultiSelect
                     value={selectedServices}
@@ -868,7 +866,7 @@ function DoctorPrescription() {
                     optionValue="value"
                     placeholder="Select Tests"
                     filter
-                    className="w-100"
+                    className="w-100 ml-4"
                     display="chip"
                   />
                 </div>

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { hospitalChargesService } from "../../services/charges/hospitalChargesService";
+import { hospitalChargesService } from "../../Services/charges/hospitalChargesService";
 
 // PrimeReact
 import { Button } from "primereact/button";

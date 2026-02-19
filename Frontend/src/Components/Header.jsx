@@ -1,5 +1,5 @@
 import React from "react";
-import logo from "../assets/logowebsite11.png"; // apna logo ka path yahan import karo
+import logo from "../assets/BIMSLOGO.png"; // apna logo ka path yahan import karo
 
 export default function Header({ toggleSidebar }) {
   return (

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Formik, Form, useFormik } from "formik";
+import { Formik, Form, FieldArray } from "formik";
 import { Button } from "primereact/button";
 import { Dialog } from "primereact/dialog";
 import { Dropdown } from "primereact/dropdown";
@@ -13,6 +13,16 @@ import "primereact/resources/primereact.min.css";
 import "primeicons/primeicons.css";
 import "../../styles/AddTpa.css";
 import { roomCategoryService } from "../../Services/roomCategoryService";
+
+// ── Empty room charge row ────────────────────────────────────────────────────
+const emptyRoomCharge = {
+  roomCategory: "",
+  doctorVisit: 0,
+  nursingCharge: 0,
+  roomRent: 0,
+  rmoCharge: 0,
+  daycareCharge: 0,
+};
 
 function AddTpa() {
   const [tpaList, setTpaList] = useState([]);
@@ -28,10 +38,7 @@ function AddTpa() {
   const [deleting, setDeleting] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [showDeleted, setShowDeleted] = useState(false);
-  const [Roomcategory, setRoomcategory] = useState(null);
   const [selectedRoomCategory, setRoomcategorydata] = useState([]);
-  const [CategoryName, setCategoryName] = useState(null);
-  // const [selectedcategoryName, setselectedcategoryName] = useState();
 
   const itemsPerPage = 10;
 
@@ -52,12 +59,9 @@ function AddTpa() {
     try {
       const response = await tpaService.getAllTPAs();
       console.log("Fetched TPAs:", response.data);
-
-      // Filter based on showDeleted toggle
       const filteredData = showDeleted
         ? response.data || []
         : (response.data || []).filter((tpa) => tpa.isActive !== false);
-
       setTpaList(filteredData);
       setFilteredList(filteredData);
     } catch (error) {
@@ -77,19 +81,14 @@ function AddTpa() {
     setLoading(true);
     try {
       const response = await roomCategoryService.getAllCategories();
-
-      // console.log("------------------------", response[0]);
-
       const options = response.map((item) => ({
         labelcategoryName: `${item.categoryName}`,
-
         labelroomtype: `${item.roomType}`,
         value: item._id,
         roomType: item.roomType,
         categoryName: item.categoryName,
       }));
-      console.log("-------=========", options);
-
+      console.log("Room options:", options);
       setRoomcategorydata(options);
     } catch (error) {
       toast.error("Error fetching room data");
@@ -97,10 +96,6 @@ function AddTpa() {
       setLoading(false);
     }
   };
-
-
-
-// create search method in TPA Data...................................
 
   useEffect(() => {
     const filtered = tpaList.filter(
@@ -114,22 +109,87 @@ function AddTpa() {
     setCurrentPage(1);
   }, [searchTerm, tpaList]);
 
-
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
   const currentItems = filteredList.slice(indexOfFirstItem, indexOfLastItem);
   const totalPages = Math.ceil(filteredList.length / itemsPerPage);
 
+  // ── Build initial roomCharges when editing ───────────────────────────────
+  const buildInitialRoomCharges = () => {
+    if (editingTPA?.roomCharges?.length > 0) {
+      return editingTPA.roomCharges.map((rc) => ({
+        roomCategory: rc.roomCategory?._id || rc.roomCategory || "",
+        doctorVisit: rc.doctorVisit || 0,
+        nursingCharge: rc.nursingCharge || 0,
+        roomRent: rc.roomRent || 0,
+        rmoCharge: rc.rmoCharge || 0,
+        daycareCharge: rc.daycareCharge || 0,
+        DoctorVisitDiscount: Number(rc.Discount) || 0,
+        NursingDiscount: Number(rc.Discount) || 0,
+        RoomRentDiscount: Number(rc.Discount) || 0,
+        RMODiscount: Number(rc.Discount) || 0,
+        DaycareDiscount: Number(rc.Discount) || 0,
+      }));
+    }
+    return [{ ...emptyRoomCharge }];
+  };
+
   const handleSubmit = async (values, { resetForm }) => {
     try {
+      // Clean roomCharges — skip rows with no category selected
+      const cleanedCharges = values.roomCharges
+        .filter((rc) => rc.roomCategory)
+        .map((rc) => ({
+          roomCategory: rc.roomCategory,
+          doctorVisit: Number(rc.doctorVisit) || 0,
+          nursingCharge: Number(rc.nursingCharge) || 0,
+          roomRent: Number(rc.roomRent) || 0,
+          rmoCharge: Number(rc.rmoCharge) || 0,
+          daycareCharge: Number(rc.daycareCharge) || 0,
+          DoctorVisitDiscount: Number(rc.Discount) || 0,
+          NursingDiscount: Number(rc.Discount) || 0,
+          RoomRentDiscount: Number(rc.Discount) || 0,
+          RMODiscount: Number(rc.Discount) || 0,
+          DaycareDiscount: Number(rc.Discount) || 0,
+        }));
+
+
+//  .map((rc) => ({
+//           roomCategory: rc.roomCategory,
+//           doctorVisit: Number(rc.doctorVisit) || 0,
+//           nursingCharge: Number(rc.nursingCharge) || 0,
+//           roomRent: Number(rc.roomRent) || 0,
+//           rmoCharge: Number(rc.rmoCharge) || 0,
+//           daycareCharge: Number(rc.daycareCharge) || 0,
+//           DoctorVisitDiscount: Number(rc.Discount) || 0,
+//           DoctorVisitTotalAmount: Number() || 0,
+//           NursingDiscount: Number(rc.Discount) || 0,
+//           NursingTotalAmount: Number() || 0,
+//           RoomRentDiscount: Number(rc.Discount) || 0,
+//           RoomRentTotalAmount: Number() || 0,
+//           RMODiscount: Number(rc.Discount) || 0,
+//           RmoTotalAmount: Number() || 0,
+//           DaycareDiscount: Number(rc.Discount) || 0,
+//           DaycareTotalAmount: Number() || 0,
+//         }));
+
+
+  // const calculateTotal = (amount, discount) => {
+  //   const discountAmount = (amount * (discount || 0)) / 100;
+  //   return amount - discountAmount;
+  // };
+
+
+      const payload = { ...values, roomCharges: cleanedCharges };
+
       if (editingTPA) {
-        console.log("Updating TPA:", editingTPA._id, values);
-        await tpaService.updateTPA(editingTPA._id, values);
+        console.log("Updating TPA:", editingTPA._id, payload);
+        await tpaService.updateTPA(editingTPA._id, payload);
         toast.success("TPA Updated Successfully");
         setEditingTPA(null);
       } else {
-        console.log("Creating TPA:", values);
-        await tpaService.createTPA(values);
+        console.log("Creating TPA:", payload);
+        await tpaService.createTPA(payload);
         toast.success("TPA Added Successfully");
       }
       resetForm();
@@ -154,7 +214,6 @@ function AddTpa() {
   const handleDelete = async () => {
     if (!deleteDialog.tpa || !deleteDialog.tpa._id) {
       toast.error("Invalid TPA ID");
-      console.error("No TPA selected for deletion");
       return;
     }
 
@@ -163,36 +222,18 @@ function AddTpa() {
     const tpaName = deleteDialog.tpa.tpaName;
 
     try {
-      console.log("Attempting to delete TPA:", {
-        id: tpaId,
-        name: tpaName,
-      });
-
       const response = await tpaService.deleteTPA(tpaId);
-
       console.log("Delete response:", response);
-
       toast.success(`TPA "${tpaName}" deleted successfully`);
       setDeleteDialog({ visible: false, tpa: null });
-
-      // Refresh the list
       await fetchTPAs();
     } catch (error) {
-      console.error("Delete error details:", {
-        message: error.message,
-        response: error.response?.data,
-        status: error.response?.status,
-        statusText: error.response?.statusText,
-        id: tpaId,
-        fullError: error,
-      });
-
+      console.error("Delete error details:", error);
       const errorMessage =
         error.response?.data?.message ||
         error.response?.data?.error ||
         error.message ||
         "Failed to delete TPA";
-
       toast.error(errorMessage);
     } finally {
       setDeleting(false);
@@ -222,7 +263,6 @@ function AddTpa() {
 
   const ViewModal = ({ tpa, onClose }) => {
     if (!tpa) return null;
-
     return (
       <Dialog
         header="TPA Details"
@@ -234,91 +274,30 @@ function AddTpa() {
         <div style={{ padding: "10px" }}>
           <table style={{ width: "100%" }}>
             <tbody>
-              <tr>
-                <td
-                  style={{
-                    fontWeight: 600,
-                    color: "#495057",
-                    padding: "10px 0",
-                    width: "40%",
-                  }}
-                >
-                  TPA Name:
-                </td>
-                <td style={{ color: "#212529", padding: "10px 0" }}>
-                  {tpa.tpaName}
-                </td>
-              </tr>
-              <tr>
-                <td
-                  style={{
-                    fontWeight: 600,
-                    color: "#495057",
-                    padding: "10px 0",
-                  }}
-                >
-                  TPA Code:
-                </td>
-                <td style={{ color: "#212529", padding: "10px 0" }}>
-                  {tpa.tpaCode}
-                </td>
-              </tr>
-              <tr>
-                <td
-                  style={{
-                    fontWeight: 600,
-                    color: "#495057",
-                    padding: "10px 0",
-                  }}
-                >
-                  Phone:
-                </td>
-                <td style={{ color: "#212529", padding: "10px 0" }}>
-                  {tpa.phone}
-                </td>
-              </tr>
-              <tr>
-                <td
-                  style={{
-                    fontWeight: 600,
-                    color: "#495057",
-                    padding: "10px 0",
-                  }}
-                >
-                  Email:
-                </td>
-                <td style={{ color: "#212529", padding: "10px 0" }}>
-                  {tpa.email || "N/A"}
-                </td>
-              </tr>
-              <tr>
-                <td
-                  style={{
-                    fontWeight: 600,
-                    color: "#495057",
-                    padding: "10px 0",
-                  }}
-                >
-                  Contact Person:
-                </td>
-                <td style={{ color: "#212529", padding: "10px 0" }}>
-                  {tpa.contactPerson || "N/A"}
-                </td>
-              </tr>
-              <tr>
-                <td
-                  style={{
-                    fontWeight: 600,
-                    color: "#495057",
-                    padding: "10px 0",
-                  }}
-                >
-                  Address:
-                </td>
-                <td style={{ color: "#212529", padding: "10px 0" }}>
-                  {tpa.address || "N/A"}
-                </td>
-              </tr>
+              {[
+                ["TPA Name", tpa.tpaName],
+                ["TPA Code", tpa.tpaCode],
+                ["Phone", tpa.phone],
+                ["Email", tpa.email || "N/A"],
+                ["Contact Person", tpa.contactPerson || "N/A"],
+                ["Address", tpa.address || "N/A"],
+              ].map(([label, value]) => (
+                <tr key={label}>
+                  <td
+                    style={{
+                      fontWeight: 600,
+                      color: "#495057",
+                      padding: "10px 0",
+                      width: "40%",
+                    }}
+                  >
+                    {label}:
+                  </td>
+                  <td style={{ color: "#212529", padding: "10px 0" }}>
+                    {value}
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
@@ -377,18 +356,7 @@ function AddTpa() {
             email: editingTPA?.email || "",
             contactPerson: editingTPA?.contactPerson || "",
             address: editingTPA?.address || "",
-
-            roomCharges: [
-              {
-                roomCategory:
-                  editingTPA?.roomCharges?.[0]?.roomCategory?._id || "",
-                categoryName: editingTPA?.roomCharges?.[0]?.categoryName || "",
-                doctorVisit: editingTPA?.roomCharges?.[0]?.doctorVisit || 0,
-                nursingCharge: editingTPA?.roomCharges?.[0]?.nursingCharge || 0,
-                roomRent: editingTPA?.roomCharges?.[0]?.roomRent || 0,
-                rmoCharge: editingTPA?.roomCharges?.[0]?.rmoCharge || 0,
-              },
-            ],
+            roomCharges: buildInitialRoomCharges(),
           }}
           enableReinitialize
           validationSchema={validationSchema}
@@ -404,6 +372,7 @@ function AddTpa() {
             setFieldValue,
           }) => (
             <Form>
+              {/* ── Basic Info Grid (same as original) ── */}
               <div
                 style={{
                   display: "grid",
@@ -590,193 +559,386 @@ function AddTpa() {
                     rows={3}
                   />
                 </div>
-
-                {/* <div className="field col-12 md:col-6">
-                  <label className="font-semibold block mb-2">
-                    Room Category <span className="text-red-500">*</span>
-                  </label>
-                  <Dropdown
-                    value={Roomcategory}
-                    options={selectedRoomCategory}
-
-                    // onChange={(e) => handleInputChange("department", e.value)}
-                    onChange={(e) => setRoomcategory(e.value)}
-                    placeholder="Select Room Category"
-                    filter
-                    optionLabel="labelroomtype"
-                     optionValue="value"
-                    className={errors.roomCategory ? "p-invalid" : ""}
-                    style={{ width: "100%" }}
-                  />
-                  {errors.roomCategory && (
-                    <small className="p-error block">
-                      {errors.roomCategory}
-                    </small>
-                  )}
-                </div> */}
-
-                <div style={{ display: "flex", flexDirection: "column" }}>
-                  <label
-                    style={{
-                      fontSize: "14px",
-                      fontWeight: 600,
-                      color: "#495057",
-                      marginBottom: "8px",
-                    }}
-                  >
-                    Room Category <span style={{ color: "#dc3545" }}>*</span>
-                  </label>
-
-                  <Dropdown
-                    value={values.roomCharges[0].roomCategory}
-                    options={selectedRoomCategory}
-                    optionLabel="labelroomtype"
-                    optionValue="value"
-                    placeholder="Select Room Category"
-                    filter
-                    onChange={(e) =>
-                   
-
-                      setFieldValue("roomCharges[0].roomCategory", e.value)
-                    }
-                    className={
-                      touched?.roomCharges?.[0]?.roomCategory &&
-                      errors?.roomCharges?.[0]?.roomCategory
-                        ? "p-invalid"
-                        : ""
-                    }
-                    style={{ width: "100%" }}
-                  />
-
-                  {touched?.roomCharges?.[0]?.roomCategory &&
-                    errors?.roomCharges?.[0]?.roomCategory && (
-                      <small className="p-error block">
-                        {errors.roomCharges[0].roomCategory}
-                      </small>
-                    )}
-                </div>
-
-                <div style={{ display: "flex", flexDirection: "column" }}>
-                  <label
-                    style={{
-                      fontSize: "14px",
-                      fontWeight: 600,
-                      color: "#495057",
-                      marginBottom: "8px",
-                    }}
-                  >
-                    Category Name <span style={{ color: "#dc3545" }}>*</span>
-                  </label>
-                  <Dropdown
-                    value={values.roomCharges[0].categoryName}
-                    options={selectedRoomCategory}
-                    onChange={(e) =>
-                      // console.log("............",e.value)
-
-                      setFieldValue("roomCharges[0].categoryName", e.value)
-                    }
-                    optionLabel="labelcategoryName"
-                    optionValue="labelcategoryName"
-                    placeholder="Select Category Name"
-                    filter
-                    className={
-                      touched?.roomCharges?.[0]?.categoryName &&
-                      errors?.roomCharges?.[0]?.categoryName
-                        ? "p-invalid"
-                        : ""
-                    }
-                    style={{ width: "100%" }}
-                  />
-
-                  {touched?.roomCharges?.[0]?.categoryName &&
-                    errors?.roomCharges?.[0]?.categoryName && (
-                      <small className="p-error block">
-                        {errors.roomCharges[0].categoryName}
-                      </small>
-                    )}
-                </div>
-
-                <div style={{ display: "flex", flexDirection: "column" }}>
-                  <label
-                    style={{
-                      fontSize: "14px",
-                      fontWeight: 600,
-                      color: "#495057",
-                      marginBottom: "8px",
-                    }}
-                  >
-                    Doctor Visit
-                  </label>
-                  <InputText
-                    name="roomCharges[0].doctorVisit"
-                    value={values.roomCharges[0].doctorVisit}
-                    onChange={handleChange}
-                    onBlur={handleBlur}
-                    placeholder="Enter Doctor Visit"
-                  />
-                </div>
-
-                <div style={{ display: "flex", flexDirection: "column" }}>
-                  <label
-                    style={{
-                      fontSize: "14px",
-                      fontWeight: 600,
-                      color: "#495057",
-                      marginBottom: "8px",
-                    }}
-                  >
-                    Nursing Charge
-                  </label>
-                  <InputText
-                    name="roomCharges[0].nursingCharge"
-                    value={values.roomCharges[0].nursingCharge}
-                    onChange={handleChange}
-                    onBlur={handleBlur}
-                    placeholder="Enter Nursing Charges"
-                  />
-                </div>
-
-                <div style={{ display: "flex", flexDirection: "column" }}>
-                  <label
-                    style={{
-                      fontSize: "14px",
-                      fontWeight: 600,
-                      color: "#495057",
-                      marginBottom: "8px",
-                    }}
-                  >
-                    Room Rent
-                  </label>
-                  <InputText
-                    name="roomCharges[0].roomRent"
-                    value={values.roomCharges[0].roomRent}
-                    onChange={handleChange}
-                    onBlur={handleBlur}
-                    placeholder="Enter Room Rent"
-                  />
-                </div>
-
-                <div style={{ display: "flex", flexDirection: "column" }}>
-                  <label
-                    style={{
-                      fontSize: "14px",
-                      fontWeight: 600,
-                      color: "#495057",
-                      marginBottom: "8px",
-                    }}
-                  >
-                    Rmo Charge
-                  </label>
-                  <InputText
-                    name="roomCharges[0].rmoCharge"
-                    value={values.roomCharges[0].rmoCharge}
-                    onChange={handleChange}
-                    onBlur={handleBlur}
-                    placeholder="Enter Room Charge"
-                  />
-                </div>
               </div>
 
+              {/* ── Room Charges Section — FieldArray ── */}
+              <FieldArray name="roomCharges">
+                {({ push, remove }) => (
+                  <div style={{ marginBottom: "25px" }}>
+                    {/* Section header with Add button */}
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        marginBottom: "15px",
+                      }}
+                    >
+                      <h3
+                        style={{
+                          fontSize: "16px",
+                          fontWeight: 600,
+                          color: "#2c3e50",
+                          margin: 0,
+                        }}
+                      >
+                        Room Charges
+                      </h3>
+                      <Button
+                        type="button"
+                        label="Add Room Category"
+                        icon="pi pi-plus"
+                        className="p-button-outlined p-button-sm"
+                        style={{ fontSize: "13px" }}
+                        onClick={() => push({ ...emptyRoomCharge })}
+                      />
+                    </div>
+
+                    {/* One card per room category */}
+                    {values.roomCharges.map((rc, index) => (
+                      <div
+                        key={index}
+                        style={{
+                          border: "1px solid #dee2e6",
+                          borderRadius: "6px",
+                          padding: "20px",
+                          marginBottom: "15px",
+                          backgroundColor: "#fafafa",
+                          position: "relative",
+                        }}
+                      >
+                        {/* Remove row button */}
+                        {values.roomCharges.length > 1 && (
+                          <Button
+                            type="button"
+                            icon="pi pi-times"
+                            className="p-button-rounded p-button-danger p-button-text p-button-sm"
+                            onClick={() => remove(index)}
+                            style={{
+                              position: "absolute",
+                              top: "10px",
+                              right: "10px",
+                              width: "28px",
+                              height: "28px",
+                            }}
+                            tooltip="Remove"
+                            tooltipOptions={{ position: "top" }}
+                          />
+                        )}
+
+                        {/* Room Category Dropdown - Full Width */}
+                        <div style={{ marginBottom: "20px" }}>
+                          <div
+                            style={{ display: "flex", flexDirection: "column" }}
+                          >
+                            <label
+                              style={{
+                                fontSize: "14px",
+                                fontWeight: 600,
+                                color: "#495057",
+                                marginBottom: "8px",
+                              }}
+                            >
+                              Room Category{" "}
+                              <span style={{ color: "#dc3545" }}>*</span>
+                            </label>
+                            <Dropdown
+                              value={rc.roomCategory}
+                              options={selectedRoomCategory}
+                              optionLabel="labelroomtype"
+                              optionValue="value"
+                              placeholder="Select Room Category"
+                              filter
+                              onChange={(e) =>
+                                setFieldValue(
+                                  `roomCharges[${index}].roomCategory`,
+                                  e.value,
+                                )
+                              }
+                              className={
+                                touched?.roomCharges?.[index]?.roomCategory &&
+                                errors?.roomCharges?.[index]?.roomCategory
+                                  ? "p-invalid"
+                                  : ""
+                              }
+                              style={{ width: "100%" }}
+                            />
+                            {touched?.roomCharges?.[index]?.roomCategory &&
+                              errors?.roomCharges?.[index]?.roomCategory && (
+                                <small
+                                  style={{
+                                    color: "#dc3545",
+                                    fontSize: "12px",
+                                    marginTop: "5px",
+                                  }}
+                                >
+                                  {errors.roomCharges[index].roomCategory}
+                                </small>
+                              )}
+                          </div>
+                        </div>
+
+                        {/* Charge Fields Grid - 5 columns */}
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "repeat(5, 1fr)",
+                            gap: "15px",
+                          }}
+                        >
+                          {/* Doctor Visit */}
+                          <div
+                            style={{ display: "flex", flexDirection: "column" }}
+                          >
+                            <label
+                              style={{
+                                fontSize: "13px",
+                                fontWeight: 600,
+                                color: "#495057",
+                                marginBottom: "8px",
+                              }}
+                            >
+                              Doctor Visit
+                            </label>
+                            <InputText
+                              name={`roomCharges[${index}].doctorVisit`}
+                              value={rc.doctorVisit}
+                              onChange={handleChange}
+                              onBlur={handleBlur}
+                              placeholder="0"
+                              type="number"
+                              min="0"
+                            />
+                          </div>
+
+                          {/* Nursing Charge */}
+                          <div
+                            style={{ display: "flex", flexDirection: "column" }}
+                          >
+                            <label
+                              style={{
+                                fontSize: "13px",
+                                fontWeight: 600,
+                                color: "#495057",
+                                marginBottom: "8px",
+                              }}
+                            >
+                              Nursing Charge
+                            </label>
+                            <InputText
+                              name={`roomCharges[${index}].nursingCharge`}
+                              value={rc.nursingCharge}
+                              onChange={handleChange}
+                              onBlur={handleBlur}
+                              placeholder="0"
+                              type="number"
+                              min="0"
+                            />
+                          </div>
+
+                          {/* Room Rent */}
+                          <div
+                            style={{ display: "flex", flexDirection: "column" }}
+                          >
+                            <label
+                              style={{
+                                fontSize: "13px",
+                                fontWeight: 600,
+                                color: "#495057",
+                                marginBottom: "8px",
+                              }}
+                            >
+                              Room Rent
+                            </label>
+                            <InputText
+                              name={`roomCharges[${index}].roomRent`}
+                              value={rc.roomRent}
+                              onChange={handleChange}
+                              onBlur={handleBlur}
+                              placeholder="0"
+                              type="number"
+                              min="0"
+                            />
+                          </div>
+
+                          {/* RMO Charge */}
+                          <div
+                            style={{ display: "flex", flexDirection: "column" }}
+                          >
+                            <label
+                              style={{
+                                fontSize: "13px",
+                                fontWeight: 600,
+                                color: "#495057",
+                                marginBottom: "8px",
+                              }}
+                            >
+                              RMO Charge
+                            </label>
+                            <InputText
+                              name={`roomCharges[${index}].rmoCharge`}
+                              value={rc.rmoCharge}
+                              onChange={handleChange}
+                              onBlur={handleBlur}
+                              placeholder="0"
+                              type="number"
+                              min="0"
+                            />
+                          </div>
+
+                          {/* Daycare Charge — NEW FIELD */}
+                          <div
+                            style={{ display: "flex", flexDirection: "column" }}
+                          >
+                            <label
+                              style={{
+                                fontSize: "13px",
+                                fontWeight: 600,
+                                color: "#495057",
+                                marginBottom: "8px",
+                              }}
+                            >
+                              Daycare Charge
+                            </label>
+                            <InputText
+                              name={`roomCharges[${index}].daycareCharge`}
+                              value={rc.daycareCharge}
+                              onChange={handleChange}
+                              onBlur={handleBlur}
+                              placeholder="0"
+                              type="number"
+                              min="0"
+                            />
+                          </div>
+                          {/* Discount add */}
+
+                          <div
+                            style={{ display: "flex", flexDirection: "column" }}
+                          >
+                            <label
+                              style={{
+                                fontSize: "13px",
+                                fontWeight: 600,
+                                color: "#495057",
+                                marginBottom: "8px",
+                              }}
+                            >
+                              Doctor Visit Discount
+                            </label>
+                            <InputText
+                              name={`roomCharges[${index}].DoctorVisitDiscount`}
+                              value={rc.Discount}
+                              onChange={handleChange}
+                              onBlur={handleBlur}
+                              placeholder="0"
+                              type="number"
+                              min="0"
+                            />
+                          </div>
+
+                          <div
+                            style={{ display: "flex", flexDirection: "column" }}
+                          >
+                            <label
+                              style={{
+                                fontSize: "13px",
+                                fontWeight: 600,
+                                color: "#495057",
+                                marginBottom: "8px",
+                              }}
+                            >
+                              Nursing charges Discount
+                            </label>
+                            <InputText
+                              name={`roomCharges[${index}].NursingDiscount`}
+                              value={rc.Discount}
+                              onChange={handleChange}
+                              onBlur={handleBlur}
+                              placeholder="0"
+                              type="number"
+                              min="0"
+                            />
+                          </div>
+
+                          <div
+                            style={{ display: "flex", flexDirection: "column" }}
+                          >
+                            <label
+                              style={{
+                                fontSize: "13px",
+                                fontWeight: 600,
+                                color: "#495057",
+                                marginBottom: "8px",
+                              }}
+                            >
+                              Room Rent Discount
+                            </label>
+                            <InputText
+                              name={`roomCharges[${index}].RoomRentDiscount`}
+                              value={rc.Discount}
+                              onChange={handleChange}
+                              onBlur={handleBlur}
+                              placeholder="0"
+                              type="number"
+                              min="0"
+                            />
+                          </div>
+
+                          <div
+                            style={{ display: "flex", flexDirection: "column" }}
+                          >
+                            <label
+                              style={{
+                                fontSize: "13px",
+                                fontWeight: 600,
+                                color: "#495057",
+                                marginBottom: "8px",
+                              }}
+                            >
+                              RMO Discount
+                            </label>
+                            <InputText
+                              name={`roomCharges[${index}].RMODiscount`}
+                              value={rc.Discount}
+                              onChange={handleChange}
+                              onBlur={handleBlur}
+                              placeholder="0"
+                              type="number"
+                              min="0"
+                            />
+                          </div>
+
+                          <div
+                            style={{ display: "flex", flexDirection: "column" }}
+                          >
+                            <label
+                              style={{
+                                fontSize: "13px",
+                                fontWeight: 600,
+                                color: "#495057",
+                                marginBottom: "8px",
+                              }}
+                            >
+                              DayCare Discount
+                            </label>
+                            <InputText
+                              name={`roomCharges[${index}].DaycareDiscount`}
+                              value={rc.Discount}
+                              onChange={handleChange}
+                              onBlur={handleBlur}
+                              placeholder="0"
+                              type="number"
+                              min="0"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </FieldArray>
+
+              {/* Submit Buttons */}
               <div style={{ display: "flex", gap: "10px" }}>
                 <Button
                   type="submit"
@@ -850,7 +1012,7 @@ function AddTpa() {
               onChange={(e) => setShowDeleted(e.target.checked)}
               style={{ cursor: "pointer" }}
             />
-            Show Deletedss
+            Show Deleted
           </label>
 
           <span style={{ color: "#6c757d", fontSize: "14px" }}>
@@ -871,66 +1033,26 @@ function AddTpa() {
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead style={{ backgroundColor: "#17a2b8", color: "white" }}>
             <tr>
-              <th
-                style={{
-                  padding: "15px",
-                  textAlign: "left",
-                  fontWeight: 600,
-                  fontSize: "14px",
-                }}
-              >
-                TPA ID
-              </th>
-              <th
-                style={{
-                  padding: "15px",
-                  textAlign: "left",
-                  fontWeight: 600,
-                  fontSize: "14px",
-                }}
-              >
-                Name
-              </th>
-              <th
-                style={{
-                  padding: "15px",
-                  textAlign: "left",
-                  fontWeight: 600,
-                  fontSize: "14px",
-                }}
-              >
-                Contact
-              </th>
-              <th
-                style={{
-                  padding: "15px",
-                  textAlign: "left",
-                  fontWeight: 600,
-                  fontSize: "14px",
-                }}
-              >
-                TPA Code
-              </th>
-              <th
-                style={{
-                  padding: "15px",
-                  textAlign: "left",
-                  fontWeight: 600,
-                  fontSize: "14px",
-                }}
-              >
-                Contact Person
-              </th>
-              <th
-                style={{
-                  padding: "15px",
-                  textAlign: "left",
-                  fontWeight: 600,
-                  fontSize: "14px",
-                }}
-              >
-                Actions
-              </th>
+              {[
+                "TPA ID",
+                "Name",
+                "Contact",
+                "TPA Code",
+                "Contact Person",
+                "Actions",
+              ].map((h) => (
+                <th
+                  key={h}
+                  style={{
+                    padding: "15px",
+                    textAlign: "left",
+                    fontWeight: 600,
+                    fontSize: "14px",
+                  }}
+                >
+                  {h}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
@@ -1105,7 +1227,6 @@ function AddTpa() {
               disabled={currentPage === 1}
               style={{ minWidth: "40px", height: "40px" }}
             />
-
             <Button
               icon="pi pi-angle-left"
               className="p-button-outlined"

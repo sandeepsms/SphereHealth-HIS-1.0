@@ -286,11 +286,6 @@
 //             </table>
 //           </section>
 
-
-
-
-
-
 //           {/* Clinical Details */}
 //           {(prescription.clinicalDetails?.historyOfAllergy ||
 //             prescription.clinicalDetails?.historyOfPresentIllness ||
@@ -394,30 +389,6 @@
 //               </table>
 //             </section>
 //           )}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 //           {/* Investigations */}
 //           {prescription.investigations &&
@@ -803,7 +774,6 @@
 //             </table>
 //           </section>
 
-
 //           {/* Clinical Details */}
 //          {(prescription.clinicalDetails?.historyOfAllergy ||
 //             prescription.clinicalDetails?.historyOfPresentIllness ||
@@ -908,7 +878,6 @@
 //             </section>
 //           )}
 
-
 //           {/* Investigations with Price */}
 //           {prescription.investigations &&
 //             prescription.investigations.length > 0 && (
@@ -959,9 +928,6 @@
 //               </section>
 //             )}
 
-        
-
-
 //    {/* Advice */}
 //          {prescription.advice && (
 //             <section className="advice-section">
@@ -1008,14 +974,11 @@
 
 // export default DoctorPrePrint;
 
-
-
-
 import React, { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "primereact/button";
 import { toast } from "react-toastify";
-import logo from "../../assets/logowebsite11.png";
+import logo from "../../assets/BIMSLOGO.png";
 
 // import logo from "../../../src/assets/logowebsite11.png"
 import { prescriptionService } from "../../Services/doctors/prescriptionService";
@@ -1223,41 +1186,43 @@ function DoctorPrePrint() {
   return (
     <>
       {/* Buttons */}
-      <div
-        className="no-print text-center mb-3"
-        style={{
-          position: "sticky",
-          top: 0,
-          background: "white",
-          zIndex: 1000,
-          padding: "10px",
-          boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
-        }}
-      >
-        <Button
-          label="Printss Prescription"
-          icon="pi pi-print"
-          severity="success"
-          onClick={() => window.print()}
-          className="me-2"
-          size="large"
-        />
-        <Button
-          label="Download PDF"
-          icon="pi pi-download"
-          severity="info"
-          onClick={handleDownloadPDF}
-          className="me-2"
-          size="large"
-        />
-        <Button
-          label="Back to Dashboard"
-          icon="pi pi-arrow-left"
-          severity="secondary"
-          outlined
-          onClick={() => navigate("/dashboard1")}
-          size="large"
-        />
+      <div style={{ marginTop: "2%" }}>
+        <div
+          className="no-print text-center mb-3"
+          style={{
+            position: "sticky",
+            top: 0,
+            background: "white",
+            zIndex: 1000,
+            padding: "10px",
+            boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
+          }}
+        >
+          <Button
+            label="Printss Prescription"
+            icon="pi pi-print"
+            severity="success"
+            onClick={() => window.print()}
+            className="me-2"
+            size="large"
+          />
+          <Button
+            label="Download PDF"
+            icon="pi pi-download"
+            severity="info"
+            onClick={handleDownloadPDF}
+            className="me-2"
+            size="large"
+          />
+          <Button
+            label="Back to Dashboard"
+            icon="pi pi-arrow-left"
+            severity="secondary"
+            outlined
+            onClick={() => navigate("/dashboard1")}
+            size="large"
+          />
+        </div>
       </div>
 
       {/* Prescription Content */}
@@ -1287,9 +1252,9 @@ function DoctorPrePrint() {
               </div>
             </div>
             <div className="header-center-section">
-              <h1 className="hospital-name-main">SUKOON HOSPITALS</h1>
+              <h1 className="hospital-name-main">BIMS</h1>
               <p className="hospital-subtitle">
-                run by Spherehealth Medical Solutions Pvt. Ltd.
+                Bright Institute of Medical Sciences
               </p>
             </div>
           </header>
@@ -1425,37 +1390,46 @@ function DoctorPrePrint() {
           )}
 
           {/* Medicines */}
-        {prescription.medicines && prescription.medicines.length > 0 && (
-  <section className="medicines-section">
-    <h5 className="section-title-red">MEDICINE ADVISED</h5>
+          {prescription.medicines && prescription.medicines.length > 0 && (
+            <section className="medicines-section">
+              <h5 className="section-title-red">MEDICINE ADVISED</h5>
 
-    <table className="table table-bordered border-dark medicine-table-professional">
-      <thead className="table-light">
-        <tr>
-          <th className="text-center" style={{ width: "5%" }}>S.No</th>
-          <th style={{ width: "20%" }}>Medicine Name</th>
-          <th className="text-center" style={{ width: "15%" }}>Schedule</th>
-          <th style={{ width: "20%" }}>Instruction</th>
-          <th className="text-center" style={{ width: "15%" }}>Route</th>
-          <th className="text-center" style={{ width: "15%" }}>Days</th>
-        </tr>
-      </thead>
-      <tbody>
-        {prescription.medicines.map((medicine, index) => (
-          <tr key={index}>
-            <td className="text-center">{index + 1}</td>
-            <td>{medicine.medicineName || "N/A"}</td>
-            <td className="text-center">{medicine.schedule || "-"}</td>
-            <td>{medicine.instruction || "-"}</td>
-            <td className="text-center">{medicine.route || "-"}</td>
-            <td className="text-center">{medicine.days || "-"}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  </section>
-)}
-
+              <table className="table table-bordered border-dark medicine-table-professional">
+                <thead className="table-light">
+                  <tr>
+                    <th className="text-center" style={{ width: "5%" }}>
+                      S.No
+                    </th>
+                    <th style={{ width: "20%" }}>Medicine Name</th>
+                    <th className="text-center" style={{ width: "15%" }}>
+                      Schedule
+                    </th>
+                    <th style={{ width: "20%" }}>Instruction</th>
+                    <th className="text-center" style={{ width: "15%" }}>
+                      Route
+                    </th>
+                    <th className="text-center" style={{ width: "15%" }}>
+                      Days
+                    </th>
+                  </tr>
+                </thead>
+                <tbody style={{ borderColor: "gray" }}>
+                  {prescription.medicines.map((medicine, index) => (
+                    <tr key={index}>
+                      <td className="text-center">{index + 1}</td>
+                      <td>{medicine.medicineName || "N/A"}</td>
+                      <td className="text-center">
+                        {medicine.schedule || "-"}
+                      </td>
+                      <td>{medicine.instruction || "-"}</td>
+                      <td className="text-center">{medicine.route || "-"}</td>
+                      <td className="text-center">{medicine.days || "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          )}
 
           {/* Investigations with Price */}
           {prescription.investigations &&
@@ -1520,13 +1494,13 @@ function DoctorPrePrint() {
             <div className="header-right-section">
               <div className="contact-info">
                 <p>
-                  <strong>📞</strong> 7988807650, 0130-4052310
+                  <strong>📞</strong> +91 - 7988307850
                 </p>
                 <p>
-                  <strong>✉️</strong> admin@sukoonhospitals.com
+                  <strong>✉️</strong> query.bims@gmail.com
                 </p>
                 <p>
-                  <strong>📍</strong> Mohalla Jatwara, Kumaro Ki Chopal, Sonipat
+                  <strong>📍</strong> Gau Shala Road, Jatawara, Sonipat - 131001
                   (Haryana)
                 </p>
               </div>
@@ -1564,4 +1538,3 @@ function DoctorPrePrint() {
 }
 
 export default DoctorPrePrint;
-

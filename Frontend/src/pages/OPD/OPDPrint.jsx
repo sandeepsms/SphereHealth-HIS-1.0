@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import "../../../css/opdbill.css";
-import logo from "../../assets/logowebsite11.png";
+import logo from "../../assets/BIMSLOGO.png";
 import { useParams } from "react-router-dom";
 import { getPatientbyID } from "../../Services/userService";
 import html2pdf from "html2pdf.js";
@@ -63,13 +63,14 @@ const OPDPrint = () => {
           </div>
 
           <div className="col-6 text-center">
-            <h4 className="fw-bold mb-0">Spherehealth Medical Solutions</h4>
-            <small>Mohalla Jatwara, Sonipat (HR)</small>
+            <h4 className="fw-bold mb-0">BIMS</h4>
+            <small>Bright Institute of Medical Sciences</small>
           </div>
 
           <div className="col-4 text-end small">
-            <div>📞 7988307850, 0130-4052310</div>
-            <div>✉️ spherehealth@sukoonhospitals.com</div>
+            <div>📞+91 - 7988307850</div>
+            <div>✉️ query.bims@gmail.com</div>
+            <div>Gau Shala Road, Jatawara, Sonipat - 131001</div>
           </div>
         </div>
 
@@ -142,9 +143,9 @@ const OPDPrint = () => {
         {/* FOOTER */}
         <div className="text-center mt-4 border-top pt-2 small">
           <p className="mb-1">
-            Thank you for visiting <strong>SUKOON HOSPITALS</strong>
+            Thank you for visiting <strong>BIMS</strong>
           </p>
-          <p className="mb-0">Emergency Contact: 📞 7988307850</p>
+          <p className="mb-0">Emergency Contact: 📞+91 - 7988307850</p>
         </div>
       </div>
       {/* PRINT BUTTON */}z
