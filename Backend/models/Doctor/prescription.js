@@ -149,7 +149,7 @@ const prescriptionSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["Active", "Completed", "Cancelled"],
+      enum: ["Active", "Completed", "Cancelled", "CREATED"],
       default: "Active",
     },
 

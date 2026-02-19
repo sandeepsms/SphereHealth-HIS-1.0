@@ -26,7 +26,7 @@ function DoctorPrescription() {
   const [TesttotalPrice, setTestTotalPrice] = useState(0);
   const [Testprice, setTestprice] = useState();
   const [buttonmode, setButtonMode] = useState();
-  const[errors ,seterrors ]=useState();
+  const [errors, seterrors] = useState();
 
   const { UHID } = useParams();
   const navigate = useNavigate();
@@ -102,7 +102,7 @@ function DoctorPrescription() {
       .then((res) => {
         console.log("TPA Services Response:", res);
 
-        const serviceArray = res.data?.service || res.service || [];
+        const serviceArray = res.data?.services || res.services || [];
 
         const formattedOptions = serviceArray.map((item) => ({
           // label: [item.Name,item.Totalamount],
@@ -822,17 +822,50 @@ function DoctorPrescription() {
                     display="chip"
                   /> */}
 
-                  <MultiSelect
+                  {/* <MultiSelect
                     value={values.investigations}
                     onChange={(e) => {
                       console.log("Selected Tests000000000000:", e.value);
 
                       setSelectedServices(e.value || []); // UI state
-                      setFieldValue("investigations", e.value || []); // Formik state
+                      // setFieldValue("investigations", e.value || []); // Formik state
+                      setFieldValue("investigations", [
+                        {
+                          investigationName: e.serviceOptions.label,
+                          investigationId: e.value,
+                        },
+                      ]);
                     }}
                     options={serviceOptions}
                     optionLabel="label"
-                    optionValue="label"
+                    optionValue="value"
+                    placeholder="Select Tests"
+                    filter
+                    className="w-100"
+                    display="chip"
+                  /> */}
+
+                  <MultiSelect
+                    value={values.investigations?.map(
+                      (item) => item.investigationId,
+                    )}
+                    onChange={(e) => {
+                      const selectedInvestigations = e.value.map((id) => {
+                        const selectedService = serviceOptions.find(
+                          (service) => service.value === id,
+                        );
+
+                        return {
+                          investigationName: selectedService?.label || "",
+                          investigationId: id,
+                        };
+                      });
+
+                      setFieldValue("investigations", selectedInvestigations);
+                    }}
+                    options={serviceOptions}
+                    optionLabel="label"
+                    optionValue="value"
                     placeholder="Select Tests"
                     filter
                     className="w-100"

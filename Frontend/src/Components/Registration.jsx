@@ -225,9 +225,35 @@ useEffect(() => {
     }
   }, [formData.department, doctors]);
 
-  const fetchTPA = async () => {
+  // const fetchTPA = async () => {
+  //   try {
+  //     const data = await tpaService.getActiveTPAs();
+  //     if (data.success) {
+  //       const formattedTPA = data.data.map((tpa) => ({
+  //         label: tpa.tpaName,
+  //         value: tpa._id,
+  //       }));
+  //       setTpaList(formattedTPA);
+  //     } else {
+  //       console.error("No TPA data received:", data);
+  //       setTpaList([]);
+  //     }
+  //   } catch (error) {
+  //     console.error("Error fetching TPA:", error);
+  //     toast.current?.show({
+  //       severity: "warn",
+  //       summary: "Warning",
+  //       detail: "TPA data unavailable",
+  //       life: 3000,
+  //     });
+  //     setTpaList([]);
+  //   }
+  // };
+
+
+   const fetchTPA = async () => {
     try {
-      const data = await tpaService.getActiveTPAs();
+      const data = await tpaService.getAllTPAs();
       if (data.success) {
         const formattedTPA = data.data.map((tpa) => ({
           label: tpa.tpaName,

@@ -1425,37 +1425,37 @@ function DoctorPrePrint() {
           )}
 
           {/* Medicines */}
-          {prescription.medicines && prescription.medicines.length > 0 && (
-            <section className="medicines-section">
-              <h5 className="section-title-red">MEDICINE ADVISED</h5>
-              <table className="medicine-table-professional">
-                <thead>
-                  <tr>
-                    <th style={{ width: "5%" }}>S.No</th>
-                    <th style={{ width: "30%" }}>Medicine Name</th>
-                    <th style={{ width: "15%" }}>Schedule</th>
-                    <th style={{ width: "20%" }}>Instruction</th>
-                    <th style={{ width: "15%" }}>Route</th>
-                    <th style={{ width: "15%" }}>Days</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {prescription.medicines.map((medicine, index) => (
-                    <tr key={index}>
-                      <td className="text-center">{index + 1}</td>
-                      <td>{medicine.medicineName || "N/A"}</td>
-                      <td className="text-center">
-                        {medicine.schedule || "-"}
-                      </td>
-                      <td>{medicine.instruction || "-"}</td>
-                      <td className="text-center">{medicine.route || "-"}</td>
-                      <td className="text-center">{medicine.days || "-"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </section>
-          )}
+        {prescription.medicines && prescription.medicines.length > 0 && (
+  <section className="medicines-section">
+    <h5 className="section-title-red">MEDICINE ADVISED</h5>
+
+    <table className="table table-bordered border-dark medicine-table-professional">
+      <thead className="table-light">
+        <tr>
+          <th className="text-center" style={{ width: "5%" }}>S.No</th>
+          <th style={{ width: "20%" }}>Medicine Name</th>
+          <th className="text-center" style={{ width: "15%" }}>Schedule</th>
+          <th style={{ width: "20%" }}>Instruction</th>
+          <th className="text-center" style={{ width: "15%" }}>Route</th>
+          <th className="text-center" style={{ width: "15%" }}>Days</th>
+        </tr>
+      </thead>
+      <tbody>
+        {prescription.medicines.map((medicine, index) => (
+          <tr key={index}>
+            <td className="text-center">{index + 1}</td>
+            <td>{medicine.medicineName || "N/A"}</td>
+            <td className="text-center">{medicine.schedule || "-"}</td>
+            <td>{medicine.instruction || "-"}</td>
+            <td className="text-center">{medicine.route || "-"}</td>
+            <td className="text-center">{medicine.days || "-"}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </section>
+)}
+
 
           {/* Investigations with Price */}
           {prescription.investigations &&
@@ -1484,12 +1484,12 @@ function DoctorPrePrint() {
                         >
                           {typeof inv === "string"
                             ? inv.trim()
-                            : inv?.Name || inv?.label}
+                            : inv?.investigationName || inv?.label}
                         </td>
                         <td
                           style={{ border: "1px solid #ccc", padding: "4px" }}
                         >
-                          {inv?.Totalamount || 0}
+                          {inv?.totalServicesAmount || 0}
                         </td>
                       </tr>
                     ))}

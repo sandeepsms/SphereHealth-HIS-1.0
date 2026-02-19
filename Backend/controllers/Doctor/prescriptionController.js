@@ -88,7 +88,7 @@ exports.createPrescription = async (req, res) => {
     if (!existingPrescription) {
       await Prescription.create({
         ...prescriptionPayload,
-        status: "DRAFT",
+        status: "CREATED",
       });
 
       return res.status(201).json({

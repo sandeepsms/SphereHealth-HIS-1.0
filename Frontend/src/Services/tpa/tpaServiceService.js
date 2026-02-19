@@ -53,7 +53,7 @@ export const tpaServiceService = {
 
   getTPAServiceById: async (id) => { 
     try {
-      const response = await axios.get(`${API_URL}/${id}`);
+      const response = await axios.get(`${API_URL}/tpa/${id}`);
       return response.data;
     } catch (error) {
       console.error("❌ Failed to fetch TPA service:", error);
