@@ -315,7 +315,7 @@ const WardForm = ({ visible, onHide, ward, onSave }) => {
 
           {/* Ward Type */}
           <div className="p-field mb-3">
-            <label htmlFor="wardType">Ward Type</label>
+            <label htmlFor="wardType">Ward Type</label> 
             <Dropdown
               id="wardType"
               value={formData.wardType}

@@ -24,7 +24,7 @@ const DoctorFormPage = () => {
     }
   }, [doctorId]);
 
-  const loadDoctor = async () => {
+  const loadDoctor = async () => {  
     try {
       setLoading(true);
       const response = await doctorService.getDoctorById(doctorId);

@@ -139,7 +139,8 @@ const WardManagement = () => {
   };
 
   const wardTypeBodyTemplate = (rowData) => {
-    return <Tag value={rowData.wardType || "N/A"} severity="info" />;
+     return <Tag value={rowData.wardType || "N/A"}   severity={rowData.wardType === "Emergency" ? "danger" : "info"}/>;
+  
   };
 
   const statusBodyTemplate = (rowData) => {

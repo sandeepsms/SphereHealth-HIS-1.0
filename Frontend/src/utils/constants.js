@@ -61,6 +61,7 @@ export const WARD_TYPES = [
   { label: "Private", value: "Private" },
   { label: "Semi-Private", value: "Semi-Private" },
   { label: "General", value: "General" },
+   { label: "Emergency", value: "Emergency" },
   { label: "Male Ward", value: "Male Ward" },
   { label: "Female Ward", value: "Female Ward" },
   { label: "Pediatric", value: "Pediatric" },
