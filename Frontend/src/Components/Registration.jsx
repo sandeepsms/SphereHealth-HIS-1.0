@@ -27,6 +27,9 @@ export default function PatientRegistration() {
   const navigate = useNavigate();
   const { id: patientId } = useParams(); // URL से patient ID लेना
 
+console.log("..............,,,,,,,,",patientId);
+
+
   const [formData, setFormData] = useState({
     registrationType: "OPD",
     title: "",
@@ -90,12 +93,19 @@ useEffect(() => {
   loadInitialData();
 }, []);
 
+
 // Patient data load करना जब departments और doctors load हो जाएं
 useEffect(() => {
-  if (patientId && departments.length > 0 && doctors.length > 0) {
+  if (patientId && departments.length > 0 || doctors.length > 0) {
     fetchPatientData(patientId);
   }
 }, [patientId, departments.length, doctors.length]);
+
+
+
+// useEffect(()=>{
+//    fetchPatientData(patientId);
+// },[patientId]);
 
   const loadInitialData = async () => {
     setInitialLoading(true);
@@ -119,6 +129,8 @@ useEffect(() => {
       setLoading(true);
       const response = await fetch(`${API_ENDPOINTS.PATIENTS}/${id}`);
       const data = await response.json();
+      console.log("datatatatat",data);
+      
 
       if (data.success && data.data) {
         const patientData = data.data;
