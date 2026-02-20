@@ -123,9 +123,9 @@ function PatientsTable() {
 
 // Edit handler - Navigate with patient ID in URL
 const handleEdit = (rowData) => {
-  console.log("Editing patient with ID:", rowData.id);
+  console.log("Editing patient with ID:", rowData._id);
   // Navigate to /registration/:id route
-  navigate(`/registration/${rowData.id}`);
+  navigate(`/registration/${rowData._id}`);
 };
 
 const handleView = async (rowData) => {
