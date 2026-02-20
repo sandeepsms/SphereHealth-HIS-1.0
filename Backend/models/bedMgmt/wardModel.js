@@ -29,6 +29,7 @@ const WardSchema = new mongoose.Schema(
         "Private",
         "Semi-Private",
         "General",
+        "Emergency",
         "Male Ward",
         "Female Ward",
         "Pediatric",
