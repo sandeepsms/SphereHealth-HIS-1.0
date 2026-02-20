@@ -92,7 +92,7 @@ useEffect(() => {
 
 // Patient data load करना जब departments और doctors load हो जाएं
 useEffect(() => {
-  if (patientId && departments.length > 0 && doctors.length > 0) {
+  if (patientId && departments.length > 0 || doctors.length > 0) {
     fetchPatientData(patientId);
   }
 }, [patientId, departments.length, doctors.length]);
