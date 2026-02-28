@@ -27,7 +27,7 @@ export default function PatientRegistration() {
   const navigate = useNavigate();
   const { id: patientId } = useParams(); // URL से patient ID लेना
 
-console.log("..............,,,,,,,,",patientId);
+
 
 
   const [formData, setFormData] = useState({
@@ -221,14 +221,16 @@ useEffect(() => {
   useEffect(() => {
     if (formData.department && doctors.length > 0) {
       const filtered = doctors.filter(
-        (doc) => doc.department === formData.department,
+        (doc) => doc.department === formData.department,   
       );
+      console.log(",,,,,,,,,,,///////",filtered);
+      
       setFilteredDoctors(filtered);
 
       // अगर selected doctor current department में नहीं है तो clear करें
       if (
         formData.doctor &&
-        !filtered.find((d) => d.value === formData.doctor)
+        !filtered.find((d) => d.value === formData.doctor)       
       ) {
         setFormData((prev) => ({ ...prev, doctor: "" }));
       }

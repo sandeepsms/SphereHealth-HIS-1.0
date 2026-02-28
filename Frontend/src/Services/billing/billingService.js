@@ -29,7 +29,7 @@ export const billingService = {
   },
 
   // Get all bills with filters
-  getAllBills: async (filters = {}, page = 1, limit = 10) => {
+  getAllBills: async (filters = {}, page = 1, limit = 10) => { 
     try {
       const cleanFilters = Object.entries(filters).reduce(
         (acc, [key, value]) => {

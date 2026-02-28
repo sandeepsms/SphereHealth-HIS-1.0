@@ -27,6 +27,8 @@ function DoctorPrescription() {
   const [Testprice, setTestprice] = useState();
   const [buttonmode, setButtonMode] = useState();
   const [errors, seterrors] = useState();
+  const [editPrescription, setEditPrescription] = useState();
+  const [PrescriptionDataforEdit, setPrescriptionDataforEdit] = useState();
 
   const { UHID } = useParams();
   const navigate = useNavigate();
@@ -34,6 +36,18 @@ function DoctorPrescription() {
   console.log("DoctorPrescription - UHID from URL:", UHID);
 
   console.log("testprice------000000", TesttotalPrice);
+
+  // useEffect(() => {
+  //   buttonmode === "CREATE"
+  //     ? setEditPrescription(false)
+  //     : setEditPrescription(true);
+  // }, []);
+
+  useEffect(() => {
+    if (editPrescription) {
+      fetchPrescriptionEditData();
+    }
+  }, [editPrescription]);
 
   useEffect(() => {
     if (UHID == null || UHID === "") return; // jab tak UHID na aaye
@@ -43,8 +57,31 @@ function DoctorPrescription() {
         const responsedata =
           await prescriptionService.checkCreateOrUpdate(UHID);
         setButtonMode(responsedata.data.mode);
+        fetchPrescriptionEditData();
       } catch (error) {
         console.error("Error while checking prescription", error);
+      }
+    };
+// Fetch Pereception data for edit.............
+    const fetchPrescriptionEditData = async () => {
+      try {
+        setLoading(true);
+        const response = await prescriptionService.getPrescriptionsByUHID(UHID);
+        console.log("nnnnnnnnnnccccccccccc", response);
+        if (response.success) {
+          const prescriptionData = Array.isArray(response.data)
+            ? response.data[0]
+            : response.data;
+          setPrescriptionDataforEdit(prescriptionData || null);
+
+       
+        } else {
+          toast.error("No prescription data found for this UHID");
+        }
+      } catch (error) {
+        toast.error("Failed to load Edit prescription");
+      } finally {
+        setLoading(false);
       }
     };
 
@@ -225,32 +262,45 @@ function DoctorPrescription() {
 
         // Clinical Details
         historyOfAllergy: uhid?.knownAllergies,
-        historyOfPresentIllness: "",
-        physicalExamination: "",
+        historyOfPresentIllness:
+          PrescriptionDataforEdit?.clinicalDetails?.historyOfPresentIllness ||
+          "",
+
+        physicalExamination:
+          PrescriptionDataforEdit?.clinicalDetails?.physicalExamination || "",
 
         // Vitals
-        weight: "",
-        temperature: "",
-        bloodPressure: "",
-        pulse: "",
+        weight: PrescriptionDataforEdit?.vitals?.weight || "",
+
+        temperature: PrescriptionDataforEdit?.vitals?.temperature || "",
+
+        bloodPressure: PrescriptionDataforEdit?.vitals?.bloodPressure || "",
+
+        pulse: PrescriptionDataforEdit?.vitals?.pulse || "",
 
         // Diagnosis & Treatment
-        provisionalDiagnosis: "",
-        medicines: [
-          {
-            medicineName: "",
-            schedule: "",
-            instruction: "",
-            route: "",
-            days: "",
-          },
-        ],
+        provisionalDiagnosis:
+          PrescriptionDataforEdit?.provisionalDiagnosis || "",
 
-        /** @type {any[]} */
-        investigations: [],
+        // Medicines (Array Handle Properly)
+        medicines:
+          PrescriptionDataforEdit?.medicines?.length > 0
+            ? PrescriptionDataforEdit.medicines
+            : [
+                {
+                  medicineName: "",
+                  schedule: "",
+                  instruction: "",
+                  route: "",
+                  days: "",
+                },
+              ],
+
+        // Investigations
+        investigations: PrescriptionDataforEdit?.investigations || [],
 
         // Advice
-        advice: "",
+        advice: PrescriptionDataforEdit?.advice || "",
       }}
       validationSchema={validationSchema}
       onSubmit={async (values, { setSubmitting }) => {
