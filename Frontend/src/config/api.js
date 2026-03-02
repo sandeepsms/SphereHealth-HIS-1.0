@@ -25,6 +25,7 @@ export const API_ENDPOINTS = {
   HOSPITAL_CHARGES: `${API_BASE_URL}/hospital-charges`,
   PRESCRIPTIONS: `${API_BASE_URL}/prescriptions`,
   BILLING: `${API_BASE_URL}/billing`,
+  RegistrationSearch:`${API_BASE_URL}/registartion-search`
 };
 
 export default API_ENDPOINTS;

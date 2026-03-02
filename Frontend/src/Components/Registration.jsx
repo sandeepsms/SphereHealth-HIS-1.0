@@ -15,20 +15,20 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { departmentService } from "../Services/departmentService";
 import { doctorService } from "../Services/doctors/doctorService";
 import { tpaService } from "../Services/tpa/tpaService";
+
+import { RegistrationSearch } from "../Services/RegistrationSearch/search";
 import "primereact/resources/themes/lara-light-blue/theme.css";
 import "primereact/resources/primereact.min.css";
 import "primeicons/primeicons.css";
 import { API_ENDPOINTS } from "../config/api";
 import "../../css/Radiobutton.css";
+import SearchBar from "./Searchbar/SearchBar";
 
 export default function PatientRegistration() {
   const toast = useRef(null);
   const location = useLocation();
   const navigate = useNavigate();
   const { id: patientId } = useParams(); // URL से patient ID लेना
-
-
-
 
   const [formData, setFormData] = useState({
     registrationType: "OPD",
@@ -39,6 +39,7 @@ export default function PatientRegistration() {
     maritalStatus: "",
     contactNumber: "",
     email: "",
+    age: "",
     address: {
       completeAddress: "",
       pincode: "",
@@ -48,7 +49,7 @@ export default function PatientRegistration() {
     },
     bloodGroup: "",
     knownAllergies: "",
-    tpa: "",
+    tpa: "CASH",
     department: "",
     doctor: "",
     isMLC: false,
@@ -66,12 +67,60 @@ export default function PatientRegistration() {
   const [departments, setDepartments] = useState([]);
   const [doctors, setDoctors] = useState([]);
   const [filteredDoctors, setFilteredDoctors] = useState([]);
-const [loading, setLoading] = useState(false);
-const [pincodeLoading, setPincodeLoading] = useState(false);
-const [initialLoading, setInitialLoading] = useState(true);
-const [isEditMode, setIsEditMode] = useState(false);
-const [OPDprice, setOPDprice] = useState();
+  const [loading, setLoading] = useState(false);
+  const [pincodeLoading, setPincodeLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [OPDprice, setOPDprice] = useState();
+  const [searchTerm, setSearchTerm] = useState("");
+  const [searchPatient, setsearchPatient] = useState([]);
+  const [selectedsearchPatient, setselectedsearchPatient] = useState(null);
 
+  //   const usersData = [
+  //   { id: 1, name: "Sahil Singh", email: "sahil@gmail.com", role: "Developer" },
+  //   { id: 2, name: "Rahul Sharma", email: "rahul@gmail.com", role: "Designer" },
+  //   { id: 3, name: "Aman Verma", email: "aman@gmail.com", role: "Manager" },
+  // ];
+
+  //   const filteredUsers = usersData.filter((user) =>
+  //   Object.values(user).some((value) =>
+  //     value.toString().toLowerCase().includes(searchPatient.toLowerCase())
+  //   )
+  // );
+
+  useEffect(() => {
+    const delay = setTimeout(() => {
+      if (searchTerm && searchTerm.length > 2) {
+        fetchPatientbySearch(searchTerm);
+      }
+    }, 500); // 500ms debounce
+
+    return () => clearTimeout(delay);
+  }, [searchTerm]);
+
+  const fetchPatientbySearch = async (uhid) => {
+    try {
+      const response = await RegistrationSearch.RegistrationSearchs(uhid);
+
+      console.log("Full Response:", response);
+
+      if (response.success && response.data) {
+        const formattedDatas = [
+          {
+            label: response.data.fullName,
+            value: response.data.UHID,
+          },
+        ];
+
+        console.log("Formatted:", formattedDatas);
+
+        setsearchPatient(formattedDatas);
+      }
+    } catch (error) {
+      console.error("Error fetching patient:", error);
+      setsearchPatient([]);
+    }
+  };
   function fetchOPDPrice(selectedId) {
     console.log("Fetching OPD Price for TPA ID:", selectedId);
     fetch(
@@ -88,24 +137,21 @@ const [OPDprice, setOPDprice] = useState();
       });
   }
 
-// Initial data load
-useEffect(() => {
-  loadInitialData();
-}, []);
+  // Initial data load
+  useEffect(() => {
+    loadInitialData();
+  }, []);
 
+  // Patient data load करना जब departments और doctors load हो जाएं
+  useEffect(() => {
+    if ((patientId && departments.length > 0) || doctors.length > 0) {
+      fetchPatientData(patientId);
+    }
+  }, [patientId, departments.length, doctors.length]);
 
-// Patient data load करना जब departments और doctors load हो जाएं
-useEffect(() => {
-  if (patientId && departments.length > 0 || doctors.length > 0) {
-    fetchPatientData(patientId);
-  }
-}, [patientId, departments.length, doctors.length]);
-
-
-
-// useEffect(()=>{
-//    fetchPatientData(patientId);
-// },[patientId]);
+  // useEffect(()=>{
+  //    fetchPatientData(patientId);
+  // },[patientId]);
 
   const loadInitialData = async () => {
     setInitialLoading(true);
@@ -129,8 +175,7 @@ useEffect(() => {
       setLoading(true);
       const response = await fetch(`${API_ENDPOINTS.PATIENTS}/${id}`);
       const data = await response.json();
-      console.log("datatatatat",data);
-      
+      console.log("datatatatat", data);
 
       if (data.success && data.data) {
         const patientData = data.data;
@@ -159,7 +204,7 @@ useEffect(() => {
           tpaId,
           deptId,
           docId,
-          fullData: patientData,     
+          fullData: patientData,
         });
 
         // Form data set करना................................................
@@ -182,7 +227,17 @@ useEffect(() => {
             district: patientData.address?.district || "",
           },
           bloodGroup: patientData.bloodGroup || "",
-          knownAllergies: patientData.knownAllergies || "",
+          // knownAllergies:patientData.knownAllergies  ||"",
+          knownAllergies: searchPatient
+            ? searchPatient.knownAllergies
+            : patientData.knownAllergies || "",
+
+          // knownAllergies: Array.isArray(formattedDatas).length>0 ? patientData.knownAllergies ?? "":"",
+          // // knownAllergies:
+
+          //   formattedDatas?.length > 0
+          //     ? (patientData?.knownAllergies ?? "")
+          //     : "",
           tpa: tpaId || null,
           department: deptId || "",
           doctor: docId || "",
@@ -221,16 +276,16 @@ useEffect(() => {
   useEffect(() => {
     if (formData.department && doctors.length > 0) {
       const filtered = doctors.filter(
-        (doc) => doc.department === formData.department,   
+        (doc) => doc.department === formData.department,
       );
-      console.log(",,,,,,,,,,,///////",filtered);
-      
+      console.log(",,,,,,,,,,,///////", filtered);
+
       setFilteredDoctors(filtered);
 
       // अगर selected doctor current department में नहीं है तो clear करें
       if (
         formData.doctor &&
-        !filtered.find((d) => d.value === formData.doctor)       
+        !filtered.find((d) => d.value === formData.doctor)
       ) {
         setFormData((prev) => ({ ...prev, doctor: "" }));
       }
@@ -264,8 +319,7 @@ useEffect(() => {
   //   }
   // };
 
-
-   const fetchTPA = async () => {
+  const fetchTPA = async () => {
     try {
       const data = await tpaService.getAllTPAs();
       if (data.success) {
@@ -325,7 +379,7 @@ useEffect(() => {
         }));
       setDoctors(allDoctors);
     } catch (error) {
-      console.error("Error fetching doctors:", error);                                             
+      console.error("Error fetching doctors:", error);
       setDoctors([]);
     }
   };
@@ -426,9 +480,66 @@ useEffect(() => {
     { label: "Other", value: "Other" },
   ];
 
+  // Age calculation function logic 👇👇
+
+  const calculateAge = (dob) => {
+    if (!dob) return "";
+
+    const today = new Date();
+    const birthDate = new Date(dob);
+
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const monthDiff = today.getMonth() - birthDate.getMonth();
+
+    if (
+      monthDiff < 0 ||
+      (monthDiff === 0 && today.getDate() < birthDate.getDate())
+    ) {
+      age--;
+    }
+
+    return age < 0 ? "" : age;
+  };
+
+  // const handleInputChange = (name, value) => {
+  //   if (name === "title") {
+  //     const selectedTitle = titles.find((t) => t.value === value);
+  //     if (selectedTitle && selectedTitle.gender) {
+  //       setFormData((prev) => ({
+  //         ...prev,
+  //         title: value,
+  //         gender: selectedTitle.gender,
+  //       }));
+  //     } else {
+  //       setFormData((prev) => ({ ...prev, title: value }));
+  //     }
+  //   } else if (name.startsWith("address.")) {
+  //     const addressField = name.split(".")[1];
+  //     setFormData((prev) => ({
+  //       ...prev,
+  //       address: {
+  //         ...prev.address,
+  //         [addressField]: value,
+  //       },
+  //     }));
+
+  //     if (addressField === "pincode" && value.length === 6) {
+  //       fetchPincodeData(value);
+  //     }
+  //   } else {
+  //     setFormData((prev) => ({ ...prev, [name]: value }));
+  //   }
+
+  //   if (errors[name]) {
+  //     setErrors((prev) => ({ ...prev, [name]: "" }));
+  //   }
+  // };
+
   const handleInputChange = (name, value) => {
+    // ✅ Title Logic
     if (name === "title") {
       const selectedTitle = titles.find((t) => t.value === value);
+
       if (selectedTitle && selectedTitle.gender) {
         setFormData((prev) => ({
           ...prev,
@@ -438,8 +549,23 @@ useEffect(() => {
       } else {
         setFormData((prev) => ({ ...prev, title: value }));
       }
-    } else if (name.startsWith("address.")) {
+    }
+
+    // ✅ DOB Logic (NEW)
+    else if (name === "dateOfBirth") {
+      const calculatedAge = calculateAge(value);
+
+      setFormData((prev) => ({
+        ...prev,
+        dateOfBirth: value,
+        age: calculatedAge, // 👈 auto fill age
+      }));
+    }
+
+    // ✅ Address Logic
+    else if (name.startsWith("address.")) {
       const addressField = name.split(".")[1];
+
       setFormData((prev) => ({
         ...prev,
         address: {
@@ -451,10 +577,14 @@ useEffect(() => {
       if (addressField === "pincode" && value.length === 6) {
         fetchPincodeData(value);
       }
-    } else {
+    }
+
+    // ✅ Normal Fields (Including Manual Age Edit)
+    else {
       setFormData((prev) => ({ ...prev, [name]: value }));
     }
 
+    // ✅ Error Clear
     if (errors[name]) {
       setErrors((prev) => ({ ...prev, [name]: "" }));
     }
@@ -596,7 +726,7 @@ useEffect(() => {
       <div
         style={{
           display: "flex",
-          flexDirection:"column",
+          flexDirection: "column",
           justifyContent: "center",
           alignItems: "center",
           height: "400px",
@@ -606,9 +736,8 @@ useEffect(() => {
           className="loaders"
           style={{ width: "50px", height: "50px" }}
         ></span>
-         <h3 className="mt-3 font-bold text-xl">Loading...</h3>
+        <h3 className="mt-3 font-bold text-xl">Loading...</h3>
       </div>
-     
     );
   }
 
@@ -634,6 +763,23 @@ useEffect(() => {
                 : "Patient Registration Portal"}
             </p>
             <small>Dr. Sandeep</small>
+          </div>
+
+          <div style={{ padding: "20px" }}>
+            {/* <input
+        type="text"
+        placeholder="Search Patient..."
+        value={searchPatient}
+        onChange={(e) => setsearchPatient(e.target.value)}
+        style={{ padding: "15px", width: "300px" }}
+      /> */}
+
+            <SearchBar
+              Dropdowndata={searchPatient}
+              value={selectedsearchPatient}
+              onchange={setselectedsearchPatient}
+              onSearchChange={setSearchTerm}
+            />
           </div>
           {isEditMode && (
             <Button
@@ -690,11 +836,35 @@ useEffect(() => {
                 IPD
               </label>
             </div>
+
+            <div className="flex align-items-center gap-2">
+              <RadioButton
+                inputId="daycare"
+                value="Daycare"
+                onChange={(e) => handleInputChange("registrationType", e.value)}
+                checked={formData.registrationType === "Daycare"}
+              />
+              <label htmlFor="daycare" className="font-medium">
+                Daycare
+              </label>
+            </div>
+
+            <div className="flex align-items-center gap-2">
+              <RadioButton
+                inputId="services"
+                value="Services"
+                onChange={(e) => handleInputChange("registrationType", e.value)}
+                checked={formData.registrationType === "Services"}
+              />
+              <label htmlFor="services" className="font-medium">
+                Services
+              </label>
+            </div>
           </div>
         </Card>
 
-{/* TPA Section */}
-<Card className="mb-4">
+        {/* TPA Section */}
+        <Card className="mb-4">
           <div className="p-field p-col-12">
             <label className="font-semibold block mb-2">TPA (Optional)</label>
             <Dropdown
@@ -703,10 +873,12 @@ useEffect(() => {
               onChange={(e) => {
                 const selectedId = e.value;
                 handleInputChange("tpa", selectedId);
+               
                 if (selectedId) {
                   fetchOPDPrice(selectedId);
                 }
               }}
+              
               placeholder={tpaList.length ? "Select TPA" : "Loading..."}
               filter
               showClear
@@ -826,6 +998,14 @@ useEffect(() => {
                 onChange={(e) => handleInputChange("maritalStatus", e.value)}
                 placeholder="Select Status"
                 style={{ width: "100%" }}
+              />
+            </div>
+            <div className="field col-12 md:col-4">
+              <label className="font-semibold block mb-2">Age</label>
+              <InputText
+                value={formData.age}
+                onChange={(e) => handleInputChange("age", e.target.value)}
+                placeholder="Enter Age"
               />
             </div>
 
