@@ -75,52 +75,111 @@ export default function PatientRegistration() {
   const [searchTerm, setSearchTerm] = useState("");
   const [searchPatient, setsearchPatient] = useState([]);
   const [selectedsearchPatient, setselectedsearchPatient] = useState(null);
+  const [datasearch, setdatasearch] = useState();
+  const [updatebyserach, setupdatebyserach] = useState(false);
+  const [idofsearchPatient, setidofsearchPatient] = useState(null);
+  const [UHID, setUHID] = useState();
 
-  //   const usersData = [
-  //   { id: 1, name: "Sahil Singh", email: "sahil@gmail.com", role: "Developer" },
-  //   { id: 2, name: "Rahul Sharma", email: "rahul@gmail.com", role: "Designer" },
-  //   { id: 3, name: "Aman Verma", email: "aman@gmail.com", role: "Manager" },
-  // ];
+  console.log("lllllllllllll", UHID);
 
-  //   const filteredUsers = usersData.filter((user) =>
-  //   Object.values(user).some((value) =>
-  //     value.toString().toLowerCase().includes(searchPatient.toLowerCase())
-  //   )
-  // );
-
+  //  setidofsearchPatient(searchPatient?.[0]?.id) ;
   useEffect(() => {
     const delay = setTimeout(() => {
       if (searchTerm && searchTerm.length > 2) {
         fetchPatientbySearch(searchTerm);
       }
-    }, 500); // 500ms debounce
+    }, 500); // debounce
 
     return () => clearTimeout(delay);
   }, [searchTerm]);
+
+  //  useEffect(()=>{
+  //   const delay=setTimeout(() => {
+  //     if(searchTerm.length>0){
+  //       fetchPatientbySearch(searchTerm);
+  //     }else{
+  //       searchTerm([])
+  //     }
+  //   }, 500);
+  //   return clearTimeout(delay)
+  // },[searchTerm])
 
   const fetchPatientbySearch = async (uhid) => {
     try {
       const response = await RegistrationSearch.RegistrationSearchs(uhid);
 
-      console.log("Full Response:", response);
+      console.log("Full Response:", response.data);
 
-      if (response.success && response.data) {
-        const formattedDatas = [
-          {
-            label: response.data.fullName,
-            value: response.data.UHID,
-          },
-        ];
+      const data = response.data;
+      setdatasearch(data);
 
-        console.log("Formatted:", formattedDatas);
+      const formattedDatas = data.map((data) => ({
+        label: data.fullName,
+        value: data.UHID,
+        id: data._id,
+      }));
 
-        setsearchPatient(formattedDatas);
-      }
+      setsearchPatient(formattedDatas);
+      setidofsearchPatient(formattedDatas[0].id);
+      setUHID(formattedDatas[0].value);
+      // }
     } catch (error) {
       console.error("Error fetching patient:", error);
       setsearchPatient([]);
     }
   };
+
+  // set value after searching...................
+  useEffect(() => {
+    if (datasearch?.length > 0) {
+      const patient = datasearch[0];
+      setupdatebyserach(true);
+
+      setFormData((prev) => ({
+        ...prev,
+
+        registrationType: patient.registrationType || "OPD",
+        title: patient.title || "",
+        fullName: patient.fullName || "",
+        gender: patient.gender || "",
+        dateOfBirth: patient.dateOfBirth ? new Date(patient.dateOfBirth) : null,
+        maritalStatus: patient.maritalStatus || "",
+        contactNumber: patient.contactNumber || "",
+        email: patient.email || "",
+        age: patient.age || "",
+
+        address: {
+          completeAddress: patient.address?.completeAddress || "",
+          pincode: patient.address?.pincode || "",
+          city: patient.address?.city || "",
+          state: patient.address?.state || "",
+          district: patient.address?.district || "",
+        },
+
+        bloodGroup: patient.bloodGroup || "",
+        knownAllergies: patient.knownAllergies || "",
+        tpa: patient.tpa || "CASH",
+        department: patient.department || "",
+        doctor: patient.doctor || "",
+
+        isMLC: patient.isMLC || false,
+        mlcNumber: patient.mlcNumber || "",
+
+        companionName: patient.companionName || "",
+        companionRelationship: patient.companionRelationship || "",
+        companionContact: patient.companionContact || "",
+
+        hasAppointment: patient.hasAppointment || false,
+        appointmentDate: patient.appointmentDate
+          ? new Date(patient.appointmentDate)
+          : null,
+        appointmentTime: patient.appointmentTime
+          ? new Date(patient.appointmentTime)
+          : null,
+      }));
+    }
+  }, [datasearch]);
+
   function fetchOPDPrice(selectedId) {
     console.log("Fetching OPD Price for TPA ID:", selectedId);
     fetch(
@@ -227,17 +286,8 @@ export default function PatientRegistration() {
             district: patientData.address?.district || "",
           },
           bloodGroup: patientData.bloodGroup || "",
-          // knownAllergies:patientData.knownAllergies  ||"",
-          knownAllergies: searchPatient
-            ? searchPatient.knownAllergies
-            : patientData.knownAllergies || "",
+          knownAllergies: patientData.knownAllergies || "",
 
-          // knownAllergies: Array.isArray(formattedDatas).length>0 ? patientData.knownAllergies ?? "":"",
-          // // knownAllergies:
-
-          //   formattedDatas?.length > 0
-          //     ? (patientData?.knownAllergies ?? "")
-          //     : "",
           tpa: tpaId || null,
           department: deptId || "",
           doctor: docId || "",
@@ -659,6 +709,7 @@ export default function PatientRegistration() {
 
       let response;
       if (isEditMode && patientId) {
+        // if (patientId && (isEditMode || updatebyserach)) {
         // Update existing patient
         response = await fetch(`${API_ENDPOINTS.PATIENTS}/${patientId}`, {
           method: "PUT",
@@ -667,6 +718,17 @@ export default function PatientRegistration() {
           },
           body: JSON.stringify(cleanedFormData),
         });
+      } else if (idofsearchPatient && updatebyserach) {
+        response = await fetch(
+          `${API_ENDPOINTS.PATIENTS}/${idofsearchPatient}`,
+          {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(cleanedFormData),
+          },
+        );
       } else {
         // Create new patient
         response = await fetch(API_ENDPOINTS.PATIENTS, {
@@ -692,7 +754,8 @@ export default function PatientRegistration() {
           life: 3000,
         });
         setTimeout(() => {
-          navigate("/allpatient");
+          // navigate("/allpatient");
+          navigate(`/opd/${UHID}`);
         }, 2000);
       } else {
         toast.current?.show({
@@ -776,8 +839,8 @@ export default function PatientRegistration() {
 
             <SearchBar
               Dropdowndata={searchPatient}
-              value={selectedsearchPatient}
-              onchange={setselectedsearchPatient}
+              valuedata={selectedsearchPatient}
+              onchanges={setselectedsearchPatient}
               onSearchChange={setSearchTerm}
             />
           </div>
@@ -842,7 +905,11 @@ export default function PatientRegistration() {
                 inputId="daycare"
                 value="Daycare"
                 onChange={(e) => handleInputChange("registrationType", e.value)}
-                checked={formData.registrationType === "Daycare"}
+                checked={
+                  formData.registrationType === "Daycare"
+                    ? setShowdialogboxofbed(true)
+                    : ""
+                }
               />
               <label htmlFor="daycare" className="font-medium">
                 Daycare
@@ -873,12 +940,11 @@ export default function PatientRegistration() {
               onChange={(e) => {
                 const selectedId = e.value;
                 handleInputChange("tpa", selectedId);
-               
+
                 if (selectedId) {
                   fetchOPDPrice(selectedId);
                 }
               }}
-              
               placeholder={tpaList.length ? "Select TPA" : "Loading..."}
               filter
               showClear
@@ -1353,7 +1419,7 @@ export default function PatientRegistration() {
             label={
               loading
                 ? "Submitting..."
-                : isEditMode
+                : isEditMode || updatebyserach
                   ? "Update Patient"
                   : "Register Patient"
             }

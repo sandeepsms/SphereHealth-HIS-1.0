@@ -30,7 +30,7 @@ function PatientsTable() {
   const [deleteDialogVisible, setDeleteDialogVisible] = useState(false);
   const [viewDialogVisible, setViewDialogVisible] = useState(false);
   const [selectedPatient, setSelectedPatient] = useState(null);
-  console.log("mmmmmmmmmmmmmmmmmmccccccccccccccccc",selectedPatient);
+  
   
 
   const toast = useRef(null);

@@ -112,6 +112,26 @@ class PatientService {
     return patient;
   }
 
+
+ async getRegistrationPatientSerachByUHID(uhid) {
+   const patient= await Patient.find({
+    UHID: { $regex: `^${uhid}`, $options: "i" }
+  })
+  .limit(10)
+  .lean();
+  
+    if (!patient) {
+      throw new Error("Patient not found");
+    }
+
+    return patient;
+};
+
+// export default { getPatientByUHID };
+
+
+
+
   async getPatientByUHID(uhid) {
     const patient = await Patient.findOne({ UHID: uhid })
       .populate("department", "departmentName")
