@@ -23,7 +23,7 @@ const tpaServiceRoutes = require("./tpa/tpaServiceRoutes");
 const TPAServicebill = require("./Billing/TPAServiceBilling");
 const doctorPrescriptionRoutes = require("../routes/Doctor/doctorPrescriptionRoutes");
 const hospitalChargesRoutes = require("../routes/charges/hospitalChargesRoutes");
-const RegistrationSearchRoutes = require("../routes/RegistrationSearch/search")
+
 // routes mapping
 router.use("/buildings", buildingRoutes);
 router.use("/floors", floorRoutes);
@@ -45,6 +45,5 @@ router.use("/tpaservice", tpaServiceRoutes);
 router.use("/prescriptions", doctorPrescriptionRoutes);
 router.use("/servicebilldata", TPAServicebill);
 router.use("/hospital-charges", hospitalChargesRoutes);
-router.use("/registartion-search",RegistrationSearchRoutes);
 
 module.exports = router;
