@@ -3,29 +3,41 @@ const API_BASE_URL =
 
 export const API_ENDPOINTS = {
   BASE: API_BASE_URL,
+
+  // ── Doctors & Patients ────────────────────────────────────────
   DOCTORS: `${API_BASE_URL}/doctors`,
   PATIENTS: `${API_BASE_URL}/patients`,
   DEPARTMENTS: `${API_BASE_URL}/department`,
-  TPA: `${API_BASE_URL}/tpa`,
-  TPASERVICEBILL: `${API_BASE_URL}/Servicebilldata/addbill`,
 
+  // ── TPA & Old Billing ─────────────────────────────────────────
+  TPA: `${API_BASE_URL}/tpa`,
+  TPA_SERVICES: `${API_BASE_URL}/tpaservice`,
+  TPASERVICEBILL: `${API_BASE_URL}/Servicebilldata/addbill`,
+  HOSPITAL_CHARGES: `${API_BASE_URL}/hospital-charges`,
+
+  // ── Bed Management ────────────────────────────────────────────
   BEDS: `${API_BASE_URL}/bedss`,
   BUILDINGS: `${API_BASE_URL}/buildings`,
   FLOORS: `${API_BASE_URL}/floors`,
   WARDS: `${API_BASE_URL}/wards`,
   ROOMS: `${API_BASE_URL}/rooms`,
   ROOM_CATEGORIES: `${API_BASE_URL}/room-categories`,
+
+  // ── OPD / Emergency / Admissions ─────────────────────────────
   ADMISSIONS: `${API_BASE_URL}/admissions`,
-  SERVICES: `${API_BASE_URL}/services`,
   OPD: `${API_BASE_URL}/opd`,
   EMERGENCY: `${API_BASE_URL}/emergency`,
-  // DOCTORPRECEPTION:`${API_BASE_URL}/RegistrationOPD/getPreceptionreport`
+
+  // ── Doctor & Prescriptions ────────────────────────────────────
   DOCTORPRECEPTION: `${API_BASE_URL}/patients/uhid`,
-  TPA_SERVICES: `${API_BASE_URL}/tpaservice`,
-  HOSPITAL_CHARGES: `${API_BASE_URL}/hospital-charges`,
   PRESCRIPTIONS: `${API_BASE_URL}/prescriptions`,
+
+  // ── Search ────────────────────────────────────────────────────
+  RegistrationSearch: `${API_BASE_URL}/registartion-search`,
+
+  // ── New Billing System (billing-v3) ───────────────────────────
+  SERVICES: `${API_BASE_URL}/services`,
   BILLING: `${API_BASE_URL}/billing`,
-  RegistrationSearch:`${API_BASE_URL}/registartion-search`
 };
 
 export default API_ENDPOINTS;

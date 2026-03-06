@@ -1,172 +1,215 @@
-import React, { useState, useEffect } from "react";
-import { DataTable } from "primereact/datatable";
-import { Column } from "primereact/column";
+import React, { useEffect, useRef, useState } from "react";
 import { Button } from "primereact/button";
-import { InputText } from "primereact/inputtext";
-import { Tag } from "primereact/tag";
 import { Card } from "primereact/card";
 import { Toast } from "primereact/toast";
-import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
+import { ConfirmDialog } from "primereact/confirmdialog";
+import { InputText } from "primereact/inputtext";
+
 import RoomForm from "../Components/room/RoomForm";
+import RoomList from "../Components/room/RoomList";
+import RoomVisualLayout from "../Components/room/Roomvisuallayout";
 import { roomService } from "../Services/roomService";
 
+const TABS = [
+  { key: "table", icon: "pi pi-table", label: "Table View" },
+  { key: "visual", icon: "pi pi-sitemap", label: "Visual Layout" },
+];
+
 const RoomManagement = () => {
-  const [rooms, setRooms] = useState([]);
-  const [selectedRoom, setSelectedRoom] = useState(null);
+  const toast = useRef(null);
+  const [viewMode, setViewMode] = useState("table");
   const [showForm, setShowForm] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [selRoom, setSelRoom] = useState(null);
+  const [refresh, setRefresh] = useState(0);
   const [globalFilter, setGlobalFilter] = useState("");
-  const toast = React.useRef(null);
-
-  useEffect(() => {
-    loadRooms();
-  }, []);
-
-  const loadRooms = async () => {
-    setLoading(true);
-    try {
-      const data = await roomService.getAllRooms();
-      setRooms(data);
-    } catch (error) {
-      toast.current.show({
-        severity: "error",
-        summary: "Error",
-        detail: "Failed to load rooms",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleEdit = (room) => {
-    setSelectedRoom(room);
+    setSelRoom(room);
     setShowForm(true);
   };
-
-  const handleDelete = (room) => {
-    confirmDialog({
-      message: `Are you sure you want to delete room ${room.roomNumber}?`,
-      header: "Confirmation",
-      icon: "pi pi-exclamation-triangle",
-      accept: async () => {
-        try {
-          await roomService.deleteRoom(room._id);
-          toast.current.show({
-            severity: "success",
-            summary: "Success",
-            detail: "Room deleted successfully",
-          });
-          loadRooms();
-        } catch (error) {
-          toast.current.show({
-            severity: "error",
-            summary: "Error",
-            detail: "Failed to delete room",
-          });
-        }
-      },
+  const handleSave = () => {
+    setShowForm(false);
+    setSelRoom(null);
+    setRefresh((r) => r + 1);
+    toast.current?.show({
+      severity: "success",
+      summary: "Success",
+      detail: "Room saved successfully",
+      life: 3000,
     });
   };
 
-  const statusBodyTemplate = (rowData) => {
-    const severity = {
-      Active: "success",
-      Inactive: "danger",
-      "Under Maintenance": "warning",
-      Blocked: "info",
-    };
-    return <Tag value={rowData.status} severity={severity[rowData.status]} />;
-  };
-
-  const occupancyBodyTemplate = (rowData) => {
-    return `${rowData.occupiedBeds}/${rowData.totalBeds} (${rowData.occupancyRate}%)`;
-  };
-
-  const actionBodyTemplate = (rowData) => {
-    return (
-      <div className="flex gap-2">
-        <Button
-          icon="pi pi-pencil"
-          className="p-button-rounded p-button-success"
-          onClick={() => handleEdit(rowData)}
-        />
-        <Button
-          icon="pi pi-trash"
-          className="p-button-rounded p-button-danger"
-          onClick={() => handleDelete(rowData)}
-        />
-      </div>
-    );
-  };
-
-  const header = (
-    <div className="flex flex-wrap gap-2 align-items-center justify-content-between">
-      <h4 className="m-0">Room Management</h4>
-      <span className="p-input-icon-left">
-        <i className="pi pi-search" />
-        <InputText
-          type="search"
-          value={globalFilter}
-          onChange={(e) => setGlobalFilter(e.target.value)}
-          placeholder="Search..."
-        />
-      </span>
-      <Button
-        label="Add Room"
-        icon="pi pi-plus"
-        onClick={() => {
-          setSelectedRoom(null);
-          setShowForm(true);
-        }}
-      />
-    </div>
-  );
-
   return (
-    <div className="p-4">
+    <div style={{ padding: 20, background: "#f1f5f9", minHeight: "100vh" }}>
       <Toast ref={toast} />
       <ConfirmDialog />
 
-      <Card>
-        <DataTable
-          value={rooms}
-          paginator
-          rows={10}
-          loading={loading}
-          globalFilter={globalFilter}
-          header={header}
-          emptyMessage="No rooms found"
-          responsiveLayout="scroll"
+      {/* ── HEADER ── */}
+      <div
+        style={{
+          background: "linear-gradient(135deg,#0891b2 0%,#0e7490 100%)",
+          borderRadius: 12,
+          padding: "14px 22px",
+          marginBottom: 20,
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 14,
+          alignItems: "center",
+          justifyContent: "space-between",
+          boxShadow: "0 4px 18px rgba(8,145,178,.28)",
+        }}
+      >
+        {/* Title */}
+        <h2
+          style={{
+            margin: 0,
+            color: "#fff",
+            fontSize: 20,
+            fontWeight: 700,
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            flexShrink: 0,
+          }}
         >
-          <Column field="roomNumber" header="Room Number" sortable />
-          <Column field="roomName" header="Room Name" sortable />
-          <Column field="roomCode" header="Room Code" sortable />
-          <Column field="wardName" header="Ward" sortable />
-          <Column field="floorNumber" header="Floor" sortable />
-          <Column field="buildingName" header="Building" sortable />
-          <Column header="Occupancy" body={occupancyBodyTemplate} sortable />
-          <Column
-            field="status"
-            header="Status"
-            body={statusBodyTemplate}
-            sortable
-          />
-          <Column header="Actions" body={actionBodyTemplate} />
-        </DataTable>
-      </Card>
+          <i className="pi pi-building" /> Room Management
+        </h2>
 
+        {/* Tabs */}
+        <div
+          style={{
+            display: "flex",
+            background: "rgba(255,255,255,.15)",
+            borderRadius: 9,
+            padding: 3,
+            gap: 3,
+            flexShrink: 0,
+          }}
+        >
+          {TABS.map(({ key, icon, label }) => {
+            const active = viewMode === key;
+            return (
+              <button
+                key={key}
+                onClick={() => setViewMode(key)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "7px 16px",
+                  borderRadius: 6,
+                  border: "none",
+                  cursor: "pointer",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  transition: "all .18s",
+                  background: active ? "#fff" : "transparent",
+                  color: active ? "#0891b2" : "rgba(255,255,255,.88)",
+                  boxShadow: active ? "0 2px 8px rgba(0,0,0,.14)" : "none",
+                }}
+              >
+                <i className={icon} style={{ fontSize: 13 }} />
+                {label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Search + Add */}
+        <div
+          style={{
+            display: "flex",
+            gap: 10,
+            alignItems: "center",
+            flexShrink: 0,
+            flexWrap: "wrap",
+          }}
+        >
+          {viewMode === "table" && (
+            <span
+              style={{
+                position: "relative",
+                display: "inline-flex",
+                alignItems: "center",
+              }}
+            >
+              <i
+                className="pi pi-search"
+                style={{
+                  position: "absolute",
+                  left: 10,
+                  color: "rgba(255,255,255,.7)",
+                  fontSize: 13,
+                  zIndex: 1,
+                }}
+              />
+              <InputText
+                placeholder="Search rooms…"
+                value={globalFilter}
+                onChange={(e) => setGlobalFilter(e.target.value)}
+                style={{
+                  paddingLeft: 32,
+                  width: 200,
+                  background: "rgba(255,255,255,.18)",
+                  border: "1px solid rgba(255,255,255,.3)",
+                  borderRadius: 8,
+                  color: "#fff",
+                  fontSize: 13,
+                }}
+              />
+            </span>
+          )}
+          <Button
+            icon="pi pi-plus"
+            label="Add Room"
+            onClick={() => {
+              setSelRoom(null);
+              setShowForm(true);
+            }}
+            style={{
+              background: "#fff",
+              color: "#0891b2",
+              border: "none",
+              fontWeight: 700,
+              borderRadius: 8,
+              padding: "8px 18px",
+              boxShadow: "0 2px 8px rgba(0,0,0,.13)",
+              display: "inline-flex",
+              alignItems: "center",
+              whiteSpace: "nowrap",
+              cursor: "pointer",
+            }}
+          />
+        </div>
+      </div>
+
+      {/* ── TABLE VIEW ── */}
+      {viewMode === "table" && (
+        <Card
+          style={{ borderRadius: 12, boxShadow: "0 2px 12px rgba(0,0,0,.07)" }}
+        >
+          <RoomList
+            onEdit={handleEdit}
+            onRefresh={refresh}
+            globalFilter={globalFilter}
+          />
+        </Card>
+      )}
+
+      {/* ── VISUAL LAYOUT ── */}
+      {viewMode === "visual" && (
+        <RoomVisualLayout onEdit={handleEdit} onRefresh={refresh} />
+      )}
+
+      {/* ── FORM DIALOG ── */}
       <RoomForm
         visible={showForm}
-        onHide={() => setShowForm(false)}
-        room={selectedRoom}
-        onSave={() => {
-          loadRooms();
-          toast.current.show({
-            severity: "success",
-            summary: "Success",
-            detail: "Room saved successfully",
-          });
+        room={selRoom}
+        onHide={() => {
+          setShowForm(false);
+          setSelRoom(null);
         }}
+        onSave={handleSave}
       />
     </div>
   );

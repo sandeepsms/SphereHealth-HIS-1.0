@@ -1,4 +1,3 @@
-// models/bedMgmt/roomModel.js
 const mongoose = require("mongoose");
 
 const RoomSchema = new mongoose.Schema(
@@ -9,14 +8,12 @@ const RoomSchema = new mongoose.Schema(
       required: true,
     },
     buildingName: String,
-
     floor: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Floor",
       required: true,
     },
     floorNumber: String,
-
     ward: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Ward",
@@ -24,76 +21,50 @@ const RoomSchema = new mongoose.Schema(
     },
     wardName: String,
     wardCode: String,
-
     roomNumber: {
       type: String,
       required: true,
     },
-
     roomName: {
       type: String,
       trim: true,
     },
-
     roomCode: {
       type: String,
       required: false,
       unique: true,
       uppercase: true,
     },
-
     roomCategory: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "RoomCategoryModel",
       required: [true, "Room category is required"],
     },
-
     totalBeds: {
       type: Number,
       required: true,
       min: 0,
     },
-
     availableBeds: {
       type: Number,
       default: 0,
     },
-
     occupiedBeds: {
       type: Number,
       default: 0,
     },
-
     bedRange: String,
-
-    services: [
-      {
-        service: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "ServiceMaster",
-        },
-        price: {
-          type: Number,
-          required: true,
-        },
-        isIncluded: {
-          type: Boolean,
-          default: false,
-        },
-      },
-    ],
-
+    // ❌ REMOVED: services (pricing moved to TPA)
+    // ❌ REMOVED: pricing object
     status: {
       type: String,
       enum: ["Active", "Inactive", "Under Maintenance", "Blocked"],
       default: "Active",
     },
-
     isActive: {
       type: Boolean,
       default: true,
     },
-
     notes: String,
   },
   {
@@ -105,7 +76,6 @@ const RoomSchema = new mongoose.Schema(
 
 RoomSchema.index({ building: 1, floor: 1 });
 RoomSchema.index({ floor: 1, roomNumber: 1 });
-
 RoomSchema.index({ ward: 1 });
 RoomSchema.index({ roomCategory: 1, status: 1 });
 

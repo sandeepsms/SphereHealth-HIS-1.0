@@ -1,47 +1,22 @@
+// routes/billingRoutes.js
 const express = require("express");
 const router = express.Router();
-const billingController = require("../../controllers/Billing/billingController");
+const ctrl = require("../../controllers/Billing/billingController");
 
-// 🎯 Create bill from prescription
-router.post("/from-prescription", billingController.createBillFromPrescription);
+// ── Static / non-ID routes first ─────────────────────────────
+router.get("/summary", ctrl.getSummary); // GET  /api/billing/summary
+router.get("/uhid/:UHID", ctrl.getBillsByUHID); // GET  /api/billing/uhid/UH00000001
+router.get("/price/:serviceId", ctrl.getServicePrice); // GET  /api/billing/price/:id?tariffType=TPA&tpaId=xxx
+router.get("/daycare-check/:admissionId", ctrl.checkDaycare); // GET  /api/billing/daycare-check/:admissionId
 
-// 📄 Get single bill
-router.get("/:id", billingController.getBillById);
-
-// 📋 Get all bills with filters
-router.get("/", billingController.getAllBills);
-
-// ✏️ Update bill (draft only)
-router.put("/:id", billingController.updateBill);
-
-// 🎫 Generate final bill
-router.post("/:id/generate", billingController.generateBill);
-
-// 🔄 Toggle investigation (in-house vs outside)
-router.patch(
-  "/:billId/investigation/:investigationId/toggle",
-  billingController.toggleInvestigation,
-);
-
-// 💳 Add payment
-router.post("/:id/payment", billingController.addPayment);
-
-// ❌ Cancel bill
-router.delete("/:id/cancel", billingController.cancelBill);
-
-// 📊 Get statistics
-router.get("/stats/summary", billingController.getBillStats);
-
-// 🏥 Get bills by TPA
-router.get("/tpa/:tpaId", billingController.getBillsByTPA);
-
-// 📝 Get outside investigations
-router.get(
-  "/:id/outside-investigations",
-  billingController.getOutsideInvestigations,
-);
-
-// 🧮 Recalculate bill
-router.post("/:id/recalculate", billingController.recalculateBill);
+// ── Bill CRUD & actions ───────────────────────────────────────
+router.get("/:billId", ctrl.getBillById); // GET  /api/billing/:billId
+router.post("/create", ctrl.getOrCreateBill); // POST /api/billing/create  {UHID, visitType, admissionId?}
+router.post("/:billId/add-service", ctrl.addService); // POST /api/billing/:id/add-service  {serviceId, quantity}
+router.post("/:billId/generate", ctrl.generateBill); // POST /api/billing/:id/generate
+router.post("/:billId/payment", ctrl.recordPayment); // POST /api/billing/:id/payment  {amount, paymentMode}
+router.post("/:billId/tpa-claim", ctrl.setTPAClaimStatus); // POST /api/billing/:id/tpa-claim
+router.put("/:billId/items/:itemId", ctrl.updateItemQty); // PUT  /api/billing/:id/items/:itemId  {quantity}
+router.delete("/:billId/items/:itemId", ctrl.removeItem); // DELETE /api/billing/:id/items/:itemId
 
 module.exports = router;

@@ -62,19 +62,13 @@ export const bedService = {
 
   createBed: async (formData) => {
     try {
+      // ❌ REMOVED: pricing from payload (pricing is now in TPA)
       const payload = {
         roomId: formData.room,
         beds: [
           {
             bedNumber: formData.bedNumber,
             status: formData.status || "Available",
-            pricing: formData.pricing || {
-              perBedDailyRate: 0,
-              nursingCharges: 0,
-              equipmentCharges: 0,
-              securityDeposit: 0,
-              currency: "INR",
-            },
             notes: formData.notes || "",
           },
         ],
@@ -89,7 +83,7 @@ export const bedService = {
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(
-          `HTTP error! status: ${response.status}, message: ${errorText}`
+          `HTTP error! status: ${response.status}, message: ${errorText}`,
         );
       }
 
@@ -107,13 +101,10 @@ export const bedService = {
         }
       }
 
-      if (result.data) {
-        return normalizeBed(result.data);
-      } else if (Array.isArray(result) && result.length > 0) {
+      if (result.data) return normalizeBed(result.data);
+      if (Array.isArray(result) && result.length > 0)
         return normalizeBed(result[0]);
-      } else if (result._id) {
-        return normalizeBed(result);
-      }
+      if (result._id) return normalizeBed(result);
 
       throw new Error(result.message || result.error || "Failed to create bed");
     } catch (error) {
@@ -124,10 +115,12 @@ export const bedService = {
 
   updateBed: async (id, data) => {
     try {
+      // Strip pricing fields if accidentally passed
+      const { pricing, services, ...cleanData } = data;
       const response = await fetch(`${API_BASE}/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        body: JSON.stringify(cleanData),
       });
       const bed = await response.json();
       return normalizeBed(bed);
@@ -139,9 +132,7 @@ export const bedService = {
 
   deleteBed: async (id) => {
     try {
-      const response = await fetch(`${API_BASE}/${id}`, {
-        method: "DELETE",
-      });
+      const response = await fetch(`${API_BASE}/${id}`, { method: "DELETE" });
       return await response.json();
     } catch (error) {
       console.error("Error:", error);
@@ -189,26 +180,6 @@ export const bedService = {
     } catch (error) {
       console.error("Error:", error);
       throw error;
-    }
-  },
-
-  getBedPricing: async (id) => {
-    try {
-      const response = await fetch(`${API_BASE}/${id}/pricing`);
-      return await response.json();
-    } catch (error) {
-      console.error("Error:", error);
-      return null;
-    }
-  },
-
-  estimateCharges: async (id, days) => {
-    try {
-      const response = await fetch(`${API_BASE}/${id}/estimate?days=${days}`);
-      return await response.json();
-    } catch (error) {
-      console.error("Error:", error);
-      return null;
     }
   },
 };

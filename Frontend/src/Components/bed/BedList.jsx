@@ -6,10 +6,9 @@ import { Tag } from "primereact/tag";
 import { Toast } from "primereact/toast";
 import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
 import { bedService } from "../../Services/bedService";
-import { formatDateTime, formatCurrency } from "../../utils/helpers";
-import { BED_STATUS_COLORS } from "../../utils/constants";
+import { formatDateTime } from "../../utils/helpers";
 
-const BedList = ({ onEdit, onRefresh, onBook }) => {
+const BedList = ({ onEdit, onRefresh, onBook, onView }) => {
   const [beds, setBeds] = useState([]);
   const [loading, setLoading] = useState(false);
   const toast = useRef(null);
@@ -40,6 +39,7 @@ const BedList = ({ onEdit, onRefresh, onBook }) => {
       message: `Are you sure you want to delete Bed ${bed.bedNumber}?`,
       header: "Confirm Delete",
       icon: "pi pi-exclamation-triangle",
+      acceptClassName: "p-button-danger",
       accept: async () => {
         try {
           await bedService.deleteBed(bed._id);
@@ -64,26 +64,55 @@ const BedList = ({ onEdit, onRefresh, onBook }) => {
 
   const actionBodyTemplate = (rowData) => {
     return (
-      <div style={{ display: "flex", gap: "5px" }}>
+      <div className="flex align-items-center gap-2">
+        {/* View */}
+        <Button
+          icon="pi pi-eye"
+          rounded
+          outlined
+          severity="info"
+          size="small"
+          onClick={() => onView && onView(rowData)}
+          tooltip="View Details"
+          tooltipOptions={{ position: "top" }}
+        />
+
+        {/* Book — only when Available */}
         {rowData.status === "Available" && (
           <Button
             icon="pi pi-calendar-plus"
-            className="p-button-rounded p-button-text p-button-success"
+            rounded
+            outlined
+            severity="success"
+            size="small"
             onClick={() => onBook(rowData)}
             tooltip="Book Bed"
+            tooltipOptions={{ position: "top" }}
           />
         )}
+
+        {/* Edit */}
         <Button
           icon="pi pi-pencil"
-          className="p-button-rounded p-button-text p-button-info"
+          rounded
+          outlined
+          severity="warning"
+          size="small"
           onClick={() => onEdit(rowData)}
           tooltip="Edit"
+          tooltipOptions={{ position: "top" }}
         />
+
+        {/* Delete */}
         <Button
           icon="pi pi-trash"
-          className="p-button-rounded p-button-text p-button-danger"
+          rounded
+          outlined
+          severity="danger"
+          size="small"
           onClick={() => handleDelete(rowData)}
           tooltip="Delete"
+          tooltipOptions={{ position: "top" }}
         />
       </div>
     );
@@ -106,70 +135,125 @@ const BedList = ({ onEdit, onRefresh, onBook }) => {
           return "secondary";
       }
     };
-
-    return <Tag value={rowData.status} severity={getSeverity()} />;
-  };
-
-  const priceBodyTemplate = (rowData) => {
-    return formatCurrency(rowData.pricing?.perBedDailyRate || 0);
+    return (
+      <Tag
+        value={rowData.status}
+        severity={getSeverity()}
+        style={{ minWidth: "90px", justifyContent: "center" }}
+      />
+    );
   };
 
   const locationBodyTemplate = (rowData) => {
     return (
-      <div>
-        <div>
+      <div className="flex flex-column gap-1 text-sm">
+        <span>
+          <i className="pi pi-building mr-1 text-primary" />
           <strong>Building:</strong> {rowData.buildingName}
-        </div>
-        <div>
+        </span>
+        <span>
+          <i className="pi pi-th-large mr-1 text-primary" />
           <strong>Floor:</strong> {rowData.floorNumber}
-        </div>
-        <div>
+        </span>
+        <span>
+          <i className="pi pi-heart mr-1 text-primary" />
           <strong>Ward:</strong> {rowData.wardName || "N/A"}
-        </div>
-        <div>
+        </span>
+        <span>
+          <i className="pi pi-home mr-1 text-primary" />
           <strong>Room:</strong> {rowData.roomNumber}
-        </div>
+        </span>
       </div>
     );
   };
 
-  const dateBodyTemplate = (rowData) => {
-    return formatDateTime(rowData.createdAt);
-  };
+  const dateBodyTemplate = (rowData) => (
+    <span className="text-sm text-color-secondary">
+      {formatDateTime(rowData.createdAt)}
+    </span>
+  );
+
+  const bedNumberBodyTemplate = (rowData) => (
+    <span className="font-semibold text-primary">{rowData.bedNumber}</span>
+  );
+
+  const bedTypeBodyTemplate = (rowData) => (
+    <span className="font-medium">{rowData.bedType || "—"}</span>
+  );
 
   return (
     <>
       <Toast ref={toast} />
       <ConfirmDialog />
+
       <DataTable
         value={beds}
         loading={loading}
         paginator
         rows={10}
         rowsPerPageOptions={[5, 10, 25, 50]}
-        tableStyle={{ minWidth: "50rem" }}
-        emptyMessage="No beds found"
         stripedRows
+        showGridlines
+        size="small"
+        emptyMessage="No beds found."
+        sortMode="multiple"
+        removableSort
+        filterDisplay="menu"
+        style={{ fontSize: "0.9rem" }}
+        className="p-datatable-beds"
+        paginatorTemplate="FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport RowsPerPageDropdown"
+        currentPageReportTemplate="Showing {first} to {last} of {totalRecords} beds"
       >
-        <Column field="bedNumber" header="Bed Number" sortable />
-        <Column header="Location" body={locationBodyTemplate} />
+        <Column
+          field="bedNumber"
+          header="Bed No."
+          sortable
+          filter
+          filterPlaceholder="Search bed"
+          body={bedNumberBodyTemplate}
+          style={{ minWidth: "100px" }}
+        />
+
+        <Column
+          field="bedType"
+          header="Bed Type"
+          sortable
+          filter
+          filterPlaceholder="Search type"
+          body={bedTypeBodyTemplate}
+          style={{ minWidth: "130px" }}
+        />
+
+        <Column
+          header="Location"
+          body={locationBodyTemplate}
+          style={{ minWidth: "200px" }}
+        />
+
         <Column
           field="status"
           header="Status"
-          body={statusBodyTemplate}
           sortable
+          filter
+          filterPlaceholder="Filter status"
+          body={statusBodyTemplate}
+          style={{ minWidth: "130px", textAlign: "center" }}
         />
-        <Column header="Daily Rate" body={priceBodyTemplate} sortable />
+
         <Column
           field="createdAt"
           header="Created At"
-          body={dateBodyTemplate}
           sortable
+          body={dateBodyTemplate}
+          style={{ minWidth: "150px" }}
         />
+
         <Column
           header="Actions"
           body={actionBodyTemplate}
-          style={{ width: "150px" }}
+          style={{ minWidth: "180px", textAlign: "center" }}
+          frozen
+          alignFrozen="right"
         />
       </DataTable>
     </>

@@ -1,252 +1,257 @@
-import axios from "axios";
-import { API_ENDPOINTS } from "../../config/api.js";
+import { API_ENDPOINTS } from "../../config/api";
 
-const API_URL = API_ENDPOINTS.BILLING;
+const API_BASE = API_ENDPOINTS.BILLING;
+
+// ── Helper: normalize bill object ─────────────────────────────
+const extractId = (obj) => {
+  if (!obj) return null;
+  if (typeof obj === "string") return obj;
+  if (obj.$oid) return obj.$oid;
+  if (obj._id) return extractId(obj._id);
+  return obj;
+};
+
+const normalizeBill = (bill) => {
+  if (!bill) return bill;
+  return {
+    ...bill,
+    _id: extractId(bill._id),
+    patient: extractId(bill.patient),
+    admission: extractId(bill.admission),
+    tpa: extractId(bill.tpa),
+  };
+};
 
 export const billingService = {
-  // Create bill from prescription
-  createBillFromPrescription: async (prescriptionId) => {
+  // ── GET /api/billing/summary ──────────────────────────────────
+  // Dashboard stats: today's bills, pending, revenue, TPA pending
+  getSummary: async () => {
     try {
-      const response = await axios.post(`${API_URL}/from-prescription`, {
-        prescriptionId,
-      });
-      return response.data;
+      const response = await fetch(`${API_BASE}/summary`);
+      const data = await response.json();
+      return data.data || {};
     } catch (error) {
-      console.error("Failed to create bill:", error);
-      throw error;
+      console.error("Error fetching billing summary:", error);
+      return {};
     }
   },
 
-  // Get bill by ID
+  // ── GET /api/billing/uhid/:UHID ───────────────────────────────
+  // Patient info + all their bills
+  getPatientBills: async (UHID) => {
+    try {
+      const response = await fetch(`${API_BASE}/uhid/${UHID}`);
+      const data = await response.json();
+      return {
+        patient: data.data?.patient || null,
+        bills: (data.data?.bills || []).map(normalizeBill),
+      };
+    } catch (error) {
+      console.error("Error fetching patient bills:", error);
+      return { patient: null, bills: [] };
+    }
+  },
+
+  // ── GET /api/billing/:billId ──────────────────────────────────
   getBillById: async (billId) => {
     try {
-      const response = await axios.get(`${API_URL}/${billId}`);
-      return response.data?.data || response.data || null;
+      const response = await fetch(`${API_BASE}/${billId}`);
+      const data = await response.json();
+      return normalizeBill(data.data);
     } catch (error) {
-      console.error("Failed to fetch bill:", error);
-      throw error;
+      console.error("Error fetching bill:", error);
+      return null;
     }
   },
 
-  // Get all bills with filters
-  getAllBills: async (filters = {}, page = 1, limit = 10) => { 
+  // ── POST /api/billing/create ──────────────────────────────────
+  // Get existing DRAFT or create new bill
+  // { UHID, visitType: "OPD"|"IPD"|"DAYCARE"|"EMERGENCY", admissionId? }
+  getOrCreateBill: async ({ UHID, visitType, admissionId = null }) => {
     try {
-      const cleanFilters = Object.entries(filters).reduce(
-        (acc, [key, value]) => {
-          if (value !== "" && value !== null && value !== undefined) {
-            acc[key] = value;
-          }
-          return acc;
-        },
-        {},
-      );
-
-      const response = await axios.get(API_URL, {
-        params: {
-          ...cleanFilters,
-          page,
-          limit,
-        },
+      const response = await fetch(`${API_BASE}/create`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ UHID, visitType, admissionId }),
       });
 
-      return {
-        bills: Array.isArray(response.data?.bills)
-          ? response.data.bills
-          : Array.isArray(response.data?.data)
-            ? response.data.data
-            : [],
-        pagination: response.data?.pagination || {
-          total: 0,
-          page: 1,
-          limit: 10,
-          pages: 0,
-        },
-      };
-    } catch (error) {
-      console.error("Failed to fetch bills:", error);
-      return {
-        bills: [],
-        pagination: { total: 0, page: 1, limit: 10, pages: 0 },
-      };
-    }
-  },
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.message || "Failed to create bill");
+      }
 
-  // Update bill
-  updateBill: async (billId, data) => {
-    try {
-      const response = await axios.put(`${API_URL}/${billId}`, data);
-      return response.data;
+      const data = await response.json();
+      return normalizeBill(data.data);
     } catch (error) {
-      console.error("Failed to update bill:", error);
+      console.error("Error creating bill:", error);
       throw error;
     }
   },
 
-  // Generate final bill
-  generateBill: async (billId) => {
-    try {
-      const response = await axios.post(`${API_URL}/${billId}/generate`);
-      return response.data;
-    } catch (error) {
-      console.error("Failed to generate bill:", error);
-      throw error;
-    }
-  },
-
-  // Toggle investigation (in-house vs outside)
-  toggleInvestigation: async (
+  // ── POST /api/billing/:billId/add-service ─────────────────────
+  // { serviceId, quantity?, chargeDate?, remarks? }
+  addServiceToBill: async (
     billId,
-    investigationId,
-    performInHouse,
-    outsideDetails,
+    { serviceId, quantity = 1, chargeDate, remarks },
   ) => {
     try {
-      const response = await axios.patch(
-        `${API_URL}/${billId}/investigation/${investigationId}/toggle`,
-        {
-          performInHouse,
-          outsideDetails: outsideDetails || {},
-        },
-      );
-      return response.data;
-    } catch (error) {
-      console.error("Failed to toggle investigation:", error);
-      throw error;
-    }
-  },
-
-  // Add payment
-  addPayment: async (billId, paymentData) => {
-    try {
-      const response = await axios.post(
-        `${API_URL}/${billId}/payment`,
-        paymentData,
-      );
-      return response.data;
-    } catch (error) {
-      console.error("Failed to add payment:", error);
-      throw error;
-    }
-  },
-
-  // Cancel bill
-  cancelBill: async (billId, reason) => {
-    try {
-      const response = await axios.delete(`${API_URL}/${billId}/cancel`, {
-        data: { reason },
-      });
-      return response.data;
-    } catch (error) {
-      console.error("Failed to cancel bill:", error);
-      throw error;
-    }
-  },
-
-  // Get outside investigations
-  getOutsideInvestigations: async (billId) => {
-    try {
-      const response = await axios.get(
-        `${API_URL}/${billId}/outside-investigations`,
-      );
-      return response.data;
-    } catch (error) {
-      console.error("Failed to fetch outside investigations:", error);
-      throw error;
-    }
-  },
-
-  // Get bill stats
-  getBillStats: async (filters = {}) => {
-    try {
-      const cleanFilters = Object.entries(filters).reduce(
-        (acc, [key, value]) => {
-          if (value !== "" && value !== null && value !== undefined) {
-            acc[key] = value;
-          }
-          return acc;
-        },
-        {},
-      );
-
-      const response = await axios.get(`${API_URL}/stats/summary`, {
-        params: cleanFilters,
+      const response = await fetch(`${API_BASE}/${billId}/add-service`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serviceId, quantity, chargeDate, remarks }),
       });
 
-      return (
-        response.data?.data || {
-          total: 0,
-          paid: 0,
-          partial: 0,
-          draft: 0,
-          cancelled: 0,
-          totalRevenue: 0,
-          totalCollected: 0,
-          totalPending: 0,
-        }
-      );
-    } catch (error) {
-      console.error("Failed to fetch bill stats:", error);
-      return {
-        total: 0,
-        paid: 0,
-        partial: 0,
-        draft: 0,
-        cancelled: 0,
-        totalRevenue: 0,
-        totalCollected: 0,
-        totalPending: 0,
-      };
-    }
-  },
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.message || "Failed to add service");
+      }
 
-  // Recalculate bill
-  recalculateBill: async (billId) => {
-    try {
-      const response = await axios.post(`${API_URL}/${billId}/recalculate`);
-      return response.data;
+      const data = await response.json();
+      return normalizeBill(data.data);
     } catch (error) {
-      console.error("Failed to recalculate bill:", error);
+      console.error("Error adding service to bill:", error);
       throw error;
     }
   },
 
-  // 🆕 NEW: Get available charges for a bill
-  getAvailableCharges: async (billId) => {
+  // ── DELETE /api/billing/:billId/items/:itemId ─────────────────
+  removeItemFromBill: async (billId, itemId) => {
     try {
-      const response = await axios.get(
-        `${API_URL}/${billId}/available-charges`,
-      );
-      return response.data;
+      const response = await fetch(`${API_BASE}/${billId}/items/${itemId}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.message || "Failed to remove item");
+      }
+
+      const data = await response.json();
+      return normalizeBill(data.data);
     } catch (error) {
-      console.error("Failed to fetch available charges:", error);
+      console.error("Error removing bill item:", error);
       throw error;
     }
   },
 
-  // 🆕 NEW: Add charge to bill
-  addChargeToBill: async (billId, chargeData) => {
+  // ── PUT /api/billing/:billId/items/:itemId ────────────────────
+  updateItemQuantity: async (billId, itemId, quantity) => {
     try {
-      const response = await axios.post(
-        `${API_URL}/${billId}/add-charge`,
-        chargeData,
-      );
-      return response.data;
+      const response = await fetch(`${API_BASE}/${billId}/items/${itemId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ quantity }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.message || "Failed to update quantity");
+      }
+
+      const data = await response.json();
+      return normalizeBill(data.data);
     } catch (error) {
-      console.error("Failed to add charge:", error);
+      console.error("Error updating item quantity:", error);
       throw error;
     }
   },
 
-  // 🆕 NEW: Remove charge from bill
-  removeChargeFromBill: async (billId, chargeIndex) => {
+  // ── POST /api/billing/:billId/generate ───────────────────────
+  // DRAFT → GENERATED
+  generateBill: async (billId, generatedBy = "Staff") => {
     try {
-      const response = await axios.delete(
-        `${API_URL}/${billId}/remove-charge/${chargeIndex}`,
-      );
-      return response.data;
+      const response = await fetch(`${API_BASE}/${billId}/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ generatedBy }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.message || "Failed to generate bill");
+      }
+
+      const data = await response.json();
+      return normalizeBill(data.data);
     } catch (error) {
-      console.error("Failed to remove charge:", error);
+      console.error("Error generating bill:", error);
       throw error;
+    }
+  },
+
+  // ── POST /api/billing/:billId/payment ─────────────────────────
+  // { amount, paymentMode: "CASH"|"CARD"|"UPI"|"CHEQUE"|"ONLINE"|"TPA_CLAIM",
+  //   transactionId?, receivedBy?, remarks? }
+  recordPayment: async (billId, paymentData) => {
+    try {
+      const response = await fetch(`${API_BASE}/${billId}/payment`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(paymentData),
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.message || "Failed to record payment");
+      }
+
+      const data = await response.json();
+      return normalizeBill(data.data);
+    } catch (error) {
+      console.error("Error recording payment:", error);
+      throw error;
+    }
+  },
+
+  // ── POST /api/billing/:billId/tpa-claim ──────────────────────
+  // { status, claimNumber?, approvedAmount? }
+  updateTPAClaimStatus: async (billId, claimData) => {
+    try {
+      const response = await fetch(`${API_BASE}/${billId}/tpa-claim`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(claimData),
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.message || "Failed to update TPA claim");
+      }
+
+      const data = await response.json();
+      return normalizeBill(data.data);
+    } catch (error) {
+      console.error("Error updating TPA claim:", error);
+      throw error;
+    }
+  },
+
+  // ── GET /api/billing/price/:serviceId ─────────────────────────
+  // Check effective price for a service (tariffType + optional tpaId)
+  getServicePrice: async (serviceId, tariffType = "CASH", tpaId = null) => {
+    try {
+      const params = new URLSearchParams({ tariffType });
+      if (tpaId) params.append("tpaId", tpaId);
+
+      const response = await fetch(`${API_BASE}/price/${serviceId}?${params}`);
+      const data = await response.json();
+      return data.data || null; // { service, pricing, effectivePrice }
+    } catch (error) {
+      console.error("Error fetching service price:", error);
+      return null;
+    }
+  },
+
+  // ── GET /api/billing/daycare-check/:admissionId ───────────────
+  // Check if daycare patient exceeded time limit
+  checkDaycareConversion: async (admissionId) => {
+    try {
+      const response = await fetch(`${API_BASE}/daycare-check/${admissionId}`);
+      const data = await response.json();
+      return data.data || null; // { converted, hours, remaining? }
+    } catch (error) {
+      console.error("Error checking daycare:", error);
+      return null;
     }
   },
 };
