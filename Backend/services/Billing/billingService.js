@@ -1,629 +1,448 @@
-const Billing = require("../../models/Billing/billingModel");
-const Prescription = require("../../models/Doctor/prescription");
-const HospitalCharges = require("../../models/charges/HospitalChargesModel");
-const TPAServices = require("../../models/tpa/TPAServicesModel");
-const Patient = require("../../models/Patient/patientModel");
+// services/billingService.js
+// ═══════════════════════════════════════════════════════════════
+// BILLING SERVICE LAYER
+// Sabhi billing business logic yahan hai
+// Controllers sirf call karenge — koi bhi DB query ya logic
+// controller mein nahi hogi
+// ═══════════════════════════════════════════════════════════════
+
+const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+const Admission = require("../../models/Patient/admissionModel");
+const ServiceMaster = require("../../models/ServiceMaster/serviceMasterModel");
+const ServicePricing = require("../../models/ServicePricing/ServicePricingModel");
+const AutoBilledItems = require("../../models/PatientBillModel/AutoBilledItemsModel");
 
 class BillingService {
-  /**
-   * 🎯 Main Function: Create Bill from Prescription
-   * 🔥 FIX: Only add ESSENTIAL charges, not all TPA charges
-   */
-  async createFromPrescription(prescriptionId) {
-    const prescription = await Prescription.findById(prescriptionId)
-      .populate("patient")
-      .populate("doctor")
-      .populate("investigations");
+  // ── 1. Patient + all bills by UHID ───────────────────────────
+  async getPatientWithBills(UHID) {
+    const Patient = require("../..models/Patient/patientModel");
 
-    if (!prescription) {
-      throw new Error("Prescription not found");
-    }
+    const [bills, patient] = await Promise.all([
+      this.getBillsByUHID(UHID),
+      Patient.findOne({ UHID })
+        .populate("tpa", "tpaName tpaCode")
+        .populate("department", "departmentName")
+        .populate("doctor", "personalInfo"),
+    ]);
 
-    const patient = await Patient.findById(prescription.patient._id).populate(
-      "tpa",
-    );
+    if (!patient) throw new Error(`Patient not found: ${UHID}`);
 
-    if (!patient) {
-      throw new Error("Patient not found");
-    }
+    return { patient, bills };
+  }
 
-    const tpaId = patient.tpa?._id || null;
-    const tpaName = patient.tpa?.tpaName || "Normal";
-    const tpaCode = patient.tpa?.tpaCode || "NORMAL";
+  // ── 2. Get existing DRAFT bill or create new one ──────────────
+  async getOrCreateDraftBill(UHID, visitType, admissionId = null) {
+    const Patient = require("../..models/Patient/patientModel");
 
-    // Fetch Hospital Charges for reference
-    const hospitalCharges = await this._getHospitalCharges(tpaId, tpaName);
+    // Pehle existing DRAFT dhundho
+    const query = { UHID, visitType, billStatus: "DRAFT" };
+    if (admissionId) query.admission = admissionId;
 
-    // 🔥 FIX: Only add ESSENTIAL charges based on registration type
-    const selectedCharges = this._mapEssentialCharges(
-      hospitalCharges,
-      prescription.registrationType,
-    );
+    let bill = await PatientBill.findOne(query);
+    if (bill) return bill;
 
-    // 🔥 FIX: Properly map investigations from prescription
-    const investigations = await this._mapInvestigationsFromPrescription(
-      prescription,
-      tpaId,
-      tpaName,
-    );
+    // Patient ka tariff type determine karo
+    const patient = await Patient.findOne({ UHID }).populate("tpa");
+    if (!patient) throw new Error(`Patient not found: ${UHID}`);
 
-    console.log("📋 Prescription Details:", {
-      registrationType: prescription.registrationType,
-      investigationsCount: prescription.investigations?.length || 0,
-    });
-    console.log("💊 Mapped Investigations:", investigations.length);
-    console.log("🏥 Essential Charges:", selectedCharges.length);
-
-    const billing = new Billing({
+    const billData = {
       patient: patient._id,
-      UHID: patient.UHID,
-      patientName: patient.fullName,
-      prescription: prescriptionId,
-      tpa: tpaId,
-      tpaName: tpaName,
-      tpaCode: tpaCode,
-      billingType: prescription.registrationType || "OPD",
-      hospitalChargesRef: hospitalCharges?._id,
-      selectedCharges, // Only essential charges
-      investigations, // All prescribed investigations
-      status: "draft",
-    });
+      UHID,
+      visitType,
+      paymentType: patient.tpa ? "TPA" : "CASH",
+      tpa: patient.tpa?._id || null,
+      tpaName: patient.tpa?.tpaName || null,
+      billItems: [],
+    };
 
-    await billing.save();
-    return billing;
+    if (admissionId) {
+      const adm = await Admission.findById(admissionId);
+      if (adm) {
+        billData.admission = admissionId;
+        billData.admissionNumber = adm.admissionNumber;
+      }
+    }
+
+    bill = new PatientBill(billData);
+    await bill.save();
+    return bill;
   }
 
-  async _getHospitalCharges(tpaId, tpaName) {
-    let hospitalCharges;
+  // ── 3. Get single bill (fully populated) ─────────────────────
+  async getBillById(billId) {
+    const bill = await PatientBill.findById(billId)
+      .populate("patient")
+      .populate("tpa")
+      .populate("admission")
+      .populate("billItems.serviceId");
 
-    if (tpaId && tpaName !== "Normal") {
-      hospitalCharges = await HospitalCharges.findOne({
-        tpa: tpaId,
-        isActive: true,
-      });
-    }
-
-    if (!hospitalCharges) {
-      hospitalCharges = await HospitalCharges.findOne({
-        tpaName: "Normal",
-        isActive: true,
-      });
-    }
-
-    return hospitalCharges;
+    if (!bill) throw new Error("Bill not found");
+    return bill;
   }
 
-  /**
-   * 🔥 FIX: Only add ESSENTIAL charges, not all charges
-   * Essential charges are mandatory for each registration type
-   */
-  _mapEssentialCharges(hospitalCharges, registrationType) {
-    if (!hospitalCharges?.charges || hospitalCharges.charges.length === 0) {
-      return [];
-    }
-
-    const essentialCharges = [];
-
-    hospitalCharges.charges.forEach((charge) => {
-      let isEssential = false;
-
-      // Only add charges that are ESSENTIAL (mandatory) for this registration type
-      if (registrationType === "OPD" && charge.chargeType === "OPD") {
-        isEssential = true; // OPD registration fee is essential
-      }
-
-      if (
-        registrationType === "Emergency" &&
-        charge.chargeType === "EMERGENCY"
-      ) {
-        isEssential = true; // Emergency fee is essential
-      }
-
-      // For IPD, NO charges are automatically added
-      // User must manually select which charges to add (bed, nursing, etc.)
-
-      if (isEssential) {
-        essentialCharges.push({
-          chargeId: charge._id?.toString(),
-          chargeName: charge.chargeName,
-          chargeType: charge.chargeType,
-          baseAmount: charge.amount || 0,
-          discount: charge.discount || 0,
-          finalAmount: charge.totalAmount || charge.amount,
-          perUnit: charge.perUnit || "one time",
-          quantity: 1,
-          isActive: true,
-        });
-      }
-    });
-
-    console.log("✅ Essential charges added:", essentialCharges.length);
-    return essentialCharges;
+  // ── 4. Get draft bill (populated) for a new/existing session ──
+  async getDraftBillPopulated(UHID, visitType, admissionId) {
+    const bill = await this.getOrCreateDraftBill(UHID, visitType, admissionId);
+    return PatientBill.findById(bill._id)
+      .populate("patient", "fullName title UHID contactNumber gender tpa")
+      .populate("tpa", "tpaName tpaCode")
+      .populate("admission");
   }
 
-  /**
-   * 🔥 COMPLETELY REWRITTEN: Map investigations from prescription properly
-   * prescription.investigations is an array of TPAServices references
-   */
-  async _mapInvestigationsFromPrescription(prescription, tpaId, tpaName) {
-    if (
-      !prescription.investigations ||
-      prescription.investigations.length === 0
-    ) {
-      console.log("⚠️ No investigations in prescription");
-      return [];
+  // ── 5. All bills for a UHID ───────────────────────────────────
+  async getBillsByUHID(UHID) {
+    return PatientBill.find({ UHID })
+      .populate("patient", "fullName title contactNumber gender dateOfBirth")
+      .populate("tpa", "tpaName tpaCode")
+      .populate(
+        "admission",
+        "admissionNumber bedNumber roomCategory status admissionDateTime",
+      )
+      .sort({ createdAt: -1 });
+  }
+
+  // ── 6. Add service to bill ────────────────────────────────────
+  // Pricing fetch → TPA split calculate → item add → save
+  async addServiceToBill(
+    billId,
+    serviceId,
+    quantity = 1,
+    chargeDate = new Date(),
+    remarks = "",
+  ) {
+    const bill = await PatientBill.findById(billId);
+    if (!bill) throw new Error("Bill not found");
+    if (["PAID", "CANCELLED"].includes(bill.billStatus)) {
+      throw new Error("Cannot modify a PAID or CANCELLED bill");
     }
 
-    const investigations = [];
+    const service = await ServiceMaster.findById(serviceId);
+    if (!service) throw new Error("Service not found");
 
-    console.log(
-      "📋 Processing investigations:",
-      prescription.investigations.length,
+    // Correct tariff fetch karo (TPA → fallback to CASH if not configured)
+    const pricing = await ServicePricing.getPriceFor(
+      serviceId,
+      bill.paymentType,
+      bill.tpa,
     );
 
-    // prescription.investigations contains TPAServices document IDs
-    for (const investigationRef of prescription.investigations) {
-      try {
-        // Get the TPAServices ID (handle both populated and non-populated)
-        let tpaServiceId = investigationRef._id || investigationRef;
+    const unitPrice = pricing ? pricing.finalPrice : service.defaultPrice;
+    const grossAmount = unitPrice * quantity;
+    const discountPct = pricing?.discount || 0;
+    const discountAmt = (grossAmount * discountPct) / 100;
+    const netAmount = grossAmount - discountAmt;
+    const taxAmount = service.isTaxable
+      ? (netAmount * (service.taxPercentage || 0)) / 100
+      : 0;
+    const lineTotal = netAmount + taxAmount;
 
-        console.log("🔍 Looking up TPAServices ID:", tpaServiceId);
-
-        // Find the TPAServices document
-        let tpaService = await TPAServices.findById(tpaServiceId);
-
-        if (!tpaService) {
-          console.log("❌ TPAServices not found for ID:", tpaServiceId);
-          continue;
-        }
-
-        console.log("✅ Found TPAServices:", {
-          id: tpaService._id,
-          tpaName: tpaService.tpaName,
-          serviceCount: tpaService.service?.length || 0,
-        });
-
-        // 🔥 If patient has TPA, try to find TPA-specific pricing
-        if (tpaId && tpaName !== "Normal") {
-          const tpaSpecificServices = await TPAServices.find({
-            tpa: tpaId,
-            isActive: true,
-          });
-
-          console.log(
-            `🎯 Found ${tpaSpecificServices.length} TPA-specific service groups`,
-          );
-
-          // Try to find matching services in TPA-specific groups
-          if (tpaService.service && Array.isArray(tpaService.service)) {
-            for (const originalService of tpaService.service) {
-              let serviceAdded = false;
-
-              // Search for this service in TPA-specific groups
-              for (const tpaSpecificGroup of tpaSpecificServices) {
-                if (
-                  tpaSpecificGroup.service &&
-                  Array.isArray(tpaSpecificGroup.service)
-                ) {
-                  const matchingService = tpaSpecificGroup.service.find(
-                    (s) =>
-                      s.Name?.toLowerCase() ===
-                      originalService.Name?.toLowerCase(),
-                  );
-
-                  if (matchingService) {
-                    // Use TPA-specific pricing
-                    investigations.push({
-                      serviceRef: tpaSpecificGroup._id,
-                      serviceName: matchingService.Name,
-                      baseAmount: matchingService.Amount || 0,
-                      discount: matchingService.Discount || 0,
-                      finalAmount:
-                        matchingService.Totalamount || matchingService.Amount,
-                      performedInHouse: true,
-                      isActive: true,
-                      outsideDetails: {},
-                    });
-
-                    console.log("💰 Added with TPA pricing:", {
-                      name: matchingService.Name,
-                      amount: matchingService.Amount,
-                      discount: matchingService.Discount,
-                    });
-
-                    serviceAdded = true;
-                    break;
-                  }
-                }
-              }
-
-              // If no TPA-specific pricing found, use original pricing
-              if (!serviceAdded) {
-                investigations.push({
-                  serviceRef: tpaService._id,
-                  serviceName: originalService.Name,
-                  baseAmount: originalService.Amount || 0,
-                  discount: originalService.Discount || 0,
-                  finalAmount:
-                    originalService.Totalamount || originalService.Amount,
-                  performedInHouse: true,
-                  isActive: true,
-                  outsideDetails: {},
-                });
-
-                console.log("💵 Added with Normal pricing:", {
-                  name: originalService.Name,
-                  amount: originalService.Amount,
-                });
-              }
-            }
-          }
-        } else {
-          // Normal patient - use standard pricing
-          if (tpaService.service && Array.isArray(tpaService.service)) {
-            tpaService.service.forEach((service) => {
-              investigations.push({
-                serviceRef: tpaService._id,
-                serviceName: service.Name,
-                baseAmount: service.Amount || 0,
-                discount: service.Discount || 0,
-                finalAmount: service.Totalamount || service.Amount,
-                performedInHouse: true,
-                isActive: true,
-                outsideDetails: {},
-              });
-
-              console.log("💵 Added Normal investigation:", {
-                name: service.Name,
-                amount: service.Amount,
-              });
-            });
-          }
-        }
-      } catch (error) {
-        console.error("❌ Error processing investigation:", error);
-        continue;
-      }
+    // TPA split: TPA kitna dega, patient kitna dega
+    let tpaPayableAmount = 0;
+    if (bill.paymentType === "TPA") {
+      tpaPayableAmount = pricing?.tpaApprovedLimit
+        ? Math.min(pricing.tpaApprovedLimit * quantity, lineTotal)
+        : lineTotal; // Limit nahi hai → TPA full amount dega
     }
 
-    console.log("✅ Total investigations mapped:", investigations.length);
-    return investigations;
-  }
-
-  /**
-   * 🆕 NEW METHOD: Add additional charges manually
-   * This allows users to add optional charges after bill creation
-   */
-  async addChargeToExistingBill(billId, chargeData) {
-    const bill = await Billing.findById(billId);
-
-    if (!bill) {
-      throw new Error("Bill not found");
-    }
-
-    if (bill.status !== "draft") {
-      throw new Error("Can only add charges to draft bills");
-    }
-
-    // Add the charge
-    bill.selectedCharges.push({
-      chargeId: chargeData.chargeId,
-      chargeName: chargeData.chargeName,
-      chargeType: chargeData.chargeType,
-      baseAmount: chargeData.baseAmount,
-      discount: chargeData.discount || 0,
-      finalAmount: chargeData.finalAmount,
-      perUnit: chargeData.perUnit || "one time",
-      quantity: chargeData.quantity || 1,
-      isActive: true,
+    bill.billItems.push({
+      serviceId: service._id,
+      serviceCode: service.serviceCode,
+      serviceName: service.serviceName,
+      category: service.category,
+      billingType: service.billingType,
+      quantity,
+      unitPrice,
+      grossAmount,
+      discountPercent: discountPct,
+      discountAmount: discountAmt,
+      netAmount,
+      tpaPayableAmount,
+      patientPayableAmount: lineTotal - tpaPayableAmount,
+      isTaxable: service.isTaxable,
+      taxPercent: service.taxPercentage || 0,
+      taxAmount,
+      appliedTariff: bill.paymentType,
+      chargeDate,
+      remarks,
     });
 
     await bill.save();
     return bill;
   }
 
-  /**
-   * 🆕 NEW METHOD: Remove charge from bill
-   */
-  async removeChargeFromBill(billId, chargeIndex) {
-    const bill = await Billing.findById(billId);
-
-    if (!bill) {
-      throw new Error("Bill not found");
+  // ── 7. Remove item from bill ──────────────────────────────────
+  async removeItemFromBill(billId, itemId) {
+    const bill = await PatientBill.findById(billId);
+    if (!bill) throw new Error("Bill not found");
+    if (["PAID", "CANCELLED"].includes(bill.billStatus)) {
+      throw new Error("Cannot modify a PAID or CANCELLED bill");
     }
 
-    if (bill.status !== "draft") {
-      throw new Error("Can only modify draft bills");
-    }
-
-    bill.selectedCharges.splice(chargeIndex, 1);
+    bill.billItems = bill.billItems.filter(
+      (i) => i._id.toString() !== itemId.toString(),
+    );
     await bill.save();
     return bill;
   }
 
-  /**
-   * 🆕 NEW METHOD: Get available charges for this bill's TPA
-   * Returns all charges that can be added manually
-   */
-  async getAvailableCharges(billId) {
-    const bill = await Billing.findById(billId).populate("hospitalChargesRef");
-
-    if (!bill) {
-      throw new Error("Bill not found");
+  // ── 8. Update item quantity ───────────────────────────────────
+  async updateItemQuantity(billId, itemId, quantity) {
+    const bill = await PatientBill.findById(billId);
+    if (!bill) throw new Error("Bill not found");
+    if (["PAID", "CANCELLED"].includes(bill.billStatus)) {
+      throw new Error("Cannot modify a PAID or CANCELLED bill");
     }
 
-    const hospitalCharges = bill.hospitalChargesRef;
+    const item = bill.billItems.id(itemId);
+    if (!item) throw new Error("Bill item not found");
 
-    if (!hospitalCharges?.charges) {
-      return [];
-    }
-
-    // Filter charges based on billing type
-    return hospitalCharges.charges.filter((charge) => {
-      if (bill.billingType === "OPD") {
-        return ["OPD", "DRESSING", "INJECTION", "OTHER"].includes(
-          charge.chargeType,
-        );
-      }
-      if (bill.billingType === "IPD") {
-        return [
-          "IPD_BED",
-          "ICU_BED",
-          "NURSE",
-          "DOCTOR_VISIT",
-          "OPERATION_THEATER",
-          "DRESSING",
-          "INJECTION",
-          "OTHER",
-        ].includes(charge.chargeType);
-      }
-      if (bill.billingType === "Emergency") {
-        return ["EMERGENCY", "AMBULANCE", "DRESSING", "INJECTION"].includes(
-          charge.chargeType,
-        );
-      }
-      return false;
-    });
+    item.quantity = quantity;
+    await bill.save();
+    return bill;
   }
 
-  async toggleInvestigation(
+  // ── 9. Generate final bill (DRAFT → GENERATED) ────────────────
+  async generateFinalBill(billId, generatedBy = "Staff") {
+    const bill = await PatientBill.findById(billId);
+    if (!bill) throw new Error("Bill not found");
+    if (bill.billStatus !== "DRAFT")
+      throw new Error("Only DRAFT bills can be generated");
+    if (!bill.billItems || bill.billItems.length === 0) {
+      throw new Error("Cannot generate empty bill — pehle services add karo");
+    }
+
+    bill.billStatus = "GENERATED";
+    bill.billGeneratedAt = new Date();
+    bill.generatedBy = generatedBy;
+
+    if (bill.paymentType === "TPA") {
+      bill.tpaClaimStatus = "PENDING";
+    }
+
+    await bill.save();
+    return bill;
+  }
+
+  // ── 10. Record payment ────────────────────────────────────────
+  async recordPayment(
     billId,
-    investigationId,
-    performInHouse,
-    outsideDetails,
+    { amount, paymentMode, transactionId, receivedBy, remarks },
   ) {
-    const bill = await Billing.findById(billId);
+    const bill = await PatientBill.findById(billId);
+    if (!bill) throw new Error("Bill not found");
+    if (bill.billStatus === "PAID") throw new Error("Bill already fully paid");
 
-    if (!bill) {
-      throw new Error("Bill not found");
+    bill.payments.push({
+      amount,
+      paymentMode,
+      transactionId,
+      receivedBy,
+      remarks,
+    });
+
+    const totalPaid = bill.payments.reduce((s, p) => s + p.amount, 0);
+    bill.advancePaid = totalPaid;
+    bill.balanceAmount = Math.max(0, bill.patientPayableAmount - totalPaid);
+    bill.billStatus = bill.balanceAmount === 0 ? "PAID" : "PARTIAL";
+    if (bill.billStatus === "PAID") bill.paidAt = new Date();
+
+    await bill.save();
+    return bill;
+  }
+
+  // ── 11. Update TPA claim status ───────────────────────────────
+  async updateTPAClaimStatus(billId, { status, claimNumber, approvedAmount }) {
+    const bill = await PatientBill.findById(billId);
+    if (!bill) throw new Error("Bill not found");
+
+    bill.tpaClaimStatus = status;
+    if (claimNumber) bill.tpaClaimNumber = claimNumber;
+    if (approvedAmount) bill.tpaApprovedAmount = approvedAmount;
+    await bill.save();
+
+    return bill;
+  }
+
+  // ── 12. Billing dashboard summary ────────────────────────────
+  // Aaj ka revenue, pending bills, TPA claims
+  async getBillingSummary() {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const [todayCount, pendingCount, paidToday, tpaPending] = await Promise.all(
+      [
+        PatientBill.countDocuments({ billDate: { $gte: today } }),
+        PatientBill.countDocuments({
+          billStatus: { $in: ["GENERATED", "PARTIAL"] },
+        }),
+        PatientBill.aggregate([
+          { $match: { billStatus: "PAID", paidAt: { $gte: today } } },
+          { $group: { _id: null, total: { $sum: "$advancePaid" } } },
+        ]),
+        PatientBill.countDocuments({
+          paymentType: "TPA",
+          tpaClaimStatus: "PENDING",
+        }),
+      ],
+    );
+
+    return {
+      todayBills: todayCount,
+      pendingBills: pendingCount,
+      todayRevenue: paidToday[0]?.total || 0,
+      tpaPending,
+    };
+  }
+
+  // ── 13. Setup daily auto-charges on admission ─────────────────
+  // Room category se service codes map → AutoBilledItems records
+  async setupAutoChargesForAdmission(admission, patient) {
+    const ROOM_MAP = {
+      GENERAL_WARD: { room: "IPD-RM-001", nursing: "IPD-NUR-001" },
+      SEMI_PRIVATE: { room: "IPD-RM-002", nursing: "IPD-NUR-001" },
+      PRIVATE: { room: "IPD-RM-003", nursing: "IPD-NUR-002" },
+      DELUXE: { room: "IPD-RM-004", nursing: "IPD-NUR-002" },
+      SUITE: { room: "IPD-RM-005", nursing: "IPD-NUR-003" },
+      ICU: { room: "IPD-ICU-001", nursing: "IPD-ICU-005" },
+      DAYCARE_BED: { room: "IPD-RM-008", nursing: null },
+      EMERGENCY_BED: { room: "ER-OBS-001", nursing: "ER-NUR-001" },
+    };
+
+    const mapping =
+      ROOM_MAP[admission.roomCategory] || ROOM_MAP["GENERAL_WARD"];
+    const codes = [mapping.room, mapping.nursing].filter(Boolean);
+    const tariff = patient.tpa ? "TPA" : "CASH";
+
+    for (const code of codes) {
+      const service = await ServiceMaster.findOne({
+        serviceCode: code,
+        isActive: true,
+      });
+      if (!service) continue;
+
+      const pricing = await ServicePricing.getPriceFor(
+        service._id,
+        tariff,
+        patient.tpa?._id,
+      );
+      const unitPrice = pricing ? pricing.finalPrice : service.defaultPrice;
+
+      await AutoBilledItems.create({
+        admission: admission._id,
+        admissionNumber: admission.admissionNumber,
+        UHID: admission.UHID,
+        patient: admission.patient,
+        service: service._id,
+        serviceCode: service.serviceCode,
+        serviceName: service.serviceName,
+        billingType: "PER_DAY",
+        unitPrice,
+        startDate: admission.admissionDateTime,
+        appliedTariff: tariff,
+        tpaId: patient.tpa?._id || null,
+      });
     }
+  }
 
-    const investigation = bill.investigations.id(investigationId);
+  // ── 14. Daycare time check + auto-convert to IPD ──────────────
+  async checkAndHandleDaycareConversion(admissionId) {
+    const admission = await Admission.findById(admissionId);
+    if (!admission || admission.admissionType !== "DAYCARE") return null;
 
-    if (!investigation) {
-      throw new Error("Investigation not found");
-    }
+    const hours = admission.totalHoursAdmitted;
+    const exceeded = hours > admission.daycareMaxHours;
 
-    if (performInHouse) {
-      investigation.performedInHouse = true;
-      investigation.isActive = true;
-      investigation.outsideDetails = {};
-    } else {
-      investigation.performedInHouse = false;
-      investigation.isActive = false;
-      investigation.outsideDetails = {
-        reason: outsideDetails?.reason || "Patient preference",
-        suggestedLab: outsideDetails?.suggestedLab || "",
-        estimatedCost:
-          outsideDetails?.estimatedCost || investigation.finalAmount,
+    if (exceeded && !admission.isConvertedToIPD) {
+      admission.isConvertedToIPD = true;
+      admission.convertedToIPDAt = new Date();
+      admission.conversionReason = `Exceeded ${admission.daycareMaxHours}hr daycare limit`;
+      await admission.save();
+
+      // Open draft bills ko bhi IPD mein convert karo
+      await PatientBill.updateMany(
+        { admission: admissionId, billStatus: "DRAFT" },
+        { $set: { visitType: "IPD" } },
+      );
+
+      return {
+        converted: true,
+        hours,
+        message: `Patient converted to IPD after ${hours} hours`,
       };
     }
 
-    await bill.save();
-    return bill;
-  }
-
-  async getBillById(billId) {
-    const bill = await Billing.findById(billId)
-      .populate("patient", "fullName UHID contactNumber gender age")
-      .populate("prescription")
-      .populate("tpa", "tpaName tpaCode phone email")
-      .populate("hospitalChargesRef");
-
-    if (!bill) {
-      throw new Error("Bill not found");
-    }
-
-    return bill;
-  }
-
-  async updateBill(billId, updateData) {
-    const bill = await Billing.findById(billId);
-
-    if (!bill) {
-      throw new Error("Bill not found");
-    }
-
-    if (bill.status === "paid") {
-      throw new Error("Cannot update a paid bill");
-    }
-
-    if (updateData.selectedCharges) {
-      bill.selectedCharges = updateData.selectedCharges;
-    }
-
-    if (updateData.investigations) {
-      bill.investigations = updateData.investigations;
-    }
-
-    if (updateData.additionalItems) {
-      bill.additionalItems = updateData.additionalItems;
-    }
-
-    if (updateData.financials) {
-      bill.financials = { ...bill.financials, ...updateData.financials };
-    }
-
-    if (updateData.notes) {
-      bill.notes = updateData.notes;
-    }
-
-    await bill.save();
-    return bill;
-  }
-
-  async generateBill(billId) {
-    const bill = await Billing.findById(billId);
-
-    if (!bill) {
-      throw new Error("Bill not found");
-    }
-
-    if (bill.status !== "draft") {
-      throw new Error("Bill already generated");
-    }
-
-    await bill.generateBillNumber();
-    await bill.save();
-
-    return bill;
-  }
-
-  async addPayment(billId, paymentData) {
-    const bill = await Billing.findById(billId);
-
-    if (!bill) {
-      throw new Error("Bill not found");
-    }
-
-    if (bill.status === "cancelled") {
-      throw new Error("Cannot add payment to cancelled bill");
-    }
-
-    if (paymentData.amount > bill.financials.balance) {
-      throw new Error(
-        `Payment amount cannot exceed balance of ₹${bill.financials.balance}`,
-      );
-    }
-
-    await bill.addPayment({
-      amount: paymentData.amount,
-      method: paymentData.method || "Cash",
-      transactionId: paymentData.transactionId || "",
-      status: paymentData.status || "success",
-    });
-
-    return bill;
-  }
-
-  async getAllBills(filters = {}, page = 1, limit = 20) {
-    const query = {};
-
-    if (filters.UHID) {
-      query.UHID = new RegExp(filters.UHID, "i");
-    }
-
-    if (filters.status) {
-      query.status = filters.status;
-    }
-
-    if (filters.patientName) {
-      query.patientName = new RegExp(filters.patientName, "i");
-    }
-
-    if (filters.billNumber) {
-      query.billNumber = new RegExp(filters.billNumber, "i");
-    }
-
-    if (filters.startDate || filters.endDate) {
-      query.createdAt = {};
-      if (filters.startDate) {
-        query.createdAt.$gte = new Date(filters.startDate);
-      }
-      if (filters.endDate) {
-        query.createdAt.$lte = new Date(filters.endDate);
-      }
-    }
-
-    const skip = (page - 1) * limit;
-
-    const [bills, total] = await Promise.all([
-      Billing.find(query)
-        .populate("patient", "fullName UHID contactNumber")
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit),
-      Billing.countDocuments(query),
-    ]);
-
     return {
-      bills,
-      pagination: {
-        total,
-        page,
-        limit,
-        pages: Math.ceil(total / limit),
-      },
+      converted: false,
+      hours,
+      remaining: Math.max(0, admission.daycareMaxHours - hours),
     };
   }
 
-  async cancelBill(billId, reason) {
-    const bill = await Billing.findById(billId);
+  // ── 15. Daily auto-charge cron job ────────────────────────────
+  // Har raat cron is method ko call karta hai
+  // Sabhi admitted patients ke liye room rent + nursing daily bill mein add hota hai
+  async runDailyAutoCharges() {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
-    if (!bill) {
-      throw new Error("Bill not found");
+    // Aaj jo bhi bill nahi hue woh sab do
+    const items = await AutoBilledItems.find({
+      isActive: true,
+      $or: [{ lastBilledDate: null }, { lastBilledDate: { $lt: today } }],
+    }).populate("admission");
+
+    const results = [];
+
+    for (const item of items) {
+      try {
+        // Patient discharged ho gaya → auto-charge band
+        if (!item.admission || item.admission.status !== "ADMITTED") {
+          item.isActive = false;
+          await item.save();
+          results.push({
+            UHID: item.UHID,
+            service: item.serviceName,
+            status: "stopped",
+          });
+          continue;
+        }
+
+        const bill = await this.getOrCreateDraftBill(
+          item.UHID,
+          item.admission.admissionType,
+          item.admission._id,
+        );
+
+        await this.addServiceToBill(
+          bill._id,
+          item.service,
+          1,
+          new Date(),
+          "Auto-charged daily",
+        );
+
+        item.lastBilledDate = new Date();
+        item.lastBilledBillId = bill._id;
+        item.totalBilledCount += 1;
+        item.totalBilledAmount += item.unitPrice;
+        await item.save();
+
+        results.push({
+          UHID: item.UHID,
+          service: item.serviceName,
+          status: "billed",
+        });
+      } catch (err) {
+        results.push({
+          UHID: item.UHID,
+          service: item.serviceName,
+          status: "error",
+          error: err.message,
+        });
+      }
     }
 
-    bill.cancel(reason);
-    await bill.save();
-
-    return bill;
-  }
-
-  async getBillStats(filters = {}) {
-    const matchQuery = {};
-
-    if (filters.startDate || filters.endDate) {
-      matchQuery.createdAt = {};
-      if (filters.startDate)
-        matchQuery.createdAt.$gte = new Date(filters.startDate);
-      if (filters.endDate)
-        matchQuery.createdAt.$lte = new Date(filters.endDate);
-    }
-
-    const stats = await Billing.aggregate([
-      { $match: matchQuery },
-      {
-        $group: {
-          _id: "$status",
-          count: { $sum: 1 },
-          totalAmount: { $sum: "$financials.total" },
-          totalPaid: { $sum: "$financials.paid" },
-          totalBalance: { $sum: "$financials.balance" },
-        },
-      },
-    ]);
-
-    const summary = {
-      total: 0,
-      paid: 0,
-      partial: 0,
-      draft: 0,
-      cancelled: 0,
-      totalRevenue: 0,
-      totalCollected: 0,
-      totalPending: 0,
-    };
-
-    stats.forEach((stat) => {
-      summary.total += stat.count;
-      summary[stat._id] = stat.count;
-      summary.totalRevenue += stat.totalAmount;
-      summary.totalCollected += stat.totalPaid;
-      summary.totalPending += stat.totalBalance;
-    });
-
-    return summary;
+    return { processed: results.length, results };
   }
 }
 

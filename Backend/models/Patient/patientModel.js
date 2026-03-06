@@ -13,7 +13,7 @@ const PatientSchema = new mongoose.Schema(
     registrationType: {
       type: String,
       required: true,
-      enum: ["OPD", "Emergency", "IPD"],
+      enum: ["OPD", "Emergency", "IPD", "Daycare", "Service"],
       default: "OPD",
     },
     fullName: {

@@ -1,10 +1,11 @@
 // services/bedMgmt/roomService.js
 const Room = require("../../models/bedMgmt/roomModel");
 const RoomCategory = require("../../models/bedMgmt/roomCategoryModel");
-const ServiceMaster = require("../../models/bedMgmt/serviceMasterModel");
 const Floor = require("../../models/bedMgmt/floorModel");
 const Building = require("../../models/bedMgmt/buildingModel");
 const Ward = require("../../models/bedMgmt/wardModel");
+
+// ❌ REMOVED: ServiceMaster import (services/pricing moved to TPA)
 
 class RoomService {
   /**
@@ -29,29 +30,10 @@ class RoomService {
     return `${buildingCode}-${floorNumber}-${roomNumber}`;
   }
 
-  /**
-   * Helper: Validate pricing
-   */
-  validatePricing(pricing) {
-    const validated = {
-      perBedDailyRate: parseFloat(pricing.perBedDailyRate || 0),
-      nursingCharges: parseFloat(pricing.nursingCharges || 0),
-      equipmentCharges: parseFloat(pricing.equipmentCharges || 0),
-      securityDeposit: parseFloat(pricing.securityDeposit || 0),
-    };
-
-    // Check for negative values
-    Object.keys(validated).forEach((key) => {
-      if (validated[key] < 0) {
-        throw new Error(`${key} cannot be negative`);
-      }
-    });
-
-    return validated;
-  }
+  // ❌ REMOVED: validatePricing() - pricing moved to TPA
 
   /**
-   * Create a new room with category integration
+   * Create a new room (no pricing - managed via TPA)
    */
   async createRoom(data) {
     try {
@@ -59,7 +41,6 @@ class RoomService {
       if (!data.roomNumber || !data.roomName) {
         throw new Error("Room number and name are required");
       }
-
       if (!data.totalBeds || data.totalBeds < 1) {
         throw new Error("Total beds must be at least 1");
       }
@@ -100,7 +81,6 @@ class RoomService {
           throw new Error("Ward not found");
         }
 
-        // Ensure ward belongs to the specified floor
         if (ward.floor.toString() !== floorId.toString()) {
           throw new Error("Ward does not belong to the specified floor");
         }
@@ -110,7 +90,6 @@ class RoomService {
         data.wardCode = ward.wardCode;
         wardCode = ward.wardCode;
       } else {
-        // No ward - clean the data
         data.ward = undefined;
         data.wardName = null;
         data.wardCode = null;
@@ -152,43 +131,9 @@ class RoomService {
         throw new Error("Room number already exists in this location");
       }
 
-      // Handle pricing
-      if (!data.pricing || Object.keys(data.pricing).length === 0) {
-        // Use category default pricing
-        data.pricing = {
-          perBedDailyRate: category.defaultPricing.perBedDailyRate || 0,
-          nursingCharges: category.defaultPricing.nursingCharges || 0,
-          equipmentCharges: category.defaultPricing.equipmentCharges || 0,
-          securityDeposit: category.defaultPricing.securityDeposit || 0,
-        };
-      } else {
-        // Validate and use custom pricing
-        data.pricing = this.validatePricing(data.pricing);
-      }
-
-      // Validate and process services
-      if (data.services && data.services.length > 0) {
-        const serviceIds = data.services.map((s) => s.service);
-        const validServices = await ServiceMaster.find({
-          _id: { $in: serviceIds },
-          isActive: true,
-        });
-
-        if (validServices.length !== serviceIds.length) {
-          throw new Error("One or more services are invalid or inactive");
-        }
-
-        data.services = data.services.map((serviceData) => {
-          const masterService = validServices.find(
-            (s) => s._id.toString() === serviceData.service.toString(),
-          );
-          return {
-            service: serviceData.service,
-            price: serviceData.price || masterService.basePrice,
-            isIncluded: serviceData.isIncluded || false,
-          };
-        });
-      }
+      // ❌ REMOVED: pricing handling (defaultPricing from category, custom pricing)
+      // ❌ REMOVED: services validation and mapping
+      // Pricing is now fully managed in TPA → roomCharges[]
 
       // Set denormalized data
       data.buildingName = building.buildingName;
@@ -197,6 +142,10 @@ class RoomService {
       // Initialize bed availability
       data.availableBeds = data.totalBeds;
       data.occupiedBeds = 0;
+
+      // Strip any pricing/service fields that may have been passed in
+      delete data.pricing;
+      delete data.services;
 
       // Create room
       const room = await Room.create(data);
@@ -235,10 +184,7 @@ class RoomService {
       .populate("floor", "floorNumber floorName")
       .populate("ward", "wardName wardCode")
       .populate("roomCategory", "categoryName categoryCode roomType")
-      .populate(
-        "services.service",
-        "serviceName serviceCode basePrice unit category",
-      )
+      // ❌ REMOVED: services.service populate (no services on room)
       .sort({ roomCode: 1 });
   }
 
@@ -250,14 +196,8 @@ class RoomService {
       .populate("building", "buildingName buildingCode")
       .populate("floor", "floorNumber floorName")
       .populate("ward", "wardName wardCode")
-      .populate(
-        "roomCategory",
-        "categoryName categoryCode roomType defaultPricing",
-      )
-      .populate(
-        "services.service",
-        "serviceName serviceCode basePrice unit category",
-      );
+      .populate("roomCategory", "categoryName categoryCode roomType");
+    // ❌ REMOVED: services.service populate
 
     if (!room) {
       throw new Error("Room not found");
@@ -287,7 +227,6 @@ class RoomService {
         }
       }
 
-      // Handle hierarchy changes
       let needsRoomCodeUpdate = false;
       const updates = {};
 
@@ -312,24 +251,19 @@ class RoomService {
       // Handle ward changes
       if (data.ward !== undefined) {
         if (!data.ward || data.ward === null || data.ward === "") {
-          // Removing ward
           data.ward = undefined;
           data.wardName = null;
           data.wardCode = null;
           needsRoomCodeUpdate = true;
         } else if (data.ward !== room.ward?.toString()) {
-          // Adding/changing ward
           const ward = await Ward.findById(data.ward);
           if (!ward) {
             throw new Error("Ward not found");
           }
-
-          // Validate ward belongs to floor
           const targetFloor = data.floor || room.floor;
           if (ward.floor.toString() !== targetFloor.toString()) {
             throw new Error("Ward does not belong to the specified floor");
           }
-
           data.wardName = ward.wardName;
           data.wardCode = ward.wardCode;
           needsRoomCodeUpdate = true;
@@ -352,42 +286,29 @@ class RoomService {
           roomNumber,
         );
 
-        // Check for duplicate room code
         const existingRoomCode = await Room.findOne({
           roomCode: data.roomCode,
           _id: { $ne: id },
           isActive: true,
         });
+
         if (existingRoomCode) {
           throw new Error("Room code already exists");
         }
       }
 
-      // Validate pricing if provided
-      if (data.pricing) {
-        data.pricing = this.validatePricing(data.pricing);
-      }
+      // ❌ REMOVED: pricing validation
+      // ❌ REMOVED: services validation
+      // Strip any pricing/service fields
+      delete data.pricing;
+      delete data.services;
 
-      // Validate services if being updated
-      if (data.services) {
-        const serviceIds = data.services.map((s) => s.service);
-        const validServices = await ServiceMaster.find({
-          _id: { $in: serviceIds },
-          isActive: true,
-        });
-
-        if (validServices.length !== serviceIds.length) {
-          throw new Error("One or more services are invalid or inactive");
-        }
-      }
-
-      // Merge updates
       Object.assign(data, updates);
 
       const updatedRoom = await Room.findByIdAndUpdate(id, data, {
         new: true,
         runValidators: true,
-      }).populate("building floor ward roomCategory services.service");
+      }).populate("building floor ward roomCategory");
 
       return updatedRoom;
     } catch (error) {
@@ -418,31 +339,7 @@ class RoomService {
     return room;
   }
 
-  /**
-   * Add/Update services for a room
-   */
-  async updateRoomServices(roomId, services) {
-    const room = await Room.findById(roomId);
-    if (!room) {
-      throw new Error("Room not found");
-    }
-
-    // Validate all services
-    const serviceIds = services.map((s) => s.service);
-    const validServices = await ServiceMaster.find({
-      _id: { $in: serviceIds },
-      isActive: true,
-    });
-
-    if (validServices.length !== serviceIds.length) {
-      throw new Error("One or more services are invalid or inactive");
-    }
-
-    room.services = services;
-    await room.save();
-
-    return await this.getRoomById(roomId);
-  }
+  // ❌ REMOVED: updateRoomServices() - services/pricing moved to TPA
 
   /**
    * Get rooms by category
@@ -459,7 +356,7 @@ class RoomService {
     }
 
     return await Room.find(query)
-      .populate("building floor ward roomCategory services.service")
+      .populate("building floor ward roomCategory")
       .sort({ roomCode: 1 });
   }
 
@@ -473,7 +370,7 @@ class RoomService {
       status: "Active",
       availableBeds: { $gt: 0 },
     })
-      .populate("building floor ward roomCategory services.service")
+      .populate("building floor ward roomCategory")
       .sort({ roomCode: 1 });
   }
 

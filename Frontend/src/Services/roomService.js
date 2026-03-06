@@ -54,16 +54,16 @@ export const roomService = {
 
   createRoom: async (data) => {
     try {
-      console.log("Creating room with data:", data);
+      // Strip any pricing/services fields (managed via TPA)
+      const { pricing, services, ...cleanData } = data;
 
       const response = await fetch(API_ENDPOINTS.ROOMS, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        body: JSON.stringify(cleanData),
       });
 
       const result = await response.json();
-      console.log("Create response:", result);
 
       if (!response.ok) {
         throw new Error(
@@ -80,10 +80,13 @@ export const roomService = {
 
   updateRoom: async (id, data) => {
     try {
+      // Strip any pricing/services fields (managed via TPA)
+      const { pricing, services, ...cleanData } = data;
+
       const response = await fetch(`${API_ENDPOINTS.ROOMS}/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        body: JSON.stringify(cleanData),
       });
 
       const result = await response.json();
@@ -181,20 +184,8 @@ export const roomService = {
     }
   },
 
-  updateRoomServices: async (id, services) => {
-    try {
-      const response = await fetch(`${API_ENDPOINTS.ROOMS}/${id}/services`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ services }),
-      });
-      const room = await response.json();
-      return normalizeRoom(room);
-    } catch (error) {
-      console.error("Error:", error);
-      throw error;
-    }
-  },
+  // ❌ REMOVED: updateRoomServices() - services/pricing moved to TPA
+  // ❌ REMOVED: updateBedOccupancy() - this is internal, handled by bedService
 
   updateBedOccupancy: async (id, occupancy) => {
     try {

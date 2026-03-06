@@ -5,11 +5,9 @@ import { Button } from "primereact/button";
 import { Tag } from "primereact/tag";
 import { Toast } from "primereact/toast";
 import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
-import { ProgressBar } from "primereact/progressbar";
 import { roomService } from "../../Services/roomService";
-import { formatDateTime } from "../../utils/helpers";
 
-const RoomList = ({ onEdit, onRefresh }) => {
+const RoomList = ({ onEdit, onRefresh, globalFilter }) => {
   const [rooms, setRooms] = useState([]);
   const [loading, setLoading] = useState(false);
   const toast = useRef(null);
@@ -23,7 +21,7 @@ const RoomList = ({ onEdit, onRefresh }) => {
     try {
       const data = await roomService.getAllRooms();
       setRooms(data);
-    } catch (error) {
+    } catch {
       toast.current?.show({
         severity: "error",
         summary: "Error",
@@ -37,7 +35,7 @@ const RoomList = ({ onEdit, onRefresh }) => {
 
   const handleDelete = (room) => {
     confirmDialog({
-      message: `Are you sure you want to delete Room ${room.roomNumber}?`,
+      message: `Delete Room ${room.roomNumber}?`,
       header: "Confirm Delete",
       icon: "pi pi-exclamation-triangle",
       accept: async () => {
@@ -45,16 +43,16 @@ const RoomList = ({ onEdit, onRefresh }) => {
           await roomService.deleteRoom(room._id);
           toast.current?.show({
             severity: "success",
-            summary: "Success",
-            detail: "Room deleted successfully",
+            summary: "Deleted",
+            detail: "Room deleted",
             life: 3000,
           });
           fetchRooms();
-        } catch (error) {
+        } catch {
           toast.current?.show({
             severity: "error",
             summary: "Error",
-            detail: "Failed to delete room",
+            detail: "Delete failed",
             life: 3000,
           });
         }
@@ -62,59 +60,34 @@ const RoomList = ({ onEdit, onRefresh }) => {
     });
   };
 
-  const actionBodyTemplate = (rowData) => {
-    return (
-      <div style={{ display: "flex", gap: "5px" }}>
-        <Button
-          icon="pi pi-pencil"
-          className="p-button-rounded p-button-text p-button-info"
-          onClick={() => onEdit(rowData)}
-          tooltip="Edit"
-        />
-        <Button
-          icon="pi pi-trash"
-          className="p-button-rounded p-button-text p-button-danger"
-          onClick={() => handleDelete(rowData)}
-          tooltip="Delete"
-        />
-      </div>
-    );
-  };
-
-  const statusBodyTemplate = (rowData) => {
-    const statusMap = {
+  const statusTpl = (r) => {
+    const map = {
       Active: "success",
       Inactive: "danger",
       "Under Maintenance": "warning",
       Blocked: "secondary",
     };
-    return <Tag value={rowData.status} severity={statusMap[rowData.status]} />;
+    return <Tag value={r.status} severity={map[r.status]} />;
   };
 
-  const occupancyBodyTemplate = (rowData) => {
-    const rate = parseFloat(rowData.occupancyRate || 0);
-    let severity = "success";
-    if (rate > 80) severity = "danger";
-    else if (rate > 50) severity = "warning";
-
-    return (
-      <div>
-        <ProgressBar
-          value={rate}
-          showValue={false}
-          style={{ height: "8px" }}
-          color={severity}
-        />
-        <small>
-          {rate}% ({rowData.occupiedBeds}/{rowData.totalBeds})
-        </small>
-      </div>
-    );
-  };
-
-  const dateBodyTemplate = (rowData) => {
-    return formatDateTime(rowData.createdAt);
-  };
+  const actionTpl = (r) => (
+    <div style={{ display: "flex", gap: 4 }}>
+      <Button
+        icon="pi pi-pencil"
+        className="p-button-rounded p-button-text p-button-info"
+        onClick={() => onEdit(r)}
+        tooltip="Edit"
+        tooltipOptions={{ position: "top" }}
+      />
+      <Button
+        icon="pi pi-trash"
+        className="p-button-rounded p-button-text p-button-danger"
+        onClick={() => handleDelete(r)}
+        tooltip="Delete"
+        tooltipOptions={{ position: "top" }}
+      />
+    </div>
+  );
 
   return (
     <>
@@ -126,34 +99,23 @@ const RoomList = ({ onEdit, onRefresh }) => {
         paginator
         rows={10}
         rowsPerPageOptions={[5, 10, 25, 50]}
-        tableStyle={{ minWidth: "50rem" }}
+        globalFilter={globalFilter}
         emptyMessage="No rooms found"
-        stripedRows
+        tableStyle={{ minWidth: "50rem" }}
       >
-        <Column field="roomCode" header="Room Code" sortable />
-        <Column field="roomNumber" header="Room Number" sortable />
+        <Column
+          field="roomNumber"
+          header="Room No."
+          sortable
+          style={{ fontWeight: 600 }}
+        />
         <Column field="roomName" header="Room Name" sortable />
         <Column field="buildingName" header="Building" sortable />
         <Column field="floorNumber" header="Floor" sortable />
         <Column field="wardName" header="Ward" sortable />
-        <Column header="Occupancy" body={occupancyBodyTemplate} sortable />
-        <Column
-          field="status"
-          header="Status"
-          body={statusBodyTemplate}
-          sortable
-        />
-        <Column
-          field="createdAt"
-          header="Created At"
-          body={dateBodyTemplate}
-          sortable
-        />
-        <Column
-          header="Actions"
-          body={actionBodyTemplate}
-          style={{ width: "120px" }}
-        />
+        <Column field="roomCode" header="Code" sortable />
+        <Column field="status" header="Status" body={statusTpl} sortable />
+        <Column header="Actions" body={actionTpl} style={{ width: 90 }} />
       </DataTable>
     </>
   );

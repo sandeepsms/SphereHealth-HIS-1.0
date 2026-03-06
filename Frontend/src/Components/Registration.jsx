@@ -1,4 +1,4 @@
-// PatientRegistration.jsx - Fixed Version
+// PatientRegistration.jsx - With Patient Search Feature
 import React, { useState, useEffect, useRef } from "react";
 import { InputText } from "primereact/inputtext";
 import { Dropdown } from "primereact/dropdown";
@@ -8,9 +8,8 @@ import { Checkbox } from "primereact/checkbox";
 import { RadioButton } from "primereact/radiobutton";
 import { Button } from "primereact/button";
 import { Toast } from "primereact/toast";
-import { ProgressSpinner } from "primereact/progressspinner";
 import { Card } from "primereact/card";
-import { Divider } from "primereact/divider";
+import { ProgressSpinner } from "primereact/progressspinner";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { departmentService } from "../Services/departmentService";
 import { doctorService } from "../Services/doctors/doctorService";
@@ -21,14 +20,13 @@ import "primeicons/primeicons.css";
 import { API_ENDPOINTS } from "../config/api";
 import "../../css/Radiobutton.css";
 
+// ✅ NEW: PatientSearchBar import
+import PatientSearchBar from "./Search/PatientSearchBar";
+
 export default function PatientRegistration() {
   const toast = useRef(null);
-  const location = useLocation();
   const navigate = useNavigate();
-  const { id: patientId } = useParams(); // URL से patient ID लेना
-
-
-
+  const { id: patientId } = useParams();
 
   const [formData, setFormData] = useState({
     registrationType: "OPD",
@@ -48,7 +46,7 @@ export default function PatientRegistration() {
     },
     bloodGroup: "",
     knownAllergies: "",
-    tpa: "",
+    tpa: null,
     department: "",
     doctor: "",
     isMLC: false,
@@ -66,27 +64,14 @@ export default function PatientRegistration() {
   const [departments, setDepartments] = useState([]);
   const [doctors, setDoctors] = useState([]);
   const [filteredDoctors, setFilteredDoctors] = useState([]);
-const [loading, setLoading] = useState(false);
-const [pincodeLoading, setPincodeLoading] = useState(false);
-const [initialLoading, setInitialLoading] = useState(true);
-const [isEditMode, setIsEditMode] = useState(false);
-const [OPDprice, setOPDprice] = useState();
+  const [loading, setLoading] = useState(false);
+  const [pincodeLoading, setPincodeLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [OPDprice, setOPDprice] = useState(null);
 
-  function fetchOPDPrice(selectedId) {
-    console.log("Fetching OPD Price for TPA ID:", selectedId);
-    fetch(
-      `http://localhost:5000/api/Servicebilldata/getOPDPrice?_id=${selectedId}`,
-    )
-      .then((res) => res.json())
-      .then((data) => {
-        if (data?.data?.opd_price?.[0]?.Totalamount) {
-          setOPDprice(data.data.opd_price[0].Totalamount);
-        }
-      })
-      .catch((error) => {
-        console.error("Error fetching OPD price:", error);
-      });
-  }
+  // ✅ NEW: Search se patient select hone ka banner
+  const [searchSelectedPatient, setSearchSelectedPatient] = useState(null);
 
 // Initial data load
 useEffect(() => {
@@ -94,18 +79,12 @@ useEffect(() => {
 }, []);
 
 
-// Patient data load करना जब departments और doctors load हो जाएं
-useEffect(() => {
-  if (patientId && departments.length > 0 || doctors.length > 0) {
-    fetchPatientData(patientId);
-  }
-}, [patientId, departments.length, doctors.length]);
-
-
-
-// useEffect(()=>{
-//    fetchPatientData(patientId);
-// },[patientId]);
+  // Patient data load when editing
+  useEffect(() => {
+    if (patientId && (departments.length > 0 || doctors.length > 0)) {
+      fetchPatientData(patientId);
+    }
+  }, [patientId, departments.length, doctors.length]);
 
   const loadInitialData = async () => {
     setInitialLoading(true);
@@ -124,45 +103,93 @@ useEffect(() => {
     }
   };
 
+  // ✅ NEW: Search se patient select hone pe form fill karo
+  const handlePatientSearchSelect = (patient) => {
+    setSearchSelectedPatient(patient);
+
+    const tpaId =
+      typeof patient.tpa === "object" && patient.tpa !== null
+        ? patient.tpa._id
+        : patient.tpa;
+
+    const deptId =
+      typeof patient.department === "object" && patient.department !== null
+        ? patient.department._id
+        : patient.department;
+
+    const docId =
+      typeof patient.doctor === "object" && patient.doctor !== null
+        ? patient.doctor._id
+        : patient.doctor;
+
+    setFormData({
+      registrationType: patient.registrationType || "OPD",
+      title: patient.title || "",
+      fullName: patient.fullName || "",
+      gender: patient.gender || "",
+      dateOfBirth: patient.dateOfBirth ? new Date(patient.dateOfBirth) : null,
+      maritalStatus: patient.maritalStatus || "",
+      contactNumber: patient.contactNumber || "",
+      email: patient.email || "",
+      age: patient.age || calculateAge(patient.dateOfBirth) || "",
+      address: {
+        completeAddress: patient.address?.completeAddress || "",
+        pincode: patient.address?.pincode || "",
+        city: patient.address?.city || "",
+        state: patient.address?.state || "",
+        district: patient.address?.district || "",
+      },
+      bloodGroup: patient.bloodGroup || "",
+      knownAllergies: patient.knownAllergies || "",
+      tpa: tpaId || null,
+      department: deptId || "",
+      doctor: docId || "",
+      isMLC: patient.isMLC || false,
+      mlcNumber: patient.mlcNumber || "",
+      companionName: patient.companionName || "",
+      companionRelationship: patient.companionRelationship || "",
+      companionContact: patient.companionContact || "",
+      hasAppointment: false,
+      appointmentDate: null,
+      appointmentTime: null,
+    });
+
+    if (tpaId) fetchOPDPrice(tpaId);
+
+    toast.current?.show({
+      severity: "info",
+      summary: "Patient Found",
+      detail: `${patient.fullName} (${patient.UHID}) ka data load ho gaya`,
+      life: 3000,
+    });
+  };
+
   const fetchPatientData = async (id) => {
     try {
       setLoading(true);
       const response = await fetch(`${API_ENDPOINTS.PATIENTS}/${id}`);
       const data = await response.json();
-      console.log("datatatatat",data);
-      
 
       if (data.success && data.data) {
         const patientData = data.data;
         setIsEditMode(true);
 
-        // TPA ID extract करना
         const tpaId =
           typeof patientData.tpa === "object" && patientData.tpa !== null
             ? patientData.tpa._id
             : patientData.tpa;
 
-        // Department ID extract करना
         const deptId =
           typeof patientData.department === "object" &&
           patientData.department !== null
             ? patientData.department._id
             : patientData.department;
 
-        // Doctor ID extract करना
         const docId =
           typeof patientData.doctor === "object" && patientData.doctor !== null
             ? patientData.doctor._id
             : patientData.doctor;
 
-        console.log("Patient Data Loaded:", {
-          tpaId,
-          deptId,
-          docId,
-          fullData: patientData,     
-        });
-
-        // Form data set करना................................................
         setFormData({
           registrationType: patientData.registrationType || "OPD",
           title: patientData.title || "",
@@ -174,6 +201,7 @@ useEffect(() => {
           maritalStatus: patientData.maritalStatus || "",
           contactNumber: patientData.contactNumber || "",
           email: patientData.email || "",
+          age: patientData.age || calculateAge(patientData.dateOfBirth) || "",
           address: {
             completeAddress: patientData.address?.completeAddress || "",
             pincode: patientData.address?.pincode || "",
@@ -200,10 +228,7 @@ useEffect(() => {
             : null,
         });
 
-        // TPA के लिए OPD price fetch करना
-        if (tpaId) {
-          fetchOPDPrice(tpaId);
-        }
+        if (tpaId) fetchOPDPrice(tpaId);
       }
     } catch (error) {
       console.error("Error fetching patient data:", error);
@@ -218,16 +243,13 @@ useEffect(() => {
     }
   };
 
+  // Doctor filter when department changes
   useEffect(() => {
     if (formData.department && doctors.length > 0) {
       const filtered = doctors.filter(
         (doc) => doc.department === formData.department,   
       );
-      console.log(",,,,,,,,,,,///////",filtered);
-      
       setFilteredDoctors(filtered);
-
-      // अगर selected doctor current department में नहीं है तो clear करें
       if (
         formData.doctor &&
         !filtered.find((d) => d.value === formData.doctor)       
@@ -239,53 +261,18 @@ useEffect(() => {
     }
   }, [formData.department, doctors]);
 
-  // const fetchTPA = async () => {
-  //   try {
-  //     const data = await tpaService.getActiveTPAs();
-  //     if (data.success) {
-  //       const formattedTPA = data.data.map((tpa) => ({
-  //         label: tpa.tpaName,
-  //         value: tpa._id,
-  //       }));
-  //       setTpaList(formattedTPA);
-  //     } else {
-  //       console.error("No TPA data received:", data);
-  //       setTpaList([]);
-  //     }
-  //   } catch (error) {
-  //     console.error("Error fetching TPA:", error);
-  //     toast.current?.show({
-  //       severity: "warn",
-  //       summary: "Warning",
-  //       detail: "TPA data unavailable",
-  //       life: 3000,
-  //     });
-  //     setTpaList([]);
-  //   }
-  // };
-
-
    const fetchTPA = async () => {
     try {
       const data = await tpaService.getAllTPAs();
       if (data.success) {
-        const formattedTPA = data.data.map((tpa) => ({
-          label: tpa.tpaName,
-          value: tpa._id,
-        }));
-        setTpaList(formattedTPA);
+        setTpaList(
+          data.data.map((tpa) => ({ label: tpa.tpaName, value: tpa._id })),
+        );
       } else {
-        console.error("No TPA data received:", data);
         setTpaList([]);
       }
     } catch (error) {
       console.error("Error fetching TPA:", error);
-      toast.current?.show({
-        severity: "warn",
-        summary: "Warning",
-        detail: "TPA data unavailable",
-        life: 3000,
-      });
       setTpaList([]);
     }
   };
@@ -294,13 +281,11 @@ useEffect(() => {
     try {
       const res = await departmentService.getAllDepartments();
       const deptList = Array.isArray(res) ? res : res.data || [];
-      const formattedDepts = deptList
-        .filter((dept) => dept.isActive)
-        .map((dept) => ({
-          label: dept.departmentName,
-          value: dept._id,
-        }));
-      setDepartments(formattedDepts);
+      setDepartments(
+        deptList
+          .filter((d) => d.isActive)
+          .map((d) => ({ label: d.departmentName, value: d._id })),
+      );
     } catch (error) {
       console.error("Error fetching departments:", error);
       setDepartments([]);
@@ -311,35 +296,47 @@ useEffect(() => {
     try {
       const res = await doctorService.getAllDoctors();
       const doctorsList = Array.isArray(res) ? res : res.data || [];
-      const allDoctors = doctorsList
-        .filter((doc) => doc.isActive)
-        .map((doc) => ({
-          label: `Dr. ${doc.personalInfo?.firstName || ""} ${
-            doc.personalInfo?.lastName || ""
-          } (${doc.professional?.specialization || ""})`,
-          value: doc._id,
-          department:
-            typeof doc.department === "object"
-              ? doc.department._id
-              : doc.department,
-        }));
-      setDoctors(allDoctors);
+      setDoctors(
+        doctorsList
+          .filter((doc) => doc.isActive)
+          .map((doc) => ({
+            label: `Dr. ${doc.personalInfo?.firstName || ""} ${doc.personalInfo?.lastName || ""} (${doc.professional?.specialization || ""})`,
+            value: doc._id,
+            department:
+              typeof doc.department === "object"
+                ? doc.department._id
+                : doc.department,
+          })),
+      );
     } catch (error) {
       console.error("Error fetching doctors:", error);                                             
       setDoctors([]);
     }
   };
 
+  function fetchOPDPrice(selectedId) {
+    fetch(
+      `http://localhost:5000/api/Servicebilldata/getOPDPrice?_id=${selectedId}`,
+    )
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.data?.opd_price?.[0]?.Totalamount) {
+          setOPDprice(data.data.opd_price[0].Totalamount);
+        } else {
+          setOPDprice(null);
+        }
+      })
+      .catch(() => setOPDprice(null));
+  }
+
   const fetchPincodeData = async (pincode) => {
     if (pincode.length !== 6) return;
-
     setPincodeLoading(true);
     try {
       const response = await fetch(
         `https://api.postalpincode.in/pincode/${pincode}`,
       );
       const data = await response.json();
-
       if (data[0].Status === "Success" && data[0].PostOffice) {
         const postOffice = data[0].PostOffice[0];
         setFormData((prev) => ({
@@ -354,7 +351,7 @@ useEffect(() => {
         toast.current?.show({
           severity: "success",
           summary: "Success",
-          detail: "Address details fetched successfully",
+          detail: "Address fetched",
           life: 3000,
         });
       } else {
@@ -365,12 +362,11 @@ useEffect(() => {
           life: 3000,
         });
       }
-    } catch (error) {
-      console.error("Error fetching pincode data:", error);
+    } catch {
       toast.current?.show({
         severity: "error",
         summary: "Error",
-        detail: "Failed to fetch address details",
+        detail: "Failed to fetch address",
         life: 3000,
       });
     } finally {
@@ -378,7 +374,21 @@ useEffect(() => {
     }
   };
 
-  // Static data arrays
+  const calculateAge = (dob) => {
+    if (!dob) return "";
+    const today = new Date();
+    const birthDate = new Date(dob);
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const monthDiff = today.getMonth() - birthDate.getMonth();
+    if (
+      monthDiff < 0 ||
+      (monthDiff === 0 && today.getDate() < birthDate.getDate())
+    )
+      age--;
+    return age < 0 ? "" : age;
+  };
+
+  // Static data
   const titles = [
     { label: "Mr.", value: "Mr.", gender: "Male" },
     { label: "Mrs.", value: "Mrs.", gender: "Female" },
@@ -387,13 +397,11 @@ useEffect(() => {
     { label: "Baby", value: "Baby", gender: "" },
     { label: "Dr.", value: "Dr.", gender: "" },
   ];
-
   const genders = [
     { label: "Male", value: "Male" },
     { label: "Female", value: "Female" },
     { label: "Other", value: "Other" },
   ];
-
   const maritalStatuses = [
     { label: "Single", value: "Single" },
     { label: "Married", value: "Married" },
@@ -401,7 +409,6 @@ useEffect(() => {
     { label: "Widowed", value: "Widowed" },
     { label: "Other", value: "Other" },
   ];
-
   const bloodGroups = [
     { label: "A+", value: "A+" },
     { label: "A-", value: "A-" },
@@ -413,7 +420,6 @@ useEffect(() => {
     { label: "O-", value: "O-" },
     { label: "Not Known", value: "Not Known" },
   ];
-
   const relationships = [
     { label: "Father", value: "Father" },
     { label: "Mother", value: "Mother" },
@@ -429,7 +435,7 @@ useEffect(() => {
   const handleInputChange = (name, value) => {
     if (name === "title") {
       const selectedTitle = titles.find((t) => t.value === value);
-      if (selectedTitle && selectedTitle.gender) {
+      if (selectedTitle?.gender) {
         setFormData((prev) => ({
           ...prev,
           title: value,
@@ -438,31 +444,28 @@ useEffect(() => {
       } else {
         setFormData((prev) => ({ ...prev, title: value }));
       }
+    } else if (name === "dateOfBirth") {
+      setFormData((prev) => ({
+        ...prev,
+        dateOfBirth: value,
+        age: calculateAge(value),
+      }));
     } else if (name.startsWith("address.")) {
       const addressField = name.split(".")[1];
       setFormData((prev) => ({
         ...prev,
-        address: {
-          ...prev.address,
-          [addressField]: value,
-        },
+        address: { ...prev.address, [addressField]: value },
       }));
-
-      if (addressField === "pincode" && value.length === 6) {
+      if (addressField === "pincode" && value.length === 6)
         fetchPincodeData(value);
-      }
     } else {
       setFormData((prev) => ({ ...prev, [name]: value }));
     }
-
-    if (errors[name]) {
-      setErrors((prev) => ({ ...prev, [name]: "" }));
-    }
+    if (errors[name]) setErrors((prev) => ({ ...prev, [name]: "" }));
   };
 
   const validateForm = () => {
     const newErrors = {};
-
     if (!formData.title) newErrors.title = "Title is required";
     if (!formData.fullName.trim()) newErrors.fullName = "Full name is required";
     if (!formData.gender) newErrors.gender = "Gender is required";
@@ -477,25 +480,21 @@ useEffect(() => {
       newErrors.knownAllergies = "Known allergies field is required";
     if (!formData.department) newErrors.department = "Department is required";
     if (!formData.doctor) newErrors.doctor = "Doctor is required";
-
     if (formData.hasAppointment) {
       if (!formData.appointmentDate)
         newErrors.appointmentDate = "Date is required";
       if (!formData.appointmentTime)
         newErrors.appointmentTime = "Time is required";
     }
-
     if (formData.companionRelationship && !formData.companionContact.trim()) {
       newErrors.companionContact = "Contact is required";
     }
-
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-
     if (!validateForm()) {
       toast.current?.show({
         severity: "error",
@@ -505,51 +504,30 @@ useEffect(() => {
       });
       return;
     }
-
     setLoading(true);
-
     try {
       const cleanedFormData = { ...formData };
-
-      if (!cleanedFormData.tpa) {
-        cleanedFormData.tpa = null;
-      }
-
-      if (!cleanedFormData.email) {
-        cleanedFormData.email = null;
-      }
-
-      if (!cleanedFormData.maritalStatus) {
-        cleanedFormData.maritalStatus = null;
-      }
-
-      if (!cleanedFormData.mlcNumber) {
-        cleanedFormData.mlcNumber = null;
-      }
+      if (!cleanedFormData.tpa) cleanedFormData.tpa = null;
+      if (!cleanedFormData.email) cleanedFormData.email = null;
+      if (!cleanedFormData.maritalStatus) cleanedFormData.maritalStatus = null;
+      if (!cleanedFormData.mlcNumber) cleanedFormData.mlcNumber = null;
 
       let response;
       if (isEditMode && patientId) {
-        // Update existing patient
         response = await fetch(`${API_ENDPOINTS.PATIENTS}/${patientId}`, {
           method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify(cleanedFormData),
         });
       } else {
-        // Create new patient
         response = await fetch(API_ENDPOINTS.PATIENTS, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify(cleanedFormData),
         });
       }
 
       const data = await response.json();
-
       if (data.success) {
         toast.current?.show({
           severity: "success",
@@ -561,18 +539,12 @@ useEffect(() => {
               : "Patient registered successfully"),
           life: 3000,
         });
-        setTimeout(() => {
-          navigate("/allpatient");
-        }, 2000);
+        setTimeout(() => navigate("/allpatient"), 2000);
       } else {
         toast.current?.show({
           severity: "error",
           summary: "Error",
-          detail:
-            data.message ||
-            (isEditMode
-              ? "Failed to update patient"
-              : "Failed to register patient"),
+          detail: data.message || "Operation failed",
           life: 3000,
         });
       }
@@ -581,9 +553,7 @@ useEffect(() => {
       toast.current?.show({
         severity: "error",
         summary: "Error",
-        detail: isEditMode
-          ? "Failed to update patient"
-          : "Failed to register patient",
+        detail: "Submission failed",
         life: 3000,
       });
     } finally {
@@ -612,35 +582,151 @@ useEffect(() => {
     );
   }
 
+  // Compact label style
+  const lbl = {
+    fontWeight: 600,
+    display: "block",
+    marginBottom: "3px",
+    fontSize: "12px",
+    color: "#374151",
+  };
+  const cardStyle = { marginBottom: "3px", borderRadius: "8px" };
+  const sectionHead = {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    marginBottom: "8px",
+    paddingBottom: "6px",
+    borderBottom: "1px solid #e5e7eb",
+  };
+  const fieldStyle = { marginBottom: "6px" };
+
   return (
-    <div className="p-4" style={{ maxWidth: "1400px", margin: "0 auto" }}>
+    <div style={{ width: "100%", padding: "4px 12px 4px 12px" }}>
       <Toast ref={toast} position="top-right" />
 
-      {/* Header Card */}
+      {/* ── Header (Ultra Compact, Full Width) ── */}
       <Card
-        className="mb-5 btn-custom"
+        className="btn-custom"
         style={{
+          borderRadius: "8px",
+          marginBottom: "3px",
           color: "white",
         }}
       >
-        <div className="flex justify-content-between align-items-center">
-          <div>
-            <h1 className="m-0 text-2xl font-bold">
-              Spherehealth Medical Solutions
-            </h1>
-            <p className="m-0 mt-1 opacity-90">
-              {isEditMode
-                ? "Edit Patient Details"
-                : "Patient Registration Portal"}
-            </p>
-            <small>Dr. Sandeep</small>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: "12px",
+            padding: "2px 4px",
+          }}
+        >
+          {/* Left: Branding */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "7px",
+              flexShrink: 0,
+            }}
+          >
+            <i
+              className="pi pi-heart-fill"
+              style={{ fontSize: "14px", opacity: 0.9 }}
+            />
+            <div>
+              <div
+                style={{
+                  fontSize: "13px",
+                  fontWeight: 700,
+                  lineHeight: 1.15,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Spherehealth Medical Solutions
+              </div>
+              <div
+                style={{
+                  fontSize: "10px",
+                  opacity: 0.75,
+                  lineHeight: 1.2,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {isEditMode ? "Edit Patient" : "Patient Registration"}{" "}
+                &nbsp;·&nbsp; Dr. Sandeep
+              </div>
+            </div>
           </div>
+
+          {/* Center: Search bar (only in add mode) — grows to fill */}
+          {!isEditMode && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                flex: 1,
+                minWidth: 0,
+              }}
+            >
+              <div
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  transform: "scale(0.88)",
+                  transformOrigin: "left center",
+                }}
+              >
+                <PatientSearchBar
+                  onPatientSelect={handlePatientSearchSelect}
+                  placeholder="🔍  Search existing patient by name, UHID or phone..."
+                  style={{ width: "100%" }}
+                />
+              </div>
+              {searchSelectedPatient && (
+                <div
+                  style={{
+                    fontSize: "10px",
+                    background: "rgba(255,255,255,0.22)",
+                    padding: "3px 9px",
+                    borderRadius: "12px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "5px",
+                    whiteSpace: "nowrap",
+                    flexShrink: 0,
+                    border: "1px solid rgba(255,255,255,0.3)",
+                  }}
+                >
+                  <i
+                    className="pi pi-check-circle"
+                    style={{ color: "#90ee90", fontSize: "10px" }}
+                  />
+                  <span>
+                    {searchSelectedPatient.fullName} (
+                    {searchSelectedPatient.UHID})
+                  </span>
+                  <i
+                    className="pi pi-times"
+                    style={{ cursor: "pointer", fontSize: "9px", opacity: 0.7 }}
+                    onClick={() => setSearchSelectedPatient(null)}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Edit mode: Back button */}
           {isEditMode && (
             <Button
-              label="Back to Patients"
+              label="Back"
               icon="pi pi-arrow-left"
               severity="secondary"
               outlined
+              size="small"
               onClick={() => navigate("/allpatient")}
             />
           )}
@@ -648,142 +734,168 @@ useEffect(() => {
       </Card>
 
       <form onSubmit={handleSubmit}>
-        {/* Registration Type */}
-        <Card className="mb-4">
-          <div className="flex align-items-center gap-3 mb-3">
-            <i className="pi pi-user-plus text-primary mr-2"></i>
-            <h3 className="m-0 font-semibold text-xl">Registration Details</h3>
-          </div>
+        {/* ── Row 1: Registration Type + TPA (side by side) ── */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: "3px",
+            marginBottom: "3px",
+          }}
+        >
+          {/* Registration Type */}
+          <Card style={cardStyle}>
+            <div style={sectionHead}>
+              <i
+                className="pi pi-user-plus text-primary"
+                style={{ fontSize: "13px" }}
+              />
+              <span style={{ fontWeight: 600, fontSize: "13px" }}>
+                Registration Type
+              </span>
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "12px" }}>
+              {["OPD", "Emergency", "IPD", "Daycare", "Services"].map(
+                (type) => (
+                  <div
+                    key={type}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "5px",
+                    }}
+                  >
+                    <RadioButton
+                      inputId={type.toLowerCase()}
+                      value={type}
+                      onChange={(e) =>
+                        handleInputChange("registrationType", e.value)
+                      }
+                      checked={formData.registrationType === type}
+                    />
+                    <label
+                      htmlFor={type.toLowerCase()}
+                      style={{ fontSize: "13px", cursor: "pointer" }}
+                    >
+                      {type}
+                    </label>
+                  </div>
+                ),
+              )}
+            </div>
+          </Card>
 
-          <div className="flex flex-wrap gap-4">
-            <div className="flex align-items-center gap-2">
-              <RadioButton
-                inputId="opd"
-                value="OPD"
-                onChange={(e) => handleInputChange("registrationType", e.value)}
-                checked={formData.registrationType === "OPD"}
-                className="opd-radio"
+          {/* TPA */}
+          <Card style={cardStyle}>
+            <div style={sectionHead}>
+              <i
+                className="pi pi-shield text-primary"
+                style={{ fontSize: "13px" }}
               />
-              <label htmlFor="opd" className="font-medium">
-                OPD
-              </label>
+              <span style={{ fontWeight: 600, fontSize: "13px" }}>
+                TPA (Optional)
+              </span>
+              {OPDprice && (
+                <span
+                  style={{
+                    marginLeft: "auto",
+                    fontSize: "12px",
+                    color: "#0d6efd",
+                    fontWeight: 600,
+                  }}
+                >
+                  OPD: ₹{OPDprice}
+                </span>
+              )}
             </div>
-            <div className="flex align-items-center gap-2">
-              <RadioButton
-                inputId="emergency"
-                value="Emergency"
-                onChange={(e) => handleInputChange("registrationType", e.value)}
-                checked={formData.registrationType === "Emergency"}
-              />
-              <label htmlFor="emergency" className="font-medium">
-                Emergency
-              </label>
-            </div>
-            <div className="flex align-items-center gap-2">
-              <RadioButton
-                inputId="ipd"
-                value="IPD"
-                onChange={(e) => handleInputChange("registrationType", e.value)}
-                checked={formData.registrationType === "IPD"}
-              />
-              <label htmlFor="ipd" className="font-medium">
-                IPD
-              </label>
-            </div>
-          </div>
-        </Card>
-
-{/* TPA Section */}
-<Card className="mb-4">
-          <div className="p-field p-col-12">
-            <label className="font-semibold block mb-2">TPA (Optional)</label>
             <Dropdown
               value={formData.tpa}
               options={tpaList}
               onChange={(e) => {
-                const selectedId = e.value;
-                handleInputChange("tpa", selectedId);
-                if (selectedId) {
-                  fetchOPDPrice(selectedId);
-                }
+                handleInputChange("tpa", e.value);
+                if (e.value) fetchOPDPrice(e.value);
+                else setOPDprice(null);
               }}
               placeholder={tpaList.length ? "Select TPA" : "Loading..."}
               filter
               showClear
-              className={errors.tpa ? "p-invalid" : ""}
               style={{ width: "100%" }}
             />
-            {tpaList.length === 0 && !initialLoading && (
-              <small className="text-500 block mt-1">No TPA available</small>
-            )}
-            {OPDprice && (
-              <small className="text-primary block mt-2">
-                OPD Price: ₹{OPDprice}
-              </small>
-            )}
-          </div>
-        </Card>
+          </Card>
+        </div>
 
-        {/* Personal Details */}
-        <Card className="mb-4">
-          <div className="flex align-items-center gap-3 mb-4">
-            <i className="pi pi-user text-primary"></i>
-            <h3 className="m-0 font-semibold text-xl">Personal Details</h3>
+        {/* ── Personal Details ── */}
+        <Card style={cardStyle}>
+          <div style={sectionHead}>
+            <i
+              className="pi pi-user text-primary"
+              style={{ fontSize: "13px" }}
+            />
+            <span style={{ fontWeight: 600, fontSize: "13px" }}>
+              Personal Details
+            </span>
           </div>
-
-          <div className="grid">
-            <div className="field col-12 md:col-4">
-              <label className="font-semibold block mb-2">
-                Title <span className="text-red-500">*</span>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(8, 1fr)",
+              gap: "8px",
+            }}
+          >
+            {/* Title */}
+            <div style={{ gridColumn: "span 1", ...fieldStyle }}>
+              <label style={lbl}>
+                Title <span style={{ color: "red" }}>*</span>
               </label>
               <Dropdown
                 value={formData.title}
                 options={titles}
                 onChange={(e) => handleInputChange("title", e.value)}
-                placeholder="Select Title"
+                placeholder="Title"
                 className={errors.title ? "p-invalid" : ""}
                 style={{ width: "100%" }}
               />
               {errors.title && (
-                <small className="p-error block">{errors.title}</small>
+                <small className="p-error">{errors.title}</small>
               )}
             </div>
-
-            <div className="field col-12 md:col-4">
-              <label className="font-semibold block mb-2">
-                Full Name <span className="text-red-500">*</span>
+            {/* Full Name */}
+            <div style={{ gridColumn: "span 3", ...fieldStyle }}>
+              <label style={lbl}>
+                Full Name <span style={{ color: "red" }}>*</span>
               </label>
               <InputText
                 value={formData.fullName}
                 onChange={(e) => handleInputChange("fullName", e.target.value)}
-                placeholder="Enter Full Name"
+                placeholder="Full Name"
                 className={errors.fullName ? "p-invalid" : ""}
+                style={{ width: "100%" }}
               />
               {errors.fullName && (
-                <small className="p-error block">{errors.fullName}</small>
+                <small className="p-error">{errors.fullName}</small>
               )}
             </div>
-
-            <div className="field col-12 md:col-4">
-              <label className="font-semibold block mb-2">
-                Gender <span className="text-red-500">*</span>
+            {/* Gender */}
+            <div style={{ gridColumn: "span 2", ...fieldStyle }}>
+              <label style={lbl}>
+                Gender <span style={{ color: "red" }}>*</span>
               </label>
               <Dropdown
                 value={formData.gender}
                 options={genders}
                 onChange={(e) => handleInputChange("gender", e.value)}
-                placeholder="Select Gender"
+                placeholder="Gender"
                 className={errors.gender ? "p-invalid" : ""}
                 style={{ width: "100%" }}
               />
               {errors.gender && (
-                <small className="p-error block">{errors.gender}</small>
+                <small className="p-error">{errors.gender}</small>
               )}
             </div>
-
-            <div className="field col-12 md:col-4">
-              <label className="font-semibold block mb-2">
-                Date of Birth <span className="text-red-500">*</span>
+            {/* DOB */}
+            <div style={{ gridColumn: "span 2", ...fieldStyle }}>
+              <label style={lbl}>
+                Date of Birth <span style={{ color: "red" }}>*</span>
               </label>
               <Calendar
                 value={formData.dateOfBirth}
@@ -791,383 +903,466 @@ useEffect(() => {
                 dateFormat="dd/mm/yy"
                 showIcon
                 maxDate={new Date()}
-                placeholder="Select DOB"
+                placeholder="DOB"
                 className={errors.dateOfBirth ? "p-invalid" : ""}
                 style={{ width: "100%" }}
               />
               {errors.dateOfBirth && (
-                <small className="p-error block">{errors.dateOfBirth}</small>
+                <small className="p-error">{errors.dateOfBirth}</small>
               )}
             </div>
-
-            <div className="field col-12 md:col-4">
-              <label className="font-semibold block mb-2">
-                Contact Number <span className="text-red-500">*</span>
+            {/* Age */}
+            <div style={{ gridColumn: "span 1", ...fieldStyle }}>
+              <label style={lbl}>Age</label>
+              <InputText
+                value={formData.age}
+                onChange={(e) => handleInputChange("age", e.target.value)}
+                placeholder="Age"
+                style={{ width: "100%" }}
+              />
+            </div>
+            {/* Contact */}
+            <div style={{ gridColumn: "span 2", ...fieldStyle }}>
+              <label style={lbl}>
+                Contact No. <span style={{ color: "red" }}>*</span>
               </label>
               <InputText
                 value={formData.contactNumber}
                 onChange={(e) =>
                   handleInputChange("contactNumber", e.target.value)
                 }
-                placeholder="Enter Contact Number"
+                placeholder="Contact Number"
                 maxLength={10}
                 className={errors.contactNumber ? "p-invalid" : ""}
-              />
-              {errors.contactNumber && (
-                <small className="p-error block">{errors.contactNumber}</small>
-              )}
-            </div>
-
-            <div className="field col-12 md:col-4">
-              <label className="font-semibold block mb-2">Marital Status</label>
-              <Dropdown
-                value={formData.maritalStatus}
-                options={maritalStatuses}
-                onChange={(e) => handleInputChange("maritalStatus", e.value)}
-                placeholder="Select Status"
                 style={{ width: "100%" }}
               />
+              {errors.contactNumber && (
+                <small className="p-error">{errors.contactNumber}</small>
+              )}
             </div>
-
-            <div className="field col-12 md:col-4">
-              <label className="font-semibold block mb-2">Email</label>
+            {/* Email */}
+            <div style={{ gridColumn: "span 3", ...fieldStyle }}>
+              <label style={lbl}>Email</label>
               <InputText
                 value={formData.email}
                 onChange={(e) => handleInputChange("email", e.target.value)}
                 type="email"
-                placeholder="Enter Email"
+                placeholder="Email"
+                style={{ width: "100%" }}
+              />
+            </div>
+            {/* Marital Status */}
+            <div style={{ gridColumn: "span 2", ...fieldStyle }}>
+              <label style={lbl}>Marital Status</label>
+              <Dropdown
+                value={formData.maritalStatus}
+                options={maritalStatuses}
+                onChange={(e) => handleInputChange("maritalStatus", e.value)}
+                placeholder="Status"
+                style={{ width: "100%" }}
               />
             </div>
           </div>
         </Card>
 
-        {/* Address Section */}
-        <Card className="mb-4">
-          <div className="flex align-items-center gap-3 mb-4">
-            <i className="pi pi-map-marker text-primary"></i>
-            <h3 className="m-0 font-semibold text-xl">Address Details</h3>
-          </div>
-
-          <div className="grid">
-            <div className="field col-12 md:col-3">
-              <label className="font-semibold block mb-2">
-                Pincode <span className="text-red-500">*</span>
-              </label>
-              <div className="relative">
-                <InputText
-                  value={formData.address.pincode}
-                  onChange={(e) =>
-                    handleInputChange("address.pincode", e.target.value)
-                  }
-                  placeholder="Enter 6 digit pincode"
-                  maxLength={6}
-                  className={errors.pincode ? "p-invalid" : ""}
-                />
-                {pincodeLoading && (
-                  <ProgressSpinner
-                    style={{
-                      width: "20px",
-                      height: "20px",
-                      position: "absolute",
-                      right: "10px",
-                      top: "50%",
-                      transform: "translateY(-50%)",
-                    }}
+        {/* ── Row 3: Address + Medical (side by side) ── */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: "3px",
+            margin: "3px 0",
+          }}
+        >
+          {/* Address */}
+          <Card style={cardStyle}>
+            <div style={sectionHead}>
+              <i
+                className="pi pi-map-marker text-primary"
+                style={{ fontSize: "13px" }}
+              />
+              <span style={{ fontWeight: 600, fontSize: "13px" }}>
+                Address Details
+              </span>
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr 1fr 1fr",
+                gap: "8px",
+              }}
+            >
+              <div style={fieldStyle}>
+                <label style={lbl}>
+                  Pincode <span style={{ color: "red" }}>*</span>
+                </label>
+                <div style={{ position: "relative" }}>
+                  <InputText
+                    value={formData.address.pincode}
+                    onChange={(e) =>
+                      handleInputChange("address.pincode", e.target.value)
+                    }
+                    placeholder="Pincode"
+                    maxLength={6}
+                    className={errors.pincode ? "p-invalid" : ""}
+                    style={{ width: "100%" }}
                   />
+                  {pincodeLoading && (
+                    <ProgressSpinner
+                      style={{
+                        width: "16px",
+                        height: "16px",
+                        position: "absolute",
+                        right: "8px",
+                        top: "50%",
+                        transform: "translateY(-50%)",
+                      }}
+                    />
+                  )}
+                </div>
+                {errors.pincode && (
+                  <small className="p-error">{errors.pincode}</small>
                 )}
               </div>
-              {errors.pincode && (
-                <small className="p-error block">{errors.pincode}</small>
-              )}
+              <div style={fieldStyle}>
+                <label style={lbl}>City</label>
+                <InputText
+                  value={formData.address.city}
+                  readOnly
+                  placeholder="Auto"
+                  style={{ width: "100%" }}
+                />
+              </div>
+              <div style={fieldStyle}>
+                <label style={lbl}>State</label>
+                <InputText
+                  value={formData.address.state}
+                  readOnly
+                  placeholder="Auto"
+                  style={{ width: "100%" }}
+                />
+              </div>
+              <div style={fieldStyle}>
+                <label style={lbl}>District</label>
+                <InputText
+                  value={formData.address.district}
+                  readOnly
+                  placeholder="Auto"
+                  style={{ width: "100%" }}
+                />
+              </div>
             </div>
-
-            <div className="field col-12 md:col-3">
-              <label className="font-semibold block mb-2">City</label>
-              <InputText
-                value={formData.address.city}
-                readOnly
-                placeholder="Auto-filled"
-              />
-            </div>
-
-            <div className="field col-12 md:col-3">
-              <label className="font-semibold block mb-2">State</label>
-              <InputText
-                value={formData.address.state}
-                readOnly
-                placeholder="Auto-filled"
-              />
-            </div>
-
-            <div className="field col-12 md:col-3">
-              <label className="font-semibold block mb-2">District</label>
-              <InputText
-                value={formData.address.district}
-                readOnly
-                placeholder="Auto-filled"
-              />
-            </div>
-
-            <div className="field col-12">
-              <label className="font-semibold block mb-2">
-                Complete Address
-              </label>
+            <div style={{ marginTop: "8px" }}>
+              <label style={lbl}>Complete Address</label>
               <InputTextarea
                 value={formData.address.completeAddress}
                 onChange={(e) =>
                   handleInputChange("address.completeAddress", e.target.value)
                 }
-                rows={3}
-                placeholder="Enter complete address details"
-              />
-            </div>
-          </div>
-        </Card>
-
-        {/* Medical Details */}
-        <Card className="mb-4">
-          <div className="flex align-items-center gap-3 mb-4">
-            <i className="pi pi-heart text-primary"></i>
-            <h3 className="m-0 font-semibold text-xl">Medical Details</h3>
-          </div>
-
-          <div className="grid">
-            <div className="field col-12 md:col-6">
-              <label className="font-semibold block mb-2">
-                Department <span className="text-red-500">*</span>
-              </label>
-              <Dropdown
-                value={formData.department}
-                options={departments}
-                onChange={(e) => handleInputChange("department", e.value)}
-                placeholder="Select Department"
-                filter
-                className={errors.department ? "p-invalid" : ""}
-                style={{ width: "100%" }}
-              />
-              {errors.department && (
-                <small className="p-error block">{errors.department}</small>
-              )}
-            </div>
-
-            <div className="field col-12 md:col-6">
-              <label className="font-semibold block mb-2">
-                Doctor <span className="text-red-500">*</span>
-              </label>
-              <Dropdown
-                value={formData.doctor}
-                options={filteredDoctors}
-                onChange={(e) => handleInputChange("doctor", e.value)}
-                placeholder={
-                  formData.department
-                    ? "Select Doctor"
-                    : "Select Department First"
-                }
-                filter
-                disabled={!formData.department}
-                className={errors.doctor ? "p-invalid" : ""}
-                style={{ width: "100%" }}
-              />
-              {errors.doctor && (
-                <small className="p-error block">{errors.doctor}</small>
-              )}
-            </div>
-
-            <div className="field col-12 md:col-6">
-              <label className="font-semibold block mb-2">
-                Blood Group <span className="text-red-500">*</span>
-              </label>
-              <Dropdown
-                value={formData.bloodGroup}
-                options={bloodGroups}
-                onChange={(e) => handleInputChange("bloodGroup", e.value)}
-                placeholder="Select Blood Group"
-                className={errors.bloodGroup ? "p-invalid" : ""}
-                style={{ width: "100%" }}
-              />
-              {errors.bloodGroup && (
-                <small className="p-error block">{errors.bloodGroup}</small>
-              )}
-            </div>
-
-            <div className="field col-12 md:col-6">
-              <label className="font-semibold block mb-2">
-                Known Allergies <span className="text-red-500">*</span>
-              </label>
-              <InputTextarea
-                value={formData.knownAllergies}
-                onChange={(e) =>
-                  handleInputChange("knownAllergies", e.target.value)
-                }
-                rows={3}
-                placeholder="List any known allergies (e.g., Penicillin, Dust, etc.)"
-                className={errors.knownAllergies ? "p-invalid" : ""}
-              />
-              {errors.knownAllergies && (
-                <small className="p-error block">{errors.knownAllergies}</small>
-              )}
-            </div>
-          </div>
-
-          {/* MLC Section */}
-          <Divider className="my-4">
-            <span className="p-tag p-tag-info btn-custom">MLC Case</span>
-          </Divider>
-          <div className="flex align-items-center gap-2 mb-3">
-            <Checkbox
-              inputId="mlc"
-              checked={formData.isMLC}
-              onChange={(e) => handleInputChange("isMLC", e.checked)}
-            />
-            <label htmlFor="mlc" className="font-medium">
-              Is this an MLC case?
-            </label>
-          </div>
-          {formData.isMLC && (
-            <div className="field col-12 md:col-6">
-              <label className="font-semibold block mb-2">MLC Number</label>
-              <InputText
-                value={formData.mlcNumber}
-                onChange={(e) => handleInputChange("mlcNumber", e.target.value)}
-                placeholder="Enter MLC Number"
-              />
-            </div>
-          )}
-        </Card>
-
-        {/* Companion Details */}
-        <Card className="mb-4">
-          <div className="flex align-items-center gap-3 mb-4">
-            <i className="pi pi-users text-primary"></i>
-            <h3 className="m-0 font-semibold text-xl">Companion Details</h3>
-          </div>
-
-          <div className="grid">
-            <div className="field col-12 md:col-4">
-              <label className="font-semibold block mb-2">Companion Name</label>
-              <InputText
-                value={formData.companionName}
-                onChange={(e) =>
-                  handleInputChange("companionName", e.target.value)
-                }
-                placeholder="Enter Companion Name"
-              />
-            </div>
-
-            <div className="field col-12 md:col-4">
-              <label className="font-semibold block mb-2">Relationship</label>
-              <Dropdown
-                value={formData.companionRelationship}
-                options={relationships}
-                onChange={(e) =>
-                  handleInputChange("companionRelationship", e.value)
-                }
-                placeholder="Select Relationship"
+                rows={2}
+                placeholder="Complete address details"
                 style={{ width: "100%" }}
               />
             </div>
+          </Card>
 
-            <div className="field col-12 md:col-4">
-              <label className="font-semibold block mb-2">
-                Contact Number{" "}
-                {formData.companionRelationship && (
-                  <span className="text-red-500">*</span>
-                )}
-              </label>
-              <InputText
-                value={formData.companionContact}
-                onChange={(e) =>
-                  handleInputChange("companionContact", e.target.value)
-                }
-                placeholder="Enter Contact Number"
-                maxLength={10}
-                className={errors.companionContact ? "p-invalid" : ""}
+          {/* Medical */}
+          <Card style={cardStyle}>
+            <div style={sectionHead}>
+              <i
+                className="pi pi-heart text-primary"
+                style={{ fontSize: "13px" }}
               />
-              {errors.companionContact && (
-                <small className="p-error block">
-                  {errors.companionContact}
-                </small>
-              )}
+              <span style={{ fontWeight: 600, fontSize: "13px" }}>
+                Medical Details
+              </span>
             </div>
-          </div>
-        </Card>
-
-        {/* Appointment Details */}
-        <Card className="mb-5">
-          <div className="flex align-items-center gap-3 mb-4">
-            <i className="pi pi-calendar-plus text-primary"></i>
-            <h3 className="m-0 font-semibold text-xl">Appointment Details</h3>
-          </div>
-
-          <div className="flex align-items-center gap-2 mb-4">
-            <Checkbox
-              inputId="hasAppointment"
-              checked={formData.hasAppointment}
-              onChange={(e) => handleInputChange("hasAppointment", e.checked)}
-            />
-            <label htmlFor="hasAppointment" className="font-medium">
-              Has Prior Appointment
-            </label>
-          </div>
-
-          {formData.hasAppointment && (
-            <div className="grid">
-              <div className="field col-12 md:col-6">
-                <label className="font-semibold block mb-2">
-                  Appointment Date <span className="text-red-500">*</span>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "8px",
+              }}
+            >
+              <div style={fieldStyle}>
+                <label style={lbl}>
+                  Department <span style={{ color: "red" }}>*</span>
                 </label>
-                <Calendar
-                  value={formData.appointmentDate}
-                  onChange={(e) =>
-                    handleInputChange("appointmentDate", e.value)
-                  }
-                  dateFormat="dd/mm/yy"
-                  showIcon
-                  placeholder="Select Date"
-                  className={errors.appointmentDate ? "p-invalid" : ""}
+                <Dropdown
+                  value={formData.department}
+                  options={departments}
+                  onChange={(e) => handleInputChange("department", e.value)}
+                  placeholder="Select Department"
+                  filter
+                  className={errors.department ? "p-invalid" : ""}
                   style={{ width: "100%" }}
                 />
-                {errors.appointmentDate && (
-                  <small className="p-error block">
-                    {errors.appointmentDate}
-                  </small>
+                {errors.department && (
+                  <small className="p-error">{errors.department}</small>
                 )}
               </div>
-
-              <div className="field col-12 md:col-6">
-                <label className="font-semibold block mb-2">
-                  Appointment Time <span className="text-red-500">*</span>
+              <div style={fieldStyle}>
+                <label style={lbl}>
+                  Doctor <span style={{ color: "red" }}>*</span>
                 </label>
-                <Calendar
-                  value={formData.appointmentTime}
-                  onChange={(e) =>
-                    handleInputChange("appointmentTime", e.value)
+                <Dropdown
+                  value={formData.doctor}
+                  options={filteredDoctors}
+                  onChange={(e) => handleInputChange("doctor", e.value)}
+                  placeholder={
+                    formData.department ? "Select Doctor" : "Select Dept First"
                   }
-                  timeOnly
-                  showIcon
-                  placeholder="Select Time"
-                  className={errors.appointmentTime ? "p-invalid" : ""}
+                  filter
+                  disabled={!formData.department}
+                  className={errors.doctor ? "p-invalid" : ""}
                   style={{ width: "100%" }}
                 />
-                {errors.appointmentTime && (
-                  <small className="p-error block">
-                    {errors.appointmentTime}
-                  </small>
+                {errors.doctor && (
+                  <small className="p-error">{errors.doctor}</small>
+                )}
+              </div>
+              <div style={fieldStyle}>
+                <label style={lbl}>
+                  Blood Group <span style={{ color: "red" }}>*</span>
+                </label>
+                <Dropdown
+                  value={formData.bloodGroup}
+                  options={bloodGroups}
+                  onChange={(e) => handleInputChange("bloodGroup", e.value)}
+                  placeholder="Blood Group"
+                  className={errors.bloodGroup ? "p-invalid" : ""}
+                  style={{ width: "100%" }}
+                />
+                {errors.bloodGroup && (
+                  <small className="p-error">{errors.bloodGroup}</small>
+                )}
+              </div>
+              <div style={fieldStyle}>
+                <label style={lbl}>
+                  Known Allergies <span style={{ color: "red" }}>*</span>
+                </label>
+                <InputTextarea
+                  value={formData.knownAllergies}
+                  onChange={(e) =>
+                    handleInputChange("knownAllergies", e.target.value)
+                  }
+                  rows={2}
+                  placeholder="e.g. Penicillin, Dust"
+                  className={errors.knownAllergies ? "p-invalid" : ""}
+                  style={{ width: "100%" }}
+                />
+                {errors.knownAllergies && (
+                  <small className="p-error">{errors.knownAllergies}</small>
                 )}
               </div>
             </div>
-          )}
-        </Card>
+            {/* MLC inline */}
+            <div
+              style={{
+                marginTop: "8px",
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                flexWrap: "wrap",
+              }}
+            >
+              <Checkbox
+                inputId="mlc"
+                checked={formData.isMLC}
+                onChange={(e) => handleInputChange("isMLC", e.checked)}
+              />
+              <label
+                htmlFor="mlc"
+                style={{ fontSize: "12px", fontWeight: 600 }}
+              >
+                MLC Case?
+              </label>
+              {formData.isMLC && (
+                <InputText
+                  value={formData.mlcNumber}
+                  onChange={(e) =>
+                    handleInputChange("mlcNumber", e.target.value)
+                  }
+                  placeholder="MLC Number"
+                  style={{ width: "160px" }}
+                />
+              )}
+            </div>
+          </Card>
+        </div>
 
-        {/* Action Buttons */}
-        <div className="flex gap-3 justify-content-center">
+        {/* ── Row 4: Companion + Appointment (side by side) ── */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: "3px",
+            marginBottom: "4px",
+          }}
+        >
+          {/* Companion */}
+          <Card style={cardStyle}>
+            <div style={sectionHead}>
+              <i
+                className="pi pi-users text-primary"
+                style={{ fontSize: "13px" }}
+              />
+              <span style={{ fontWeight: 600, fontSize: "13px" }}>
+                Companion Details
+              </span>
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr 1fr",
+                gap: "8px",
+              }}
+            >
+              <div style={fieldStyle}>
+                <label style={lbl}>Companion Name</label>
+                <InputText
+                  value={formData.companionName}
+                  onChange={(e) =>
+                    handleInputChange("companionName", e.target.value)
+                  }
+                  placeholder="Name"
+                  style={{ width: "100%" }}
+                />
+              </div>
+              <div style={fieldStyle}>
+                <label style={lbl}>Relationship</label>
+                <Dropdown
+                  value={formData.companionRelationship}
+                  options={relationships}
+                  onChange={(e) =>
+                    handleInputChange("companionRelationship", e.value)
+                  }
+                  placeholder="Relation"
+                  style={{ width: "100%" }}
+                />
+              </div>
+              <div style={fieldStyle}>
+                <label style={lbl}>
+                  Contact{" "}
+                  {formData.companionRelationship && (
+                    <span style={{ color: "red" }}>*</span>
+                  )}
+                </label>
+                <InputText
+                  value={formData.companionContact}
+                  onChange={(e) =>
+                    handleInputChange("companionContact", e.target.value)
+                  }
+                  placeholder="Contact No."
+                  maxLength={10}
+                  className={errors.companionContact ? "p-invalid" : ""}
+                  style={{ width: "100%" }}
+                />
+                {errors.companionContact && (
+                  <small className="p-error">{errors.companionContact}</small>
+                )}
+              </div>
+            </div>
+          </Card>
+
+          {/* Appointment */}
+          <Card style={cardStyle}>
+            <div style={sectionHead}>
+              <i
+                className="pi pi-calendar-plus text-primary"
+                style={{ fontSize: "13px" }}
+              />
+              <span style={{ fontWeight: 600, fontSize: "13px" }}>
+                Appointment Details
+              </span>
+            </div>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                marginBottom: "8px",
+              }}
+            >
+              <Checkbox
+                inputId="hasAppointment"
+                checked={formData.hasAppointment}
+                onChange={(e) => handleInputChange("hasAppointment", e.checked)}
+              />
+              <label
+                htmlFor="hasAppointment"
+                style={{ fontSize: "13px", fontWeight: 600 }}
+              >
+                Has Prior Appointment
+              </label>
+            </div>
+            {formData.hasAppointment && (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: "8px",
+                }}
+              >
+                <div style={fieldStyle}>
+                  <label style={lbl}>
+                    Date <span style={{ color: "red" }}>*</span>
+                  </label>
+                  <Calendar
+                    value={formData.appointmentDate}
+                    onChange={(e) =>
+                      handleInputChange("appointmentDate", e.value)
+                    }
+                    dateFormat="dd/mm/yy"
+                    showIcon
+                    placeholder="Date"
+                    className={errors.appointmentDate ? "p-invalid" : ""}
+                    style={{ width: "100%" }}
+                  />
+                  {errors.appointmentDate && (
+                    <small className="p-error">{errors.appointmentDate}</small>
+                  )}
+                </div>
+                <div style={fieldStyle}>
+                  <label style={lbl}>
+                    Time <span style={{ color: "red" }}>*</span>
+                  </label>
+                  <Calendar
+                    value={formData.appointmentTime}
+                    onChange={(e) =>
+                      handleInputChange("appointmentTime", e.value)
+                    }
+                    timeOnly
+                    showIcon
+                    placeholder="Time"
+                    className={errors.appointmentTime ? "p-invalid" : ""}
+                    style={{ width: "100%" }}
+                  />
+                  {errors.appointmentTime && (
+                    <small className="p-error">{errors.appointmentTime}</small>
+                  )}
+                </div>
+              </div>
+            )}
+          </Card>
+        </div>
+
+        {/* ── Action Buttons ── */}
+        <div
+          style={{
+            display: "flex",
+            gap: "10px",
+            justifyContent: "center",
+            paddingBottom: "12px",
+          }}
+        >
           <Button
             label="Cancel"
             icon="pi pi-times"
             severity="secondary"
             type="button"
             onClick={() => navigate("/allpatient")}
-            className="p-button-outlined text-white"
+            outlined
           />
           <Button
             label={

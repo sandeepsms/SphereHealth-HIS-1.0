@@ -6,8 +6,9 @@ import { Calendar } from "primereact/calendar";
 import { InputText } from "primereact/inputtext";
 import { InputTextarea } from "primereact/inputtextarea";
 import { admissionService } from "../../Services/admissionService";
-import { formatCurrency } from "../../utils/helpers";
 import { ADMISSION_TYPES } from "../../utils/constants";
+
+// ❌ REMOVED: formatCurrency import (no pricing on bed)
 
 const BedAssignDialog = ({ visible, onHide, bed, patients, onSuccess }) => {
   const [formData, setFormData] = useState({
@@ -24,9 +25,7 @@ const BedAssignDialog = ({ visible, onHide, bed, patients, onSuccess }) => {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!visible) {
-      resetForm();
-    }
+    if (!visible) resetForm();
   }, [visible]);
 
   const resetForm = () => {
@@ -43,22 +42,7 @@ const BedAssignDialog = ({ visible, onHide, bed, patients, onSuccess }) => {
     });
   };
 
-  const calculateEstimatedCharges = () => {
-    if (!bed || !formData.expectedDischargeDate) return 0;
-
-    const days = Math.ceil(
-      (new Date(formData.expectedDischargeDate) -
-        new Date(formData.admissionDate)) /
-        (1000 * 60 * 60 * 24)
-    );
-
-    const dailyRate =
-      (bed.pricing?.perBedDailyRate || 0) +
-      (bed.pricing?.nursingCharges || 0) +
-      (bed.pricing?.equipmentCharges || 0);
-
-    return dailyRate * (days > 0 ? days : 1);
-  };
+  // ❌ REMOVED: calculateEstimatedCharges() - pricing now in TPA
 
   const handleSubmit = async () => {
     setLoading(true);
@@ -301,71 +285,24 @@ const BedAssignDialog = ({ visible, onHide, bed, patients, onSuccess }) => {
           />
         </div>
 
-        {/* Pricing Summary */}
+        {/* ❌ REMOVED: Pricing Summary section (pricing is now in TPA) */}
+        {/* Info note */}
         <div
           style={{
-            backgroundColor: "#ecfdf5",
-            padding: "15px",
+            backgroundColor: "#eff6ff",
+            padding: "12px 16px",
             borderRadius: "8px",
-            border: "2px solid #10b981",
+            border: "1px solid #bfdbfe",
+            display: "flex",
+            alignItems: "center",
+            gap: "10px",
           }}
         >
-          <h4 style={{ margin: "0 0 10px 0", color: "#047857" }}>
-            <i className="pi pi-calculator mr-2"></i>Pricing Summary
-          </h4>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: "10px",
-              marginBottom: "10px",
-            }}
-          >
-            <div>
-              <strong>Bed Rate:</strong>{" "}
-              {formatCurrency(bed?.pricing?.perBedDailyRate || 0)}/day
-            </div>
-            <div>
-              <strong>Nursing:</strong>{" "}
-              {formatCurrency(bed?.pricing?.nursingCharges || 0)}/day
-            </div>
-            <div>
-              <strong>Equipment:</strong>{" "}
-              {formatCurrency(bed?.pricing?.equipmentCharges || 0)}/day
-            </div>
-            <div>
-              <strong>Security Deposit:</strong>{" "}
-              {formatCurrency(bed?.pricing?.securityDeposit || 0)}
-            </div>
-          </div>
-          <hr style={{ margin: "10px 0", border: "1px solid #10b981" }} />
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-            }}
-          >
-            <strong style={{ fontSize: "16px" }}>
-              Estimated Total Charges:
-            </strong>
-            <strong style={{ fontSize: "20px", color: "#047857" }}>
-              {formatCurrency(calculateEstimatedCharges())}
-            </strong>
-          </div>
-          {formData.expectedDischargeDate && (
-            <small
-              style={{ color: "#047857", marginTop: "5px", display: "block" }}
-            >
-              Based on{" "}
-              {Math.ceil(
-                (new Date(formData.expectedDischargeDate) -
-                  new Date(formData.admissionDate)) /
-                  (1000 * 60 * 60 * 24)
-              )}{" "}
-              days
-            </small>
-          )}
+          <i className="pi pi-info-circle" style={{ color: "#3b82f6" }} />
+          <span style={{ fontSize: "13px", color: "#1e40af" }}>
+            Charges will be calculated at discharge based on the patient's TPA
+            plan and room category.
+          </span>
         </div>
       </div>
     </Dialog>
