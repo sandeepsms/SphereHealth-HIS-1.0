@@ -6,13 +6,66 @@ import { Dropdown } from "primereact/dropdown";
 import { Checkbox } from "primereact/checkbox";
 import { Button } from "primereact/button";
 import { InputTextarea } from "primereact/inputtextarea";
+import { Tag } from "primereact/tag";
+import { Toast } from "primereact/toast";
 import { roomService } from "../../Services/roomService";
 import { buildingService } from "../../Services/buildingService";
 import { floorService } from "../../Services/floorService";
 import { wardService } from "../../Services/wardService";
 import { roomCategoryService } from "../../Services/roomCategoryService";
 
+/* ─────────────────────────────────────────────────────────────
+   AUTO ROOM CODE — "R" + timestamp + random 3 digits
+   Guaranteed unique on every call
+───────────────────────────────────────────────────────────── */
+const genRoomCode = (roomNumber = "") => {
+  const base = roomNumber ? roomNumber.toUpperCase().replace(/\s+/g, "-") : "";
+  const rand = Math.floor(Math.random() * 900 + 100); // 100-999
+  const ts = Date.now().toString().slice(-4); // last 4 digits of timestamp
+  return base ? `${base}-${ts}${rand}` : `R-${ts}${rand}`;
+};
+
+/* ─────────────────────────────────────────────────────────────
+   RANGE PARSER — "101" to "110" → ["101","102"..."110"]
+   Also handles "A101" to "A110", "ICU-01" to "ICU-10"
+───────────────────────────────────────────────────────────── */
+const parseRoomRange = (from, to) => {
+  const split = (str) => {
+    const m = str.match(/^(.*?)(\d+)$/);
+    return m ? { prefix: m[1], num: m[2] } : null;
+  };
+  const f = split(from.trim().toUpperCase());
+  const t = split(to.trim().toUpperCase());
+  if (!f || !t)
+    return { error: "Invalid format. Use e.g. 101 to 110 or A01 to A10" };
+  if (f.prefix !== t.prefix)
+    return { error: "Prefix must be same for both (e.g. both A)" };
+  const start = parseInt(f.num, 10);
+  const end = parseInt(t.num, 10);
+  if (isNaN(start) || isNaN(end)) return { error: "Invalid numbers" };
+  if (start > end) return { error: "Start must be ≤ End" };
+  if (end - start + 1 > 50) return { error: "Max 50 rooms per batch" };
+  const padLen = f.num.length;
+  const rooms = [];
+  for (let i = start; i <= end; i++)
+    rooms.push(`${f.prefix}${String(i).padStart(padLen, "0")}`);
+  return { rooms };
+};
+
+/* ════════════════════════════════════════════════════════════ */
 const RoomForm = ({ visible, onHide, room, onSave }) => {
+  const toast = React.useRef(null);
+
+  // ── mode
+  const [mode, setMode] = useState("single"); // "single" | "bulk"
+
+  // ── bulk range
+  const [rangeFrom, setRangeFrom] = useState("");
+  const [rangeTo, setRangeTo] = useState("");
+  const [preview, setPreview] = useState([]);
+  const [rangeErr, setRangeErr] = useState("");
+
+  // ── form
   const [formData, setFormData] = useState({
     building: "",
     floor: "",
@@ -25,11 +78,16 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
     isActive: true,
     notes: "",
   });
+
+  // ── lookups
   const [buildings, setBuildings] = useState([]);
-  const [floors, setFloors] = useState([]);
-  const [wards, setWards] = useState([]);
+  const [allFloors, setAllFloors] = useState([]);
+  const [allWards, setAllWards] = useState([]);
+  const [filtFloors, setFiltFloors] = useState([]);
+  const [filtWards, setFiltWards] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [bulkProg, setBulkProg] = useState(null); // { done, total, failed[] }
 
   const statusOptions = [
     { label: "Active", value: "Active" },
@@ -38,68 +96,70 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
     { label: "Blocked", value: "Blocked" },
   ];
 
+  /* ── load on open ── */
   useEffect(() => {
-    loadBuildings();
-    loadCategories();
-  }, []);
-
-  useEffect(() => {
-    if (formData.building) {
-      loadFloors();
+    if (visible) {
+      loadAll();
+      if (room) setMode("single");
     }
-  }, [formData.building]);
+  }, [visible]);
 
   useEffect(() => {
-    if (formData.floor) {
-      loadWards();
+    setFiltFloors(
+      allFloors.filter((f) => String(f.building) === String(formData.building)),
+    );
+  }, [formData.building, allFloors]);
+
+  useEffect(() => {
+    setFiltWards(
+      allWards.filter((w) => String(w.floor) === String(formData.floor)),
+    );
+  }, [formData.floor, allWards]);
+
+  useEffect(() => {
+    if (room && visible) setFormData(room);
+    else if (!visible) resetForm();
+  }, [room, visible]);
+
+  /* ── live range preview ── */
+  useEffect(() => {
+    if (mode !== "bulk" || !rangeFrom || !rangeTo) {
+      setPreview([]);
+      setRangeErr("");
+      return;
     }
-  }, [formData.floor]);
-
-  useEffect(() => {
-    if (room) {
-      setFormData(room);
+    const r = parseRoomRange(rangeFrom, rangeTo);
+    if (r.error) {
+      setRangeErr(r.error);
+      setPreview([]);
     } else {
-      resetForm();
+      setRangeErr("");
+      setPreview(r.rooms);
     }
-  }, [room]);
+  }, [rangeFrom, rangeTo, mode]);
 
-  const loadBuildings = async () => {
+  const loadAll = async () => {
+    setLoading(true);
     try {
-      const data = await buildingService.getAllBuildings();
-      setBuildings(data);
-    } catch (error) {
-      console.error("Error loading buildings:", error);
+      const [b, f, w, c] = await Promise.all([
+        buildingService.getAllBuildings(),
+        floorService.getAllFloors(),
+        wardService.getAllWards(),
+        roomCategoryService.getAllCategories(),
+      ]);
+      setBuildings(b || []);
+      setAllFloors(f || []);
+      setAllWards(w || []);
+      setCategories(c || []);
+    } catch {
+      showToast("error", "Error", "Failed to load data");
+    } finally {
+      setLoading(false);
     }
   };
 
-  const loadFloors = async () => {
-    try {
-      const data = await floorService.getAllFloors();
-      const filtered = data.filter((f) => f.building === formData.building);
-      setFloors(filtered);
-    } catch (error) {
-      console.error("Error loading floors:", error);
-    }
-  };
-
-  const loadWards = async () => {
-    try {
-      const data = await wardService.getAllWards();
-      const filtered = data.filter((w) => w.floor === formData.floor);
-      setWards(filtered);
-    } catch (error) {
-      console.error("Error loading wards:", error);
-    }
-  };
-
-  const loadCategories = async () => {
-    try {
-      const data = await roomCategoryService.getAllCategories();
-      setCategories(data);
-    } catch (error) {
-      console.error("Error loading categories:", error);
-    }
-  };
+  const showToast = (severity, summary, detail) =>
+    toast.current?.show({ severity, summary, detail, life: 3500 });
 
   const resetForm = () => {
     setFormData({
@@ -114,28 +174,101 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
       isActive: true,
       notes: "",
     });
+    setFiltFloors([]);
+    setFiltWards([]);
+    setMode("single");
+    setRangeFrom("");
+    setRangeTo("");
+    setPreview([]);
+    setRangeErr("");
+    setBulkProg(null);
   };
 
-  const handleSubmit = async () => {
+  const validateLocation = () => {
+    if (!formData.building) {
+      showToast("warn", "Warning", "Please select a building");
+      return false;
+    }
+    if (!formData.floor) {
+      showToast("warn", "Warning", "Please select a floor");
+      return false;
+    }
+    if (!formData.roomCategory) {
+      showToast("warn", "Warning", "Please select a room category");
+      return false;
+    }
+    return true;
+  };
+
+  /* ── single submit ── */
+  const handleSingleSubmit = async () => {
+    if (!formData.roomNumber)
+      return showToast("warn", "Warning", "Please enter room number");
+    if (!validateLocation()) return;
     setLoading(true);
     try {
-      if (room?._id) {
-        await roomService.updateRoom(room._id, formData);
-      } else {
-        await roomService.createRoom(formData);
-      }
+      // Auto-generate unique roomCode
+      const payload = {
+        ...formData,
+        roomCode: genRoomCode(formData.roomNumber),
+      };
+      if (room?._id) await roomService.updateRoom(room._id, payload);
+      else await roomService.createRoom(payload);
+      showToast(
+        "success",
+        "Success",
+        room?._id ? "Room updated!" : "Room created!",
+      );
       onSave();
       onHide();
       resetForm();
-    } catch (error) {
-      console.error("Error saving room:", error);
+    } catch (e) {
+      showToast("error", "Error", e.message || "Failed to save room");
     } finally {
       setLoading(false);
     }
   };
 
+  /* ── bulk submit ── */
+  const handleBulkSubmit = async () => {
+    if (!validateLocation()) return;
+    if (preview.length === 0 || rangeErr)
+      return showToast("warn", "Warning", rangeErr || "Enter valid range");
+    setLoading(true);
+    const failed = [];
+    setBulkProg({ done: 0, total: preview.length, failed: [] });
+    for (let i = 0; i < preview.length; i++) {
+      const rn = preview[i];
+      try {
+        await roomService.createRoom({
+          ...formData,
+          roomNumber: rn,
+          roomName: formData.roomName ? `${formData.roomName} ${rn}` : "",
+          roomCode: genRoomCode(rn), // unique per room
+        });
+      } catch {
+        failed.push(rn);
+      }
+      setBulkProg({ done: i + 1, total: preview.length, failed });
+    }
+    setLoading(false);
+    const ok = preview.length - failed.length;
+    if (failed.length === 0)
+      showToast("success", "Bulk Created", `${ok} rooms created!`);
+    else
+      showToast(
+        "warn",
+        "Partial",
+        `${ok} created, ${failed.length} failed: ${failed.join(", ")}`,
+      );
+    onSave();
+    onHide();
+    resetForm();
+  };
+
+  /* ── footer ── */
   const footer = (
-    <div>
+    <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
       <Button
         label="Cancel"
         icon="pi pi-times"
@@ -144,179 +277,552 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
           resetForm();
         }}
         className="p-button-text"
+        disabled={loading}
       />
       <Button
-        label="Save"
-        icon="pi pi-check"
-        onClick={handleSubmit}
+        label={
+          mode === "bulk"
+            ? `Create ${preview.length || ""} Rooms`
+            : room
+              ? "Update"
+              : "Create Room"
+        }
+        icon={mode === "bulk" ? "pi pi-copy" : "pi pi-check"}
+        onClick={mode === "bulk" ? handleBulkSubmit : handleSingleSubmit}
         loading={loading}
-        disabled={
-          !formData.roomNumber ||
-          !formData.building ||
-          !formData.floor ||
-          !formData.roomCategory
+        disabled={mode === "bulk" && (preview.length === 0 || !!rangeErr)}
+        style={
+          mode === "bulk" && preview.length > 0
+            ? { background: "#0891b2", border: "none" }
+            : {}
         }
       />
     </div>
   );
 
-  return (
-    <Dialog
-      visible={visible}
-      style={{ width: "600px" }}
-      header={room ? "Edit Room" : "Add New Room"}
-      modal
-      footer={footer}
-      onHide={onHide}
-    >
-      <div className="p-fluid">
-        <div className="p-field mb-3">
-          <label htmlFor="building">Building *</label>
-          <Dropdown
-            id="building"
-            value={formData.building}
-            options={buildings.map((b) => ({
-              label: b.buildingName,
-              value: b._id,
-            }))}
-            onChange={(e) =>
-              setFormData({
-                ...formData,
-                building: e.value,
-                floor: "",
-                ward: null,
-              })
-            }
-            placeholder="Select Building"
-          />
-        </div>
-
-        <div className="p-field mb-3">
-          <label htmlFor="floor">Floor *</label>
-          <Dropdown
-            id="floor"
-            value={formData.floor}
-            options={floors.map((f) => ({ label: f.floorName, value: f._id }))}
-            onChange={(e) =>
-              setFormData({ ...formData, floor: e.value, ward: null })
-            }
-            placeholder="Select Floor"
-            disabled={!formData.building}
-          />
-        </div>
-
-        <div className="p-field mb-3">
-          <label htmlFor="ward">Ward (Optional)</label>
-          <Dropdown
-            id="ward"
-            value={formData.ward}
-            options={wards.map((w) => ({ label: w.wardName, value: w._id }))}
-            onChange={(e) => setFormData({ ...formData, ward: e.value })}
-            placeholder="Select Ward"
-            disabled={!formData.floor}
-            showClear
-          />
-        </div>
-
-        <div className="grid">
-          <div className="col-6">
-            <div className="p-field mb-3">
-              <label htmlFor="roomNumber">Room Number *</label>
-              <InputText
-                id="roomNumber"
-                value={formData.roomNumber}
-                onChange={(e) =>
-                  setFormData({ ...formData, roomNumber: e.target.value })
-                }
-                placeholder="Enter room number"
-              />
-            </div>
-          </div>
-          <div className="col-6">
-            <div className="p-field mb-3">
-              <label htmlFor="roomName">Room Name</label>
-              <InputText
-                id="roomName"
-                value={formData.roomName}
-                onChange={(e) =>
-                  setFormData({ ...formData, roomName: e.target.value })
-                }
-                placeholder="Enter room name"
-              />
-            </div>
-          </div>
-        </div>
-
-        <div className="p-field mb-3">
-          <label htmlFor="roomCategory">Room Category *</label>
-          <Dropdown
-            id="roomCategory"
-            value={formData.roomCategory}
-            options={categories.map((c) => ({
-              label: c.categoryName,
-              value: c._id,
-            }))}
-            onChange={(e) =>
-              setFormData({ ...formData, roomCategory: e.value })
-            }
-            placeholder="Select Category"
-          />
-        </div>
-
-        <div className="grid">
-          <div className="col-6">
-            <div className="p-field mb-3">
-              <label htmlFor="totalBeds">Total Beds *</label>
-              <InputNumber
-                id="totalBeds"
-                value={formData.totalBeds}
-                onValueChange={(e) =>
-                  setFormData({ ...formData, totalBeds: e.value })
-                }
-                min={1}
-                showButtons
-              />
-            </div>
-          </div>
-          <div className="col-6">
-            <div className="p-field mb-3">
-              <label htmlFor="status">Status</label>
-              <Dropdown
-                id="status"
-                value={formData.status}
-                options={statusOptions}
-                onChange={(e) => setFormData({ ...formData, status: e.value })}
-                placeholder="Select Status"
-              />
-            </div>
-          </div>
-        </div>
-
-        <div className="p-field mb-3">
-          <label htmlFor="notes">Notes</label>
-          <InputTextarea
-            id="notes"
-            value={formData.notes}
-            onChange={(e) =>
-              setFormData({ ...formData, notes: e.target.value })
-            }
-            rows={3}
-            placeholder="Enter notes"
-          />
-        </div>
-
-        <div className="p-field-checkbox mb-3">
-          <Checkbox
-            inputId="isActive"
-            checked={formData.isActive}
-            onChange={(e) => setFormData({ ...formData, isActive: e.checked })}
-          />
-          <label htmlFor="isActive" className="ml-2">
-            Active
-          </label>
-        </div>
+  /* ── shared location fields ── */
+  const LocationFields = () => (
+    <>
+      <div className="p-field mb-3">
+        <label>Building *</label>
+        <Dropdown
+          value={formData.building}
+          options={buildings.map((b) => ({
+            label: b.buildingName,
+            value: b._id,
+          }))}
+          onChange={(e) =>
+            setFormData({
+              ...formData,
+              building: e.value,
+              floor: "",
+              ward: null,
+            })
+          }
+          placeholder="Select Building"
+          disabled={loading}
+          className="w-full"
+        />
       </div>
-    </Dialog>
+      <div className="p-field mb-3">
+        <label>Floor *</label>
+        <Dropdown
+          value={formData.floor}
+          options={filtFloors.map((f) => ({
+            label: f.floorName || `Floor ${f.floorNumber}`,
+            value: f._id,
+          }))}
+          onChange={(e) =>
+            setFormData({ ...formData, floor: e.value, ward: null })
+          }
+          placeholder="Select Floor"
+          disabled={!formData.building || loading}
+          className="w-full"
+        />
+      </div>
+      <div className="p-field mb-3">
+        <label>Ward (Optional)</label>
+        <Dropdown
+          value={formData.ward}
+          options={filtWards.map((w) => ({ label: w.wardName, value: w._id }))}
+          onChange={(e) => setFormData({ ...formData, ward: e.value })}
+          placeholder="Select Ward"
+          disabled={!formData.floor || loading}
+          showClear
+          className="w-full"
+        />
+      </div>
+      <div className="p-field mb-3">
+        <label>Room Category *</label>
+        <Dropdown
+          value={formData.roomCategory}
+          options={categories.map((c) => ({
+            label: c.categoryName,
+            value: c._id,
+          }))}
+          onChange={(e) => setFormData({ ...formData, roomCategory: e.value })}
+          placeholder="Select Category"
+          disabled={loading}
+          className="w-full"
+        />
+      </div>
+    </>
+  );
+
+  /* ════════════════════════════════════════════════════════ */
+  return (
+    <>
+      <Toast ref={toast} />
+      <Dialog
+        visible={visible}
+        style={{ width: "620px", maxHeight: "90vh" }}
+        header={
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <i
+              className="pi pi-building"
+              style={{ color: "#0891b2", fontSize: 18 }}
+            />
+            <span>{room ? "Edit Room" : "Add Room(s)"}</span>
+          </div>
+        }
+        modal
+        footer={footer}
+        onHide={() => {
+          onHide();
+          resetForm();
+        }}
+      >
+        <div
+          className="p-fluid"
+          style={{ maxHeight: "70vh", overflowY: "auto", padding: "10px" }}
+        >
+          {/* ── MODE TOGGLE (only when creating) ── */}
+          {!room && (
+            <div
+              style={{
+                display: "flex",
+                gap: 8,
+                marginBottom: 20,
+                background: "#f1f5f9",
+                borderRadius: 10,
+                padding: 4,
+              }}
+            >
+              {[
+                {
+                  key: "single",
+                  icon: "pi pi-plus-circle",
+                  label: "Single Room",
+                },
+                {
+                  key: "bulk",
+                  icon: "pi pi-copy",
+                  label: "Bulk Create (Range)",
+                },
+              ].map(({ key, icon, label }) => {
+                const active = mode === key;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setMode(key)}
+                    style={{
+                      flex: 1,
+                      padding: "9px 0",
+                      borderRadius: 7,
+                      border: "none",
+                      cursor: "pointer",
+                      fontSize: 13,
+                      fontWeight: 600,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 7,
+                      background: active ? "#0891b2" : "transparent",
+                      color: active ? "#fff" : "#64748b",
+                      transition: "all .18s",
+                    }}
+                  >
+                    <i className={icon} />
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* ══ SINGLE MODE ══ */}
+          {mode === "single" && (
+            <>
+              <LocationFields />
+              <div className="grid">
+                <div className="col-6">
+                  <div className="p-field mb-3">
+                    <label>Room Number *</label>
+                    <InputText
+                      value={formData.roomNumber}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          roomNumber: e.target.value.toUpperCase(),
+                        })
+                      }
+                      placeholder="e.g. 101"
+                    />
+                  </div>
+                </div>
+                <div className="col-6">
+                  <div className="p-field mb-3">
+                    <label>Room Name</label>
+                    <InputText
+                      value={formData.roomName}
+                      onChange={(e) =>
+                        setFormData({ ...formData, roomName: e.target.value })
+                      }
+                      placeholder="e.g. General Ward A"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Room Code — auto, shown as info only */}
+              <div
+                style={{
+                  background: "#f0fdf4",
+                  border: "1px solid #bbf7d0",
+                  borderRadius: 8,
+                  padding: "10px 14px",
+                  marginBottom: 16,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                }}
+              >
+                <i className="pi pi-info-circle" style={{ color: "#16a34a" }} />
+                <span style={{ fontSize: 13, color: "#166534" }}>
+                  Room Code will be <strong>auto-generated</strong> as a unique
+                  ID on save.
+                </span>
+              </div>
+
+              <div className="grid">
+                <div className="col-6">
+                  <div className="p-field mb-3">
+                    <label>Total Beds *</label>
+                    <InputNumber
+                      value={formData.totalBeds}
+                      onValueChange={(e) =>
+                        setFormData({ ...formData, totalBeds: e.value })
+                      }
+                      min={1}
+                      showButtons
+                    />
+                  </div>
+                </div>
+                <div className="col-6">
+                  <div className="p-field mb-3">
+                    <label>Status</label>
+                    <Dropdown
+                      value={formData.status}
+                      options={statusOptions}
+                      onChange={(e) =>
+                        setFormData({ ...formData, status: e.value })
+                      }
+                      placeholder="Select Status"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-field mb-3">
+                <label>Notes</label>
+                <InputTextarea
+                  value={formData.notes}
+                  onChange={(e) =>
+                    setFormData({ ...formData, notes: e.target.value })
+                  }
+                  rows={3}
+                  placeholder="Enter notes"
+                />
+              </div>
+
+              <div className="p-field-checkbox mb-3">
+                <Checkbox
+                  inputId="isActive"
+                  checked={formData.isActive}
+                  onChange={(e) =>
+                    setFormData({ ...formData, isActive: e.checked })
+                  }
+                />
+                <label htmlFor="isActive" className="ml-2">
+                  Active
+                </label>
+              </div>
+            </>
+          )}
+
+          {/* ══ BULK MODE ══ */}
+          {mode === "bulk" && (
+            <>
+              {/* Tip */}
+              <div
+                style={{
+                  background: "#f0fdf4",
+                  border: "1px solid #bbf7d0",
+                  borderRadius: 8,
+                  padding: "12px 16px",
+                  marginBottom: 18,
+                  fontSize: 13,
+                  color: "#166534",
+                  display: "flex",
+                  gap: 10,
+                  alignItems: "flex-start",
+                }}
+              >
+                <i
+                  className="pi pi-lightbulb"
+                  style={{ color: "#16a34a", marginTop: 2, flexShrink: 0 }}
+                />
+                <div>
+                  <strong>Range Format:</strong> Enter start and end room
+                  numbers with same prefix.
+                  <br />
+                  <span style={{ opacity: 0.8 }}>
+                    Examples: &nbsp;<code>101</code> → <code>110</code>{" "}
+                    &nbsp;|&nbsp;
+                    <code>A01</code> → <code>A20</code> &nbsp;|&nbsp;
+                    <code>ICU-01</code> → <code>ICU-05</code>
+                  </span>
+                  <br />
+                  <span style={{ opacity: 0.7 }}>
+                    Room codes are auto-generated uniquely for each room.
+                  </span>
+                </div>
+              </div>
+
+              {/* Range inputs */}
+              <div className="grid mb-3">
+                <div className="col-5">
+                  <label
+                    style={{
+                      display: "block",
+                      marginBottom: 4,
+                      fontSize: 12,
+                      fontWeight: 500,
+                    }}
+                  >
+                    From (Start) *
+                  </label>
+                  <InputText
+                    value={rangeFrom}
+                    onChange={(e) => setRangeFrom(e.target.value.toUpperCase())}
+                    placeholder="e.g. 101"
+                    className="w-full"
+                  />
+                </div>
+                <div
+                  className="col-2"
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-end",
+                    justifyContent: "center",
+                    paddingBottom: 8,
+                    fontSize: 22,
+                    color: "#94a3b8",
+                  }}
+                >
+                  →
+                </div>
+                <div className="col-5">
+                  <label
+                    style={{
+                      display: "block",
+                      marginBottom: 4,
+                      fontSize: 12,
+                      fontWeight: 500,
+                    }}
+                  >
+                    To (End) *
+                  </label>
+                  <InputText
+                    value={rangeTo}
+                    onChange={(e) => setRangeTo(e.target.value.toUpperCase())}
+                    placeholder="e.g. 110"
+                    className="w-full"
+                  />
+                </div>
+              </div>
+
+              {rangeErr && (
+                <div
+                  style={{
+                    color: "#dc2626",
+                    fontSize: 13,
+                    marginBottom: 12,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  <i className="pi pi-exclamation-circle" /> {rangeErr}
+                </div>
+              )}
+
+              {/* Preview chips */}
+              {preview.length > 0 && (
+                <div
+                  style={{
+                    background: "#f8fafc",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: 8,
+                    padding: "12px 16px",
+                    marginBottom: 18,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      marginBottom: 10,
+                    }}
+                  >
+                    <strong style={{ fontSize: 13 }}>
+                      Preview — {preview.length} rooms will be created
+                    </strong>
+                    <Tag
+                      value={`${preview.length} rooms`}
+                      severity="info"
+                      style={{ fontSize: 11 }}
+                    />
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: 6,
+                      maxHeight: 100,
+                      overflowY: "auto",
+                    }}
+                  >
+                    {preview.map((r) => (
+                      <span
+                        key={r}
+                        style={{
+                          background: "#e0f2fe",
+                          color: "#0369a1",
+                          borderRadius: 5,
+                          padding: "3px 8px",
+                          fontSize: 12,
+                          fontWeight: 600,
+                          fontFamily: "monospace",
+                        }}
+                      >
+                        {r}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <LocationFields />
+
+              {/* Common name prefix */}
+              <div className="p-field mb-3">
+                <label>Room Name Prefix (optional)</label>
+                <InputText
+                  value={formData.roomName}
+                  onChange={(e) =>
+                    setFormData({ ...formData, roomName: e.target.value })
+                  }
+                  placeholder="e.g. 'General Ward' → 'General Ward 101'"
+                />
+              </div>
+
+              <div className="grid">
+                <div className="col-6">
+                  <div className="p-field mb-3">
+                    <label>Beds Per Room *</label>
+                    <InputNumber
+                      value={formData.totalBeds}
+                      onValueChange={(e) =>
+                        setFormData({ ...formData, totalBeds: e.value })
+                      }
+                      min={1}
+                      showButtons
+                    />
+                  </div>
+                </div>
+                <div className="col-6">
+                  <div className="p-field mb-3">
+                    <label>Status</label>
+                    <Dropdown
+                      value={formData.status}
+                      options={statusOptions}
+                      onChange={(e) =>
+                        setFormData({ ...formData, status: e.value })
+                      }
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-field-checkbox mb-3">
+                <Checkbox
+                  inputId="isActiveBulk"
+                  checked={formData.isActive}
+                  onChange={(e) =>
+                    setFormData({ ...formData, isActive: e.checked })
+                  }
+                />
+                <label htmlFor="isActiveBulk" className="ml-2">
+                  Active
+                </label>
+              </div>
+
+              {/* Progress */}
+              {bulkProg && (
+                <div style={{ marginTop: 12 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      fontSize: 12,
+                      color: "#64748b",
+                      marginBottom: 4,
+                    }}
+                  >
+                    <span>Creating rooms…</span>
+                    <span>
+                      {bulkProg.done} / {bulkProg.total}
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      background: "#e2e8f0",
+                      borderRadius: 999,
+                      height: 8,
+                      overflow: "hidden",
+                    }}
+                  >
+                    <div
+                      style={{
+                        background:
+                          bulkProg.failed.length > 0 ? "#f59e0b" : "#0891b2",
+                        height: "100%",
+                        width: `${(bulkProg.done / bulkProg.total) * 100}%`,
+                        transition: "width .2s",
+                        borderRadius: 999,
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </Dialog>
+    </>
   );
 };
 

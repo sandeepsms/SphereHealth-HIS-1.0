@@ -1,20 +1,22 @@
 .opd-radio.p-radiobutton .p-radiobutton-box.p-highlight {
-  background:  rgb(2, 142, 166);   /* blue */
+  background: rgb(2, 142, 166);
+  /* blue */
   border-color: rgb(2, 142, 166);
 }
 
 .loaders {
   width: 48px;
-  height: 48px;
+  height: 28px;
   border-radius: 50%;
   display: inline-block;
-  border-top: 4px solid #0dc5da;
-  border-right: 4px solid transparent;
+  border-top: 2px solid #0dc5da;
+  border-right: 2px solid transparent;
   box-sizing: border-box;
   animation: rotation 1s linear infinite;
 }
+
 .loaders::after {
-  content: '';  
+  content: '';
   box-sizing: border-box;
   position: absolute;
   left: 0;
@@ -26,25 +28,19 @@
   border-bottom: 4px solid transparent;
   animation: rotation 0.5s linear infinite reverse;
 }
+
 @keyframes rotation {
   0% {
     transform: rotate(0deg);
   }
+
   100% {
     transform: rotate(360deg);
   }
-} 
-
-
-
-
-
-/* action icon color of patient table👇 */
-.p-button{
-    color: white;
 }
 
 
 
-
-
+.p-button {
+  color: white;
+}

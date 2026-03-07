@@ -1,86 +1,245 @@
+const mongoose = require("mongoose");
 const Admission = require("../../models/Patient/admissionModel");
+
+// ✅ FIX: Model registered as "Beds" (plural) in bedsModel.js
+//    mongoose.model("Beds", BedSchema)
+//    Using require directly avoids the "Schema hasn't been registered" error
 const Bed = require("../../models/bedMgmt/bedsModel");
+
 const Patient = require("../../models/Patient/patientModel");
 
 class AdmissionService {
-  async generateAdmissionNumber() {
-    const today = new Date();
-    const year = today.getFullYear().toString().slice(-2);
-    const month = String(today.getMonth() + 1).padStart(2, "0");
-    const prefix = `ADM${year}${month}`;
+  async _generateAdmissionNumber() {
+    const now = new Date();
+    const yy = now.getFullYear().toString().slice(-2);
+    const mm = String(now.getMonth() + 1).padStart(2, "0");
+    const prefix = `ADM${yy}${mm}`;
 
-    const lastAdmission = await Admission.findOne({
+    const last = await Admission.findOne({
       admissionNumber: { $regex: `^${prefix}` },
-    }).sort({ admissionNumber: -1 });
+    })
+      .sort({ admissionNumber: -1 })
+      .lean();
 
-    let sequence = 1;
-    if (lastAdmission) {
-      const lastSequence = parseInt(lastAdmission.admissionNumber.slice(-4));
-      sequence = lastSequence + 1;
+    const seq = last
+      ? (parseInt(last.admissionNumber.slice(-4), 10) || 0) + 1
+      : 1;
+
+    return `${prefix}${String(seq).padStart(4, "0")}`;
+  }
+
+  _patientName(p) {
+    return (
+      p.fullName ||
+      `${p.firstName || ""} ${p.lastName || ""}`.trim() ||
+      p.name ||
+      "Unknown Patient"
+    );
+  }
+
+  async _findPatient(patientId, UHID) {
+    let patient = null;
+
+    if (patientId && mongoose.isValidObjectId(patientId)) {
+      patient = await Patient.findById(patientId).lean();
     }
 
-    return `${prefix}${String(sequence).padStart(4, "0")}`;
+    if (!patient && UHID) {
+      patient = await Patient.findOne({
+        UHID: UHID.toString().trim().toUpperCase(),
+      }).lean();
+    }
+
+    if (!patient)
+      throw new Error("Patient not found — check patientId or UHID");
+    return patient;
   }
 
   async createAdmission(data) {
-    const bed = await Bed.findById(data.bedId)
-      .populate("room")
-      .populate("ward")
-      .populate("floor")
-      .populate("building");
+    if (!data.bedId) throw new Error("bedId is required");
+    if (!data.patientId && !data.UHID)
+      throw new Error("patientId or UHID is required");
 
-    if (!bed) throw new Error("Bed not found");
-    if (bed.status !== "Available") throw new Error("Bed is not available");
+    const patient = await this._findPatient(data.patientId, data.UHID);
 
-    const patient = await Patient.findById(data.patientId);
-    if (!patient) throw new Error("Patient not found");
-
-    const activeAdmission = await Admission.findOne({
-      patientId: data.patientId,
+    const existing = await Admission.findOne({
+      patientId: patient._id,
       status: "Active",
-    });
+    }).lean();
 
-    if (activeAdmission) {
-      throw new Error("Patient already has an active admission");
+    if (existing) {
+      throw new Error(
+        `Patient already has an active admission: ${existing.admissionNumber}. ` +
+          `Discharge the patient first before creating a new admission.`,
+      );
     }
 
-    const admissionNumber = await this.generateAdmissionNumber();
+    const bed = await Bed.findOneAndUpdate(
+      { _id: data.bedId, status: "Available" },
+      { $set: { status: "Occupied" } },
+      { new: true },
+    ).populate("room ward floor building");
 
-    const admission = await Admission.create({
-      admissionNumber,
-      UHID: patient.UHID || patient.uhid || patient.id,
-      patientId: data.patientId,
-      patientName:
-        `${patient.firstName || ""} ${patient.lastName || ""}`.trim() ||
-        patient.name ||
-        "Unknown",
-      contactNumber:
-        patient.phone ||
-        patient.mobile ||
-        patient.contactNumber ||
-        patient.contact ||
-        "0000000000",
-      email: patient.email || "",
-      bedId: bed._id,
-      bedNumber: bed.bedNumber,
-      roomNumber: bed.room?.roomNumber,
-      roomId: bed.room?._id,
-      wardId: bed.ward?._id,
-      floorId: bed.floor?._id,
-      buildingId: bed.building?._id,
-      department: data.department,
-      admissionDate: data.admissionDate || new Date(),
-      expectedDischargeDate: data.expectedDischargeDate,
-      reasonForAdmission: data.reasonForAdmission,
-      estimatedCost: data.estimatedCost || 0,
-      advancePaid: data.advancePaid || 0,
-      status: "Active",
+    if (!bed) {
+      const bedCheck = await Bed.findById(data.bedId).lean();
+      if (!bedCheck) throw new Error("Bed not found");
+      throw new Error(
+        `Bed ${bedCheck.bedNumber} is not available (current status: ${bedCheck.status}). ` +
+          `Cannot book an already occupied or unavailable bed without discharging first.`,
+      );
+    }
+
+    const admissionNumber = await this._generateAdmissionNumber();
+
+    let admission;
+    try {
+      admission = await Admission.create({
+        admissionNumber,
+        UHID: patient.UHID || String(patient._id),
+        patientId: patient._id,
+        patientName: this._patientName(patient),
+        contactNumber:
+          patient.contactNumber ||
+          patient.phone ||
+          patient.mobile ||
+          "0000000000",
+        email: patient.email || "",
+
+        bedId: bed._id,
+        bedNumber: bed.bedNumber,
+        roomNumber: bed.room?.roomNumber || "",
+        roomId: bed.room?._id || null,
+        wardId: bed.ward?._id || null,
+        floorId: bed.floor?._id || null,
+        buildingId: bed.building?._id || null,
+
+        department: data.department || "",
+        admissionDate: data.admissionDate
+          ? new Date(data.admissionDate)
+          : new Date(),
+        expectedDischargeDate: data.expectedDischargeDate
+          ? new Date(data.expectedDischargeDate)
+          : undefined,
+        reasonForAdmission: data.reasonForAdmission || "",
+        admissionType: data.admissionType || "Emergency",
+        attendingDoctor: data.attendingDoctor || "",
+        estimatedCost: Number(data.estimatedCost) || 0,
+        advancePaid: Number(data.advancePaid) || 0,
+        status: "Active",
+      });
+    } catch (err) {
+      // Rollback bed status if admission creation fails
+      await Bed.findByIdAndUpdate(bed._id, {
+        $set: { status: "Available", currentAdmission: null },
+      });
+      throw err;
+    }
+
+    // ✅ Store admission reference on bed so getAllBeds can populate it
+    await Bed.findByIdAndUpdate(bed._id, {
+      $set: { currentAdmission: admission._id },
     });
 
-    bed.status = "Occupied";
-    bed.currentAdmission = admission._id;
-    await bed.save();
+    return admission;
+  }
 
+  async dischargePatient(admissionId, dischargeData = {}) {
+    const admission = await Admission.findById(admissionId);
+    if (!admission) throw new Error("Admission not found");
+    if (admission.status !== "Active")
+      throw new Error(
+        `Cannot discharge — admission status is already "${admission.status}"`,
+      );
+
+    // ✅ Clear bed: Available + null currentAdmission
+    await Bed.findByIdAndUpdate(admission.bedId, {
+      $set: { status: "Available", currentAdmission: null, patient: null },
+    });
+
+    admission.status = "Discharged";
+    admission.actualDischargeDate = dischargeData.actualDischargeDate
+      ? new Date(dischargeData.actualDischargeDate)
+      : new Date();
+    admission.dischargeNotes = dischargeData.dischargeNotes || "";
+    admission.dischargeSummary = dischargeData.dischargeSummary || "";
+    admission.followUpInstructions = dischargeData.followUpInstructions || "";
+
+    if (dischargeData.conditionOnDischarge) {
+      admission.conditionOnDischarge = dischargeData.conditionOnDischarge;
+    }
+    if (
+      dischargeData.totalCost !== undefined &&
+      dischargeData.totalCost !== ""
+    ) {
+      admission.totalCost = Number(dischargeData.totalCost);
+    }
+
+    await admission.save();
+    return admission;
+  }
+
+  async cancelAdmission(id, reason) {
+    const admission = await Admission.findById(id);
+    if (!admission) throw new Error("Admission not found");
+    if (admission.status !== "Active")
+      throw new Error(
+        `Cannot cancel — admission status is "${admission.status}"`,
+      );
+
+    await Bed.findByIdAndUpdate(admission.bedId, {
+      $set: { status: "Available", currentAdmission: null, patient: null },
+    });
+
+    admission.status = "Cancelled";
+    admission.cancelReason = reason || "";
+    admission.cancelledAt = new Date();
+    await admission.save();
+    return admission;
+  }
+
+  async transferBed(admissionId, newBedId, reason) {
+    if (!mongoose.isValidObjectId(newBedId))
+      throw new Error("Invalid newBedId");
+
+    const admission = await Admission.findById(admissionId);
+    if (!admission) throw new Error("Admission not found");
+    if (admission.status !== "Active")
+      throw new Error("Admission is not active");
+
+    const newBed = await Bed.findOneAndUpdate(
+      { _id: newBedId, status: "Available" },
+      { $set: { status: "Occupied", currentAdmission: admissionId } },
+      { new: true },
+    );
+
+    if (!newBed) {
+      const check = await Bed.findById(newBedId).lean();
+      if (!check) throw new Error("New bed not found");
+      throw new Error(
+        `New bed ${check.bedNumber} is not available (status: ${check.status})`,
+      );
+    }
+
+    // Free old bed
+    await Bed.findByIdAndUpdate(admission.bedId, {
+      $set: { status: "Available", currentAdmission: null, patient: null },
+    });
+
+    admission.transferHistory = admission.transferHistory || [];
+    admission.transferHistory.push({
+      fromBed: admission.bedId,
+      toBed: newBedId,
+      reason: reason || "",
+      date: new Date(),
+    });
+
+    admission.bedId = newBed._id;
+    admission.bedNumber = newBed.bedNumber;
+    admission.roomId = newBed.room || null;
+    admission.wardId = newBed.ward || null;
+    admission.floorId = newBed.floor || null;
+
+    await admission.save();
     return admission;
   }
 
@@ -88,11 +247,29 @@ class AdmissionService {
     const query = {};
 
     if (filters.status) query.status = filters.status;
-    if (filters.department) query.department = filters.department;
-    if (filters.patientId) query.patientId = filters.patientId;
-    if (filters.bedId) query.bedId = filters.bedId;
-    if (filters.wardId) query.wardId = filters.wardId;
+    if (filters.admissionType) query.admissionType = filters.admissionType;
+    if (filters.attendingDoctor)
+      query.attendingDoctor = {
+        $regex: filters.attendingDoctor,
+        $options: "i",
+      };
+    if (filters.department)
+      query.department = { $regex: filters.department, $options: "i" };
     if (filters.UHID) query.UHID = { $regex: filters.UHID, $options: "i" };
+    if (filters.patientName)
+      query.patientName = { $regex: filters.patientName, $options: "i" };
+
+    // ✅ FIX: accept both bedId and bed as filter keys
+    const bedFilter = filters.bedId || filters.bed;
+    if (bedFilter && mongoose.isValidObjectId(String(bedFilter)))
+      query.bedId = new mongoose.Types.ObjectId(String(bedFilter));
+
+    const patFilter = filters.patientId || filters.patient;
+    if (patFilter && mongoose.isValidObjectId(String(patFilter)))
+      query.patientId = patFilter;
+
+    if (filters.wardId && mongoose.isValidObjectId(String(filters.wardId)))
+      query.wardId = filters.wardId;
 
     if (filters.fromDate || filters.toDate) {
       query.admissionDate = {};
@@ -101,30 +278,29 @@ class AdmissionService {
       if (filters.toDate) query.admissionDate.$lte = new Date(filters.toDate);
     }
 
-    const page = parseInt(filters.page) || 1;
-    const limit = parseInt(filters.limit) || 10;
+    const page = Math.max(1, parseInt(filters.page) || 1);
+    const limit = Math.min(500, parseInt(filters.limit) || 50); // ✅ higher default limit
     const skip = (page - 1) * limit;
 
-    const admissions = await Admission.find(query)
-      .populate("patientId", "firstName lastName UHID phone")
-      .populate("bedId", "bedNumber status")
-      .populate("department", "name")
-      .populate("roomId", "roomNumber")
-      .populate("wardId", "wardName")
-      .sort({ admissionDate: -1 })
-      .skip(skip)
-      .limit(limit);
-
-    const total = await Admission.countDocuments(query);
+    const [admissions, total] = await Promise.all([
+      Admission.find(query)
+        .populate(
+          "patientId",
+          "fullName firstName lastName UHID age dateOfBirth gender bloodGroup contactNumber phone",
+        )
+        .populate("bedId", "bedNumber status")
+        .populate("roomId", "roomNumber")
+        .populate("wardId", "wardName")
+        .sort({ admissionDate: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      Admission.countDocuments(query),
+    ]);
 
     return {
       admissions,
-      pagination: {
-        page,
-        limit,
-        total,
-        pages: Math.ceil(total / limit),
-      },
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
     };
   }
 
@@ -132,7 +308,6 @@ class AdmissionService {
     const admission = await Admission.findById(id)
       .populate("patientId")
       .populate("bedId")
-      .populate("department")
       .populate("roomId")
       .populate("wardId")
       .populate("floorId")
@@ -142,162 +317,139 @@ class AdmissionService {
     return admission;
   }
 
+  /* ─────────────────────────────────────────────────────────────
+     getActiveAdmissions  —  KEY FIX:
+     Previously crashed with "Schema hasn't been registered for model Bed"
+     because somewhere it was doing mongoose.model("Bed") but the model
+     is registered as "Beds". Now we just require bedsModel directly —
+     no mongoose.model() call needed at all.
+  ───────────────────────────────────────────────────────────── */
   async getActiveAdmissions(filters = {}) {
     const query = { status: "Active" };
 
-    if (filters.department) query.department = filters.department;
+    if (filters.department)
+      query.department = { $regex: filters.department, $options: "i" };
+    if (filters.admissionType) query.admissionType = filters.admissionType;
+    if (filters.attendingDoctor)
+      query.attendingDoctor = {
+        $regex: filters.attendingDoctor,
+        $options: "i",
+      };
     if (filters.wardId) query.wardId = filters.wardId;
 
-    return await Admission.find(query)
-      .populate("patientId", "firstName lastName UHID")
-      .populate("bedId", "bedNumber")
-      .populate("department", "name")
-      .sort({ admissionDate: -1 });
+    // ✅ Support bedId filter (frontend uses this as fallback)
+    const bedFilter = filters.bedId || filters.bed;
+    if (bedFilter && mongoose.isValidObjectId(String(bedFilter)))
+      query.bedId = new mongoose.Types.ObjectId(String(bedFilter));
+
+    return Admission.find(query)
+      .populate(
+        "patientId",
+        "fullName firstName lastName UHID age dateOfBirth gender bloodGroup contactNumber phone",
+      )
+      .populate("bedId", "bedNumber status")
+      .sort({ admissionDate: -1 })
+      .lean();
   }
 
   async getTodayAdmissions() {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
 
-    return await Admission.find({
-      admissionDate: { $gte: today, $lt: tomorrow },
-    })
-      .populate("patientId", "firstName lastName UHID")
+    return Admission.find({ admissionDate: { $gte: start, $lt: end } })
+      .populate("patientId", "fullName firstName lastName UHID")
       .populate("bedId", "bedNumber")
-      .populate("department", "name")
-      .sort({ admissionDate: -1 });
+      .sort({ admissionDate: -1 })
+      .lean();
+  }
+
+  async getTodayDischarges() {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+
+    return Admission.find({
+      status: "Discharged",
+      actualDischargeDate: { $gte: start, $lt: end },
+    })
+      .populate("patientId", "fullName firstName lastName UHID")
+      .populate("bedId", "bedNumber")
+      .sort({ actualDischargeDate: -1 })
+      .lean();
+  }
+
+  async getExpectedDischarges(date) {
+    const target = date ? new Date(date) : new Date();
+    target.setHours(0, 0, 0, 0);
+    const next = new Date(target);
+    next.setDate(next.getDate() + 1);
+
+    return Admission.find({
+      status: "Active",
+      expectedDischargeDate: { $gte: target, $lt: next },
+    })
+      .populate("patientId", "fullName firstName lastName UHID")
+      .populate("bedId", "bedNumber")
+      .sort({ expectedDischargeDate: 1 })
+      .lean();
   }
 
   async updateAdmission(id, data) {
+    const safe = { ...data };
+    delete safe.status;
+    delete safe.admissionNumber;
+    delete safe.patientId;
+    delete safe.bedId;
+
     const admission = await Admission.findByIdAndUpdate(
       id,
-      { $set: data },
-      { new: true, runValidators: true }
+      { $set: safe },
+      { new: true, runValidators: true },
     );
-
     if (!admission) throw new Error("Admission not found");
-    return admission;
-  }
-
-  async transferBed(admissionId, newBedId, reason) {
-    const admission = await Admission.findById(admissionId);
-    if (!admission) throw new Error("Admission not found");
-    if (admission.status !== "Active")
-      throw new Error("Admission is not active");
-
-    const oldBed = await Bed.findById(admission.bedId);
-    const newBed = await Bed.findById(newBedId);
-
-    if (!newBed) throw new Error("New bed not found");
-    if (newBed.status !== "Available")
-      throw new Error("New bed is not available");
-
-    if (oldBed) {
-      oldBed.status = "Available";
-      oldBed.currentAdmission = null;
-      await oldBed.save();
-    }
-
-    newBed.status = "Occupied";
-    newBed.currentAdmission = admissionId;
-    await newBed.save();
-
-    admission.bedId = newBedId;
-    admission.bedNumber = newBed.bedNumber;
-    admission.roomId = newBed.room;
-    admission.wardId = newBed.ward;
-    admission.transferHistory = admission.transferHistory || [];
-    admission.transferHistory.push({
-      fromBed: oldBed?._id,
-      toBed: newBedId,
-      reason,
-      date: new Date(),
-    });
-
-    await admission.save();
-    return admission;
-  }
-
-  async dischargePatient(admissionId, dischargeData) {
-    const admission = await Admission.findById(admissionId);
-    if (!admission) throw new Error("Admission not found");
-    if (admission.status !== "Active")
-      throw new Error("Admission is not active");
-
-    const bed = await Bed.findById(admission.bedId);
-    if (bed) {
-      bed.status = "Available";
-      bed.currentAdmission = null;
-      await bed.save();
-    }
-
-    admission.status = "Discharged";
-    admission.actualDischargeDate =
-      dischargeData.actualDischargeDate || new Date();
-    admission.dischargeNotes = dischargeData.dischargeNotes;
-    admission.dischargeSummary = dischargeData.dischargeSummary;
-    admission.totalCost = dischargeData.totalCost;
-
-    await admission.save();
-    return admission;
-  }
-
-  async cancelAdmission(id, reason) {
-    const admission = await Admission.findById(id);
-    if (!admission) throw new Error("Admission not found");
-
-    const bed = await Bed.findById(admission.bedId);
-    if (bed) {
-      bed.status = "Available";
-      bed.currentAdmission = null;
-      await bed.save();
-    }
-
-    admission.status = "Cancelled";
-    admission.cancelReason = reason;
-    admission.cancelledAt = new Date();
-
-    await admission.save();
     return admission;
   }
 
   async getAdmissionStatistics(startDate, endDate) {
-    const query = {};
+    const match = {};
     if (startDate || endDate) {
-      query.admissionDate = {};
-      if (startDate) query.admissionDate.$gte = new Date(startDate);
-      if (endDate) query.admissionDate.$lte = new Date(endDate);
+      match.admissionDate = {};
+      if (startDate) match.admissionDate.$gte = new Date(startDate);
+      if (endDate) match.admissionDate.$lte = new Date(endDate);
     }
 
-    const total = await Admission.countDocuments(query);
-    const active = await Admission.countDocuments({
-      ...query,
-      status: "Active",
-    });
-    const discharged = await Admission.countDocuments({
-      ...query,
-      status: "Discharged",
-    });
-    const cancelled = await Admission.countDocuments({
-      ...query,
-      status: "Cancelled",
-    });
-
-    const departmentStats = await Admission.aggregate([
-      { $match: query },
-      { $group: { _id: "$department", count: { $sum: 1 } } },
-      {
-        $lookup: {
-          from: "departments",
-          localField: "_id",
-          foreignField: "_id",
-          as: "dept",
-        },
-      },
-      { $unwind: { path: "$dept", preserveNullAndEmptyArrays: true } },
-      { $project: { department: "$dept.name", count: 1 } },
+    const [
+      total,
+      active,
+      discharged,
+      cancelled,
+      deptWise,
+      typeWise,
+      doctorWise,
+    ] = await Promise.all([
+      Admission.countDocuments(match),
+      Admission.countDocuments({ ...match, status: "Active" }),
+      Admission.countDocuments({ ...match, status: "Discharged" }),
+      Admission.countDocuments({ ...match, status: "Cancelled" }),
+      Admission.aggregate([
+        { $match: match },
+        { $group: { _id: "$department", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ]),
+      Admission.aggregate([
+        { $match: match },
+        { $group: { _id: "$admissionType", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ]),
+      Admission.aggregate([
+        { $match: { ...match, attendingDoctor: { $ne: "" } } },
+        { $group: { _id: "$attendingDoctor", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $limit: 10 },
+      ]),
     ]);
 
     return {
@@ -305,33 +457,57 @@ class AdmissionService {
       active,
       discharged,
       cancelled,
-      departmentWise: departmentStats,
+      departmentWise: deptWise,
+      admissionTypeWise: typeWise,
+      doctorWise,
     };
   }
 
   async getPatientAdmissionHistory(patientId) {
-    return await Admission.find({ patientId })
+    return Admission.find({ patientId })
       .populate("bedId", "bedNumber")
-      .populate("department", "name")
-      .sort({ admissionDate: -1 });
+      .sort({ admissionDate: -1 })
+      .lean();
   }
 
   async searchAdmissions(searchTerm) {
-    const regex = new RegExp(searchTerm, "i");
-
-    return await Admission.find({
+    if (!searchTerm?.trim()) throw new Error("Search term is required");
+    const regex = { $regex: searchTerm.trim(), $options: "i" };
+    return Admission.find({
       $or: [
         { UHID: regex },
         { patientName: regex },
         { admissionNumber: regex },
         { contactNumber: regex },
+        { attendingDoctor: regex },
       ],
     })
-      .populate("patientId", "firstName lastName UHID")
+      .populate("patientId", "fullName UHID")
       .populate("bedId", "bedNumber")
-      .populate("department", "name")
       .limit(20)
-      .sort({ admissionDate: -1 });
+      .sort({ admissionDate: -1 })
+      .lean();
+  }
+
+  async getPatientByUHID(uhid) {
+    if (!uhid) throw new Error("UHID is required");
+    const patient = await Patient.findOne({
+      UHID: uhid.toString().trim().toUpperCase(),
+    }).lean();
+    if (!patient) throw new Error(`No patient found with UHID: ${uhid}`);
+    return patient;
+  }
+
+  async getAdmissionsByDoctor(doctorName) {
+    if (!doctorName) throw new Error("Doctor name is required");
+    return Admission.find({
+      attendingDoctor: { $regex: doctorName.trim(), $options: "i" },
+      status: "Active",
+    })
+      .populate("patientId", "fullName UHID contactNumber")
+      .populate("bedId", "bedNumber")
+      .sort({ admissionDate: -1 })
+      .lean();
   }
 
   async deleteAdmission(id) {
@@ -339,12 +515,10 @@ class AdmissionService {
     if (!admission) throw new Error("Admission not found");
 
     if (admission.status === "Active") {
-      const bed = await Bed.findById(admission.bedId);
-      if (bed) {
-        bed.status = "Available";
-        bed.currentAdmission = null;
-        await bed.save();
-      }
+      // ✅ Always free the bed when admission is deleted
+      await Bed.findByIdAndUpdate(admission.bedId, {
+        $set: { status: "Available", currentAdmission: null, patient: null },
+      });
     }
 
     await Admission.findByIdAndDelete(id);

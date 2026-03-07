@@ -1,268 +1,235 @@
-import API_ENDPOINTS from "../config/api";
+// src/Services/patient/admissionService.js
+// Tumhare existing /api/admissions routes ke according
+// Same axios pattern as patientService.js
 
-const extractId = (obj) => {
-  if (!obj) return null;
-  if (typeof obj === "string") return obj;
-  if (obj.$oid) return obj.$oid;
-  if (obj._id) return extractId(obj._id);
-  return obj;
-};
+import axios from "axios";
+import { API_ENDPOINTS } from "../config/api.js";
 
-const normalizeAdmission = (admission) => {
-  if (!admission) return admission;
-  return {
-    ...admission,
-    _id: extractId(admission._id),
-    patient: extractId(admission.patient),
-    bed: extractId(admission.bed),
-    room: extractId(admission.room),
-    ward: extractId(admission.ward),
-    floor: extractId(admission.floor),
-    building: extractId(admission.building),
-  };
-};
+const API_URL = API_ENDPOINTS.ADMISSIONS;
 
-export const admissionService = {
+const admissionService = {
+  // ── GET /api/admissions ───────────────────────────────────────
+  // Filters: status, admissionType, attendingDoctor
   getAllAdmissions: async (params = {}) => {
     try {
-      const queryString = new URLSearchParams(params).toString();
-      const response = await fetch(
-        `${API_ENDPOINTS.ADMISSIONS}?${queryString}`
-      );
-      const data = await response.json();
-      const admissions = Array.isArray(data)
-        ? data
-        : data.data || data.admissions || [];
-      return admissions.map(normalizeAdmission);
+      const response = await axios.get(API_URL, { params });
+      return response.data;
     } catch (error) {
-      console.error("Error:", error);
-      return [];
-    }
-  },
-
-  getAdmissionById: async (id) => {
-    try {
-      const response = await fetch(`${API_ENDPOINTS.ADMISSIONS}/${id}`);
-      const admission = await response.json();
-      return normalizeAdmission(admission);
-    } catch (error) {
-      console.error("Error:", error);
-      return null;
-    }
-  },
-
-  getAdmissionByNumber: async (admissionNumber) => {
-    try {
-      const response = await fetch(
-        `${API_ENDPOINTS.ADMISSIONS}/number/${admissionNumber}`
-      );
-      const admission = await response.json();
-      return normalizeAdmission(admission);
-    } catch (error) {
-      console.error("Error:", error);
-      return null;
-    }
-  },
-
-  createAdmission: async (data) => {
-    try {
-      const response = await fetch(API_ENDPOINTS.ADMISSIONS, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      const admission = await response.json();
-      return normalizeAdmission(admission);
-    } catch (error) {
-      console.error("Error:", error);
+      console.error("admissionService.getAllAdmissions error:", error);
       throw error;
     }
   },
 
-  updateAdmission: async (id, data) => {
+  // ── GET /api/admissions/active ────────────────────────────────
+  // Filters: department, admissionType, attendingDoctor
+  getActiveAdmissions: async (params = {}) => {
     try {
-      const response = await fetch(`${API_ENDPOINTS.ADMISSIONS}/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      const admission = await response.json();
-      return normalizeAdmission(admission);
+      const response = await axios.get(`${API_URL}/active`, { params });
+      return response.data;
     } catch (error) {
-      console.error("Error:", error);
+      console.error("admissionService.getActiveAdmissions error:", error);
       throw error;
     }
   },
 
-  deleteAdmission: async (id) => {
-    try {
-      const response = await fetch(`${API_ENDPOINTS.ADMISSIONS}/${id}`, {
-        method: "DELETE",
-      });
-      return await response.json();
-    } catch (error) {
-      console.error("Error:", error);
-      throw error;
-    }
-  },
-
-  searchAdmissions: async (query) => {
-    try {
-      const response = await fetch(
-        `${API_ENDPOINTS.ADMISSIONS}/search?q=${query}`
-      );
-      const data = await response.json();
-      const admissions = Array.isArray(data) ? data : [];
-      return admissions.map(normalizeAdmission);
-    } catch (error) {
-      console.error("Error:", error);
-      return [];
-    }
-  },
-
-  getActiveAdmissions: async (filters = {}) => {
-    try {
-      const queryString = new URLSearchParams(filters).toString();
-      const response = await fetch(
-        `${API_ENDPOINTS.ADMISSIONS}/active?${queryString}`
-      );
-      const data = await response.json();
-      const admissions = Array.isArray(data) ? data : [];
-      return admissions.map(normalizeAdmission);
-    } catch (error) {
-      console.error("Error:", error);
-      return [];
-    }
-  },
-
+  // ── GET /api/admissions/today ─────────────────────────────────
   getTodayAdmissions: async () => {
     try {
-      const response = await fetch(`${API_ENDPOINTS.ADMISSIONS}/today`);
-      const data = await response.json();
-      const admissions = Array.isArray(data) ? data : [];
-      return admissions.map(normalizeAdmission);
+      const response = await axios.get(`${API_URL}/today`);
+      return response.data;
     } catch (error) {
-      console.error("Error:", error);
-      return [];
+      console.error("admissionService.getTodayAdmissions error:", error);
+      throw error;
     }
   },
 
+  // ── GET /api/admissions/search?q=Rahul ───────────────────────
+  searchAdmissions: async (q) => {
+    try {
+      const response = await axios.get(`${API_URL}/search`, { params: { q } });
+      return response.data;
+    } catch (error) {
+      console.error("admissionService.searchAdmissions error:", error);
+      throw error;
+    }
+  },
+
+  // ── GET /api/admissions/statistics ───────────────────────────
+  // Optional: startDate, endDate
+  getStatistics: async (params = {}) => {
+    try {
+      const response = await axios.get(`${API_URL}/statistics`, { params });
+      return response.data;
+    } catch (error) {
+      console.error("admissionService.getStatistics error:", error);
+      throw error;
+    }
+  },
+
+  // ── GET /api/admissions/discharges/today ──────────────────────
   getTodayDischarges: async () => {
     try {
-      const response = await fetch(
-        `${API_ENDPOINTS.ADMISSIONS}/discharges/today`
-      );
-      const data = await response.json();
-      const admissions = Array.isArray(data) ? data : [];
-      return admissions.map(normalizeAdmission);
+      const response = await axios.get(`${API_URL}/discharges/today`);
+      return response.data;
     } catch (error) {
-      console.error("Error:", error);
-      return [];
+      console.error("admissionService.getTodayDischarges error:", error);
+      throw error;
     }
   },
 
-  getExpectedDischarges: async (date) => {
+  // ── GET /api/admissions/discharges/expected ───────────────────
+  // Optional: date (e.g. "2026-02-27")
+  getExpectedDischarges: async (date = null) => {
     try {
-      const response = await fetch(
-        `${API_ENDPOINTS.ADMISSIONS}/discharges/expected?date=${date}`
-      );
-      const data = await response.json();
-      const admissions = Array.isArray(data) ? data : [];
-      return admissions.map(normalizeAdmission);
+      const params = date ? { date } : {};
+      const response = await axios.get(`${API_URL}/discharges/expected`, {
+        params,
+      });
+      return response.data;
     } catch (error) {
-      console.error("Error:", error);
-      return [];
+      console.error("admissionService.getExpectedDischarges error:", error);
+      throw error;
     }
   },
 
-  getAdmissionStatistics: async (startDate, endDate) => {
+  // ── GET /api/admissions/doctor/:doctorName ────────────────────
+  // Returns all ACTIVE admissions under that doctor
+  getAdmissionsByDoctor: async (doctorName) => {
     try {
-      let url = `${API_ENDPOINTS.ADMISSIONS}/statistics`;
-      if (startDate && endDate) {
-        url += `?startDate=${startDate}&endDate=${endDate}`;
-      }
-      const response = await fetch(url);
-      return await response.json();
-    } catch (error) {
-      console.error("Error:", error);
-      return null;
-    }
-  },
-
-  getDepartmentWiseCount: async () => {
-    try {
-      const response = await fetch(
-        `${API_ENDPOINTS.ADMISSIONS}/departments/count`
+      const response = await axios.get(
+        `${API_URL}/doctor/${encodeURIComponent(doctorName)}`,
       );
-      return await response.json();
+      return response.data;
     } catch (error) {
-      console.error("Error:", error);
-      return [];
+      console.error("admissionService.getAdmissionsByDoctor error:", error);
+      throw error;
     }
   },
 
+  // ── GET /api/admissions/patient-by-uhid/:uhid ─────────────────
+  getPatientByUHID: async (uhid) => {
+    try {
+      const response = await axios.get(`${API_URL}/patient-by-uhid/${uhid}`);
+      return response.data;
+    } catch (error) {
+      console.error("admissionService.getPatientByUHID error:", error);
+      throw error;
+    }
+  },
+
+  // ── GET /api/admissions/patient/:patientId/history ────────────
   getPatientAdmissionHistory: async (patientId) => {
     try {
-      const response = await fetch(
-        `${API_ENDPOINTS.ADMISSIONS}/patient/${patientId}/history`
+      const response = await axios.get(
+        `${API_URL}/patient/${patientId}/history`,
       );
-      const data = await response.json();
-      const admissions = Array.isArray(data) ? data : [];
-      return admissions.map(normalizeAdmission);
+      return response.data;
     } catch (error) {
-      console.error("Error:", error);
-      return [];
-    }
-  },
-
-  transferBed: async (id, data) => {
-    try {
-      const response = await fetch(
-        `${API_ENDPOINTS.ADMISSIONS}/${id}/transfer`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(data),
-        }
+      console.error(
+        "admissionService.getPatientAdmissionHistory error:",
+        error,
       );
-      const admission = await response.json();
-      return normalizeAdmission(admission);
-    } catch (error) {
-      console.error("Error:", error);
       throw error;
     }
   },
 
-  dischargePatient: async (id, data) => {
+  // ── GET /api/admissions/:id ───────────────────────────────────
+  getAdmissionById: async (id) => {
     try {
-      const response = await fetch(
-        `${API_ENDPOINTS.ADMISSIONS}/${id}/discharge`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(data),
-        }
-      );
-      const admission = await response.json();
-      return normalizeAdmission(admission);
+      const response = await axios.get(`${API_URL}/${id}`);
+      return response.data;
     } catch (error) {
-      console.error("Error:", error);
+      console.error("admissionService.getAdmissionById error:", error);
       throw error;
     }
   },
 
+  // ── POST /api/admissions ──────────────────────────────────────
+  // Required: patientId (or UHID), bedId, department, reasonForAdmission
+  // Optional: admissionDate, expectedDischargeDate, admissionType,
+  //           attendingDoctor, estimatedCost, advancePaid
+  createAdmission: async (data) => {
+    try {
+      const response = await axios.post(API_URL, data);
+      return response.data;
+    } catch (error) {
+      console.error("admissionService.createAdmission error:", error);
+      throw error;
+    }
+  },
+
+  // ── PUT /api/admissions/:id ───────────────────────────────────
+  // Allowed: department, expectedDischargeDate, reasonForAdmission,
+  //          admissionType, attendingDoctor, dischargeNotes,
+  //          dischargeSummary, estimatedCost, advancePaid
+  updateAdmission: async (id, data) => {
+    try {
+      const response = await axios.put(`${API_URL}/${id}`, data);
+      return response.data;
+    } catch (error) {
+      console.error("admissionService.updateAdmission error:", error);
+      throw error;
+    }
+  },
+
+  // ── DELETE /api/admissions/:id ────────────────────────────────
+  // Admin only — frees bed if Active
+  deleteAdmission: async (id) => {
+    try {
+      const response = await axios.delete(`${API_URL}/${id}`);
+      return response.data;
+    } catch (error) {
+      console.error("admissionService.deleteAdmission error:", error);
+      throw error;
+    }
+  },
+
+  // ── POST /api/admissions/:id/discharge ───────────────────────
+  // Optional: actualDischargeDate, dischargeNotes, dischargeSummary,
+  //           conditionOnDischarge, followUpInstructions, totalCost
+  dischargePatient: async (id, data = {}) => {
+    try {
+      const response = await axios.post(`${API_URL}/${id}/discharge`, data);
+      return response.data;
+    } catch (error) {
+      console.error("admissionService.dischargePatient error:", error);
+      throw error;
+    }
+  },
+
+  // ── POST /api/admissions/:id/cancel ──────────────────────────
+  // Required: reason
   cancelAdmission: async (id, reason) => {
     try {
-      const response = await fetch(`${API_ENDPOINTS.ADMISSIONS}/${id}/cancel`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reason }),
-      });
-      const admission = await response.json();
-      return normalizeAdmission(admission);
+      const response = await axios.post(`${API_URL}/${id}/cancel`, { reason });
+      return response.data;
     } catch (error) {
-      console.error("Error:", error);
+      console.error("admissionService.cancelAdmission error:", error);
+      throw error;
+    }
+  },
+
+  // ── POST /api/admissions/:id/transfer ────────────────────────
+  // Required: newBedId
+  // Optional: reason
+  transferBed: async (id, newBedId, reason = "") => {
+    try {
+      const response = await axios.post(`${API_URL}/${id}/transfer`, {
+        newBedId,
+        reason,
+      });
+      return response.data;
+    } catch (error) {
+      console.error("admissionService.transferBed error:", error);
       throw error;
     }
   },
 };
+
+// Default export (patientService.js pattern ke liye)
+export default admissionService;
+
+// Named export (BedVisualLayout.jsx pattern ke liye)
+// import admissionService from "..."   ✅ dono kaam karenge
+// import { admissionService } from "..." ✅
+export { admissionService };
