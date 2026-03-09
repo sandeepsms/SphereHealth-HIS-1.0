@@ -15,14 +15,9 @@ import { roomService } from "../../Services/roomService";
 import { BED_STATUS } from "../../utils/constants";
 
 /* ─────────────────────────────────────────────────────────────────────────
-   HELPER — Parse a range string like "B001" to "B010" → ["B001"..."B010"]
-   Supports:
-     • Pure numeric prefix:  "101" to "110"  → 101,102,...110
-     • Letter + number:      "B01" to "B10"  → B01,B02,...B10  (zero-padded)
-     • Any prefix + number:  "ICU-001" to "ICU-005"
+   HELPER — Parse range "B001" to "B010" → ["B001"..."B010"]
 ───────────────────────────────────────────────────────────────────────── */
 const parseBedRange = (from, to) => {
-  // Split into (prefix, numericPart)
   const splitNum = (str) => {
     const match = str.match(/^(.*?)(\d+)$/);
     if (!match) return null;
@@ -43,7 +38,7 @@ const parseBedRange = (from, to) => {
   if (start > end) return { error: "Start must be ≤ End" };
   if (end - start + 1 > 100) return { error: "Max 100 beds per batch" };
 
-  const padLen = f.num.length; // preserve zero-padding from 'from'
+  const padLen = f.num.length;
   const beds = [];
   for (let i = start; i <= end; i++) {
     beds.push(`${f.prefix}${String(i).padStart(padLen, "0")}`);
@@ -54,13 +49,11 @@ const parseBedRange = (from, to) => {
 /* ─────────────────────────────────────────────────────────────────────── */
 
 const BedForm = ({ visible, onHide, bed, onSave }) => {
-  // ── Mode: "single" or "bulk" (bulk only when creating new)
   const [mode, setMode] = useState("single");
 
-  // ── Bulk range inputs
   const [rangeFrom, setRangeFrom] = useState("");
   const [rangeTo, setRangeTo] = useState("");
-  const [previewBeds, setPreviewBeds] = useState([]); // string[]
+  const [previewBeds, setPreviewBeds] = useState([]);
   const [rangeError, setRangeError] = useState("");
 
   const [formData, setFormData] = useState({
@@ -84,7 +77,7 @@ const BedForm = ({ visible, onHide, bed, onSave }) => {
   const [filteredRooms, setFilteredRooms] = useState([]);
 
   const [loading, setLoading] = useState(false);
-  const [bulkProgress, setBulkProgress] = useState(null); // { done, total, failed[] }
+  const [bulkProgress, setBulkProgress] = useState(null);
   const toast = React.useRef(null);
 
   const statusOptions = Object.values(BED_STATUS).map((s) => ({
@@ -92,16 +85,15 @@ const BedForm = ({ visible, onHide, bed, onSave }) => {
     value: s,
   }));
 
-  /* ── Load data on open ── */
+  /* ── Load on open ── */
   useEffect(() => {
     if (visible) {
       loadAllData();
-      // Reset mode when opening for edit (bulk not allowed for edit)
       if (bed) setMode("single");
     }
   }, [visible]);
 
-  /* ── Cascade filters ── */
+  /* ── Cascade: building → floors ── */
   useEffect(() => {
     if (formData.building && allFloors.length > 0) {
       setFilteredFloors(
@@ -114,6 +106,7 @@ const BedForm = ({ visible, onHide, bed, onSave }) => {
     }
   }, [formData.building, allFloors]);
 
+  /* ── Cascade: floor → wards + rooms ── */
   useEffect(() => {
     if (formData.floor && allWards.length > 0 && allRooms.length > 0) {
       setFilteredWards(
@@ -128,6 +121,7 @@ const BedForm = ({ visible, onHide, bed, onSave }) => {
     }
   }, [formData.floor, allWards, allRooms]);
 
+  /* ── Cascade: ward → filter rooms by ward ── */
   useEffect(() => {
     if (formData.ward && formData.floor) {
       setFilteredRooms(
@@ -179,10 +173,10 @@ const BedForm = ({ visible, onHide, bed, onSave }) => {
           wardService.getAllWards(),
           roomService.getAllRooms(),
         ]);
-      setBuildings(buildingsData);
-      setAllFloors(floorsData);
-      setAllWards(wardsData);
-      setAllRooms(roomsData);
+      setBuildings(buildingsData || []);
+      setAllFloors(floorsData || []);
+      setAllWards(wardsData || []);
+      setAllRooms(roomsData || []);
     } catch (error) {
       showToast("error", "Error", "Failed to load data");
     } finally {
@@ -215,7 +209,7 @@ const BedForm = ({ visible, onHide, bed, onSave }) => {
     setBulkProgress(null);
   };
 
-  /* ── Validate common location fields ── */
+  /* ── Validate location ── */
   const validateLocation = () => {
     if (!formData.building) {
       showToast("warn", "Warning", "Please select a building");
@@ -232,7 +226,7 @@ const BedForm = ({ visible, onHide, bed, onSave }) => {
     return true;
   };
 
-  /* ── Single bed save ── */
+  /* ── Single submit ── */
   const handleSingleSubmit = async () => {
     if (!formData.bedNumber)
       return showToast("warn", "Warning", "Please enter bed number");
@@ -240,11 +234,22 @@ const BedForm = ({ visible, onHide, bed, onSave }) => {
 
     setLoading(true);
     try {
+      const payload = {
+        building: formData.building,
+        floor: formData.floor,
+        ward: formData.ward || null,
+        room: formData.room,
+        bedNumber: formData.bedNumber,
+        status: formData.status || "Available",
+        isActive: formData.isActive ?? true,
+        notes: formData.notes || "",
+      };
+
       if (bed?._id) {
-        await bedService.updateBed(bed._id, formData);
+        await bedService.updateBed(bed._id, payload);
         showToast("success", "Success", "Bed updated successfully");
       } else {
-        await bedService.createBed(formData);
+        await bedService.createBed(payload);
         showToast("success", "Success", "Bed created successfully");
       }
       onSave();
@@ -261,7 +266,7 @@ const BedForm = ({ visible, onHide, bed, onSave }) => {
     }
   };
 
-  /* ── Bulk bed save ── */
+  /* ── Bulk submit ── */
   const handleBulkSubmit = async () => {
     if (!validateLocation()) return;
     if (previewBeds.length === 0)
@@ -275,7 +280,16 @@ const BedForm = ({ visible, onHide, bed, onSave }) => {
     for (let i = 0; i < previewBeds.length; i++) {
       const bedNum = previewBeds[i];
       try {
-        await bedService.createBed({ ...formData, bedNumber: bedNum });
+        await bedService.createBed({
+          building: formData.building,
+          floor: formData.floor,
+          ward: formData.ward || null,
+          room: formData.room,
+          bedNumber: bedNum,
+          status: formData.status || "Available",
+          isActive: formData.isActive ?? true,
+          notes: formData.notes || "",
+        });
       } catch {
         failed.push(bedNum);
       }
@@ -341,7 +355,6 @@ const BedForm = ({ visible, onHide, bed, onSave }) => {
   /* ── Shared location fields ── */
   const LocationFields = () => (
     <>
-      {/* Building */}
       <div className="p-field mb-3">
         <label htmlFor="building">Building *</label>
         <Dropdown
@@ -362,17 +375,17 @@ const BedForm = ({ visible, onHide, bed, onSave }) => {
           }
           placeholder="Select Building"
           disabled={loading}
+          className="w-full"
         />
       </div>
 
-      {/* Floor */}
       <div className="p-field mb-3">
         <label htmlFor="floor">Floor *</label>
         <Dropdown
           id="floor"
           value={formData.floor}
           options={filteredFloors.map((f) => ({
-            label: `${f.floorName} (${f.floorNumber})`,
+            label: f.floorName || `Floor ${f.floorNumber}`,
             value: f._id,
           }))}
           onChange={(e) =>
@@ -380,10 +393,10 @@ const BedForm = ({ visible, onHide, bed, onSave }) => {
           }
           placeholder="Select Floor"
           disabled={!formData.building || loading}
+          className="w-full"
         />
       </div>
 
-      {/* Ward (Optional) */}
       <div className="p-field mb-3">
         <label htmlFor="ward">Ward (Optional)</label>
         <Dropdown
@@ -397,10 +410,10 @@ const BedForm = ({ visible, onHide, bed, onSave }) => {
           placeholder="Select Ward"
           disabled={!formData.floor || loading}
           showClear
+          className="w-full"
         />
       </div>
 
-      {/* Room */}
       <div className="p-field mb-3">
         <label htmlFor="room">Room *</label>
         <Dropdown
@@ -413,25 +426,58 @@ const BedForm = ({ visible, onHide, bed, onSave }) => {
           onChange={(e) => setFormData({ ...formData, room: e.value })}
           placeholder="Select Room"
           disabled={!formData.floor || loading}
+          className="w-full"
         />
       </div>
     </>
   );
 
-  /* ── Render ── */
+  /* ════════════════════════════════════════════════════════
+     RENDER
+  ════════════════════════════════════════════════════════ */
   return (
     <>
       <Toast ref={toast} />
+
+      {/*
+        KEY FIX: Same pattern as BedVisualLayout discharge modal.
+        - Dialog gets maxHeight via CSS class, no fixed height
+        - Inner div uses flex column with overflow hidden
+        - Scrollable section uses flex:"1 1 0px" + minHeight:0 + overflowY:auto
+      */}
+      <style>{`
+        .bedform-dialog .p-dialog-content {
+          overflow: hidden !important;
+          padding: 0 !important;
+          display: flex !important;
+          flex-direction: column !important;
+          max-height: 80vh !important;
+        }
+        .bedform-dialog .p-dialog {
+          max-height: 90vh !important;
+        }
+      `}</style>
+
       <Dialog
         visible={visible}
-        style={{ width: "620px", maxHeight: "90vh" }}
+        style={{ width: "620px" }}
+        className="bedform-dialog"
         header={
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              padding: "4px 0",
+            }}
+          >
             <i
               className="pi pi-th-large"
               style={{ color: "#0891b2", fontSize: 18 }}
             />
-            <span>{bed ? "Edit Bed" : "Add Bed(s)"}</span>
+            <span style={{ fontWeight: 700, fontSize: 17 }}>
+              {bed ? "Edit Bed" : "Add Bed(s)"}
+            </span>
           </div>
         }
         modal
@@ -440,390 +486,406 @@ const BedForm = ({ visible, onHide, bed, onSave }) => {
           onHide();
           resetForm();
         }}
+        draggable={false}
       >
+        {/* Outer wrapper — fills the dialog content area */}
         <div
-          className="p-fluid"
-          style={{ maxHeight: "70vh", overflowY: "auto", padding: "10px" }}
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            height: "100%",
+            minHeight: 0,
+          }}
         >
-          {/* ── MODE TOGGLE (only when creating) ── */}
-          {!bed && (
-            <div
-              style={{
-                display: "flex",
-                gap: 8,
-                marginBottom: 20,
-                background: "#f1f5f9",
-                borderRadius: 10,
-                padding: 4,
-              }}
-            >
-              {[
-                {
-                  key: "single",
-                  icon: "pi pi-plus-circle",
-                  label: "Single Bed",
-                },
-                {
-                  key: "bulk",
-                  icon: "pi pi-copy",
-                  label: "Bulk Create (Range)",
-                },
-              ].map(({ key, icon, label }) => {
-                const active = mode === key;
-                return (
-                  <button
-                    key={key}
-                    type="button"
-                    onClick={() => setMode(key)}
-                    style={{
-                      flex: 1,
-                      padding: "9px 0",
-                      borderRadius: 7,
-                      border: "none",
-                      cursor: "pointer",
-                      fontSize: 13,
-                      fontWeight: 600,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: 7,
-                      background: active ? "#0891b2" : "transparent",
-                      color: active ? "#fff" : "#64748b",
-                      transition: "all .18s",
-                    }}
-                  >
-                    <i className={icon} />
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {/* ══ SINGLE MODE ══ */}
-          {mode === "single" && (
-            <>
-              <LocationFields />
-
-              {/* Bed Number & Status */}
-              <div className="grid">
-                <div className="col-6">
-                  <div className="p-field mb-3">
-                    <label htmlFor="bedNumber">Bed Number *</label>
-                    <InputText
-                      id="bedNumber"
-                      value={formData.bedNumber}
-                      onChange={(e) =>
-                        setFormData({
-                          ...formData,
-                          bedNumber: e.target.value.toUpperCase(),
-                        })
-                      }
-                      placeholder="e.g. B-101"
-                    />
-                  </div>
-                </div>
-                <div className="col-6">
-                  <div className="p-field mb-3">
-                    <label htmlFor="status">Status</label>
-                    <Dropdown
-                      id="status"
-                      value={formData.status}
-                      options={statusOptions}
-                      onChange={(e) =>
-                        setFormData({ ...formData, status: e.value })
-                      }
-                      placeholder="Select Status"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Pricing note */}
+          {/* ── Scrollable body ── */}
+          <div
+            className="p-fluid"
+            style={{
+              flex: "1 1 0px" /* KEY: allow shrinking */,
+              minHeight: 0 /* KEY: flexbox scroll trick */,
+              overflowY: "auto",
+              padding: "16px 20px",
+              overscrollBehavior: "contain",
+            }}
+          >
+            {/* ── MODE TOGGLE (only when creating) ── */}
+            {!bed && (
               <div
                 style={{
-                  backgroundColor: "#eff6ff",
-                  border: "1px solid #bfdbfe",
-                  borderRadius: 6,
-                  padding: "12px 16px",
-                  marginBottom: 16,
                   display: "flex",
-                  alignItems: "center",
-                  gap: 10,
+                  gap: 8,
+                  marginBottom: 20,
+                  background: "#f1f5f9",
+                  borderRadius: 10,
+                  padding: 4,
                 }}
               >
-                <i
-                  className="pi pi-info-circle"
-                  style={{ color: "#3b82f6", fontSize: 16 }}
-                />
-                <span style={{ fontSize: 13, color: "#1e40af" }}>
-                  Pricing is managed through TPA configuration and applied at
-                  the time of billing.
-                </span>
+                {[
+                  {
+                    key: "single",
+                    icon: "pi pi-plus-circle",
+                    label: "Single Bed",
+                  },
+                  {
+                    key: "bulk",
+                    icon: "pi pi-copy",
+                    label: "Bulk Create (Range)",
+                  },
+                ].map(({ key, icon, label }) => {
+                  const active = mode === key;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setMode(key)}
+                      style={{
+                        flex: 1,
+                        padding: "9px 0",
+                        borderRadius: 7,
+                        border: "none",
+                        cursor: "pointer",
+                        fontSize: 13,
+                        fontWeight: 600,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: 7,
+                        background: active ? "#0891b2" : "transparent",
+                        color: active ? "#fff" : "#64748b",
+                        transition: "all .18s",
+                      }}
+                    >
+                      <i className={icon} />
+                      {label}
+                    </button>
+                  );
+                })}
               </div>
+            )}
 
-              {/* Notes */}
-              <div className="p-field mb-3">
-                <label htmlFor="notes">Notes</label>
-                <InputTextarea
-                  id="notes"
-                  value={formData.notes}
-                  onChange={(e) =>
-                    setFormData({ ...formData, notes: e.target.value })
-                  }
-                  rows={3}
-                  placeholder="Enter notes"
-                />
-              </div>
+            {/* ══ SINGLE MODE ══ */}
+            {mode === "single" && (
+              <>
+                <LocationFields />
 
-              {/* Active */}
-              <div className="p-field-checkbox mb-3">
-                <Checkbox
-                  inputId="isActive"
-                  checked={formData.isActive}
-                  onChange={(e) =>
-                    setFormData({ ...formData, isActive: e.checked })
-                  }
-                />
-                <label htmlFor="isActive" className="ml-2">
-                  Active
-                </label>
-              </div>
-            </>
-          )}
-
-          {/* ══ BULK MODE ══ */}
-          {mode === "bulk" && (
-            <>
-              {/* How-to tip */}
-              <div
-                style={{
-                  backgroundColor: "#f0fdf4",
-                  border: "1px solid #bbf7d0",
-                  borderRadius: 8,
-                  padding: "12px 16px",
-                  marginBottom: 18,
-                  fontSize: 13,
-                  color: "#166534",
-                  display: "flex",
-                  gap: 10,
-                  alignItems: "flex-start",
-                }}
-              >
-                <i
-                  className="pi pi-lightbulb"
-                  style={{ color: "#16a34a", marginTop: 2, flexShrink: 0 }}
-                />
-                <div>
-                  <strong>Range Format:</strong> Enter start and end bed numbers
-                  with the same prefix. Zero-padding is preserved automatically.
-                  <br />
-                  <span style={{ opacity: 0.8 }}>
-                    Examples: &nbsp;<code>B001</code> → <code>B010</code>{" "}
-                    &nbsp;|&nbsp;
-                    <code>ICU-01</code> → <code>ICU-20</code>
-                  </span>
-                </div>
-              </div>
-
-              {/* Range inputs */}
-              <div className="grid mb-3">
-                <div className="col-5">
-                  <div className="p-field">
-                    <label>From (Start) *</label>
-                    <InputText
-                      value={rangeFrom}
-                      onChange={(e) =>
-                        setRangeFrom(e.target.value.toUpperCase())
-                      }
-                      placeholder="e.g. B001"
-                    />
+                <div className="grid">
+                  <div className="col-6">
+                    <div className="p-field mb-3">
+                      <label htmlFor="bedNumber">Bed Number *</label>
+                      <InputText
+                        id="bedNumber"
+                        value={formData.bedNumber}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            bedNumber: e.target.value.toUpperCase(),
+                          })
+                        }
+                        placeholder="e.g. B-101"
+                      />
+                    </div>
+                  </div>
+                  <div className="col-6">
+                    <div className="p-field mb-3">
+                      <label htmlFor="status">Status</label>
+                      <Dropdown
+                        id="status"
+                        value={formData.status}
+                        options={statusOptions}
+                        onChange={(e) =>
+                          setFormData({ ...formData, status: e.value })
+                        }
+                        placeholder="Select Status"
+                      />
+                    </div>
                   </div>
                 </div>
-                <div
-                  className="col-2"
-                  style={{
-                    display: "flex",
-                    alignItems: "flex-end",
-                    justifyContent: "center",
-                    paddingBottom: 8,
-                    fontSize: 20,
-                    color: "#94a3b8",
-                  }}
-                >
-                  →
-                </div>
-                <div className="col-5">
-                  <div className="p-field">
-                    <label>To (End) *</label>
-                    <InputText
-                      value={rangeTo}
-                      onChange={(e) => setRangeTo(e.target.value.toUpperCase())}
-                      placeholder="e.g. B010"
-                    />
-                  </div>
-                </div>
-              </div>
 
-              {/* Range error */}
-              {rangeError && (
+                {/* Pricing note */}
                 <div
                   style={{
-                    color: "#dc2626",
-                    fontSize: 13,
-                    marginBottom: 12,
+                    backgroundColor: "#eff6ff",
+                    border: "1px solid #bfdbfe",
+                    borderRadius: 6,
+                    padding: "12px 16px",
+                    marginBottom: 16,
                     display: "flex",
                     alignItems: "center",
-                    gap: 6,
+                    gap: 10,
                   }}
                 >
-                  <i className="pi pi-exclamation-circle" />
-                  {rangeError}
+                  <i
+                    className="pi pi-info-circle"
+                    style={{ color: "#3b82f6", fontSize: 16 }}
+                  />
+                  <span style={{ fontSize: 13, color: "#1e40af" }}>
+                    Pricing is managed through TPA configuration and applied at
+                    the time of billing.
+                  </span>
                 </div>
-              )}
 
-              {/* Preview */}
-              {previewBeds.length > 0 && (
+                <div className="p-field mb-3">
+                  <label htmlFor="notes">Notes</label>
+                  <InputTextarea
+                    id="notes"
+                    value={formData.notes}
+                    onChange={(e) =>
+                      setFormData({ ...formData, notes: e.target.value })
+                    }
+                    rows={3}
+                    placeholder="Enter notes"
+                  />
+                </div>
+
+                <div className="p-field-checkbox mb-3">
+                  <Checkbox
+                    inputId="isActive"
+                    checked={formData.isActive}
+                    onChange={(e) =>
+                      setFormData({ ...formData, isActive: e.checked })
+                    }
+                  />
+                  <label htmlFor="isActive" className="ml-2">
+                    Active
+                  </label>
+                </div>
+              </>
+            )}
+
+            {/* ══ BULK MODE ══ */}
+            {mode === "bulk" && (
+              <>
                 <div
                   style={{
-                    background: "#f8fafc",
-                    border: "1px solid #e2e8f0",
+                    backgroundColor: "#f0fdf4",
+                    border: "1px solid #bbf7d0",
                     borderRadius: 8,
                     padding: "12px 16px",
                     marginBottom: 18,
+                    fontSize: 13,
+                    color: "#166534",
+                    display: "flex",
+                    gap: 10,
+                    alignItems: "flex-start",
                   }}
                 >
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      marginBottom: 10,
-                    }}
-                  >
-                    <strong style={{ fontSize: 13, color: "#0f172a" }}>
-                      Preview — {previewBeds.length} beds will be created
-                    </strong>
-                    <Tag
-                      value={`${previewBeds.length} beds`}
-                      severity="info"
-                      style={{ fontSize: 11 }}
-                    />
-                  </div>
-                  <div
-                    style={{
-                      display: "flex",
-                      flexWrap: "wrap",
-                      gap: 6,
-                      maxHeight: 120,
-                      overflowY: "auto",
-                    }}
-                  >
-                    {previewBeds.map((b) => (
-                      <span
-                        key={b}
-                        style={{
-                          background: "#e0f2fe",
-                          color: "#0369a1",
-                          borderRadius: 5,
-                          padding: "3px 8px",
-                          fontSize: 12,
-                          fontWeight: 600,
-                          fontFamily: "monospace",
-                        }}
-                      >
-                        {b}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Location fields */}
-              <LocationFields />
-
-              {/* Status for all bulk beds */}
-              <div className="p-field mb-3">
-                <label>Status (applied to all beds)</label>
-                <Dropdown
-                  value={formData.status}
-                  options={statusOptions}
-                  onChange={(e) =>
-                    setFormData({ ...formData, status: e.value })
-                  }
-                  placeholder="Select Status"
-                />
-              </div>
-
-              {/* Notes */}
-              <div className="p-field mb-3">
-                <label>Notes (applied to all beds)</label>
-                <InputTextarea
-                  value={formData.notes}
-                  onChange={(e) =>
-                    setFormData({ ...formData, notes: e.target.value })
-                  }
-                  rows={2}
-                  placeholder="Optional notes for all beds"
-                />
-              </div>
-
-              {/* Active checkbox */}
-              <div className="p-field-checkbox mb-3">
-                <Checkbox
-                  inputId="isActiveBulk"
-                  checked={formData.isActive}
-                  onChange={(e) =>
-                    setFormData({ ...formData, isActive: e.checked })
-                  }
-                />
-                <label htmlFor="isActiveBulk" className="ml-2">
-                  Active
-                </label>
-              </div>
-
-              {/* Progress bar while creating */}
-              {bulkProgress && (
-                <div style={{ marginTop: 12 }}>
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      fontSize: 12,
-                      color: "#64748b",
-                      marginBottom: 4,
-                    }}
-                  >
-                    <span>Creating beds…</span>
-                    <span>
-                      {bulkProgress.done} / {bulkProgress.total}
+                  <i
+                    className="pi pi-lightbulb"
+                    style={{ color: "#16a34a", marginTop: 2, flexShrink: 0 }}
+                  />
+                  <div>
+                    <strong>Range Format:</strong> Enter start and end bed
+                    numbers with the same prefix. Zero-padding is preserved
+                    automatically.
+                    <br />
+                    <span style={{ opacity: 0.8 }}>
+                      Examples: &nbsp;<code>B001</code> → <code>B010</code>
+                      &nbsp;|&nbsp;
+                      <code>ICU-01</code> → <code>ICU-20</code>
                     </span>
                   </div>
+                </div>
+
+                {/* Range inputs */}
+                <div className="grid mb-3">
+                  <div className="col-5">
+                    <div className="p-field">
+                      <label>From (Start) *</label>
+                      <InputText
+                        value={rangeFrom}
+                        onChange={(e) =>
+                          setRangeFrom(e.target.value.toUpperCase())
+                        }
+                        placeholder="e.g. B001"
+                        className="w-full"
+                      />
+                    </div>
+                  </div>
+                  <div
+                    className="col-2"
+                    style={{
+                      display: "flex",
+                      alignItems: "flex-end",
+                      justifyContent: "center",
+                      paddingBottom: 8,
+                      fontSize: 20,
+                      color: "#94a3b8",
+                    }}
+                  >
+                    →
+                  </div>
+                  <div className="col-5">
+                    <div className="p-field">
+                      <label>To (End) *</label>
+                      <InputText
+                        value={rangeTo}
+                        onChange={(e) =>
+                          setRangeTo(e.target.value.toUpperCase())
+                        }
+                        placeholder="e.g. B010"
+                        className="w-full"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {rangeError && (
                   <div
                     style={{
-                      background: "#e2e8f0",
-                      borderRadius: 999,
-                      height: 8,
-                      overflow: "hidden",
+                      color: "#dc2626",
+                      fontSize: 13,
+                      marginBottom: 12,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                  >
+                    <i className="pi pi-exclamation-circle" />
+                    {rangeError}
+                  </div>
+                )}
+
+                {/* Preview chips */}
+                {previewBeds.length > 0 && (
+                  <div
+                    style={{
+                      background: "#f8fafc",
+                      border: "1px solid #e2e8f0",
+                      borderRadius: 8,
+                      padding: "12px 16px",
+                      marginBottom: 18,
                     }}
                   >
                     <div
                       style={{
-                        background:
-                          bulkProgress.failed.length > 0
-                            ? "#f59e0b"
-                            : "#0891b2",
-                        height: "100%",
-                        width: `${(bulkProgress.done / bulkProgress.total) * 100}%`,
-                        transition: "width .2s",
-                        borderRadius: 999,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        marginBottom: 10,
                       }}
-                    />
+                    >
+                      <strong style={{ fontSize: 13, color: "#0f172a" }}>
+                        Preview — {previewBeds.length} beds will be created
+                      </strong>
+                      <Tag
+                        value={`${previewBeds.length} beds`}
+                        severity="info"
+                        style={{ fontSize: 11 }}
+                      />
+                    </div>
+                    <div
+                      style={{
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: 6,
+                        maxHeight: 120,
+                        overflowY: "auto",
+                      }}
+                    >
+                      {previewBeds.map((b) => (
+                        <span
+                          key={b}
+                          style={{
+                            background: "#e0f2fe",
+                            color: "#0369a1",
+                            borderRadius: 5,
+                            padding: "3px 8px",
+                            fontSize: 12,
+                            fontWeight: 600,
+                            fontFamily: "monospace",
+                          }}
+                        >
+                          {b}
+                        </span>
+                      ))}
+                    </div>
                   </div>
+                )}
+
+                <LocationFields />
+
+                <div className="p-field mb-3">
+                  <label>Status (applied to all beds)</label>
+                  <Dropdown
+                    value={formData.status}
+                    options={statusOptions}
+                    onChange={(e) =>
+                      setFormData({ ...formData, status: e.value })
+                    }
+                    placeholder="Select Status"
+                    className="w-full"
+                  />
                 </div>
-              )}
-            </>
-          )}
+
+                <div className="p-field mb-3">
+                  <label>Notes (applied to all beds)</label>
+                  <InputTextarea
+                    value={formData.notes}
+                    onChange={(e) =>
+                      setFormData({ ...formData, notes: e.target.value })
+                    }
+                    rows={2}
+                    placeholder="Optional notes for all beds"
+                  />
+                </div>
+
+                <div className="p-field-checkbox mb-3">
+                  <Checkbox
+                    inputId="isActiveBulk"
+                    checked={formData.isActive}
+                    onChange={(e) =>
+                      setFormData({ ...formData, isActive: e.checked })
+                    }
+                  />
+                  <label htmlFor="isActiveBulk" className="ml-2">
+                    Active
+                  </label>
+                </div>
+
+                {/* Progress bar */}
+                {bulkProgress && (
+                  <div style={{ marginTop: 12 }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        fontSize: 12,
+                        color: "#64748b",
+                        marginBottom: 4,
+                      }}
+                    >
+                      <span>Creating beds…</span>
+                      <span>
+                        {bulkProgress.done} / {bulkProgress.total}
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        background: "#e2e8f0",
+                        borderRadius: 999,
+                        height: 8,
+                        overflow: "hidden",
+                      }}
+                    >
+                      <div
+                        style={{
+                          background:
+                            bulkProgress.failed.length > 0
+                              ? "#f59e0b"
+                              : "#0891b2",
+                          height: "100%",
+                          width: `${(bulkProgress.done / bulkProgress.total) * 100}%`,
+                          transition: "width .2s",
+                          borderRadius: 999,
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+          {/* end scrollable */}
         </div>
       </Dialog>
     </>

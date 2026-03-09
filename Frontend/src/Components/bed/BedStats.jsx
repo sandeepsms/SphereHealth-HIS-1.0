@@ -35,7 +35,7 @@ const BedStats = () => {
     const available = bedsData.filter((b) => b.status === "Available").length;
     const occupied = bedsData.filter((b) => b.status === "Occupied").length;
     const maintenance = bedsData.filter(
-      (b) => b.status === "Maintenance"
+      (b) => b.status === "Maintenance",
     ).length;
     const blocked = bedsData.filter((b) => b.status === "Blocked").length;
     const reserved = bedsData.filter((b) => b.status === "Reserved").length;
@@ -244,8 +244,8 @@ const BedStats = () => {
                 stats.occupancyRate > 80
                   ? "#ef4444"
                   : stats.occupancyRate > 50
-                  ? "#f59e0b"
-                  : "#10b981",
+                    ? "#f59e0b"
+                    : "#10b981",
             }}
           >
             {stats.occupancyRate}%
@@ -261,8 +261,8 @@ const BedStats = () => {
             stats.occupancyRate > 80
               ? "#ef4444"
               : stats.occupancyRate > 50
-              ? "#f59e0b"
-              : "#10b981"
+                ? "#f59e0b"
+                : "#10b981"
           }
         />
       </Card>

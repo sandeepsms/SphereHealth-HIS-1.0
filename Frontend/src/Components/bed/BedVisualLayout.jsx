@@ -99,13 +99,10 @@ const getPatientName = (p) => {
 const getDoctorName = (doctorRef, doctorsMap = {}) => {
   if (!doctorRef) return null;
   if (typeof doctorRef === "string") {
-    // Not a MongoId → it's already a plain name string, return directly
     if (!/^[a-f0-9]{24}$/i.test(doctorRef.trim()))
       return doctorRef.trim() || null;
-    // It's a MongoId → look up in doctorsMap
     return doctorsMap[doctorRef] || null;
   }
-  // Populated object — doctorService stores name under personalInfo.fullName
   return (
     doctorRef.personalInfo?.fullName?.trim() ||
     `${doctorRef.personalInfo?.firstName || ""} ${doctorRef.personalInfo?.lastName || ""}`.trim() ||
@@ -144,63 +141,21 @@ const scoreP = (p, q) =>
     fuzzyScore(p?.contactNumber || p?.phone || "", q),
   );
 
-/* isMongoId: 24-char hex ObjectId */
 const isMongoId = (v) => typeof v === "string" && /^[a-f\d]{24}$/i.test(v);
-/* isUHIDVal: non-empty string that is NOT a MongoId */
 const isUHIDVal = (v) =>
   typeof v === "string" && v.trim().length > 0 && !/^[a-f\d]{24}$/i.test(v);
 
-/* ─── Safe patient unwrap ────────────────────────────────────
-   patientService methods do: return response.data  (axios)
-   So res IS already the parsed JSON body from the server.
-   Backend can return any of these shapes:
-     { success, patient: {...} }
-     { success, data: {...} }
-     { patient: {...} }
-     { ...patientFields directly... }
-   We try each in order.
-─────────────────────────────────────────────────────────── */
 const unwrapPatient = (res) => {
   if (!res || typeof res !== "object") return null;
-  // shape: { patient: {...} }
   if (res.patient && typeof res.patient === "object" && res.patient._id)
     return res.patient;
-  // shape: { data: { patient: {...} } }
   if (res.data && typeof res.data === "object") {
     if (res.data.patient && res.data.patient._id) return res.data.patient;
     if (res.data._id) return res.data;
   }
-  // shape: patient object directly
   if (res._id) return res;
   return null;
 };
-
-/* ─── Stat Card ──────────────────────────────────────────── */
-const StatCard = ({ label, value, icon, gradient }) => (
-  <div
-    style={{
-      background: gradient,
-      borderRadius: 16,
-      padding: "20px 24px",
-      color: "#fff",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "space-between",
-      boxShadow: "0 4px 20px rgba(0,0,0,.12)",
-      transition: "transform .2s",
-    }}
-    onMouseEnter={(e) => (e.currentTarget.style.transform = "scale(1.03)")}
-    onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}
-  >
-    <div>
-      <p style={{ fontSize: 12, opacity: 0.8, margin: "0 0 4px" }}>{label}</p>
-      <p style={{ fontSize: 36, fontWeight: 800, margin: 0, lineHeight: 1 }}>
-        {value}
-      </p>
-    </div>
-    <i className={`pi ${icon}`} style={{ fontSize: 42, opacity: 0.22 }} />
-  </div>
-);
 
 /* ─── Bed Icon ───────────────────────────────────────────── */
 const BedIcon = ({ status }) => {
@@ -249,6 +204,8 @@ const BedVisualLayout = ({ onRefreshParent }) => {
   const [floors, setFloors] = useState([]);
   const [wards, setWards] = useState([]);
   const [rooms, setRooms] = useState([]);
+  const [allFloorsList, setAllFloorsList] = useState([]); // ✅ ALL floors for name lookup
+  const [allRoomsList, setAllRoomsList] = useState([]); // ✅ ALL rooms for name lookup
   const [allPatients, setAllPats] = useState([]);
   const [doctors, setDoctors] = useState([]);
   const [doctorsMap, setDoctorsMap] = useState({});
@@ -308,7 +265,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
   });
   const [discharging, setDischarging] = useState(false);
 
-  /* ── Search results (computed) ── */
+  /* ── Search results ── */
   const searchResults = searchQ.trim()
     ? allPatients
         .map((p) => ({ p, score: scoreP(p, searchQ.trim()) }))
@@ -344,15 +301,23 @@ const BedVisualLayout = ({ onRefreshParent }) => {
   const fetchAll = async () => {
     setBusy(true);
     try {
-      const [b, bl, pts, docs] = await Promise.all([
+      const [b, bl, pts, docs, allF, allR] = await Promise.all([
         bedService.getAllBeds(),
         buildingService.getAllBuildings(),
         patientService.getAllPatients({ limit: 1000 }),
         doctorService.getAllDoctors().catch(() => []),
+        floorService.getAllFloors(), // ✅ load all floors for name lookup
+        roomService.getAllRooms(), // ✅ load all rooms for name lookup
       ]);
 
       setBeds(Array.isArray(b) ? b : b?.data || []);
       setBldgs(Array.isArray(bl) ? bl : bl?.data || []);
+
+      // ✅ Store all floors & rooms for name resolution
+      const allFloorsArr = Array.isArray(allF) ? allF : allF?.data || [];
+      const allRoomsArr = Array.isArray(allR) ? allR : allR?.data || [];
+      setAllFloorsList(allFloorsArr);
+      setAllRoomsList(allRoomsArr);
 
       const pList = Array.isArray(pts) ? pts : pts?.data || pts?.patients || [];
       setAllPats(pList);
@@ -366,7 +331,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       const dMap = {};
       const dOpts = rawDocs
         .map((d) => {
-          // doctorService uses personalInfo.fullName structure
           const name =
             d.personalInfo?.fullName?.trim() ||
             `${d.personalInfo?.firstName || ""} ${d.personalInfo?.lastName || ""}`.trim() ||
@@ -469,14 +433,39 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       list = list.filter(
         (b) =>
           b.bedNumber?.toLowerCase().includes(q) ||
-          b.roomNumber?.toLowerCase().includes(q) ||
+          resolveRoomName(b)?.toLowerCase().includes(q) ||
           resolvePatientName(b.currentAdmission)?.toLowerCase().includes(q),
       );
     }
     setShown(list);
   };
 
-  /* ══ DATA RESOLVERS ══ */
+  /* ══ NAME RESOLVERS ══ */
+
+  // ✅ FIX: Resolve floor name from allFloorsList
+  const resolveFloorName = (bed) => {
+    if (!bed) return "?";
+    const floorId = getId(bed.floor);
+    if (!floorId) return bed.floorNumber ? `Floor ${bed.floorNumber}` : "?";
+    const found = allFloorsList.find((f) => getId(f._id) === floorId);
+    return (
+      found?.floorName ||
+      (found?.floorNumber ? `Floor ${found.floorNumber}` : `Floor ?`)
+    );
+  };
+
+  // ✅ FIX: Resolve room name from allRoomsList
+  const resolveRoomName = (bed) => {
+    if (!bed) return "?";
+    const roomId = getId(bed.room);
+    if (!roomId) return bed.roomNumber ? `Room ${bed.roomNumber}` : "?";
+    const found = allRoomsList.find((r) => getId(r._id) === roomId);
+    return (
+      found?.roomName ||
+      (found?.roomNumber ? `Room ${found.roomNumber}` : `Room ?`)
+    );
+  };
+
   const resolvePatientName = (adm) => {
     if (!adm) return null;
     if (
@@ -535,8 +524,9 @@ const BedVisualLayout = ({ onRefreshParent }) => {
 
   const calcAge = (dob) => {
     if (!dob) return "";
-    const diff = Date.now() - new Date(dob).getTime();
-    return Math.floor(diff / (1000 * 60 * 60 * 24 * 365.25));
+    return Math.floor(
+      (Date.now() - new Date(dob).getTime()) / (1000 * 60 * 60 * 24 * 365.25),
+    );
   };
 
   /* ══ BED CLICK FLOW ══ */
@@ -546,46 +536,28 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     setSearchModal(true);
   };
 
-  /* ══ HANDLE OCCUPIED ══
-     After backend fix (bedsModel + bedService), bed.currentAdmission is now
-     fully populated: { patientId: { fullName, UHID, ... }, UHID, attendingDoctor, ... }
-     So we just read it directly — no extra API calls needed in most cases.
-  ══ */
   const handleOccupied = async (bed) => {
     setDetailBed(bed);
     setDetailPatient(null);
     setDetailAdm(null);
     setDetailLoad(true);
     setDetailModal(true);
-
     try {
       const bedId = getId(bed._id);
-      const ca = bed.currentAdmission; // populated object after backend fix
+      const ca = bed.currentAdmission;
 
-      console.log("[BedLayout] bed clicked — bedId:", bedId);
-      console.log("[BedLayout] currentAdmission:", ca);
-
-      /* ── Path A: currentAdmission is populated (happy path after backend fix) ── */
       if (ca && typeof ca === "object" && ca._id) {
         setDetailAdm(ca);
-
-        // patientId may be populated object OR just an ObjectId string
         const patObj =
           ca.patientId && typeof ca.patientId === "object" && ca.patientId._id
             ? ca.patientId
             : null;
-
         if (patObj && getPatientName(patObj)) {
-          console.log(
-            "[BedLayout] ✅ patient from populated currentAdmission:",
-            patObj,
-          );
           setDetailPatient(patObj);
           setDetailLoad(false);
           return;
         }
 
-        // patientId not populated — fetch by UHID or ObjectId
         const uhid =
           ca.UHID ||
           ca.patientUHID ||
@@ -619,59 +591,33 @@ const BedVisualLayout = ({ onRefreshParent }) => {
             }
           } catch (_) {}
         }
-        // Cache fallback
         const cached = allPatients.find(
           (p) => (uhid && p.UHID === uhid) || (objId && getId(p._id) === objId),
         );
-        if (cached) {
-          setDetailPatient(cached);
-          setDetailLoad(false);
-          return;
-        }
-
-        console.warn("[BedLayout] admission found but patient lookup failed");
+        if (cached) setDetailPatient(cached);
         setDetailLoad(false);
         return;
       }
 
-      /* ── Path B: currentAdmission not populated — fetch admission via getActiveAdmissions ── */
-      console.warn(
-        "[BedLayout] currentAdmission not populated, fetching from API...",
-      );
       try {
         const activeList = await admissionService.getActiveAdmissions();
         const list = Array.isArray(activeList)
           ? activeList
           : activeList?.admissions || activeList?.data || [];
-
         const admRecord = list.find(
           (a) => getId(a.bedId) === bedId || getId(a.bed) === bedId,
         );
-
         if (!admRecord) {
-          console.warn(
-            "[BedLayout] ❌ No active admission for bedId:",
-            bedId,
-            "total active:",
-            list.length,
-          );
           setDetailLoad(false);
           return;
         }
-
-        console.log(
-          "[BedLayout] ✅ admission found via getActiveAdmissions:",
-          admRecord,
-        );
         setDetailAdm(admRecord);
 
-        // Resolve patient from admission
         const uhid = admRecord.UHID || admRecord.patientUHID || null;
         const objId = isMongoId(getId(admRecord.patientId))
           ? getId(admRecord.patientId)
           : null;
 
-        // Try populated patientId first
         if (
           admRecord.patientId &&
           typeof admRecord.patientId === "object" &&
@@ -684,7 +630,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
             return;
           }
         }
-
         if (uhid) {
           try {
             const res = await patientService.getPatientByUHID(uhid);
@@ -710,16 +655,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         const cached = allPatients.find(
           (p) => (uhid && p.UHID === uhid) || (objId && getId(p._id) === objId),
         );
-        if (cached) {
-          setDetailPatient(cached);
-        } else {
-          console.warn(
-            "[BedLayout] ❌ patient NOT found. UHID:",
-            uhid,
-            "ObjId:",
-            objId,
-          );
-        }
+        if (cached) setDetailPatient(cached);
       } catch (e) {
         console.error("[BedLayout] getActiveAdmissions failed:", e?.message);
       }
@@ -958,30 +894,19 @@ const BedVisualLayout = ({ onRefreshParent }) => {
   };
 
   /* ── Group beds by Floor → Room ── */
+  // ✅ FIX: Use resolved names instead of bed.floorNumber / bed.roomName
   const byFloor = (() => {
     const map = {};
     shown.forEach((bed) => {
-      const fk = `Floor ${bed.floorNumber || "?"}`;
+      const fk = resolveFloorName(bed);
       if (!map[fk]) map[fk] = { rooms: {} };
       const rk = String(getId(bed.room) || `nr_${getId(bed._id)}`);
       if (!map[fk].rooms[rk])
-        map[fk].rooms[rk] = {
-          roomName: bed.roomName || `Room ${bed.roomNumber || "?"}`,
-          beds: [],
-        };
+        map[fk].rooms[rk] = { roomName: resolveRoomName(bed), beds: [] };
       map[fk].rooms[rk].beds.push(bed);
     });
     return map;
   })();
-
-  const stats = {
-    total: shown.length,
-    available: shown.filter((b) => b.status === "Available").length,
-    occupied: shown.filter((b) => b.status === "Occupied").length,
-    other: shown.filter(
-      (b) => b.status !== "Available" && b.status !== "Occupied",
-    ).length,
-  };
 
   const canBook =
     !!selPat &&
@@ -1004,40 +929,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     <div style={{ fontFamily: "'Inter',-apple-system,sans-serif" }}>
       <Toast ref={toast} />
 
-      {/* ── STAT CARDS ── */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(4,1fr)",
-          gap: 16,
-          marginBottom: 20,
-        }}
-      >
-        <StatCard
-          label="Total Beds"
-          value={stats.total}
-          icon="pi-inbox"
-          gradient={TEAL_GRAD}
-        />
-        <StatCard
-          label="Available"
-          value={stats.available}
-          icon="pi-check-circle"
-          gradient="linear-gradient(135deg,#10b981,#059669)"
-        />
-        <StatCard
-          label="Occupied"
-          value={stats.occupied}
-          icon="pi-user-minus"
-          gradient="linear-gradient(135deg,#ef4444,#dc2626)"
-        />
-        <StatCard
-          label="Other"
-          value={stats.other}
-          icon="pi-clock"
-          gradient="linear-gradient(135deg,#f59e0b,#d97706)"
-        />
-      </div>
+      {/* ✅ STATS CARDS REMOVED */}
 
       {/* ── FILTER BAR ── */}
       <div
@@ -1125,7 +1017,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
             <input
               value={fSearch}
               onChange={(e) => setFSearch(e.target.value)}
-              placeholder="Search rooms or beds..."
+              placeholder="Search beds or patients..."
               style={{
                 width: "100%",
                 padding: "10px 14px 10px 38px",
@@ -1375,7 +1267,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                         const avail = bed.status === "Available";
                         const occ = bed.status === "Occupied";
                         const adm = bed.currentAdmission;
-
                         const pName = resolvePatientName(adm);
                         const pInfo = occ ? resolvePatientInfo(adm) : {};
                         const docName = occ ? resolveDoctorName(adm) : null;
@@ -1473,7 +1364,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                               </span>
                             </div>
 
-                            {/* Occupied: patient info */}
                             {occ && pName && (
                               <div
                                 style={{
@@ -1627,9 +1517,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         </span>
       </div>
 
-      {/* ══════════════════════════════════════════════
-          MODAL 1 — Search & Admit Patient
-      ══════════════════════════════════════════════ */}
+      {/* ══ MODAL 1 — Search & Admit ══ */}
       <Dialog
         visible={searchModal}
         onHide={() => setSearchModal(false)}
@@ -1673,7 +1561,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               }}
             />
           </div>
-
           <div style={{ maxHeight: 340, overflowY: "auto" }}>
             {searchQ.trim() === "" ? (
               <div
@@ -1781,9 +1668,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         </div>
       </Dialog>
 
-      {/* ══════════════════════════════════════════════
-          MODAL 2 — Admit Patient Form
-      ══════════════════════════════════════════════ */}
+      {/* ══ MODAL 2 — Admit Patient Form ══ */}
       <Dialog
         visible={admModal}
         onHide={() => {
@@ -1830,12 +1715,11 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                   color: "#1e40af",
                 }}
               >
-                {selBed.bedNumber} — Room {selBed.roomNumber}, Floor{" "}
-                {selBed.floorNumber}
+                {selBed.bedNumber} — {resolveRoomName(selBed)},{" "}
+                {resolveFloorName(selBed)}
               </p>
             </div>
           )}
-
           {selPat && (
             <div
               style={{
@@ -1889,7 +1773,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               </div>
             </div>
           )}
-
           <div
             style={{
               display: "grid",
@@ -1925,7 +1808,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               />
             </div>
           </div>
-
           <div style={{ marginBottom: 14 }}>
             <label style={lbl}>Admission Type</label>
             <Dropdown
@@ -1941,7 +1823,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               placeholder="Select Type"
             />
           </div>
-
           <div style={{ marginBottom: 14 }}>
             <label style={lbl}>Attending Doctor</label>
             <Dropdown
@@ -1956,9 +1837,8 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               showClear
             />
           </div>
-
           <div style={{ marginBottom: 14 }}>
-            <label style={lbl}>Diagnosis</label>
+            <label style={lbl}>Diagnosis *</label>
             <InputTextarea
               value={admForm.reasonForAdmission}
               rows={3}
@@ -1969,7 +1849,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               }
             />
           </div>
-
           <div style={{ marginBottom: 20 }}>
             <label style={lbl}>Special Instructions</label>
             <InputTextarea
@@ -1982,7 +1861,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               }
             />
           </div>
-
           <div style={{ display: "flex", gap: 12 }}>
             <button
               onClick={handleAdmit}
@@ -2032,9 +1910,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         </div>
       </Dialog>
 
-      {/* ══════════════════════════════════════════════
-          MODAL 3 — Patient Details
-      ══════════════════════════════════════════════ */}
+      {/* ══ MODAL 3 — Patient Details ══ */}
       <Dialog
         visible={detailModal}
         onHide={() => setDetailModal(false)}
@@ -2072,15 +1948,11 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                   detailAdm ||
                   detailBed.currentAdmission ||
                   detailBed.bookingInfo;
-
-                /* Patient name: prefer fetched detailPatient */
                 const pn =
                   getPatientName(detailPatient) ||
                   resolvePatientName(src) ||
                   src?.patientName ||
                   null;
-
-                /* Patient info: prefer fetched detailPatient */
                 const pInfo = detailPatient
                   ? {
                       age:
@@ -2097,7 +1969,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                         "",
                     }
                   : { ...resolvePatientInfo(src), blood: "", phone: "" };
-
                 const docN = resolveDoctorName(src);
                 const adt = src?.admissionDate
                   ? new Date(src.admissionDate).toLocaleDateString("en-IN", {
@@ -2120,7 +1991,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
 
                 return (
                   <>
-                    {/* Avatar + Name */}
                     <div
                       style={{
                         display: "flex",
@@ -2187,7 +2057,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                       </div>
                     </div>
 
-                    {/* Info grid */}
                     <div
                       style={{
                         display: "grid",
@@ -2232,7 +2101,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                       ))}
                     </div>
 
-                    {/* Doctor box */}
                     <div
                       style={{
                         background: "linear-gradient(135deg,#f5f3ff,#ede9fe)",
@@ -2288,7 +2156,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                       </div>
                     </div>
 
-                    {/* Buttons */}
                     <div style={{ display: "flex", gap: 10 }}>
                       <button
                         onClick={() => src && openDischarge(src, detailBed)}
@@ -2314,14 +2181,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                             : "none",
                           transition: "all .2s",
                         }}
-                        onMouseEnter={(e) => {
-                          if (src)
-                            e.currentTarget.style.transform =
-                              "translateY(-1px)";
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.transform = "none";
-                        }}
                       >
                         <i
                           className="pi pi-sign-out"
@@ -2329,7 +2188,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                         />
                         Discharge
                       </button>
-
                       {src && (
                         <button
                           onClick={() => openEdit(src)}
@@ -2349,19 +2207,11 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                             boxShadow: "0 4px 14px rgba(8,145,178,0.3)",
                             transition: "all .2s",
                           }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.transform =
-                              "translateY(-1px)";
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.transform = "none";
-                          }}
                         >
                           <i className="pi pi-pencil" />
                           Edit
                         </button>
                       )}
-
                       <button
                         onClick={() => setDetailModal(false)}
                         style={{
@@ -2373,13 +2223,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                           fontWeight: 600,
                           color: "#374151",
                           cursor: "pointer",
-                          transition: "all .2s",
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.background = "#f8fafc";
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.background = "#fff";
                         }}
                       >
                         Close
@@ -2393,9 +2236,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         )}
       </Dialog>
 
-      {/* ══════════════════════════════════════════════
-          MODAL 4 — Edit Admission
-      ══════════════════════════════════════════════ */}
+      {/* ══ MODAL 4 — Edit Admission ══ */}
       <Dialog
         visible={editModal}
         onHide={() => !editSaving && setEditModal(false)}
@@ -2436,7 +2277,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               />
             </div>
           ))}
-
           <div className="p-field mb-3">
             <label
               style={{
@@ -2459,7 +2299,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               placeholder="Department"
             />
           </div>
-
           <div className="p-field mb-3">
             <label
               style={{
@@ -2528,7 +2367,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               ))}
             </div>
           </div>
-
           <div className="p-field mb-3">
             <label
               style={{
@@ -2553,7 +2391,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               showClear
             />
           </div>
-
           <div className="p-field mb-3">
             <label
               style={{
@@ -2575,7 +2412,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               }
             />
           </div>
-
           <div
             style={{
               display: "flex",
@@ -2602,9 +2438,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         </div>
       </Dialog>
 
-      {/* ══════════════════════════════════════════════
-          MODAL 5 — Discharge Patient
-      ══════════════════════════════════════════════ */}
+      {/* ══ MODAL 5 — Discharge Patient ══ */}
       <Dialog
         visible={dischargeModal}
         onHide={() => !discharging && setDischargeModal(false)}
@@ -2617,7 +2451,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       >
         {dischargeAdm && (
           <div>
-            {/* Red header */}
             <div
               style={{
                 background: "linear-gradient(135deg,#dc2626,#b91c1c)",

@@ -54,8 +54,13 @@ export const roomService = {
 
   createRoom: async (data) => {
     try {
-      // Strip any pricing/services fields (managed via TPA)
+      // ✅ pricing/services strip karo — TPA manage karta hai
       const { pricing, services, ...cleanData } = data;
+
+      // ✅ Safety check — roomNumber aur roomName dono zaroor hone chahiye
+      if (!cleanData.roomNumber || !cleanData.roomName) {
+        throw new Error("Room number and name are required");
+      }
 
       const response = await fetch(API_ENDPOINTS.ROOMS, {
         method: "POST",
@@ -80,7 +85,7 @@ export const roomService = {
 
   updateRoom: async (id, data) => {
     try {
-      // Strip any pricing/services fields (managed via TPA)
+      // ✅ pricing/services strip karo — TPA manage karta hai
       const { pricing, services, ...cleanData } = data;
 
       const response = await fetch(`${API_ENDPOINTS.ROOMS}/${id}`, {
@@ -183,9 +188,6 @@ export const roomService = {
       return null;
     }
   },
-
-  // ❌ REMOVED: updateRoomServices() - services/pricing moved to TPA
-  // ❌ REMOVED: updateBedOccupancy() - this is internal, handled by bedService
 
   updateBedOccupancy: async (id, occupancy) => {
     try {

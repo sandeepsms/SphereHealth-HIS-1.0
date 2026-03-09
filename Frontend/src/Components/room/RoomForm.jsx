@@ -16,18 +16,16 @@ import { roomCategoryService } from "../../Services/roomCategoryService";
 
 /* ─────────────────────────────────────────────────────────────
    AUTO ROOM CODE — "R" + timestamp + random 3 digits
-   Guaranteed unique on every call
 ───────────────────────────────────────────────────────────── */
 const genRoomCode = (roomNumber = "") => {
   const base = roomNumber ? roomNumber.toUpperCase().replace(/\s+/g, "-") : "";
-  const rand = Math.floor(Math.random() * 900 + 100); // 100-999
-  const ts = Date.now().toString().slice(-4); // last 4 digits of timestamp
+  const rand = Math.floor(Math.random() * 900 + 100);
+  const ts = Date.now().toString().slice(-4);
   return base ? `${base}-${ts}${rand}` : `R-${ts}${rand}`;
 };
 
 /* ─────────────────────────────────────────────────────────────
    RANGE PARSER — "101" to "110" → ["101","102"..."110"]
-   Also handles "A101" to "A110", "ICU-01" to "ICU-10"
 ───────────────────────────────────────────────────────────── */
 const parseRoomRange = (from, to) => {
   const split = (str) => {
@@ -56,16 +54,13 @@ const parseRoomRange = (from, to) => {
 const RoomForm = ({ visible, onHide, room, onSave }) => {
   const toast = React.useRef(null);
 
-  // ── mode
-  const [mode, setMode] = useState("single"); // "single" | "bulk"
+  const [mode, setMode] = useState("single");
 
-  // ── bulk range
   const [rangeFrom, setRangeFrom] = useState("");
   const [rangeTo, setRangeTo] = useState("");
   const [preview, setPreview] = useState([]);
   const [rangeErr, setRangeErr] = useState("");
 
-  // ── form
   const [formData, setFormData] = useState({
     building: "",
     floor: "",
@@ -79,7 +74,6 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
     notes: "",
   });
 
-  // ── lookups
   const [buildings, setBuildings] = useState([]);
   const [allFloors, setAllFloors] = useState([]);
   const [allWards, setAllWards] = useState([]);
@@ -87,7 +81,7 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
   const [filtWards, setFiltWards] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [bulkProg, setBulkProg] = useState(null); // { done, total, failed[] }
+  const [bulkProg, setBulkProg] = useState(null);
 
   const statusOptions = [
     { label: "Active", value: "Active" },
@@ -96,7 +90,6 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
     { label: "Blocked", value: "Blocked" },
   ];
 
-  /* ── load on open ── */
   useEffect(() => {
     if (visible) {
       loadAll();
@@ -121,7 +114,6 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
     else if (!visible) resetForm();
   }, [room, visible]);
 
-  /* ── live range preview ── */
   useEffect(() => {
     if (mode !== "bulk" || !rangeFrom || !rangeTo) {
       setPreview([]);
@@ -207,13 +199,24 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
     if (!validateLocation()) return;
     setLoading(true);
     try {
-      // Auto-generate unique roomCode
       const payload = {
-        ...formData,
+        building: formData.building,
+        floor: formData.floor,
+        ward: formData.ward || null,
+        roomNumber: formData.roomNumber,
+        // ✅ FIX: roomName kabhi empty nahi jayega
+        roomName: formData.roomName?.trim() || `Room ${formData.roomNumber}`,
+        roomCategory: formData.roomCategory,
+        totalBeds: formData.totalBeds || 1,
+        status: formData.status || "Active",
+        isActive: formData.isActive ?? true,
+        notes: formData.notes || "",
         roomCode: genRoomCode(formData.roomNumber),
       };
+
       if (room?._id) await roomService.updateRoom(room._id, payload);
       else await roomService.createRoom(payload);
+
       showToast(
         "success",
         "Success",
@@ -234,23 +237,38 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
     if (!validateLocation()) return;
     if (preview.length === 0 || rangeErr)
       return showToast("warn", "Warning", rangeErr || "Enter valid range");
+
     setLoading(true);
     const failed = [];
     setBulkProg({ done: 0, total: preview.length, failed: [] });
+
     for (let i = 0; i < preview.length; i++) {
       const rn = preview[i];
       try {
+        // ✅ FIX: roomName kabhi empty string nahi — fallback "Room 101"
+        const roomName = formData.roomName?.trim()
+          ? `${formData.roomName.trim()} ${rn}`
+          : `Room ${rn}`;
+
         await roomService.createRoom({
-          ...formData,
+          building: formData.building,
+          floor: formData.floor,
+          ward: formData.ward || null,
           roomNumber: rn,
-          roomName: formData.roomName ? `${formData.roomName} ${rn}` : "",
-          roomCode: genRoomCode(rn), // unique per room
+          roomName: roomName,
+          roomCategory: formData.roomCategory,
+          totalBeds: formData.totalBeds || 1,
+          status: formData.status || "Active",
+          isActive: formData.isActive ?? true,
+          notes: formData.notes || "",
+          roomCode: genRoomCode(rn),
         });
       } catch {
         failed.push(rn);
       }
       setBulkProg({ done: i + 1, total: preview.length, failed });
     }
+
     setLoading(false);
     const ok = preview.length - failed.length;
     if (failed.length === 0)
@@ -479,13 +497,13 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
                       onChange={(e) =>
                         setFormData({ ...formData, roomName: e.target.value })
                       }
-                      placeholder="e.g. General Ward A"
+                      placeholder="e.g. General Ward A (optional)"
                     />
                   </div>
                 </div>
               </div>
 
-              {/* Room Code — auto, shown as info only */}
+              {/* Auto room code info */}
               <div
                 style={{
                   background: "#f0fdf4",
@@ -564,7 +582,6 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
           {/* ══ BULK MODE ══ */}
           {mode === "bulk" && (
             <>
-              {/* Tip */}
               <div
                 style={{
                   background: "#f0fdf4",
@@ -588,14 +605,15 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
                   numbers with same prefix.
                   <br />
                   <span style={{ opacity: 0.8 }}>
-                    Examples: &nbsp;<code>101</code> → <code>110</code>{" "}
+                    Examples: &nbsp;<code>101</code> → <code>110</code>
                     &nbsp;|&nbsp;
                     <code>A01</code> → <code>A20</code> &nbsp;|&nbsp;
                     <code>ICU-01</code> → <code>ICU-05</code>
                   </span>
                   <br />
                   <span style={{ opacity: 0.7 }}>
-                    Room codes are auto-generated uniquely for each room.
+                    Room codes are auto-generated uniquely for each room. Room
+                    name prefix optional — auto-filled if blank.
                   </span>
                 </div>
               </div>
@@ -735,7 +753,7 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
                   onChange={(e) =>
                     setFormData({ ...formData, roomName: e.target.value })
                   }
-                  placeholder="e.g. 'General Ward' → 'General Ward 101'"
+                  placeholder="e.g. 'General Ward' → 'General Ward 101' (blank = auto)"
                 />
               </div>
 
