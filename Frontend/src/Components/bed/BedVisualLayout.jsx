@@ -157,39 +157,30 @@ const unwrapPatient = (res) => {
   return null;
 };
 
-/* ─── Bed Icon ───────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────
+   ✅ BED ICON — uses Font Awesome <i class="fas fa-bed">
+   Add this to your index.html if not already present:
+   <link rel="stylesheet"
+     href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"/>
+───────────────────────────────────────────────────────── */
 const BedIcon = ({ status }) => {
   const col = STATUS_COLOR[status] || "#9ca3af";
-  const dark =
-    status === "Available"
-      ? "#16a34a"
-      : status === "Occupied"
-        ? "#b91c1c"
-        : "#78716c";
   return (
-    <svg
-      width="32"
-      height="28"
-      viewBox="0 0 36 30"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 36,
+        height: 36,
+        borderRadius: 10,
+        background: `${col}18`,
+        border: `1.5px solid ${col}40`,
+        flexShrink: 0,
+      }}
     >
-      <rect x="2" y="14" width="32" height="10" rx="2" fill={col} />
-      <rect x="2" y="8" width="5" height="16" rx="1.5" fill={dark} />
-      <rect
-        x="8"
-        y="10"
-        width="9"
-        height="7"
-        rx="2"
-        fill="white"
-        opacity=".9"
-      />
-      <rect x="8" y="14" width="24" height="4" rx="1" fill={col} opacity=".6" />
-      <rect x="29" y="10" width="4" height="14" rx="1.5" fill={dark} />
-      <rect x="3" y="23" width="4" height="6" rx="1" fill={dark} />
-      <rect x="29" y="23" width="4" height="6" rx="1" fill={dark} />
-    </svg>
+      <i className="fas fa-bed" style={{ fontSize: 16, color: col }} />
+    </span>
   );
 };
 
@@ -197,33 +188,29 @@ const BedIcon = ({ status }) => {
 const BedVisualLayout = ({ onRefreshParent }) => {
   const toast = useRef(null);
 
-  /* ── data ── */
   const [beds, setBeds] = useState([]);
   const [shown, setShown] = useState([]);
   const [bldgs, setBldgs] = useState([]);
   const [floors, setFloors] = useState([]);
   const [wards, setWards] = useState([]);
   const [rooms, setRooms] = useState([]);
-  const [allFloorsList, setAllFloorsList] = useState([]); // ✅ ALL floors for name lookup
-  const [allRoomsList, setAllRoomsList] = useState([]); // ✅ ALL rooms for name lookup
+  const [allFloorsList, setAllFloorsList] = useState([]);
+  const [allRoomsList, setAllRoomsList] = useState([]);
   const [allPatients, setAllPats] = useState([]);
   const [doctors, setDoctors] = useState([]);
   const [doctorsMap, setDoctorsMap] = useState({});
   const [busy, setBusy] = useState(false);
 
-  /* ── filters ── */
   const [fBldg, setFBldg] = useState(null);
   const [fFloor, setFFloor] = useState(null);
   const [fWard, setFWard] = useState(null);
   const [fRoom, setFRoom] = useState(null);
   const [fSearch, setFSearch] = useState("");
 
-  /* ── Modal 1: Search & Admit ── */
   const [searchModal, setSearchModal] = useState(false);
   const [searchQ, setSearchQ] = useState("");
   const [selBed, setSelBed] = useState(null);
 
-  /* ── Modal 2: Admission Form ── */
   const [admModal, setAdmModal] = useState(false);
   const [selPat, setSelPat] = useState(null);
   const [admForm, setAdmForm] = useState({
@@ -237,20 +224,17 @@ const BedVisualLayout = ({ onRefreshParent }) => {
   });
   const [booking, setBooking] = useState(false);
 
-  /* ── Modal 3: Patient Details ── */
   const [detailModal, setDetailModal] = useState(false);
   const [detailBed, setDetailBed] = useState(null);
   const [detailAdm, setDetailAdm] = useState(null);
   const [detailPatient, setDetailPatient] = useState(null);
   const [detailLoading, setDetailLoad] = useState(false);
 
-  /* ── Modal 4: Edit ── */
   const [editModal, setEditModal] = useState(false);
   const [editAdm, setEditAdm] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [editSaving, setEditSaving] = useState(false);
 
-  /* ── Modal 5: Discharge ── */
   const [dischargeModal, setDischargeModal] = useState(false);
   const [dischargeAdm, setDischargeAdm] = useState(null);
   const [dischargeBed, setDischargeBed] = useState(null);
@@ -265,7 +249,10 @@ const BedVisualLayout = ({ onRefreshParent }) => {
   });
   const [discharging, setDischarging] = useState(false);
 
-  /* ── Search results ── */
+  /* ── Modal 6: Discharge Invoice ── */
+  const [invoiceModal, setInvoiceModal] = useState(false);
+  const [invoiceData, setInvoiceData] = useState(null);
+
   const searchResults = searchQ.trim()
     ? allPatients
         .map((p) => ({ p, score: scoreP(p, searchQ.trim()) }))
@@ -275,7 +262,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         .map((x) => x.p)
     : [];
 
-  /* ══ LIFECYCLE ══ */
   useEffect(() => {
     fetchAll();
   }, []);
@@ -297,7 +283,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     doFilter();
   }, [beds, fBldg, fFloor, fWard, fRoom, fSearch]);
 
-  /* ══ FETCH ══ */
   const fetchAll = async () => {
     setBusy(true);
     try {
@@ -306,28 +291,18 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         buildingService.getAllBuildings(),
         patientService.getAllPatients({ limit: 1000 }),
         doctorService.getAllDoctors().catch(() => []),
-        floorService.getAllFloors(), // ✅ load all floors for name lookup
-        roomService.getAllRooms(), // ✅ load all rooms for name lookup
+        floorService.getAllFloors(),
+        roomService.getAllRooms(),
       ]);
-
       setBeds(Array.isArray(b) ? b : b?.data || []);
       setBldgs(Array.isArray(bl) ? bl : bl?.data || []);
+      setAllFloorsList(Array.isArray(allF) ? allF : allF?.data || []);
+      setAllRoomsList(Array.isArray(allR) ? allR : allR?.data || []);
+      setAllPats(Array.isArray(pts) ? pts : pts?.data || pts?.patients || []);
 
-      // ✅ Store all floors & rooms for name resolution
-      const allFloorsArr = Array.isArray(allF) ? allF : allF?.data || [];
-      const allRoomsArr = Array.isArray(allR) ? allR : allR?.data || [];
-      setAllFloorsList(allFloorsArr);
-      setAllRoomsList(allRoomsArr);
-
-      const pList = Array.isArray(pts) ? pts : pts?.data || pts?.patients || [];
-      setAllPats(pList);
-
-      let rawDocs = [];
-      if (Array.isArray(docs)) rawDocs = docs;
-      else if (Array.isArray(docs?.data)) rawDocs = docs.data;
-      else if (Array.isArray(docs?.doctors)) rawDocs = docs.doctors;
-      else if (Array.isArray(docs?.result)) rawDocs = docs.result;
-
+      let rawDocs = Array.isArray(docs)
+        ? docs
+        : docs?.data || docs?.doctors || docs?.result || [];
       const dMap = {};
       const dOpts = rawDocs
         .map((d) => {
@@ -361,7 +336,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
           };
         })
         .filter((d) => d.label && d.label !== "Unknown" && d._id);
-
       setDoctors(dOpts);
       setDoctorsMap(dMap);
     } catch (e) {
@@ -385,7 +359,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       setFloors([]);
     }
   };
-
   const fetchWards = async () => {
     try {
       const r = await wardService.getAllWards();
@@ -395,7 +368,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       setWards([]);
     }
   };
-
   const fetchRooms = async () => {
     try {
       const r = await roomService.getAllRooms();
@@ -405,7 +377,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       setRooms([]);
     }
   };
-
   const fetchBeds = async () => {
     setBusy(true);
     try {
@@ -440,9 +411,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     setShown(list);
   };
 
-  /* ══ NAME RESOLVERS ══ */
-
-  // ✅ FIX: Resolve floor name from allFloorsList
   const resolveFloorName = (bed) => {
     if (!bed) return "?";
     const floorId = getId(bed.floor);
@@ -450,11 +418,9 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     const found = allFloorsList.find((f) => getId(f._id) === floorId);
     return (
       found?.floorName ||
-      (found?.floorNumber ? `Floor ${found.floorNumber}` : `Floor ?`)
+      (found?.floorNumber ? `Floor ${found.floorNumber}` : "Floor ?")
     );
   };
-
-  // ✅ FIX: Resolve room name from allRoomsList
   const resolveRoomName = (bed) => {
     if (!bed) return "?";
     const roomId = getId(bed.room);
@@ -462,10 +428,9 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     const found = allRoomsList.find((r) => getId(r._id) === roomId);
     return (
       found?.roomName ||
-      (found?.roomNumber ? `Room ${found.roomNumber}` : `Room ?`)
+      (found?.roomNumber ? `Room ${found.roomNumber}` : "Room ?")
     );
   };
-
   const resolvePatientName = (adm) => {
     if (!adm) return null;
     if (
@@ -486,7 +451,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     }
     return null;
   };
-
   const resolveDoctorName = (adm) => {
     if (!adm) return null;
     return (
@@ -495,7 +459,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       null
     );
   };
-
   const resolvePatientInfo = (adm) => {
     if (!adm) return {};
     const pObj = typeof adm.patientId === "object" ? adm.patientId : null;
@@ -521,7 +484,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     }
     return { uhid: adm.UHID || "", age: "", gender: "" };
   };
-
   const calcAge = (dob) => {
     if (!dob) return "";
     return Math.floor(
@@ -529,13 +491,11 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     );
   };
 
-  /* ══ BED CLICK FLOW ══ */
   const handleAvailable = (bed) => {
     setSelBed(bed);
     setSearchQ("");
     setSearchModal(true);
   };
-
   const handleOccupied = async (bed) => {
     setDetailBed(bed);
     setDetailPatient(null);
@@ -545,7 +505,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     try {
       const bedId = getId(bed._id);
       const ca = bed.currentAdmission;
-
       if (ca && typeof ca === "object" && ca._id) {
         setDetailAdm(ca);
         const patObj =
@@ -557,7 +516,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
           setDetailLoad(false);
           return;
         }
-
         const uhid =
           ca.UHID ||
           ca.patientUHID ||
@@ -568,7 +526,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
           typeof ca.patientId === "string" && isMongoId(ca.patientId)
             ? ca.patientId
             : getId(ca.patientId);
-
         if (uhid) {
           try {
             const res = await patientService.getPatientByUHID(uhid);
@@ -598,7 +555,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         setDetailLoad(false);
         return;
       }
-
       try {
         const activeList = await admissionService.getActiveAdmissions();
         const list = Array.isArray(activeList)
@@ -612,12 +568,10 @@ const BedVisualLayout = ({ onRefreshParent }) => {
           return;
         }
         setDetailAdm(admRecord);
-
         const uhid = admRecord.UHID || admRecord.patientUHID || null;
         const objId = isMongoId(getId(admRecord.patientId))
           ? getId(admRecord.patientId)
           : null;
-
         if (
           admRecord.patientId &&
           typeof admRecord.patientId === "object" &&
@@ -693,7 +647,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     setAdmModal(true);
   };
 
-  /* ══ ADMIT ══ */
   const handleAdmit = async () => {
     if (!selPat || !selBed) return;
     if (!admForm.reasonForAdmission.trim()) {
@@ -764,7 +717,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     }
   };
 
-  /* ══ EDIT ══ */
   const openEdit = (adm) => {
     setDetailModal(false);
     setEditAdm(adm);
@@ -821,7 +773,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     }
   };
 
-  /* ══ DISCHARGE ══ */
   const openDischarge = (adm, bed) => {
     setDetailModal(false);
     setDischargeAdm(adm);
@@ -870,12 +821,21 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         detail: `Bed ${dischargeBed?.bedNumber || ""} ab Available hai`,
         life: 5000,
       });
+      // ✅ Save invoice data before clearing state
+      setInvoiceData({
+        patient: dischargePatient,
+        admission: dischargeAdm,
+        bed: dischargeBed,
+        form: { ...dischargeForm },
+        dischargedAt: new Date().toISOString(),
+      });
       setDischargeModal(false);
       setDischargeAdm(null);
       setDischargeBed(null);
       setDischargePatient(null);
       await fetchBeds();
       onRefreshParent?.();
+      setInvoiceModal(true);
     } catch (e) {
       setBeds((prev) =>
         prev.map((b) =>
@@ -893,8 +853,185 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     }
   };
 
-  /* ── Group beds by Floor → Room ── */
-  // ✅ FIX: Use resolved names instead of bed.floorNumber / bed.roomName
+  /* ══ PRINT INVOICE ══ */
+  const printInvoice = () => {
+    if (!invoiceData) return;
+    const { patient, admission, bed, form, dischargedAt } = invoiceData;
+    const pName = getPatientName(patient) || admission?.patientName || "—";
+    const uhid = patient?.UHID || admission?.UHID || "—";
+    const admDate = admission?.admissionDate
+      ? new Date(admission.admissionDate).toLocaleDateString("en-IN", {
+          day: "2-digit",
+          month: "short",
+          year: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : "—";
+    const disDate = form.actualDischargeDate
+      ? new Date(form.actualDischargeDate).toLocaleDateString("en-IN", {
+          day: "2-digit",
+          month: "short",
+          year: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : new Date(dischargedAt).toLocaleDateString("en-IN");
+    const days = admission?.admissionDate
+      ? Math.max(
+          1,
+          Math.ceil(
+            (new Date(form.actualDischargeDate || dischargedAt) -
+              new Date(admission.admissionDate)) /
+              (1000 * 60 * 60 * 24),
+          ),
+        )
+      : "—";
+    const dept =
+      typeof admission?.department === "object"
+        ? admission?.department?.name
+        : admission?.department || "—";
+    const doctor = resolveDoctorName(admission) || "—";
+    const cost = form.totalCost
+      ? `₹ ${Number(form.totalCost).toLocaleString("en-IN")}`
+      : "—";
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8"/>
+  <title>Discharge Invoice</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family: Arial, sans-serif; color: #1e293b; background:#fff; }
+    .page { width:210mm; min-height:297mm; margin:0 auto; padding:12mm 14mm; }
+    /* Header */
+    .header { display:flex; justify-content:space-between; align-items:flex-start; padding-bottom:12px; border-bottom:3px solid #0891b2; margin-bottom:18px; }
+    .hospital-name { font-size:22px; font-weight:800; color:#0891b2; letter-spacing:-0.5px; }
+    .hospital-sub  { font-size:11px; color:#64748b; margin-top:3px; }
+    .invoice-badge { text-align:right; }
+    .invoice-badge .inv-title { font-size:18px; font-weight:700; color:#dc2626; }
+    .invoice-badge .inv-no    { font-size:11px; color:#64748b; margin-top:2px; }
+    /* Status strip */
+    .status-strip { background:linear-gradient(135deg,#dc2626,#b91c1c); color:#fff; borderRadius:10px; padding:10px 18px; display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; border-radius:8px; }
+    .status-strip .label { font-size:11px; opacity:.8; }
+    .status-strip .value { font-size:14px; font-weight:700; margin-top:1px; }
+    /* Grid sections */
+    .section-title { font-size:12px; font-weight:700; color:#0891b2; text-transform:uppercase; letter-spacing:.06em; margin-bottom:10px; padding-bottom:4px; border-bottom:1px solid #e2e8f0; }
+    .info-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px 24px; margin-bottom:18px; }
+    .info-item .lbl { font-size:10px; color:#9ca3af; text-transform:uppercase; letter-spacing:.05em; }
+    .info-item .val { font-size:13px; font-weight:600; color:#0f172a; margin-top:2px; }
+    /* Summary box */
+    .summary-box { background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:14px 16px; margin-bottom:18px; font-size:13px; color:#374151; line-height:1.6; }
+    .summary-box .no-content { color:#94a3b8; font-style:italic; }
+    /* Cost table */
+    .cost-table { width:100%; border-collapse:collapse; margin-bottom:18px; }
+    .cost-table th { background:#0891b2; color:#fff; padding:9px 14px; font-size:12px; text-align:left; }
+    .cost-table td { padding:9px 14px; font-size:13px; border-bottom:1px solid #f1f5f9; }
+    .cost-table .total-row td { font-weight:700; font-size:14px; background:#f0f9ff; color:#0891b2; }
+    /* Condition badge */
+    .condition { display:inline-block; padding:4px 14px; border-radius:20px; font-size:12px; font-weight:700; }
+    .Stable   { background:#d1fae5; color:#065f46; }
+    .Improved { background:#dbeafe; color:#1e40af; }
+    .Critical { background:#fee2e2; color:#991b1b; }
+    .LAMA     { background:#ede9fe; color:#5b21b6; }
+    /* Footer */
+    .footer { margin-top:auto; padding-top:16px; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:flex-end; }
+    .sign-box { text-align:center; }
+    .sign-line { width:140px; border-bottom:1px solid #374151; margin-bottom:4px; height:36px; }
+    .sign-label { font-size:10px; color:#64748b; }
+    .footer-note { font-size:10px; color:#94a3b8; text-align:center; margin-top:8px; }
+    @media print {
+      body { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+      .page { padding:8mm 10mm; }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header -->
+  <div class="header">
+    <div>
+      <div class="hospital-name">Spherehealth Medical Solutions</div>
+      <div class="hospital-sub">Complete Healthcare Management System</div>
+    </div>
+    <div class="invoice-badge">
+      <div class="inv-title">DISCHARGE INVOICE</div>
+      <div class="inv-no">Date: ${new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</div>
+    </div>
+  </div>
+
+  <!-- Status strip -->
+  <div class="status-strip">
+    <div><div class="label">Patient Name</div><div class="value">${pName}</div></div>
+    <div><div class="label">UHID</div><div class="value">${uhid}</div></div>
+    <div><div class="label">Bed</div><div class="value">${bed?.bedNumber || "—"}</div></div>
+    <div><div class="label">Condition</div><div class="value">${form.conditionOnDischarge || "Stable"}</div></div>
+  </div>
+
+  <!-- Patient & Admission Info -->
+  <div class="section-title">Patient & Admission Details</div>
+  <div class="info-grid">
+    <div class="info-item"><div class="lbl">Patient Name</div><div class="val">${pName}</div></div>
+    <div class="info-item"><div class="lbl">UHID / Patient ID</div><div class="val">${uhid}</div></div>
+    <div class="info-item"><div class="lbl">Admission Date</div><div class="val">${admDate}</div></div>
+    <div class="info-item"><div class="lbl">Discharge Date</div><div class="val">${disDate}</div></div>
+    <div class="info-item"><div class="lbl">Total Stay</div><div class="val">${days} Day${days !== 1 ? "s" : ""}</div></div>
+    <div class="info-item"><div class="lbl">Bed Number</div><div class="val">${bed?.bedNumber || "—"}</div></div>
+    <div class="info-item"><div class="lbl">Department</div><div class="val">${dept}</div></div>
+    <div class="info-item"><div class="lbl">Admission Type</div><div class="val">${admission?.admissionType || "—"}</div></div>
+    <div class="info-item"><div class="lbl">Attending Doctor</div><div class="val">${doctor}</div></div>
+    <div class="info-item"><div class="lbl">Condition on Discharge</div><div class="val"><span class="condition ${form.conditionOnDischarge || "Stable"}">${form.conditionOnDischarge || "Stable"}</span></div></div>
+  </div>
+
+  <!-- Clinical Notes -->
+  <div class="section-title">Clinical Summary</div>
+  <div style="margin-bottom:10px">
+    <div style="font-size:11px;color:#64748b;font-weight:600;margin-bottom:4px">DIAGNOSIS / REASON FOR ADMISSION</div>
+    <div class="summary-box">${admission?.reasonForAdmission || '<span class="no-content">Not specified</span>'}</div>
+  </div>
+  <div style="margin-bottom:10px">
+    <div style="font-size:11px;color:#64748b;font-weight:600;margin-bottom:4px">DISCHARGE SUMMARY</div>
+    <div class="summary-box">${form.dischargeSummary || '<span class="no-content">Not provided</span>'}</div>
+  </div>
+  <div style="margin-bottom:10px">
+    <div style="font-size:11px;color:#64748b;font-weight:600;margin-bottom:4px">DISCHARGE NOTES</div>
+    <div class="summary-box">${form.dischargeNotes || '<span class="no-content">Not provided</span>'}</div>
+  </div>
+  <div style="margin-bottom:18px">
+    <div style="font-size:11px;color:#64748b;font-weight:600;margin-bottom:4px">FOLLOW-UP INSTRUCTIONS</div>
+    <div class="summary-box">${form.followUpInstructions || '<span class="no-content">Not provided</span>'}</div>
+  </div>
+
+  <!-- Cost -->
+  <div class="section-title">Billing Summary</div>
+  <table class="cost-table">
+    <thead><tr><th>Description</th><th>Details</th><th style="text-align:right">Amount</th></tr></thead>
+    <tbody>
+      <tr><td>Bed Charges (${days} day${days !== 1 ? "s" : ""})</td><td>Bed ${bed?.bedNumber || "—"} · ${dept}</td><td style="text-align:right">${cost}</td></tr>
+      <tr class="total-row"><td colspan="2"><strong>Total Amount</strong></td><td style="text-align:right"><strong>${cost}</strong></td></tr>
+    </tbody>
+  </table>
+
+  <!-- Signatures -->
+  <div class="footer">
+    <div class="sign-box"><div class="sign-line"></div><div class="sign-label">Patient / Attendant Signature</div></div>
+    <div class="sign-box"><div class="sign-line"></div><div class="sign-label">Attending Doctor</div></div>
+    <div class="sign-box"><div class="sign-line"></div><div class="sign-label">Authorized Signatory</div></div>
+  </div>
+  <div class="footer-note">This is a computer-generated document. For queries contact the billing department.</div>
+
+</div>
+</body>
+</html>`;
+
+    const win = window.open("", "_blank", "width=900,height=700");
+    win.document.write(html);
+    win.document.close();
+    win.onload = () => win.print();
+  };
+
   const byFloor = (() => {
     const map = {};
     shown.forEach((bed) => {
@@ -913,7 +1050,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     !!admForm.department &&
     !!admForm.admissionDateTime &&
     !!admForm.reasonForAdmission.trim();
-
   const lbl = {
     display: "block",
     fontSize: 13,
@@ -922,14 +1058,17 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     marginBottom: 6,
   };
 
-  /* ════════════════════════════════════════════════════════
-     RENDER
-  ════════════════════════════════════════════════════════ */
   return (
     <div style={{ fontFamily: "'Inter',-apple-system,sans-serif" }}>
       <Toast ref={toast} />
 
-      {/* ✅ STATS CARDS REMOVED */}
+      {/* ══ DISCHARGE DIALOG SCROLL FIX ══ */}
+      <style>{`
+        .discharge-dlg .p-dialog-content {
+          padding: 0 !important;
+          overflow: hidden !important;
+        }
+      `}</style>
 
       {/* ── FILTER BAR ── */}
       <div
@@ -994,7 +1133,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
             />
           </div>
         </div>
-
         <div
           style={{
             display: "grid",
@@ -1140,7 +1278,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                 marginBottom: 20,
               }}
             >
-              {/* Floor header */}
               <div
                 style={{
                   background: TEAL_GRAD,
@@ -1183,8 +1320,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                   })}
                 </div>
               </div>
-
-              {/* Rooms grid */}
               <div
                 style={{
                   display: "grid",
@@ -1203,7 +1338,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                       background: "#fafafa",
                     }}
                   >
-                    {/* Room header */}
                     <div
                       style={{
                         padding: "12px 18px",
@@ -1248,8 +1382,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                         {grp.beds.length} Bed{grp.beds.length !== 1 ? "s" : ""}
                       </span>
                     </div>
-
-                    {/* Bed cards */}
                     <div
                       style={{
                         padding: 12,
@@ -1311,7 +1443,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                               e.currentTarget.style.boxShadow = "none";
                             }}
                           >
-                            {/* Top row */}
+                            {/* ✅ Top row with Font Awesome bed icon */}
                             <div
                               style={{
                                 display: "flex",
@@ -1422,7 +1554,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                                 )}
                               </div>
                             )}
-
                             {occ && !pName && (
                               <div
                                 style={{
@@ -1441,7 +1572,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                                 </div>
                               </div>
                             )}
-
                             {avail && (
                               <div
                                 style={{
@@ -1988,7 +2118,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                       { day: "2-digit", month: "short", year: "numeric" },
                     )
                   : "—";
-
                 return (
                   <>
                     <div
@@ -2056,7 +2185,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                         )}
                       </div>
                     </div>
-
                     <div
                       style={{
                         display: "grid",
@@ -2100,7 +2228,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                         </div>
                       ))}
                     </div>
-
                     <div
                       style={{
                         background: "linear-gradient(135deg,#f5f3ff,#ede9fe)",
@@ -2155,7 +2282,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                         </p>
                       </div>
                     </div>
-
                     <div style={{ display: "flex", gap: 10 }}>
                       <button
                         onClick={() => src && openDischarge(src, detailBed)}
@@ -2438,19 +2564,28 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         </div>
       </Dialog>
 
-      {/* ══ MODAL 5 — Discharge Patient ══ */}
+      {/* ══ MODAL 5 — Discharge Patient ✅ SCROLLABLE FIX ══ */}
       <Dialog
         visible={dischargeModal}
         onHide={() => !discharging && setDischargeModal(false)}
         style={{ width: "560px" }}
+        className="discharge-dlg"
         header={null}
         modal
         draggable={false}
         closable={false}
-        contentStyle={{ padding: 0, borderRadius: 16, overflow: "hidden" }}
+        contentStyle={{ padding: 0 }}
       >
         {dischargeAdm && (
-          <div>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              maxHeight: "85vh",
+              overflow: "hidden",
+            }}
+          >
+            {/* Fixed header */}
             <div
               style={{
                 background: "linear-gradient(135deg,#dc2626,#b91c1c)",
@@ -2458,6 +2593,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
+                flexShrink: 0,
               }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -2483,7 +2619,15 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               </button>
             </div>
 
-            <div style={{ padding: "20px 24px" }}>
+            {/* ✅ Scrollable content area */}
+            <div
+              style={{
+                overflowY: "auto",
+                maxHeight: "calc(85vh - 80px)",
+                padding: "20px 24px 8px 24px",
+                overscrollBehavior: "contain",
+              }}
+            >
               {/* Patient strip */}
               <div
                 style={{
@@ -2625,7 +2769,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                 </div>
               ))}
 
-              {/* Condition */}
+              {/* Condition on Discharge */}
               <div style={{ marginBottom: 16 }}>
                 <label
                   style={{
@@ -2755,55 +2899,432 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                   />
                 </div>
               ))}
+            </div>
+            {/* end scrollable */}
 
-              <div style={{ display: "flex", gap: 12, marginTop: 4 }}>
-                <button
-                  onClick={doDischarge}
-                  disabled={discharging}
-                  style={{
-                    flex: 1,
-                    background: discharging
-                      ? "#94a3b8"
-                      : "linear-gradient(135deg,#dc2626,#b91c1c)",
-                    color: "#fff",
-                    border: "none",
-                    borderRadius: 12,
-                    padding: "13px",
-                    fontSize: 14,
-                    fontWeight: 700,
-                    cursor: discharging ? "not-allowed" : "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 8,
-                  }}
-                >
-                  <i
-                    className={`pi ${discharging ? "pi-spin pi-spinner" : "pi-sign-out"}`}
-                  />
-                  {discharging ? "Discharge ho raha hai…" : "Discharge Confirm"}
-                </button>
-                <button
-                  onClick={() => !discharging && setDischargeModal(false)}
-                  disabled={discharging}
-                  style={{
-                    padding: "13px 20px",
-                    border: "1.5px solid #e2e8f0",
-                    borderRadius: 12,
-                    background: "#fff",
-                    fontSize: 14,
-                    fontWeight: 600,
-                    color: "#64748b",
-                    cursor: discharging ? "not-allowed" : "pointer",
-                  }}
-                >
-                  Cancel
-                </button>
-              </div>
+            {/* Fixed footer — sticky bottom */}
+            <div
+              style={{
+                position: "sticky",
+                bottom: 0,
+                padding: "16px 24px 24px 24px",
+                borderTop: "1px solid #f1f5f9",
+                background: "#fff",
+                display: "flex",
+                gap: 12,
+                zIndex: 10,
+              }}
+            >
+              <button
+                onClick={doDischarge}
+                disabled={discharging}
+                style={{
+                  flex: 1,
+                  background: discharging
+                    ? "#94a3b8"
+                    : "linear-gradient(135deg,#dc2626,#b91c1c)",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 12,
+                  padding: "13px",
+                  fontSize: 14,
+                  fontWeight: 700,
+                  cursor: discharging ? "not-allowed" : "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 8,
+                }}
+              >
+                <i
+                  className={`pi ${discharging ? "pi-spin pi-spinner" : "pi-sign-out"}`}
+                />
+                {discharging ? "Discharge ho raha hai…" : "Discharge Confirm"}
+              </button>
+              <button
+                onClick={() => !discharging && setDischargeModal(false)}
+                disabled={discharging}
+                style={{
+                  padding: "13px 20px",
+                  border: "1.5px solid #e2e8f0",
+                  borderRadius: 12,
+                  background: "#fff",
+                  fontSize: 14,
+                  fontWeight: 600,
+                  color: "#64748b",
+                  cursor: discharging ? "not-allowed" : "pointer",
+                }}
+              >
+                Cancel
+              </button>
             </div>
           </div>
         )}
       </Dialog>
+      {/* ══ MODAL 6 — Discharge Invoice ══ */}
+      {invoiceData && (
+        <Dialog
+          visible={invoiceModal}
+          onHide={() => setInvoiceModal(false)}
+          style={{ width: "520px" }}
+          header={null}
+          modal
+          draggable={false}
+          closable={false}
+          contentStyle={{ padding: 0 }}
+        >
+          {(() => {
+            const { patient, admission, bed, form, dischargedAt } = invoiceData;
+            const pName =
+              getPatientName(patient) || admission?.patientName || "—";
+            const uhid = patient?.UHID || admission?.UHID || "—";
+            const disDate = form.actualDischargeDate
+              ? new Date(form.actualDischargeDate).toLocaleDateString("en-IN", {
+                  day: "2-digit",
+                  month: "short",
+                  year: "numeric",
+                })
+              : new Date(dischargedAt).toLocaleDateString("en-IN");
+            const days = admission?.admissionDate
+              ? Math.max(
+                  1,
+                  Math.ceil(
+                    (new Date(form.actualDischargeDate || dischargedAt) -
+                      new Date(admission.admissionDate)) /
+                      (1000 * 60 * 60 * 24),
+                  ),
+                )
+              : "—";
+            const dept =
+              typeof admission?.department === "object"
+                ? admission?.department?.name
+                : admission?.department || "—";
+            const doctor = resolveDoctorName(admission) || "—";
+            const cost = form.totalCost
+              ? `₹ ${Number(form.totalCost).toLocaleString("en-IN")}`
+              : "Not Specified";
+            const condColor = {
+              Stable: "#16a34a",
+              Improved: "#0891b2",
+              Critical: "#dc2626",
+              LAMA: "#9333ea",
+            };
+            const cond = form.conditionOnDischarge || "Stable";
+
+            return (
+              <div>
+                {/* Green success header */}
+                <div
+                  style={{
+                    background: "linear-gradient(135deg,#16a34a,#15803d)",
+                    padding: "20px 24px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 12 }}
+                  >
+                    <div
+                      style={{
+                        width: 42,
+                        height: 42,
+                        borderRadius: "50%",
+                        background: "rgba(255,255,255,.2)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      <i
+                        className="pi pi-check"
+                        style={{ color: "#fff", fontSize: 20 }}
+                      />
+                    </div>
+                    <div>
+                      <div
+                        style={{ color: "#fff", fontSize: 18, fontWeight: 700 }}
+                      >
+                        Discharge Successful!
+                      </div>
+                      <div
+                        style={{
+                          color: "rgba(255,255,255,.8)",
+                          fontSize: 12,
+                          marginTop: 2,
+                        }}
+                      >
+                        Invoice ready to print
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setInvoiceModal(false)}
+                    style={{
+                      background: "rgba(255,255,255,.2)",
+                      border: "none",
+                      borderRadius: 8,
+                      padding: "6px 10px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <i className="pi pi-times" style={{ color: "#fff" }} />
+                  </button>
+                </div>
+
+                {/* Invoice preview card */}
+                <div style={{ padding: "20px 24px" }}>
+                  {/* Patient summary */}
+                  <div
+                    style={{
+                      background: "#f8fafc",
+                      border: "1px solid #e2e8f0",
+                      borderRadius: 12,
+                      padding: "14px 16px",
+                      marginBottom: 16,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "flex-start",
+                      }}
+                    >
+                      <div>
+                        <div
+                          style={{
+                            fontWeight: 800,
+                            fontSize: 16,
+                            color: "#0f172a",
+                          }}
+                        >
+                          {pName}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 12,
+                            color: "#64748b",
+                            marginTop: 3,
+                          }}
+                        >
+                          UHID: {uhid} | Bed: {bed?.bedNumber || "—"}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 12,
+                            color: "#64748b",
+                            marginTop: 2,
+                          }}
+                        >
+                          Dept: {dept} | Doctor: {doctor}
+                        </div>
+                      </div>
+                      <span
+                        style={{
+                          background: `${condColor[cond]}18`,
+                          color: condColor[cond],
+                          border: `1px solid ${condColor[cond]}40`,
+                          borderRadius: 20,
+                          padding: "4px 12px",
+                          fontSize: 12,
+                          fontWeight: 700,
+                          flexShrink: 0,
+                        }}
+                      >
+                        {cond}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Key stats row */}
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr 1fr",
+                      gap: 10,
+                      marginBottom: 16,
+                    }}
+                  >
+                    {[
+                      {
+                        icon: "pi-calendar-minus",
+                        color: "#0891b2",
+                        label: "Discharge Date",
+                        val: disDate,
+                      },
+                      {
+                        icon: "pi-clock",
+                        color: "#9333ea",
+                        label: "Total Stay",
+                        val: `${days} Day${days !== 1 ? "s" : ""}`,
+                      },
+                      {
+                        icon: "pi-indian-rupee",
+                        color: "#16a34a",
+                        label: "Total Amount",
+                        val: cost,
+                      },
+                    ].map(({ icon, color, label, val }) => (
+                      <div
+                        key={label}
+                        style={{
+                          background: "#fff",
+                          border: "1px solid #e2e8f0",
+                          borderRadius: 10,
+                          padding: "12px",
+                          textAlign: "center",
+                        }}
+                      >
+                        <i
+                          className={`pi ${icon}`}
+                          style={{
+                            fontSize: 18,
+                            color,
+                            display: "block",
+                            marginBottom: 6,
+                          }}
+                        />
+                        <div
+                          style={{
+                            fontSize: 10,
+                            color: "#94a3b8",
+                            textTransform: "uppercase",
+                            letterSpacing: ".05em",
+                          }}
+                        >
+                          {label}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 13,
+                            fontWeight: 700,
+                            color: "#0f172a",
+                            marginTop: 2,
+                          }}
+                        >
+                          {val}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Notes preview */}
+                  {(form.dischargeSummary ||
+                    form.dischargeNotes ||
+                    form.followUpInstructions) && (
+                    <div
+                      style={{
+                        background: "#fffbeb",
+                        border: "1px solid #fef3c7",
+                        borderRadius: 10,
+                        padding: "12px 14px",
+                        marginBottom: 16,
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 700,
+                          color: "#92400e",
+                          marginBottom: 6,
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                        }}
+                      >
+                        <i
+                          className="pi pi-file-edit"
+                          style={{ fontSize: 12 }}
+                        />{" "}
+                        CLINICAL NOTES PREVIEW
+                      </div>
+                      {form.dischargeSummary && (
+                        <div
+                          style={{
+                            fontSize: 12,
+                            color: "#374151",
+                            marginBottom: 4,
+                          }}
+                        >
+                          <strong>Summary:</strong>{" "}
+                          {form.dischargeSummary.slice(0, 80)}
+                          {form.dischargeSummary.length > 80 ? "…" : ""}
+                        </div>
+                      )}
+                      {form.followUpInstructions && (
+                        <div style={{ fontSize: 12, color: "#374151" }}>
+                          <strong>Follow-up:</strong>{" "}
+                          {form.followUpInstructions.slice(0, 80)}
+                          {form.followUpInstructions.length > 80 ? "…" : ""}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Action buttons */}
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <button
+                      onClick={printInvoice}
+                      style={{
+                        flex: 1,
+                        background: "linear-gradient(135deg,#0891b2,#0e7490)",
+                        color: "#fff",
+                        border: "none",
+                        borderRadius: 12,
+                        padding: "13px",
+                        fontSize: 14,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: 8,
+                        boxShadow: "0 4px 14px rgba(8,145,178,0.3)",
+                      }}
+                    >
+                      <i className="pi pi-print" style={{ fontSize: 16 }} />
+                      Print / Download Invoice
+                    </button>
+                    <button
+                      onClick={() => setInvoiceModal(false)}
+                      style={{
+                        padding: "13px 20px",
+                        border: "1.5px solid #e2e8f0",
+                        borderRadius: 12,
+                        background: "#fff",
+                        fontSize: 14,
+                        fontWeight: 600,
+                        color: "#64748b",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Close
+                    </button>
+                  </div>
+
+                  <div
+                    style={{
+                      textAlign: "center",
+                      fontSize: 11,
+                      color: "#94a3b8",
+                      marginTop: 12,
+                    }}
+                  >
+                    <i
+                      className="pi pi-info-circle"
+                      style={{ marginRight: 4 }}
+                    />
+                    Print dialog mein "Save as PDF" select karke download bhi
+                    kar sakte hain
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+        </Dialog>
+      )}
     </div>
   );
 };
