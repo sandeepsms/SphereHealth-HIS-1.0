@@ -99,6 +99,7 @@ const getPatientName = (p) => {
 const getDoctorName = (doctorRef, doctorsMap = {}) => {
   if (!doctorRef) return null;
   if (typeof doctorRef === "string") {
+<<<<<<< HEAD
     // Not a MongoId → it's already a plain name string, return directly
     if (!/^[a-f0-9]{24}$/i.test(doctorRef.trim()))
       return doctorRef.trim() || null;
@@ -106,6 +107,12 @@ const getDoctorName = (doctorRef, doctorsMap = {}) => {
     return doctorsMap[doctorRef] || null;
   }
   // Populated object — doctorService stores name under personalInfo.fullName
+=======
+    if (!/^[a-f0-9]{24}$/i.test(doctorRef.trim()))
+      return doctorRef.trim() || null;
+    return doctorsMap[doctorRef] || null;
+  }
+>>>>>>> temp-fix
   return (
     doctorRef.personalInfo?.fullName?.trim() ||
     `${doctorRef.personalInfo?.firstName || ""} ${doctorRef.personalInfo?.lastName || ""}`.trim() ||
@@ -144,6 +151,7 @@ const scoreP = (p, q) =>
     fuzzyScore(p?.contactNumber || p?.phone || "", q),
   );
 
+<<<<<<< HEAD
 /* isMongoId: 24-char hex ObjectId */
 const isMongoId = (v) => typeof v === "string" && /^[a-f\d]{24}$/i.test(v);
 /* isUHIDVal: non-empty string that is NOT a MongoId */
@@ -166,15 +174,29 @@ const unwrapPatient = (res) => {
   if (res.patient && typeof res.patient === "object" && res.patient._id)
     return res.patient;
   // shape: { data: { patient: {...} } }
+=======
+const isMongoId = (v) => typeof v === "string" && /^[a-f\d]{24}$/i.test(v);
+const isUHIDVal = (v) =>
+  typeof v === "string" && v.trim().length > 0 && !/^[a-f\d]{24}$/i.test(v);
+
+const unwrapPatient = (res) => {
+  if (!res || typeof res !== "object") return null;
+  if (res.patient && typeof res.patient === "object" && res.patient._id)
+    return res.patient;
+>>>>>>> temp-fix
   if (res.data && typeof res.data === "object") {
     if (res.data.patient && res.data.patient._id) return res.data.patient;
     if (res.data._id) return res.data;
   }
+<<<<<<< HEAD
   // shape: patient object directly
+=======
+>>>>>>> temp-fix
   if (res._id) return res;
   return null;
 };
 
+<<<<<<< HEAD
 /* ─── Stat Card ──────────────────────────────────────────── */
 const StatCard = ({ label, value, icon, gradient }) => (
   <div
@@ -243,30 +265,77 @@ const BedVisualLayout = ({ onRefreshParent }) => {
   const toast = useRef(null);
 
   /* ── data ── */
+=======
+/* ─────────────────────────────────────────────────────────
+   ✅ BED ICON — uses Font Awesome <i class="fas fa-bed">
+   Add this to your index.html if not already present:
+   <link rel="stylesheet"
+     href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"/>
+───────────────────────────────────────────────────────── */
+const BedIcon = ({ status }) => {
+  const col = STATUS_COLOR[status] || "#9ca3af";
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 36,
+        height: 36,
+        borderRadius: 10,
+        background: `${col}18`,
+        border: `1.5px solid ${col}40`,
+        flexShrink: 0,
+      }}
+    >
+      <i className="fas fa-bed" style={{ fontSize: 16, color: col }} />
+    </span>
+  );
+};
+
+/* ══════════════════════════════════════════════════════════ */
+const BedVisualLayout = ({ onRefreshParent }) => {
+  const toast = useRef(null);
+
+>>>>>>> temp-fix
   const [beds, setBeds] = useState([]);
   const [shown, setShown] = useState([]);
   const [bldgs, setBldgs] = useState([]);
   const [floors, setFloors] = useState([]);
   const [wards, setWards] = useState([]);
   const [rooms, setRooms] = useState([]);
+<<<<<<< HEAD
+=======
+  const [allFloorsList, setAllFloorsList] = useState([]);
+  const [allRoomsList, setAllRoomsList] = useState([]);
+>>>>>>> temp-fix
   const [allPatients, setAllPats] = useState([]);
   const [doctors, setDoctors] = useState([]);
   const [doctorsMap, setDoctorsMap] = useState({});
   const [busy, setBusy] = useState(false);
 
+<<<<<<< HEAD
   /* ── filters ── */
+=======
+>>>>>>> temp-fix
   const [fBldg, setFBldg] = useState(null);
   const [fFloor, setFFloor] = useState(null);
   const [fWard, setFWard] = useState(null);
   const [fRoom, setFRoom] = useState(null);
   const [fSearch, setFSearch] = useState("");
 
+<<<<<<< HEAD
   /* ── Modal 1: Search & Admit ── */
+=======
+>>>>>>> temp-fix
   const [searchModal, setSearchModal] = useState(false);
   const [searchQ, setSearchQ] = useState("");
   const [selBed, setSelBed] = useState(null);
 
+<<<<<<< HEAD
   /* ── Modal 2: Admission Form ── */
+=======
+>>>>>>> temp-fix
   const [admModal, setAdmModal] = useState(false);
   const [selPat, setSelPat] = useState(null);
   const [admForm, setAdmForm] = useState({
@@ -280,18 +349,25 @@ const BedVisualLayout = ({ onRefreshParent }) => {
   });
   const [booking, setBooking] = useState(false);
 
+<<<<<<< HEAD
   /* ── Modal 3: Patient Details ── */
+=======
+>>>>>>> temp-fix
   const [detailModal, setDetailModal] = useState(false);
   const [detailBed, setDetailBed] = useState(null);
   const [detailAdm, setDetailAdm] = useState(null);
   const [detailPatient, setDetailPatient] = useState(null);
   const [detailLoading, setDetailLoad] = useState(false);
 
+<<<<<<< HEAD
   /* ── Modal 4: Edit ── */
+=======
+>>>>>>> temp-fix
   const [editModal, setEditModal] = useState(false);
   const [editAdm, setEditAdm] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [editSaving, setEditSaving] = useState(false);
+<<<<<<< HEAD
 
   /* ── Modal 5: Discharge ── */
   const [dischargeModal, setDischargeModal] = useState(false);
@@ -319,6 +395,36 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     : [];
 
   /* ══ LIFECYCLE ══ */
+=======
+
+  const [dischargeModal, setDischargeModal] = useState(false);
+  const [dischargeAdm, setDischargeAdm] = useState(null);
+  const [dischargeBed, setDischargeBed] = useState(null);
+  const [dischargePatient, setDischargePatient] = useState(null);
+  const [dischargeForm, setDischargeForm] = useState({
+    actualDischargeDate: "",
+    dischargeNotes: "",
+    dischargeSummary: "",
+    totalCost: "",
+    conditionOnDischarge: "Stable",
+    followUpInstructions: "",
+  });
+  const [discharging, setDischarging] = useState(false);
+
+  /* ── Modal 6: Discharge Invoice ── */
+  const [invoiceModal, setInvoiceModal] = useState(false);
+  const [invoiceData, setInvoiceData] = useState(null);
+
+  const searchResults = searchQ.trim()
+    ? allPatients
+        .map((p) => ({ p, score: scoreP(p, searchQ.trim()) }))
+        .filter((x) => x.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 10)
+        .map((x) => x.p)
+    : [];
+
+>>>>>>> temp-fix
   useEffect(() => {
     fetchAll();
   }, []);
@@ -340,15 +446,23 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     doFilter();
   }, [beds, fBldg, fFloor, fWard, fRoom, fSearch]);
 
+<<<<<<< HEAD
   /* ══ FETCH ══ */
   const fetchAll = async () => {
     setBusy(true);
     try {
       const [b, bl, pts, docs] = await Promise.all([
+=======
+  const fetchAll = async () => {
+    setBusy(true);
+    try {
+      const [b, bl, pts, docs, allF, allR] = await Promise.all([
+>>>>>>> temp-fix
         bedService.getAllBeds(),
         buildingService.getAllBuildings(),
         patientService.getAllPatients({ limit: 1000 }),
         doctorService.getAllDoctors().catch(() => []),
+<<<<<<< HEAD
       ]);
 
       setBeds(Array.isArray(b) ? b : b?.data || []);
@@ -367,6 +481,23 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       const dOpts = rawDocs
         .map((d) => {
           // doctorService uses personalInfo.fullName structure
+=======
+        floorService.getAllFloors(),
+        roomService.getAllRooms(),
+      ]);
+      setBeds(Array.isArray(b) ? b : b?.data || []);
+      setBldgs(Array.isArray(bl) ? bl : bl?.data || []);
+      setAllFloorsList(Array.isArray(allF) ? allF : allF?.data || []);
+      setAllRoomsList(Array.isArray(allR) ? allR : allR?.data || []);
+      setAllPats(Array.isArray(pts) ? pts : pts?.data || pts?.patients || []);
+
+      let rawDocs = Array.isArray(docs)
+        ? docs
+        : docs?.data || docs?.doctors || docs?.result || [];
+      const dMap = {};
+      const dOpts = rawDocs
+        .map((d) => {
+>>>>>>> temp-fix
           const name =
             d.personalInfo?.fullName?.trim() ||
             `${d.personalInfo?.firstName || ""} ${d.personalInfo?.lastName || ""}`.trim() ||
@@ -397,7 +528,10 @@ const BedVisualLayout = ({ onRefreshParent }) => {
           };
         })
         .filter((d) => d.label && d.label !== "Unknown" && d._id);
+<<<<<<< HEAD
 
+=======
+>>>>>>> temp-fix
       setDoctors(dOpts);
       setDoctorsMap(dMap);
     } catch (e) {
@@ -421,7 +555,10 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       setFloors([]);
     }
   };
+<<<<<<< HEAD
 
+=======
+>>>>>>> temp-fix
   const fetchWards = async () => {
     try {
       const r = await wardService.getAllWards();
@@ -431,7 +568,10 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       setWards([]);
     }
   };
+<<<<<<< HEAD
 
+=======
+>>>>>>> temp-fix
   const fetchRooms = async () => {
     try {
       const r = await roomService.getAllRooms();
@@ -441,7 +581,10 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       setRooms([]);
     }
   };
+<<<<<<< HEAD
 
+=======
+>>>>>>> temp-fix
   const fetchBeds = async () => {
     setBusy(true);
     try {
@@ -469,14 +612,41 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       list = list.filter(
         (b) =>
           b.bedNumber?.toLowerCase().includes(q) ||
+<<<<<<< HEAD
           b.roomNumber?.toLowerCase().includes(q) ||
+=======
+          resolveRoomName(b)?.toLowerCase().includes(q) ||
+>>>>>>> temp-fix
           resolvePatientName(b.currentAdmission)?.toLowerCase().includes(q),
       );
     }
     setShown(list);
   };
 
+<<<<<<< HEAD
   /* ══ DATA RESOLVERS ══ */
+=======
+  const resolveFloorName = (bed) => {
+    if (!bed) return "?";
+    const floorId = getId(bed.floor);
+    if (!floorId) return bed.floorNumber ? `Floor ${bed.floorNumber}` : "?";
+    const found = allFloorsList.find((f) => getId(f._id) === floorId);
+    return (
+      found?.floorName ||
+      (found?.floorNumber ? `Floor ${found.floorNumber}` : "Floor ?")
+    );
+  };
+  const resolveRoomName = (bed) => {
+    if (!bed) return "?";
+    const roomId = getId(bed.room);
+    if (!roomId) return bed.roomNumber ? `Room ${bed.roomNumber}` : "?";
+    const found = allRoomsList.find((r) => getId(r._id) === roomId);
+    return (
+      found?.roomName ||
+      (found?.roomNumber ? `Room ${found.roomNumber}` : "Room ?")
+    );
+  };
+>>>>>>> temp-fix
   const resolvePatientName = (adm) => {
     if (!adm) return null;
     if (
@@ -497,7 +667,10 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     }
     return null;
   };
+<<<<<<< HEAD
 
+=======
+>>>>>>> temp-fix
   const resolveDoctorName = (adm) => {
     if (!adm) return null;
     return (
@@ -506,7 +679,10 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       null
     );
   };
+<<<<<<< HEAD
 
+=======
+>>>>>>> temp-fix
   const resolvePatientInfo = (adm) => {
     if (!adm) return {};
     const pObj = typeof adm.patientId === "object" ? adm.patientId : null;
@@ -531,6 +707,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         };
     }
     return { uhid: adm.UHID || "", age: "", gender: "" };
+<<<<<<< HEAD
   };
 
   const calcAge = (dob) => {
@@ -540,23 +717,37 @@ const BedVisualLayout = ({ onRefreshParent }) => {
   };
 
   /* ══ BED CLICK FLOW ══ */
+=======
+  };
+  const calcAge = (dob) => {
+    if (!dob) return "";
+    return Math.floor(
+      (Date.now() - new Date(dob).getTime()) / (1000 * 60 * 60 * 24 * 365.25),
+    );
+  };
+
+>>>>>>> temp-fix
   const handleAvailable = (bed) => {
     setSelBed(bed);
     setSearchQ("");
     setSearchModal(true);
   };
+<<<<<<< HEAD
 
   /* ══ HANDLE OCCUPIED ══
      After backend fix (bedsModel + bedService), bed.currentAdmission is now
      fully populated: { patientId: { fullName, UHID, ... }, UHID, attendingDoctor, ... }
      So we just read it directly — no extra API calls needed in most cases.
   ══ */
+=======
+>>>>>>> temp-fix
   const handleOccupied = async (bed) => {
     setDetailBed(bed);
     setDetailPatient(null);
     setDetailAdm(null);
     setDetailLoad(true);
     setDetailModal(true);
+<<<<<<< HEAD
 
     try {
       const bedId = getId(bed._id);
@@ -570,22 +761,36 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         setDetailAdm(ca);
 
         // patientId may be populated object OR just an ObjectId string
+=======
+    try {
+      const bedId = getId(bed._id);
+      const ca = bed.currentAdmission;
+      if (ca && typeof ca === "object" && ca._id) {
+        setDetailAdm(ca);
+>>>>>>> temp-fix
         const patObj =
           ca.patientId && typeof ca.patientId === "object" && ca.patientId._id
             ? ca.patientId
             : null;
+<<<<<<< HEAD
 
         if (patObj && getPatientName(patObj)) {
           console.log(
             "[BedLayout] ✅ patient from populated currentAdmission:",
             patObj,
           );
+=======
+        if (patObj && getPatientName(patObj)) {
+>>>>>>> temp-fix
           setDetailPatient(patObj);
           setDetailLoad(false);
           return;
         }
+<<<<<<< HEAD
 
         // patientId not populated — fetch by UHID or ObjectId
+=======
+>>>>>>> temp-fix
         const uhid =
           ca.UHID ||
           ca.patientUHID ||
@@ -596,7 +801,10 @@ const BedVisualLayout = ({ onRefreshParent }) => {
           typeof ca.patientId === "string" && isMongoId(ca.patientId)
             ? ca.patientId
             : getId(ca.patientId);
+<<<<<<< HEAD
 
+=======
+>>>>>>> temp-fix
         if (uhid) {
           try {
             const res = await patientService.getPatientByUHID(uhid);
@@ -619,6 +827,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
             }
           } catch (_) {}
         }
+<<<<<<< HEAD
         // Cache fallback
         const cached = allPatients.find(
           (p) => (uhid && p.UHID === uhid) || (objId && getId(p._id) === objId),
@@ -638,11 +847,21 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       console.warn(
         "[BedLayout] currentAdmission not populated, fetching from API...",
       );
+=======
+        const cached = allPatients.find(
+          (p) => (uhid && p.UHID === uhid) || (objId && getId(p._id) === objId),
+        );
+        if (cached) setDetailPatient(cached);
+        setDetailLoad(false);
+        return;
+      }
+>>>>>>> temp-fix
       try {
         const activeList = await admissionService.getActiveAdmissions();
         const list = Array.isArray(activeList)
           ? activeList
           : activeList?.admissions || activeList?.data || [];
+<<<<<<< HEAD
 
         const admRecord = list.find(
           (a) => getId(a.bedId) === bedId || getId(a.bed) === bedId,
@@ -666,12 +885,25 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         setDetailAdm(admRecord);
 
         // Resolve patient from admission
+=======
+        const admRecord = list.find(
+          (a) => getId(a.bedId) === bedId || getId(a.bed) === bedId,
+        );
+        if (!admRecord) {
+          setDetailLoad(false);
+          return;
+        }
+        setDetailAdm(admRecord);
+>>>>>>> temp-fix
         const uhid = admRecord.UHID || admRecord.patientUHID || null;
         const objId = isMongoId(getId(admRecord.patientId))
           ? getId(admRecord.patientId)
           : null;
+<<<<<<< HEAD
 
         // Try populated patientId first
+=======
+>>>>>>> temp-fix
         if (
           admRecord.patientId &&
           typeof admRecord.patientId === "object" &&
@@ -684,7 +916,10 @@ const BedVisualLayout = ({ onRefreshParent }) => {
             return;
           }
         }
+<<<<<<< HEAD
 
+=======
+>>>>>>> temp-fix
         if (uhid) {
           try {
             const res = await patientService.getPatientByUHID(uhid);
@@ -710,6 +945,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         const cached = allPatients.find(
           (p) => (uhid && p.UHID === uhid) || (objId && getId(p._id) === objId),
         );
+<<<<<<< HEAD
         if (cached) {
           setDetailPatient(cached);
         } else {
@@ -720,6 +956,9 @@ const BedVisualLayout = ({ onRefreshParent }) => {
             objId,
           );
         }
+=======
+        if (cached) setDetailPatient(cached);
+>>>>>>> temp-fix
       } catch (e) {
         console.error("[BedLayout] getActiveAdmissions failed:", e?.message);
       }
@@ -757,7 +996,10 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     setAdmModal(true);
   };
 
+<<<<<<< HEAD
   /* ══ ADMIT ══ */
+=======
+>>>>>>> temp-fix
   const handleAdmit = async () => {
     if (!selPat || !selBed) return;
     if (!admForm.reasonForAdmission.trim()) {
@@ -828,7 +1070,10 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     }
   };
 
+<<<<<<< HEAD
   /* ══ EDIT ══ */
+=======
+>>>>>>> temp-fix
   const openEdit = (adm) => {
     setDetailModal(false);
     setEditAdm(adm);
@@ -885,7 +1130,10 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     }
   };
 
+<<<<<<< HEAD
   /* ══ DISCHARGE ══ */
+=======
+>>>>>>> temp-fix
   const openDischarge = (adm, bed) => {
     setDetailModal(false);
     setDischargeAdm(adm);
@@ -934,12 +1182,27 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         detail: `Bed ${dischargeBed?.bedNumber || ""} ab Available hai`,
         life: 5000,
       });
+<<<<<<< HEAD
+=======
+      // ✅ Save invoice data before clearing state
+      setInvoiceData({
+        patient: dischargePatient,
+        admission: dischargeAdm,
+        bed: dischargeBed,
+        form: { ...dischargeForm },
+        dischargedAt: new Date().toISOString(),
+      });
+>>>>>>> temp-fix
       setDischargeModal(false);
       setDischargeAdm(null);
       setDischargeBed(null);
       setDischargePatient(null);
       await fetchBeds();
       onRefreshParent?.();
+<<<<<<< HEAD
+=======
+      setInvoiceModal(true);
+>>>>>>> temp-fix
     } catch (e) {
       setBeds((prev) =>
         prev.map((b) =>
@@ -955,6 +1218,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     } finally {
       setDischarging(false);
     }
+<<<<<<< HEAD
   };
 
   /* ── Group beds by Floor → Room ── */
@@ -983,11 +1247,208 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     ).length,
   };
 
+=======
+  };
+
+  /* ══ PRINT INVOICE ══ */
+  const printInvoice = () => {
+    if (!invoiceData) return;
+    const { patient, admission, bed, form, dischargedAt } = invoiceData;
+    const pName = getPatientName(patient) || admission?.patientName || "—";
+    const uhid = patient?.UHID || admission?.UHID || "—";
+    const admDate = admission?.admissionDate
+      ? new Date(admission.admissionDate).toLocaleDateString("en-IN", {
+          day: "2-digit",
+          month: "short",
+          year: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : "—";
+    const disDate = form.actualDischargeDate
+      ? new Date(form.actualDischargeDate).toLocaleDateString("en-IN", {
+          day: "2-digit",
+          month: "short",
+          year: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : new Date(dischargedAt).toLocaleDateString("en-IN");
+    const days = admission?.admissionDate
+      ? Math.max(
+          1,
+          Math.ceil(
+            (new Date(form.actualDischargeDate || dischargedAt) -
+              new Date(admission.admissionDate)) /
+              (1000 * 60 * 60 * 24),
+          ),
+        )
+      : "—";
+    const dept =
+      typeof admission?.department === "object"
+        ? admission?.department?.name
+        : admission?.department || "—";
+    const doctor = resolveDoctorName(admission) || "—";
+    const cost = form.totalCost
+      ? `₹ ${Number(form.totalCost).toLocaleString("en-IN")}`
+      : "—";
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8"/>
+  <title>Discharge Invoice</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family: Arial, sans-serif; color: #1e293b; background:#fff; }
+    .page { width:210mm; min-height:297mm; margin:0 auto; padding:12mm 14mm; }
+    /* Header */
+    .header { display:flex; justify-content:space-between; align-items:flex-start; padding-bottom:12px; border-bottom:3px solid #0891b2; margin-bottom:18px; }
+    .hospital-name { font-size:22px; font-weight:800; color:#0891b2; letter-spacing:-0.5px; }
+    .hospital-sub  { font-size:11px; color:#64748b; margin-top:3px; }
+    .invoice-badge { text-align:right; }
+    .invoice-badge .inv-title { font-size:18px; font-weight:700; color:#dc2626; }
+    .invoice-badge .inv-no    { font-size:11px; color:#64748b; margin-top:2px; }
+    /* Status strip */
+    .status-strip { background:linear-gradient(135deg,#dc2626,#b91c1c); color:#fff; borderRadius:10px; padding:10px 18px; display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; border-radius:8px; }
+    .status-strip .label { font-size:11px; opacity:.8; }
+    .status-strip .value { font-size:14px; font-weight:700; margin-top:1px; }
+    /* Grid sections */
+    .section-title { font-size:12px; font-weight:700; color:#0891b2; text-transform:uppercase; letter-spacing:.06em; margin-bottom:10px; padding-bottom:4px; border-bottom:1px solid #e2e8f0; }
+    .info-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px 24px; margin-bottom:18px; }
+    .info-item .lbl { font-size:10px; color:#9ca3af; text-transform:uppercase; letter-spacing:.05em; }
+    .info-item .val { font-size:13px; font-weight:600; color:#0f172a; margin-top:2px; }
+    /* Summary box */
+    .summary-box { background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:14px 16px; margin-bottom:18px; font-size:13px; color:#374151; line-height:1.6; }
+    .summary-box .no-content { color:#94a3b8; font-style:italic; }
+    /* Cost table */
+    .cost-table { width:100%; border-collapse:collapse; margin-bottom:18px; }
+    .cost-table th { background:#0891b2; color:#fff; padding:9px 14px; font-size:12px; text-align:left; }
+    .cost-table td { padding:9px 14px; font-size:13px; border-bottom:1px solid #f1f5f9; }
+    .cost-table .total-row td { font-weight:700; font-size:14px; background:#f0f9ff; color:#0891b2; }
+    /* Condition badge */
+    .condition { display:inline-block; padding:4px 14px; border-radius:20px; font-size:12px; font-weight:700; }
+    .Stable   { background:#d1fae5; color:#065f46; }
+    .Improved { background:#dbeafe; color:#1e40af; }
+    .Critical { background:#fee2e2; color:#991b1b; }
+    .LAMA     { background:#ede9fe; color:#5b21b6; }
+    /* Footer */
+    .footer { margin-top:auto; padding-top:16px; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:flex-end; }
+    .sign-box { text-align:center; }
+    .sign-line { width:140px; border-bottom:1px solid #374151; margin-bottom:4px; height:36px; }
+    .sign-label { font-size:10px; color:#64748b; }
+    .footer-note { font-size:10px; color:#94a3b8; text-align:center; margin-top:8px; }
+    @media print {
+      body { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+      .page { padding:8mm 10mm; }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header -->
+  <div class="header">
+    <div>
+      <div class="hospital-name">Spherehealth Medical Solutions</div>
+      <div class="hospital-sub">Complete Healthcare Management System</div>
+    </div>
+    <div class="invoice-badge">
+      <div class="inv-title">DISCHARGE INVOICE</div>
+      <div class="inv-no">Date: ${new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</div>
+    </div>
+  </div>
+
+  <!-- Status strip -->
+  <div class="status-strip">
+    <div><div class="label">Patient Name</div><div class="value">${pName}</div></div>
+    <div><div class="label">UHID</div><div class="value">${uhid}</div></div>
+    <div><div class="label">Bed</div><div class="value">${bed?.bedNumber || "—"}</div></div>
+    <div><div class="label">Condition</div><div class="value">${form.conditionOnDischarge || "Stable"}</div></div>
+  </div>
+
+  <!-- Patient & Admission Info -->
+  <div class="section-title">Patient & Admission Details</div>
+  <div class="info-grid">
+    <div class="info-item"><div class="lbl">Patient Name</div><div class="val">${pName}</div></div>
+    <div class="info-item"><div class="lbl">UHID / Patient ID</div><div class="val">${uhid}</div></div>
+    <div class="info-item"><div class="lbl">Admission Date</div><div class="val">${admDate}</div></div>
+    <div class="info-item"><div class="lbl">Discharge Date</div><div class="val">${disDate}</div></div>
+    <div class="info-item"><div class="lbl">Total Stay</div><div class="val">${days} Day${days !== 1 ? "s" : ""}</div></div>
+    <div class="info-item"><div class="lbl">Bed Number</div><div class="val">${bed?.bedNumber || "—"}</div></div>
+    <div class="info-item"><div class="lbl">Department</div><div class="val">${dept}</div></div>
+    <div class="info-item"><div class="lbl">Admission Type</div><div class="val">${admission?.admissionType || "—"}</div></div>
+    <div class="info-item"><div class="lbl">Attending Doctor</div><div class="val">${doctor}</div></div>
+    <div class="info-item"><div class="lbl">Condition on Discharge</div><div class="val"><span class="condition ${form.conditionOnDischarge || "Stable"}">${form.conditionOnDischarge || "Stable"}</span></div></div>
+  </div>
+
+  <!-- Clinical Notes -->
+  <div class="section-title">Clinical Summary</div>
+  <div style="margin-bottom:10px">
+    <div style="font-size:11px;color:#64748b;font-weight:600;margin-bottom:4px">DIAGNOSIS / REASON FOR ADMISSION</div>
+    <div class="summary-box">${admission?.reasonForAdmission || '<span class="no-content">Not specified</span>'}</div>
+  </div>
+  <div style="margin-bottom:10px">
+    <div style="font-size:11px;color:#64748b;font-weight:600;margin-bottom:4px">DISCHARGE SUMMARY</div>
+    <div class="summary-box">${form.dischargeSummary || '<span class="no-content">Not provided</span>'}</div>
+  </div>
+  <div style="margin-bottom:10px">
+    <div style="font-size:11px;color:#64748b;font-weight:600;margin-bottom:4px">DISCHARGE NOTES</div>
+    <div class="summary-box">${form.dischargeNotes || '<span class="no-content">Not provided</span>'}</div>
+  </div>
+  <div style="margin-bottom:18px">
+    <div style="font-size:11px;color:#64748b;font-weight:600;margin-bottom:4px">FOLLOW-UP INSTRUCTIONS</div>
+    <div class="summary-box">${form.followUpInstructions || '<span class="no-content">Not provided</span>'}</div>
+  </div>
+
+  <!-- Cost -->
+  <div class="section-title">Billing Summary</div>
+  <table class="cost-table">
+    <thead><tr><th>Description</th><th>Details</th><th style="text-align:right">Amount</th></tr></thead>
+    <tbody>
+      <tr><td>Bed Charges (${days} day${days !== 1 ? "s" : ""})</td><td>Bed ${bed?.bedNumber || "—"} · ${dept}</td><td style="text-align:right">${cost}</td></tr>
+      <tr class="total-row"><td colspan="2"><strong>Total Amount</strong></td><td style="text-align:right"><strong>${cost}</strong></td></tr>
+    </tbody>
+  </table>
+
+  <!-- Signatures -->
+  <div class="footer">
+    <div class="sign-box"><div class="sign-line"></div><div class="sign-label">Patient / Attendant Signature</div></div>
+    <div class="sign-box"><div class="sign-line"></div><div class="sign-label">Attending Doctor</div></div>
+    <div class="sign-box"><div class="sign-line"></div><div class="sign-label">Authorized Signatory</div></div>
+  </div>
+  <div class="footer-note">This is a computer-generated document. For queries contact the billing department.</div>
+
+</div>
+</body>
+</html>`;
+
+    const win = window.open("", "_blank", "width=900,height=700");
+    win.document.write(html);
+    win.document.close();
+    win.onload = () => win.print();
+  };
+
+  const byFloor = (() => {
+    const map = {};
+    shown.forEach((bed) => {
+      const fk = resolveFloorName(bed);
+      if (!map[fk]) map[fk] = { rooms: {} };
+      const rk = String(getId(bed.room) || `nr_${getId(bed._id)}`);
+      if (!map[fk].rooms[rk])
+        map[fk].rooms[rk] = { roomName: resolveRoomName(bed), beds: [] };
+      map[fk].rooms[rk].beds.push(bed);
+    });
+    return map;
+  })();
+
+>>>>>>> temp-fix
   const canBook =
     !!selPat &&
     !!admForm.department &&
     !!admForm.admissionDateTime &&
     !!admForm.reasonForAdmission.trim();
+<<<<<<< HEAD
 
   const lbl = {
     display: "block",
@@ -1000,10 +1461,21 @@ const BedVisualLayout = ({ onRefreshParent }) => {
   /* ════════════════════════════════════════════════════════
      RENDER
   ════════════════════════════════════════════════════════ */
+=======
+  const lbl = {
+    display: "block",
+    fontSize: 13,
+    fontWeight: 600,
+    color: "#374151",
+    marginBottom: 6,
+  };
+
+>>>>>>> temp-fix
   return (
     <div style={{ fontFamily: "'Inter',-apple-system,sans-serif" }}>
       <Toast ref={toast} />
 
+<<<<<<< HEAD
       {/* ── STAT CARDS ── */}
       <div
         style={{
@@ -1038,6 +1510,15 @@ const BedVisualLayout = ({ onRefreshParent }) => {
           gradient="linear-gradient(135deg,#f59e0b,#d97706)"
         />
       </div>
+=======
+      {/* ══ DISCHARGE DIALOG SCROLL FIX ══ */}
+      <style>{`
+        .discharge-dlg .p-dialog-content {
+          padding: 0 !important;
+          overflow: hidden !important;
+        }
+      `}</style>
+>>>>>>> temp-fix
 
       {/* ── FILTER BAR ── */}
       <div
@@ -1086,6 +1567,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                 borderRadius: 8,
                 fontSize: 12,
               }}
+<<<<<<< HEAD
             />
             <Button
               label="Clear"
@@ -1103,6 +1585,24 @@ const BedVisualLayout = ({ onRefreshParent }) => {
           </div>
         </div>
 
+=======
+            />
+            <Button
+              label="Clear"
+              icon="pi pi-filter-slash"
+              onClick={() => {
+                setFBldg(null);
+                setFFloor(null);
+                setFWard(null);
+                setFRoom(null);
+                setFSearch("");
+              }}
+              className="p-button-sm p-button-text"
+              style={{ color: "#64748b" }}
+            />
+          </div>
+        </div>
+>>>>>>> temp-fix
         <div
           style={{
             display: "grid",
@@ -1113,6 +1613,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
           <div style={{ position: "relative" }}>
             <i
               className="pi pi-search"
+<<<<<<< HEAD
               style={{
                 position: "absolute",
                 left: 12,
@@ -1674,6 +2175,556 @@ const BedVisualLayout = ({ onRefreshParent }) => {
             />
           </div>
 
+=======
+              style={{
+                position: "absolute",
+                left: 12,
+                top: "50%",
+                transform: "translateY(-50%)",
+                color: "#9ca3af",
+                fontSize: 14,
+              }}
+            />
+            <input
+              value={fSearch}
+              onChange={(e) => setFSearch(e.target.value)}
+              placeholder="Search beds or patients..."
+              style={{
+                width: "100%",
+                padding: "10px 14px 10px 38px",
+                border: "1px solid #e2e8f0",
+                borderRadius: 10,
+                fontSize: 13,
+                outline: "none",
+                fontFamily: "inherit",
+                boxSizing: "border-box",
+              }}
+            />
+          </div>
+          {[
+            {
+              val: fBldg,
+              opts: bldgs.map((b) => ({ label: b.buildingName, value: b._id })),
+              onChange: (v) => {
+                setFBldg(v);
+                setFFloor(null);
+                setFWard(null);
+                setFRoom(null);
+              },
+              disabled: false,
+              ph: "All Buildings",
+            },
+            {
+              val: fFloor,
+              opts: floors.map((f) => ({
+                label: f.floorName || `Floor ${f.floorNumber}`,
+                value: f._id,
+              })),
+              onChange: (v) => {
+                setFFloor(v);
+                setFWard(null);
+                setFRoom(null);
+              },
+              disabled: !fBldg,
+              ph: "All Floors",
+            },
+            {
+              val: fWard,
+              opts: wards.map((w) => ({ label: w.wardName, value: w._id })),
+              onChange: setFWard,
+              disabled: !fFloor,
+              ph: "All Wards",
+            },
+            {
+              val: fRoom,
+              opts: rooms.map((r) => ({ label: r.roomNumber, value: r._id })),
+              onChange: setFRoom,
+              disabled: !fFloor,
+              ph: "All Rooms",
+            },
+          ].map(({ val, opts, onChange, disabled, ph }, i) => (
+            <Dropdown
+              key={i}
+              className="w-full"
+              value={val}
+              showClear
+              disabled={disabled}
+              options={opts}
+              onChange={(e) => onChange(e.value)}
+              placeholder={ph}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* ── BED GRID ── */}
+      {busy ? (
+        <div
+          style={{
+            textAlign: "center",
+            padding: 80,
+            background: "#fff",
+            borderRadius: 16,
+          }}
+        >
+          <i
+            className="pi pi-spin pi-spinner"
+            style={{ fontSize: 40, color: TEAL }}
+          />
+          <p style={{ marginTop: 12, color: "#64748b" }}>
+            Beds load ho rahe hain…
+          </p>
+        </div>
+      ) : Object.keys(byFloor).length === 0 ? (
+        <div
+          style={{
+            textAlign: "center",
+            padding: 80,
+            background: "#fff",
+            borderRadius: 16,
+            border: "1px solid #e2e8f0",
+          }}
+        >
+          <i
+            className="pi pi-inbox"
+            style={{
+              fontSize: 52,
+              color: "#cbd5e1",
+              display: "block",
+              marginBottom: 12,
+            }}
+          />
+          <p style={{ color: "#94a3b8" }}>Koi bed nahi mila</p>
+        </div>
+      ) : (
+        Object.entries(byFloor)
+          .sort()
+          .map(([floorLabel, floorData]) => (
+            <div
+              key={floorLabel}
+              style={{
+                background: "#fff",
+                borderRadius: 20,
+                border: "1px solid #e2e8f0",
+                boxShadow: "0 4px 20px rgba(0,0,0,.07)",
+                overflow: "hidden",
+                marginBottom: 20,
+              }}
+            >
+              <div
+                style={{
+                  background: TEAL_GRAD,
+                  padding: "16px 24px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                }}
+              >
+                <i
+                  className="pi pi-building"
+                  style={{ color: "#fff", fontSize: 20 }}
+                />
+                <span style={{ color: "#fff", fontWeight: 800, fontSize: 18 }}>
+                  {floorLabel}
+                </span>
+                <div style={{ marginLeft: "auto", display: "flex", gap: 12 }}>
+                  {[
+                    ["Available", "#d1fae5", "#065f46"],
+                    ["Occupied", "#fee2e2", "#991b1b"],
+                  ].map(([k, bg, c]) => {
+                    const cnt = Object.values(floorData.rooms)
+                      .flatMap((r) => r.beds)
+                      .filter((b) => b.status === k).length;
+                    return (
+                      <span
+                        key={k}
+                        style={{
+                          background: bg,
+                          color: c,
+                          borderRadius: 20,
+                          padding: "3px 12px",
+                          fontSize: 12,
+                          fontWeight: 700,
+                        }}
+                      >
+                        {k}: {cnt}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill,minmax(360px,1fr))",
+                  gap: 16,
+                  padding: 20,
+                }}
+              >
+                {Object.values(floorData.rooms).map((grp, ri) => (
+                  <div
+                    key={ri}
+                    style={{
+                      border: "1px solid #e2e8f0",
+                      borderRadius: 16,
+                      overflow: "hidden",
+                      background: "#fafafa",
+                    }}
+                  >
+                    <div
+                      style={{
+                        padding: "12px 18px",
+                        background: "#fff",
+                        borderBottom: "1px solid #f1f5f9",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                        }}
+                      >
+                        <i
+                          className="pi pi-home"
+                          style={{ color: TEAL, fontSize: 15 }}
+                        />
+                        <span
+                          style={{
+                            fontWeight: 700,
+                            fontSize: 15,
+                            color: "#0f172a",
+                          }}
+                        >
+                          {grp.roomName}
+                        </span>
+                      </div>
+                      <span
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 600,
+                          color: "#64748b",
+                          background: "#f1f5f9",
+                          borderRadius: 20,
+                          padding: "2px 10px",
+                        }}
+                      >
+                        {grp.beds.length} Bed{grp.beds.length !== 1 ? "s" : ""}
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        padding: 12,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 10,
+                      }}
+                    >
+                      {grp.beds.map((bed) => {
+                        const col = STATUS_COLOR[bed.status] || "#d1d5db";
+                        const sbg = STATUS_BG[bed.status] || {
+                          bg: "#f3f4f6",
+                          color: "#374151",
+                        };
+                        const avail = bed.status === "Available";
+                        const occ = bed.status === "Occupied";
+                        const adm = bed.currentAdmission;
+                        const pName = resolvePatientName(adm);
+                        const pInfo = occ ? resolvePatientInfo(adm) : {};
+                        const docName = occ ? resolveDoctorName(adm) : null;
+                        const admDate = adm?.admissionDate
+                          ? new Date(adm.admissionDate).toLocaleDateString(
+                              "en-IN",
+                              {
+                                day: "2-digit",
+                                month: "short",
+                                year: "numeric",
+                              },
+                            )
+                          : null;
+
+                        return (
+                          <div
+                            key={bed._id}
+                            onClick={() => handleBedClick(bed)}
+                            style={{
+                              border: "1px solid #e2e8f0",
+                              borderLeft: `4px solid ${col}`,
+                              borderRadius: 12,
+                              background: avail
+                                ? "#f9fafb"
+                                : occ
+                                  ? "#fff"
+                                  : "#fafafa",
+                              cursor: avail || occ ? "pointer" : "default",
+                              padding: "14px 16px",
+                              transition: "all .2s",
+                            }}
+                            onMouseEnter={(e) => {
+                              if (avail || occ) {
+                                e.currentTarget.style.transform =
+                                  "translateY(-3px)";
+                                e.currentTarget.style.boxShadow =
+                                  "0 8px 24px rgba(0,0,0,.1)";
+                              }
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.transform = "none";
+                              e.currentTarget.style.boxShadow = "none";
+                            }}
+                          >
+                            {/* ✅ Top row with Font Awesome bed icon */}
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                marginBottom: occ && pName ? 12 : 0,
+                              }}
+                            >
+                              <div
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 10,
+                                }}
+                              >
+                                <BedIcon status={bed.status} />
+                                <span
+                                  style={{
+                                    fontWeight: 800,
+                                    fontSize: 15,
+                                    color: "#0f172a",
+                                  }}
+                                >
+                                  {bed.bedNumber}
+                                </span>
+                              </div>
+                              <span
+                                style={{
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 5,
+                                  padding: "4px 12px",
+                                  borderRadius: 20,
+                                  fontSize: 12,
+                                  fontWeight: 600,
+                                  background: sbg.bg,
+                                  color: sbg.color,
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    width: 7,
+                                    height: 7,
+                                    borderRadius: "50%",
+                                    background: col,
+                                    display: "inline-block",
+                                  }}
+                                />
+                                {bed.status}
+                              </span>
+                            </div>
+
+                            {occ && pName && (
+                              <div
+                                style={{
+                                  borderTop: "1px solid #f1f5f9",
+                                  paddingTop: 10,
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    fontWeight: 700,
+                                    fontSize: 14,
+                                    color: "#0f172a",
+                                  }}
+                                >
+                                  {pName}
+                                </div>
+                                <div
+                                  style={{
+                                    fontSize: 12,
+                                    color: "#64748b",
+                                    marginTop: 3,
+                                  }}
+                                >
+                                  {pInfo.uhid ? `ID: ${pInfo.uhid}` : ""}
+                                  {pInfo.age ? ` | ${pInfo.age}Y` : ""}
+                                  {pInfo.gender ? ` ${pInfo.gender}` : ""}
+                                </div>
+                                {docName && (
+                                  <div
+                                    style={{
+                                      fontSize: 12,
+                                      color: "#6b7280",
+                                      marginTop: 5,
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 5,
+                                    }}
+                                  >
+                                    <i
+                                      className="pi pi-user-edit"
+                                      style={{ color: "#7c3aed", fontSize: 12 }}
+                                    />
+                                    {docName}
+                                  </div>
+                                )}
+                                {admDate && (
+                                  <div
+                                    style={{
+                                      fontSize: 11,
+                                      color: "#94a3b8",
+                                      marginTop: 4,
+                                    }}
+                                  >
+                                    Admitted: {admDate}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                            {occ && !pName && (
+                              <div
+                                style={{
+                                  borderTop: "1px solid #f1f5f9",
+                                  paddingTop: 8,
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    fontSize: 12,
+                                    color: "#94a3b8",
+                                    fontStyle: "italic",
+                                  }}
+                                >
+                                  Patient data loading…
+                                </div>
+                              </div>
+                            )}
+                            {avail && (
+                              <div
+                                style={{
+                                  fontSize: 12,
+                                  color: "#94a3b8",
+                                  marginTop: 6,
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 5,
+                                }}
+                              >
+                                <i
+                                  className="pi pi-plus-circle"
+                                  style={{ color: "#22c55e", fontSize: 13 }}
+                                />
+                                Click To Admit Patient
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))
+      )}
+
+      {/* Legend */}
+      <div
+        style={{
+          background: "#fff",
+          borderRadius: 12,
+          padding: "10px 20px",
+          border: "1px solid #e2e8f0",
+          display: "flex",
+          gap: 20,
+          flexWrap: "wrap",
+          alignItems: "center",
+          marginTop: 4,
+        }}
+      >
+        <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>
+          Legend:
+        </span>
+        {Object.entries(STATUS_COLOR).map(([label, col]) => (
+          <span
+            key={label}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: 12,
+              color: "#475569",
+            }}
+          >
+            <span
+              style={{
+                width: 20,
+                height: 13,
+                border: `3px solid ${col}`,
+                borderRadius: 4,
+                display: "inline-block",
+              }}
+            />
+            {label}
+          </span>
+        ))}
+        <span style={{ fontSize: 11, color: "#94a3b8", marginLeft: "auto" }}>
+          <i className="pi pi-info-circle" style={{ marginRight: 4 }} />
+          Green = admit · Red = patient details
+        </span>
+      </div>
+
+      {/* ══ MODAL 1 — Search & Admit ══ */}
+      <Dialog
+        visible={searchModal}
+        onHide={() => setSearchModal(false)}
+        style={{ width: "500px" }}
+        header={
+          <span style={{ fontWeight: 700, fontSize: 18, color: "#111827" }}>
+            Search &amp; Admit Patient
+          </span>
+        }
+        modal
+        draggable={false}
+      >
+        <div>
+          <label style={lbl}>Search Patient by ID or Name</label>
+          <div style={{ position: "relative", marginBottom: 16 }}>
+            <input
+              value={searchQ}
+              onChange={(e) => setSearchQ(e.target.value)}
+              placeholder="Enter Patient ID or Name"
+              autoFocus
+              style={{
+                width: "100%",
+                padding: "11px 44px 11px 14px",
+                boxSizing: "border-box",
+                border: `1.5px solid ${searchQ ? TEAL : "#e2e8f0"}`,
+                borderRadius: 10,
+                fontSize: 14,
+                outline: "none",
+                fontFamily: "inherit",
+              }}
+            />
+            <i
+              className="pi pi-search"
+              style={{
+                position: "absolute",
+                right: 14,
+                top: "50%",
+                transform: "translateY(-50%)",
+                color: "#9ca3af",
+                fontSize: 16,
+              }}
+            />
+          </div>
+>>>>>>> temp-fix
           <div style={{ maxHeight: 340, overflowY: "auto" }}>
             {searchQ.trim() === "" ? (
               <div
@@ -1781,9 +2832,13 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         </div>
       </Dialog>
 
+<<<<<<< HEAD
       {/* ══════════════════════════════════════════════
           MODAL 2 — Admit Patient Form
       ══════════════════════════════════════════════ */}
+=======
+      {/* ══ MODAL 2 — Admit Patient Form ══ */}
+>>>>>>> temp-fix
       <Dialog
         visible={admModal}
         onHide={() => {
@@ -1830,12 +2885,20 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                   color: "#1e40af",
                 }}
               >
+<<<<<<< HEAD
                 {selBed.bedNumber} — Room {selBed.roomNumber}, Floor{" "}
                 {selBed.floorNumber}
               </p>
             </div>
           )}
 
+=======
+                {selBed.bedNumber} — {resolveRoomName(selBed)},{" "}
+                {resolveFloorName(selBed)}
+              </p>
+            </div>
+          )}
+>>>>>>> temp-fix
           {selPat && (
             <div
               style={{
@@ -1889,7 +2952,10 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               </div>
             </div>
           )}
+<<<<<<< HEAD
 
+=======
+>>>>>>> temp-fix
           <div
             style={{
               display: "grid",
@@ -1925,7 +2991,10 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               />
             </div>
           </div>
+<<<<<<< HEAD
 
+=======
+>>>>>>> temp-fix
           <div style={{ marginBottom: 14 }}>
             <label style={lbl}>Admission Type</label>
             <Dropdown
@@ -1941,7 +3010,10 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               placeholder="Select Type"
             />
           </div>
+<<<<<<< HEAD
 
+=======
+>>>>>>> temp-fix
           <div style={{ marginBottom: 14 }}>
             <label style={lbl}>Attending Doctor</label>
             <Dropdown
@@ -1956,9 +3028,14 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               showClear
             />
           </div>
+<<<<<<< HEAD
 
           <div style={{ marginBottom: 14 }}>
             <label style={lbl}>Diagnosis</label>
+=======
+          <div style={{ marginBottom: 14 }}>
+            <label style={lbl}>Diagnosis *</label>
+>>>>>>> temp-fix
             <InputTextarea
               value={admForm.reasonForAdmission}
               rows={3}
@@ -1969,7 +3046,10 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               }
             />
           </div>
+<<<<<<< HEAD
 
+=======
+>>>>>>> temp-fix
           <div style={{ marginBottom: 20 }}>
             <label style={lbl}>Special Instructions</label>
             <InputTextarea
@@ -1982,7 +3062,10 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               }
             />
           </div>
+<<<<<<< HEAD
 
+=======
+>>>>>>> temp-fix
           <div style={{ display: "flex", gap: 12 }}>
             <button
               onClick={handleAdmit}
@@ -2032,9 +3115,13 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         </div>
       </Dialog>
 
+<<<<<<< HEAD
       {/* ══════════════════════════════════════════════
           MODAL 3 — Patient Details
       ══════════════════════════════════════════════ */}
+=======
+      {/* ══ MODAL 3 — Patient Details ══ */}
+>>>>>>> temp-fix
       <Dialog
         visible={detailModal}
         onHide={() => setDetailModal(false)}
@@ -2072,15 +3159,21 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                   detailAdm ||
                   detailBed.currentAdmission ||
                   detailBed.bookingInfo;
+<<<<<<< HEAD
 
                 /* Patient name: prefer fetched detailPatient */
+=======
+>>>>>>> temp-fix
                 const pn =
                   getPatientName(detailPatient) ||
                   resolvePatientName(src) ||
                   src?.patientName ||
                   null;
+<<<<<<< HEAD
 
                 /* Patient info: prefer fetched detailPatient */
+=======
+>>>>>>> temp-fix
                 const pInfo = detailPatient
                   ? {
                       age:
@@ -2097,7 +3190,10 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                         "",
                     }
                   : { ...resolvePatientInfo(src), blood: "", phone: "" };
+<<<<<<< HEAD
 
+=======
+>>>>>>> temp-fix
                 const docN = resolveDoctorName(src);
                 const adt = src?.admissionDate
                   ? new Date(src.admissionDate).toLocaleDateString("en-IN", {
@@ -2117,10 +3213,15 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                       { day: "2-digit", month: "short", year: "numeric" },
                     )
                   : "—";
+<<<<<<< HEAD
 
                 return (
                   <>
                     {/* Avatar + Name */}
+=======
+                return (
+                  <>
+>>>>>>> temp-fix
                     <div
                       style={{
                         display: "flex",
@@ -2186,6 +3287,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                         )}
                       </div>
                     </div>
+<<<<<<< HEAD
 
                     {/* Info grid */}
                     <div
@@ -2396,6 +3498,186 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       {/* ══════════════════════════════════════════════
           MODAL 4 — Edit Admission
       ══════════════════════════════════════════════ */}
+=======
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr 1fr",
+                        gap: "14px 24px",
+                        marginBottom: 16,
+                      }}
+                    >
+                      {[
+                        ["Age", pInfo.age ? `${pInfo.age} Years` : "—"],
+                        ["Gender", pInfo.gender || "—"],
+                        ["Admission Date", adt],
+                        ["Expected Discharge", expDischarge],
+                        ["Bed", detailBed.bedNumber],
+                        ["Department", dept],
+                        ["Admission Type", admType],
+                        ["Phone", pInfo.phone || "—"],
+                      ].map(([label, value]) => (
+                        <div key={label}>
+                          <p
+                            style={{
+                              margin: "0 0 2px",
+                              fontSize: 11,
+                              color: "#9ca3af",
+                              textTransform: "uppercase",
+                              letterSpacing: "0.05em",
+                            }}
+                          >
+                            {label}
+                          </p>
+                          <p
+                            style={{
+                              margin: 0,
+                              fontWeight: 600,
+                              fontSize: 13,
+                              color: "#111827",
+                            }}
+                          >
+                            {value}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                    <div
+                      style={{
+                        background: "linear-gradient(135deg,#f5f3ff,#ede9fe)",
+                        border: "1px solid #ddd6fe",
+                        borderRadius: 12,
+                        padding: "14px 16px",
+                        marginBottom: 20,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 12,
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: 38,
+                          height: 38,
+                          borderRadius: "50%",
+                          background: "#7c3aed",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          flexShrink: 0,
+                        }}
+                      >
+                        <i
+                          className="pi pi-user-edit"
+                          style={{ color: "#fff", fontSize: 16 }}
+                        />
+                      </div>
+                      <div>
+                        <p
+                          style={{
+                            margin: "0 0 2px",
+                            fontSize: 11,
+                            color: "#8b5cf6",
+                            fontWeight: 600,
+                            textTransform: "uppercase",
+                            letterSpacing: "0.05em",
+                          }}
+                        >
+                          Attending Doctor
+                        </p>
+                        <p
+                          style={{
+                            margin: 0,
+                            fontWeight: 700,
+                            fontSize: 16,
+                            color: "#5b21b6",
+                          }}
+                        >
+                          {docN || "—"}
+                        </p>
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 10 }}>
+                      <button
+                        onClick={() => src && openDischarge(src, detailBed)}
+                        disabled={!src}
+                        style={{
+                          flex: 1,
+                          background: src
+                            ? "linear-gradient(135deg,#dc2626,#b91c1c)"
+                            : "#d1d5db",
+                          color: "#fff",
+                          border: "none",
+                          borderRadius: 12,
+                          padding: "13px 16px",
+                          fontSize: 14,
+                          fontWeight: 700,
+                          cursor: src ? "pointer" : "not-allowed",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: 8,
+                          boxShadow: src
+                            ? "0 4px 14px rgba(220,38,38,0.35)"
+                            : "none",
+                          transition: "all .2s",
+                        }}
+                      >
+                        <i
+                          className="pi pi-sign-out"
+                          style={{ fontSize: 15 }}
+                        />
+                        Discharge
+                      </button>
+                      {src && (
+                        <button
+                          onClick={() => openEdit(src)}
+                          style={{
+                            padding: "13px 16px",
+                            borderRadius: 12,
+                            background:
+                              "linear-gradient(135deg,#0891b2,#0e7490)",
+                            color: "#fff",
+                            border: "none",
+                            fontSize: 14,
+                            fontWeight: 700,
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                            boxShadow: "0 4px 14px rgba(8,145,178,0.3)",
+                            transition: "all .2s",
+                          }}
+                        >
+                          <i className="pi pi-pencil" />
+                          Edit
+                        </button>
+                      )}
+                      <button
+                        onClick={() => setDetailModal(false)}
+                        style={{
+                          padding: "13px 18px",
+                          border: "1.5px solid #e2e8f0",
+                          borderRadius: 12,
+                          background: "#fff",
+                          fontSize: 14,
+                          fontWeight: 600,
+                          color: "#374151",
+                          cursor: "pointer",
+                        }}
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </>
+                );
+              })()
+            )}
+          </div>
+        )}
+      </Dialog>
+
+      {/* ══ MODAL 4 — Edit Admission ══ */}
+>>>>>>> temp-fix
       <Dialog
         visible={editModal}
         onHide={() => !editSaving && setEditModal(false)}
@@ -2436,7 +3718,10 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               />
             </div>
           ))}
+<<<<<<< HEAD
 
+=======
+>>>>>>> temp-fix
           <div className="p-field mb-3">
             <label
               style={{
@@ -2459,7 +3744,10 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               placeholder="Department"
             />
           </div>
+<<<<<<< HEAD
 
+=======
+>>>>>>> temp-fix
           <div className="p-field mb-3">
             <label
               style={{
@@ -2528,6 +3816,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               ))}
             </div>
           </div>
+<<<<<<< HEAD
 
           <div className="p-field mb-3">
             <label
@@ -2605,19 +3894,112 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       {/* ══════════════════════════════════════════════
           MODAL 5 — Discharge Patient
       ══════════════════════════════════════════════ */}
+=======
+          <div className="p-field mb-3">
+            <label
+              style={{
+                display: "block",
+                marginBottom: 4,
+                fontSize: 12,
+                fontWeight: 500,
+                color: "#475569",
+              }}
+            >
+              Attending Doctor
+            </label>
+            <Dropdown
+              value={editForm.attendingDoctor}
+              className="w-full"
+              options={doctors}
+              onChange={(e) =>
+                setEditForm({ ...editForm, attendingDoctor: e.value })
+              }
+              placeholder="Doctor (optional)"
+              filter
+              showClear
+            />
+          </div>
+          <div className="p-field mb-3">
+            <label
+              style={{
+                display: "block",
+                marginBottom: 4,
+                fontSize: 12,
+                fontWeight: 500,
+                color: "#475569",
+              }}
+            >
+              Reason
+            </label>
+            <InputTextarea
+              value={editForm.reasonForAdmission || ""}
+              rows={3}
+              className="w-full"
+              onChange={(e) =>
+                setEditForm({ ...editForm, reasonForAdmission: e.target.value })
+              }
+            />
+          </div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              gap: 10,
+              marginTop: 8,
+            }}
+          >
+            <Button
+              label="Cancel"
+              onClick={() => setEditModal(false)}
+              className="p-button-outlined p-button-sm"
+              disabled={editSaving}
+            />
+            <Button
+              label="Save Changes"
+              icon="pi pi-check"
+              onClick={saveEdit}
+              loading={editSaving}
+              className="p-button-sm"
+              style={{ background: TEAL, border: "none", borderRadius: 10 }}
+            />
+          </div>
+        </div>
+      </Dialog>
+
+      {/* ══ MODAL 5 — Discharge Patient ✅ SCROLLABLE FIX ══ */}
+>>>>>>> temp-fix
       <Dialog
         visible={dischargeModal}
         onHide={() => !discharging && setDischargeModal(false)}
         style={{ width: "560px" }}
+<<<<<<< HEAD
+=======
+        className="discharge-dlg"
+>>>>>>> temp-fix
         header={null}
         modal
         draggable={false}
         closable={false}
+<<<<<<< HEAD
         contentStyle={{ padding: 0, borderRadius: 16, overflow: "hidden" }}
       >
         {dischargeAdm && (
           <div>
             {/* Red header */}
+=======
+        contentStyle={{ padding: 0 }}
+      >
+        {dischargeAdm && (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              maxHeight: "85vh",
+              overflow: "hidden",
+            }}
+          >
+            {/* Fixed header */}
+>>>>>>> temp-fix
             <div
               style={{
                 background: "linear-gradient(135deg,#dc2626,#b91c1c)",
@@ -2625,6 +4007,10 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
+<<<<<<< HEAD
+=======
+                flexShrink: 0,
+>>>>>>> temp-fix
               }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -2650,7 +4036,19 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               </button>
             </div>
 
+<<<<<<< HEAD
             <div style={{ padding: "20px 24px" }}>
+=======
+            {/* ✅ Scrollable content area */}
+            <div
+              style={{
+                overflowY: "auto",
+                maxHeight: "calc(85vh - 80px)",
+                padding: "20px 24px 8px 24px",
+                overscrollBehavior: "contain",
+              }}
+            >
+>>>>>>> temp-fix
               {/* Patient strip */}
               <div
                 style={{
@@ -2792,7 +4190,11 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                 </div>
               ))}
 
+<<<<<<< HEAD
               {/* Condition */}
+=======
+              {/* Condition on Discharge */}
+>>>>>>> temp-fix
               <div style={{ marginBottom: 16 }}>
                 <label
                   style={{
@@ -2922,6 +4324,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                   />
                 </div>
               ))}
+<<<<<<< HEAD
 
               <div style={{ display: "flex", gap: 12, marginTop: 4 }}>
                 <button
@@ -2968,9 +4371,434 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                 </button>
               </div>
             </div>
+=======
+            </div>
+            {/* end scrollable */}
+
+            {/* Fixed footer — sticky bottom */}
+            <div
+              style={{
+                position: "sticky",
+                bottom: 0,
+                padding: "16px 24px 24px 24px",
+                borderTop: "1px solid #f1f5f9",
+                background: "#fff",
+                display: "flex",
+                gap: 12,
+                zIndex: 10,
+              }}
+            >
+              <button
+                onClick={doDischarge}
+                disabled={discharging}
+                style={{
+                  flex: 1,
+                  background: discharging
+                    ? "#94a3b8"
+                    : "linear-gradient(135deg,#dc2626,#b91c1c)",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 12,
+                  padding: "13px",
+                  fontSize: 14,
+                  fontWeight: 700,
+                  cursor: discharging ? "not-allowed" : "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 8,
+                }}
+              >
+                <i
+                  className={`pi ${discharging ? "pi-spin pi-spinner" : "pi-sign-out"}`}
+                />
+                {discharging ? "Discharge ho raha hai…" : "Discharge Confirm"}
+              </button>
+              <button
+                onClick={() => !discharging && setDischargeModal(false)}
+                disabled={discharging}
+                style={{
+                  padding: "13px 20px",
+                  border: "1.5px solid #e2e8f0",
+                  borderRadius: 12,
+                  background: "#fff",
+                  fontSize: 14,
+                  fontWeight: 600,
+                  color: "#64748b",
+                  cursor: discharging ? "not-allowed" : "pointer",
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+>>>>>>> temp-fix
           </div>
         )}
       </Dialog>
+      {/* ══ MODAL 6 — Discharge Invoice ══ */}
+      {invoiceData && (
+        <Dialog
+          visible={invoiceModal}
+          onHide={() => setInvoiceModal(false)}
+          style={{ width: "520px" }}
+          header={null}
+          modal
+          draggable={false}
+          closable={false}
+          contentStyle={{ padding: 0 }}
+        >
+          {(() => {
+            const { patient, admission, bed, form, dischargedAt } = invoiceData;
+            const pName =
+              getPatientName(patient) || admission?.patientName || "—";
+            const uhid = patient?.UHID || admission?.UHID || "—";
+            const disDate = form.actualDischargeDate
+              ? new Date(form.actualDischargeDate).toLocaleDateString("en-IN", {
+                  day: "2-digit",
+                  month: "short",
+                  year: "numeric",
+                })
+              : new Date(dischargedAt).toLocaleDateString("en-IN");
+            const days = admission?.admissionDate
+              ? Math.max(
+                  1,
+                  Math.ceil(
+                    (new Date(form.actualDischargeDate || dischargedAt) -
+                      new Date(admission.admissionDate)) /
+                      (1000 * 60 * 60 * 24),
+                  ),
+                )
+              : "—";
+            const dept =
+              typeof admission?.department === "object"
+                ? admission?.department?.name
+                : admission?.department || "—";
+            const doctor = resolveDoctorName(admission) || "—";
+            const cost = form.totalCost
+              ? `₹ ${Number(form.totalCost).toLocaleString("en-IN")}`
+              : "Not Specified";
+            const condColor = {
+              Stable: "#16a34a",
+              Improved: "#0891b2",
+              Critical: "#dc2626",
+              LAMA: "#9333ea",
+            };
+            const cond = form.conditionOnDischarge || "Stable";
+
+            return (
+              <div>
+                {/* Green success header */}
+                <div
+                  style={{
+                    background: "linear-gradient(135deg,#16a34a,#15803d)",
+                    padding: "20px 24px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 12 }}
+                  >
+                    <div
+                      style={{
+                        width: 42,
+                        height: 42,
+                        borderRadius: "50%",
+                        background: "rgba(255,255,255,.2)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      <i
+                        className="pi pi-check"
+                        style={{ color: "#fff", fontSize: 20 }}
+                      />
+                    </div>
+                    <div>
+                      <div
+                        style={{ color: "#fff", fontSize: 18, fontWeight: 700 }}
+                      >
+                        Discharge Successful!
+                      </div>
+                      <div
+                        style={{
+                          color: "rgba(255,255,255,.8)",
+                          fontSize: 12,
+                          marginTop: 2,
+                        }}
+                      >
+                        Invoice ready to print
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setInvoiceModal(false)}
+                    style={{
+                      background: "rgba(255,255,255,.2)",
+                      border: "none",
+                      borderRadius: 8,
+                      padding: "6px 10px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <i className="pi pi-times" style={{ color: "#fff" }} />
+                  </button>
+                </div>
+
+                {/* Invoice preview card */}
+                <div style={{ padding: "20px 24px" }}>
+                  {/* Patient summary */}
+                  <div
+                    style={{
+                      background: "#f8fafc",
+                      border: "1px solid #e2e8f0",
+                      borderRadius: 12,
+                      padding: "14px 16px",
+                      marginBottom: 16,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "flex-start",
+                      }}
+                    >
+                      <div>
+                        <div
+                          style={{
+                            fontWeight: 800,
+                            fontSize: 16,
+                            color: "#0f172a",
+                          }}
+                        >
+                          {pName}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 12,
+                            color: "#64748b",
+                            marginTop: 3,
+                          }}
+                        >
+                          UHID: {uhid} | Bed: {bed?.bedNumber || "—"}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 12,
+                            color: "#64748b",
+                            marginTop: 2,
+                          }}
+                        >
+                          Dept: {dept} | Doctor: {doctor}
+                        </div>
+                      </div>
+                      <span
+                        style={{
+                          background: `${condColor[cond]}18`,
+                          color: condColor[cond],
+                          border: `1px solid ${condColor[cond]}40`,
+                          borderRadius: 20,
+                          padding: "4px 12px",
+                          fontSize: 12,
+                          fontWeight: 700,
+                          flexShrink: 0,
+                        }}
+                      >
+                        {cond}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Key stats row */}
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr 1fr",
+                      gap: 10,
+                      marginBottom: 16,
+                    }}
+                  >
+                    {[
+                      {
+                        icon: "pi-calendar-minus",
+                        color: "#0891b2",
+                        label: "Discharge Date",
+                        val: disDate,
+                      },
+                      {
+                        icon: "pi-clock",
+                        color: "#9333ea",
+                        label: "Total Stay",
+                        val: `${days} Day${days !== 1 ? "s" : ""}`,
+                      },
+                      {
+                        icon: "pi-indian-rupee",
+                        color: "#16a34a",
+                        label: "Total Amount",
+                        val: cost,
+                      },
+                    ].map(({ icon, color, label, val }) => (
+                      <div
+                        key={label}
+                        style={{
+                          background: "#fff",
+                          border: "1px solid #e2e8f0",
+                          borderRadius: 10,
+                          padding: "12px",
+                          textAlign: "center",
+                        }}
+                      >
+                        <i
+                          className={`pi ${icon}`}
+                          style={{
+                            fontSize: 18,
+                            color,
+                            display: "block",
+                            marginBottom: 6,
+                          }}
+                        />
+                        <div
+                          style={{
+                            fontSize: 10,
+                            color: "#94a3b8",
+                            textTransform: "uppercase",
+                            letterSpacing: ".05em",
+                          }}
+                        >
+                          {label}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 13,
+                            fontWeight: 700,
+                            color: "#0f172a",
+                            marginTop: 2,
+                          }}
+                        >
+                          {val}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Notes preview */}
+                  {(form.dischargeSummary ||
+                    form.dischargeNotes ||
+                    form.followUpInstructions) && (
+                    <div
+                      style={{
+                        background: "#fffbeb",
+                        border: "1px solid #fef3c7",
+                        borderRadius: 10,
+                        padding: "12px 14px",
+                        marginBottom: 16,
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 700,
+                          color: "#92400e",
+                          marginBottom: 6,
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                        }}
+                      >
+                        <i
+                          className="pi pi-file-edit"
+                          style={{ fontSize: 12 }}
+                        />{" "}
+                        CLINICAL NOTES PREVIEW
+                      </div>
+                      {form.dischargeSummary && (
+                        <div
+                          style={{
+                            fontSize: 12,
+                            color: "#374151",
+                            marginBottom: 4,
+                          }}
+                        >
+                          <strong>Summary:</strong>{" "}
+                          {form.dischargeSummary.slice(0, 80)}
+                          {form.dischargeSummary.length > 80 ? "…" : ""}
+                        </div>
+                      )}
+                      {form.followUpInstructions && (
+                        <div style={{ fontSize: 12, color: "#374151" }}>
+                          <strong>Follow-up:</strong>{" "}
+                          {form.followUpInstructions.slice(0, 80)}
+                          {form.followUpInstructions.length > 80 ? "…" : ""}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Action buttons */}
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <button
+                      onClick={printInvoice}
+                      style={{
+                        flex: 1,
+                        background: "linear-gradient(135deg,#0891b2,#0e7490)",
+                        color: "#fff",
+                        border: "none",
+                        borderRadius: 12,
+                        padding: "13px",
+                        fontSize: 14,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: 8,
+                        boxShadow: "0 4px 14px rgba(8,145,178,0.3)",
+                      }}
+                    >
+                      <i className="pi pi-print" style={{ fontSize: 16 }} />
+                      Print / Download Invoice
+                    </button>
+                    <button
+                      onClick={() => setInvoiceModal(false)}
+                      style={{
+                        padding: "13px 20px",
+                        border: "1.5px solid #e2e8f0",
+                        borderRadius: 12,
+                        background: "#fff",
+                        fontSize: 14,
+                        fontWeight: 600,
+                        color: "#64748b",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Close
+                    </button>
+                  </div>
+
+                  <div
+                    style={{
+                      textAlign: "center",
+                      fontSize: 11,
+                      color: "#94a3b8",
+                      marginTop: 12,
+                    }}
+                  >
+                    <i
+                      className="pi pi-info-circle"
+                      style={{ marginRight: 4 }}
+                    />
+                    Print dialog mein "Save as PDF" select karke download bhi
+                    kar sakte hain
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+        </Dialog>
+      )}
     </div>
   );
 };

@@ -62,6 +62,7 @@ export const bedService = {
 
   createBed: async (formData) => {
     try {
+<<<<<<< HEAD
       // ❌ REMOVED: pricing from payload (pricing is now in TPA)
       const payload = {
         roomId: formData.room,
@@ -72,7 +73,25 @@ export const bedService = {
             notes: formData.notes || "",
           },
         ],
+=======
+      // ✅ FIX: flat payload bhejo — backend ko building, floor, room, bedNumber chahiye
+      const payload = {
+        building: formData.building,
+        floor: formData.floor,
+        ward: formData.ward || null,
+        room: formData.room,
+        bedNumber: formData.bedNumber,
+        status: formData.status || "Available",
+        isActive: formData.isActive ?? true,
+        notes: formData.notes || "",
+>>>>>>> temp-fix
       };
+
+      // Safety check — required fields
+      if (!payload.room) throw new Error("Room is required");
+      if (!payload.floor) throw new Error("Floor is required");
+      if (!payload.building) throw new Error("Building is required");
+      if (!payload.bedNumber) throw new Error("Bed number is required");
 
       const response = await fetch(API_BASE, {
         method: "POST",
@@ -89,6 +108,7 @@ export const bedService = {
 
       const result = await response.json();
 
+<<<<<<< HEAD
       if (result.success === true) {
         if (
           result.createdBeds &&
@@ -105,6 +125,15 @@ export const bedService = {
       if (Array.isArray(result) && result.length > 0)
         return normalizeBed(result[0]);
       if (result._id) return normalizeBed(result);
+=======
+      // Handle different response shapes
+      if (result.createdBeds?.length > 0)
+        return normalizeBed(result.createdBeds[0]);
+      if (result.data) return normalizeBed(result.data);
+      if (result._id) return normalizeBed(result);
+      if (Array.isArray(result) && result.length > 0)
+        return normalizeBed(result[0]);
+>>>>>>> temp-fix
 
       throw new Error(result.message || result.error || "Failed to create bed");
     } catch (error) {
@@ -115,17 +144,31 @@ export const bedService = {
 
   updateBed: async (id, data) => {
     try {
+<<<<<<< HEAD
       // Strip pricing fields if accidentally passed
       const { pricing, services, ...cleanData } = data;
+=======
+      // Strip pricing/services fields — managed via TPA
+      const { pricing, services, ...cleanData } = data;
+
+>>>>>>> temp-fix
       const response = await fetch(`${API_BASE}/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(cleanData),
       });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `HTTP error! status: ${response.status}, message: ${errorText}`,
+        );
+      }
+
       const bed = await response.json();
       return normalizeBed(bed);
     } catch (error) {
-      console.error("Error:", error);
+      console.error("Error updating bed:", error);
       throw error;
     }
   },

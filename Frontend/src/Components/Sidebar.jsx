@@ -34,9 +34,12 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
       ],
     },
 
+<<<<<<< HEAD
     // ══════════════════════════════════════════════════════════════════════
     // BILLING (Old)
     // ══════════════════════════════════════════════════════════════════════
+=======
+>>>>>>> temp-fix
     {
       label: "Billing",
       icon: "pi pi-money-bill",
@@ -60,7 +63,31 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
       ],
     },
 
+    {
+      label: "Patient Billing",
+      icon: "pi pi-receipt",
+      items: [
+        {
+          label: "Patient Bill",
+          icon: "pi pi-user",
+          command: () => {
+            navigate("/patient-billing");
+            toggleSidebar();
+          },
+        },
+        {
+          label: "Service Master",
+          icon: "pi pi-cog",
+          command: () => {
+            navigate("/service-master");
+            toggleSidebar();
+          },
+        },
+      ],
+    },
+
     // ══════════════════════════════════════════════════════════════════════
+<<<<<<< HEAD
     // NEW BILLING SYSTEM (billing-v3)
     // ══════════════════════════════════════════════════════════════════════
     {
@@ -90,7 +117,25 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
 
     // ══════════════════════════════════════════════════════════════════════
     // MASTER DATA
+=======
+    // DEPARTMENT MANAGEMENT (NEW — ALAG SECTION)
+>>>>>>> temp-fix
     // ══════════════════════════════════════════════════════════════════════
+    {
+      label: "Department",
+      icon: "pi pi-sitemap",
+      items: [
+        {
+          label: "Manage Departments",
+          icon: "pi pi-list",
+          command: () => {
+            navigate("/department");
+            toggleSidebar();
+          },
+        },
+      ],
+    },
+
     {
       label: "Master Data",
       icon: "pi pi-database",
@@ -135,20 +180,9 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
             toggleSidebar();
           },
         },
-        {
-          label: "Department",
-          icon: "pi pi-sitemap",
-          command: () => {
-            navigate("/department");
-            toggleSidebar();
-          },
-        },
       ],
     },
 
-    // ══════════════════════════════════════════════════════════════════════
-    // BED MANAGEMENT
-    // ══════════════════════════════════════════════════════════════════════
     {
       label: "Bed Management",
       icon: "pi pi-table",
@@ -172,9 +206,6 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
       ],
     },
 
-    // ══════════════════════════════════════════════════════════════════════
-    // DOCTOR MANAGEMENT
-    // ══════════════════════════════════════════════════════════════════════
     {
       label: "Doctor Management",
       icon: "pi pi-user-edit",
@@ -190,9 +221,6 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
       ],
     },
 
-    // ══════════════════════════════════════════════════════════════════════
-    // TPA SERVICES
-    // ══════════════════════════════════════════════════════════════════════
     {
       label: "TPA Services",
       icon: "pi pi-briefcase",
@@ -216,9 +244,6 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
       ],
     },
 
-    // ══════════════════════════════════════════════════════════════════════
-    // HOSPITAL CHARGES
-    // ══════════════════════════════════════════════════════════════════════
     {
       label: "Hospital Charges",
       icon: "pi pi-dollar",

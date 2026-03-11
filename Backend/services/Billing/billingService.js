@@ -1,9 +1,22 @@
 // services/billingService.js
 // ═══════════════════════════════════════════════════════════════
+<<<<<<< HEAD
 // BILLING SERVICE LAYER
 // Sabhi billing business logic yahan hai
 // Controllers sirf call karenge — koi bhi DB query ya logic
 // controller mein nahi hogi
+=======
+// BILLING SERVICE LAYER — FIXED VERSION
+// Fixes:
+//  1. updateItemQuantity → amounts recalculate
+//  2. recordPayment → DRAFT pe payment block
+//  3. runDailyAutoCharges → atomicity + error isolation
+//  4. getOrCreateDraftBill → race condition fix (upsert)
+//  5. setupAutoChargesForAdmission → duplicate prevention
+//  6. generateFinalBill → unique bill number assign
+//  7. getBillingSummary → createdAt use (safe fallback)
+//  8. checkAndHandleDaycareConversion → IPD auto-charges setup
+>>>>>>> temp-fix
 // ═══════════════════════════════════════════════════════════════
 
 const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
@@ -11,11 +24,34 @@ const Admission = require("../../models/Patient/admissionModel");
 const ServiceMaster = require("../../models/ServiceMaster/serviceMasterModel");
 const ServicePricing = require("../../models/ServicePricing/ServicePricingModel");
 const AutoBilledItems = require("../../models/PatientBillModel/AutoBilledItemsModel");
+<<<<<<< HEAD
+=======
+
+// ── Bill Number Generator ─────────────────────────────────────
+// Format: BILL-YYYYMMDD-XXXXX  (e.g. BILL-20260307-00042)
+async function generateBillNumber() {
+  const today = new Date();
+  const dateStr = today.toISOString().slice(0, 10).replace(/-/g, ""); // "20260307"
+  const prefix = `BILL-${dateStr}-`;
+
+  // Aaj ke bills count karo aur next number do
+  const count = await PatientBill.countDocuments({
+    billNumber: { $regex: `^${prefix}` },
+  });
+
+  const serial = String(count + 1).padStart(5, "0");
+  return `${prefix}${serial}`;
+}
+>>>>>>> temp-fix
 
 class BillingService {
   // ── 1. Patient + all bills by UHID ───────────────────────────
   async getPatientWithBills(UHID) {
+<<<<<<< HEAD
     const Patient = require("../..models/Patient/patientModel");
+=======
+    const Patient = require("../../models/Patient/patientModel");
+>>>>>>> temp-fix
 
     const [bills, patient] = await Promise.all([
       this.getBillsByUHID(UHID),
@@ -31,6 +67,7 @@ class BillingService {
   }
 
   // ── 2. Get existing DRAFT bill or create new one ──────────────
+<<<<<<< HEAD
   async getOrCreateDraftBill(UHID, visitType, admissionId = null) {
     const Patient = require("../..models/Patient/patientModel");
 
@@ -45,6 +82,23 @@ class BillingService {
     const patient = await Patient.findOne({ UHID }).populate("tpa");
     if (!patient) throw new Error(`Patient not found: ${UHID}`);
 
+=======
+  // FIX #4: Race condition — findOneAndUpdate upsert se duplicate drafts nahi banenge
+  async getOrCreateDraftBill(UHID, visitType, admissionId = null) {
+    const Patient = require("../../models/Patient/patientModel");
+
+    const patient = await Patient.findOne({ UHID }).populate("tpa");
+    if (!patient) throw new Error(`Patient not found: ${UHID}`);
+
+    const filter = { UHID, visitType, billStatus: "DRAFT" };
+    if (admissionId) filter.admission = admissionId;
+
+    // Pehle dhundho — already exist karta hai to return
+    let bill = await PatientBill.findOne(filter);
+    if (bill) return bill;
+
+    // Naya banao — but pehle admission info lo
+>>>>>>> temp-fix
     const billData = {
       patient: patient._id,
       UHID,
@@ -52,6 +106,10 @@ class BillingService {
       paymentType: patient.tpa ? "TPA" : "CASH",
       tpa: patient.tpa?._id || null,
       tpaName: patient.tpa?.tpaName || null,
+<<<<<<< HEAD
+=======
+      billStatus: "DRAFT",
+>>>>>>> temp-fix
       billItems: [],
     };
 
@@ -63,9 +121,25 @@ class BillingService {
       }
     }
 
+<<<<<<< HEAD
     bill = new PatientBill(billData);
     await bill.save();
     return bill;
+=======
+    // insertIfNotExists pattern: agar concurrent request ne pehle bana diya to usse return karo
+    try {
+      bill = new PatientBill(billData);
+      await bill.save();
+      return bill;
+    } catch (err) {
+      // Duplicate key error (unique index on UHID+visitType+DRAFT+admission)
+      if (err.code === 11000) {
+        const existing = await PatientBill.findOne(filter);
+        if (existing) return existing;
+      }
+      throw err;
+    }
+>>>>>>> temp-fix
   }
 
   // ── 3. Get single bill (fully populated) ─────────────────────
@@ -102,7 +176,10 @@ class BillingService {
   }
 
   // ── 6. Add service to bill ────────────────────────────────────
+<<<<<<< HEAD
   // Pricing fetch → TPA split calculate → item add → save
+=======
+>>>>>>> temp-fix
   async addServiceToBill(
     billId,
     serviceId,
@@ -119,7 +196,10 @@ class BillingService {
     const service = await ServiceMaster.findById(serviceId);
     if (!service) throw new Error("Service not found");
 
+<<<<<<< HEAD
     // Correct tariff fetch karo (TPA → fallback to CASH if not configured)
+=======
+>>>>>>> temp-fix
     const pricing = await ServicePricing.getPriceFor(
       serviceId,
       bill.paymentType,
@@ -136,12 +216,19 @@ class BillingService {
       : 0;
     const lineTotal = netAmount + taxAmount;
 
+<<<<<<< HEAD
     // TPA split: TPA kitna dega, patient kitna dega
+=======
+>>>>>>> temp-fix
     let tpaPayableAmount = 0;
     if (bill.paymentType === "TPA") {
       tpaPayableAmount = pricing?.tpaApprovedLimit
         ? Math.min(pricing.tpaApprovedLimit * quantity, lineTotal)
+<<<<<<< HEAD
         : lineTotal; // Limit nahi hai → TPA full amount dega
+=======
+        : lineTotal;
+>>>>>>> temp-fix
     }
 
     bill.billItems.push({
@@ -186,7 +273,14 @@ class BillingService {
   }
 
   // ── 8. Update item quantity ───────────────────────────────────
+<<<<<<< HEAD
   async updateItemQuantity(billId, itemId, quantity) {
+=======
+  // FIX #1: Quantity ke saath saath sab amounts recalculate hote hain
+  async updateItemQuantity(billId, itemId, quantity) {
+    if (quantity <= 0) throw new Error("Quantity must be greater than 0");
+
+>>>>>>> temp-fix
     const bill = await PatientBill.findById(billId);
     if (!bill) throw new Error("Bill not found");
     if (["PAID", "CANCELLED"].includes(bill.billStatus)) {
@@ -196,21 +290,63 @@ class BillingService {
     const item = bill.billItems.id(itemId);
     if (!item) throw new Error("Bill item not found");
 
+<<<<<<< HEAD
     item.quantity = quantity;
+=======
+    // Recalculate all amounts based on new quantity
+    item.quantity = quantity;
+    item.grossAmount = item.unitPrice * quantity;
+    item.discountAmount =
+      (item.grossAmount * (item.discountPercent || 0)) / 100;
+    item.netAmount = item.grossAmount - item.discountAmount;
+    item.taxAmount = item.isTaxable
+      ? (item.netAmount * (item.taxPercent || 0)) / 100
+      : 0;
+    const lineTotal = item.netAmount + item.taxAmount;
+
+    // TPA split recalculate
+    if (bill.paymentType === "TPA") {
+      // tpaApprovedLimit per unit tha — isliye quantity se multiply
+      const tpaLimit = item.tpaApprovedLimitPerUnit
+        ? item.tpaApprovedLimitPerUnit * quantity
+        : lineTotal;
+      item.tpaPayableAmount = Math.min(tpaLimit, lineTotal);
+      item.patientPayableAmount = lineTotal - item.tpaPayableAmount;
+    } else {
+      item.tpaPayableAmount = 0;
+      item.patientPayableAmount = lineTotal;
+    }
+
+>>>>>>> temp-fix
     await bill.save();
     return bill;
   }
 
   // ── 9. Generate final bill (DRAFT → GENERATED) ────────────────
+<<<<<<< HEAD
   async generateFinalBill(billId, generatedBy = "Staff") {
     const bill = await PatientBill.findById(billId);
     if (!bill) throw new Error("Bill not found");
     if (bill.billStatus !== "DRAFT")
       throw new Error("Only DRAFT bills can be generated");
+=======
+  // FIX #6: Unique bill number assign hota hai
+  async generateFinalBill(billId, generatedBy = "Staff") {
+    const bill = await PatientBill.findById(billId);
+    if (!bill) throw new Error("Bill not found");
+    if (bill.billStatus !== "DRAFT") {
+      throw new Error("Only DRAFT bills can be generated");
+    }
+>>>>>>> temp-fix
     if (!bill.billItems || bill.billItems.length === 0) {
       throw new Error("Cannot generate empty bill — pehle services add karo");
     }
 
+<<<<<<< HEAD
+=======
+    // Unique bill number generate karo
+    bill.billNumber = await generateBillNumber();
+>>>>>>> temp-fix
     bill.billStatus = "GENERATED";
     bill.billGeneratedAt = new Date();
     bill.generatedBy = generatedBy;
@@ -224,13 +360,35 @@ class BillingService {
   }
 
   // ── 10. Record payment ────────────────────────────────────────
+<<<<<<< HEAD
+=======
+  // FIX #2: DRAFT bill pe payment block — pehle generate karo
+>>>>>>> temp-fix
   async recordPayment(
     billId,
     { amount, paymentMode, transactionId, receivedBy, remarks },
   ) {
     const bill = await PatientBill.findById(billId);
     if (!bill) throw new Error("Bill not found");
+<<<<<<< HEAD
     if (bill.billStatus === "PAID") throw new Error("Bill already fully paid");
+=======
+
+    // DRAFT pe payment nahi leni — pehle generate karo
+    if (bill.billStatus === "DRAFT") {
+      throw new Error(
+        "Bill abhi DRAFT hai — pehle generateFinalBill() karo, tab payment lo",
+      );
+    }
+    if (bill.billStatus === "PAID") {
+      throw new Error("Bill already fully paid");
+    }
+    if (bill.billStatus === "CANCELLED") {
+      throw new Error("Cancelled bill pe payment nahi ho sakti");
+    }
+
+    if (!amount || amount <= 0) throw new Error("Valid amount required");
+>>>>>>> temp-fix
 
     bill.payments.push({
       amount,
@@ -238,6 +396,10 @@ class BillingService {
       transactionId,
       receivedBy,
       remarks,
+<<<<<<< HEAD
+=======
+      paidAt: new Date(),
+>>>>>>> temp-fix
     });
 
     const totalPaid = bill.payments.reduce((s, p) => s + p.amount, 0);
@@ -264,14 +426,22 @@ class BillingService {
   }
 
   // ── 12. Billing dashboard summary ────────────────────────────
+<<<<<<< HEAD
   // Aaj ka revenue, pending bills, TPA claims
+=======
+  // FIX #7: billDate ki jagah createdAt use — safe aur reliable
+>>>>>>> temp-fix
   async getBillingSummary() {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
     const [todayCount, pendingCount, paidToday, tpaPending] = await Promise.all(
       [
+<<<<<<< HEAD
         PatientBill.countDocuments({ billDate: { $gte: today } }),
+=======
+        PatientBill.countDocuments({ createdAt: { $gte: today } }),
+>>>>>>> temp-fix
         PatientBill.countDocuments({
           billStatus: { $in: ["GENERATED", "PARTIAL"] },
         }),
@@ -295,7 +465,11 @@ class BillingService {
   }
 
   // ── 13. Setup daily auto-charges on admission ─────────────────
+<<<<<<< HEAD
   // Room category se service codes map → AutoBilledItems records
+=======
+  // FIX #5: Duplicate prevention — pehle check karo, tab hi create karo
+>>>>>>> temp-fix
   async setupAutoChargesForAdmission(admission, patient) {
     const ROOM_MAP = {
       GENERAL_WARD: { room: "IPD-RM-001", nursing: "IPD-NUR-001" },
@@ -320,6 +494,17 @@ class BillingService {
       });
       if (!service) continue;
 
+<<<<<<< HEAD
+=======
+      // FIX: Pehle check karo — duplicate auto-charge nahi banana
+      const alreadyExists = await AutoBilledItems.findOne({
+        admission: admission._id,
+        service: service._id,
+        isActive: true,
+      });
+      if (alreadyExists) continue;
+
+>>>>>>> temp-fix
       const pricing = await ServicePricing.getPriceFor(
         service._id,
         tariff,
@@ -345,8 +530,14 @@ class BillingService {
   }
 
   // ── 14. Daycare time check + auto-convert to IPD ──────────────
+<<<<<<< HEAD
   async checkAndHandleDaycareConversion(admissionId) {
     const admission = await Admission.findById(admissionId);
+=======
+  // FIX #8: Convert ke baad IPD auto-charges bhi setup karo
+  async checkAndHandleDaycareConversion(admissionId) {
+    const admission = await Admission.findById(admissionId).populate("patient");
+>>>>>>> temp-fix
     if (!admission || admission.admissionType !== "DAYCARE") return null;
 
     const hours = admission.totalHoursAdmitted;
@@ -356,6 +547,10 @@ class BillingService {
       admission.isConvertedToIPD = true;
       admission.convertedToIPDAt = new Date();
       admission.conversionReason = `Exceeded ${admission.daycareMaxHours}hr daycare limit`;
+<<<<<<< HEAD
+=======
+      admission.admissionType = "IPD"; // type bhi update karo
+>>>>>>> temp-fix
       await admission.save();
 
       // Open draft bills ko bhi IPD mein convert karo
@@ -364,6 +559,27 @@ class BillingService {
         { $set: { visitType: "IPD" } },
       );
 
+<<<<<<< HEAD
+=======
+      // FIX: IPD room/nursing auto-charges ab setup karo
+      // Existing daycare auto-charges band karo
+      await AutoBilledItems.updateMany(
+        { admission: admissionId, isActive: true },
+        { $set: { isActive: false } },
+      );
+
+      // Naye IPD auto-charges setup karo
+      if (admission.patient) {
+        const Patient = require("../../models/Patient/patientModel");
+        const patient = await Patient.findById(admission.patient).populate(
+          "tpa",
+        );
+        if (patient) {
+          await this.setupAutoChargesForAdmission(admission, patient);
+        }
+      }
+
+>>>>>>> temp-fix
       return {
         converted: true,
         hours,
@@ -371,6 +587,7 @@ class BillingService {
       };
     }
 
+<<<<<<< HEAD
     return {
       converted: false,
       hours,
@@ -444,6 +661,114 @@ class BillingService {
 
     return { processed: results.length, results };
   }
+=======
+    return {
+      converted: false,
+      hours,
+      remaining: Math.max(0, admission.daycareMaxHours - hours),
+    };
+  }
+
+  // ── 15. Daily auto-charge cron job ────────────────────────────
+  // FIX #3: Per-item error isolation — ek fail ho to baaki process hote rahein
+  // Result mein failed items clearly listed hain retry ke liye
+  async runDailyAutoCharges() {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const items = await AutoBilledItems.find({
+      isActive: true,
+      $or: [{ lastBilledDate: null }, { lastBilledDate: { $lt: today } }],
+    }).populate("admission");
+
+    const results = [];
+    const failed = [];
+
+    for (const item of items) {
+      try {
+        // Patient discharged ho gaya → auto-charge band
+        if (!item.admission || item.admission.status !== "ADMITTED") {
+          item.isActive = false;
+          await item.save();
+          results.push({
+            UHID: item.UHID,
+            service: item.serviceName,
+            status: "stopped",
+            reason: "Patient discharged or admission not found",
+          });
+          continue;
+        }
+
+        // Aaj already billed nahi hua — double-charge prevention
+        const alreadyBilledToday = await PatientBill.findOne({
+          admission: item.admission._id,
+          billStatus: { $ne: "CANCELLED" },
+          "billItems.chargeDate": { $gte: today },
+          "billItems.serviceId": item.service,
+        });
+        if (alreadyBilledToday) {
+          results.push({
+            UHID: item.UHID,
+            service: item.serviceName,
+            status: "skipped",
+            reason: "Already billed today",
+          });
+          continue;
+        }
+
+        const bill = await this.getOrCreateDraftBill(
+          item.UHID,
+          item.admission.admissionType,
+          item.admission._id,
+        );
+
+        await this.addServiceToBill(
+          bill._id,
+          item.service,
+          1,
+          new Date(),
+          "Auto-charged daily",
+        );
+
+        item.lastBilledDate = new Date();
+        item.lastBilledBillId = bill._id;
+        item.totalBilledCount += 1;
+        item.totalBilledAmount += item.unitPrice;
+        await item.save();
+
+        results.push({
+          UHID: item.UHID,
+          service: item.serviceName,
+          status: "billed",
+        });
+      } catch (err) {
+        // Ek item fail ho to loop rukta nahi — baaki process hote hain
+        const failEntry = {
+          UHID: item.UHID,
+          service: item.serviceName,
+          status: "error",
+          error: err.message,
+        };
+        results.push(failEntry);
+        failed.push(failEntry);
+        console.error(
+          `[AutoCharge] Failed for ${item.UHID} - ${item.serviceName}:`,
+          err,
+        );
+      }
+    }
+
+    return {
+      processed: results.length,
+      successCount: results.filter((r) => r.status === "billed").length,
+      stoppedCount: results.filter((r) => r.status === "stopped").length,
+      skippedCount: results.filter((r) => r.status === "skipped").length,
+      failedCount: failed.length,
+      failed, // retry ke liye yeh list use karo
+      results,
+    };
+  }
+>>>>>>> temp-fix
 }
 
 module.exports = new BillingService();

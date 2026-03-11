@@ -18,10 +18,15 @@ import "primereact/resources/themes/lara-light-blue/theme.css";
 import "primereact/resources/primereact.min.css";
 import "primeicons/primeicons.css";
 import { API_ENDPOINTS } from "../config/api";
+import PatientSearchBar from "./Search/PatientSearchBar";
+
 import "../../css/Radiobutton.css";
+<<<<<<< HEAD
 
 // ✅ NEW: PatientSearchBar import
 import PatientSearchBar from "./Search/PatientSearchBar";
+=======
+>>>>>>> temp-fix
 
 export default function PatientRegistration() {
   const toast = useRef(null);
@@ -37,7 +42,6 @@ export default function PatientRegistration() {
     maritalStatus: "",
     contactNumber: "",
     email: "",
-    age: "",
     address: {
       completeAddress: "",
       pincode: "",
@@ -47,7 +51,10 @@ export default function PatientRegistration() {
     },
     bloodGroup: "",
     knownAllergies: "",
+<<<<<<< HEAD
     tpa: null,
+=======
+>>>>>>> temp-fix
     department: "",
     doctor: "",
     isMLC: false,
@@ -71,7 +78,11 @@ export default function PatientRegistration() {
   const [isEditMode, setIsEditMode] = useState(false);
   const [OPDprice, setOPDprice] = useState(null);
 
+<<<<<<< HEAD
   // ✅ NEW: Search se patient select hone ka banner
+=======
+  // Search se patient select hone ka banner
+>>>>>>> temp-fix
   const [searchSelectedPatient, setSearchSelectedPatient] = useState(null);
 
   // Initial data load
@@ -103,7 +114,11 @@ export default function PatientRegistration() {
     }
   };
 
+<<<<<<< HEAD
   // ✅ NEW: Search se patient select hone pe form fill karo
+=======
+  // Search se patient select hone pe form fill karo
+>>>>>>> temp-fix
   const handlePatientSearchSelect = (patient) => {
     setSearchSelectedPatient(patient);
 
@@ -572,10 +587,7 @@ export default function PatientRegistration() {
           height: "400px",
         }}
       >
-        <span
-          className="loaders"
-          style={{ width: "50px", height: "50px" }}
-        ></span>
+        <span className="loaders" style={{ width: "50px", height: "50px" }} />
         <h3 className="mt-3 font-bold text-xl">Loading...</h3>
       </div>
     );
@@ -604,6 +616,7 @@ export default function PatientRegistration() {
     <div style={{ width: "100%", padding: "4px 12px 4px 12px" }}>
       <Toast ref={toast} position="top-right" />
 
+<<<<<<< HEAD
       {/* ── Header (Ultra Compact, Full Width) ── */}
       <Card
         className="btn-custom"
@@ -612,6 +625,12 @@ export default function PatientRegistration() {
           marginBottom: "3px",
           color: "white",
         }}
+=======
+      {/* ── Header ── */}
+      <Card
+        className="btn-custom"
+        style={{ borderRadius: "8px", marginBottom: "3px", color: "white" }}
+>>>>>>> temp-fix
       >
         <div
           style={{
@@ -654,13 +673,22 @@ export default function PatientRegistration() {
                   whiteSpace: "nowrap",
                 }}
               >
+<<<<<<< HEAD
                 {isEditMode ? "Edit Patient" : "Patient Registration"}{" "}
                 &nbsp;·&nbsp; Dr. Sandeep
+=======
+                {isEditMode ? "Edit Patient" : "Patient Registration"}
+                &nbsp;·&nbsp;Dr. Sandeep
+>>>>>>> temp-fix
               </div>
             </div>
           </div>
 
+<<<<<<< HEAD
           {/* Center: Search bar (only in add mode) — grows to fill */}
+=======
+          {/* Center: Search bar (only in add mode) */}
+>>>>>>> temp-fix
           {!isEditMode && (
             <div
               style={{
@@ -733,7 +761,11 @@ export default function PatientRegistration() {
       </Card>
 
       <form onSubmit={handleSubmit}>
+<<<<<<< HEAD
         {/* ── Row 1: Registration Type + TPA (side by side) ── */}
+=======
+        {/* ── Row 1: Registration Type + TPA ── */}
+>>>>>>> temp-fix
         <div
           style={{
             display: "grid",
@@ -964,7 +996,11 @@ export default function PatientRegistration() {
           </div>
         </Card>
 
+<<<<<<< HEAD
         {/* ── Row 3: Address + Medical (side by side) ── */}
+=======
+        {/* ── Row 3: Address + Medical ── */}
+>>>>>>> temp-fix
         <div
           style={{
             display: "grid",
@@ -1190,7 +1226,11 @@ export default function PatientRegistration() {
           </Card>
         </div>
 
+<<<<<<< HEAD
         {/* ── Row 4: Companion + Appointment (side by side) ── */}
+=======
+        {/* ── Row 4: Companion + Appointment ── */}
+>>>>>>> temp-fix
         <div
           style={{
             display: "grid",
