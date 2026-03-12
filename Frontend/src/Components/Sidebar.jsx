@@ -34,12 +34,6 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
       ],
     },
 
-<<<<<<< HEAD
-    // ══════════════════════════════════════════════════════════════════════
-    // BILLING (Old)
-    // ══════════════════════════════════════════════════════════════════════
-=======
->>>>>>> temp-fix
     {
       label: "Billing",
       icon: "pi pi-money-bill",
@@ -86,41 +80,6 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
       ],
     },
 
-    // ══════════════════════════════════════════════════════════════════════
-<<<<<<< HEAD
-    // NEW BILLING SYSTEM (billing-v3)
-    // ══════════════════════════════════════════════════════════════════════
-    {
-      label: "Patient Billing",
-      icon: "pi pi-receipt",
-      items: [
-        {
-          // UHID se patient search karo → bill open hoga
-          label: "Patient Bill",
-          icon: "pi pi-user",
-          command: () => {
-            navigate("/patient-billing");
-            toggleSidebar();
-          },
-        },
-        {
-          // Admin: sabhi hospital services + pricing manage karo
-          label: "Service Master",
-          icon: "pi pi-cog",
-          command: () => {
-            navigate("/service-master");
-            toggleSidebar();
-          },
-        },
-      ],
-    },
-
-    // ══════════════════════════════════════════════════════════════════════
-    // MASTER DATA
-=======
-    // DEPARTMENT MANAGEMENT (NEW — ALAG SECTION)
->>>>>>> temp-fix
-    // ══════════════════════════════════════════════════════════════════════
     {
       label: "Department",
       icon: "pi pi-sitemap",
@@ -342,7 +301,6 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
         <div style={{ fontSize: "12px", color: "#6c757d" }}>Version 1.0.0</div>
       </div>
 
-      {/* ═══ Custom Styles ═══ */}
       <style>{`
         .modern-sidebar .p-sidebar-content { padding: 0 !important; background: #ffffff !important; }
         .modern-sidebar .p-panelmenu { border: none !important; background: transparent !important; }

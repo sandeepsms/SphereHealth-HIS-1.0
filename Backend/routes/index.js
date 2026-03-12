@@ -14,11 +14,8 @@ const patientRoutes = require("./Patient/patientRoutes");
 const opdRoutes = require("./Patient/OPDRoutes");
 const doctorRoutes = require("./Doctor/doctorRoutes");
 const emergencyRoutes = require("./Patient/emergencyRoutes");
-<<<<<<< HEAD
-const admissionRoutes = require("./Patient/admissionRoutes");
-=======
+
 const admissionRoutes = require("./Patient/admissionRoutes"); // ✅ Existing admission system
->>>>>>> temp-fix
 const doctorPrescriptionRoutes = require("../routes/Doctor/doctorPrescriptionRoutes");
 
 // ── Department & Support ──────────────────────────────────────
@@ -31,13 +28,9 @@ const TPAServicebill = require("./Billing/TPAServiceBilling");
 const hospitalChargesRoutes = require("../routes/charges/hospitalChargesRoutes");
 
 // ── New Billing System (billing-v3) ───────────────────────────
-<<<<<<< HEAD
+
 const serviceMasterRoutes = require("../routes/ServiceMasterRoute/serviceMasterRoutes");
 const newBillingRoutes = require("./Billing/billingRoutes");
-=======
-const serviceMasterRoutes = require("../routes/ServiceMasterRoute/serviceMasterRoutes"); // Service catalog + pricing
-const newBillingRoutes = require("./Billing/billingRoutes"); // Bills, payments, TPA claims
->>>>>>> temp-fix
 
 // ═════════════════════════════════════════════════════════════
 // ROUTE REGISTRATION
@@ -56,11 +49,9 @@ router.use("/patients", patientRoutes);
 router.use("/opd", opdRoutes);
 router.use("/emergency", emergencyRoutes);
 router.use("/doctors", doctorRoutes);
-<<<<<<< HEAD
+
 router.use("/admissions", admissionRoutes);
-=======
-router.use("/admissions", admissionRoutes); // ✅ Existing admission system — unchanged
->>>>>>> temp-fix
+
 router.use("/prescriptions", doctorPrescriptionRoutes);
 
 // Department & Support
@@ -73,12 +64,8 @@ router.use("/servicebilldata", TPAServicebill);
 router.use("/hospital-charges", hospitalChargesRoutes);
 
 // New Billing System (billing-v3)
-<<<<<<< HEAD
-router.use("/services", serviceMasterRoutes); // GET /api/services, POST /api/services/seed
-router.use("/billing", newBillingRoutes); // GET /api/billing/uhid/:UHID, POST /api/billing/create
-=======
+
 router.use("/services", serviceMasterRoutes);
 router.use("/billing", newBillingRoutes);
->>>>>>> temp-fix
 
 module.exports = router;

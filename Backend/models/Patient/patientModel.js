@@ -13,11 +13,9 @@ const PatientSchema = new mongoose.Schema(
     registrationType: {
       type: String,
       required: true,
-<<<<<<< HEAD
-      enum: ["OPD", "Emergency", "IPD", "Daycare", "Service"],
-=======
+
       enum: ["OPD", "Emergency", "IPD", "Daycare", "Services"],
->>>>>>> temp-fix
+
       default: "OPD",
     },
     fullName: {

@@ -54,18 +54,11 @@ export const roomService = {
 
   createRoom: async (data) => {
     try {
-<<<<<<< HEAD
-      // Strip any pricing/services fields (managed via TPA)
-      const { pricing, services, ...cleanData } = data;
-=======
-      // ✅ pricing/services strip karo — TPA manage karta hai
       const { pricing, services, ...cleanData } = data;
 
-      // ✅ Safety check — roomNumber aur roomName dono zaroor hone chahiye
       if (!cleanData.roomNumber || !cleanData.roomName) {
         throw new Error("Room number and name are required");
       }
->>>>>>> temp-fix
 
       const response = await fetch(API_ENDPOINTS.ROOMS, {
         method: "POST",
@@ -90,11 +83,6 @@ export const roomService = {
 
   updateRoom: async (id, data) => {
     try {
-<<<<<<< HEAD
-      // Strip any pricing/services fields (managed via TPA)
-=======
-      // ✅ pricing/services strip karo — TPA manage karta hai
->>>>>>> temp-fix
       const { pricing, services, ...cleanData } = data;
 
       const response = await fetch(`${API_ENDPOINTS.ROOMS}/${id}`, {
@@ -121,12 +109,10 @@ export const roomService = {
       const response = await fetch(`${API_ENDPOINTS.ROOMS}/${id}`, {
         method: "DELETE",
       });
-
       if (!response.ok) {
         const error = await response.json();
         throw new Error(error.message || "Failed to delete room");
       }
-
       return await response.json();
     } catch (error) {
       console.error("Error deleting room:", error);
@@ -138,8 +124,7 @@ export const roomService = {
     try {
       const response = await fetch(`${API_ENDPOINTS.ROOMS}/availability/low`);
       const data = await response.json();
-      const rooms = Array.isArray(data) ? data : [];
-      return rooms.map(normalizeRoom);
+      return (Array.isArray(data) ? data : []).map(normalizeRoom);
     } catch (error) {
       console.error("Error:", error);
       return [];
@@ -150,8 +135,7 @@ export const roomService = {
     try {
       const response = await fetch(`${API_ENDPOINTS.ROOMS}/availability/full`);
       const data = await response.json();
-      const rooms = Array.isArray(data) ? data : [];
-      return rooms.map(normalizeRoom);
+      return (Array.isArray(data) ? data : []).map(normalizeRoom);
     } catch (error) {
       console.error("Error:", error);
       return [];
@@ -164,8 +148,7 @@ export const roomService = {
         `${API_ENDPOINTS.ROOMS}/category/${categoryId}`,
       );
       const data = await response.json();
-      const rooms = Array.isArray(data) ? data : [];
-      return rooms.map(normalizeRoom);
+      return (Array.isArray(data) ? data : []).map(normalizeRoom);
     } catch (error) {
       console.error("Error:", error);
       return [];
@@ -178,8 +161,7 @@ export const roomService = {
         `${API_ENDPOINTS.ROOMS}/category/${categoryId}/available`,
       );
       const data = await response.json();
-      const rooms = Array.isArray(data) ? data : [];
-      return rooms.map(normalizeRoom);
+      return (Array.isArray(data) ? data : []).map(normalizeRoom);
     } catch (error) {
       console.error("Error:", error);
       return [];
@@ -198,12 +180,6 @@ export const roomService = {
     }
   },
 
-<<<<<<< HEAD
-  // ❌ REMOVED: updateRoomServices() - services/pricing moved to TPA
-  // ❌ REMOVED: updateBedOccupancy() - this is internal, handled by bedService
-
-=======
->>>>>>> temp-fix
   updateBedOccupancy: async (id, occupancy) => {
     try {
       const response = await fetch(`${API_ENDPOINTS.ROOMS}/${id}/occupancy`, {

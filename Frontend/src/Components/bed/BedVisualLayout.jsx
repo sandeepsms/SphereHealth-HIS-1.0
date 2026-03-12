@@ -99,20 +99,10 @@ const getPatientName = (p) => {
 const getDoctorName = (doctorRef, doctorsMap = {}) => {
   if (!doctorRef) return null;
   if (typeof doctorRef === "string") {
-<<<<<<< HEAD
-    // Not a MongoId → it's already a plain name string, return directly
-    if (!/^[a-f0-9]{24}$/i.test(doctorRef.trim()))
-      return doctorRef.trim() || null;
-    // It's a MongoId → look up in doctorsMap
-    return doctorsMap[doctorRef] || null;
-  }
-  // Populated object — doctorService stores name under personalInfo.fullName
-=======
     if (!/^[a-f0-9]{24}$/i.test(doctorRef.trim()))
       return doctorRef.trim() || null;
     return doctorsMap[doctorRef] || null;
   }
->>>>>>> temp-fix
   return (
     doctorRef.personalInfo?.fullName?.trim() ||
     `${doctorRef.personalInfo?.firstName || ""} ${doctorRef.personalInfo?.lastName || ""}`.trim() ||
@@ -151,30 +141,6 @@ const scoreP = (p, q) =>
     fuzzyScore(p?.contactNumber || p?.phone || "", q),
   );
 
-<<<<<<< HEAD
-/* isMongoId: 24-char hex ObjectId */
-const isMongoId = (v) => typeof v === "string" && /^[a-f\d]{24}$/i.test(v);
-/* isUHIDVal: non-empty string that is NOT a MongoId */
-const isUHIDVal = (v) =>
-  typeof v === "string" && v.trim().length > 0 && !/^[a-f\d]{24}$/i.test(v);
-
-/* ─── Safe patient unwrap ────────────────────────────────────
-   patientService methods do: return response.data  (axios)
-   So res IS already the parsed JSON body from the server.
-   Backend can return any of these shapes:
-     { success, patient: {...} }
-     { success, data: {...} }
-     { patient: {...} }
-     { ...patientFields directly... }
-   We try each in order.
-─────────────────────────────────────────────────────────── */
-const unwrapPatient = (res) => {
-  if (!res || typeof res !== "object") return null;
-  // shape: { patient: {...} }
-  if (res.patient && typeof res.patient === "object" && res.patient._id)
-    return res.patient;
-  // shape: { data: { patient: {...} } }
-=======
 const isMongoId = (v) => typeof v === "string" && /^[a-f\d]{24}$/i.test(v);
 const isUHIDVal = (v) =>
   typeof v === "string" && v.trim().length > 0 && !/^[a-f\d]{24}$/i.test(v);
@@ -183,89 +149,14 @@ const unwrapPatient = (res) => {
   if (!res || typeof res !== "object") return null;
   if (res.patient && typeof res.patient === "object" && res.patient._id)
     return res.patient;
->>>>>>> temp-fix
   if (res.data && typeof res.data === "object") {
     if (res.data.patient && res.data.patient._id) return res.data.patient;
     if (res.data._id) return res.data;
   }
-<<<<<<< HEAD
-  // shape: patient object directly
-=======
->>>>>>> temp-fix
   if (res._id) return res;
   return null;
 };
 
-<<<<<<< HEAD
-/* ─── Stat Card ──────────────────────────────────────────── */
-const StatCard = ({ label, value, icon, gradient }) => (
-  <div
-    style={{
-      background: gradient,
-      borderRadius: 16,
-      padding: "20px 24px",
-      color: "#fff",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "space-between",
-      boxShadow: "0 4px 20px rgba(0,0,0,.12)",
-      transition: "transform .2s",
-    }}
-    onMouseEnter={(e) => (e.currentTarget.style.transform = "scale(1.03)")}
-    onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}
-  >
-    <div>
-      <p style={{ fontSize: 12, opacity: 0.8, margin: "0 0 4px" }}>{label}</p>
-      <p style={{ fontSize: 36, fontWeight: 800, margin: 0, lineHeight: 1 }}>
-        {value}
-      </p>
-    </div>
-    <i className={`pi ${icon}`} style={{ fontSize: 42, opacity: 0.22 }} />
-  </div>
-);
-
-/* ─── Bed Icon ───────────────────────────────────────────── */
-const BedIcon = ({ status }) => {
-  const col = STATUS_COLOR[status] || "#9ca3af";
-  const dark =
-    status === "Available"
-      ? "#16a34a"
-      : status === "Occupied"
-        ? "#b91c1c"
-        : "#78716c";
-  return (
-    <svg
-      width="32"
-      height="28"
-      viewBox="0 0 36 30"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <rect x="2" y="14" width="32" height="10" rx="2" fill={col} />
-      <rect x="2" y="8" width="5" height="16" rx="1.5" fill={dark} />
-      <rect
-        x="8"
-        y="10"
-        width="9"
-        height="7"
-        rx="2"
-        fill="white"
-        opacity=".9"
-      />
-      <rect x="8" y="14" width="24" height="4" rx="1" fill={col} opacity=".6" />
-      <rect x="29" y="10" width="4" height="14" rx="1.5" fill={dark} />
-      <rect x="3" y="23" width="4" height="6" rx="1" fill={dark} />
-      <rect x="29" y="23" width="4" height="6" rx="1" fill={dark} />
-    </svg>
-  );
-};
-
-/* ══════════════════════════════════════════════════════════ */
-const BedVisualLayout = ({ onRefreshParent }) => {
-  const toast = useRef(null);
-
-  /* ── data ── */
-=======
 /* ─────────────────────────────────────────────────────────
    ✅ BED ICON — uses Font Awesome <i class="fas fa-bed">
    Add this to your index.html if not already present:
@@ -297,45 +188,29 @@ const BedIcon = ({ status }) => {
 const BedVisualLayout = ({ onRefreshParent }) => {
   const toast = useRef(null);
 
->>>>>>> temp-fix
   const [beds, setBeds] = useState([]);
   const [shown, setShown] = useState([]);
   const [bldgs, setBldgs] = useState([]);
   const [floors, setFloors] = useState([]);
   const [wards, setWards] = useState([]);
   const [rooms, setRooms] = useState([]);
-<<<<<<< HEAD
-=======
   const [allFloorsList, setAllFloorsList] = useState([]);
   const [allRoomsList, setAllRoomsList] = useState([]);
->>>>>>> temp-fix
   const [allPatients, setAllPats] = useState([]);
   const [doctors, setDoctors] = useState([]);
   const [doctorsMap, setDoctorsMap] = useState({});
   const [busy, setBusy] = useState(false);
 
-<<<<<<< HEAD
-  /* ── filters ── */
-=======
->>>>>>> temp-fix
   const [fBldg, setFBldg] = useState(null);
   const [fFloor, setFFloor] = useState(null);
   const [fWard, setFWard] = useState(null);
   const [fRoom, setFRoom] = useState(null);
   const [fSearch, setFSearch] = useState("");
 
-<<<<<<< HEAD
-  /* ── Modal 1: Search & Admit ── */
-=======
->>>>>>> temp-fix
   const [searchModal, setSearchModal] = useState(false);
   const [searchQ, setSearchQ] = useState("");
   const [selBed, setSelBed] = useState(null);
 
-<<<<<<< HEAD
-  /* ── Modal 2: Admission Form ── */
-=======
->>>>>>> temp-fix
   const [admModal, setAdmModal] = useState(false);
   const [selPat, setSelPat] = useState(null);
   const [admForm, setAdmForm] = useState({
@@ -349,53 +224,16 @@ const BedVisualLayout = ({ onRefreshParent }) => {
   });
   const [booking, setBooking] = useState(false);
 
-<<<<<<< HEAD
-  /* ── Modal 3: Patient Details ── */
-=======
->>>>>>> temp-fix
   const [detailModal, setDetailModal] = useState(false);
   const [detailBed, setDetailBed] = useState(null);
   const [detailAdm, setDetailAdm] = useState(null);
   const [detailPatient, setDetailPatient] = useState(null);
   const [detailLoading, setDetailLoad] = useState(false);
 
-<<<<<<< HEAD
-  /* ── Modal 4: Edit ── */
-=======
->>>>>>> temp-fix
   const [editModal, setEditModal] = useState(false);
   const [editAdm, setEditAdm] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [editSaving, setEditSaving] = useState(false);
-<<<<<<< HEAD
-
-  /* ── Modal 5: Discharge ── */
-  const [dischargeModal, setDischargeModal] = useState(false);
-  const [dischargeAdm, setDischargeAdm] = useState(null);
-  const [dischargeBed, setDischargeBed] = useState(null);
-  const [dischargePatient, setDischargePatient] = useState(null);
-  const [dischargeForm, setDischargeForm] = useState({
-    actualDischargeDate: "",
-    dischargeNotes: "",
-    dischargeSummary: "",
-    totalCost: "",
-    conditionOnDischarge: "Stable",
-    followUpInstructions: "",
-  });
-  const [discharging, setDischarging] = useState(false);
-
-  /* ── Search results (computed) ── */
-  const searchResults = searchQ.trim()
-    ? allPatients
-        .map((p) => ({ p, score: scoreP(p, searchQ.trim()) }))
-        .filter((x) => x.score > 0)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 10)
-        .map((x) => x.p)
-    : [];
-
-  /* ══ LIFECYCLE ══ */
-=======
 
   const [dischargeModal, setDischargeModal] = useState(false);
   const [dischargeAdm, setDischargeAdm] = useState(null);
@@ -424,7 +262,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         .map((x) => x.p)
     : [];
 
->>>>>>> temp-fix
   useEffect(() => {
     fetchAll();
   }, []);
@@ -446,42 +283,14 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     doFilter();
   }, [beds, fBldg, fFloor, fWard, fRoom, fSearch]);
 
-<<<<<<< HEAD
-  /* ══ FETCH ══ */
-  const fetchAll = async () => {
-    setBusy(true);
-    try {
-      const [b, bl, pts, docs] = await Promise.all([
-=======
   const fetchAll = async () => {
     setBusy(true);
     try {
       const [b, bl, pts, docs, allF, allR] = await Promise.all([
->>>>>>> temp-fix
         bedService.getAllBeds(),
         buildingService.getAllBuildings(),
         patientService.getAllPatients({ limit: 1000 }),
         doctorService.getAllDoctors().catch(() => []),
-<<<<<<< HEAD
-      ]);
-
-      setBeds(Array.isArray(b) ? b : b?.data || []);
-      setBldgs(Array.isArray(bl) ? bl : bl?.data || []);
-
-      const pList = Array.isArray(pts) ? pts : pts?.data || pts?.patients || [];
-      setAllPats(pList);
-
-      let rawDocs = [];
-      if (Array.isArray(docs)) rawDocs = docs;
-      else if (Array.isArray(docs?.data)) rawDocs = docs.data;
-      else if (Array.isArray(docs?.doctors)) rawDocs = docs.doctors;
-      else if (Array.isArray(docs?.result)) rawDocs = docs.result;
-
-      const dMap = {};
-      const dOpts = rawDocs
-        .map((d) => {
-          // doctorService uses personalInfo.fullName structure
-=======
         floorService.getAllFloors(),
         roomService.getAllRooms(),
       ]);
@@ -497,7 +306,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       const dMap = {};
       const dOpts = rawDocs
         .map((d) => {
->>>>>>> temp-fix
           const name =
             d.personalInfo?.fullName?.trim() ||
             `${d.personalInfo?.firstName || ""} ${d.personalInfo?.lastName || ""}`.trim() ||
@@ -528,10 +336,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
           };
         })
         .filter((d) => d.label && d.label !== "Unknown" && d._id);
-<<<<<<< HEAD
-
-=======
->>>>>>> temp-fix
       setDoctors(dOpts);
       setDoctorsMap(dMap);
     } catch (e) {
@@ -555,10 +359,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       setFloors([]);
     }
   };
-<<<<<<< HEAD
-
-=======
->>>>>>> temp-fix
   const fetchWards = async () => {
     try {
       const r = await wardService.getAllWards();
@@ -568,10 +368,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       setWards([]);
     }
   };
-<<<<<<< HEAD
-
-=======
->>>>>>> temp-fix
   const fetchRooms = async () => {
     try {
       const r = await roomService.getAllRooms();
@@ -581,10 +377,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       setRooms([]);
     }
   };
-<<<<<<< HEAD
-
-=======
->>>>>>> temp-fix
   const fetchBeds = async () => {
     setBusy(true);
     try {
@@ -612,20 +404,13 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       list = list.filter(
         (b) =>
           b.bedNumber?.toLowerCase().includes(q) ||
-<<<<<<< HEAD
-          b.roomNumber?.toLowerCase().includes(q) ||
-=======
           resolveRoomName(b)?.toLowerCase().includes(q) ||
->>>>>>> temp-fix
           resolvePatientName(b.currentAdmission)?.toLowerCase().includes(q),
       );
     }
     setShown(list);
   };
 
-<<<<<<< HEAD
-  /* ══ DATA RESOLVERS ══ */
-=======
   const resolveFloorName = (bed) => {
     if (!bed) return "?";
     const floorId = getId(bed.floor);
@@ -646,7 +431,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       (found?.roomNumber ? `Room ${found.roomNumber}` : "Room ?")
     );
   };
->>>>>>> temp-fix
   const resolvePatientName = (adm) => {
     if (!adm) return null;
     if (
@@ -667,10 +451,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     }
     return null;
   };
-<<<<<<< HEAD
-
-=======
->>>>>>> temp-fix
   const resolveDoctorName = (adm) => {
     if (!adm) return null;
     return (
@@ -679,10 +459,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       null
     );
   };
-<<<<<<< HEAD
-
-=======
->>>>>>> temp-fix
   const resolvePatientInfo = (adm) => {
     if (!adm) return {};
     const pObj = typeof adm.patientId === "object" ? adm.patientId : null;
@@ -707,17 +483,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         };
     }
     return { uhid: adm.UHID || "", age: "", gender: "" };
-<<<<<<< HEAD
-  };
-
-  const calcAge = (dob) => {
-    if (!dob) return "";
-    const diff = Date.now() - new Date(dob).getTime();
-    return Math.floor(diff / (1000 * 60 * 60 * 24 * 365.25));
-  };
-
-  /* ══ BED CLICK FLOW ══ */
-=======
   };
   const calcAge = (dob) => {
     if (!dob) return "";
@@ -726,71 +491,31 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     );
   };
 
->>>>>>> temp-fix
   const handleAvailable = (bed) => {
     setSelBed(bed);
     setSearchQ("");
     setSearchModal(true);
   };
-<<<<<<< HEAD
-
-  /* ══ HANDLE OCCUPIED ══
-     After backend fix (bedsModel + bedService), bed.currentAdmission is now
-     fully populated: { patientId: { fullName, UHID, ... }, UHID, attendingDoctor, ... }
-     So we just read it directly — no extra API calls needed in most cases.
-  ══ */
-=======
->>>>>>> temp-fix
   const handleOccupied = async (bed) => {
     setDetailBed(bed);
     setDetailPatient(null);
     setDetailAdm(null);
     setDetailLoad(true);
     setDetailModal(true);
-<<<<<<< HEAD
-
-    try {
-      const bedId = getId(bed._id);
-      const ca = bed.currentAdmission; // populated object after backend fix
-
-      console.log("[BedLayout] bed clicked — bedId:", bedId);
-      console.log("[BedLayout] currentAdmission:", ca);
-
-      /* ── Path A: currentAdmission is populated (happy path after backend fix) ── */
-      if (ca && typeof ca === "object" && ca._id) {
-        setDetailAdm(ca);
-
-        // patientId may be populated object OR just an ObjectId string
-=======
     try {
       const bedId = getId(bed._id);
       const ca = bed.currentAdmission;
       if (ca && typeof ca === "object" && ca._id) {
         setDetailAdm(ca);
->>>>>>> temp-fix
         const patObj =
           ca.patientId && typeof ca.patientId === "object" && ca.patientId._id
             ? ca.patientId
             : null;
-<<<<<<< HEAD
-
         if (patObj && getPatientName(patObj)) {
-          console.log(
-            "[BedLayout] ✅ patient from populated currentAdmission:",
-            patObj,
-          );
-=======
-        if (patObj && getPatientName(patObj)) {
->>>>>>> temp-fix
           setDetailPatient(patObj);
           setDetailLoad(false);
           return;
         }
-<<<<<<< HEAD
-
-        // patientId not populated — fetch by UHID or ObjectId
-=======
->>>>>>> temp-fix
         const uhid =
           ca.UHID ||
           ca.patientUHID ||
@@ -801,10 +526,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
           typeof ca.patientId === "string" && isMongoId(ca.patientId)
             ? ca.patientId
             : getId(ca.patientId);
-<<<<<<< HEAD
-
-=======
->>>>>>> temp-fix
         if (uhid) {
           try {
             const res = await patientService.getPatientByUHID(uhid);
@@ -827,27 +548,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
             }
           } catch (_) {}
         }
-<<<<<<< HEAD
-        // Cache fallback
-        const cached = allPatients.find(
-          (p) => (uhid && p.UHID === uhid) || (objId && getId(p._id) === objId),
-        );
-        if (cached) {
-          setDetailPatient(cached);
-          setDetailLoad(false);
-          return;
-        }
-
-        console.warn("[BedLayout] admission found but patient lookup failed");
-        setDetailLoad(false);
-        return;
-      }
-
-      /* ── Path B: currentAdmission not populated — fetch admission via getActiveAdmissions ── */
-      console.warn(
-        "[BedLayout] currentAdmission not populated, fetching from API...",
-      );
-=======
         const cached = allPatients.find(
           (p) => (uhid && p.UHID === uhid) || (objId && getId(p._id) === objId),
         );
@@ -855,37 +555,11 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         setDetailLoad(false);
         return;
       }
->>>>>>> temp-fix
       try {
         const activeList = await admissionService.getActiveAdmissions();
         const list = Array.isArray(activeList)
           ? activeList
           : activeList?.admissions || activeList?.data || [];
-<<<<<<< HEAD
-
-        const admRecord = list.find(
-          (a) => getId(a.bedId) === bedId || getId(a.bed) === bedId,
-        );
-
-        if (!admRecord) {
-          console.warn(
-            "[BedLayout] ❌ No active admission for bedId:",
-            bedId,
-            "total active:",
-            list.length,
-          );
-          setDetailLoad(false);
-          return;
-        }
-
-        console.log(
-          "[BedLayout] ✅ admission found via getActiveAdmissions:",
-          admRecord,
-        );
-        setDetailAdm(admRecord);
-
-        // Resolve patient from admission
-=======
         const admRecord = list.find(
           (a) => getId(a.bedId) === bedId || getId(a.bed) === bedId,
         );
@@ -894,16 +568,10 @@ const BedVisualLayout = ({ onRefreshParent }) => {
           return;
         }
         setDetailAdm(admRecord);
->>>>>>> temp-fix
         const uhid = admRecord.UHID || admRecord.patientUHID || null;
         const objId = isMongoId(getId(admRecord.patientId))
           ? getId(admRecord.patientId)
           : null;
-<<<<<<< HEAD
-
-        // Try populated patientId first
-=======
->>>>>>> temp-fix
         if (
           admRecord.patientId &&
           typeof admRecord.patientId === "object" &&
@@ -916,10 +584,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
             return;
           }
         }
-<<<<<<< HEAD
-
-=======
->>>>>>> temp-fix
         if (uhid) {
           try {
             const res = await patientService.getPatientByUHID(uhid);
@@ -945,20 +609,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         const cached = allPatients.find(
           (p) => (uhid && p.UHID === uhid) || (objId && getId(p._id) === objId),
         );
-<<<<<<< HEAD
-        if (cached) {
-          setDetailPatient(cached);
-        } else {
-          console.warn(
-            "[BedLayout] ❌ patient NOT found. UHID:",
-            uhid,
-            "ObjId:",
-            objId,
-          );
-        }
-=======
         if (cached) setDetailPatient(cached);
->>>>>>> temp-fix
       } catch (e) {
         console.error("[BedLayout] getActiveAdmissions failed:", e?.message);
       }
@@ -996,10 +647,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     setAdmModal(true);
   };
 
-<<<<<<< HEAD
-  /* ══ ADMIT ══ */
-=======
->>>>>>> temp-fix
   const handleAdmit = async () => {
     if (!selPat || !selBed) return;
     if (!admForm.reasonForAdmission.trim()) {
@@ -1070,10 +717,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     }
   };
 
-<<<<<<< HEAD
-  /* ══ EDIT ══ */
-=======
->>>>>>> temp-fix
   const openEdit = (adm) => {
     setDetailModal(false);
     setEditAdm(adm);
@@ -1130,10 +773,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     }
   };
 
-<<<<<<< HEAD
-  /* ══ DISCHARGE ══ */
-=======
->>>>>>> temp-fix
   const openDischarge = (adm, bed) => {
     setDetailModal(false);
     setDischargeAdm(adm);
@@ -1182,8 +821,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         detail: `Bed ${dischargeBed?.bedNumber || ""} ab Available hai`,
         life: 5000,
       });
-<<<<<<< HEAD
-=======
       // ✅ Save invoice data before clearing state
       setInvoiceData({
         patient: dischargePatient,
@@ -1192,17 +829,13 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         form: { ...dischargeForm },
         dischargedAt: new Date().toISOString(),
       });
->>>>>>> temp-fix
       setDischargeModal(false);
       setDischargeAdm(null);
       setDischargeBed(null);
       setDischargePatient(null);
       await fetchBeds();
       onRefreshParent?.();
-<<<<<<< HEAD
-=======
       setInvoiceModal(true);
->>>>>>> temp-fix
     } catch (e) {
       setBeds((prev) =>
         prev.map((b) =>
@@ -1218,36 +851,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     } finally {
       setDischarging(false);
     }
-<<<<<<< HEAD
-  };
-
-  /* ── Group beds by Floor → Room ── */
-  const byFloor = (() => {
-    const map = {};
-    shown.forEach((bed) => {
-      const fk = `Floor ${bed.floorNumber || "?"}`;
-      if (!map[fk]) map[fk] = { rooms: {} };
-      const rk = String(getId(bed.room) || `nr_${getId(bed._id)}`);
-      if (!map[fk].rooms[rk])
-        map[fk].rooms[rk] = {
-          roomName: bed.roomName || `Room ${bed.roomNumber || "?"}`,
-          beds: [],
-        };
-      map[fk].rooms[rk].beds.push(bed);
-    });
-    return map;
-  })();
-
-  const stats = {
-    total: shown.length,
-    available: shown.filter((b) => b.status === "Available").length,
-    occupied: shown.filter((b) => b.status === "Occupied").length,
-    other: shown.filter(
-      (b) => b.status !== "Available" && b.status !== "Occupied",
-    ).length,
-  };
-
-=======
   };
 
   /* ══ PRINT INVOICE ══ */
@@ -1442,14 +1045,11 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     return map;
   })();
 
->>>>>>> temp-fix
   const canBook =
     !!selPat &&
     !!admForm.department &&
     !!admForm.admissionDateTime &&
     !!admForm.reasonForAdmission.trim();
-<<<<<<< HEAD
-
   const lbl = {
     display: "block",
     fontSize: 13,
@@ -1458,59 +1058,10 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     marginBottom: 6,
   };
 
-  /* ════════════════════════════════════════════════════════
-     RENDER
-  ════════════════════════════════════════════════════════ */
-=======
-  const lbl = {
-    display: "block",
-    fontSize: 13,
-    fontWeight: 600,
-    color: "#374151",
-    marginBottom: 6,
-  };
-
->>>>>>> temp-fix
   return (
     <div style={{ fontFamily: "'Inter',-apple-system,sans-serif" }}>
       <Toast ref={toast} />
 
-<<<<<<< HEAD
-      {/* ── STAT CARDS ── */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(4,1fr)",
-          gap: 16,
-          marginBottom: 20,
-        }}
-      >
-        <StatCard
-          label="Total Beds"
-          value={stats.total}
-          icon="pi-inbox"
-          gradient={TEAL_GRAD}
-        />
-        <StatCard
-          label="Available"
-          value={stats.available}
-          icon="pi-check-circle"
-          gradient="linear-gradient(135deg,#10b981,#059669)"
-        />
-        <StatCard
-          label="Occupied"
-          value={stats.occupied}
-          icon="pi-user-minus"
-          gradient="linear-gradient(135deg,#ef4444,#dc2626)"
-        />
-        <StatCard
-          label="Other"
-          value={stats.other}
-          icon="pi-clock"
-          gradient="linear-gradient(135deg,#f59e0b,#d97706)"
-        />
-      </div>
-=======
       {/* ══ DISCHARGE DIALOG SCROLL FIX ══ */}
       <style>{`
         .discharge-dlg .p-dialog-content {
@@ -1518,7 +1069,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
           overflow: hidden !important;
         }
       `}</style>
->>>>>>> temp-fix
 
       {/* ── FILTER BAR ── */}
       <div
@@ -1567,7 +1117,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                 borderRadius: 8,
                 fontSize: 12,
               }}
-<<<<<<< HEAD
             />
             <Button
               label="Clear"
@@ -1584,25 +1133,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
             />
           </div>
         </div>
-
-=======
-            />
-            <Button
-              label="Clear"
-              icon="pi pi-filter-slash"
-              onClick={() => {
-                setFBldg(null);
-                setFFloor(null);
-                setFWard(null);
-                setFRoom(null);
-                setFSearch("");
-              }}
-              className="p-button-sm p-button-text"
-              style={{ color: "#64748b" }}
-            />
-          </div>
-        </div>
->>>>>>> temp-fix
         <div
           style={{
             display: "grid",
@@ -1613,569 +1143,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
           <div style={{ position: "relative" }}>
             <i
               className="pi pi-search"
-<<<<<<< HEAD
-              style={{
-                position: "absolute",
-                left: 12,
-                top: "50%",
-                transform: "translateY(-50%)",
-                color: "#9ca3af",
-                fontSize: 14,
-              }}
-            />
-            <input
-              value={fSearch}
-              onChange={(e) => setFSearch(e.target.value)}
-              placeholder="Search rooms or beds..."
-              style={{
-                width: "100%",
-                padding: "10px 14px 10px 38px",
-                border: "1px solid #e2e8f0",
-                borderRadius: 10,
-                fontSize: 13,
-                outline: "none",
-                fontFamily: "inherit",
-                boxSizing: "border-box",
-              }}
-            />
-          </div>
-          {[
-            {
-              val: fBldg,
-              opts: bldgs.map((b) => ({ label: b.buildingName, value: b._id })),
-              onChange: (v) => {
-                setFBldg(v);
-                setFFloor(null);
-                setFWard(null);
-                setFRoom(null);
-              },
-              disabled: false,
-              ph: "All Buildings",
-            },
-            {
-              val: fFloor,
-              opts: floors.map((f) => ({
-                label: f.floorName || `Floor ${f.floorNumber}`,
-                value: f._id,
-              })),
-              onChange: (v) => {
-                setFFloor(v);
-                setFWard(null);
-                setFRoom(null);
-              },
-              disabled: !fBldg,
-              ph: "All Floors",
-            },
-            {
-              val: fWard,
-              opts: wards.map((w) => ({ label: w.wardName, value: w._id })),
-              onChange: setFWard,
-              disabled: !fFloor,
-              ph: "All Wards",
-            },
-            {
-              val: fRoom,
-              opts: rooms.map((r) => ({ label: r.roomNumber, value: r._id })),
-              onChange: setFRoom,
-              disabled: !fFloor,
-              ph: "All Rooms",
-            },
-          ].map(({ val, opts, onChange, disabled, ph }, i) => (
-            <Dropdown
-              key={i}
-              className="w-full"
-              value={val}
-              showClear
-              disabled={disabled}
-              options={opts}
-              onChange={(e) => onChange(e.value)}
-              placeholder={ph}
-            />
-          ))}
-        </div>
-      </div>
-
-      {/* ── BED GRID ── */}
-      {busy ? (
-        <div
-          style={{
-            textAlign: "center",
-            padding: 80,
-            background: "#fff",
-            borderRadius: 16,
-          }}
-        >
-          <i
-            className="pi pi-spin pi-spinner"
-            style={{ fontSize: 40, color: TEAL }}
-          />
-          <p style={{ marginTop: 12, color: "#64748b" }}>
-            Beds load ho rahe hain…
-          </p>
-        </div>
-      ) : Object.keys(byFloor).length === 0 ? (
-        <div
-          style={{
-            textAlign: "center",
-            padding: 80,
-            background: "#fff",
-            borderRadius: 16,
-            border: "1px solid #e2e8f0",
-          }}
-        >
-          <i
-            className="pi pi-inbox"
-            style={{
-              fontSize: 52,
-              color: "#cbd5e1",
-              display: "block",
-              marginBottom: 12,
-            }}
-          />
-          <p style={{ color: "#94a3b8" }}>Koi bed nahi mila</p>
-        </div>
-      ) : (
-        Object.entries(byFloor)
-          .sort()
-          .map(([floorLabel, floorData]) => (
-            <div
-              key={floorLabel}
-              style={{
-                background: "#fff",
-                borderRadius: 20,
-                border: "1px solid #e2e8f0",
-                boxShadow: "0 4px 20px rgba(0,0,0,.07)",
-                overflow: "hidden",
-                marginBottom: 20,
-              }}
-            >
-              {/* Floor header */}
-              <div
-                style={{
-                  background: TEAL_GRAD,
-                  padding: "16px 24px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 12,
-                }}
-              >
-                <i
-                  className="pi pi-building"
-                  style={{ color: "#fff", fontSize: 20 }}
-                />
-                <span style={{ color: "#fff", fontWeight: 800, fontSize: 18 }}>
-                  {floorLabel}
-                </span>
-                <div style={{ marginLeft: "auto", display: "flex", gap: 12 }}>
-                  {[
-                    ["Available", "#d1fae5", "#065f46"],
-                    ["Occupied", "#fee2e2", "#991b1b"],
-                  ].map(([k, bg, c]) => {
-                    const cnt = Object.values(floorData.rooms)
-                      .flatMap((r) => r.beds)
-                      .filter((b) => b.status === k).length;
-                    return (
-                      <span
-                        key={k}
-                        style={{
-                          background: bg,
-                          color: c,
-                          borderRadius: 20,
-                          padding: "3px 12px",
-                          fontSize: 12,
-                          fontWeight: 700,
-                        }}
-                      >
-                        {k}: {cnt}
-                      </span>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Rooms grid */}
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fill,minmax(360px,1fr))",
-                  gap: 16,
-                  padding: 20,
-                }}
-              >
-                {Object.values(floorData.rooms).map((grp, ri) => (
-                  <div
-                    key={ri}
-                    style={{
-                      border: "1px solid #e2e8f0",
-                      borderRadius: 16,
-                      overflow: "hidden",
-                      background: "#fafafa",
-                    }}
-                  >
-                    {/* Room header */}
-                    <div
-                      style={{
-                        padding: "12px 18px",
-                        background: "#fff",
-                        borderBottom: "1px solid #f1f5f9",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 8,
-                        }}
-                      >
-                        <i
-                          className="pi pi-home"
-                          style={{ color: TEAL, fontSize: 15 }}
-                        />
-                        <span
-                          style={{
-                            fontWeight: 700,
-                            fontSize: 15,
-                            color: "#0f172a",
-                          }}
-                        >
-                          {grp.roomName}
-                        </span>
-                      </div>
-                      <span
-                        style={{
-                          fontSize: 11,
-                          fontWeight: 600,
-                          color: "#64748b",
-                          background: "#f1f5f9",
-                          borderRadius: 20,
-                          padding: "2px 10px",
-                        }}
-                      >
-                        {grp.beds.length} Bed{grp.beds.length !== 1 ? "s" : ""}
-                      </span>
-                    </div>
-
-                    {/* Bed cards */}
-                    <div
-                      style={{
-                        padding: 12,
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 10,
-                      }}
-                    >
-                      {grp.beds.map((bed) => {
-                        const col = STATUS_COLOR[bed.status] || "#d1d5db";
-                        const sbg = STATUS_BG[bed.status] || {
-                          bg: "#f3f4f6",
-                          color: "#374151",
-                        };
-                        const avail = bed.status === "Available";
-                        const occ = bed.status === "Occupied";
-                        const adm = bed.currentAdmission;
-
-                        const pName = resolvePatientName(adm);
-                        const pInfo = occ ? resolvePatientInfo(adm) : {};
-                        const docName = occ ? resolveDoctorName(adm) : null;
-                        const admDate = adm?.admissionDate
-                          ? new Date(adm.admissionDate).toLocaleDateString(
-                              "en-IN",
-                              {
-                                day: "2-digit",
-                                month: "short",
-                                year: "numeric",
-                              },
-                            )
-                          : null;
-
-                        return (
-                          <div
-                            key={bed._id}
-                            onClick={() => handleBedClick(bed)}
-                            style={{
-                              border: "1px solid #e2e8f0",
-                              borderLeft: `4px solid ${col}`,
-                              borderRadius: 12,
-                              background: avail
-                                ? "#f9fafb"
-                                : occ
-                                  ? "#fff"
-                                  : "#fafafa",
-                              cursor: avail || occ ? "pointer" : "default",
-                              padding: "14px 16px",
-                              transition: "all .2s",
-                            }}
-                            onMouseEnter={(e) => {
-                              if (avail || occ) {
-                                e.currentTarget.style.transform =
-                                  "translateY(-3px)";
-                                e.currentTarget.style.boxShadow =
-                                  "0 8px 24px rgba(0,0,0,.1)";
-                              }
-                            }}
-                            onMouseLeave={(e) => {
-                              e.currentTarget.style.transform = "none";
-                              e.currentTarget.style.boxShadow = "none";
-                            }}
-                          >
-                            {/* Top row */}
-                            <div
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "space-between",
-                                marginBottom: occ && pName ? 12 : 0,
-                              }}
-                            >
-                              <div
-                                style={{
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: 10,
-                                }}
-                              >
-                                <BedIcon status={bed.status} />
-                                <span
-                                  style={{
-                                    fontWeight: 800,
-                                    fontSize: 15,
-                                    color: "#0f172a",
-                                  }}
-                                >
-                                  {bed.bedNumber}
-                                </span>
-                              </div>
-                              <span
-                                style={{
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  gap: 5,
-                                  padding: "4px 12px",
-                                  borderRadius: 20,
-                                  fontSize: 12,
-                                  fontWeight: 600,
-                                  background: sbg.bg,
-                                  color: sbg.color,
-                                }}
-                              >
-                                <span
-                                  style={{
-                                    width: 7,
-                                    height: 7,
-                                    borderRadius: "50%",
-                                    background: col,
-                                    display: "inline-block",
-                                  }}
-                                />
-                                {bed.status}
-                              </span>
-                            </div>
-
-                            {/* Occupied: patient info */}
-                            {occ && pName && (
-                              <div
-                                style={{
-                                  borderTop: "1px solid #f1f5f9",
-                                  paddingTop: 10,
-                                }}
-                              >
-                                <div
-                                  style={{
-                                    fontWeight: 700,
-                                    fontSize: 14,
-                                    color: "#0f172a",
-                                  }}
-                                >
-                                  {pName}
-                                </div>
-                                <div
-                                  style={{
-                                    fontSize: 12,
-                                    color: "#64748b",
-                                    marginTop: 3,
-                                  }}
-                                >
-                                  {pInfo.uhid ? `ID: ${pInfo.uhid}` : ""}
-                                  {pInfo.age ? ` | ${pInfo.age}Y` : ""}
-                                  {pInfo.gender ? ` ${pInfo.gender}` : ""}
-                                </div>
-                                {docName && (
-                                  <div
-                                    style={{
-                                      fontSize: 12,
-                                      color: "#6b7280",
-                                      marginTop: 5,
-                                      display: "flex",
-                                      alignItems: "center",
-                                      gap: 5,
-                                    }}
-                                  >
-                                    <i
-                                      className="pi pi-user-edit"
-                                      style={{ color: "#7c3aed", fontSize: 12 }}
-                                    />
-                                    {docName}
-                                  </div>
-                                )}
-                                {admDate && (
-                                  <div
-                                    style={{
-                                      fontSize: 11,
-                                      color: "#94a3b8",
-                                      marginTop: 4,
-                                    }}
-                                  >
-                                    Admitted: {admDate}
-                                  </div>
-                                )}
-                              </div>
-                            )}
-
-                            {occ && !pName && (
-                              <div
-                                style={{
-                                  borderTop: "1px solid #f1f5f9",
-                                  paddingTop: 8,
-                                }}
-                              >
-                                <div
-                                  style={{
-                                    fontSize: 12,
-                                    color: "#94a3b8",
-                                    fontStyle: "italic",
-                                  }}
-                                >
-                                  Patient data loading…
-                                </div>
-                              </div>
-                            )}
-
-                            {avail && (
-                              <div
-                                style={{
-                                  fontSize: 12,
-                                  color: "#94a3b8",
-                                  marginTop: 6,
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: 5,
-                                }}
-                              >
-                                <i
-                                  className="pi pi-plus-circle"
-                                  style={{ color: "#22c55e", fontSize: 13 }}
-                                />
-                                Click To Admit Patient
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))
-      )}
-
-      {/* Legend */}
-      <div
-        style={{
-          background: "#fff",
-          borderRadius: 12,
-          padding: "10px 20px",
-          border: "1px solid #e2e8f0",
-          display: "flex",
-          gap: 20,
-          flexWrap: "wrap",
-          alignItems: "center",
-          marginTop: 4,
-        }}
-      >
-        <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>
-          Legend:
-        </span>
-        {Object.entries(STATUS_COLOR).map(([label, col]) => (
-          <span
-            key={label}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              fontSize: 12,
-              color: "#475569",
-            }}
-          >
-            <span
-              style={{
-                width: 20,
-                height: 13,
-                border: `3px solid ${col}`,
-                borderRadius: 4,
-                display: "inline-block",
-              }}
-            />
-            {label}
-          </span>
-        ))}
-        <span style={{ fontSize: 11, color: "#94a3b8", marginLeft: "auto" }}>
-          <i className="pi pi-info-circle" style={{ marginRight: 4 }} />
-          Green = admit · Red = patient details
-        </span>
-      </div>
-
-      {/* ══════════════════════════════════════════════
-          MODAL 1 — Search & Admit Patient
-      ══════════════════════════════════════════════ */}
-      <Dialog
-        visible={searchModal}
-        onHide={() => setSearchModal(false)}
-        style={{ width: "500px" }}
-        header={
-          <span style={{ fontWeight: 700, fontSize: 18, color: "#111827" }}>
-            Search &amp; Admit Patient
-          </span>
-        }
-        modal
-        draggable={false}
-      >
-        <div>
-          <label style={lbl}>Search Patient by ID or Name</label>
-          <div style={{ position: "relative", marginBottom: 16 }}>
-            <input
-              value={searchQ}
-              onChange={(e) => setSearchQ(e.target.value)}
-              placeholder="Enter Patient ID or Name"
-              autoFocus
-              style={{
-                width: "100%",
-                padding: "11px 44px 11px 14px",
-                boxSizing: "border-box",
-                border: `1.5px solid ${searchQ ? TEAL : "#e2e8f0"}`,
-                borderRadius: 10,
-                fontSize: 14,
-                outline: "none",
-                fontFamily: "inherit",
-              }}
-            />
-            <i
-              className="pi pi-search"
-              style={{
-                position: "absolute",
-                right: 14,
-                top: "50%",
-                transform: "translateY(-50%)",
-                color: "#9ca3af",
-                fontSize: 16,
-              }}
-            />
-          </div>
-
-=======
               style={{
                 position: "absolute",
                 left: 12,
@@ -2724,7 +1691,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               }}
             />
           </div>
->>>>>>> temp-fix
           <div style={{ maxHeight: 340, overflowY: "auto" }}>
             {searchQ.trim() === "" ? (
               <div
@@ -2832,13 +1798,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         </div>
       </Dialog>
 
-<<<<<<< HEAD
-      {/* ══════════════════════════════════════════════
-          MODAL 2 — Admit Patient Form
-      ══════════════════════════════════════════════ */}
-=======
       {/* ══ MODAL 2 — Admit Patient Form ══ */}
->>>>>>> temp-fix
       <Dialog
         visible={admModal}
         onHide={() => {
@@ -2885,20 +1845,11 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                   color: "#1e40af",
                 }}
               >
-<<<<<<< HEAD
-                {selBed.bedNumber} — Room {selBed.roomNumber}, Floor{" "}
-                {selBed.floorNumber}
-              </p>
-            </div>
-          )}
-
-=======
                 {selBed.bedNumber} — {resolveRoomName(selBed)},{" "}
                 {resolveFloorName(selBed)}
               </p>
             </div>
           )}
->>>>>>> temp-fix
           {selPat && (
             <div
               style={{
@@ -2952,10 +1903,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               </div>
             </div>
           )}
-<<<<<<< HEAD
-
-=======
->>>>>>> temp-fix
           <div
             style={{
               display: "grid",
@@ -2991,10 +1938,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               />
             </div>
           </div>
-<<<<<<< HEAD
-
-=======
->>>>>>> temp-fix
           <div style={{ marginBottom: 14 }}>
             <label style={lbl}>Admission Type</label>
             <Dropdown
@@ -3010,10 +1953,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               placeholder="Select Type"
             />
           </div>
-<<<<<<< HEAD
-
-=======
->>>>>>> temp-fix
           <div style={{ marginBottom: 14 }}>
             <label style={lbl}>Attending Doctor</label>
             <Dropdown
@@ -3028,14 +1967,8 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               showClear
             />
           </div>
-<<<<<<< HEAD
-
-          <div style={{ marginBottom: 14 }}>
-            <label style={lbl}>Diagnosis</label>
-=======
           <div style={{ marginBottom: 14 }}>
             <label style={lbl}>Diagnosis *</label>
->>>>>>> temp-fix
             <InputTextarea
               value={admForm.reasonForAdmission}
               rows={3}
@@ -3046,10 +1979,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               }
             />
           </div>
-<<<<<<< HEAD
-
-=======
->>>>>>> temp-fix
           <div style={{ marginBottom: 20 }}>
             <label style={lbl}>Special Instructions</label>
             <InputTextarea
@@ -3062,10 +1991,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               }
             />
           </div>
-<<<<<<< HEAD
-
-=======
->>>>>>> temp-fix
           <div style={{ display: "flex", gap: 12 }}>
             <button
               onClick={handleAdmit}
@@ -3115,13 +2040,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         </div>
       </Dialog>
 
-<<<<<<< HEAD
-      {/* ══════════════════════════════════════════════
-          MODAL 3 — Patient Details
-      ══════════════════════════════════════════════ */}
-=======
       {/* ══ MODAL 3 — Patient Details ══ */}
->>>>>>> temp-fix
       <Dialog
         visible={detailModal}
         onHide={() => setDetailModal(false)}
@@ -3159,21 +2078,11 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                   detailAdm ||
                   detailBed.currentAdmission ||
                   detailBed.bookingInfo;
-<<<<<<< HEAD
-
-                /* Patient name: prefer fetched detailPatient */
-=======
->>>>>>> temp-fix
                 const pn =
                   getPatientName(detailPatient) ||
                   resolvePatientName(src) ||
                   src?.patientName ||
                   null;
-<<<<<<< HEAD
-
-                /* Patient info: prefer fetched detailPatient */
-=======
->>>>>>> temp-fix
                 const pInfo = detailPatient
                   ? {
                       age:
@@ -3190,10 +2099,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                         "",
                     }
                   : { ...resolvePatientInfo(src), blood: "", phone: "" };
-<<<<<<< HEAD
-
-=======
->>>>>>> temp-fix
                 const docN = resolveDoctorName(src);
                 const adt = src?.admissionDate
                   ? new Date(src.admissionDate).toLocaleDateString("en-IN", {
@@ -3213,15 +2118,8 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                       { day: "2-digit", month: "short", year: "numeric" },
                     )
                   : "—";
-<<<<<<< HEAD
-
                 return (
                   <>
-                    {/* Avatar + Name */}
-=======
-                return (
-                  <>
->>>>>>> temp-fix
                     <div
                       style={{
                         display: "flex",
@@ -3287,218 +2185,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                         )}
                       </div>
                     </div>
-<<<<<<< HEAD
-
-                    {/* Info grid */}
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "1fr 1fr",
-                        gap: "14px 24px",
-                        marginBottom: 16,
-                      }}
-                    >
-                      {[
-                        ["Age", pInfo.age ? `${pInfo.age} Years` : "—"],
-                        ["Gender", pInfo.gender || "—"],
-                        ["Admission Date", adt],
-                        ["Expected Discharge", expDischarge],
-                        ["Bed", detailBed.bedNumber],
-                        ["Department", dept],
-                        ["Admission Type", admType],
-                        ["Phone", pInfo.phone || "—"],
-                      ].map(([label, value]) => (
-                        <div key={label}>
-                          <p
-                            style={{
-                              margin: "0 0 2px",
-                              fontSize: 11,
-                              color: "#9ca3af",
-                              textTransform: "uppercase",
-                              letterSpacing: "0.05em",
-                            }}
-                          >
-                            {label}
-                          </p>
-                          <p
-                            style={{
-                              margin: 0,
-                              fontWeight: 600,
-                              fontSize: 13,
-                              color: "#111827",
-                            }}
-                          >
-                            {value}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Doctor box */}
-                    <div
-                      style={{
-                        background: "linear-gradient(135deg,#f5f3ff,#ede9fe)",
-                        border: "1px solid #ddd6fe",
-                        borderRadius: 12,
-                        padding: "14px 16px",
-                        marginBottom: 20,
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 12,
-                      }}
-                    >
-                      <div
-                        style={{
-                          width: 38,
-                          height: 38,
-                          borderRadius: "50%",
-                          background: "#7c3aed",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          flexShrink: 0,
-                        }}
-                      >
-                        <i
-                          className="pi pi-user-edit"
-                          style={{ color: "#fff", fontSize: 16 }}
-                        />
-                      </div>
-                      <div>
-                        <p
-                          style={{
-                            margin: "0 0 2px",
-                            fontSize: 11,
-                            color: "#8b5cf6",
-                            fontWeight: 600,
-                            textTransform: "uppercase",
-                            letterSpacing: "0.05em",
-                          }}
-                        >
-                          Attending Doctor
-                        </p>
-                        <p
-                          style={{
-                            margin: 0,
-                            fontWeight: 700,
-                            fontSize: 16,
-                            color: "#5b21b6",
-                          }}
-                        >
-                          {docN || "—"}
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Buttons */}
-                    <div style={{ display: "flex", gap: 10 }}>
-                      <button
-                        onClick={() => src && openDischarge(src, detailBed)}
-                        disabled={!src}
-                        style={{
-                          flex: 1,
-                          background: src
-                            ? "linear-gradient(135deg,#dc2626,#b91c1c)"
-                            : "#d1d5db",
-                          color: "#fff",
-                          border: "none",
-                          borderRadius: 12,
-                          padding: "13px 16px",
-                          fontSize: 14,
-                          fontWeight: 700,
-                          cursor: src ? "pointer" : "not-allowed",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          gap: 8,
-                          boxShadow: src
-                            ? "0 4px 14px rgba(220,38,38,0.35)"
-                            : "none",
-                          transition: "all .2s",
-                        }}
-                        onMouseEnter={(e) => {
-                          if (src)
-                            e.currentTarget.style.transform =
-                              "translateY(-1px)";
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.transform = "none";
-                        }}
-                      >
-                        <i
-                          className="pi pi-sign-out"
-                          style={{ fontSize: 15 }}
-                        />
-                        Discharge
-                      </button>
-
-                      {src && (
-                        <button
-                          onClick={() => openEdit(src)}
-                          style={{
-                            padding: "13px 16px",
-                            borderRadius: 12,
-                            background:
-                              "linear-gradient(135deg,#0891b2,#0e7490)",
-                            color: "#fff",
-                            border: "none",
-                            fontSize: 14,
-                            fontWeight: 700,
-                            cursor: "pointer",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 6,
-                            boxShadow: "0 4px 14px rgba(8,145,178,0.3)",
-                            transition: "all .2s",
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.transform =
-                              "translateY(-1px)";
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.transform = "none";
-                          }}
-                        >
-                          <i className="pi pi-pencil" />
-                          Edit
-                        </button>
-                      )}
-
-                      <button
-                        onClick={() => setDetailModal(false)}
-                        style={{
-                          padding: "13px 18px",
-                          border: "1.5px solid #e2e8f0",
-                          borderRadius: 12,
-                          background: "#fff",
-                          fontSize: 14,
-                          fontWeight: 600,
-                          color: "#374151",
-                          cursor: "pointer",
-                          transition: "all .2s",
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.background = "#f8fafc";
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.background = "#fff";
-                        }}
-                      >
-                        Close
-                      </button>
-                    </div>
-                  </>
-                );
-              })()
-            )}
-          </div>
-        )}
-      </Dialog>
-
-      {/* ══════════════════════════════════════════════
-          MODAL 4 — Edit Admission
-      ══════════════════════════════════════════════ */}
-=======
                     <div
                       style={{
                         display: "grid",
@@ -3677,7 +2363,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       </Dialog>
 
       {/* ══ MODAL 4 — Edit Admission ══ */}
->>>>>>> temp-fix
       <Dialog
         visible={editModal}
         onHide={() => !editSaving && setEditModal(false)}
@@ -3718,10 +2403,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               />
             </div>
           ))}
-<<<<<<< HEAD
-
-=======
->>>>>>> temp-fix
           <div className="p-field mb-3">
             <label
               style={{
@@ -3744,10 +2425,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               placeholder="Department"
             />
           </div>
-<<<<<<< HEAD
-
-=======
->>>>>>> temp-fix
           <div className="p-field mb-3">
             <label
               style={{
@@ -3816,85 +2493,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               ))}
             </div>
           </div>
-<<<<<<< HEAD
-
-          <div className="p-field mb-3">
-            <label
-              style={{
-                display: "block",
-                marginBottom: 4,
-                fontSize: 12,
-                fontWeight: 500,
-                color: "#475569",
-              }}
-            >
-              Attending Doctor
-            </label>
-            <Dropdown
-              value={editForm.attendingDoctor}
-              className="w-full"
-              options={doctors}
-              onChange={(e) =>
-                setEditForm({ ...editForm, attendingDoctor: e.value })
-              }
-              placeholder="Doctor (optional)"
-              filter
-              showClear
-            />
-          </div>
-
-          <div className="p-field mb-3">
-            <label
-              style={{
-                display: "block",
-                marginBottom: 4,
-                fontSize: 12,
-                fontWeight: 500,
-                color: "#475569",
-              }}
-            >
-              Reason
-            </label>
-            <InputTextarea
-              value={editForm.reasonForAdmission || ""}
-              rows={3}
-              className="w-full"
-              onChange={(e) =>
-                setEditForm({ ...editForm, reasonForAdmission: e.target.value })
-              }
-            />
-          </div>
-
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "flex-end",
-              gap: 10,
-              marginTop: 8,
-            }}
-          >
-            <Button
-              label="Cancel"
-              onClick={() => setEditModal(false)}
-              className="p-button-outlined p-button-sm"
-              disabled={editSaving}
-            />
-            <Button
-              label="Save Changes"
-              icon="pi pi-check"
-              onClick={saveEdit}
-              loading={editSaving}
-              className="p-button-sm"
-              style={{ background: TEAL, border: "none", borderRadius: 10 }}
-            />
-          </div>
-        </div>
-      </Dialog>
-
-      {/* ══════════════════════════════════════════════
-          MODAL 5 — Discharge Patient
-      ══════════════════════════════════════════════ */}
-=======
           <div className="p-field mb-3">
             <label
               style={{
@@ -3967,26 +2565,15 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       </Dialog>
 
       {/* ══ MODAL 5 — Discharge Patient ✅ SCROLLABLE FIX ══ */}
->>>>>>> temp-fix
       <Dialog
         visible={dischargeModal}
         onHide={() => !discharging && setDischargeModal(false)}
         style={{ width: "560px" }}
-<<<<<<< HEAD
-=======
         className="discharge-dlg"
->>>>>>> temp-fix
         header={null}
         modal
         draggable={false}
         closable={false}
-<<<<<<< HEAD
-        contentStyle={{ padding: 0, borderRadius: 16, overflow: "hidden" }}
-      >
-        {dischargeAdm && (
-          <div>
-            {/* Red header */}
-=======
         contentStyle={{ padding: 0 }}
       >
         {dischargeAdm && (
@@ -3999,7 +2586,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
             }}
           >
             {/* Fixed header */}
->>>>>>> temp-fix
             <div
               style={{
                 background: "linear-gradient(135deg,#dc2626,#b91c1c)",
@@ -4007,10 +2593,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
-<<<<<<< HEAD
-=======
                 flexShrink: 0,
->>>>>>> temp-fix
               }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -4036,9 +2619,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               </button>
             </div>
 
-<<<<<<< HEAD
-            <div style={{ padding: "20px 24px" }}>
-=======
             {/* ✅ Scrollable content area */}
             <div
               style={{
@@ -4048,7 +2628,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                 overscrollBehavior: "contain",
               }}
             >
->>>>>>> temp-fix
               {/* Patient strip */}
               <div
                 style={{
@@ -4190,11 +2769,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                 </div>
               ))}
 
-<<<<<<< HEAD
-              {/* Condition */}
-=======
               {/* Condition on Discharge */}
->>>>>>> temp-fix
               <div style={{ marginBottom: 16 }}>
                 <label
                   style={{
@@ -4324,54 +2899,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                   />
                 </div>
               ))}
-<<<<<<< HEAD
-
-              <div style={{ display: "flex", gap: 12, marginTop: 4 }}>
-                <button
-                  onClick={doDischarge}
-                  disabled={discharging}
-                  style={{
-                    flex: 1,
-                    background: discharging
-                      ? "#94a3b8"
-                      : "linear-gradient(135deg,#dc2626,#b91c1c)",
-                    color: "#fff",
-                    border: "none",
-                    borderRadius: 12,
-                    padding: "13px",
-                    fontSize: 14,
-                    fontWeight: 700,
-                    cursor: discharging ? "not-allowed" : "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 8,
-                  }}
-                >
-                  <i
-                    className={`pi ${discharging ? "pi-spin pi-spinner" : "pi-sign-out"}`}
-                  />
-                  {discharging ? "Discharge ho raha hai…" : "Discharge Confirm"}
-                </button>
-                <button
-                  onClick={() => !discharging && setDischargeModal(false)}
-                  disabled={discharging}
-                  style={{
-                    padding: "13px 20px",
-                    border: "1.5px solid #e2e8f0",
-                    borderRadius: 12,
-                    background: "#fff",
-                    fontSize: 14,
-                    fontWeight: 600,
-                    color: "#64748b",
-                    cursor: discharging ? "not-allowed" : "pointer",
-                  }}
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-=======
             </div>
             {/* end scrollable */}
 
@@ -4431,7 +2958,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                 Cancel
               </button>
             </div>
->>>>>>> temp-fix
           </div>
         )}
       </Dialog>

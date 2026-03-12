@@ -19,14 +19,7 @@ import "primereact/resources/primereact.min.css";
 import "primeicons/primeicons.css";
 import { API_ENDPOINTS } from "../config/api";
 import PatientSearchBar from "./Search/PatientSearchBar";
-
 import "../../css/Radiobutton.css";
-<<<<<<< HEAD
-
-// ✅ NEW: PatientSearchBar import
-import PatientSearchBar from "./Search/PatientSearchBar";
-=======
->>>>>>> temp-fix
 
 export default function PatientRegistration() {
   const toast = useRef(null);
@@ -51,10 +44,7 @@ export default function PatientRegistration() {
     },
     bloodGroup: "",
     knownAllergies: "",
-<<<<<<< HEAD
     tpa: null,
-=======
->>>>>>> temp-fix
     department: "",
     doctor: "",
     isMLC: false,
@@ -77,20 +67,12 @@ export default function PatientRegistration() {
   const [initialLoading, setInitialLoading] = useState(true);
   const [isEditMode, setIsEditMode] = useState(false);
   const [OPDprice, setOPDprice] = useState(null);
-
-<<<<<<< HEAD
-  // ✅ NEW: Search se patient select hone ka banner
-=======
-  // Search se patient select hone ka banner
->>>>>>> temp-fix
   const [searchSelectedPatient, setSearchSelectedPatient] = useState(null);
 
-  // Initial data load
   useEffect(() => {
     loadInitialData();
   }, []);
 
-  // Patient data load when editing
   useEffect(() => {
     if (patientId && (departments.length > 0 || doctors.length > 0)) {
       fetchPatientData(patientId);
@@ -114,11 +96,6 @@ export default function PatientRegistration() {
     }
   };
 
-<<<<<<< HEAD
-  // ✅ NEW: Search se patient select hone pe form fill karo
-=======
-  // Search se patient select hone pe form fill karo
->>>>>>> temp-fix
   const handlePatientSearchSelect = (patient) => {
     setSearchSelectedPatient(patient);
 
@@ -126,12 +103,10 @@ export default function PatientRegistration() {
       typeof patient.tpa === "object" && patient.tpa !== null
         ? patient.tpa._id
         : patient.tpa;
-
     const deptId =
       typeof patient.department === "object" && patient.department !== null
         ? patient.department._id
         : patient.department;
-
     const docId =
       typeof patient.doctor === "object" && patient.doctor !== null
         ? patient.doctor._id
@@ -193,13 +168,11 @@ export default function PatientRegistration() {
           typeof patientData.tpa === "object" && patientData.tpa !== null
             ? patientData.tpa._id
             : patientData.tpa;
-
         const deptId =
           typeof patientData.department === "object" &&
           patientData.department !== null
             ? patientData.department._id
             : patientData.department;
-
         const docId =
           typeof patientData.doctor === "object" && patientData.doctor !== null
             ? patientData.doctor._id
@@ -258,7 +231,6 @@ export default function PatientRegistration() {
     }
   };
 
-  // Doctor filter when department changes
   useEffect(() => {
     if (formData.department && doctors.length > 0) {
       const filtered = doctors.filter(
@@ -403,7 +375,6 @@ export default function PatientRegistration() {
     return age < 0 ? "" : age;
   };
 
-  // Static data
   const titles = [
     { label: "Mr.", value: "Mr.", gender: "Male" },
     { label: "Mrs.", value: "Mrs.", gender: "Female" },
@@ -593,7 +564,6 @@ export default function PatientRegistration() {
     );
   }
 
-  // Compact label style
   const lbl = {
     fontWeight: 600,
     display: "block",
@@ -616,21 +586,10 @@ export default function PatientRegistration() {
     <div style={{ width: "100%", padding: "4px 12px 4px 12px" }}>
       <Toast ref={toast} position="top-right" />
 
-<<<<<<< HEAD
-      {/* ── Header (Ultra Compact, Full Width) ── */}
-      <Card
-        className="btn-custom"
-        style={{
-          borderRadius: "8px",
-          marginBottom: "3px",
-          color: "white",
-        }}
-=======
       {/* ── Header ── */}
       <Card
         className="btn-custom"
         style={{ borderRadius: "8px", marginBottom: "3px", color: "white" }}
->>>>>>> temp-fix
       >
         <div
           style={{
@@ -641,7 +600,6 @@ export default function PatientRegistration() {
             padding: "2px 4px",
           }}
         >
-          {/* Left: Branding */}
           <div
             style={{
               display: "flex",
@@ -673,22 +631,12 @@ export default function PatientRegistration() {
                   whiteSpace: "nowrap",
                 }}
               >
-<<<<<<< HEAD
-                {isEditMode ? "Edit Patient" : "Patient Registration"}{" "}
-                &nbsp;·&nbsp; Dr. Sandeep
-=======
                 {isEditMode ? "Edit Patient" : "Patient Registration"}
                 &nbsp;·&nbsp;Dr. Sandeep
->>>>>>> temp-fix
               </div>
             </div>
           </div>
 
-<<<<<<< HEAD
-          {/* Center: Search bar (only in add mode) — grows to fill */}
-=======
-          {/* Center: Search bar (only in add mode) */}
->>>>>>> temp-fix
           {!isEditMode && (
             <div
               style={{
@@ -746,7 +694,6 @@ export default function PatientRegistration() {
             </div>
           )}
 
-          {/* Edit mode: Back button */}
           {isEditMode && (
             <Button
               label="Back"
@@ -761,11 +708,7 @@ export default function PatientRegistration() {
       </Card>
 
       <form onSubmit={handleSubmit}>
-<<<<<<< HEAD
-        {/* ── Row 1: Registration Type + TPA (side by side) ── */}
-=======
         {/* ── Row 1: Registration Type + TPA ── */}
->>>>>>> temp-fix
         <div
           style={{
             display: "grid",
@@ -774,7 +717,6 @@ export default function PatientRegistration() {
             marginBottom: "3px",
           }}
         >
-          {/* Registration Type */}
           <Card style={cardStyle}>
             <div style={sectionHead}>
               <i
@@ -816,7 +758,6 @@ export default function PatientRegistration() {
             </div>
           </Card>
 
-          {/* TPA */}
           <Card style={cardStyle}>
             <div style={sectionHead}>
               <i
@@ -873,7 +814,6 @@ export default function PatientRegistration() {
               gap: "8px",
             }}
           >
-            {/* Title */}
             <div style={{ gridColumn: "span 1", ...fieldStyle }}>
               <label style={lbl}>
                 Title <span style={{ color: "red" }}>*</span>
@@ -890,7 +830,6 @@ export default function PatientRegistration() {
                 <small className="p-error">{errors.title}</small>
               )}
             </div>
-            {/* Full Name */}
             <div style={{ gridColumn: "span 3", ...fieldStyle }}>
               <label style={lbl}>
                 Full Name <span style={{ color: "red" }}>*</span>
@@ -906,7 +845,6 @@ export default function PatientRegistration() {
                 <small className="p-error">{errors.fullName}</small>
               )}
             </div>
-            {/* Gender */}
             <div style={{ gridColumn: "span 2", ...fieldStyle }}>
               <label style={lbl}>
                 Gender <span style={{ color: "red" }}>*</span>
@@ -923,7 +861,6 @@ export default function PatientRegistration() {
                 <small className="p-error">{errors.gender}</small>
               )}
             </div>
-            {/* DOB */}
             <div style={{ gridColumn: "span 2", ...fieldStyle }}>
               <label style={lbl}>
                 Date of Birth <span style={{ color: "red" }}>*</span>
@@ -942,7 +879,6 @@ export default function PatientRegistration() {
                 <small className="p-error">{errors.dateOfBirth}</small>
               )}
             </div>
-            {/* Age */}
             <div style={{ gridColumn: "span 1", ...fieldStyle }}>
               <label style={lbl}>Age</label>
               <InputText
@@ -952,7 +888,6 @@ export default function PatientRegistration() {
                 style={{ width: "100%" }}
               />
             </div>
-            {/* Contact */}
             <div style={{ gridColumn: "span 2", ...fieldStyle }}>
               <label style={lbl}>
                 Contact No. <span style={{ color: "red" }}>*</span>
@@ -971,7 +906,6 @@ export default function PatientRegistration() {
                 <small className="p-error">{errors.contactNumber}</small>
               )}
             </div>
-            {/* Email */}
             <div style={{ gridColumn: "span 3", ...fieldStyle }}>
               <label style={lbl}>Email</label>
               <InputText
@@ -982,7 +916,6 @@ export default function PatientRegistration() {
                 style={{ width: "100%" }}
               />
             </div>
-            {/* Marital Status */}
             <div style={{ gridColumn: "span 2", ...fieldStyle }}>
               <label style={lbl}>Marital Status</label>
               <Dropdown
@@ -996,11 +929,7 @@ export default function PatientRegistration() {
           </div>
         </Card>
 
-<<<<<<< HEAD
-        {/* ── Row 3: Address + Medical (side by side) ── */}
-=======
         {/* ── Row 3: Address + Medical ── */}
->>>>>>> temp-fix
         <div
           style={{
             display: "grid",
@@ -1009,7 +938,6 @@ export default function PatientRegistration() {
             margin: "3px 0",
           }}
         >
-          {/* Address */}
           <Card style={cardStyle}>
             <div style={sectionHead}>
               <i
@@ -1101,7 +1029,6 @@ export default function PatientRegistration() {
             </div>
           </Card>
 
-          {/* Medical */}
           <Card style={cardStyle}>
             <div style={sectionHead}>
               <i
@@ -1191,7 +1118,6 @@ export default function PatientRegistration() {
                 )}
               </div>
             </div>
-            {/* MLC inline */}
             <div
               style={{
                 marginTop: "8px",
@@ -1226,11 +1152,7 @@ export default function PatientRegistration() {
           </Card>
         </div>
 
-<<<<<<< HEAD
-        {/* ── Row 4: Companion + Appointment (side by side) ── */}
-=======
         {/* ── Row 4: Companion + Appointment ── */}
->>>>>>> temp-fix
         <div
           style={{
             display: "grid",
@@ -1239,7 +1161,6 @@ export default function PatientRegistration() {
             marginBottom: "4px",
           }}
         >
-          {/* Companion */}
           <Card style={cardStyle}>
             <div style={sectionHead}>
               <i
@@ -1304,7 +1225,6 @@ export default function PatientRegistration() {
             </div>
           </Card>
 
-          {/* Appointment */}
           <Card style={cardStyle}>
             <div style={sectionHead}>
               <i
