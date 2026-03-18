@@ -294,7 +294,9 @@ function DoctorPrescription() {
                   route: "",
                   days: "",
                 },
-              ],
+              ],   
+              
+              
 
         // Investigations
         investigations: PrescriptionDataforEdit?.investigations || [],

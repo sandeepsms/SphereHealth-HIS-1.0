@@ -28,7 +28,7 @@ export function useBilling() {
     }
   }, []);
 
-  // ── Billing ────────────────────────────────────────────────
+  // ── Billing ─────────────────────────────────────────────
   const getPatientBills = (UHID) =>
     call(() =>
       axios.get(`${BASE}/billing/uhid/${UHID}`).then((r) => r.data.data),

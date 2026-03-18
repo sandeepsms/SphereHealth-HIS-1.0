@@ -1,0 +1,27 @@
+.menu-card{
+background:#fff;
+border-radius:15px;
+padding:20px;
+cursor:pointer;
+box-shadow:0 4px 10px rgba(0,0,0,0.1);
+transition:0.3s;
+}
+
+.menu-card:hover{
+transform:translateY(-5px);
+box-shadow:0 8px 20px rgba(0,0,0,0.2);
+}
+
+.menu-icon{
+width:70px;
+height:70px;
+border-radius:50%;
+background:#0d6efd;
+color:white;
+display:flex;
+align-items:center;
+justify-content:center;
+font-size:28px;
+font-weight:bold;
+margin:auto;
+}

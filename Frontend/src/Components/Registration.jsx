@@ -19,6 +19,10 @@ import "primereact/resources/primereact.min.css";
 import "primeicons/primeicons.css";
 import { API_ENDPOINTS } from "../config/api";
 import "../../css/Radiobutton.css";
+// import { useContext } from "react";
+// import { PopupContext } from "./contextapi/ContextApi";
+
+
 
 // ✅ NEW: PatientSearchBar import
 import PatientSearchBar from "./Search/PatientSearchBar";
@@ -26,7 +30,8 @@ import PatientSearchBar from "./Search/PatientSearchBar";
 export default function PatientRegistration() {
   const toast = useRef(null);
   const navigate = useNavigate();
-  const { id: patientId } = useParams();
+  const { typedata, id: patientId } = useParams();
+  console.log(typedata, "datatataa");
 
   const [formData, setFormData] = useState({
     registrationType: "OPD",
@@ -69,15 +74,17 @@ export default function PatientRegistration() {
   const [initialLoading, setInitialLoading] = useState(true);
   const [isEditMode, setIsEditMode] = useState(false);
   const [OPDprice, setOPDprice] = useState(null);
+  const [trueForUpdate, setTrueForUpdate] = useState(false);
+
+  // const { openBed, setOpenBed } = useContext(PopupContext);
 
   // ✅ NEW: Search se patient select hone ka banner
   const [searchSelectedPatient, setSearchSelectedPatient] = useState(null);
 
-// Initial data load
-useEffect(() => {
-  loadInitialData();
-}, []);
-
+  // Initial data load
+  useEffect(() => {
+    loadInitialData();
+  }, []);
 
   // Patient data load when editing
   useEffect(() => {
@@ -106,6 +113,7 @@ useEffect(() => {
   // ✅ NEW: Search se patient select hone pe form fill karo
   const handlePatientSearchSelect = (patient) => {
     setSearchSelectedPatient(patient);
+    setTrueForUpdate(true);
 
     const tpaId =
       typeof patient.tpa === "object" && patient.tpa !== null
@@ -247,12 +255,12 @@ useEffect(() => {
   useEffect(() => {
     if (formData.department && doctors.length > 0) {
       const filtered = doctors.filter(
-        (doc) => doc.department === formData.department,   
+        (doc) => doc.department === formData.department,
       );
       setFilteredDoctors(filtered);
       if (
         formData.doctor &&
-        !filtered.find((d) => d.value === formData.doctor)       
+        !filtered.find((d) => d.value === formData.doctor)
       ) {
         setFormData((prev) => ({ ...prev, doctor: "" }));
       }
@@ -261,7 +269,7 @@ useEffect(() => {
     }
   }, [formData.department, doctors]);
 
-   const fetchTPA = async () => {
+  const fetchTPA = async () => {
     try {
       const data = await tpaService.getAllTPAs();
       if (data.success) {
@@ -309,7 +317,7 @@ useEffect(() => {
           })),
       );
     } catch (error) {
-      console.error("Error fetching doctors:", error);                                             
+      console.error("Error fetching doctors:", error);
       setDoctors([]);
     }
   };
@@ -505,6 +513,7 @@ useEffect(() => {
       return;
     }
     setLoading(true);
+
     try {
       const cleanedFormData = { ...formData };
       if (!cleanedFormData.tpa) cleanedFormData.tpa = null;
@@ -513,7 +522,14 @@ useEffect(() => {
       if (!cleanedFormData.mlcNumber) cleanedFormData.mlcNumber = null;
 
       let response;
+      // UPDATE REGISTRATION DATA.............................................................
       if (isEditMode && patientId) {
+        response = await fetch(`${API_ENDPOINTS.PATIENTS}/${patientId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(cleanedFormData),
+        });
+      } else if (trueForUpdate) {
         response = await fetch(`${API_ENDPOINTS.PATIENTS}/${patientId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -539,7 +555,10 @@ useEffect(() => {
               : "Patient registered successfully"),
           life: 3000,
         });
-        setTimeout(() => navigate("/allpatient"), 2000);
+        {
+          formData.registrationType === "Daycare" && navigate("/bed-visual");
+        }
+        // setTimeout(() => navigate("/allpatient"), 2000);
       } else {
         toast.current?.show({
           severity: "error",
@@ -566,7 +585,7 @@ useEffect(() => {
       <div
         style={{
           display: "flex",
-          flexDirection:"column",
+          flexDirection: "column",
           justifyContent: "center",
           alignItems: "center",
           height: "400px",
@@ -576,9 +595,8 @@ useEffect(() => {
           className="loaders"
           style={{ width: "50px", height: "50px" }}
         ></span>
-         <h3 className="mt-3 font-bold text-xl">Loading...</h3>
+        <h3 className="mt-3 font-bold text-xl">Loading...</h3>
       </div>
-     
     );
   }
 
@@ -602,701 +620,519 @@ useEffect(() => {
   const fieldStyle = { marginBottom: "6px" };
 
   return (
-    <div style={{ width: "100%", padding: "4px 12px 4px 12px" }}>
-      <Toast ref={toast} position="top-right" />
+  
+     
+      <div style={{ width: "100%", padding: "4px 12px 4px 12px" }}>
+        <Toast ref={toast} position="top-right" />
 
-      {/* ── Header (Ultra Compact, Full Width) ── */}
-      <Card
-        className="btn-custom"
-        style={{
-          borderRadius: "8px",
-          marginBottom: "3px",
-          color: "white",
-        }}
-      >
-        <div
+        {/* ── Header (Ultra Compact, Full Width) ── */}
+        <Card
+          className="btn-custom"
           style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: "12px",
-            padding: "2px 4px",
+            borderRadius: "8px",
+            marginBottom: "3px",
+            color: "white",
           }}
         >
-          {/* Left: Branding */}
           <div
             style={{
               display: "flex",
+              justifyContent: "space-between",
               alignItems: "center",
-              gap: "7px",
-              flexShrink: 0,
+              gap: "12px",
+              padding: "2px 4px",
             }}
           >
-            <i
-              className="pi pi-heart-fill"
-              style={{ fontSize: "14px", opacity: 0.9 }}
-            />
-            <div>
-              <div
-                style={{
-                  fontSize: "13px",
-                  fontWeight: 700,
-                  lineHeight: 1.15,
-                  whiteSpace: "nowrap",
-                }}
-              >
-                Spherehealth Medical Solutions
-              </div>
-              <div
-                style={{
-                  fontSize: "10px",
-                  opacity: 0.75,
-                  lineHeight: 1.2,
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {isEditMode ? "Edit Patient" : "Patient Registration"}{" "}
-                &nbsp;·&nbsp; Dr. Sandeep
-              </div>
-            </div>
-          </div>
-
-          {/* Center: Search bar (only in add mode) — grows to fill */}
-          {!isEditMode && (
+            {/* Left: Branding */}
             <div
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: "8px",
-                flex: 1,
-                minWidth: 0,
+                gap: "7px",
+                flexShrink: 0,
               }}
             >
-              <div
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  transform: "scale(0.88)",
-                  transformOrigin: "left center",
-                }}
-              >
-                <PatientSearchBar
-                  onPatientSelect={handlePatientSearchSelect}
-                  placeholder="🔍  Search existing patient by name, UHID or phone..."
-                  style={{ width: "100%" }}
-                />
-              </div>
-              {searchSelectedPatient && (
+              <i
+                className="pi pi-heart-fill"
+                style={{ fontSize: "14px", opacity: 0.9 }}
+              />
+              <div>
+                <div
+                  style={{
+                    fontSize: "13px",
+                    fontWeight: 700,
+                    lineHeight: 1.15,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Spherehealth Medical Solutions
+                </div>
                 <div
                   style={{
                     fontSize: "10px",
-                    background: "rgba(255,255,255,0.22)",
-                    padding: "3px 9px",
-                    borderRadius: "12px",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "5px",
+                    opacity: 0.75,
+                    lineHeight: 1.2,
                     whiteSpace: "nowrap",
-                    flexShrink: 0,
-                    border: "1px solid rgba(255,255,255,0.3)",
                   }}
                 >
-                  <i
-                    className="pi pi-check-circle"
-                    style={{ color: "#90ee90", fontSize: "10px" }}
-                  />
-                  <span>
-                    {searchSelectedPatient.fullName} (
-                    {searchSelectedPatient.UHID})
-                  </span>
-                  <i
-                    className="pi pi-times"
-                    style={{ cursor: "pointer", fontSize: "9px", opacity: 0.7 }}
-                    onClick={() => setSearchSelectedPatient(null)}
+                  {isEditMode ? "Edit Patient" : "Patient Registration"}{" "}
+                  &nbsp;·&nbsp; Dr. Sandeep
+                </div>
+              </div>
+            </div>
+
+            {/* Center: Search bar (only in add mode) — grows to fill */}
+            {!isEditMode && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  flex: 1,
+                  minWidth: 0,
+                }}
+              >
+                <div
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    transform: "scale(0.88)",
+                    transformOrigin: "left center",
+                  }}
+                >
+                  <PatientSearchBar
+                    onPatientSelect={handlePatientSearchSelect}
+                    placeholder="🔍  Search existing patient by name, UHID or phone..."
+                    style={{ width: "100%" }}
                   />
                 </div>
-              )}
-            </div>
-          )}
-
-          {/* Edit mode: Back button */}
-          {isEditMode && (
-            <Button
-              label="Back"
-              icon="pi pi-arrow-left"
-              severity="secondary"
-              outlined
-              size="small"
-              onClick={() => navigate("/allpatient")}
-            />
-          )}
-        </div>
-      </Card>
-
-      <form onSubmit={handleSubmit}>
-        {/* ── Row 1: Registration Type + TPA (side by side) ── */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            gap: "3px",
-            marginBottom: "3px",
-          }}
-        >
-          {/* Registration Type */}
-          <Card style={cardStyle}>
-            <div style={sectionHead}>
-              <i
-                className="pi pi-user-plus text-primary"
-                style={{ fontSize: "13px" }}
-              />
-              <span style={{ fontWeight: 600, fontSize: "13px" }}>
-                Registration Type
-              </span>
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "12px" }}>
-              {["OPD", "Emergency", "IPD", "Daycare", "Services"].map(
-                (type) => (
+                {searchSelectedPatient && (
                   <div
-                    key={type}
                     style={{
+                      fontSize: "10px",
+                      background: "rgba(255,255,255,0.22)",
+                      padding: "3px 9px",
+                      borderRadius: "12px",
                       display: "flex",
                       alignItems: "center",
                       gap: "5px",
+                      whiteSpace: "nowrap",
+                      flexShrink: 0,
+                      border: "1px solid rgba(255,255,255,0.3)",
                     }}
                   >
-                    <RadioButton
-                      inputId={type.toLowerCase()}
-                      value={type}
-                      onChange={(e) =>
-                        handleInputChange("registrationType", e.value)
-                      }
-                      checked={formData.registrationType === type}
+                    <i
+                      className="pi pi-check-circle"
+                      style={{ color: "#90ee90", fontSize: "10px" }}
                     />
-                    <label
-                      htmlFor={type.toLowerCase()}
-                      style={{ fontSize: "13px", cursor: "pointer" }}
-                    >
-                      {type}
-                    </label>
+                    <span>
+                      {searchSelectedPatient.fullName} (
+                      {searchSelectedPatient.UHID})
+                    </span>
+                    <i
+                      className="pi pi-times"
+                      style={{
+                        cursor: "pointer",
+                        fontSize: "9px",
+                        opacity: 0.7,
+                      }}
+                      onClick={() => setSearchSelectedPatient(null)}
+                    />
                   </div>
-                ),
-              )}
-            </div>
-          </Card>
+                )}
+              </div>
+            )}
 
-          {/* TPA */}
-          <Card style={cardStyle}>
-            <div style={sectionHead}>
-              <i
-                className="pi pi-shield text-primary"
-                style={{ fontSize: "13px" }}
+            {/* Edit mode: Back button */}
+            {isEditMode && (
+              <Button
+                label="Back"
+                icon="pi pi-arrow-left"
+                severity="secondary"
+                outlined
+                size="small"
+                onClick={() => navigate("/allpatient")}
               />
-              <span style={{ fontWeight: 600, fontSize: "13px" }}>
-                TPA (Optional)
-              </span>
-              {OPDprice && (
-                <span
-                  style={{
-                    marginLeft: "auto",
-                    fontSize: "12px",
-                    color: "#0d6efd",
-                    fontWeight: 600,
-                  }}
-                >
-                  OPD: ₹{OPDprice}
-                </span>
-              )}
-            </div>
-            <Dropdown
-              value={formData.tpa}
-              options={tpaList}
-              onChange={(e) => {
-                handleInputChange("tpa", e.value);
-                if (e.value) fetchOPDPrice(e.value);
-                else setOPDprice(null);
-              }}
-              placeholder={tpaList.length ? "Select TPA" : "Loading..."}
-              filter
-              showClear
-              style={{ width: "100%" }}
-            />
-          </Card>
-        </div>
-
-        {/* ── Personal Details ── */}
-        <Card style={cardStyle}>
-          <div style={sectionHead}>
-            <i
-              className="pi pi-user text-primary"
-              style={{ fontSize: "13px" }}
-            />
-            <span style={{ fontWeight: 600, fontSize: "13px" }}>
-              Personal Details
-            </span>
-          </div>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(8, 1fr)",
-              gap: "8px",
-            }}
-          >
-            {/* Title */}
-            <div style={{ gridColumn: "span 1", ...fieldStyle }}>
-              <label style={lbl}>
-                Title <span style={{ color: "red" }}>*</span>
-              </label>
-              <Dropdown
-                value={formData.title}
-                options={titles}
-                onChange={(e) => handleInputChange("title", e.value)}
-                placeholder="Title"
-                className={errors.title ? "p-invalid" : ""}
-                style={{ width: "100%" }}
-              />
-              {errors.title && (
-                <small className="p-error">{errors.title}</small>
-              )}
-            </div>
-            {/* Full Name */}
-            <div style={{ gridColumn: "span 3", ...fieldStyle }}>
-              <label style={lbl}>
-                Full Name <span style={{ color: "red" }}>*</span>
-              </label>
-              <InputText
-                value={formData.fullName}
-                onChange={(e) => handleInputChange("fullName", e.target.value)}
-                placeholder="Full Name"
-                className={errors.fullName ? "p-invalid" : ""}
-                style={{ width: "100%" }}
-              />
-              {errors.fullName && (
-                <small className="p-error">{errors.fullName}</small>
-              )}
-            </div>
-            {/* Gender */}
-            <div style={{ gridColumn: "span 2", ...fieldStyle }}>
-              <label style={lbl}>
-                Gender <span style={{ color: "red" }}>*</span>
-              </label>
-              <Dropdown
-                value={formData.gender}
-                options={genders}
-                onChange={(e) => handleInputChange("gender", e.value)}
-                placeholder="Gender"
-                className={errors.gender ? "p-invalid" : ""}
-                style={{ width: "100%" }}
-              />
-              {errors.gender && (
-                <small className="p-error">{errors.gender}</small>
-              )}
-            </div>
-            {/* DOB */}
-            <div style={{ gridColumn: "span 2", ...fieldStyle }}>
-              <label style={lbl}>
-                Date of Birth <span style={{ color: "red" }}>*</span>
-              </label>
-              <Calendar
-                value={formData.dateOfBirth}
-                onChange={(e) => handleInputChange("dateOfBirth", e.value)}
-                dateFormat="dd/mm/yy"
-                showIcon
-                maxDate={new Date()}
-                placeholder="DOB"
-                className={errors.dateOfBirth ? "p-invalid" : ""}
-                style={{ width: "100%" }}
-              />
-              {errors.dateOfBirth && (
-                <small className="p-error">{errors.dateOfBirth}</small>
-              )}
-            </div>
-            {/* Age */}
-            <div style={{ gridColumn: "span 1", ...fieldStyle }}>
-              <label style={lbl}>Age</label>
-              <InputText
-                value={formData.age}
-                onChange={(e) => handleInputChange("age", e.target.value)}
-                placeholder="Age"
-                style={{ width: "100%" }}
-              />
-            </div>
-            {/* Contact */}
-            <div style={{ gridColumn: "span 2", ...fieldStyle }}>
-              <label style={lbl}>
-                Contact No. <span style={{ color: "red" }}>*</span>
-              </label>
-              <InputText
-                value={formData.contactNumber}
-                onChange={(e) =>
-                  handleInputChange("contactNumber", e.target.value)
-                }
-                placeholder="Contact Number"
-                maxLength={10}
-                className={errors.contactNumber ? "p-invalid" : ""}
-                style={{ width: "100%" }}
-              />
-              {errors.contactNumber && (
-                <small className="p-error">{errors.contactNumber}</small>
-              )}
-            </div>
-            {/* Email */}
-            <div style={{ gridColumn: "span 3", ...fieldStyle }}>
-              <label style={lbl}>Email</label>
-              <InputText
-                value={formData.email}
-                onChange={(e) => handleInputChange("email", e.target.value)}
-                type="email"
-                placeholder="Email"
-                style={{ width: "100%" }}
-              />
-            </div>
-            {/* Marital Status */}
-            <div style={{ gridColumn: "span 2", ...fieldStyle }}>
-              <label style={lbl}>Marital Status</label>
-              <Dropdown
-                value={formData.maritalStatus}
-                options={maritalStatuses}
-                onChange={(e) => handleInputChange("maritalStatus", e.value)}
-                placeholder="Status"
-                style={{ width: "100%" }}
-              />
-            </div>
+            )}
           </div>
         </Card>
 
-        {/* ── Row 3: Address + Medical (side by side) ── */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            gap: "3px",
-            margin: "3px 0",
-          }}
-        >
-          {/* Address */}
-          <Card style={cardStyle}>
-            <div style={sectionHead}>
-              <i
-                className="pi pi-map-marker text-primary"
-                style={{ fontSize: "13px" }}
-              />
-              <span style={{ fontWeight: 600, fontSize: "13px" }}>
-                Address Details
-              </span>
-            </div>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr 1fr 1fr",
-                gap: "8px",
-              }}
-            >
-              <div style={fieldStyle}>
-                <label style={lbl}>
-                  Pincode <span style={{ color: "red" }}>*</span>
-                </label>
-                <div style={{ position: "relative" }}>
-                  <InputText
-                    value={formData.address.pincode}
-                    onChange={(e) =>
-                      handleInputChange("address.pincode", e.target.value)
-                    }
-                    placeholder="Pincode"
-                    maxLength={6}
-                    className={errors.pincode ? "p-invalid" : ""}
-                    style={{ width: "100%" }}
-                  />
-                  {pincodeLoading && (
-                    <ProgressSpinner
+        <form onSubmit={handleSubmit}>
+          {/* ── Row 1: Registration Type + TPA (side by side) ── */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: "3px",
+              marginBottom: "3px",
+            }}
+          >
+            {/* Registration Type */}
+            <Card style={cardStyle}>
+              <div style={sectionHead}>
+                <i
+                  className="pi pi-user-plus text-primary"
+                  style={{ fontSize: "13px" }}
+                />
+                <span style={{ fontWeight: 600, fontSize: "13px" }}>
+                  Registration Type
+                </span>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "12px" }}>
+                {["OPD", "Emergency", "IPD", "Daycare", "Services"].map(
+                  (type) =>
+                    (typedata === type ||
+                      (typedata === "IPD" && type === "Services")) && (
+                      <div
+                        key={type}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "5px",
+                        }}
+                      >
+                        <RadioButton
+                          inputId={type.toLowerCase()}
+                          value={type}
+                          onChange={(e) =>
+                            handleInputChange("registrationType", e.value)
+                          }
+                          checked={formData.registrationType === type}
+                        />
+                        <label
+                          htmlFor={type.toLowerCase()}
+                          style={{ fontSize: "13px", cursor: "pointer" }}
+                        >
+                          {type}
+                        </label>
+                      </div>
+                    ),
+                )}
+
+                {typedata === "IPD" && (
+                  <>
+                    <label
+                      htmlFor=""
                       style={{
-                        width: "16px",
-                        height: "16px",
-                        position: "absolute",
-                        right: "8px",
-                        top: "50%",
-                        transform: "translateY(-50%)",
+                        fontSize: "13px",
+                        marginTop: "6px",
+                        marginLeft: "20px",
                       }}
-                    />
-                  )}
-                </div>
-                {errors.pincode && (
-                  <small className="p-error">{errors.pincode}</small>
+                    >
+                      {" "}
+                      Bed
+                    </label>
+                    <button
+                      onClick={() => {
+                        setOpenBed(true);
+                      }}
+                      // navigate("/bed-visual")}
+                      className=""
+                      style={{ borderRadius: "5px" }}
+                    >
+                      <i class="fa-solid fa-bed"></i>
+                    </button>
+                  </>
                 )}
               </div>
-              <div style={fieldStyle}>
-                <label style={lbl}>City</label>
-                <InputText
-                  value={formData.address.city}
-                  readOnly
-                  placeholder="Auto"
-                  style={{ width: "100%" }}
+            </Card>
+
+            {/* TPA */}
+            <Card style={cardStyle}>
+              <div style={sectionHead}>
+                <i
+                  className="pi pi-shield text-primary"
+                  style={{ fontSize: "13px" }}
                 />
+                <span style={{ fontWeight: 600, fontSize: "13px" }}>
+                  TPA (Optional)
+                </span>
+                {OPDprice && (
+                  <span
+                    style={{
+                      marginLeft: "auto",
+                      fontSize: "12px",
+                      color: "#0d6efd",
+                      fontWeight: 600,
+                    }}
+                  >
+                    OPD: ₹{OPDprice}
+                  </span>
+                )}
               </div>
-              <div style={fieldStyle}>
-                <label style={lbl}>State</label>
-                <InputText
-                  value={formData.address.state}
-                  readOnly
-                  placeholder="Auto"
-                  style={{ width: "100%" }}
-                />
-              </div>
-              <div style={fieldStyle}>
-                <label style={lbl}>District</label>
-                <InputText
-                  value={formData.address.district}
-                  readOnly
-                  placeholder="Auto"
-                  style={{ width: "100%" }}
-                />
-              </div>
-            </div>
-            <div style={{ marginTop: "8px" }}>
-              <label style={lbl}>Complete Address</label>
-              <InputTextarea
-                value={formData.address.completeAddress}
-                onChange={(e) =>
-                  handleInputChange("address.completeAddress", e.target.value)
-                }
-                rows={2}
-                placeholder="Complete address details"
+              <Dropdown
+                value={formData.tpa}
+                options={tpaList}
+                onChange={(e) => {
+                  handleInputChange("tpa", e.value);
+                  if (e.value) fetchOPDPrice(e.value);
+                  else setOPDprice(null);
+                }}
+                placeholder={tpaList.length ? "Select TPA" : "Loading..."}
+                filter
+                showClear
                 style={{ width: "100%" }}
               />
-            </div>
-          </Card>
+            </Card>
+          </div>
 
-          {/* Medical */}
+          {/* ── Personal Details ── */}
           <Card style={cardStyle}>
             <div style={sectionHead}>
               <i
-                className="pi pi-heart text-primary"
+                className="pi pi-user text-primary"
                 style={{ fontSize: "13px" }}
               />
               <span style={{ fontWeight: 600, fontSize: "13px" }}>
-                Medical Details
+                Personal Details
               </span>
             </div>
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "1fr 1fr",
+                gridTemplateColumns: "repeat(8, 1fr)",
                 gap: "8px",
               }}
             >
-              <div style={fieldStyle}>
+              {/* Title */}
+              <div style={{ gridColumn: "span 1", ...fieldStyle }}>
                 <label style={lbl}>
-                  Department <span style={{ color: "red" }}>*</span>
+                  Title <span style={{ color: "red" }}>*</span>
                 </label>
                 <Dropdown
-                  value={formData.department}
-                  options={departments}
-                  onChange={(e) => handleInputChange("department", e.value)}
-                  placeholder="Select Department"
-                  filter
-                  className={errors.department ? "p-invalid" : ""}
+                  value={formData.title}
+                  options={titles}
+                  onChange={(e) => handleInputChange("title", e.value)}
+                  placeholder="Title"
+                  className={errors.title ? "p-invalid" : ""}
                   style={{ width: "100%" }}
                 />
-                {errors.department && (
-                  <small className="p-error">{errors.department}</small>
+                {errors.title && (
+                  <small className="p-error">{errors.title}</small>
                 )}
               </div>
-              <div style={fieldStyle}>
+              {/* Full Name */}
+              <div style={{ gridColumn: "span 3", ...fieldStyle }}>
                 <label style={lbl}>
-                  Doctor <span style={{ color: "red" }}>*</span>
+                  Full Name <span style={{ color: "red" }}>*</span>
                 </label>
-                <Dropdown
-                  value={formData.doctor}
-                  options={filteredDoctors}
-                  onChange={(e) => handleInputChange("doctor", e.value)}
-                  placeholder={
-                    formData.department ? "Select Doctor" : "Select Dept First"
-                  }
-                  filter
-                  disabled={!formData.department}
-                  className={errors.doctor ? "p-invalid" : ""}
-                  style={{ width: "100%" }}
-                />
-                {errors.doctor && (
-                  <small className="p-error">{errors.doctor}</small>
-                )}
-              </div>
-              <div style={fieldStyle}>
-                <label style={lbl}>
-                  Blood Group <span style={{ color: "red" }}>*</span>
-                </label>
-                <Dropdown
-                  value={formData.bloodGroup}
-                  options={bloodGroups}
-                  onChange={(e) => handleInputChange("bloodGroup", e.value)}
-                  placeholder="Blood Group"
-                  className={errors.bloodGroup ? "p-invalid" : ""}
-                  style={{ width: "100%" }}
-                />
-                {errors.bloodGroup && (
-                  <small className="p-error">{errors.bloodGroup}</small>
-                )}
-              </div>
-              <div style={fieldStyle}>
-                <label style={lbl}>
-                  Known Allergies <span style={{ color: "red" }}>*</span>
-                </label>
-                <InputTextarea
-                  value={formData.knownAllergies}
+                <InputText
+                  value={formData.fullName}
                   onChange={(e) =>
-                    handleInputChange("knownAllergies", e.target.value)
+                    handleInputChange("fullName", e.target.value)
+                  }
+                  placeholder="Full Name"
+                  className={errors.fullName ? "p-invalid" : ""}
+                  style={{ width: "100%" }}
+                />
+                {errors.fullName && (
+                  <small className="p-error">{errors.fullName}</small>
+                )}
+              </div>
+              {/* Gender */}
+              <div style={{ gridColumn: "span 2", ...fieldStyle }}>
+                <label style={lbl}>
+                  Gender <span style={{ color: "red" }}>*</span>
+                </label>
+                <Dropdown
+                  value={formData.gender}
+                  options={genders}
+                  onChange={(e) => handleInputChange("gender", e.value)}
+                  placeholder="Gender"
+                  className={errors.gender ? "p-invalid" : ""}
+                  style={{ width: "100%" }}
+                />
+                {errors.gender && (
+                  <small className="p-error">{errors.gender}</small>
+                )}
+              </div>
+              {/* DOB */}
+              <div style={{ gridColumn: "span 2", ...fieldStyle }}>
+                <label style={lbl}>
+                  Date of Birth <span style={{ color: "red" }}>*</span>
+                </label>
+                <Calendar
+                  value={formData.dateOfBirth}
+                  onChange={(e) => handleInputChange("dateOfBirth", e.value)}
+                  dateFormat="dd/mm/yy"
+                  showIcon
+                  maxDate={new Date()}
+                  placeholder="DOB"
+                  className={errors.dateOfBirth ? "p-invalid" : ""}
+                  style={{ width: "100%" }}
+                  disabled={formData.age}
+                />
+                {errors.dateOfBirth && (
+                  <small className="p-error">{errors.dateOfBirth}</small>
+                )}
+              </div>
+              {/* Age */}
+              <div style={{ gridColumn: "span 1", ...fieldStyle }}>
+                <label style={lbl}>Age</label>
+                <InputText
+                  value={formData.age}
+                  onChange={(e) => handleInputChange("age", e.target.value)}
+                  placeholder="Age"
+                  style={{ width: "100%" }}
+                  disabled={formData.dateOfBirth}
+                />
+              </div>
+              {/* Contact */}
+              <div style={{ gridColumn: "span 2", ...fieldStyle }}>
+                <label style={lbl}>
+                  Contact No. <span style={{ color: "red" }}>*</span>
+                </label>
+                <InputText
+                  value={formData.contactNumber}
+                  onChange={(e) =>
+                    handleInputChange("contactNumber", e.target.value)
+                  }
+                  placeholder="Contact Number"
+                  maxLength={10}
+                  className={errors.contactNumber ? "p-invalid" : ""}
+                  style={{ width: "100%" }}
+                />
+                {errors.contactNumber && (
+                  <small className="p-error">{errors.contactNumber}</small>
+                )}
+              </div>
+              {/* Email */}
+              <div style={{ gridColumn: "span 3", ...fieldStyle }}>
+                <label style={lbl}>Email</label>
+                <InputText
+                  value={formData.email}
+                  onChange={(e) => handleInputChange("email", e.target.value)}
+                  type="email"
+                  placeholder="Email"
+                  style={{ width: "100%" }}
+                />
+              </div>
+              {/* Marital Status */}
+              <div style={{ gridColumn: "span 2", ...fieldStyle }}>
+                <label style={lbl}>Marital Status</label>
+                <Dropdown
+                  value={formData.maritalStatus}
+                  options={maritalStatuses}
+                  onChange={(e) => handleInputChange("maritalStatus", e.value)}
+                  placeholder="Status"
+                  style={{ width: "100%" }}
+                />
+              </div>
+            </div>
+          </Card>
+
+          {/* ── Row 3: Address + Medical (side by side) ── */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: "3px",
+              margin: "3px 0",
+            }}
+          >
+            {/* Address */}
+            <Card style={cardStyle}>
+              <div style={sectionHead}>
+                <i
+                  className="pi pi-map-marker text-primary"
+                  style={{ fontSize: "13px" }}
+                />
+                <span style={{ fontWeight: 600, fontSize: "13px" }}>
+                  Address Details
+                </span>
+              </div>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr 1fr 1fr",
+                  gap: "8px",
+                }}
+              >
+                <div style={fieldStyle}>
+                  <label style={lbl}>
+                    Pincode <span style={{ color: "red" }}>*</span>
+                  </label>
+                  <div style={{ position: "relative" }}>
+                    <InputText
+                      value={formData.address.pincode}
+                      onChange={(e) =>
+                        handleInputChange("address.pincode", e.target.value)
+                      }
+                      placeholder="Pincode"
+                      maxLength={6}
+                      className={errors.pincode ? "p-invalid" : ""}
+                      style={{ width: "100%" }}
+                    />
+                    {pincodeLoading && (
+                      <ProgressSpinner
+                        style={{
+                          width: "16px",
+                          height: "16px",
+                          position: "absolute",
+                          right: "8px",
+                          top: "50%",
+                          transform: "translateY(-50%)",
+                        }}
+                      />
+                    )}
+                  </div>
+                  {errors.pincode && (
+                    <small className="p-error">{errors.pincode}</small>
+                  )}
+                </div>
+                <div style={fieldStyle}>
+                  <label style={lbl}>City</label>
+                  <InputText
+                    value={formData.address.city}
+                    readOnly
+                    placeholder="Auto"
+                    style={{ width: "100%" }}
+                  />
+                </div>
+                <div style={fieldStyle}>
+                  <label style={lbl}>State</label>
+                  <InputText
+                    value={formData.address.state}
+                    readOnly
+                    placeholder="Auto"
+                    style={{ width: "100%" }}
+                  />
+                </div>
+                <div style={fieldStyle}>
+                  <label style={lbl}>District</label>
+                  <InputText
+                    value={formData.address.district}
+                    readOnly
+                    placeholder="Auto"
+                    style={{ width: "100%" }}
+                  />
+                </div>
+              </div>
+              <div style={{ marginTop: "8px" }}>
+                <label style={lbl}>Complete Address</label>
+                <InputTextarea
+                  value={formData.address.completeAddress}
+                  onChange={(e) =>
+                    handleInputChange("address.completeAddress", e.target.value)
                   }
                   rows={2}
-                  placeholder="e.g. Penicillin, Dust"
-                  className={errors.knownAllergies ? "p-invalid" : ""}
+                  placeholder="Complete address details"
                   style={{ width: "100%" }}
                 />
-                {errors.knownAllergies && (
-                  <small className="p-error">{errors.knownAllergies}</small>
-                )}
               </div>
-            </div>
-            {/* MLC inline */}
-            <div
-              style={{
-                marginTop: "8px",
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-                flexWrap: "wrap",
-              }}
-            >
-              <Checkbox
-                inputId="mlc"
-                checked={formData.isMLC}
-                onChange={(e) => handleInputChange("isMLC", e.checked)}
-              />
-              <label
-                htmlFor="mlc"
-                style={{ fontSize: "12px", fontWeight: 600 }}
-              >
-                MLC Case?
-              </label>
-              {formData.isMLC && (
-                <InputText
-                  value={formData.mlcNumber}
-                  onChange={(e) =>
-                    handleInputChange("mlcNumber", e.target.value)
-                  }
-                  placeholder="MLC Number"
-                  style={{ width: "160px" }}
-                />
-              )}
-            </div>
-          </Card>
-        </div>
+            </Card>
 
-        {/* ── Row 4: Companion + Appointment (side by side) ── */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            gap: "3px",
-            marginBottom: "4px",
-          }}
-        >
-          {/* Companion */}
-          <Card style={cardStyle}>
-            <div style={sectionHead}>
-              <i
-                className="pi pi-users text-primary"
-                style={{ fontSize: "13px" }}
-              />
-              <span style={{ fontWeight: 600, fontSize: "13px" }}>
-                Companion Details
-              </span>
-            </div>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr 1fr",
-                gap: "8px",
-              }}
-            >
-              <div style={fieldStyle}>
-                <label style={lbl}>Companion Name</label>
-                <InputText
-                  value={formData.companionName}
-                  onChange={(e) =>
-                    handleInputChange("companionName", e.target.value)
-                  }
-                  placeholder="Name"
-                  style={{ width: "100%" }}
+            {/* Medical */}
+            <Card style={cardStyle}>
+              <div style={sectionHead}>
+                <i
+                  className="pi pi-heart text-primary"
+                  style={{ fontSize: "13px" }}
                 />
+                <span style={{ fontWeight: 600, fontSize: "13px" }}>
+                  Medical Details
+                </span>
               </div>
-              <div style={fieldStyle}>
-                <label style={lbl}>Relationship</label>
-                <Dropdown
-                  value={formData.companionRelationship}
-                  options={relationships}
-                  onChange={(e) =>
-                    handleInputChange("companionRelationship", e.value)
-                  }
-                  placeholder="Relation"
-                  style={{ width: "100%" }}
-                />
-              </div>
-              <div style={fieldStyle}>
-                <label style={lbl}>
-                  Contact{" "}
-                  {formData.companionRelationship && (
-                    <span style={{ color: "red" }}>*</span>
-                  )}
-                </label>
-                <InputText
-                  value={formData.companionContact}
-                  onChange={(e) =>
-                    handleInputChange("companionContact", e.target.value)
-                  }
-                  placeholder="Contact No."
-                  maxLength={10}
-                  className={errors.companionContact ? "p-invalid" : ""}
-                  style={{ width: "100%" }}
-                />
-                {errors.companionContact && (
-                  <small className="p-error">{errors.companionContact}</small>
-                )}
-              </div>
-            </div>
-          </Card>
-
-          {/* Appointment */}
-          <Card style={cardStyle}>
-            <div style={sectionHead}>
-              <i
-                className="pi pi-calendar-plus text-primary"
-                style={{ fontSize: "13px" }}
-              />
-              <span style={{ fontWeight: 600, fontSize: "13px" }}>
-                Appointment Details
-              </span>
-            </div>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-                marginBottom: "8px",
-              }}
-            >
-              <Checkbox
-                inputId="hasAppointment"
-                checked={formData.hasAppointment}
-                onChange={(e) => handleInputChange("hasAppointment", e.checked)}
-              />
-              <label
-                htmlFor="hasAppointment"
-                style={{ fontSize: "13px", fontWeight: 600 }}
-              >
-                Has Prior Appointment
-              </label>
-            </div>
-            {formData.hasAppointment && (
               <div
                 style={{
                   display: "grid",
@@ -1306,80 +1142,310 @@ useEffect(() => {
               >
                 <div style={fieldStyle}>
                   <label style={lbl}>
-                    Date <span style={{ color: "red" }}>*</span>
+                    Department <span style={{ color: "red" }}>*</span>
                   </label>
-                  <Calendar
-                    value={formData.appointmentDate}
-                    onChange={(e) =>
-                      handleInputChange("appointmentDate", e.value)
-                    }
-                    dateFormat="dd/mm/yy"
-                    showIcon
-                    placeholder="Date"
-                    className={errors.appointmentDate ? "p-invalid" : ""}
+                  <Dropdown
+                    value={formData.department}
+                    options={departments}
+                    onChange={(e) => handleInputChange("department", e.value)}
+                    placeholder="Select Department"
+                    filter
+                    className={errors.department ? "p-invalid" : ""}
                     style={{ width: "100%" }}
                   />
-                  {errors.appointmentDate && (
-                    <small className="p-error">{errors.appointmentDate}</small>
+                  {errors.department && (
+                    <small className="p-error">{errors.department}</small>
                   )}
                 </div>
                 <div style={fieldStyle}>
                   <label style={lbl}>
-                    Time <span style={{ color: "red" }}>*</span>
+                    Doctor <span style={{ color: "red" }}>*</span>
                   </label>
-                  <Calendar
-                    value={formData.appointmentTime}
-                    onChange={(e) =>
-                      handleInputChange("appointmentTime", e.value)
+                  <Dropdown
+                    value={formData.doctor}
+                    options={filteredDoctors}
+                    onChange={(e) => handleInputChange("doctor", e.value)}
+                    placeholder={
+                      formData.department
+                        ? "Select Doctor"
+                        : "Select Dept First"
                     }
-                    timeOnly
-                    showIcon
-                    placeholder="Time"
-                    className={errors.appointmentTime ? "p-invalid" : ""}
+                    filter
+                    disabled={!formData.department}
+                    className={errors.doctor ? "p-invalid" : ""}
                     style={{ width: "100%" }}
                   />
-                  {errors.appointmentTime && (
-                    <small className="p-error">{errors.appointmentTime}</small>
+                  {errors.doctor && (
+                    <small className="p-error">{errors.doctor}</small>
+                  )}
+                </div>
+                <div style={fieldStyle}>
+                  <label style={lbl}>
+                    Blood Group <span style={{ color: "red" }}>*</span>
+                  </label>
+                  <Dropdown
+                    value={formData.bloodGroup}
+                    options={bloodGroups}
+                    onChange={(e) => handleInputChange("bloodGroup", e.value)}
+                    placeholder="Blood Group"
+                    className={errors.bloodGroup ? "p-invalid" : ""}
+                    style={{ width: "100%" }}
+                  />
+                  {errors.bloodGroup && (
+                    <small className="p-error">{errors.bloodGroup}</small>
+                  )}
+                </div>
+                <div style={fieldStyle}>
+                  <label style={lbl}>
+                    Known Allergies <span style={{ color: "red" }}>*</span>
+                  </label>
+                  <InputTextarea
+                    value={formData.knownAllergies}
+                    onChange={(e) =>
+                      handleInputChange("knownAllergies", e.target.value)
+                    }
+                    rows={2}
+                    placeholder="e.g. Penicillin, Dust"
+                    className={errors.knownAllergies ? "p-invalid" : ""}
+                    style={{ width: "100%" }}
+                  />
+                  {errors.knownAllergies && (
+                    <small className="p-error">{errors.knownAllergies}</small>
                   )}
                 </div>
               </div>
-            )}
-          </Card>
-        </div>
+              {/* MLC inline */}
+              <div
+                style={{
+                  marginTop: "8px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  flexWrap: "wrap",
+                }}
+              >
+                <Checkbox
+                  inputId="mlc"
+                  checked={formData.isMLC}
+                  onChange={(e) => handleInputChange("isMLC", e.checked)}
+                />
+                <label
+                  htmlFor="mlc"
+                  style={{ fontSize: "12px", fontWeight: 600 }}
+                >
+                  MLC Case?
+                </label>
+                {formData.isMLC && (
+                  <InputText
+                    value={formData.mlcNumber}
+                    onChange={(e) =>
+                      handleInputChange("mlcNumber", e.target.value)
+                    }
+                    placeholder="MLC Number"
+                    style={{ width: "160px" }}
+                  />
+                )}
+              </div>
+            </Card>
+          </div>
 
-        {/* ── Action Buttons ── */}
-        <div
-          style={{
-            display: "flex",
-            gap: "10px",
-            justifyContent: "center",
-            paddingBottom: "12px",
-          }}
-        >
-          <Button
-            label="Cancel"
-            icon="pi pi-times"
-            severity="secondary"
-            type="button"
-            onClick={() => navigate("/allpatient")}
-            outlined
-          />
-          <Button
-            label={
-              loading
-                ? "Submitting..."
-                : isEditMode
-                  ? "Update Patient"
-                  : "Register Patient"
-            }
-            icon={loading ? "pi pi-spin pi-spinner" : "pi pi-check"}
-            severity="success"
-            type="submit"
-            loading={loading}
-            disabled={loading}
-          />
-        </div>
-      </form>
-    </div>
+          {/* ── Row 4: Companion + Appointment (side by side) ── */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: "3px",
+              marginBottom: "4px",
+            }}
+          >
+            {/* Companion */}
+            <Card style={cardStyle}>
+              <div style={sectionHead}>
+                <i
+                  className="pi pi-users text-primary"
+                  style={{ fontSize: "13px" }}
+                />
+                <span style={{ fontWeight: 600, fontSize: "13px" }}>
+                  Companion Details
+                </span>
+              </div>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr 1fr",
+                  gap: "8px",
+                }}
+              >
+                <div style={fieldStyle}>
+                  <label style={lbl}>Companion Name</label>
+                  <InputText
+                    value={formData.companionName}
+                    onChange={(e) =>
+                      handleInputChange("companionName", e.target.value)
+                    }
+                    placeholder="Name"
+                    style={{ width: "100%" }}
+                  />
+                </div>
+                <div style={fieldStyle}>
+                  <label style={lbl}>Relationship</label>
+                  <Dropdown
+                    value={formData.companionRelationship}
+                    options={relationships}
+                    onChange={(e) =>
+                      handleInputChange("companionRelationship", e.value)
+                    }
+                    placeholder="Relation"
+                    style={{ width: "100%" }}
+                  />
+                </div>
+                <div style={fieldStyle}>
+                  <label style={lbl}>
+                    Contact{" "}
+                    {formData.companionRelationship && (
+                      <span style={{ color: "red" }}>*</span>
+                    )}
+                  </label>
+                  <InputText
+                    value={formData.companionContact}
+                    onChange={(e) =>
+                      handleInputChange("companionContact", e.target.value)
+                    }
+                    placeholder="Contact No."
+                    maxLength={10}
+                    className={errors.companionContact ? "p-invalid" : ""}
+                    style={{ width: "100%" }}
+                  />
+                  {errors.companionContact && (
+                    <small className="p-error">{errors.companionContact}</small>
+                  )}
+                </div>
+              </div>
+            </Card>
+
+            {/* Appointment */}
+            <Card style={cardStyle}>
+              <div style={sectionHead}>
+                <i
+                  className="pi pi-calendar-plus text-primary"
+                  style={{ fontSize: "13px" }}
+                />
+                <span style={{ fontWeight: 600, fontSize: "13px" }}>
+                  Appointment Details
+                </span>
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  marginBottom: "8px",
+                }}
+              >
+                <Checkbox
+                  inputId="hasAppointment"
+                  checked={formData.hasAppointment}
+                  onChange={(e) =>
+                    handleInputChange("hasAppointment", e.checked)
+                  }
+                />
+                <label
+                  htmlFor="hasAppointment"
+                  style={{ fontSize: "13px", fontWeight: 600 }}
+                >
+                  Has Prior Appointment
+                </label>
+              </div>
+              {formData.hasAppointment && (
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: "8px",
+                  }}
+                >
+                  <div style={fieldStyle}>
+                    <label style={lbl}>
+                      Date <span style={{ color: "red" }}>*</span>
+                    </label>
+                    <Calendar
+                      value={formData.appointmentDate}
+                      onChange={(e) =>
+                        handleInputChange("appointmentDate", e.value)
+                      }
+                      dateFormat="dd/mm/yy"
+                      showIcon
+                      placeholder="Date"
+                      className={errors.appointmentDate ? "p-invalid" : ""}
+                      style={{ width: "100%" }}
+                    />
+                    {errors.appointmentDate && (
+                      <small className="p-error">
+                        {errors.appointmentDate}
+                      </small>
+                    )}
+                  </div>
+                  <div style={fieldStyle}>
+                    <label style={lbl}>
+                      Time <span style={{ color: "red" }}>*</span>
+                    </label>
+                    <Calendar
+                      value={formData.appointmentTime}
+                      onChange={(e) =>
+                        handleInputChange("appointmentTime", e.value)
+                      }
+                      timeOnly
+                      showIcon
+                      placeholder="Time"
+                      className={errors.appointmentTime ? "p-invalid" : ""}
+                      style={{ width: "100%" }}
+                    />
+                    {errors.appointmentTime && (
+                      <small className="p-error">
+                        {errors.appointmentTime}
+                      </small>
+                    )}
+                  </div>
+                </div>
+              )}
+            </Card>
+          </div>
+
+          {/* ── Action Buttons ── */}
+          <div
+            style={{
+              display: "flex",
+              gap: "10px",
+              justifyContent: "center",
+              paddingBottom: "12px",
+            }}
+          >
+            <Button
+              label="Cancel"
+              icon="pi pi-times"
+              severity="secondary"
+              type="button"
+              onClick={() => navigate("/allpatient")}
+              outlined
+            />
+
+            <Button
+              label={
+                loading
+                  ? "Submitting..."
+                  : isEditMode || trueForUpdate
+                    ? "Update Patient"
+                    : "Register Patient"
+              }
+              icon={loading ? "pi pi-spin pi-spinner" : "pi pi-check"}
+              severity="success"
+              type="submit"
+              loading={loading}
+              disabled={loading}
+            />
+          </div>
+        </form>
+      </div>
+   
   );
 }

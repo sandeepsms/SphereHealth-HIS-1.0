@@ -7,7 +7,7 @@ import { InputText } from "primereact/inputtext";
 import { ProgressSpinner } from "primereact/progressspinner";
 import { Tag } from "primereact/tag";
 import usePatientSearch from "../../hooks/usePatientSearch";
-
+import "../../../src/App.css"
 /**
  * PatientSearchBar
  *
@@ -75,7 +75,7 @@ const PatientSearchBar = ({
     >
       {/* Search Input */}
       <span className="p-input-icon-left p-input-icon-right w-full">
-        <i className="pi pi-search" style={{ zIndex: 1 }} />
+        {/* <i className="pi pi-search" style={{ zIndex: 1 }} /> */}
         <InputText
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
@@ -83,7 +83,7 @@ const PatientSearchBar = ({
           disabled={disabled}
           onFocus={() => results.length > 0 && setShowDropdown(true)}
           style={{
-            width: "100%",
+            width: "100%",  
             paddingLeft: "2.5rem",
             paddingRight: loading ? "2.5rem" : "1rem",
             borderRadius: "8px",
@@ -104,7 +104,7 @@ const PatientSearchBar = ({
 
       {/* Dropdown Results */}
       {showDropdown && (
-        <div
+        <div className="div-dropdown"
           style={{
             position: "absolute",
             top: "calc(100% + 4px)",
@@ -114,9 +114,9 @@ const PatientSearchBar = ({
             border: "1px solid #dee2e6",
             borderRadius: "8px",
             boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
-            zIndex: 9999,
+            // zIndex: 9999 ,
             maxHeight: "360px",
-            overflowY: "auto",
+            overflowY: "hidden",
           }}
         >
           {/* Loading State */}

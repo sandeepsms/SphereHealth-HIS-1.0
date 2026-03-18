@@ -23,6 +23,14 @@ body {
   letter-spacing: 1px;
 }
 
+/*  Registration search */
+.div-dropdown{
+  z-index: 9999 !important;
+ 
+}
+
+
+/* ////////////////////////////// */
 .marginginRight10 {
   margin-right: 10px;
 }

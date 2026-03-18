@@ -974,6 +974,15 @@
 
 // export default DoctorPrePrint;
 
+
+
+
+
+
+
+
+
+
 import React, { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "primereact/button";
@@ -1236,93 +1245,98 @@ function DoctorPrePrint() {
           height: "297mm",
           boxSizing: "border-box",
           overflow: "hidden",
+        
         }}
       >
         <div className="prescription-page">
           {/* Header */}
-          <header className="prescription-header-professional">
-            <div className="header-left-section">
-              <div className="logo-section">
-                <img
-                  src={logo}
-                  alt="Hospital Logo"
-                  className="hospital-logo "
-                  style={{ width: "60px", marginBottom: "5px" }}
-                />
-              </div>
-            </div>
-            <div className="header-center-section">
-              <h1 className="hospital-name-main">BIMS</h1>
-              <p className="hospital-subtitle">
-                Bright Institute of Medical Sciences
-              </p>
-            </div>
-          </header>
+         <header className="prescription-header-professional">
+
+  {/* LEFT SIDE */}
+  <div className="header-left">
+
+    <div className="hospital-row">
+      <img src={logo} alt="Hospital Logo" className="hospital-logo" />
+
+      <div className="hospital-text">
+        <h1 className="hospital-name">
+          Bright Institute Of Medical Sciences
+        </h1>
+      </div>
+    </div>
+
+    <div className="contact-info">
+      <p>📞 +91 - 7988307850</p>
+      <p>✉️ query.bims@gmail.com</p>
+      <p>📍 Gau Shala Road, Jatawara, Sonipat - 131001 (Haryana)</p>
+    </div>
+
+  </div>
+
+
+  {/* RIGHT SIDE */}
+  <div className="header-right">
+    <h5 className="section-title-red">PATIENT INFORMATION</h5>
+
+    <table className="info-table">
+      <tbody>
+        <tr>
+          <td className="label-cell">Patient Name:</td>
+          <td className="value-cell " style={{fontWeight:"bold"}}>
+            {prescription.patient?.fullName || prescription.patientName || "N/A"}
+          </td>
+
+          <td className="label-cell">UHID:</td>
+          <td className="value-cell" style={{fontWeight:"bold"}}>{prescription.UHID || "N/A"}</td>
+        </tr>
+
+        <tr>
+          <td className="label-cell">Age:</td>
+          <td className="value-cell">{patientAge}</td>
+
+          <td className="label-cell">Gender:</td>
+          <td className="value-cell">
+            {prescription.patient?.gender || prescription.gender || "N/A"}
+          </td>
+        </tr>
+
+        <tr>
+          <td className="label-cell">Father/Guardian:</td>
+          <td className="value-cell">{prescription.fatherName || "N/A"}</td>
+
+          <td className="label-cell">Contact:</td>
+          <td className="value-cell">
+            {prescription.patient?.contactNumber || prescription.contactNumber || "N/A"}
+          </td>
+        </tr>
+
+        <tr>
+          <td className="label-cell">Department:</td>
+          <td className="value-cell" style={{fontWeight:"bold"}}>{prescription.department || "N/A"}</td>
+
+          <td className="label-cell">Date:</td>
+          <td className="value-cell">{formatDate(prescription.createdAt)}</td>
+        </tr>
+
+        <tr>
+          <td className="label-cell">Referred By:</td>
+          <td className="value-cell">
+            {prescription.patient?.referredBy || prescription.referredBy || "N/A"}
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+</header>
 
           {/* Patient Info */}
-          <section className="patient-info-compact">
-            <h5 className="section-title-red">PATIENT INFORMATION</h5>
-            <table className="info-table">
-              <tbody>
-                <tr>
-                  <td className="label-cell">Patient Name:</td>
-                  <td className="value-cell">
-                    {prescription.patient?.fullName ||
-                      prescription.patientName ||
-                      "N/A"}
-                  </td>
-                  <td className="label-cell">UHID:</td>
-                  <td className="value-cell">{prescription.UHID || "N/A"}</td>
-                </tr>
-                <tr>
-                  <td className="label-cell">Age:</td>
-                  <td className="value-cell">{patientAge}</td>
-                  <td className="label-cell">Gender:</td>
-                  <td className="value-cell">
-                    {prescription.patient?.gender ||
-                      prescription.gender ||
-                      "N/A"}
-                  </td>
-                </tr>
-                <tr>
-                  <td className="label-cell">Father/Guardian:</td>
-                  <td className="value-cell">
-                    {prescription.fatherName || "N/A"}
-                  </td>
-                  <td className="label-cell">Contact:</td>
-                  <td className="value-cell">
-                    {prescription.patient?.contactNumber ||
-                      prescription.contactNumber ||
-                      "N/A"}
-                  </td>
-                </tr>
-                <tr>
-                  <td className="label-cell">Department:</td>
-                  <td className="value-cell">
-                    {prescription.department || "N/A"}
-                  </td>
-                  <td className="label-cell">Date:</td>
-                  <td className="value-cell">
-                    {formatDate(prescription.createdAt)}
-                  </td>
-                </tr>
-                <tr>
-                  <td className="label-cell">Referred By:</td>
-                  <td className="value-cell">
-                    {prescription.patient?.referredBy ||
-                      prescription.referredBy ||
-                      "N/A"}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </section>
 
           {/* Clinical Details */}
           {(prescription.clinicalDetails?.historyOfAllergy ||
             prescription.clinicalDetails?.historyOfPresentIllness ||
             prescription.clinicalDetails?.physicalExamination) && (
-            <section className="clinical-section">
+            <section className="clinical-section" style={{position:"relative",bottom:"25px"}}>
               <h5 className="section-title-red">CLINICAL DETAILS</h5>
 
               {prescription.clinicalDetails?.historyOfAllergy && (
@@ -1351,7 +1365,7 @@ function DoctorPrePrint() {
           {/* Vitals - Compact Format */}
           {prescription.vitals &&
             Object.values(prescription.vitals).some((val) => val) && (
-              <section className="vitals-section">
+              <section className="vitals-section" style={{position:"relative",bottom:"15px"}}>
                 <h5 className="section-title-red">VITALS</h5>
                 <div className="vitals-row">
                   {prescription.vitals.weight && (
@@ -1492,7 +1506,7 @@ function DoctorPrePrint() {
           {/* Doctor Signature */}
           <section className="doctor-signature-professional ">
             <div className="header-right-section">
-              <div className="contact-info">
+              {/* <div className="contact-info">
                 <p>
                   <strong>📞</strong> +91 - 7988307850
                 </p>
@@ -1503,13 +1517,13 @@ function DoctorPrePrint() {
                   <strong>📍</strong> Gau Shala Road, Jatawara, Sonipat - 131001
                   (Haryana)
                 </p>
-              </div>
+              </div> */}
             </div>
             <div className="doctor-details-box" style={{ textAlign: "right" }}>
               <div className="signature-line"></div>
               <p className="signature-label">Doctor's Signature</p>
               <p>
-                <strong>Doctor:</strong> Dr.{" "}
+                <strong>Doctor:</strong>{" "}
                 {prescription.doctor?.personalInfo?.firstName || ""}{" "}
                 {prescription.doctor?.personalInfo?.lastName || ""}
               </p>

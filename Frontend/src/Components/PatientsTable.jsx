@@ -281,7 +281,7 @@ function PatientsTable() {
           <InputText
             value={globalFilterValue}
             onChange={onGlobalFilterChange}
-            placeholder="Filter table..."
+            placeholder=" Global Filter table..."
             className="w-full border-none"
           />
         </span>

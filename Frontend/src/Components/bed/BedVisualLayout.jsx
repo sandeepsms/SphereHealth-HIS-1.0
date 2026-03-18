@@ -15,6 +15,9 @@ import { floorService } from "../../Services/floorService";
 import patientService from "../../Services/patient/patientService";
 import { doctorService } from "../../Services/doctors/doctorService";
 
+
+
+
 /* ─── Colors ─────────────────────────────────────────────── */
 const TEAL = "#0891b2";
 const TEAL_GRAD = "linear-gradient(135deg,#0f766e,#0891b2)";
@@ -241,6 +244,8 @@ const BedIcon = ({ status }) => {
 /* ══════════════════════════════════════════════════════════ */
 const BedVisualLayout = ({ onRefreshParent }) => {
   const toast = useRef(null);
+
+    const { openBed, setOpenBed } = useContext(PopupContext);
 
   /* ── data ── */
   const [beds, setBeds] = useState([]);
@@ -743,8 +748,9 @@ const BedVisualLayout = ({ onRefreshParent }) => {
   };
 
   const handlePatientPick = (p) => {
-    setSelPat(p);
+    setSelPat(p); // save that patient
     setAdmForm({
+      // reset the admit form
       admissionDateTime: nowDTL(),
       expectedDischargeDate: "",
       department: "General Medicine",
@@ -753,14 +759,15 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       attendingDoctor: "",
       specialInstructions: "",
     });
-    setSearchModal(false);
-    setAdmModal(true);
+    setSearchModal(false); // close the search modal
+    setAdmModal(true); // open the admit modal
   };
 
   /* ══ ADMIT ══ */
   const handleAdmit = async () => {
-    if (!selPat || !selBed) return;
+    if (!selPat || !selBed) return; // agar patient select nahi hai ya bed select nahi hai to function aage run nahi karega.
     if (!admForm.reasonForAdmission.trim()) {
+      // Hospital system me reason mandatory hota hai. ex=ChestPain, HighFever
       toast.current?.show({
         severity: "warn",
         summary: "Required",
@@ -768,24 +775,53 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       });
       return;
     }
+
+    // Yaha system selected bed ka current status check kar raha hai.
+
     const cur = beds.find((b) => getId(b._id) === getId(selBed._id));
     if (cur && cur.status !== "Available") {
+      // Agar bed available nahi hai
       toast.current?.show({
         severity: "error",
         summary: "Bed Available Nahi",
-        detail: `Bed ${selBed.bedNumber} already ${cur.status} hai`,
+        detail: `Bed ${selBed.bedNumber} already ${cur.status} hai`, // Bed A1 already Occupied hai
         life: 4000,
       });
-      setAdmModal(false);
+      setAdmModal(false); // Admit dialog close ho jayega.
       return;
     }
-    setBooking(true);
+
+    setBooking(true);  // booking se liye state hai true hoga to admit wala dialog open hoga
+
+    //Iska matlab:
+
+    // Server response aane se pehle hi UI me bed Occupied show ho jayega.
+
+    // Example:
+
+    // Before:
+
+    // Bed A1 → Available
+
+    // After click:
+
+    // Bed A1 → Occupied
+
+    // Ye technique ko bolte hain:
+
+    // Optimistic UI Update
+
+    // Industry me UX fast banane ke liye use hota hai.👇👇
+
     const bedId = getId(selBed._id);
     setBeds((prev) =>
       prev.map((b) =>
         getId(b._id) === bedId ? { ...b, status: "Occupied" } : b,
       ),
     );
+
+////////////////////////////////////////  
+
     try {
       await admissionService.createAdmission({
         patientId: getId(selPat._id),
@@ -806,12 +842,14 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         detail: `${getPatientName(selPat)} → Bed ${selBed.bedNumber}`,
         life: 5000,
       });
-      setAdmModal(false);
-      setSelBed(null);
-      setSelPat(null);
-      await fetchBeds();
-      onRefreshParent?.();
-    } catch (e) {
+      setAdmModal(false); // Admit dialog close.
+      setSelBed(null); // Selected Bed Reset
+      setSelPat(null);// Selected Patient Reset ho aaki next admission fresh ho.
+      await fetchBeds(); // Ye backend se fresh bed data fetch karta hai. ex= Bed A1 → Occupied ,Bed A2 → Available
+      onRefreshParent?.(); // Parent Component Refresh hai dashboard mai Admitted Patients Count, Bed Availability, Dashboard Stats sabko update kr dega
+    }
+    
+    catch (e) {  // Agar API Fail Ho To system bed status revert karta hai. matlab Occupied se Available ho jayega
       setBeds((prev) =>
         prev.map((b) =>
           getId(b._id) === bedId ? { ...b, status: "Available" } : b,
@@ -827,6 +865,8 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       setBooking(false);
     }
   };
+
+
 
   /* ══ EDIT ══ */
   const openEdit = (adm) => {
@@ -1306,9 +1346,9 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                     key={ri}
                     style={{
                       border: "1px solid #e2e8f0",
-                      borderRadius: 16,
-                      overflow: "hidden",
-                      background: "#fafafa",
+                      bordelow: "hidden",
+                      backgrRadius: 16,
+                      overfround: "#fafafa",
                     }}
                   >
                     {/* Room header */}
@@ -1641,6 +1681,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         }
         modal
         draggable={false}
+          appendTo="self"  // Agar BedVisualLayout me PrimeReact Dialog use ho raha hai, to wo default me body me render hota hai. Isliye kabhi kabhi parent popup ke niche chala jata hai isliye use karet hai appendto.
       >
         <div>
           <label style={lbl}>Search Patient by ID or Name</label>

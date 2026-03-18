@@ -373,3 +373,227 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
     </PrimeSidebar>
   );
 }
+
+
+
+
+
+
+
+
+// import React, { useState } from "react";
+// import { useNavigate } from "react-router-dom";
+// import { PanelMenu } from "primereact/panelmenu";
+// import "primereact/resources/themes/lara-light-blue/theme.css";
+// import "primereact/resources/primereact.min.css";
+// import "primeicons/primeicons.css";
+
+// export default function Sidebar() {
+
+//   const navigate = useNavigate();
+//   const [collapsed, setCollapsed] = useState(false);
+
+//   const toggleSidebar = () => {
+//     setCollapsed(!collapsed);
+//   };
+
+//   const menuModel = [
+//     {
+//       label: "Patient Management",
+//       icon: "pi pi-users",
+//       items: [
+//         {
+//           label: "Registration",
+//           icon: "pi pi-user-plus",
+//           command: () => navigate("/registration"),
+//         },
+//         {
+//           label: "Find Patient",
+//           icon: "pi pi-search",
+//           command: () => navigate("/allpatient"),
+//         },
+//       ],
+//     },
+//     {
+//       label: "Billing",
+//       icon: "pi pi-money-bill",
+//       items: [
+//         {
+//           label: "Bills List",
+//           icon: "pi pi-list",
+//           command: () => navigate("/billing"),
+//         },
+//         {
+//           label: "Generate Bill",
+//           icon: "pi pi-file-plus",
+//           command: () => navigate("/billing/create"),
+//         },
+//       ],
+//     },
+//     {
+//       label: "Patient Billing",
+//       icon: "pi pi-receipt",
+//       items: [
+//         {
+//           label: "Patient Bill",
+//           icon: "pi pi-user",
+//           command: () => navigate("/patient-billing"),
+//         },
+//         {
+//           label: "Service Master",
+//           icon: "pi pi-cog",
+//           command: () => navigate("/service-master"),
+//         },
+//       ],
+//     },
+//   ];
+
+//   return (
+//     <div
+//       className={`sidebar ${collapsed ? "collapsed" : ""}`}
+//       style={{
+//         width: collapsed ? "75px" : "260px",
+//         height: "100vh",
+//         position: "fixed",
+//         top: 0,
+//         left: 0,
+//         background: "#ffffff",
+//         transition: "width 0.35s ease",
+//         boxShadow: "2px 0 15px rgba(0,0,0,0.06)",
+//         overflowX: "hidden",
+//         zIndex: 1000
+//       }}
+//     >
+
+//       {/* HEADER */}
+//       <div className="sidebar-header">
+
+//         {!collapsed && (
+//           <h2 className="logo">
+//             HMS
+//           </h2>
+//         )}
+
+//         <i
+//           className="pi pi-bars toggle-btn"
+//           onClick={toggleSidebar}
+//         />
+
+//       </div>
+
+//       {/* MENU */}
+//       <div className="menu-container">
+//         <PanelMenu model={menuModel} />
+//       </div>
+
+//       {/* FOOTER */}
+//       {!collapsed && (
+//         <div className="sidebar-footer">
+//           Version 1.0
+//         </div>
+//       )}
+
+//       <style>{`
+
+//       .sidebar-header{
+//         padding:20px;
+//         display:flex;
+//         align-items:center;
+//         justify-content:space-between;
+//         border-bottom:1px solid #f1f1f1;
+//         margin-top:75px;
+//       }
+
+//       .logo{
+//         font-size:20px;
+//         font-weight:700;
+//         color:#000000;
+//         margin:0;
+//       }
+
+//       .toggle-btn{
+//         font-size:18px;
+//         cursor:pointer;
+//         color:#000000;
+//       }
+
+//       .menu-container{
+//         padding-top:10px;
+//       }
+
+//       /* PANEL MENU STYLE */
+
+//       .sidebar .p-panelmenu-header-link{
+//         padding:14px 20px !important;
+//         border-radius:8px;
+//         font-weight:600;
+//         border:none !important;
+//         display:flex;
+//         align-items:center;
+//         gap:12px;
+//         transition:all 0.25s;
+//       }
+//         .p-menuitem-text {
+//         color:#000000
+//         }
+
+//       .sidebar .p-panelmenu-header-link:hover{
+//         background:#f5f7fb !important;
+//         color:#000000 !important;
+//       }
+
+//       .sidebar .p-menuitem-link{
+//         padding:10px 20px 10px 42px !important;
+//         border-radius:6px;
+//         font-size:14px;
+//       }
+
+//       .sidebar .p-menuitem-link:hover{
+//         background:#eef2ff !important;
+//         color:#000000 !important;
+//       }
+
+//       .sidebar .p-menuitem-icon{
+//         font-size:17px;
+//         color:#000000 !important;
+//       }
+
+//       /* COLLAPSED MODE */
+
+//       .sidebar.collapsed .p-menuitem-text,
+//       .sidebar.collapsed .p-panelmenu-header-label{
+//         display:none !important;
+       
+//       }
+
+//       .sidebar.collapsed .p-panelmenu-header-link{
+//         justify-content:center !important;
+//         padding:16px 0 !important;
+//       }
+
+//       .sidebar.collapsed .p-menuitem-link{
+//         justify-content:center !important;
+//         padding:12px 0 !important;
+//       }
+
+//       .sidebar.collapsed .p-menuitem-icon{
+//         margin:0 !important;
+//         font-size:18px;
+//       }
+
+//       /* FOOTER */
+
+//       .sidebar-footer{
+//         position:absolute;
+//         bottom:20px;
+//         width:100%;
+//         text-align:center;
+//         font-size:12px;
+//         color:#000000;
+//       }
+
+//       `}</style>
+
+//     </div>
+//   );
+// }
