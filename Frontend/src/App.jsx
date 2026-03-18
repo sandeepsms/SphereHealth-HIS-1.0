@@ -73,6 +73,8 @@ import BillGeneration from "./pages/billing/Billgeneration";
 // ── New Billing System (billing-v3) ───────────────────────────
 import PatientBilling from "./Components/Billing/PatientBilling";
 import ServiceMasterManager from "./Components/ServiceMaster/ServiceMasterManager";
+import InvestigationMaster from "./Components/Investigation/InvestigationMaster";
+import InvestigationOrders from "./Components/Investigation/InvestigationOrders";
 
 export default function App() {
   const [isOpen, setIsOpen] = useState(false);
@@ -185,6 +187,14 @@ export default function App() {
 
           {/* Service Master — admin page, sabhi hospital services manage karo */}
           <Route path="/service-master" element={<ServiceMasterManager />} />
+          <Route
+            path="/investigation-master"
+            element={<InvestigationMaster />}
+          />
+          <Route
+            path="/investigation-orders"
+            element={<InvestigationOrders />}
+          />
 
           {/* ── Default & Catch-all ───────────────────────────── */}
           {/* <Route path="/" element={<Navigate to="/dashboard1" replace />} /> */}

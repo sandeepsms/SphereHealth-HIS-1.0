@@ -75,14 +75,20 @@ class AdmissionController {
     return res.json({ success: true, data: patient });
   });
 
+  // ✅ FIXED: returns both "admissions" and "data" keys
+  // Returns empty array if no admissions found (never 400)
   getPatientAdmissionHistory = handle(async (req, res) => {
     const admissions = await AdmissionService.getPatientAdmissionHistory(
       req.params.patientId,
     );
-    return res.json({ success: true, data: admissions });
+    return res.json({
+      success: true,
+      admissions: admissions || [], // ✅ PatientHistoryModal uses this
+      data: admissions || [], // ✅ backward compat
+      count: (admissions || []).length,
+    });
   });
 
-  // GET /api/admissions/doctor/:doctorName
   getAdmissionsByDoctor = handle(async (req, res) => {
     const admissions = await AdmissionService.getAdmissionsByDoctor(
       req.params.doctorName,
@@ -102,9 +108,6 @@ class AdmissionController {
     });
   });
 
-  // POST /api/admissions/:id/discharge
-  // Body: { actualDischargeDate?, dischargeNotes?, dischargeSummary?,
-  //         conditionOnDischarge?, followUpInstructions?, totalCost? }
   dischargePatient = handle(async (req, res) => {
     const admission = await AdmissionService.dischargePatient(
       req.params.id,

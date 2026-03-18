@@ -38,6 +38,8 @@ export const API_ENDPOINTS = {
   // ── New Billing System (billing-v3) ───────────────────────────
   SERVICES: `${API_BASE_URL}/services`,
   BILLING: `${API_BASE_URL}/billing`,
+  // Bills, payments, TPA claims
+  INVESTIGATIONS: `${API_BASE_URL}/investigations`, // Investigation master
 };
 
 export default API_ENDPOINTS;

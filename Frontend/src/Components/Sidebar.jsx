@@ -77,6 +77,30 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
             toggleSidebar();
           },
         },
+        {
+          label: "Investigation Master",
+          icon: "pi pi-flask",
+          command: () => {
+            navigate("/investigation-master");
+            toggleSidebar();
+          },
+        },
+        {
+          label: "Investigation Orders",
+          icon: "pi pi-list",
+          command: () => {
+            navigate("/investigation-orders");
+            toggleSidebar();
+          },
+        },
+        {
+          label: "Lab Staff",
+          icon: "pi pi-users",
+          command: () => {
+            navigate("/lab-staff");
+            toggleSidebar();
+          },
+        },
       ],
     },
 

@@ -32,6 +32,9 @@ const hospitalChargesRoutes = require("../routes/charges/hospitalChargesRoutes")
 const serviceMasterRoutes = require("../routes/ServiceMasterRoute/serviceMasterRoutes");
 const newBillingRoutes = require("./Billing/billingRoutes");
 
+const investigationRoutes = require("./Investigation/investigationRoutes");
+const investigationOrderRoutes = require("./Investigation/investigationOrderRoutes");
+
 // ═════════════════════════════════════════════════════════════
 // ROUTE REGISTRATION
 // ═════════════════════════════════════════════════════════════
@@ -67,5 +70,8 @@ router.use("/hospital-charges", hospitalChargesRoutes);
 
 router.use("/services", serviceMasterRoutes);
 router.use("/billing", newBillingRoutes);
+
+router.use("/investigations", investigationRoutes);
+router.use("/investigation-orders", investigationOrderRoutes);
 
 module.exports = router;

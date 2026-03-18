@@ -1,10 +1,26 @@
 // services/Patient/patientService.js
+// ✅ Fixed: visit counter increments on FIRST registration too
+// ✅ Patient history tracked via VisitHistory embedded or separate
+
 const Patient = require("../../models/Patient/patientModel");
 const Department = require("../../models/Department/department");
 const Doctor = require("../../models/Doctor/doctorModel");
 const TPA = require("../../models/tpa/tpaModel");
 
+/* ── Helper: which counter field for a registration type ── */
+const visitCounterField = (regType) => {
+  if (regType === "OPD") return "totalOPDVisits";
+  if (regType === "Emergency") return "totalEmergencyVisits";
+  if (regType === "IPD") return "totalIPDVisits";
+  if (regType === "Daycare") return "totalDaycareVisits";
+  if (regType === "Services") return "totalServicesVisits";
+  return null;
+};
+
 class PatientService {
+  /* ══════════════════════════════════════════════
+     CREATE — new patient + increment correct counter
+  ══════════════════════════════════════════════ */
   async createPatient(patientData) {
     const department = await Department.findById(patientData.department);
     if (!department) throw new Error("Department not found");
@@ -28,6 +44,15 @@ class PatientService {
         throw new Error("Policy number is required for TPA payment type");
     }
 
+    // ✅ Initialise the correct visit counter to 1 on first registration
+    const counterField = visitCounterField(patientData.registrationType);
+    if (counterField) {
+      patientData[counterField] = 1;
+    }
+
+    // ✅ Set lastVisitDate on first registration
+    patientData.lastVisitDate = new Date();
+
     const patient = new Patient(patientData);
     await patient.save();
 
@@ -40,6 +65,9 @@ class PatientService {
     return patient;
   }
 
+  /* ══════════════════════════════════════════════
+     GET ALL
+  ══════════════════════════════════════════════ */
   async getAllPatients(filters = {}) {
     const {
       registrationType,
@@ -53,7 +81,6 @@ class PatientService {
     } = filters;
 
     const query = { isActive: true };
-
     if (registrationType) query.registrationType = registrationType;
     if (department) query.department = department;
     if (doctor) query.doctor = doctor;
@@ -71,7 +98,6 @@ class PatientService {
     }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
-
     const patients = await Patient.find(query)
       .populate("department", "departmentName")
       .populate("doctor", "personalInfo")
@@ -81,7 +107,6 @@ class PatientService {
       .skip(skip);
 
     const count = await Patient.countDocuments(query);
-
     return {
       patients,
       totalPages: Math.ceil(count / parseInt(limit)),
@@ -90,15 +115,13 @@ class PatientService {
     };
   }
 
-  // ✅ NEW: Search patients - UHID, name, phone se search karo
+  /* ══════════════════════════════════════════════
+     SEARCH
+  ══════════════════════════════════════════════ */
   async searchPatients(searchTerm, limit = 10) {
-    if (!searchTerm || searchTerm.trim().length < 2) {
-      return [];
-    }
-
+    if (!searchTerm || searchTerm.trim().length < 2) return [];
     const trimmed = searchTerm.trim();
-
-    const patients = await Patient.find({
+    return Patient.find({
       isActive: true,
       $or: [
         { fullName: { $regex: trimmed, $options: "i" } },
@@ -112,34 +135,40 @@ class PatientService {
       .populate("doctor", "personalInfo")
       .populate("tpa", "tpaName")
       .select(
-        "fullName UHID contactNumber email gender dateOfBirth department doctor tpa registrationType bloodGroup address",
+        "fullName UHID contactNumber email gender dateOfBirth department doctor tpa registrationType bloodGroup address totalOPDVisits totalEmergencyVisits totalIPDVisits totalDaycareVisits totalServicesVisits lastVisitDate",
       )
       .sort({ createdAt: -1 })
       .limit(parseInt(limit));
-
-    return patients;
   }
 
+  /* ══════════════════════════════════════════════
+     GET BY ID
+  ══════════════════════════════════════════════ */
   async getPatientById(id) {
     const patient = await Patient.findById(id)
       .populate("department", "departmentName departmentCode")
       .populate("doctor", "personalInfo doctorId")
       .populate("tpa", "tpaName tpaCode phone email contactPerson");
-
     if (!patient) throw new Error("Patient not found");
     return patient;
   }
 
+  /* ══════════════════════════════════════════════
+     GET BY UHID
+  ══════════════════════════════════════════════ */
   async getPatientByUHID(uhid) {
     const patient = await Patient.findOne({ UHID: uhid })
       .populate("department", "departmentName")
       .populate("doctor", "personalInfo")
       .populate("tpa", "tpaName tpaCode phone");
-
     if (!patient) throw new Error("Patient not found");
     return patient;
   }
 
+  /* ══════════════════════════════════════════════
+     UPDATE — also increments visit counter
+     Frontend sends _incrementVisit: "totalOPDVisits" etc.
+  ══════════════════════════════════════════════ */
   async updatePatient(id, updateData) {
     if (updateData.doctor && updateData.department) {
       const doctor = await Doctor.findById(updateData.doctor);
@@ -159,11 +188,31 @@ class PatientService {
         throw new Error("Invalid or inactive TPA selected");
     }
 
-    const patient = await Patient.findByIdAndUpdate(
-      id,
-      { $set: updateData },
-      { new: true, runValidators: true },
-    )
+    // ⭐ NEVER overwrite UHID / patientId
+    delete updateData.UHID;
+    delete updateData.patientId;
+
+    // ⭐ Handle visit counter increment
+    const incrementField = updateData._incrementVisit;
+    delete updateData._incrementVisit;
+
+    const updateOp = { $set: updateData };
+
+    const VALID_COUNTERS = [
+      "totalOPDVisits",
+      "totalIPDVisits",
+      "totalEmergencyVisits",
+      "totalDaycareVisits",
+      "totalServicesVisits",
+    ];
+    if (incrementField && VALID_COUNTERS.includes(incrementField)) {
+      updateOp.$inc = { [incrementField]: 1 };
+    }
+
+    const patient = await Patient.findByIdAndUpdate(id, updateOp, {
+      new: true,
+      runValidators: true,
+    })
       .populate("department", "departmentName")
       .populate("doctor", "personalInfo")
       .populate("tpa", "tpaName tpaCode");
@@ -172,6 +221,9 @@ class PatientService {
     return patient;
   }
 
+  /* ══════════════════════════════════════════════
+     DELETE (soft)
+  ══════════════════════════════════════════════ */
   async deletePatient(id) {
     const patient = await Patient.findByIdAndUpdate(
       id,
@@ -182,27 +234,25 @@ class PatientService {
     return patient;
   }
 
+  /* ══════════════════════════════════════════════
+     STATS
+  ══════════════════════════════════════════════ */
   async getPatientStats() {
     const stats = await Patient.aggregate([
       { $match: { isActive: true } },
       { $group: { _id: "$registrationType", count: { $sum: 1 } } },
     ]);
-
     const totalPatients = await Patient.countDocuments({ isActive: true });
-
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-
     const todayPatients = await Patient.countDocuments({
       isActive: true,
       registrationDate: { $gte: today },
     });
-
     const tpaPatients = await Patient.countDocuments({
       isActive: true,
       paymentType: "TPA",
     });
-
     return {
       total: totalPatients,
       today: todayPatients,
@@ -211,18 +261,41 @@ class PatientService {
     };
   }
 
+  /* ══════════════════════════════════════════════
+     PATIENT HISTORY — all admissions + OPD visits
+     Returns visits sorted by date desc
+  ══════════════════════════════════════════════ */
+  async getPatientHistory(patientId) {
+    const Admission = require("../../models/Admission/admissionModel");
+
+    const [patient, admissions] = await Promise.all([
+      Patient.findById(patientId)
+        .populate("department", "departmentName")
+        .populate("doctor", "personalInfo")
+        .select(
+          "fullName UHID gender age contactNumber bloodGroup registrationType registrationDate totalOPDVisits totalEmergencyVisits totalIPDVisits totalDaycareVisits totalServicesVisits lastVisitDate",
+        ),
+      Admission.find({ patientId })
+        .populate("bedId", "bedNumber")
+        .populate("department", "departmentName")
+        .sort({ admissionDate: -1 })
+        .limit(50),
+    ]);
+
+    if (!patient) throw new Error("Patient not found");
+
+    return { patient, admissions };
+  }
+
   async getPatientsByTPA(tpaId, filters = {}) {
     const { search, fromDate, toDate, page = 1, limit = 10 } = filters;
-
     const query = { isActive: true, paymentType: "TPA", tpa: tpaId };
-
     if (fromDate && toDate) {
       query.registrationDate = {
         $gte: new Date(fromDate),
         $lte: new Date(toDate),
       };
     }
-
     if (search) {
       query.$or = [
         { fullName: { $regex: search, $options: "i" } },
@@ -230,18 +303,14 @@ class PatientService {
         { contactNumber: { $regex: search, $options: "i" } },
       ];
     }
-
     const skip = (parseInt(page) - 1) * parseInt(limit);
-
     const patients = await Patient.find(query)
       .populate("department", "departmentName")
       .populate("doctor", "personalInfo")
       .sort({ createdAt: -1 })
       .limit(parseInt(limit))
       .skip(skip);
-
     const count = await Patient.countDocuments(query);
-
     return {
       patients,
       totalPages: Math.ceil(count / parseInt(limit)),
