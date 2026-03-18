@@ -47,10 +47,8 @@ const BILLING_TYPES = [
   "PER_UNIT",
 ].map((v) => ({ label: v.replace(/_/g, " "), value: v }));
 
-const TARIFF_TYPES = ["CASH", "TPA", "CORPORATE"].map((v) => ({
-  label: v,
-  value: v,
-}));
+// CASH auto-set hoti hai service create pe (defaultPrice se) — yahan sirf TPA/CORPORATE
+const TARIFF_TYPES = ["TPA", "CORPORATE"].map((v) => ({ label: v, value: v }));
 
 const CAT_SEVERITY = {
   ROOM: "warning",
@@ -80,7 +78,7 @@ const BLANK_SVC = {
 };
 
 const BLANK_PRICE = {
-  tariffType: "CASH",
+  tariffType: "TPA",
   tpaId: null,
   price: 0,
   discount: 0,
@@ -791,6 +789,28 @@ export default function ServiceMasterManager() {
                 maxWidth: 420,
               }}
             >
+              {/* CASH auto-set info */}
+              <div
+                style={{
+                  background: "#f0fdf4",
+                  border: "1px solid #bbf7d0",
+                  borderRadius: 8,
+                  padding: "10px 14px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                }}
+              >
+                <i
+                  className="pi pi-check-circle"
+                  style={{ color: "#16a34a", fontSize: 16 }}
+                />
+                <span style={{ fontSize: 13, color: "#166534" }}>
+                  <b>CASH price auto-set hai</b> — service ka Default Price
+                  automatically CASH tariff ban jaata hai. Yahan sirf{" "}
+                  <b>TPA / Corporate</b> price set karo.
+                </span>
+              </div>
               <div>
                 <label
                   style={{

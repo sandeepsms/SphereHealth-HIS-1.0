@@ -14,21 +14,13 @@ import { floorService } from "../../Services/floorService";
 import { wardService } from "../../Services/wardService";
 import { roomCategoryService } from "../../Services/roomCategoryService";
 
-/* ─────────────────────────────────────────────────────────────
-   AUTO ROOM CODE — "R" + timestamp + random 3 digits
-   Guaranteed unique on every call
-───────────────────────────────────────────────────────────── */
 const genRoomCode = (roomNumber = "") => {
   const base = roomNumber ? roomNumber.toUpperCase().replace(/\s+/g, "-") : "";
-  const rand = Math.floor(Math.random() * 900 + 100); // 100-999
-  const ts = Date.now().toString().slice(-4); // last 4 digits of timestamp
+  const rand = Math.floor(Math.random() * 900 + 100);
+  const ts = Date.now().toString().slice(-4);
   return base ? `${base}-${ts}${rand}` : `R-${ts}${rand}`;
 };
 
-/* ─────────────────────────────────────────────────────────────
-   RANGE PARSER — "101" to "110" → ["101","102"..."110"]
-   Also handles "A101" to "A110", "ICU-01" to "ICU-10"
-───────────────────────────────────────────────────────────── */
 const parseRoomRange = (from, to) => {
   const split = (str) => {
     const m = str.match(/^(.*?)(\d+)$/);
@@ -52,20 +44,15 @@ const parseRoomRange = (from, to) => {
   return { rooms };
 };
 
-/* ════════════════════════════════════════════════════════════ */
 const RoomForm = ({ visible, onHide, room, onSave }) => {
   const toast = React.useRef(null);
 
-  // ── mode
-  const [mode, setMode] = useState("single"); // "single" | "bulk"
-
-  // ── bulk range
+  const [mode, setMode] = useState("single");
   const [rangeFrom, setRangeFrom] = useState("");
   const [rangeTo, setRangeTo] = useState("");
   const [preview, setPreview] = useState([]);
   const [rangeErr, setRangeErr] = useState("");
 
-  // ── form
   const [formData, setFormData] = useState({
     building: "",
     floor: "",
@@ -79,7 +66,6 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
     notes: "",
   });
 
-  // ── lookups
   const [buildings, setBuildings] = useState([]);
   const [allFloors, setAllFloors] = useState([]);
   const [allWards, setAllWards] = useState([]);
@@ -87,7 +73,7 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
   const [filtWards, setFiltWards] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [bulkProg, setBulkProg] = useState(null); // { done, total, failed[] }
+  const [bulkProg, setBulkProg] = useState(null);
 
   const statusOptions = [
     { label: "Active", value: "Active" },
@@ -96,7 +82,6 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
     { label: "Blocked", value: "Blocked" },
   ];
 
-  /* ── load on open ── */
   useEffect(() => {
     if (visible) {
       loadAll();
@@ -121,7 +106,6 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
     else if (!visible) resetForm();
   }, [room, visible]);
 
-  /* ── live range preview ── */
   useEffect(() => {
     if (mode !== "bulk" || !rangeFrom || !rangeTo) {
       setPreview([]);
@@ -200,16 +184,23 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
     return true;
   };
 
-  /* ── single submit ── */
   const handleSingleSubmit = async () => {
     if (!formData.roomNumber)
       return showToast("warn", "Warning", "Please enter room number");
     if (!validateLocation()) return;
     setLoading(true);
     try {
-      // Auto-generate unique roomCode
       const payload = {
-        ...formData,
+        building: formData.building,
+        floor: formData.floor,
+        ward: formData.ward || null,
+        roomNumber: formData.roomNumber,
+        roomName: formData.roomName?.trim() || `Room ${formData.roomNumber}`,
+        roomCategory: formData.roomCategory,
+        totalBeds: formData.totalBeds || 1,
+        status: formData.status || "Active",
+        isActive: formData.isActive ?? true,
+        notes: formData.notes || "",
         roomCode: genRoomCode(formData.roomNumber),
       };
       if (room?._id) await roomService.updateRoom(room._id, payload);
@@ -229,28 +220,40 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
     }
   };
 
-  /* ── bulk submit ── */
   const handleBulkSubmit = async () => {
     if (!validateLocation()) return;
     if (preview.length === 0 || rangeErr)
       return showToast("warn", "Warning", rangeErr || "Enter valid range");
+
     setLoading(true);
     const failed = [];
     setBulkProg({ done: 0, total: preview.length, failed: [] });
+
     for (let i = 0; i < preview.length; i++) {
       const rn = preview[i];
       try {
+        const roomName = formData.roomName?.trim()
+          ? `${formData.roomName.trim()} ${rn}`
+          : `Room ${rn}`;
         await roomService.createRoom({
-          ...formData,
+          building: formData.building,
+          floor: formData.floor,
+          ward: formData.ward || null,
           roomNumber: rn,
-          roomName: formData.roomName ? `${formData.roomName} ${rn}` : "",
-          roomCode: genRoomCode(rn), // unique per room
+          roomName,
+          roomCategory: formData.roomCategory,
+          totalBeds: formData.totalBeds || 1,
+          status: formData.status || "Active",
+          isActive: formData.isActive ?? true,
+          notes: formData.notes || "",
+          roomCode: genRoomCode(rn),
         });
       } catch {
         failed.push(rn);
       }
       setBulkProg({ done: i + 1, total: preview.length, failed });
     }
+
     setLoading(false);
     const ok = preview.length - failed.length;
     if (failed.length === 0)
@@ -266,7 +269,6 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
     resetForm();
   };
 
-  /* ── footer ── */
   const footer = (
     <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
       <Button
@@ -300,7 +302,6 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
     </div>
   );
 
-  /* ── shared location fields ── */
   const LocationFields = () => (
     <>
       <div className="p-field mb-3">
@@ -369,7 +370,6 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
     </>
   );
 
-  /* ════════════════════════════════════════════════════════ */
   return (
     <>
       <Toast ref={toast} />
@@ -396,7 +396,7 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
           className="p-fluid"
           style={{ maxHeight: "70vh", overflowY: "auto", padding: "10px" }}
         >
-          {/* ── MODE TOGGLE (only when creating) ── */}
+          {/* MODE TOGGLE */}
           {!room && (
             <div
               style={{
@@ -451,7 +451,7 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
             </div>
           )}
 
-          {/* ══ SINGLE MODE ══ */}
+          {/* SINGLE MODE */}
           {mode === "single" && (
             <>
               <LocationFields />
@@ -479,13 +479,12 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
                       onChange={(e) =>
                         setFormData({ ...formData, roomName: e.target.value })
                       }
-                      placeholder="e.g. General Ward A"
+                      placeholder="e.g. General Ward A (optional)"
                     />
                   </div>
                 </div>
               </div>
 
-              {/* Room Code — auto, shown as info only */}
               <div
                 style={{
                   background: "#f0fdf4",
@@ -561,10 +560,9 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
             </>
           )}
 
-          {/* ══ BULK MODE ══ */}
+          {/* BULK MODE */}
           {mode === "bulk" && (
             <>
-              {/* Tip */}
               <div
                 style={{
                   background: "#f0fdf4",
@@ -589,18 +587,17 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
                   <br />
                   <span style={{ opacity: 0.8 }}>
                     Examples: &nbsp;<code>101</code> → <code>110</code>{" "}
-                    &nbsp;|&nbsp;
-                    <code>A01</code> → <code>A20</code> &nbsp;|&nbsp;
-                    <code>ICU-01</code> → <code>ICU-05</code>
+                    &nbsp;|&nbsp; <code>A01</code> → <code>A20</code>{" "}
+                    &nbsp;|&nbsp; <code>ICU-01</code> → <code>ICU-05</code>
                   </span>
                   <br />
                   <span style={{ opacity: 0.7 }}>
-                    Room codes are auto-generated uniquely for each room.
+                    Room codes are auto-generated uniquely for each room. Room
+                    name prefix optional — auto-filled if blank.
                   </span>
                 </div>
               </div>
 
-              {/* Range inputs */}
               <div className="grid mb-3">
                 <div className="col-5">
                   <label
@@ -668,7 +665,6 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
                 </div>
               )}
 
-              {/* Preview chips */}
               {preview.length > 0 && (
                 <div
                   style={{
@@ -727,7 +723,6 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
 
               <LocationFields />
 
-              {/* Common name prefix */}
               <div className="p-field mb-3">
                 <label>Room Name Prefix (optional)</label>
                 <InputText
@@ -735,7 +730,7 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
                   onChange={(e) =>
                     setFormData({ ...formData, roomName: e.target.value })
                   }
-                  placeholder="e.g. 'General Ward' → 'General Ward 101'"
+                  placeholder="e.g. 'General Ward' → 'General Ward 101' (blank = auto)"
                 />
               </div>
 
@@ -780,7 +775,6 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
                 </label>
               </div>
 
-              {/* Progress */}
               {bulkProg && (
                 <div style={{ marginTop: 12 }}>
                   <div

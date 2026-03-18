@@ -34,9 +34,6 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
       ],
     },
 
-    // ══════════════════════════════════════════════════════════════════════
-    // BILLING (Old)
-    // ══════════════════════════════════════════════════════════════════════
     {
       label: "Billing",
       icon: "pi pi-money-bill",
@@ -60,15 +57,11 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
       ],
     },
 
-    // ══════════════════════════════════════════════════════════════════════
-    // NEW BILLING SYSTEM (billing-v3)
-    // ══════════════════════════════════════════════════════════════════════
     {
       label: "Patient Billing",
       icon: "pi pi-receipt",
       items: [
         {
-          // UHID se patient search karo → bill open hoga
           label: "Patient Bill",
           icon: "pi pi-user",
           command: () => {
@@ -77,7 +70,6 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
           },
         },
         {
-          // Admin: sabhi hospital services + pricing manage karo
           label: "Service Master",
           icon: "pi pi-cog",
           command: () => {
@@ -85,12 +77,48 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
             toggleSidebar();
           },
         },
+        {
+          label: "Investigation Master",
+          icon: "pi pi-flask",
+          command: () => {
+            navigate("/investigation-master");
+            toggleSidebar();
+          },
+        },
+        {
+          label: "Investigation Orders",
+          icon: "pi pi-list",
+          command: () => {
+            navigate("/investigation-orders");
+            toggleSidebar();
+          },
+        },
+        {
+          label: "Lab Staff",
+          icon: "pi pi-users",
+          command: () => {
+            navigate("/lab-staff");
+            toggleSidebar();
+          },
+        },
       ],
     },
 
-    // ══════════════════════════════════════════════════════════════════════
-    // MASTER DATA
-    // ══════════════════════════════════════════════════════════════════════
+    {
+      label: "Department",
+      icon: "pi pi-sitemap",
+      items: [
+        {
+          label: "Manage Departments",
+          icon: "pi pi-list",
+          command: () => {
+            navigate("/department");
+            toggleSidebar();
+          },
+        },
+      ],
+    },
+
     {
       label: "Master Data",
       icon: "pi pi-database",
@@ -135,20 +163,9 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
             toggleSidebar();
           },
         },
-        {
-          label: "Department",
-          icon: "pi pi-sitemap",
-          command: () => {
-            navigate("/department");
-            toggleSidebar();
-          },
-        },
       ],
     },
 
-    // ══════════════════════════════════════════════════════════════════════
-    // BED MANAGEMENT
-    // ══════════════════════════════════════════════════════════════════════
     {
       label: "Bed Management",
       icon: "pi pi-table",
@@ -172,9 +189,6 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
       ],
     },
 
-    // ══════════════════════════════════════════════════════════════════════
-    // DOCTOR MANAGEMENT
-    // ══════════════════════════════════════════════════════════════════════
     {
       label: "Doctor Management",
       icon: "pi pi-user-edit",
@@ -190,9 +204,6 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
       ],
     },
 
-    // ══════════════════════════════════════════════════════════════════════
-    // TPA SERVICES
-    // ══════════════════════════════════════════════════════════════════════
     {
       label: "TPA Services",
       icon: "pi pi-briefcase",
@@ -216,9 +227,6 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
       ],
     },
 
-    // ══════════════════════════════════════════════════════════════════════
-    // HOSPITAL CHARGES
-    // ══════════════════════════════════════════════════════════════════════
     {
       label: "Hospital Charges",
       icon: "pi pi-dollar",
@@ -317,7 +325,6 @@ export default function Sidebar({ isOpen, toggleSidebar }) {
         <div style={{ fontSize: "12px", color: "#6c757d" }}>Version 1.0.0</div>
       </div>
 
-      {/* ═══ Custom Styles ═══ */}
       <style>{`
         .modern-sidebar .p-sidebar-content { padding: 0 !important; background: #ffffff !important; }
         .modern-sidebar .p-panelmenu { border: none !important; background: transparent !important; }

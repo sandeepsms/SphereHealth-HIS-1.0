@@ -1,6 +1,4 @@
-// src/Services/patient/admissionService.js
-// Tumhare existing /api/admissions routes ke according
-// Same axios pattern as patientService.js
+// src/Services/admissionService.js
 
 import axios from "axios";
 import { API_ENDPOINTS } from "../config/api.js";
@@ -9,7 +7,6 @@ const API_URL = API_ENDPOINTS.ADMISSIONS;
 
 const admissionService = {
   // ── GET /api/admissions ───────────────────────────────────────
-  // Filters: status, admissionType, attendingDoctor
   getAllAdmissions: async (params = {}) => {
     try {
       const response = await axios.get(API_URL, { params });
@@ -21,7 +18,6 @@ const admissionService = {
   },
 
   // ── GET /api/admissions/active ────────────────────────────────
-  // Filters: department, admissionType, attendingDoctor
   getActiveAdmissions: async (params = {}) => {
     try {
       const response = await axios.get(`${API_URL}/active`, { params });
@@ -43,7 +39,7 @@ const admissionService = {
     }
   },
 
-  // ── GET /api/admissions/search?q=Rahul ───────────────────────
+  // ── GET /api/admissions/search?q=... ─────────────────────────
   searchAdmissions: async (q) => {
     try {
       const response = await axios.get(`${API_URL}/search`, { params: { q } });
@@ -55,7 +51,6 @@ const admissionService = {
   },
 
   // ── GET /api/admissions/statistics ───────────────────────────
-  // Optional: startDate, endDate
   getStatistics: async (params = {}) => {
     try {
       const response = await axios.get(`${API_URL}/statistics`, { params });
@@ -66,7 +61,7 @@ const admissionService = {
     }
   },
 
-  // ── GET /api/admissions/discharges/today ──────────────────────
+  // ── GET /api/admissions/discharges/today ─────────────────────
   getTodayDischarges: async () => {
     try {
       const response = await axios.get(`${API_URL}/discharges/today`);
@@ -77,13 +72,11 @@ const admissionService = {
     }
   },
 
-  // ── GET /api/admissions/discharges/expected ───────────────────
-  // Optional: date (e.g. "2026-02-27")
+  // ── GET /api/admissions/discharges/expected ──────────────────
   getExpectedDischarges: async (date = null) => {
     try {
-      const params = date ? { date } : {};
       const response = await axios.get(`${API_URL}/discharges/expected`, {
-        params,
+        params: date ? { date } : {},
       });
       return response.data;
     } catch (error) {
@@ -93,7 +86,6 @@ const admissionService = {
   },
 
   // ── GET /api/admissions/doctor/:doctorName ────────────────────
-  // Returns all ACTIVE admissions under that doctor
   getAdmissionsByDoctor: async (doctorName) => {
     try {
       const response = await axios.get(
@@ -106,7 +98,7 @@ const admissionService = {
     }
   },
 
-  // ── GET /api/admissions/patient-by-uhid/:uhid ─────────────────
+  // ── GET /api/admissions/patient-by-uhid/:uhid ────────────────
   getPatientByUHID: async (uhid) => {
     try {
       const response = await axios.get(`${API_URL}/patient-by-uhid/${uhid}`);
@@ -118,18 +110,45 @@ const admissionService = {
   },
 
   // ── GET /api/admissions/patient/:patientId/history ────────────
+  // Used by PatientHistoryModal
   getPatientAdmissionHistory: async (patientId) => {
     try {
       const response = await axios.get(
         `${API_URL}/patient/${patientId}/history`,
       );
-      return response.data;
+      return (
+        response.data?.admissions || response.data?.data || response.data || []
+      );
     } catch (error) {
       console.error(
         "admissionService.getPatientAdmissionHistory error:",
         error,
       );
       throw error;
+    }
+  },
+
+  // ✅ Alias — same as getPatientAdmissionHistory
+  // Used by PatientHistoryModal as admissionService.getAdmissionsByPatient
+  getAdmissionsByPatient: async (patientId) => {
+    try {
+      const response = await axios.get(
+        `${API_URL}/patient/${patientId}/history`,
+      );
+      return (
+        response.data?.admissions || response.data?.data || response.data || []
+      );
+    } catch (error) {
+      console.error("admissionService.getAdmissionsByPatient error:", error);
+      // Fallback: getAllAdmissions with patientId filter
+      try {
+        const fb = await axios.get(API_URL, {
+          params: { patientId, limit: 50 },
+        });
+        return fb.data?.admissions || fb.data?.data || [];
+      } catch {
+        return [];
+      }
     }
   },
 
@@ -145,9 +164,6 @@ const admissionService = {
   },
 
   // ── POST /api/admissions ──────────────────────────────────────
-  // Required: patientId (or UHID), bedId, department, reasonForAdmission
-  // Optional: admissionDate, expectedDischargeDate, admissionType,
-  //           attendingDoctor, estimatedCost, advancePaid
   createAdmission: async (data) => {
     try {
       const response = await axios.post(API_URL, data);
@@ -159,9 +175,6 @@ const admissionService = {
   },
 
   // ── PUT /api/admissions/:id ───────────────────────────────────
-  // Allowed: department, expectedDischargeDate, reasonForAdmission,
-  //          admissionType, attendingDoctor, dischargeNotes,
-  //          dischargeSummary, estimatedCost, advancePaid
   updateAdmission: async (id, data) => {
     try {
       const response = await axios.put(`${API_URL}/${id}`, data);
@@ -173,7 +186,6 @@ const admissionService = {
   },
 
   // ── DELETE /api/admissions/:id ────────────────────────────────
-  // Admin only — frees bed if Active
   deleteAdmission: async (id) => {
     try {
       const response = await axios.delete(`${API_URL}/${id}`);
@@ -185,8 +197,6 @@ const admissionService = {
   },
 
   // ── POST /api/admissions/:id/discharge ───────────────────────
-  // Optional: actualDischargeDate, dischargeNotes, dischargeSummary,
-  //           conditionOnDischarge, followUpInstructions, totalCost
   dischargePatient: async (id, data = {}) => {
     try {
       const response = await axios.post(`${API_URL}/${id}/discharge`, data);
@@ -198,7 +208,6 @@ const admissionService = {
   },
 
   // ── POST /api/admissions/:id/cancel ──────────────────────────
-  // Required: reason
   cancelAdmission: async (id, reason) => {
     try {
       const response = await axios.post(`${API_URL}/${id}/cancel`, { reason });
@@ -210,8 +219,6 @@ const admissionService = {
   },
 
   // ── POST /api/admissions/:id/transfer ────────────────────────
-  // Required: newBedId
-  // Optional: reason
   transferBed: async (id, newBedId, reason = "") => {
     try {
       const response = await axios.post(`${API_URL}/${id}/transfer`, {
@@ -226,10 +233,8 @@ const admissionService = {
   },
 };
 
-// Default export (patientService.js pattern ke liye)
+// Default export
 export default admissionService;
 
-// Named export (BedVisualLayout.jsx pattern ke liye)
-// import admissionService from "..."   ✅ dono kaam karenge
-// import { admissionService } from "..." ✅
+// Named export (for files using: import { admissionService } from "...")
 export { admissionService };

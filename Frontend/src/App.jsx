@@ -73,8 +73,13 @@ import BillGeneration from "./pages/billing/Billgeneration";
 // ── New Billing System (billing-v3) ───────────────────────────
 import PatientBilling from "./Components/Billing/PatientBilling";
 import ServiceMasterManager from "./Components/ServiceMaster/ServiceMasterManager";
+<<<<<<< HEAD
 import MainPage from "./pages/mainPage/MainPage";
 // import { PopupProvider } from "./Components/contextapi/ContextApi";
+=======
+import InvestigationMaster from "./Components/Investigation/InvestigationMaster";
+import InvestigationOrders from "./Components/Investigation/InvestigationOrders";
+>>>>>>> 6d0b72133a713c5d7a2e0aa3d1a9edac55324180
 
 export default function App() {
   const [isOpen, setIsOpen] = useState(false);
@@ -190,7 +195,20 @@ export default function App() {
             <Route path="/billing/edit/:billId" element={<BillGeneration />} />
             <Route path="/bills" element={<Navigate to="/billing" replace />} />
 
+<<<<<<< HEAD
             {/* ── New Billing System (billing-v3) ──────────────── */}
+=======
+          {/* Service Master — admin page, sabhi hospital services manage karo */}
+          <Route path="/service-master" element={<ServiceMasterManager />} />
+          <Route
+            path="/investigation-master"
+            element={<InvestigationMaster />}
+          />
+          <Route
+            path="/investigation-orders"
+            element={<InvestigationOrders />}
+          />
+>>>>>>> 6d0b72133a713c5d7a2e0aa3d1a9edac55324180
 
             {/* Patient Billing — UHID se bill open hoga */}
             {/* /patient-billing          → blank, UHID search bar dikhega */}

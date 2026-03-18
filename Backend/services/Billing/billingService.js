@@ -1,21 +1,25 @@
 // services/billingService.js
-// ═══════════════════════════════════════════════════════════════
-// BILLING SERVICE LAYER
-// Sabhi billing business logic yahan hai
-// Controllers sirf call karenge — koi bhi DB query ya logic
-// controller mein nahi hogi
-// ═══════════════════════════════════════════════════════════════
-
 const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
 const Admission = require("../../models/Patient/admissionModel");
 const ServiceMaster = require("../../models/ServiceMaster/serviceMasterModel");
 const ServicePricing = require("../../models/ServicePricing/ServicePricingModel");
 const AutoBilledItems = require("../../models/PatientBillModel/AutoBilledItemsModel");
 
+async function generateBillNumber() {
+  const today = new Date();
+  const dateStr = today.toISOString().slice(0, 10).replace(/-/g, "");
+  const prefix = `BILL-${dateStr}-`;
+  const count = await PatientBill.countDocuments({
+    billNumber: { $regex: `^${prefix}` },
+  });
+  const serial = String(count + 1).padStart(5, "0");
+  return `${prefix}${serial}`;
+}
+
 class BillingService {
   // ── 1. Patient + all bills by UHID ───────────────────────────
   async getPatientWithBills(UHID) {
-    const Patient = require("../..models/Patient/patientModel");
+    const Patient = require("../../models/Patient/patientModel");
 
     const [bills, patient] = await Promise.all([
       this.getBillsByUHID(UHID),
@@ -26,24 +30,21 @@ class BillingService {
     ]);
 
     if (!patient) throw new Error(`Patient not found: ${UHID}`);
-
     return { patient, bills };
   }
 
   // ── 2. Get existing DRAFT bill or create new one ──────────────
   async getOrCreateDraftBill(UHID, visitType, admissionId = null) {
-    const Patient = require("../..models/Patient/patientModel");
+    const Patient = require("../../models/Patient/patientModel");
 
-    // Pehle existing DRAFT dhundho
-    const query = { UHID, visitType, billStatus: "DRAFT" };
-    if (admissionId) query.admission = admissionId;
-
-    let bill = await PatientBill.findOne(query);
-    if (bill) return bill;
-
-    // Patient ka tariff type determine karo
     const patient = await Patient.findOne({ UHID }).populate("tpa");
     if (!patient) throw new Error(`Patient not found: ${UHID}`);
+
+    const filter = { UHID, visitType, billStatus: "DRAFT" };
+    if (admissionId) filter.admission = admissionId;
+
+    let bill = await PatientBill.findOne(filter);
+    if (bill) return bill;
 
     const billData = {
       patient: patient._id,
@@ -52,6 +53,7 @@ class BillingService {
       paymentType: patient.tpa ? "TPA" : "CASH",
       tpa: patient.tpa?._id || null,
       tpaName: patient.tpa?.tpaName || null,
+      billStatus: "DRAFT",
       billItems: [],
     };
 
@@ -63,9 +65,17 @@ class BillingService {
       }
     }
 
-    bill = new PatientBill(billData);
-    await bill.save();
-    return bill;
+    try {
+      bill = new PatientBill(billData);
+      await bill.save();
+      return bill;
+    } catch (err) {
+      if (err.code === 11000) {
+        const existing = await PatientBill.findOne(filter);
+        if (existing) return existing;
+      }
+      throw err;
+    }
   }
 
   // ── 3. Get single bill (fully populated) ─────────────────────
@@ -80,7 +90,7 @@ class BillingService {
     return bill;
   }
 
-  // ── 4. Get draft bill (populated) for a new/existing session ──
+  // ── 4. Get draft bill (populated) ────────────────────────────
   async getDraftBillPopulated(UHID, visitType, admissionId) {
     const bill = await this.getOrCreateDraftBill(UHID, visitType, admissionId);
     return PatientBill.findById(bill._id)
@@ -102,7 +112,6 @@ class BillingService {
   }
 
   // ── 6. Add service to bill ────────────────────────────────────
-  // Pricing fetch → TPA split calculate → item add → save
   async addServiceToBill(
     billId,
     serviceId,
@@ -119,7 +128,6 @@ class BillingService {
     const service = await ServiceMaster.findById(serviceId);
     if (!service) throw new Error("Service not found");
 
-    // Correct tariff fetch karo (TPA → fallback to CASH if not configured)
     const pricing = await ServicePricing.getPriceFor(
       serviceId,
       bill.paymentType,
@@ -136,12 +144,11 @@ class BillingService {
       : 0;
     const lineTotal = netAmount + taxAmount;
 
-    // TPA split: TPA kitna dega, patient kitna dega
     let tpaPayableAmount = 0;
     if (bill.paymentType === "TPA") {
       tpaPayableAmount = pricing?.tpaApprovedLimit
         ? Math.min(pricing.tpaApprovedLimit * quantity, lineTotal)
-        : lineTotal; // Limit nahi hai → TPA full amount dega
+        : lineTotal;
     }
 
     bill.billItems.push({
@@ -187,6 +194,8 @@ class BillingService {
 
   // ── 8. Update item quantity ───────────────────────────────────
   async updateItemQuantity(billId, itemId, quantity) {
+    if (quantity <= 0) throw new Error("Quantity must be greater than 0");
+
     const bill = await PatientBill.findById(billId);
     if (!bill) throw new Error("Bill not found");
     if (["PAID", "CANCELLED"].includes(bill.billStatus)) {
@@ -197,6 +206,26 @@ class BillingService {
     if (!item) throw new Error("Bill item not found");
 
     item.quantity = quantity;
+    item.grossAmount = item.unitPrice * quantity;
+    item.discountAmount =
+      (item.grossAmount * (item.discountPercent || 0)) / 100;
+    item.netAmount = item.grossAmount - item.discountAmount;
+    item.taxAmount = item.isTaxable
+      ? (item.netAmount * (item.taxPercent || 0)) / 100
+      : 0;
+    const lineTotal = item.netAmount + item.taxAmount;
+
+    if (bill.paymentType === "TPA") {
+      const tpaLimit = item.tpaApprovedLimitPerUnit
+        ? item.tpaApprovedLimitPerUnit * quantity
+        : lineTotal;
+      item.tpaPayableAmount = Math.min(tpaLimit, lineTotal);
+      item.patientPayableAmount = lineTotal - item.tpaPayableAmount;
+    } else {
+      item.tpaPayableAmount = 0;
+      item.patientPayableAmount = lineTotal;
+    }
+
     await bill.save();
     return bill;
   }
@@ -205,12 +234,14 @@ class BillingService {
   async generateFinalBill(billId, generatedBy = "Staff") {
     const bill = await PatientBill.findById(billId);
     if (!bill) throw new Error("Bill not found");
-    if (bill.billStatus !== "DRAFT")
+    if (bill.billStatus !== "DRAFT") {
       throw new Error("Only DRAFT bills can be generated");
+    }
     if (!bill.billItems || bill.billItems.length === 0) {
       throw new Error("Cannot generate empty bill — pehle services add karo");
     }
 
+    bill.billNumber = await generateBillNumber();
     bill.billStatus = "GENERATED";
     bill.billGeneratedAt = new Date();
     bill.generatedBy = generatedBy;
@@ -230,7 +261,16 @@ class BillingService {
   ) {
     const bill = await PatientBill.findById(billId);
     if (!bill) throw new Error("Bill not found");
+
+    if (bill.billStatus === "DRAFT") {
+      throw new Error(
+        "Bill abhi DRAFT hai — pehle generateFinalBill() karo, tab payment lo",
+      );
+    }
     if (bill.billStatus === "PAID") throw new Error("Bill already fully paid");
+    if (bill.billStatus === "CANCELLED")
+      throw new Error("Cancelled bill pe payment nahi ho sakti");
+    if (!amount || amount <= 0) throw new Error("Valid amount required");
 
     bill.payments.push({
       amount,
@@ -238,6 +278,7 @@ class BillingService {
       transactionId,
       receivedBy,
       remarks,
+      paidAt: new Date(),
     });
 
     const totalPaid = bill.payments.reduce((s, p) => s + p.amount, 0);
@@ -259,19 +300,17 @@ class BillingService {
     if (claimNumber) bill.tpaClaimNumber = claimNumber;
     if (approvedAmount) bill.tpaApprovedAmount = approvedAmount;
     await bill.save();
-
     return bill;
   }
 
   // ── 12. Billing dashboard summary ────────────────────────────
-  // Aaj ka revenue, pending bills, TPA claims
   async getBillingSummary() {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
     const [todayCount, pendingCount, paidToday, tpaPending] = await Promise.all(
       [
-        PatientBill.countDocuments({ billDate: { $gte: today } }),
+        PatientBill.countDocuments({ createdAt: { $gte: today } }),
         PatientBill.countDocuments({
           billStatus: { $in: ["GENERATED", "PARTIAL"] },
         }),
@@ -295,7 +334,6 @@ class BillingService {
   }
 
   // ── 13. Setup daily auto-charges on admission ─────────────────
-  // Room category se service codes map → AutoBilledItems records
   async setupAutoChargesForAdmission(admission, patient) {
     const ROOM_MAP = {
       GENERAL_WARD: { room: "IPD-RM-001", nursing: "IPD-NUR-001" },
@@ -319,6 +357,13 @@ class BillingService {
         isActive: true,
       });
       if (!service) continue;
+
+      const alreadyExists = await AutoBilledItems.findOne({
+        admission: admission._id,
+        service: service._id,
+        isActive: true,
+      });
+      if (alreadyExists) continue;
 
       const pricing = await ServicePricing.getPriceFor(
         service._id,
@@ -344,9 +389,9 @@ class BillingService {
     }
   }
 
-  // ── 14. Daycare time check + auto-convert to IPD ──────────────
+  // ── 14. Daycare → IPD conversion ──────────────────────────────
   async checkAndHandleDaycareConversion(admissionId) {
-    const admission = await Admission.findById(admissionId);
+    const admission = await Admission.findById(admissionId).populate("patient");
     if (!admission || admission.admissionType !== "DAYCARE") return null;
 
     const hours = admission.totalHoursAdmitted;
@@ -356,13 +401,27 @@ class BillingService {
       admission.isConvertedToIPD = true;
       admission.convertedToIPDAt = new Date();
       admission.conversionReason = `Exceeded ${admission.daycareMaxHours}hr daycare limit`;
+      admission.admissionType = "IPD";
       await admission.save();
 
-      // Open draft bills ko bhi IPD mein convert karo
       await PatientBill.updateMany(
         { admission: admissionId, billStatus: "DRAFT" },
         { $set: { visitType: "IPD" } },
       );
+
+      await AutoBilledItems.updateMany(
+        { admission: admissionId, isActive: true },
+        { $set: { isActive: false } },
+      );
+
+      if (admission.patient) {
+        const Patient = require("../../models/Patient/patientModel");
+        const patient = await Patient.findById(admission.patient).populate(
+          "tpa",
+        );
+        if (patient)
+          await this.setupAutoChargesForAdmission(admission, patient);
+      }
 
       return {
         converted: true,
@@ -379,23 +438,20 @@ class BillingService {
   }
 
   // ── 15. Daily auto-charge cron job ────────────────────────────
-  // Har raat cron is method ko call karta hai
-  // Sabhi admitted patients ke liye room rent + nursing daily bill mein add hota hai
   async runDailyAutoCharges() {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // Aaj jo bhi bill nahi hue woh sab do
     const items = await AutoBilledItems.find({
       isActive: true,
       $or: [{ lastBilledDate: null }, { lastBilledDate: { $lt: today } }],
     }).populate("admission");
 
     const results = [];
+    const failed = [];
 
     for (const item of items) {
       try {
-        // Patient discharged ho gaya → auto-charge band
         if (!item.admission || item.admission.status !== "ADMITTED") {
           item.isActive = false;
           await item.save();
@@ -433,16 +489,24 @@ class BillingService {
           status: "billed",
         });
       } catch (err) {
-        results.push({
+        const failEntry = {
           UHID: item.UHID,
           service: item.serviceName,
           status: "error",
           error: err.message,
-        });
+        };
+        results.push(failEntry);
+        failed.push(failEntry);
       }
     }
 
-    return { processed: results.length, results };
+    return {
+      processed: results.length,
+      successCount: results.filter((r) => r.status === "billed").length,
+      failedCount: failed.length,
+      failed,
+      results,
+    };
   }
 }
 

@@ -14,7 +14,8 @@ const patientRoutes = require("./Patient/patientRoutes");
 const opdRoutes = require("./Patient/OPDRoutes");
 const doctorRoutes = require("./Doctor/doctorRoutes");
 const emergencyRoutes = require("./Patient/emergencyRoutes");
-const admissionRoutes = require("./Patient/admissionRoutes");
+
+const admissionRoutes = require("./Patient/admissionRoutes"); // ✅ Existing admission system
 const doctorPrescriptionRoutes = require("../routes/Doctor/doctorPrescriptionRoutes");
 
 // ── Department & Support ──────────────────────────────────────
@@ -27,8 +28,12 @@ const TPAServicebill = require("./Billing/TPAServiceBilling");
 const hospitalChargesRoutes = require("../routes/charges/hospitalChargesRoutes");
 
 // ── New Billing System (billing-v3) ───────────────────────────
+
 const serviceMasterRoutes = require("../routes/ServiceMasterRoute/serviceMasterRoutes");
 const newBillingRoutes = require("./Billing/billingRoutes");
+
+const investigationRoutes = require("./Investigation/investigationRoutes");
+const investigationOrderRoutes = require("./Investigation/investigationOrderRoutes");
 
 // ═════════════════════════════════════════════════════════════
 // ROUTE REGISTRATION
@@ -47,7 +52,9 @@ router.use("/patients", patientRoutes);
 router.use("/opd", opdRoutes);
 router.use("/emergency", emergencyRoutes);
 router.use("/doctors", doctorRoutes);
+
 router.use("/admissions", admissionRoutes);
+
 router.use("/prescriptions", doctorPrescriptionRoutes);
 
 // Department & Support
@@ -60,7 +67,16 @@ router.use("/servicebilldata", TPAServicebill);
 router.use("/hospital-charges", hospitalChargesRoutes);
 
 // New Billing System (billing-v3)
+ 
 router.use("/services", serviceMasterRoutes); // GET /api/services, POST /api/services/seed
 router.use("/billing", newBillingRoutes); // GET /api/billing/uhid/:UHID, POST /api/billing/create
+
+
+router.use("/services", serviceMasterRoutes);
+router.use("/billing", newBillingRoutes);
+
+router.use("/investigations", investigationRoutes);
+router.use("/investigation-orders", investigationOrderRoutes);
+
 
 module.exports = router;

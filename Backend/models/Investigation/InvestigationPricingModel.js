@@ -1,27 +1,23 @@
 const mongoose = require("mongoose");
 
 // ═══════════════════════════════════════════════════════════════
-// SERVICE PRICING MODEL
-// Ek hi service ke liye multiple tariffs:
+// INVESTIGATION PRICING MODEL
+// Per investigation, per tariff type pricing
 //
-//   CASH      → Normal cash patient rate
-//   TPA       → Insurance patient rate (per TPA company)
-//   CORPORATE → Corporate empanelled patient rate
+// Hierarchy (highest priority first):
+//   1. Doctor override   — specific patient ke liye doctor ne set kiya
+//   2. TPA pricing       — TPA patient ke liye
+//   3. CASH pricing      — default (auto-created from defaultPrice)
 //
-// Example:
-//   CBC Test  CASH       = ₹500
-//   CBC Test  HDFC TPA   = ₹350  (TPA approved limit ₹300 — baaki ₹50 patient pays)
-//   CBC Test  STAR TPA   = ₹400
-//
-// Fallback: Agar TPA pricing na mile → CASH price use hoga
+// Fallback: TPA → CASH
 // ═══════════════════════════════════════════════════════════════
 
-const ServicePricingSchema = new mongoose.Schema(
+const InvestigationPricingSchema = new mongoose.Schema(
   {
-    serviceId: {
+    investigationId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "ServiceMaster",
-      required: [true, "Service reference required"],
+      ref: "InvestigationMaster",
+      required: true,
     },
 
     tariffType: {
@@ -31,7 +27,7 @@ const ServicePricingSchema = new mongoose.Schema(
       default: "CASH",
     },
 
-    // Populated only when tariffType === "TPA"
+    // Only for TPA tariff
     tpaId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "TPA",
@@ -40,16 +36,11 @@ const ServicePricingSchema = new mongoose.Schema(
 
     corporateName: { type: String, trim: true, default: null },
 
-    // Billed amount
     price: { type: Number, required: true, min: 0 },
-
-    // Discount on billed price
     discount: { type: Number, default: 0, min: 0, max: 100 },
-
-    // Auto-calculated: price - (price * discount / 100)
     finalPrice: { type: Number, required: true },
 
-    // Max amount TPA will pay (excess is patient's responsibility)
+    // Max TPA will pay — excess is patient's responsibility
     tpaApprovedLimit: { type: Number, default: null },
 
     effectiveFrom: { type: Date, default: Date.now },
@@ -60,26 +51,25 @@ const ServicePricingSchema = new mongoose.Schema(
 );
 
 // ── Auto-calculate finalPrice before save ──
-ServicePricingSchema.pre("save", function (next) {
+InvestigationPricingSchema.pre("save", function (next) {
   if (this.price !== undefined && this.discount !== undefined) {
     this.finalPrice = this.price - (this.price * this.discount) / 100;
   }
   next();
 });
 
-ServicePricingSchema.index({ serviceId: 1, tariffType: 1 });
-ServicePricingSchema.index({ serviceId: 1, tpaId: 1 });
-ServicePricingSchema.index({ tpaId: 1 });
-ServicePricingSchema.index({ isActive: 1 });
+InvestigationPricingSchema.index({ investigationId: 1, tariffType: 1 });
+InvestigationPricingSchema.index({ investigationId: 1, tpaId: 1 });
+InvestigationPricingSchema.index({ isActive: 1 });
 
 // ── Static: fetch effective price with TPA → CASH fallback ──
-ServicePricingSchema.statics.getPriceFor = async function (
-  serviceId,
+InvestigationPricingSchema.statics.getPriceFor = async function (
+  investigationId,
   tariffType = "CASH",
   tpaId = null,
 ) {
   const query = {
-    serviceId,
+    investigationId,
     tariffType,
     isActive: true,
     $or: [{ effectiveTo: null }, { effectiveTo: { $gte: new Date() } }],
@@ -88,14 +78,14 @@ ServicePricingSchema.statics.getPriceFor = async function (
 
   const pricing = await this.findOne(query).sort({ effectiveFrom: -1 });
 
-  // Fallback to CASH if TPA-specific pricing not configured
+  // Fallback to CASH if TPA-specific pricing not found
   if (!pricing && tariffType === "TPA") {
-    return this.getPriceFor(serviceId, "CASH");
+    return this.getPriceFor(investigationId, "CASH");
   }
 
   return pricing;
 };
 
 module.exports =
-  mongoose.models.ServicePricing ||
-  mongoose.model("ServicePricing", ServicePricingSchema);
+  mongoose.models.InvestigationPricing ||
+  mongoose.model("InvestigationPricing", InvestigationPricingSchema);

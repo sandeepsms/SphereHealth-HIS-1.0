@@ -2,25 +2,17 @@ const mongoose = require("mongoose");
 
 const PatientSchema = new mongoose.Schema(
   {
-    patientId: {
-      type: String,
-      unique: true,
-    },
-    UHID: {
-      type: String,
-      unique: true,
-    },
+    patientId: { type: String, unique: true },
+    UHID: { type: String, unique: true },
+
     registrationType: {
       type: String,
       required: true,
-      enum: ["OPD", "Emergency", "IPD", "Daycare", "Service"],
+      enum: ["OPD", "Emergency", "IPD", "Daycare", "Services"],
       default: "OPD",
     },
-    fullName: {
-      type: String,
-      required: true,
-      trim: true,
-    },
+
+    fullName: { type: String, required: true, trim: true },
     title: {
       type: String,
       required: true,
@@ -31,44 +23,30 @@ const PatientSchema = new mongoose.Schema(
       required: true,
       enum: ["Male", "Female", "Other"],
     },
-    dateOfBirth: {
-      type: Date,
-      required: true,
-    },
-    age: {
-      type: Number,
-    },
+    dateOfBirth: { type: Date, required: true },
+    age: { type: Number },
     maritalStatus: {
       type: String,
       enum: ["Single", "Married", "Divorced", "Widowed", "Other"],
     },
-    contactNumber: {
-      type: String,
-      required: true,
-    },
-    email: {
-      type: String,
-      lowercase: true,
-      trim: true,
-    },
+
+    contactNumber: { type: String, required: true },
+    email: { type: String, lowercase: true, trim: true },
+
     address: {
       completeAddress: String,
-      pincode: {
-        type: String,
-        required: true,
-      },
+      pincode: { type: String, required: true },
       city: String,
       state: String,
       district: String,
     },
+
     bloodGroup: {
       type: String,
       enum: ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "Not Known"],
     },
-    knownAllergies: {
-      type: String,
-      default: "",
-    },
+    knownAllergies: { type: String, default: "" },
+
     department: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Department",
@@ -80,78 +58,40 @@ const PatientSchema = new mongoose.Schema(
       required: true,
     },
 
-    // ⭐ PAYMENT TYPE - NEW FIELD
     paymentType: {
       type: String,
       enum: ["GENERAL", "TPA", "CORPORATE"],
       default: "GENERAL",
     },
-
-    // ⭐ TPA REFERENCE - NEW FIELD
-    tpa: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "TPA",
-    },
-
-    // ⭐ TPA RELATED FIELDS
+    tpa: { type: mongoose.Schema.Types.ObjectId, ref: "TPA" },
     policyNumber: String,
     policyHolderName: String,
     sumInsured: Number,
 
-    // MLC
-    isMLC: {
-      type: Boolean,
-      default: false,
-    },
-    mlcNumber: {
-      type: String,
-    },
+    isMLC: { type: Boolean, default: false },
+    mlcNumber: String,
 
-    // Companion Information
-    companionName: {
-      type: String,
-    },
-    companionRelationship: {
-      type: String,
-    },
-    companionContact: {
-      type: String,
-    },
+    companionName: String,
+    companionRelationship: String,
+    companionContact: String,
 
-    // Appointment Details
-    hasAppointment: {
-      type: Boolean,
-      default: false,
-    },
+    hasAppointment: { type: Boolean, default: false },
     appointmentDate: Date,
     appointmentTime: String,
 
-    // Registration tracking
-    registrationDate: {
-      type: Date,
-      default: Date.now,
-    },
-    isActive: {
-      type: Boolean,
-      default: true,
-    },
-    totalOPDVisits: {
-      type: Number,
-      default: 0,
-    },
-    totalEmergencyVisits: {
-      type: Number,
-      default: 0,
-    },
-    totalIPDVisits: {
-      type: Number,
-      default: 0,
-    },
+    registrationDate: { type: Date, default: Date.now },
+    isActive: { type: Boolean, default: true },
+
+    // ── Visit counters ──────────────────────────────────
+    totalOPDVisits: { type: Number, default: 0 },
+    totalEmergencyVisits: { type: Number, default: 0 },
+    totalIPDVisits: { type: Number, default: 0 },
+    totalDaycareVisits: { type: Number, default: 0 }, // ✅ NEW
+    totalServicesVisits: { type: Number, default: 0 }, // ✅ NEW
+
     lastVisitDate: Date,
   },
-  {
-    timestamps: true,
-  },
+  { timestamps: true },
 );
 
 // Indexes
@@ -178,11 +118,12 @@ PatientSchema.pre("save", async function (next) {
             ? "OPD"
             : this.registrationType === "Emergency"
               ? "EMG"
-              : "IPD";
-        this.patientId = `${prefix}-${year}-${String(count + 1).padStart(
-          6,
-          "0",
-        )}`;
+              : this.registrationType === "Daycare"
+                ? "DAY"
+                : this.registrationType === "Services"
+                  ? "SVC"
+                  : "IPD";
+        this.patientId = `${prefix}-${year}-${String(count + 1).padStart(6, "0")}`;
       }
 
       // Generate UHID
@@ -195,30 +136,21 @@ PatientSchema.pre("save", async function (next) {
     }
   }
 
-  // Calculate age
+  // Calculate age from DOB
   if (this.dateOfBirth) {
     const today = new Date();
     const birthDate = new Date(this.dateOfBirth);
     let age = today.getFullYear() - birthDate.getFullYear();
-    const monthDiff = today.getMonth() - birthDate.getMonth();
-    if (
-      monthDiff < 0 ||
-      (monthDiff === 0 && today.getDate() < birthDate.getDate())
-    ) {
-      age--;
-    }
+    const m = today.getMonth() - birthDate.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) age--;
     this.age = age;
   }
 
-  // ⭐ Auto-set gender based on title
+  // Auto-set gender from title
   if (this.title && !this.gender) {
-    if (this.title === "Mr." || this.title === "Master") {
-      this.gender = "Male";
-    } else if (this.title === "Mrs." || this.title === "Miss") {
-      this.gender = "Female";
-    } else if (this.title === "Baby") {
-      this.gender = "Other";
-    }
+    if (["Mr.", "Master"].includes(this.title)) this.gender = "Male";
+    else if (["Mrs.", "Miss"].includes(this.title)) this.gender = "Female";
+    else if (this.title === "Baby") this.gender = "Other";
   }
 
   next();
