@@ -1,11 +1,12 @@
+// services/Patient/admissionService.js
+// ✅ CHANGES:
+//   1. Added getAdmissionsByPatient(patientId) — returns all admissions for a patient
+//   2. Patient soft-delete does NOT affect admissions/beds (correct behavior)
+//      When patient.isActive=false, their active admissions stay, bed stays Occupied
+
 const mongoose = require("mongoose");
 const Admission = require("../../models/Patient/admissionModel");
-
-// ✅ FIX: Model registered as "Beds" (plural) in bedsModel.js
-//    mongoose.model("Beds", BedSchema)
-//    Using require directly avoids the "Schema hasn't been registered" error
 const Bed = require("../../models/bedMgmt/bedsModel");
-
 const Patient = require("../../models/Patient/patientModel");
 
 class AdmissionService {
@@ -14,17 +15,14 @@ class AdmissionService {
     const yy = now.getFullYear().toString().slice(-2);
     const mm = String(now.getMonth() + 1).padStart(2, "0");
     const prefix = `ADM${yy}${mm}`;
-
     const last = await Admission.findOne({
       admissionNumber: { $regex: `^${prefix}` },
     })
       .sort({ admissionNumber: -1 })
       .lean();
-
     const seq = last
       ? (parseInt(last.admissionNumber.slice(-4), 10) || 0) + 1
       : 1;
-
     return `${prefix}${String(seq).padStart(4, "0")}`;
   }
 
@@ -39,57 +37,68 @@ class AdmissionService {
 
   async _findPatient(patientId, UHID) {
     let patient = null;
-
-    if (patientId && mongoose.isValidObjectId(patientId)) {
+    if (patientId && mongoose.isValidObjectId(patientId))
       patient = await Patient.findById(patientId).lean();
-    }
-
-    if (!patient && UHID) {
+    if (!patient && UHID)
       patient = await Patient.findOne({
         UHID: UHID.toString().trim().toUpperCase(),
       }).lean();
-    }
-
     if (!patient)
       throw new Error("Patient not found — check patientId or UHID");
     return patient;
   }
 
   async createAdmission(data) {
-    if (!data.bedId) throw new Error("bedId is required");
     if (!data.patientId && !data.UHID)
       throw new Error("patientId or UHID is required");
 
     const patient = await this._findPatient(data.patientId, data.UHID);
 
-    const existing = await Admission.findOne({
-      patientId: patient._id,
-      status: "Active",
-    }).lean();
-
-    if (existing) {
-      throw new Error(
-        `Patient already has an active admission: ${existing.admissionNumber}. ` +
-          `Discharge the patient first before creating a new admission.`,
-      );
-    }
-
-    const bed = await Bed.findOneAndUpdate(
-      { _id: data.bedId, status: "Available" },
-      { $set: { status: "Occupied" } },
-      { new: true },
-    ).populate("room ward floor building");
-
-    if (!bed) {
-      const bedCheck = await Bed.findById(data.bedId).lean();
-      if (!bedCheck) throw new Error("Bed not found");
-      throw new Error(
-        `Bed ${bedCheck.bedNumber} is not available (current status: ${bedCheck.status}). ` +
-          `Cannot book an already occupied or unavailable bed without discharging first.`,
-      );
+    // ✅ Only block duplicate if existing ACTIVE bed-admission exists
+    if (data.bedId) {
+      const existing = await Admission.findOne({
+        patientId: patient._id,
+        status: "Active",
+        hasBed: true,
+      }).lean();
+      if (existing) {
+        throw new Error(
+          `Patient already has an active bed admission: ${existing.admissionNumber}. ` +
+            `Discharge first before creating a new admission.`,
+        );
+      }
     }
 
     const admissionNumber = await this._generateAdmissionNumber();
+    let bedData = {};
+
+    // ✅ Allocate bed only if bedId provided
+    if (data.bedId) {
+      const bed = await Bed.findOneAndUpdate(
+        { _id: data.bedId, status: "Available" },
+        { $set: { status: "Occupied" } },
+        { new: true },
+      ).populate("room ward floor building");
+
+      if (!bed) {
+        const bedCheck = await Bed.findById(data.bedId).lean();
+        if (!bedCheck) throw new Error("Bed not found");
+        throw new Error(
+          `Bed ${bedCheck.bedNumber} is not available (current status: ${bedCheck.status}).`,
+        );
+      }
+
+      bedData = {
+        bedId: bed._id,
+        bedNumber: bed.bedNumber,
+        roomNumber: bed.room?.roomNumber || "",
+        roomId: bed.room?._id || null,
+        wardId: bed.ward?._id || null,
+        floorId: bed.floor?._id || null,
+        buildingId: bed.building?._id || null,
+        hasBed: true,
+      };
+    }
 
     let admission;
     try {
@@ -104,15 +113,7 @@ class AdmissionService {
           patient.mobile ||
           "0000000000",
         email: patient.email || "",
-
-        bedId: bed._id,
-        bedNumber: bed.bedNumber,
-        roomNumber: bed.room?.roomNumber || "",
-        roomId: bed.room?._id || null,
-        wardId: bed.ward?._id || null,
-        floorId: bed.floor?._id || null,
-        buildingId: bed.building?._id || null,
-
+        ...bedData,
         department: data.department || "",
         admissionDate: data.admissionDate
           ? new Date(data.admissionDate)
@@ -128,17 +129,20 @@ class AdmissionService {
         status: "Active",
       });
     } catch (err) {
-      // Rollback bed status if admission creation fails
-      await Bed.findByIdAndUpdate(bed._id, {
-        $set: { status: "Available", currentAdmission: null },
-      });
+      // Rollback bed on failure
+      if (data.bedId) {
+        await Bed.findByIdAndUpdate(data.bedId, {
+          $set: { status: "Available", currentAdmission: null },
+        });
+      }
       throw err;
     }
 
-    // ✅ Store admission reference on bed so getAllBeds can populate it
-    await Bed.findByIdAndUpdate(bed._id, {
-      $set: { currentAdmission: admission._id },
-    });
+    if (data.bedId) {
+      await Bed.findByIdAndUpdate(data.bedId, {
+        $set: { currentAdmission: admission._id },
+      });
+    }
 
     return admission;
   }
@@ -151,7 +155,6 @@ class AdmissionService {
         `Cannot discharge — admission status is already "${admission.status}"`,
       );
 
-    // ✅ Clear bed: Available + null currentAdmission
     await Bed.findByIdAndUpdate(admission.bedId, {
       $set: { status: "Available", currentAdmission: null, patient: null },
     });
@@ -163,16 +166,10 @@ class AdmissionService {
     admission.dischargeNotes = dischargeData.dischargeNotes || "";
     admission.dischargeSummary = dischargeData.dischargeSummary || "";
     admission.followUpInstructions = dischargeData.followUpInstructions || "";
-
-    if (dischargeData.conditionOnDischarge) {
+    if (dischargeData.conditionOnDischarge)
       admission.conditionOnDischarge = dischargeData.conditionOnDischarge;
-    }
-    if (
-      dischargeData.totalCost !== undefined &&
-      dischargeData.totalCost !== ""
-    ) {
+    if (dischargeData.totalCost !== undefined && dischargeData.totalCost !== "")
       admission.totalCost = Number(dischargeData.totalCost);
-    }
 
     await admission.save();
     return admission;
@@ -220,7 +217,6 @@ class AdmissionService {
       );
     }
 
-    // Free old bed
     await Bed.findByIdAndUpdate(admission.bedId, {
       $set: { status: "Available", currentAdmission: null, patient: null },
     });
@@ -232,41 +228,45 @@ class AdmissionService {
       reason: reason || "",
       date: new Date(),
     });
-
     admission.bedId = newBed._id;
     admission.bedNumber = newBed.bedNumber;
     admission.roomId = newBed.room || null;
     admission.wardId = newBed.ward || null;
     admission.floorId = newBed.floor || null;
-
     await admission.save();
     return admission;
   }
 
   async getAllAdmissions(filters = {}) {
     const query = {};
-
     if (filters.status) query.status = filters.status;
     if (filters.admissionType) query.admissionType = filters.admissionType;
+    if (filters.department)
+      query.department = { $regex: filters.department, $options: "i" };
     if (filters.attendingDoctor)
       query.attendingDoctor = {
         $regex: filters.attendingDoctor,
         $options: "i",
       };
-    if (filters.department)
-      query.department = { $regex: filters.department, $options: "i" };
     if (filters.UHID) query.UHID = { $regex: filters.UHID, $options: "i" };
     if (filters.patientName)
       query.patientName = { $regex: filters.patientName, $options: "i" };
 
-    // ✅ FIX: accept both bedId and bed as filter keys
     const bedFilter = filters.bedId || filters.bed;
     if (bedFilter && mongoose.isValidObjectId(String(bedFilter)))
       query.bedId = new mongoose.Types.ObjectId(String(bedFilter));
 
+    // ✅ patientId filter — handle gracefully (don't throw 400)
     const patFilter = filters.patientId || filters.patient;
-    if (patFilter && mongoose.isValidObjectId(String(patFilter)))
-      query.patientId = patFilter;
+    if (patFilter) {
+      const patStr = String(patFilter).trim();
+      if (mongoose.isValidObjectId(patStr)) {
+        query.patientId = new mongoose.Types.ObjectId(patStr);
+      } else {
+        // search by UHID instead
+        query.UHID = patStr;
+      }
+    }
 
     if (filters.wardId && mongoose.isValidObjectId(String(filters.wardId)))
       query.wardId = filters.wardId;
@@ -279,7 +279,7 @@ class AdmissionService {
     }
 
     const page = Math.max(1, parseInt(filters.page) || 1);
-    const limit = Math.min(500, parseInt(filters.limit) || 50); // ✅ higher default limit
+    const limit = Math.min(500, parseInt(filters.limit) || 50);
     const skip = (page - 1) * limit;
 
     const [admissions, total] = await Promise.all([
@@ -312,21 +312,12 @@ class AdmissionService {
       .populate("wardId")
       .populate("floorId")
       .populate("buildingId");
-
     if (!admission) throw new Error("Admission not found");
     return admission;
   }
 
-  /* ─────────────────────────────────────────────────────────────
-     getActiveAdmissions  —  KEY FIX:
-     Previously crashed with "Schema hasn't been registered for model Bed"
-     because somewhere it was doing mongoose.model("Bed") but the model
-     is registered as "Beds". Now we just require bedsModel directly —
-     no mongoose.model() call needed at all.
-  ───────────────────────────────────────────────────────────── */
   async getActiveAdmissions(filters = {}) {
     const query = { status: "Active" };
-
     if (filters.department)
       query.department = { $regex: filters.department, $options: "i" };
     if (filters.admissionType) query.admissionType = filters.admissionType;
@@ -337,7 +328,6 @@ class AdmissionService {
       };
     if (filters.wardId) query.wardId = filters.wardId;
 
-    // ✅ Support bedId filter (frontend uses this as fallback)
     const bedFilter = filters.bedId || filters.bed;
     if (bedFilter && mongoose.isValidObjectId(String(bedFilter)))
       query.bedId = new mongoose.Types.ObjectId(String(bedFilter));
@@ -352,12 +342,58 @@ class AdmissionService {
       .lean();
   }
 
+  /* ✅ Get all admissions for a patient — never throws, searches by _id AND UHID */
+  async getAdmissionsByPatient(patientId) {
+    if (!patientId) return [];
+
+    try {
+      const idStr = String(patientId).trim();
+      const orConditions = [];
+
+      if (mongoose.isValidObjectId(idStr)) {
+        // Search by ObjectId
+        orConditions.push({ patientId: new mongoose.Types.ObjectId(idStr) });
+
+        // Also get patient's UHID and search by that too
+        try {
+          const pat = await Patient.findById(idStr).select("UHID").lean();
+          if (pat?.UHID) {
+            orConditions.push({ UHID: pat.UHID });
+          }
+        } catch (_) {}
+      } else {
+        // Treat as UHID string directly
+        orConditions.push({ UHID: idStr });
+        orConditions.push({ UHID: idStr.toUpperCase() });
+      }
+
+      const query =
+        orConditions.length === 1 ? orConditions[0] : { $or: orConditions };
+
+      const admissions = await Admission.find(query)
+        .populate("patientId", "fullName UHID gender age contactNumber")
+        .populate("bedId", "bedNumber")
+        .populate("roomId", "roomNumber roomName")
+        .populate("wardId", "wardName")
+        .sort({ admissionDate: -1 })
+        .lean();
+
+      return admissions || [];
+    } catch (err) {
+      console.error("getAdmissionsByPatient error:", err.message);
+      return [];
+    }
+  }
+
+  async getPatientAdmissionHistory(patientId) {
+    return this.getAdmissionsByPatient(patientId);
+  }
+
   async getTodayAdmissions() {
     const start = new Date();
     start.setHours(0, 0, 0, 0);
     const end = new Date(start);
     end.setDate(end.getDate() + 1);
-
     return Admission.find({ admissionDate: { $gte: start, $lt: end } })
       .populate("patientId", "fullName firstName lastName UHID")
       .populate("bedId", "bedNumber")
@@ -370,7 +406,6 @@ class AdmissionService {
     start.setHours(0, 0, 0, 0);
     const end = new Date(start);
     end.setDate(end.getDate() + 1);
-
     return Admission.find({
       status: "Discharged",
       actualDischargeDate: { $gte: start, $lt: end },
@@ -386,7 +421,6 @@ class AdmissionService {
     target.setHours(0, 0, 0, 0);
     const next = new Date(target);
     next.setDate(next.getDate() + 1);
-
     return Admission.find({
       status: "Active",
       expectedDischargeDate: { $gte: target, $lt: next },
@@ -403,7 +437,6 @@ class AdmissionService {
     delete safe.admissionNumber;
     delete safe.patientId;
     delete safe.bedId;
-
     const admission = await Admission.findByIdAndUpdate(
       id,
       { $set: safe },
@@ -420,7 +453,6 @@ class AdmissionService {
       if (startDate) match.admissionDate.$gte = new Date(startDate);
       if (endDate) match.admissionDate.$lte = new Date(endDate);
     }
-
     const [
       total,
       active,
@@ -451,7 +483,6 @@ class AdmissionService {
         { $limit: 10 },
       ]),
     ]);
-
     return {
       total,
       active,
@@ -461,13 +492,6 @@ class AdmissionService {
       admissionTypeWise: typeWise,
       doctorWise,
     };
-  }
-
-  async getPatientAdmissionHistory(patientId) {
-    return Admission.find({ patientId })
-      .populate("bedId", "bedNumber")
-      .sort({ admissionDate: -1 })
-      .lean();
   }
 
   async searchAdmissions(searchTerm) {
@@ -513,14 +537,12 @@ class AdmissionService {
   async deleteAdmission(id) {
     const admission = await Admission.findById(id);
     if (!admission) throw new Error("Admission not found");
-
     if (admission.status === "Active") {
-      // ✅ Always free the bed when admission is deleted
+      // Free bed only when directly deleting an admission record
       await Bed.findByIdAndUpdate(admission.bedId, {
         $set: { status: "Available", currentAdmission: null, patient: null },
       });
     }
-
     await Admission.findByIdAndDelete(id);
     return { message: "Admission deleted successfully" };
   }
