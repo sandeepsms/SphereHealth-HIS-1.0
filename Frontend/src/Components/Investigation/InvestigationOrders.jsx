@@ -1,6 +1,5 @@
-// frontend/components/Investigation/InvestigationOrders.jsx
-// Complete Lab workflow: Order → Sample → Results → Report
 import React, { useState, useEffect, useRef } from "react";
+import { printOrderSlip, printReport } from "./investigationPrint";
 import { Card } from "primereact/card";
 import { DataTable } from "primereact/datatable";
 import { Column } from "primereact/column";
@@ -11,42 +10,24 @@ import { Dialog } from "primereact/dialog";
 import { Toast } from "primereact/toast";
 import { Tag } from "primereact/tag";
 import { InputNumber } from "primereact/inputnumber";
-import { TabView, TabPanel } from "primereact/tabview";
-import { MultiSelect } from "primereact/multiselect";
 import { InputTextarea } from "primereact/inputtextarea";
+import { MultiSelect } from "primereact/multiselect";
 
 const API = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
 
-// ── Status configs ─────────────────────────────────────────────
 const ORDER_STATUS = {
-  PENDING: { label: "Pending", severity: "warning", icon: "pi-clock" },
-  SAMPLE_COLLECTED: {
-    label: "Sample Collected",
-    severity: "info",
-    icon: "pi-send",
-  },
-  IN_PROGRESS: {
-    label: "In Progress",
-    severity: "info",
-    icon: "pi-spin pi-spinner",
-  },
-  COMPLETED: {
-    label: "Completed",
-    severity: "success",
-    icon: "pi-check-circle",
-  },
-  CANCELLED: {
-    label: "Cancelled",
-    severity: "danger",
-    icon: "pi-times-circle",
-  },
+  PENDING: { label: "Pending", severity: "warning" },
+  SAMPLE_COLLECTED: { label: "Sample Collected", severity: "info" },
+  IN_PROGRESS: { label: "In Progress", severity: "info" },
+  COMPLETED: { label: "Completed", severity: "success" },
+  CANCELLED: { label: "Cancelled", severity: "danger" },
 };
 
-const RESULT_STATUS = {
-  PENDING: { label: "Pending", color: "#f59e0b" },
-  IN_PROGRESS: { label: "Processing", color: "#3b82f6" },
-  COMPLETED: { label: "Completed", color: "#8b5cf6" },
-  VERIFIED: { label: "Verified", color: "#10b981" },
+const RESULT_STATUS_COLOR = {
+  PENDING: "#f59e0b",
+  IN_PROGRESS: "#3b82f6",
+  COMPLETED: "#8b5cf6",
+  VERIFIED: "#10b981",
 };
 
 const PRIORITY_COLOR = {
@@ -55,7 +36,22 @@ const PRIORITY_COLOR = {
   STAT: "#dc2626",
 };
 
-// ═══════════════════════════════════════════════════════════════
+const BLANK_NEW_ORDER = {
+  UHID: "",
+  patientName: "",
+  contactNumber: "",
+  visitType: "OPD",
+  orderedBy: "DOCTOR",
+  doctorName: "",
+  doctorNote: "",
+  paymentType: "CASH",
+  tpaId: null,
+  tpaName: null,
+  items: [],
+  priority: "ROUTINE",
+  notes: "",
+};
+
 export default function InvestigationOrders() {
   const toast = useRef(null);
   const [loading, setLoading] = useState(false);
@@ -63,7 +59,6 @@ export default function InvestigationOrders() {
   const [total, setTotal] = useState(0);
   const [summary, setSummary] = useState({});
 
-  // Filters
   const [filters, setFilters] = useState({
     UHID: "",
     orderStatus: null,
@@ -72,27 +67,13 @@ export default function InvestigationOrders() {
     toDate: "",
   });
 
-  // New Order dialog
+  // New order dialog
   const [showNewOrder, setShowNewOrder] = useState(false);
   const [investigations, setInvestigations] = useState([]);
   const [tpaList, setTpaList] = useState([]);
-  const [newOrderForm, setNewOrderForm] = useState({
-    UHID: "",
-    patientName: "",
-    contactNumber: "",
-    visitType: "OPD",
-    orderedBy: "DOCTOR",
-    doctorName: "",
-    doctorNote: "",
-    paymentType: "CASH",
-    tpaId: null,
-    tpaName: null,
-    selectedInvIds: [],
-    priority: "ROUTINE",
-    notes: "",
-  });
+  const [newOrder, setNewOrder] = useState(BLANK_NEW_ORDER);
 
-  // Order detail / actions dialog
+  // Order detail dialog
   const [showDetail, setShowDetail] = useState(false);
   const [selOrder, setSelOrder] = useState(null);
 
@@ -100,18 +81,29 @@ export default function InvestigationOrders() {
   const [showResults, setShowResults] = useState(false);
   const [resultForms, setResultForms] = useState([]);
 
+  // External result dialog
+  const [showExternal, setShowExternal] = useState(false);
+  const [selExternalItem, setSelExternalItem] = useState(null);
+  const [externalForm, setExternalForm] = useState({
+    externalLabName: "",
+    externalReportRef: "",
+    interpretation: "",
+  });
+
+  const showToast = (s, sum, det) =>
+    toast.current?.show({ severity: s, summary: sum, detail: det, life: 3000 });
+
   // ── Load ──────────────────────────────────────────────────────
   const loadOrders = async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
+      const params = new URLSearchParams({ limit: 100 });
       if (filters.UHID) params.append("UHID", filters.UHID);
       if (filters.orderStatus)
         params.append("orderStatus", filters.orderStatus);
       if (filters.priority) params.append("priority", filters.priority);
       if (filters.fromDate) params.append("fromDate", filters.fromDate);
       if (filters.toDate) params.append("toDate", filters.toDate);
-      params.append("limit", "100");
 
       const res = await fetch(`${API}/investigation-orders?${params}`);
       const data = await res.json();
@@ -143,6 +135,7 @@ export default function InvestigationOrders() {
           category: i.category,
           price: i.defaultPrice,
           sampleType: i.sampleType,
+          performedAt: i.performedAt,
         })),
       );
     } catch {}
@@ -171,36 +164,48 @@ export default function InvestigationOrders() {
     loadTPA();
   }, []);
 
-  const showToast = (s, sum, det) =>
-    toast.current?.show({ severity: s, summary: sum, detail: det, life: 3000 });
-
   // ── Create Order ──────────────────────────────────────────────
   const handleCreateOrder = async () => {
-    if (!newOrderForm.UHID) return showToast("warn", "Required", "UHID daalo");
-    if (!newOrderForm.selectedInvIds.length)
-      return showToast("warn", "Required", "Kam se kam ek test select karo");
+    if (!newOrder.UHID)
+      return showToast("warn", "Required", "Enter patient UHID");
+    if (!newOrder.items.length)
+      return showToast("warn", "Required", "Select at least one test");
 
     setLoading(true);
     try {
+      // Build items with performedAt from investigation master
+      const items = newOrder.items.map((id) => {
+        const inv = investigations.find((i) => i.value === id);
+        return {
+          investigationId: id,
+          performedAt:
+            inv?.performedAt === "EXTERNAL" ? "EXTERNAL" : "INTERNAL",
+        };
+      });
+
       const payload = {
-        ...newOrderForm,
-        patientId: newOrderForm.UHID, // backend will resolve
-        investigationIds: newOrderForm.selectedInvIds,
+        ...newOrder,
+        patientId: newOrder.UHID,
+        items,
       };
+      delete payload.items; // will be re-added below
+      payload.items = items;
+
       const res = await fetch(`${API}/investigation-orders`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...payload, investigationIds: undefined }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
+
       showToast(
         "success",
         "Order Created",
-        `Order #${data.data.orderNumber} create ho gaya`,
+        `Order #${data.data?.orderNumber} created`,
       );
       setShowNewOrder(false);
-      resetNewOrderForm();
+      setNewOrder(BLANK_NEW_ORDER);
       loadOrders();
       loadSummary();
     } catch (e) {
@@ -210,24 +215,7 @@ export default function InvestigationOrders() {
     }
   };
 
-  const resetNewOrderForm = () =>
-    setNewOrderForm({
-      UHID: "",
-      patientName: "",
-      contactNumber: "",
-      visitType: "OPD",
-      orderedBy: "DOCTOR",
-      doctorName: "",
-      doctorNote: "",
-      paymentType: "CASH",
-      tpaId: null,
-      tpaName: null,
-      selectedInvIds: [],
-      priority: "ROUTINE",
-      notes: "",
-    });
-
-  // ── Open detail ───────────────────────────────────────────────
+  // ── Open Detail ───────────────────────────────────────────────
   const openDetail = async (order) => {
     setLoading(true);
     try {
@@ -256,7 +244,7 @@ export default function InvestigationOrders() {
       );
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
-      showToast("success", "Sample Collected", "Sample collect ho gaya");
+      showToast("success", "Sample Collected", "Sample collected successfully");
       openDetail({ _id: orderId });
       loadOrders();
       loadSummary();
@@ -267,10 +255,12 @@ export default function InvestigationOrders() {
     }
   };
 
-  // ── Open Result Entry ─────────────────────────────────────────
+  // ── Open Result Entry (internal) ──────────────────────────────
   const openResultEntry = (order) => {
     const forms = (order.items || [])
-      .filter((i) => i.resultStatus !== "VERIFIED")
+      .filter(
+        (i) => i.performedAt === "INTERNAL" && i.resultStatus !== "VERIFIED",
+      )
       .map((item) => ({
         itemId: item._id,
         investigationName: item.investigationName,
@@ -308,11 +298,57 @@ export default function InvestigationOrders() {
       );
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
-      showToast("success", "Results Saved", "Results enter ho gaye");
+      showToast("success", "Results Saved", "Results saved successfully");
       setShowResults(false);
       openDetail({ _id: selOrder._id });
       loadOrders();
       loadSummary();
+    } catch (e) {
+      showToast("error", "Error", e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ── External Result Entry ─────────────────────────────────────
+  const openExternalEntry = (order, item) => {
+    setSelOrder(order);
+    setSelExternalItem(item);
+    setExternalForm({
+      externalLabName: item.externalLabName || "",
+      externalReportRef: item.externalReportRef || "",
+      interpretation: item.interpretation || "",
+    });
+    setShowExternal(true);
+  };
+
+  const handleSaveExternal = async () => {
+    if (!externalForm.externalLabName)
+      return showToast("warn", "Required", "Enter the external lab name");
+    setLoading(true);
+    try {
+      const res = await fetch(
+        `${API}/investigation-orders/${selOrder._id}/enter-external-result`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            itemId: selExternalItem._id,
+            enteredBy: "Staff",
+            ...externalForm,
+          }),
+        },
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message);
+      showToast(
+        "success",
+        "External Result Saved",
+        "External report details saved",
+      );
+      setShowExternal(false);
+      openDetail({ _id: selOrder._id });
+      loadOrders();
     } catch (e) {
       showToast("error", "Error", e.message);
     } finally {
@@ -327,11 +363,11 @@ export default function InvestigationOrders() {
       const res = await fetch(`${API}/investigation-orders/${orderId}/verify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ verifiedBy: "Dr. Senior" }),
+        body: JSON.stringify({ verifiedBy: "Pathologist" }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
-      showToast("success", "Verified", "Results verify ho gaye");
+      showToast("success", "Verified", "Results verified successfully");
       openDetail({ _id: orderId });
       loadOrders();
       loadSummary();
@@ -351,12 +387,12 @@ export default function InvestigationOrders() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           cancelledBy: "Staff",
-          reason: "Patient request",
+          reason: "Cancelled by staff",
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
-      showToast("warn", "Cancelled", "Order cancel ho gaya");
+      showToast("warn", "Cancelled", "Order cancelled");
       setShowDetail(false);
       loadOrders();
       loadSummary();
@@ -368,40 +404,40 @@ export default function InvestigationOrders() {
   };
 
   // ── Result form helpers ───────────────────────────────────────
-  const addResultRow = (formIdx) => {
-    const updated = [...resultForms];
-    updated[formIdx].results.push({
+  const addResultRow = (fi) => {
+    const u = [...resultForms];
+    u[fi].results.push({
       parameterName: "",
       value: "",
       unit: "",
       normalRange: "",
       isAbnormal: false,
     });
-    setResultForms(updated);
+    setResultForms(u);
   };
 
-  const updateResult = (formIdx, rowIdx, field, value) => {
-    const updated = [...resultForms];
-    updated[formIdx].results[rowIdx][field] = value;
-    setResultForms(updated);
+  const updateResult = (fi, ri, field, value) => {
+    const u = [...resultForms];
+    u[fi].results[ri][field] = value;
+    setResultForms(u);
   };
 
-  const updateInterpretation = (formIdx, value) => {
-    const updated = [...resultForms];
-    updated[formIdx].interpretation = value;
-    setResultForms(updated);
+  const updateInterpretation = (fi, value) => {
+    const u = [...resultForms];
+    u[fi].interpretation = value;
+    setResultForms(u);
   };
 
-  // ── Summary cards ─────────────────────────────────────────────
-  const SummaryCard = ({ label, value, color, icon }) => (
+  // ── Summary Card ──────────────────────────────────────────────
+  const SCard = ({ label, value, color }) => (
     <div
       style={{
         background: "#fff",
         border: `2px solid ${color}20`,
         borderRadius: 10,
-        padding: "14px 20px",
+        padding: "12px 18px",
         flex: 1,
-        minWidth: 120,
+        minWidth: 110,
       }}
     >
       <div
@@ -409,57 +445,45 @@ export default function InvestigationOrders() {
           fontSize: 11,
           color: "#6c757d",
           fontWeight: 600,
-          marginBottom: 4,
+          marginBottom: 2,
         }}
       >
         {label}
       </div>
-      <div style={{ fontSize: 28, fontWeight: 800, color }}>{value ?? "—"}</div>
+      <div style={{ fontSize: 26, fontWeight: 800, color }}>{value ?? "—"}</div>
     </div>
   );
+
+  const selectedTotal = newOrder.items.reduce((s, id) => {
+    const inv = investigations.find((i) => i.value === id);
+    return s + (inv?.price || 0);
+  }, 0);
 
   // ══════════════════════════════════════════════════════════════
   return (
     <div style={{ maxWidth: 1400, margin: "0 auto", padding: "8px 12px" }}>
       <Toast ref={toast} position="top-right" />
 
-      {/* ── Summary Strip ── */}
+      {/* Summary */}
       <div
         style={{ display: "flex", gap: 10, marginBottom: 10, flexWrap: "wrap" }}
       >
-        <SummaryCard
-          label="Aaj ke Orders"
+        <SCard
+          label="Today's Orders"
           value={summary.todayOrders}
           color="#0891b2"
-          icon="pi-plus"
         />
-        <SummaryCard
-          label="Pending"
-          value={summary.pending}
-          color="#f59e0b"
-          icon="pi-clock"
-        />
-        <SummaryCard
-          label="In Progress"
-          value={summary.inProgress}
-          color="#3b82f6"
-          icon="pi-spinner"
-        />
-        <SummaryCard
+        <SCard label="Pending" value={summary.pending} color="#f59e0b" />
+        <SCard label="In Progress" value={summary.inProgress} color="#3b82f6" />
+        <SCard
           label="Completed Today"
           value={summary.completed}
           color="#10b981"
-          icon="pi-check"
         />
-        <SummaryCard
-          label="Urgent"
-          value={summary.urgent}
-          color="#dc2626"
-          icon="pi-exclamation-triangle"
-        />
+        <SCard label="Urgent" value={summary.urgent} color="#dc2626" />
       </div>
 
-      {/* ── Filter Bar ── */}
+      {/* Filter Bar */}
       <Card style={{ marginBottom: 8 }}>
         <div
           style={{
@@ -479,7 +503,7 @@ export default function InvestigationOrders() {
             onChange={(e) =>
               setFilters({ ...filters, UHID: e.target.value.toUpperCase() })
             }
-            placeholder="UHID search..."
+            placeholder="Search by UHID..."
             style={{ width: 160 }}
           />
 
@@ -505,7 +529,7 @@ export default function InvestigationOrders() {
               { label: "STAT", value: "STAT" },
             ]}
             onChange={(e) => setFilters({ ...filters, priority: e.value })}
-            style={{ width: 140 }}
+            style={{ width: 130 }}
           />
 
           <InputText
@@ -514,13 +538,13 @@ export default function InvestigationOrders() {
             onChange={(e) =>
               setFilters({ ...filters, fromDate: e.target.value })
             }
-            style={{ width: 145 }}
+            style={{ width: 140 }}
           />
           <InputText
             type="date"
             value={filters.toDate}
             onChange={(e) => setFilters({ ...filters, toDate: e.target.value })}
-            style={{ width: 145 }}
+            style={{ width: 140 }}
           />
 
           <div style={{ marginLeft: "auto" }}>
@@ -534,7 +558,7 @@ export default function InvestigationOrders() {
         </div>
       </Card>
 
-      {/* ── Orders Table ── */}
+      {/* Orders Table */}
       <Card>
         <DataTable
           value={orders}
@@ -546,7 +570,7 @@ export default function InvestigationOrders() {
               {total} orders
             </span>
           }
-          emptyMessage="Koi order nahi mila"
+          emptyMessage="No orders found"
         >
           <Column
             field="orderNumber"
@@ -563,18 +587,20 @@ export default function InvestigationOrders() {
                 <div style={{ fontSize: 11, color: "#6c757d" }}>{r.UHID}</div>
               </div>
             )}
-            style={{ minWidth: 150 }}
+            style={{ minWidth: 140 }}
           />
           <Column
             header="Tests"
             body={(r) => (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
-                {(r.items || []).slice(0, 3).map((i) => (
+                {(r.items || []).slice(0, 3).map((i, idx) => (
                   <span
-                    key={i._id}
+                    key={idx}
                     style={{
-                      background: "#e0f2fe",
-                      color: "#0369a1",
+                      background:
+                        i.performedAt === "EXTERNAL" ? "#fef3c7" : "#e0f2fe",
+                      color:
+                        i.performedAt === "EXTERNAL" ? "#92400e" : "#0369a1",
                       borderRadius: 4,
                       padding: "1px 6px",
                       fontSize: 10,
@@ -582,6 +608,7 @@ export default function InvestigationOrders() {
                     }}
                   >
                     {i.investigationCode}
+                    {i.performedAt === "EXTERNAL" && " (Ext)"}
                   </span>
                 ))}
                 {r.items?.length > 3 && (
@@ -591,7 +618,7 @@ export default function InvestigationOrders() {
                 )}
               </div>
             )}
-            style={{ minWidth: 180 }}
+            style={{ minWidth: 200 }}
           />
           <Column
             header="Status"
@@ -628,20 +655,6 @@ export default function InvestigationOrders() {
             style={{ width: 90 }}
           />
           <Column
-            header="Doctor"
-            body={(r) =>
-              r.doctorId ? (
-                <span style={{ fontSize: 12 }}>
-                  Dr. {r.doctorId.personalInfo?.firstName}{" "}
-                  {r.doctorId.personalInfo?.lastName}
-                </span>
-              ) : (
-                <span style={{ color: "#6c757d", fontSize: 12 }}>Walk-in</span>
-              )
-            }
-            style={{ width: 140 }}
-          />
-          <Column
             header="Date"
             body={(r) => (
               <span style={{ fontSize: 11 }}>
@@ -666,28 +679,26 @@ export default function InvestigationOrders() {
                     icon="pi pi-send"
                     text
                     size="small"
-                    tooltip="Collect Sample"
                     severity="info"
+                    tooltip="Collect Sample"
                     onClick={() => handleCollectSample(r._id)}
                   />
                 )}
               </div>
             )}
-            style={{ width: 100 }}
+            style={{ width: 90 }}
           />
         </DataTable>
       </Card>
 
-      {/* ═══════════════════════════════════════
-          NEW ORDER DIALOG
-      ═══════════════════════════════════════ */}
+      {/* ═══ NEW ORDER DIALOG ═══ */}
       <Dialog
         visible={showNewOrder}
-        style={{ width: "min(800px, 96vw)" }}
-        header="🧪 New Investigation Order"
+        style={{ width: "min(820px, 96vw)" }}
+        header="New Investigation Order"
         onHide={() => {
           setShowNewOrder(false);
-          resetNewOrderForm();
+          setNewOrder(BLANK_NEW_ORDER);
         }}
         footer={
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
@@ -710,7 +721,6 @@ export default function InvestigationOrders() {
         <div
           style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}
         >
-          {/* Patient */}
           <div>
             <label
               style={{
@@ -723,12 +733,9 @@ export default function InvestigationOrders() {
               Patient UHID *
             </label>
             <InputText
-              value={newOrderForm.UHID}
+              value={newOrder.UHID}
               onChange={(e) =>
-                setNewOrderForm({
-                  ...newOrderForm,
-                  UHID: e.target.value.toUpperCase(),
-                })
+                setNewOrder({ ...newOrder, UHID: e.target.value.toUpperCase() })
               }
               placeholder="UH00000001"
               style={{ width: "100%" }}
@@ -746,19 +753,15 @@ export default function InvestigationOrders() {
               Patient Name
             </label>
             <InputText
-              value={newOrderForm.patientName}
+              value={newOrder.patientName}
               onChange={(e) =>
-                setNewOrderForm({
-                  ...newOrderForm,
-                  patientName: e.target.value,
-                })
+                setNewOrder({ ...newOrder, patientName: e.target.value })
               }
-              placeholder="Auto-fetch hoga UHID se"
+              placeholder="Auto-filled from UHID"
               style={{ width: "100%" }}
             />
           </div>
 
-          {/* Visit Type + Priority */}
           <div>
             <label
               style={{
@@ -771,13 +774,11 @@ export default function InvestigationOrders() {
               Visit Type
             </label>
             <Dropdown
-              value={newOrderForm.visitType}
+              value={newOrder.visitType}
               options={["OPD", "IPD", "DAYCARE", "EMERGENCY", "WALKIN"].map(
                 (v) => ({ label: v, value: v }),
               )}
-              onChange={(e) =>
-                setNewOrderForm({ ...newOrderForm, visitType: e.value })
-              }
+              onChange={(e) => setNewOrder({ ...newOrder, visitType: e.value })}
               style={{ width: "100%" }}
             />
           </div>
@@ -793,20 +794,17 @@ export default function InvestigationOrders() {
               Priority
             </label>
             <Dropdown
-              value={newOrderForm.priority}
+              value={newOrder.priority}
               options={[
                 { label: "Routine", value: "ROUTINE" },
-                { label: "⚠️ Urgent", value: "URGENT" },
-                { label: "🚨 STAT", value: "STAT" },
+                { label: "Urgent", value: "URGENT" },
+                { label: "STAT", value: "STAT" },
               ]}
-              onChange={(e) =>
-                setNewOrderForm({ ...newOrderForm, priority: e.value })
-              }
+              onChange={(e) => setNewOrder({ ...newOrder, priority: e.value })}
               style={{ width: "100%" }}
             />
           </div>
 
-          {/* Doctor */}
           <div>
             <label
               style={{
@@ -819,9 +817,9 @@ export default function InvestigationOrders() {
               Referring Doctor
             </label>
             <InputText
-              value={newOrderForm.doctorName}
+              value={newOrder.doctorName}
               onChange={(e) =>
-                setNewOrderForm({ ...newOrderForm, doctorName: e.target.value })
+                setNewOrder({ ...newOrder, doctorName: e.target.value })
               }
               placeholder="Dr. Name"
               style={{ width: "100%" }}
@@ -836,51 +834,22 @@ export default function InvestigationOrders() {
                 marginBottom: 3,
               }}
             >
-              Ordered By
-            </label>
-            <Dropdown
-              value={newOrderForm.orderedBy}
-              options={["DOCTOR", "COUNTER", "WALKIN"].map((v) => ({
-                label: v,
-                value: v,
-              }))}
-              onChange={(e) =>
-                setNewOrderForm({ ...newOrderForm, orderedBy: e.value })
-              }
-              style={{ width: "100%" }}
-            />
-          </div>
-
-          {/* Payment */}
-          <div>
-            <label
-              style={{
-                fontWeight: 600,
-                fontSize: 12,
-                display: "block",
-                marginBottom: 3,
-              }}
-            >
               Payment Type
             </label>
             <Dropdown
-              value={newOrderForm.paymentType}
+              value={newOrder.paymentType}
               options={["CASH", "TPA", "CORPORATE"].map((v) => ({
                 label: v,
                 value: v,
               }))}
               onChange={(e) =>
-                setNewOrderForm({
-                  ...newOrderForm,
-                  paymentType: e.value,
-                  tpaId: null,
-                  tpaName: null,
-                })
+                setNewOrder({ ...newOrder, paymentType: e.value, tpaId: null })
               }
               style={{ width: "100%" }}
             />
           </div>
-          {newOrderForm.paymentType === "TPA" && (
+
+          {newOrder.paymentType === "TPA" && (
             <div>
               <label
                 style={{
@@ -893,14 +862,14 @@ export default function InvestigationOrders() {
                 TPA *
               </label>
               <Dropdown
-                value={newOrderForm.tpaId}
+                value={newOrder.tpaId}
                 options={tpaList}
                 onChange={(e) => {
-                  const tpa = tpaList.find((t) => t.value === e.value);
-                  setNewOrderForm({
-                    ...newOrderForm,
+                  const t = tpaList.find((x) => x.value === e.value);
+                  setNewOrder({
+                    ...newOrder,
                     tpaId: e.value,
-                    tpaName: tpa?.name || null,
+                    tpaName: t?.name || null,
                   });
                 }}
                 placeholder="Select TPA"
@@ -910,7 +879,6 @@ export default function InvestigationOrders() {
             </div>
           )}
 
-          {/* Clinical note */}
           <div style={{ gridColumn: "span 2" }}>
             <label
               style={{
@@ -920,19 +888,18 @@ export default function InvestigationOrders() {
                 marginBottom: 3,
               }}
             >
-              Clinical Note / Reason
+              Clinical Note
             </label>
             <InputText
-              value={newOrderForm.doctorNote}
+              value={newOrder.doctorNote}
               onChange={(e) =>
-                setNewOrderForm({ ...newOrderForm, doctorNote: e.target.value })
+                setNewOrder({ ...newOrder, doctorNote: e.target.value })
               }
-              placeholder="e.g. Fever since 3 days, r/o Dengue"
+              placeholder="e.g. Fever for 3 days, rule out Dengue"
               style={{ width: "100%" }}
             />
           </div>
 
-          {/* Investigations */}
           <div style={{ gridColumn: "span 2" }}>
             <label
               style={{
@@ -942,20 +909,17 @@ export default function InvestigationOrders() {
                 marginBottom: 3,
               }}
             >
-              Investigations * &nbsp;
+              Select Tests *{" "}
               <span style={{ fontWeight: 400, color: "#6c757d" }}>
-                ({newOrderForm.selectedInvIds.length} selected)
+                ({newOrder.items.length} selected)
               </span>
             </label>
             <MultiSelect
-              value={newOrderForm.selectedInvIds}
+              value={newOrder.items}
               options={investigations}
-              onChange={(e) =>
-                setNewOrderForm({ ...newOrderForm, selectedInvIds: e.value })
-              }
-              placeholder="Tests select karo..."
+              onChange={(e) => setNewOrder({ ...newOrder, items: e.value })}
+              placeholder="Search and select tests..."
               filter
-              optionGroupLabel="category"
               display="chip"
               style={{ width: "100%" }}
               itemTemplate={(opt) => (
@@ -964,19 +928,39 @@ export default function InvestigationOrders() {
                     display: "flex",
                     justifyContent: "space-between",
                     width: "100%",
+                    gap: 8,
                   }}
                 >
                   <span>{opt.label}</span>
-                  <span style={{ color: "#0d6efd", fontWeight: 600 }}>
-                    ₹{opt.price}
-                  </span>
+                  <div
+                    style={{ display: "flex", gap: 6, alignItems: "center" }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 600,
+                        background:
+                          opt.performedAt === "EXTERNAL"
+                            ? "#fef3c7"
+                            : "#e0f2fe",
+                        color:
+                          opt.performedAt === "EXTERNAL"
+                            ? "#92400e"
+                            : "#0369a1",
+                        borderRadius: 4,
+                        padding: "1px 5px",
+                      }}
+                    >
+                      {opt.performedAt}
+                    </span>
+                    <b style={{ color: "#0d6efd" }}>₹{opt.price}</b>
+                  </div>
                 </div>
               )}
             />
           </div>
 
-          {/* Price preview */}
-          {newOrderForm.selectedInvIds.length > 0 && (
+          {newOrder.items.length > 0 && (
             <div
               style={{
                 gridColumn: "span 2",
@@ -988,7 +972,7 @@ export default function InvestigationOrders() {
               <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>
                 Selected Tests:
               </div>
-              {newOrderForm.selectedInvIds.map((id) => {
+              {newOrder.items.map((id) => {
                 const inv = investigations.find((i) => i.value === id);
                 return inv ? (
                   <div
@@ -1000,10 +984,25 @@ export default function InvestigationOrders() {
                       marginBottom: 3,
                     }}
                   >
-                    <span>{inv.label.split(" — ")[1]}</span>
-                    <span style={{ fontWeight: 600 }}>
-                      ₹{inv.price?.toLocaleString("en-IN")}
+                    <span
+                      style={{ display: "flex", alignItems: "center", gap: 6 }}
+                    >
+                      {inv.label.split(" — ")[1]}
+                      {inv.performedAt === "EXTERNAL" && (
+                        <span
+                          style={{
+                            fontSize: 10,
+                            background: "#fef3c7",
+                            color: "#92400e",
+                            borderRadius: 4,
+                            padding: "1px 5px",
+                          }}
+                        >
+                          External
+                        </span>
+                      )}
                     </span>
+                    <b>₹{inv.price?.toLocaleString("en-IN")}</b>
                   </div>
                 ) : null;
               })}
@@ -1012,23 +1011,14 @@ export default function InvestigationOrders() {
                   borderTop: "1px solid #bee3f8",
                   marginTop: 8,
                   paddingTop: 6,
-                  fontWeight: 700,
                   display: "flex",
                   justifyContent: "space-between",
+                  fontWeight: 700,
                 }}
               >
-                <span>Total (CASH)</span>
+                <span>Total (CASH estimate)</span>
                 <span style={{ color: "#0d6efd" }}>
-                  ₹
-                  {newOrderForm.selectedInvIds
-                    .reduce(
-                      (sum, id) =>
-                        sum +
-                        (investigations.find((i) => i.value === id)?.price ||
-                          0),
-                      0,
-                    )
-                    .toLocaleString("en-IN")}
+                  ₹{selectedTotal.toLocaleString("en-IN")}
                 </span>
               </div>
             </div>
@@ -1036,12 +1026,10 @@ export default function InvestigationOrders() {
         </div>
       </Dialog>
 
-      {/* ═══════════════════════════════════════
-          ORDER DETAIL DIALOG
-      ═══════════════════════════════════════ */}
+      {/* ═══ ORDER DETAIL DIALOG ═══ */}
       <Dialog
         visible={showDetail && !!selOrder}
-        style={{ width: "min(900px, 96vw)" }}
+        style={{ width: "min(920px, 96vw)" }}
         header={
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span>Order — {selOrder?.orderNumber}</span>
@@ -1059,7 +1047,7 @@ export default function InvestigationOrders() {
                   fontSize: 13,
                 }}
               >
-                ⚡ {selOrder?.priority}
+                {selOrder?.priority}
               </span>
             )}
           </div>
@@ -1071,62 +1059,58 @@ export default function InvestigationOrders() {
       >
         {selOrder && (
           <div>
-            {/* Patient info strip */}
+            {/* Patient info */}
             <div
               style={{
                 background: "#f8fafc",
                 borderRadius: 8,
                 padding: "10px 16px",
-                marginBottom: 16,
+                marginBottom: 14,
                 display: "flex",
-                gap: 30,
+                gap: 28,
                 flexWrap: "wrap",
               }}
             >
               <div>
                 <div style={{ fontSize: 11, color: "#6c757d" }}>Patient</div>
-                <div style={{ fontWeight: 700 }}>
-                  {selOrder.patientId?.fullName || selOrder.patientName}
-                </div>
+                <b>{selOrder.patientId?.fullName || selOrder.patientName}</b>
               </div>
               <div>
                 <div style={{ fontSize: 11, color: "#6c757d" }}>UHID</div>
-                <div style={{ fontWeight: 700, fontFamily: "monospace" }}>
-                  {selOrder.UHID}
-                </div>
+                <b style={{ fontFamily: "monospace" }}>{selOrder.UHID}</b>
               </div>
               <div>
                 <div style={{ fontSize: 11, color: "#6c757d" }}>Doctor</div>
-                <div style={{ fontWeight: 600 }}>
-                  {selOrder.doctorName ||
-                    selOrder.doctorId?.personalInfo?.firstName ||
-                    "—"}
-                </div>
+                <b>{selOrder.doctorName || "—"}</b>
               </div>
               <div>
                 <div style={{ fontSize: 11, color: "#6c757d" }}>Payment</div>
-                <div>
-                  <Tag
-                    value={selOrder.paymentType}
-                    severity="secondary"
-                    style={{ fontSize: 10 }}
-                  />
-                </div>
+                <Tag
+                  value={selOrder.paymentType}
+                  severity="secondary"
+                  style={{ fontSize: 10 }}
+                />
               </div>
               <div>
                 <div style={{ fontSize: 11, color: "#6c757d" }}>Total</div>
-                <div style={{ fontWeight: 700, color: "#0d6efd" }}>
+                <b style={{ color: "#0d6efd" }}>
                   ₹{selOrder.totalAmount?.toLocaleString("en-IN")}
+                </b>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: "#6c757d" }}>
+                  Internal / External
                 </div>
+                <b>
+                  {selOrder.internalTestsCount} / {selOrder.externalTestsCount}
+                </b>
               </div>
               {selOrder.doctorNote && (
-                <div style={{ gridColumn: "span 5" }}>
+                <div style={{ width: "100%" }}>
                   <div style={{ fontSize: 11, color: "#6c757d" }}>
                     Clinical Note
                   </div>
-                  <div style={{ fontStyle: "italic" }}>
-                    {selOrder.doctorNote}
-                  </div>
+                  <i>{selOrder.doctorNote}</i>
                 </div>
               )}
             </div>
@@ -1152,16 +1136,21 @@ export default function InvestigationOrders() {
               )}
               {["SAMPLE_COLLECTED", "IN_PROGRESS"].includes(
                 selOrder.orderStatus,
-              ) && (
-                <Button
-                  label="Enter Results"
-                  icon="pi pi-pencil"
-                  severity="warning"
-                  size="small"
-                  onClick={() => openResultEntry(selOrder)}
-                />
-              )}
-              {selOrder.orderStatus === "IN_PROGRESS" &&
+              ) &&
+                selOrder.items?.some(
+                  (i) =>
+                    i.performedAt === "INTERNAL" &&
+                    i.resultStatus !== "VERIFIED",
+                ) && (
+                  <Button
+                    label="Enter Results (Internal)"
+                    icon="pi pi-pencil"
+                    severity="warning"
+                    size="small"
+                    onClick={() => openResultEntry(selOrder)}
+                  />
+                )}
+              {selOrder.orderStatus !== "CANCELLED" &&
                 selOrder.items?.some((i) => i.resultStatus === "COMPLETED") && (
                   <Button
                     label="Verify Results"
@@ -1187,14 +1176,18 @@ export default function InvestigationOrders() {
                         body: JSON.stringify({ printedBy: "Staff" }),
                       },
                     );
-                    showToast(
-                      "success",
-                      "Printed",
-                      "Report print mark ho gaya",
-                    );
+                    printReport(selOrder);
                   }}
                 />
               )}
+              <Button
+                label="Print Order Slip"
+                icon="pi pi-file-export"
+                severity="secondary"
+                outlined
+                size="small"
+                onClick={() => printOrderSlip(selOrder)}
+              />
               {!["COMPLETED", "CANCELLED"].includes(selOrder.orderStatus) && (
                 <Button
                   label="Cancel Order"
@@ -1217,54 +1210,60 @@ export default function InvestigationOrders() {
               />
               <Column field="investigationName" header="Test Name" />
               <Column
-                header="Sample"
-                body={(r) =>
-                  r.sampleType ? (
-                    <Tag
-                      value={r.sampleType}
-                      severity="secondary"
-                      style={{ fontSize: 10 }}
-                    />
-                  ) : (
-                    "—"
-                  )
-                }
-                style={{ width: 80 }}
+                header="Where"
+                body={(r) => (
+                  <Tag
+                    value={r.performedAt}
+                    severity={
+                      r.performedAt === "EXTERNAL" ? "warning" : "success"
+                    }
+                    style={{ fontSize: 10 }}
+                  />
+                )}
+                style={{ width: 90 }}
               />
               <Column
-                header="Sample Status"
+                header="Sample"
+                body={(r) => {
+                  if (r.performedAt === "EXTERNAL")
+                    return (
+                      <span style={{ fontSize: 11, color: "#6c757d" }}>
+                        N/A
+                      </span>
+                    );
+                  return (
+                    <span
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color:
+                          r.sampleStatus === "COLLECTED"
+                            ? "#10b981"
+                            : r.sampleStatus === "REJECTED"
+                              ? "#dc2626"
+                              : "#f59e0b",
+                      }}
+                    >
+                      {r.sampleStatus}
+                    </span>
+                  );
+                }}
+                style={{ width: 120 }}
+              />
+              <Column
+                header="Result"
                 body={(r) => (
                   <span
                     style={{
                       fontSize: 11,
-                      fontWeight: 600,
-                      color:
-                        r.sampleStatus === "COLLECTED"
-                          ? "#10b981"
-                          : r.sampleStatus === "REJECTED"
-                            ? "#dc2626"
-                            : "#f59e0b",
+                      fontWeight: 700,
+                      color: RESULT_STATUS_COLOR[r.resultStatus],
                     }}
                   >
-                    {r.sampleStatus}
+                    {r.resultStatus}
                   </span>
                 )}
-                style={{ width: 130 }}
-              />
-              <Column
-                header="Result Status"
-                body={(r) => {
-                  const s =
-                    RESULT_STATUS[r.resultStatus] || RESULT_STATUS.PENDING;
-                  return (
-                    <span
-                      style={{ fontSize: 11, fontWeight: 700, color: s.color }}
-                    >
-                      {s.label}
-                    </span>
-                  );
-                }}
-                style={{ width: 110 }}
+                style={{ width: 100 }}
               />
               <Column
                 header="Price"
@@ -1272,44 +1271,43 @@ export default function InvestigationOrders() {
                 style={{ width: 80 }}
               />
               <Column
-                header="Results"
+                header="External Lab"
                 body={(r) =>
-                  r.results?.length ? (
-                    <div style={{ fontSize: 11 }}>
-                      {r.results.slice(0, 2).map((res, i) => (
-                        <div
-                          key={i}
-                          style={{
-                            color: res.isAbnormal ? "#dc2626" : "#374151",
-                          }}
-                        >
-                          {res.parameterName}: <b>{res.value}</b> {res.unit}
-                          {res.isAbnormal && " ⚠️"}
-                        </div>
-                      ))}
-                      {r.results.length > 2 && (
-                        <div style={{ color: "#6c757d" }}>
-                          +{r.results.length - 2} more
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <span style={{ color: "#6c757d", fontSize: 11 }}>—</span>
-                  )
+                  r.performedAt === "EXTERNAL"
+                    ? r.externalLabName || (
+                        <span style={{ color: "#6c757d" }}>Not set</span>
+                      )
+                    : "—"
                 }
+                style={{ width: 130 }}
+              />
+              <Column
+                header="Actions"
+                body={(r) =>
+                  r.performedAt === "EXTERNAL" &&
+                  r.resultStatus !== "VERIFIED" ? (
+                    <Button
+                      label="Add Report"
+                      icon="pi pi-file"
+                      text
+                      size="small"
+                      severity="warning"
+                      onClick={() => openExternalEntry(selOrder, r)}
+                    />
+                  ) : null
+                }
+                style={{ width: 110 }}
               />
             </DataTable>
           </div>
         )}
       </Dialog>
 
-      {/* ═══════════════════════════════════════
-          RESULT ENTRY DIALOG
-      ═══════════════════════════════════════ */}
+      {/* ═══ INTERNAL RESULT ENTRY DIALOG ═══ */}
       <Dialog
         visible={showResults}
-        style={{ width: "min(860px, 96vw)" }}
-        header="📋 Result Entry"
+        style={{ width: "min(880px, 96vw)" }}
+        header="Enter Results (Internal Tests)"
         onHide={() => setShowResults(false)}
         footer={
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
@@ -1330,11 +1328,11 @@ export default function InvestigationOrders() {
         }
       >
         <div style={{ maxHeight: "65vh", overflowY: "auto" }}>
-          {resultForms.map((form, formIdx) => (
+          {resultForms.map((form, fi) => (
             <div
               key={form.itemId}
               style={{
-                marginBottom: 24,
+                marginBottom: 20,
                 border: "1px solid #e2e8f0",
                 borderRadius: 8,
                 overflow: "hidden",
@@ -1343,7 +1341,7 @@ export default function InvestigationOrders() {
               <div
                 style={{
                   background: "#f1f5f9",
-                  padding: "10px 14px",
+                  padding: "8px 14px",
                   fontWeight: 700,
                   fontSize: 13,
                   color: "#0891b2",
@@ -1352,10 +1350,9 @@ export default function InvestigationOrders() {
                 {form.investigationName}
               </div>
               <div style={{ padding: 14 }}>
-                {/* Result rows */}
-                {form.results.map((row, rowIdx) => (
+                {form.results.map((row, ri) => (
                   <div
-                    key={rowIdx}
+                    key={ri}
                     style={{
                       display: "grid",
                       gridTemplateColumns: "2fr 1fr 1fr 2fr auto",
@@ -1367,20 +1364,15 @@ export default function InvestigationOrders() {
                     <InputText
                       value={row.parameterName}
                       onChange={(e) =>
-                        updateResult(
-                          formIdx,
-                          rowIdx,
-                          "parameterName",
-                          e.target.value,
-                        )
+                        updateResult(fi, ri, "parameterName", e.target.value)
                       }
-                      placeholder="Parameter (e.g. Haemoglobin)"
+                      placeholder="Parameter name"
                       style={{ width: "100%" }}
                     />
                     <InputText
                       value={row.value}
                       onChange={(e) =>
-                        updateResult(formIdx, rowIdx, "value", e.target.value)
+                        updateResult(fi, ri, "value", e.target.value)
                       }
                       placeholder="Value"
                       style={{ width: "100%" }}
@@ -1388,22 +1380,17 @@ export default function InvestigationOrders() {
                     <InputText
                       value={row.unit}
                       onChange={(e) =>
-                        updateResult(formIdx, rowIdx, "unit", e.target.value)
+                        updateResult(fi, ri, "unit", e.target.value)
                       }
-                      placeholder="Unit (g/dL)"
+                      placeholder="Unit"
                       style={{ width: "100%" }}
                     />
                     <InputText
                       value={row.normalRange}
                       onChange={(e) =>
-                        updateResult(
-                          formIdx,
-                          rowIdx,
-                          "normalRange",
-                          e.target.value,
-                        )
+                        updateResult(fi, ri, "normalRange", e.target.value)
                       }
-                      placeholder="Normal range (13-17)"
+                      placeholder="Normal range"
                       style={{ width: "100%" }}
                     />
                     <div
@@ -1413,14 +1400,8 @@ export default function InvestigationOrders() {
                         type="checkbox"
                         checked={row.isAbnormal}
                         onChange={(e) =>
-                          updateResult(
-                            formIdx,
-                            rowIdx,
-                            "isAbnormal",
-                            e.target.checked,
-                          )
+                          updateResult(fi, ri, "isAbnormal", e.target.checked)
                         }
-                        style={{ cursor: "pointer" }}
                       />
                       <label style={{ fontSize: 11, color: "#dc2626" }}>
                         Abnormal
@@ -1429,14 +1410,12 @@ export default function InvestigationOrders() {
                   </div>
                 ))}
                 <Button
-                  label="+ Row"
+                  label="+ Add Row"
                   text
                   size="small"
-                  onClick={() => addResultRow(formIdx)}
+                  onClick={() => addResultRow(fi)}
                   style={{ marginBottom: 8 }}
                 />
-
-                {/* Interpretation */}
                 <div>
                   <label
                     style={{
@@ -1450,17 +1429,129 @@ export default function InvestigationOrders() {
                   </label>
                   <InputTextarea
                     value={form.interpretation}
-                    onChange={(e) =>
-                      updateInterpretation(formIdx, e.target.value)
-                    }
+                    onChange={(e) => updateInterpretation(fi, e.target.value)}
                     rows={2}
-                    placeholder="Overall interpretation..."
                     style={{ width: "100%" }}
+                    placeholder="Overall interpretation..."
                   />
                 </div>
               </div>
             </div>
           ))}
+        </div>
+      </Dialog>
+
+      {/* ═══ EXTERNAL RESULT DIALOG ═══ */}
+      <Dialog
+        visible={showExternal}
+        style={{ width: "min(480px, 96vw)" }}
+        header={`External Report — ${selExternalItem?.investigationName || ""}`}
+        onHide={() => setShowExternal(false)}
+        footer={
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <Button
+              label="Cancel"
+              severity="secondary"
+              outlined
+              onClick={() => setShowExternal(false)}
+            />
+            <Button
+              label="Save"
+              icon="pi pi-check"
+              severity="success"
+              onClick={handleSaveExternal}
+              loading={loading}
+            />
+          </div>
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div
+            style={{
+              background: "#fffbeb",
+              border: "1px solid #fde68a",
+              borderRadius: 8,
+              padding: "10px 14px",
+              fontSize: 13,
+              color: "#92400e",
+            }}
+          >
+            This test was performed at an external lab. Enter the lab details
+            and report reference below.
+          </div>
+
+          <div>
+            <label
+              style={{
+                fontWeight: 600,
+                fontSize: 12,
+                display: "block",
+                marginBottom: 3,
+              }}
+            >
+              External Lab Name *
+            </label>
+            <InputText
+              value={externalForm.externalLabName}
+              onChange={(e) =>
+                setExternalForm({
+                  ...externalForm,
+                  externalLabName: e.target.value,
+                })
+              }
+              placeholder="e.g. Metropolis, SRL, Dr. Lal PathLabs"
+              style={{ width: "100%" }}
+            />
+          </div>
+
+          <div>
+            <label
+              style={{
+                fontWeight: 600,
+                fontSize: 12,
+                display: "block",
+                marginBottom: 3,
+              }}
+            >
+              Report Reference / ID
+            </label>
+            <InputText
+              value={externalForm.externalReportRef}
+              onChange={(e) =>
+                setExternalForm({
+                  ...externalForm,
+                  externalReportRef: e.target.value,
+                })
+              }
+              placeholder="Report number or barcode"
+              style={{ width: "100%" }}
+            />
+          </div>
+
+          <div>
+            <label
+              style={{
+                fontWeight: 600,
+                fontSize: 12,
+                display: "block",
+                marginBottom: 3,
+              }}
+            >
+              Interpretation / Summary
+            </label>
+            <InputTextarea
+              value={externalForm.interpretation}
+              onChange={(e) =>
+                setExternalForm({
+                  ...externalForm,
+                  interpretation: e.target.value,
+                })
+              }
+              rows={3}
+              placeholder="Key findings from the external report..."
+              style={{ width: "100%" }}
+            />
+          </div>
         </div>
       </Dialog>
     </div>

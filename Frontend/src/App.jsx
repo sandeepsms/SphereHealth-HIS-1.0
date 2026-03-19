@@ -71,7 +71,7 @@ import BillsList from "./pages/billing/BillsList";
 import BillGeneration from "./pages/billing/Billgeneration";
 
 // ── New Billing System (billing-v3) ───────────────────────────
-import PatientBilling from "./Components/Billing/PatientBilling";
+import PatientBilling from "./Components/billing/patientBilling";
 import ServiceMasterManager from "./Components/ServiceMaster/ServiceMasterManager";
 import InvestigationMaster from "./Components/Investigation/InvestigationMaster";
 import InvestigationOrders from "./Components/Investigation/InvestigationOrders";

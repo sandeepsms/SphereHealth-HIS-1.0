@@ -1,4 +1,3 @@
-// frontend/components/Investigation/InvestigationMaster.jsx
 import React, { useState, useEffect, useRef } from "react";
 import { Card } from "primereact/card";
 import { DataTable } from "primereact/datatable";
@@ -12,9 +11,9 @@ import { Tag } from "primereact/tag";
 import { InputNumber } from "primereact/inputnumber";
 import { InputSwitch } from "primereact/inputswitch";
 import { TabView, TabPanel } from "primereact/tabview";
-import { investigationService } from "../../Services/Investigation/investigationService";
 
-// ── Constants ─────────────────────────────────────────────────
+const API = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
+
 const CATEGORIES = [
   "PATHOLOGY",
   "RADIOLOGY",
@@ -26,29 +25,33 @@ const CATEGORIES = [
   "OTHER",
 ].map((v) => ({ label: v, value: v }));
 
-const TARIFF_TYPES = ["TPA", "CORPORATE"].map((v) => ({ label: v, value: v }));
+const PERFORMED_AT_OPTIONS = [
+  { label: "Internal (own lab)", value: "INTERNAL" },
+  { label: "External (outside lab)", value: "EXTERNAL" },
+  { label: "Both available", value: "BOTH" },
+];
 
-const CAT_COLOR = {
-  PATHOLOGY: { bg: "#fef3c7", color: "#92400e", dot: "#f59e0b" },
-  RADIOLOGY: { bg: "#dbeafe", color: "#1e3a8a", dot: "#3b82f6" },
-  CARDIOLOGY: { bg: "#fce7f3", color: "#9d174d", dot: "#ec4899" },
-  MICROBIOLOGY: { bg: "#d1fae5", color: "#065f46", dot: "#10b981" },
-  BIOCHEMISTRY: { bg: "#ede9fe", color: "#4c1d95", dot: "#8b5cf6" },
-  ENDOSCOPY: { bg: "#fee2e2", color: "#7f1d1d", dot: "#ef4444" },
-  ULTRASONOGRAPHY: { bg: "#e0f2fe", color: "#0c4a6e", dot: "#0891b2" },
-  OTHER: { bg: "#f1f5f9", color: "#475569", dot: "#94a3b8" },
+const TARIFF_TYPES = [
+  { label: "TPA", value: "TPA" },
+  { label: "Corporate", value: "CORPORATE" },
+];
+
+const PERFORMED_AT_SEVERITY = {
+  INTERNAL: "success",
+  EXTERNAL: "warning",
+  BOTH: "info",
 };
 
-const BLANK_INV = {
+const BLANK_FORM = {
   investigationCode: "",
   investigationName: "",
   shortName: "",
   category: "PATHOLOGY",
   subCategory: "",
+  performedAt: "INTERNAL",
   sampleType: "",
   defaultPrice: 0,
   tatHours: 24,
-  reportTimeHours: 24,
   isTaxable: false,
   taxPercentage: 0,
   availableForTPA: true,
@@ -65,53 +68,46 @@ const BLANK_PRICE = {
   tpaApprovedLimit: null,
 };
 
-const BLANK_OVERRIDE = {
-  UHID: "",
-  overridePrice: 0,
-  reason: "",
-  isOneTime: true,
-};
-
-// ═══════════════════════════════════════════════════════════════
 export default function InvestigationMaster() {
   const toast = useRef(null);
-
   const [investigations, setInvestigations] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
+
   const [filters, setFilters] = useState({
-    category: null,
     search: "",
-    isPackage: null,
+    category: null,
+    performedAt: null,
   });
 
-  // Investigation form dialog
-  const [showInvDlg, setShowInvDlg] = useState(false);
-  const [editInv, setEditInv] = useState(null);
-  const [invForm, setInvForm] = useState(BLANK_INV);
+  // Form dialog
+  const [showForm, setShowForm] = useState(false);
+  const [editItem, setEditItem] = useState(null);
+  const [form, setForm] = useState(BLANK_FORM);
 
   // Pricing dialog
-  const [showPriceDlg, setShowPriceDlg] = useState(false);
-  const [selInv, setSelInv] = useState(null);
+  const [showPricing, setShowPricing] = useState(false);
+  const [selItem, setSelItem] = useState(null);
   const [pricing, setPricing] = useState([]);
   const [priceForm, setPriceForm] = useState(BLANK_PRICE);
   const [tpaList, setTpaList] = useState([]);
 
-  // Doctor override dialog
-  const [showOverrideDlg, setShowOverrideDlg] = useState(false);
-  const [overrideForm, setOverrideForm] = useState(BLANK_OVERRIDE);
+  const showToast = (s, sum, det) =>
+    toast.current?.show({ severity: s, summary: sum, detail: det, life: 3000 });
 
-  // ── Load investigations ──────────────────────────────────────
   const load = async () => {
     setLoading(true);
     try {
-      const params = { limit: 300 };
-      if (filters.category) params.category = filters.category;
-      if (filters.search) params.search = filters.search;
-      if (filters.isPackage !== null) params.isPackage = filters.isPackage;
-      const result = await investigationService.getAll(params);
-      setInvestigations(result.investigations);
-      setTotal(result.total);
+      const params = new URLSearchParams({ limit: 300 });
+      if (filters.category) params.append("category", filters.category);
+      if (filters.performedAt)
+        params.append("performedAt", filters.performedAt);
+      if (filters.search) params.append("search", filters.search);
+
+      const res = await fetch(`${API}/investigations?${params}`);
+      const data = await res.json();
+      setInvestigations(data.data || []);
+      setTotal(data.total || 0);
     } catch (e) {
       showToast("error", "Error", e.message);
     } finally {
@@ -121,9 +117,7 @@ export default function InvestigationMaster() {
 
   const loadTPA = async () => {
     try {
-      const res = await fetch(
-        `${import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api"}/tpa`,
-      );
+      const res = await fetch(`${API}/tpa`);
       const data = await res.json();
       setTpaList(
         (data.data || []).map((t) => ({ label: t.tpaName, value: t._id })),
@@ -138,18 +132,16 @@ export default function InvestigationMaster() {
     loadTPA();
   }, []);
 
-  const showToast = (severity, summary, detail) =>
-    toast.current?.show({ severity, summary, detail, life: 3000 });
-
-  // ── Seed ─────────────────────────────────────────────────────
+  // ── Seed ──────────────────────────────────────────────────────
   const handleSeed = async () => {
     setLoading(true);
     try {
-      const result = await investigationService.seed();
+      const res = await fetch(`${API}/investigations/seed`, { method: "POST" });
+      const data = await res.json();
       showToast(
         "success",
         "Seeded",
-        `${result.created} tests added, ${result.skipped} already existed`,
+        `${data.data.created} tests added, ${data.data.skipped} already existed`,
       );
       load();
     } catch (e) {
@@ -159,54 +151,61 @@ export default function InvestigationMaster() {
     }
   };
 
-  // ── Add / Edit ────────────────────────────────────────────────
+  // ── Open Add/Edit ─────────────────────────────────────────────
   const openAdd = () => {
-    setEditInv(null);
-    setInvForm(BLANK_INV);
-    setShowInvDlg(true);
+    setEditItem(null);
+    setForm(BLANK_FORM);
+    setShowForm(true);
   };
 
-  const openEdit = (inv) => {
-    setEditInv(inv);
-    setInvForm({
-      investigationCode: inv.investigationCode,
-      investigationName: inv.investigationName,
-      shortName: inv.shortName || "",
-      category: inv.category,
-      subCategory: inv.subCategory || "",
-      sampleType: inv.sampleType || "",
-      defaultPrice: inv.defaultPrice,
-      tatHours: inv.tatHours || 24,
-      reportTimeHours: inv.reportTimeHours || 24,
-      isTaxable: inv.isTaxable,
-      taxPercentage: inv.taxPercentage || 0,
-      availableForTPA: inv.availableForTPA,
-      requiresDoctorOrder: inv.requiresDoctorOrder,
-      isPackage: inv.isPackage,
-      description: inv.description || "",
+  const openEdit = (item) => {
+    setEditItem(item);
+    setForm({
+      investigationCode: item.investigationCode,
+      investigationName: item.investigationName,
+      shortName: item.shortName || "",
+      category: item.category,
+      subCategory: item.subCategory || "",
+      performedAt: item.performedAt || "INTERNAL",
+      sampleType: item.sampleType || "",
+      defaultPrice: item.defaultPrice,
+      tatHours: item.tatHours || 24,
+      isTaxable: item.isTaxable,
+      taxPercentage: item.taxPercentage || 0,
+      availableForTPA: item.availableForTPA,
+      requiresDoctorOrder: item.requiresDoctorOrder,
+      isPackage: item.isPackage,
+      description: item.description || "",
     });
-    setShowInvDlg(true);
+    setShowForm(true);
   };
 
-  const handleSaveInv = async () => {
-    if (!invForm.investigationCode || !invForm.investigationName) {
-      return showToast("warn", "Required", "Code aur Name required hain");
+  const handleSave = async () => {
+    if (!form.investigationCode || !form.investigationName) {
+      return showToast("warn", "Required", "Code and Name are required");
     }
     setLoading(true);
     try {
-      if (editInv) {
-        await investigationService.update(editInv._id, invForm);
-        showToast("success", "Updated", "Investigation updated");
-      } else {
-        await investigationService.create(invForm);
-        showToast(
-          "success",
-          "Created",
-          "Investigation created — CASH price auto-set",
-        );
-      }
-      setShowInvDlg(false);
-      setEditInv(null);
+      const url = editItem
+        ? `${API}/investigations/${editItem._id}`
+        : `${API}/investigations`;
+      const method = editItem ? "PUT" : "POST";
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message);
+
+      showToast(
+        "success",
+        editItem ? "Updated" : "Created",
+        editItem
+          ? "Investigation updated"
+          : "Investigation created — CASH price auto-set",
+      );
+      setShowForm(false);
       load();
     } catch (e) {
       showToast("error", "Error", e.message);
@@ -217,7 +216,7 @@ export default function InvestigationMaster() {
 
   const handleDeactivate = async (id) => {
     try {
-      await investigationService.deactivate(id);
+      await fetch(`${API}/investigations/${id}`, { method: "DELETE" });
       showToast("warn", "Deactivated", "Investigation deactivated");
       load();
     } catch (e) {
@@ -225,28 +224,34 @@ export default function InvestigationMaster() {
     }
   };
 
-  // ── Pricing ───────────────────────────────────────────────────
-  const openPricing = async (inv) => {
-    setSelInv(inv);
-    const data = await investigationService.getPricing(inv._id);
-    setPricing(data);
+  // ── Open Pricing ──────────────────────────────────────────────
+  const openPricing = async (item) => {
+    setSelItem(item);
+    const res = await fetch(`${API}/investigations/${item._id}/pricing`);
+    const data = await res.json();
+    setPricing(data.data || []);
     setPriceForm(BLANK_PRICE);
-    setShowPriceDlg(true);
+    setShowPricing(true);
   };
 
   const handleSavePricing = async () => {
-    if (!priceForm.price || priceForm.price <= 0) {
-      return showToast("warn", "Required", "Valid price daalo");
-    }
-    if (priceForm.tariffType === "TPA" && !priceForm.tpaId) {
-      return showToast("warn", "Required", "TPA select karo");
-    }
+    if (!priceForm.price || priceForm.price <= 0)
+      return showToast("warn", "Required", "Enter a valid price");
+    if (priceForm.tariffType === "TPA" && !priceForm.tpaId)
+      return showToast("warn", "Required", "Select a TPA");
     setLoading(true);
     try {
-      await investigationService.setPricing(selInv._id, priceForm);
+      const res = await fetch(`${API}/investigations/${selItem._id}/pricing`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(priceForm),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message);
       showToast("success", "Saved", "Pricing saved");
-      const data = await investigationService.getPricing(selInv._id);
-      setPricing(data);
+      const r2 = await fetch(`${API}/investigations/${selItem._id}/pricing`);
+      const d2 = await r2.json();
+      setPricing(d2.data || []);
       setPriceForm(BLANK_PRICE);
     } catch (e) {
       showToast("error", "Error", e.message);
@@ -255,73 +260,21 @@ export default function InvestigationMaster() {
     }
   };
 
-  // ── Doctor Override ───────────────────────────────────────────
-  const openOverride = (inv) => {
-    setSelInv(inv);
-    setOverrideForm(BLANK_OVERRIDE);
-    setShowOverrideDlg(true);
-  };
-
-  const handleSaveOverride = async () => {
-    if (!overrideForm.UHID) return showToast("warn", "Required", "UHID daalo");
-    if (!overrideForm.overridePrice || overrideForm.overridePrice <= 0)
-      return showToast("warn", "Required", "Override price daalo");
-    setLoading(true);
-    try {
-      await investigationService.setDoctorOverride(selInv._id, overrideForm);
-      showToast(
-        "success",
-        "Override Set",
-        `${overrideForm.UHID} ke liye price override ho gaya`,
-      );
-      setShowOverrideDlg(false);
-    } catch (e) {
-      showToast("error", "Error", e.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ── Category badge ────────────────────────────────────────────
-  const CatBadge = ({ cat }) => {
-    const c = CAT_COLOR[cat] || CAT_COLOR.OTHER;
-    return (
-      <span
-        style={{
-          background: c.bg,
-          color: c.color,
-          borderRadius: 6,
-          padding: "2px 8px",
-          fontSize: 11,
-          fontWeight: 700,
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 4,
-        }}
-      >
-        <span
-          style={{
-            width: 6,
-            height: 6,
-            borderRadius: "50%",
-            background: c.dot,
-            display: "inline-block",
-          }}
-        />
-        {cat}
-      </span>
-    );
-  };
-
   const previewFinal =
     priceForm.price - (priceForm.price * (priceForm.discount || 0)) / 100;
 
-  // ══════════════════════════════════════════════════════════════
+  const lbl = {
+    fontWeight: 600,
+    fontSize: 12,
+    display: "block",
+    marginBottom: 4,
+  };
+
   return (
     <div style={{ maxWidth: 1400, margin: "0 auto", padding: "8px 12px" }}>
       <Toast ref={toast} position="top-right" />
 
-      {/* ── Header / Filter bar ── */}
+      {/* Filter Bar */}
       <Card style={{ marginBottom: 8 }}>
         <div
           style={{
@@ -339,8 +292,8 @@ export default function InvestigationMaster() {
           <InputText
             value={filters.search}
             onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-            placeholder="Name / code / short name..."
-            style={{ width: 230 }}
+            placeholder="Search by name / code..."
+            style={{ width: 220 }}
           />
 
           <Dropdown
@@ -351,25 +304,26 @@ export default function InvestigationMaster() {
           />
 
           <Dropdown
-            value={filters.isPackage}
+            value={filters.performedAt}
             options={[
               { label: "All Types", value: null },
-              { label: "Individual Tests", value: false },
-              { label: "Packages Only", value: true },
+              { label: "Internal only", value: "INTERNAL" },
+              { label: "External only", value: "EXTERNAL" },
+              { label: "Both", value: "BOTH" },
             ]}
-            onChange={(e) => setFilters({ ...filters, isPackage: e.value })}
+            onChange={(e) => setFilters({ ...filters, performedAt: e.value })}
             style={{ width: 160 }}
           />
 
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
             <Button
-              label="Seed Default Tests"
+              label="Load Default Tests"
               icon="pi pi-database"
               severity="secondary"
               outlined
-              tooltip="40+ default investigations load karega"
               onClick={handleSeed}
               loading={loading}
+              tooltip="Loads 40+ default investigations"
             />
             <Button
               label="Add Investigation"
@@ -381,7 +335,7 @@ export default function InvestigationMaster() {
         </div>
       </Card>
 
-      {/* ── Main Table ── */}
+      {/* Table */}
       <Card>
         <DataTable
           value={investigations}
@@ -390,15 +344,10 @@ export default function InvestigationMaster() {
           stripedRows
           header={
             <span style={{ fontSize: 13, color: "#6c757d" }}>
-              {total} investigations total
+              {total} investigations
             </span>
           }
-          emptyMessage={
-            <div style={{ textAlign: "center", padding: 40 }}>
-              No investigations found. <b>"Seed Default Tests"</b> dabao to load
-              karo.
-            </div>
-          }
+          emptyMessage='No investigations found. Click "Load Default Tests" to get started.'
         >
           <Column
             field="investigationCode"
@@ -419,21 +368,39 @@ export default function InvestigationMaster() {
                 )}
               </div>
             )}
-            style={{ minWidth: 200 }}
+            style={{ minWidth: 180 }}
           />
           <Column
             header="Category"
-            body={(r) => <CatBadge cat={r.category} />}
-            style={{ width: 140 }}
+            body={(r) => (
+              <Tag
+                value={r.category}
+                severity="secondary"
+                style={{ fontSize: 10 }}
+              />
+            )}
+            style={{ width: 130 }}
           />
           <Column
-            header="Sub-Cat"
+            field="subCategory"
+            header="Sub Category"
             body={(r) => (
               <span style={{ fontSize: 11, color: "#64748b" }}>
                 {r.subCategory || "—"}
               </span>
             )}
-            style={{ width: 130 }}
+            style={{ width: 140 }}
+          />
+          <Column
+            header="Performed At"
+            body={(r) => (
+              <Tag
+                value={r.performedAt}
+                severity={PERFORMED_AT_SEVERITY[r.performedAt] || "secondary"}
+                style={{ fontSize: 10 }}
+              />
+            )}
+            style={{ width: 110 }}
           />
           <Column
             header="Sample"
@@ -451,33 +418,18 @@ export default function InvestigationMaster() {
             style={{ width: 80 }}
           />
           <Column
-            header="Default ₹"
+            header="Default Price"
             body={(r) => (
               <b style={{ color: "#0d6efd" }}>
                 ₹{r.defaultPrice?.toLocaleString("en-IN")}
               </b>
             )}
-            style={{ width: 100 }}
+            style={{ width: 110 }}
           />
           <Column
             header="TAT"
             body={(r) => <span style={{ fontSize: 11 }}>{r.tatHours}h</span>}
             style={{ width: 55 }}
-          />
-          <Column
-            header="Type"
-            body={(r) =>
-              r.isPackage ? (
-                <Tag
-                  value="PACKAGE"
-                  severity="warning"
-                  style={{ fontSize: 9 }}
-                />
-              ) : (
-                <Tag value="TEST" severity="info" style={{ fontSize: 9 }} />
-              )
-            }
-            style={{ width: 75 }}
           />
           <Column
             header="Status"
@@ -505,17 +457,9 @@ export default function InvestigationMaster() {
                   icon="pi pi-tag"
                   text
                   size="small"
-                  tooltip="TPA Pricing"
+                  tooltip="Pricing"
                   severity="info"
                   onClick={() => openPricing(r)}
-                />
-                <Button
-                  icon="pi pi-user-edit"
-                  text
-                  size="small"
-                  tooltip="Doctor Override"
-                  severity="warning"
-                  onClick={() => openOverride(r)}
                 />
                 {r.isActive && (
                   <Button
@@ -529,23 +473,19 @@ export default function InvestigationMaster() {
                 )}
               </div>
             )}
-            style={{ width: 140 }}
+            style={{ width: 110 }}
           />
         </DataTable>
       </Card>
 
-      {/* ════════════════════════════════════════
-          DIALOG: Add / Edit Investigation
-      ════════════════════════════════════════ */}
+      {/* ── Add / Edit Dialog ── */}
       <Dialog
-        visible={showInvDlg}
-        style={{ width: "min(760px, 95vw)" }}
-        header={
-          editInv ? "Investigation Edit Karo" : "Naya Investigation Add Karo"
-        }
+        visible={showForm}
+        style={{ width: "min(760px, 96vw)" }}
+        header={editItem ? "Edit Investigation" : "Add New Investigation"}
         onHide={() => {
-          setShowInvDlg(false);
-          setEditInv(null);
+          setShowForm(false);
+          setEditItem(null);
         }}
         footer={
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
@@ -553,13 +493,13 @@ export default function InvestigationMaster() {
               label="Cancel"
               severity="secondary"
               outlined
-              onClick={() => setShowInvDlg(false)}
+              onClick={() => setShowForm(false)}
             />
             <Button
-              label={editInv ? "Update" : "Create"}
+              label={editItem ? "Update" : "Create"}
               icon="pi pi-check"
               severity="success"
-              onClick={handleSaveInv}
+              onClick={handleSave}
               loading={loading}
             />
           </div>
@@ -568,191 +508,119 @@ export default function InvestigationMaster() {
         <div
           style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}
         >
-          {/* Code */}
           <div>
-            <label
-              style={{
-                fontWeight: 600,
-                fontSize: 12,
-                display: "block",
-                marginBottom: 3,
-              }}
-            >
-              Investigation Code *
-            </label>
+            <label style={lbl}>Investigation Code *</label>
             <InputText
-              value={invForm.investigationCode}
+              value={form.investigationCode}
               onChange={(e) =>
-                setInvForm({
-                  ...invForm,
+                setForm({
+                  ...form,
                   investigationCode: e.target.value.toUpperCase(),
                 })
               }
               placeholder="PATH-001"
               style={{ width: "100%", fontFamily: "monospace" }}
-              disabled={!!editInv}
+              disabled={!!editItem}
             />
           </div>
 
-          {/* Name */}
           <div>
-            <label
-              style={{
-                fontWeight: 600,
-                fontSize: 12,
-                display: "block",
-                marginBottom: 3,
-              }}
-            >
-              Investigation Name *
-            </label>
+            <label style={lbl}>Investigation Name *</label>
             <InputText
-              value={invForm.investigationName}
+              value={form.investigationName}
               onChange={(e) =>
-                setInvForm({ ...invForm, investigationName: e.target.value })
+                setForm({ ...form, investigationName: e.target.value })
               }
               placeholder="Complete Blood Count"
               style={{ width: "100%" }}
             />
           </div>
 
-          {/* Short Name */}
           <div>
-            <label
-              style={{
-                fontWeight: 600,
-                fontSize: 12,
-                display: "block",
-                marginBottom: 3,
-              }}
-            >
-              Short Name
-            </label>
+            <label style={lbl}>Short Name</label>
             <InputText
-              value={invForm.shortName}
-              onChange={(e) =>
-                setInvForm({ ...invForm, shortName: e.target.value })
-              }
+              value={form.shortName}
+              onChange={(e) => setForm({ ...form, shortName: e.target.value })}
               placeholder="CBC"
               style={{ width: "100%" }}
             />
           </div>
 
-          {/* Category */}
           <div>
-            <label
-              style={{
-                fontWeight: 600,
-                fontSize: 12,
-                display: "block",
-                marginBottom: 3,
-              }}
-            >
-              Category *
-            </label>
+            <label style={lbl}>Category *</label>
             <Dropdown
-              value={invForm.category}
+              value={form.category}
               options={CATEGORIES}
-              onChange={(e) => setInvForm({ ...invForm, category: e.value })}
+              onChange={(e) => setForm({ ...form, category: e.value })}
               style={{ width: "100%" }}
             />
           </div>
 
-          {/* Sub Category */}
           <div>
-            <label
-              style={{
-                fontWeight: 600,
-                fontSize: 12,
-                display: "block",
-                marginBottom: 3,
-              }}
-            >
-              Sub Category
-            </label>
+            <label style={lbl}>Sub Category</label>
             <InputText
-              value={invForm.subCategory}
+              value={form.subCategory}
               onChange={(e) =>
-                setInvForm({ ...invForm, subCategory: e.target.value })
+                setForm({ ...form, subCategory: e.target.value })
               }
-              placeholder="Haematology"
+              placeholder="Haematology, CT Scan..."
               style={{ width: "100%" }}
             />
           </div>
 
-          {/* Sample Type */}
           <div>
-            <label
-              style={{
-                fontWeight: 600,
-                fontSize: 12,
-                display: "block",
-                marginBottom: 3,
-              }}
-            >
-              Sample Type
-            </label>
+            <label style={lbl}>Performed At *</label>
+            <Dropdown
+              value={form.performedAt}
+              options={PERFORMED_AT_OPTIONS}
+              onChange={(e) => setForm({ ...form, performedAt: e.value })}
+              style={{ width: "100%" }}
+            />
+            <small style={{ fontSize: 11, color: "#6c757d" }}>
+              {form.performedAt === "INTERNAL" && "Done in hospital's own lab"}
+              {form.performedAt === "EXTERNAL" &&
+                "Always referred to outside lab"}
+              {form.performedAt === "BOTH" &&
+                "Can be done internally or referred outside"}
+            </small>
+          </div>
+
+          <div>
+            <label style={lbl}>Sample Type</label>
             <InputText
-              value={invForm.sampleType}
-              onChange={(e) =>
-                setInvForm({ ...invForm, sampleType: e.target.value })
-              }
+              value={form.sampleType}
+              onChange={(e) => setForm({ ...form, sampleType: e.target.value })}
               placeholder="Blood / Urine / Stool"
               style={{ width: "100%" }}
             />
           </div>
 
-          {/* Default Price */}
           <div>
-            <label
-              style={{
-                fontWeight: 600,
-                fontSize: 12,
-                display: "block",
-                marginBottom: 3,
-              }}
-            >
-              Default Price (₹) — CASH *
-            </label>
+            <label style={lbl}>Default Price (₹) — CASH *</label>
             <InputNumber
-              value={invForm.defaultPrice}
-              onValueChange={(e) =>
-                setInvForm({ ...invForm, defaultPrice: e.value })
-              }
+              value={form.defaultPrice}
+              onValueChange={(e) => setForm({ ...form, defaultPrice: e.value })}
               mode="currency"
               currency="INR"
               locale="en-IN"
               style={{ width: "100%" }}
             />
             <small style={{ color: "#16a34a", fontSize: 11 }}>
-              ✓ CASH pricing automatically set ho jaayegi
+              CASH pricing will be auto-set from this price
             </small>
           </div>
 
-          {/* TAT */}
           <div>
-            <label
-              style={{
-                fontWeight: 600,
-                fontSize: 12,
-                display: "block",
-                marginBottom: 3,
-              }}
-            >
-              TAT (hours)
-            </label>
+            <label style={lbl}>TAT (hours)</label>
             <InputNumber
-              value={invForm.tatHours}
-              onValueChange={(e) =>
-                setInvForm({ ...invForm, tatHours: e.value })
-              }
+              value={form.tatHours}
+              onValueChange={(e) => setForm({ ...form, tatHours: e.value })}
               min={0}
               suffix=" hrs"
               style={{ width: "100%" }}
             />
           </div>
 
-          {/* Toggles */}
           <div
             style={{
               display: "flex",
@@ -764,10 +632,8 @@ export default function InvestigationMaster() {
           >
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <InputSwitch
-                checked={invForm.availableForTPA}
-                onChange={(e) =>
-                  setInvForm({ ...invForm, availableForTPA: e.value })
-                }
+                checked={form.availableForTPA}
+                onChange={(e) => setForm({ ...form, availableForTPA: e.value })}
               />
               <label style={{ fontSize: 12, fontWeight: 600 }}>
                 TPA Available
@@ -775,40 +641,31 @@ export default function InvestigationMaster() {
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <InputSwitch
-                checked={invForm.isTaxable}
-                onChange={(e) => setInvForm({ ...invForm, isTaxable: e.value })}
+                checked={form.isTaxable}
+                onChange={(e) => setForm({ ...form, isTaxable: e.value })}
               />
               <label style={{ fontSize: 12, fontWeight: 600 }}>Taxable</label>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <InputSwitch
-                checked={invForm.requiresDoctorOrder}
+                checked={form.requiresDoctorOrder}
                 onChange={(e) =>
-                  setInvForm({ ...invForm, requiresDoctorOrder: e.value })
+                  setForm({ ...form, requiresDoctorOrder: e.value })
                 }
               />
               <label style={{ fontSize: 12, fontWeight: 600 }}>
-                Doctor Order Required
+                Requires Doctor Order
               </label>
             </div>
           </div>
 
-          {invForm.isTaxable && (
+          {form.isTaxable && (
             <div>
-              <label
-                style={{
-                  fontWeight: 600,
-                  fontSize: 12,
-                  display: "block",
-                  marginBottom: 3,
-                }}
-              >
-                Tax %
-              </label>
+              <label style={lbl}>Tax %</label>
               <InputNumber
-                value={invForm.taxPercentage}
+                value={form.taxPercentage}
                 onValueChange={(e) =>
-                  setInvForm({ ...invForm, taxPercentage: e.value })
+                  setForm({ ...form, taxPercentage: e.value })
                 }
                 suffix="%"
                 min={0}
@@ -818,43 +675,29 @@ export default function InvestigationMaster() {
             </div>
           )}
 
-          {/* Description */}
           <div style={{ gridColumn: "span 2" }}>
-            <label
-              style={{
-                fontWeight: 600,
-                fontSize: 12,
-                display: "block",
-                marginBottom: 3,
-              }}
-            >
-              Description
-            </label>
+            <label style={lbl}>Description</label>
             <InputText
-              value={invForm.description}
+              value={form.description}
               onChange={(e) =>
-                setInvForm({ ...invForm, description: e.target.value })
+                setForm({ ...form, description: e.target.value })
               }
-              placeholder="Optional"
+              placeholder="Optional description"
               style={{ width: "100%" }}
             />
           </div>
         </div>
       </Dialog>
 
-      {/* ════════════════════════════════════════
-          DIALOG: Pricing (TPA / Corporate)
-      ════════════════════════════════════════ */}
+      {/* ── Pricing Dialog ── */}
       <Dialog
-        visible={showPriceDlg}
-        style={{ width: "min(740px, 95vw)" }}
-        header={`💰 Pricing — ${selInv?.investigationName || ""}`}
-        onHide={() => setShowPriceDlg(false)}
+        visible={showPricing}
+        style={{ width: "min(720px, 96vw)" }}
+        header={`Pricing — ${selItem?.investigationName || ""}`}
+        onHide={() => setShowPricing(false)}
       >
         <TabView>
-          {/* Existing pricing */}
-          <TabPanel header="Existing Pricing">
-            {/* CASH auto info */}
+          <TabPanel header="Current Pricing">
             <div
               style={{
                 background: "#f0fdf4",
@@ -869,30 +712,25 @@ export default function InvestigationMaster() {
             >
               <i className="pi pi-check-circle" style={{ color: "#16a34a" }} />
               <span style={{ fontSize: 13, color: "#166534" }}>
-                <b>CASH Price:</b> ₹
-                {selInv?.defaultPrice?.toLocaleString("en-IN")} — Default price
-                se auto-set hai. Isko change karne ke liye investigation edit
-                karo.
+                <b>
+                  CASH Price: ₹{selItem?.defaultPrice?.toLocaleString("en-IN")}
+                </b>{" "}
+                — auto-set from default price. To change CASH price, edit the
+                investigation.
               </span>
             </div>
 
             <DataTable
               value={pricing}
               size="small"
-              emptyMessage="Koi TPA/Corporate pricing set nahi. Default CASH price use hoga."
+              emptyMessage="No TPA/Corporate pricing configured. Default CASH price will be used."
             >
               <Column
                 header="Tariff"
                 body={(r) => (
                   <Tag
                     value={r.tariffType}
-                    severity={
-                      r.tariffType === "TPA"
-                        ? "success"
-                        : r.tariffType === "CORPORATE"
-                          ? "info"
-                          : "secondary"
-                    }
+                    severity={r.tariffType === "TPA" ? "success" : "info"}
                   />
                 )}
               />
@@ -924,7 +762,6 @@ export default function InvestigationMaster() {
             </DataTable>
           </TabPanel>
 
-          {/* Add pricing */}
           <TabPanel header="Add / Update Pricing">
             <div
               style={{
@@ -940,30 +777,16 @@ export default function InvestigationMaster() {
                   border: "1px solid #bbf7d0",
                   borderRadius: 8,
                   padding: "10px 14px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
+                  fontSize: 13,
+                  color: "#166534",
                 }}
               >
-                <i className="pi pi-info-circle" style={{ color: "#16a34a" }} />
-                <span style={{ fontSize: 13, color: "#166534" }}>
-                  CASH price auto-set hai (₹
-                  {selInv?.defaultPrice?.toLocaleString("en-IN")}). Yahan sirf{" "}
-                  <b>TPA / Corporate</b> price set karo.
-                </span>
+                CASH price is auto-managed. Set <b>TPA or Corporate</b> pricing
+                here.
               </div>
 
               <div>
-                <label
-                  style={{
-                    fontWeight: 600,
-                    fontSize: 13,
-                    display: "block",
-                    marginBottom: 4,
-                  }}
-                >
-                  Tariff Type *
-                </label>
+                <label style={lbl}>Tariff Type *</label>
                 <Dropdown
                   value={priceForm.tariffType}
                   options={TARIFF_TYPES}
@@ -980,23 +803,14 @@ export default function InvestigationMaster() {
 
               {priceForm.tariffType === "TPA" && (
                 <div>
-                  <label
-                    style={{
-                      fontWeight: 600,
-                      fontSize: 13,
-                      display: "block",
-                      marginBottom: 4,
-                    }}
-                  >
-                    TPA Select Karo *
-                  </label>
+                  <label style={lbl}>Select TPA *</label>
                   <Dropdown
                     value={priceForm.tpaId}
                     options={tpaList}
                     onChange={(e) =>
                       setPriceForm({ ...priceForm, tpaId: e.value })
                     }
-                    placeholder="TPA select karo"
+                    placeholder="Select TPA"
                     filter
                     style={{ width: "100%" }}
                   />
@@ -1004,16 +818,7 @@ export default function InvestigationMaster() {
               )}
 
               <div>
-                <label
-                  style={{
-                    fontWeight: 600,
-                    fontSize: 13,
-                    display: "block",
-                    marginBottom: 4,
-                  }}
-                >
-                  Price (₹) *
-                </label>
+                <label style={lbl}>Price (₹) *</label>
                 <InputNumber
                   value={priceForm.price}
                   onValueChange={(e) =>
@@ -1027,16 +832,7 @@ export default function InvestigationMaster() {
               </div>
 
               <div>
-                <label
-                  style={{
-                    fontWeight: 600,
-                    fontSize: 13,
-                    display: "block",
-                    marginBottom: 4,
-                  }}
-                >
-                  Discount (%)
-                </label>
+                <label style={lbl}>Discount (%)</label>
                 <InputNumber
                   value={priceForm.discount}
                   onValueChange={(e) =>
@@ -1051,16 +847,7 @@ export default function InvestigationMaster() {
 
               {priceForm.tariffType === "TPA" && (
                 <div>
-                  <label
-                    style={{
-                      fontWeight: 600,
-                      fontSize: 13,
-                      display: "block",
-                      marginBottom: 4,
-                    }}
-                  >
-                    TPA Approved Limit (₹)
-                  </label>
+                  <label style={lbl}>TPA Approved Limit (₹)</label>
                   <InputNumber
                     value={priceForm.tpaApprovedLimit}
                     onValueChange={(e) =>
@@ -1069,11 +856,11 @@ export default function InvestigationMaster() {
                     mode="currency"
                     currency="INR"
                     locale="en-IN"
-                    placeholder="Max TPA payega"
+                    placeholder="Max TPA will pay"
                     style={{ width: "100%" }}
                   />
-                  <small style={{ color: "#6c757d" }}>
-                    Baaki amount patient dega.
+                  <small style={{ color: "#6c757d", fontSize: 11 }}>
+                    Amount above this limit is paid by the patient.
                   </small>
                 </div>
               )}
@@ -1086,7 +873,7 @@ export default function InvestigationMaster() {
                   fontSize: 13,
                 }}
               >
-                Final Price:{" "}
+                Final price after discount:{" "}
                 <b style={{ color: "#0d6efd", fontSize: 15 }}>
                   ₹
                   {(previewFinal || 0).toLocaleString("en-IN", {
@@ -1105,148 +892,6 @@ export default function InvestigationMaster() {
             </div>
           </TabPanel>
         </TabView>
-      </Dialog>
-
-      {/* ════════════════════════════════════════
-          DIALOG: Doctor Override
-      ════════════════════════════════════════ */}
-      <Dialog
-        visible={showOverrideDlg}
-        style={{ width: "min(480px, 95vw)" }}
-        header={`👨‍⚕️ Doctor Override — ${selInv?.investigationName || ""}`}
-        onHide={() => setShowOverrideDlg(false)}
-        footer={
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <Button
-              label="Cancel"
-              severity="secondary"
-              outlined
-              onClick={() => setShowOverrideDlg(false)}
-            />
-            <Button
-              label="Save Override"
-              icon="pi pi-check"
-              severity="warning"
-              onClick={handleSaveOverride}
-              loading={loading}
-            />
-          </div>
-        }
-      >
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div
-            style={{
-              background: "#fffbeb",
-              border: "1px solid #fde68a",
-              borderRadius: 8,
-              padding: "10px 14px",
-              fontSize: 13,
-              color: "#92400e",
-            }}
-          >
-            <i className="pi pi-info-circle" style={{ marginRight: 6 }} />
-            Doctor kisi specific patient ke liye is investigation ka price
-            override kar sakta hai. Yeh price <b>TPA / CASH</b> se zyada
-            priority rakhta hai.
-          </div>
-
-          <div>
-            <label
-              style={{
-                fontWeight: 600,
-                fontSize: 13,
-                display: "block",
-                marginBottom: 4,
-              }}
-            >
-              Patient UHID *
-            </label>
-            <InputText
-              value={overrideForm.UHID}
-              onChange={(e) =>
-                setOverrideForm({
-                  ...overrideForm,
-                  UHID: e.target.value.toUpperCase(),
-                })
-              }
-              placeholder="UH00000001"
-              style={{ width: "100%" }}
-            />
-          </div>
-
-          <div>
-            <label
-              style={{
-                fontWeight: 600,
-                fontSize: 13,
-                display: "block",
-                marginBottom: 4,
-              }}
-            >
-              Override Price (₹) *
-              <span
-                style={{
-                  fontWeight: 400,
-                  color: "#6c757d",
-                  marginLeft: 8,
-                  fontSize: 11,
-                }}
-              >
-                Default: ₹{selInv?.defaultPrice?.toLocaleString("en-IN")}
-              </span>
-            </label>
-            <InputNumber
-              value={overrideForm.overridePrice}
-              onValueChange={(e) =>
-                setOverrideForm({ ...overrideForm, overridePrice: e.value })
-              }
-              mode="currency"
-              currency="INR"
-              locale="en-IN"
-              style={{ width: "100%" }}
-            />
-          </div>
-
-          <div>
-            <label
-              style={{
-                fontWeight: 600,
-                fontSize: 13,
-                display: "block",
-                marginBottom: 4,
-              }}
-            >
-              Reason
-            </label>
-            <InputText
-              value={overrideForm.reason}
-              onChange={(e) =>
-                setOverrideForm({ ...overrideForm, reason: e.target.value })
-              }
-              placeholder="e.g. Charity case, Staff discount"
-              style={{ width: "100%" }}
-            />
-          </div>
-
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <InputSwitch
-              checked={overrideForm.isOneTime}
-              onChange={(e) =>
-                setOverrideForm({ ...overrideForm, isOneTime: e.value })
-              }
-            />
-            <div>
-              <label style={{ fontWeight: 600, fontSize: 13 }}>
-                One-Time Override
-              </label>
-              <div style={{ fontSize: 11, color: "#6c757d" }}>
-                {overrideForm.isOneTime
-                  ? "Sirf ek baar use hoga, phir normal price lagegi"
-                  : "Jab tak manually hatao, tab tak active rahega"}
-              </div>
-            </div>
-          </div>
-        </div>
       </Dialog>
     </div>
   );
