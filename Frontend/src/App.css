@@ -311,3 +311,19 @@ body {
   position: relative;
   left: 106px;
 }
+
+
+
+
+
+
+
+.main-content {
+  margin-left: 260px;
+  transition: all 0.3s ease;
+  padding: 20px;
+}
+
+.main-content.expanded {
+  margin-left: 70px;
+}

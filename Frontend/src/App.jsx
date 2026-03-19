@@ -71,7 +71,7 @@ import BillsList from "./pages/billing/BillsList";
 import BillGeneration from "./pages/billing/Billgeneration";
 
 // ── New Billing System (billing-v3) ───────────────────────────
-import PatientBilling from "./Components/billing/patientBilling";
+import PatientBilling from "./Components/billing/PatientBilling";
 import ServiceMasterManager from "./Components/ServiceMaster/ServiceMasterManager";
 import MainPage from "./pages/mainPage/MainPage";
 // import { PopupProvider } from "./Components/contextapi/ContextApi";
@@ -80,7 +80,9 @@ export default function App() {
   const [isOpen, setIsOpen] = useState(false);
   const toggleSidebar = () => setIsOpen(!isOpen);
   const [collapsed, setCollapsed] = useState(false);
+  
   return (
+  
     <div
       style={{ marginLeft: collapsed ? "70px" : "230px", transition: "0.35s" }}
     >
