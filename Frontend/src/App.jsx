@@ -96,6 +96,7 @@ export default function App() {
 
             {/* ── Patient Registration ──────────────────────────── */}
             <Route path="/registration/:typedata" element={<Registration />} />
+ <Route path="/registration" element={<Registration />} />
 
             <Route
               path="/registration/:typedata/:id"
