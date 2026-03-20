@@ -77,24 +77,18 @@ import MainPage from "./pages/mainPage/MainPage";
 // import { PopupProvider } from "./Components/contextapi/ContextApi";
 
 export default function App() {
-  const [isOpen, setIsOpen] = useState(false);
-  const toggleSidebar = () => setIsOpen(!isOpen);
   const [collapsed, setCollapsed] = useState(false);
-  
-  return (
-  
-    <div
-      style={{ marginLeft: collapsed ? "70px" : "230px", transition: "0.35s" }}
-    >
-      <Router>
-      z  <Header toggleSidebar={toggleSidebar} />
-        <Sidebar isOpen={isOpen} toggleSidebar={toggleSidebar} />
 
+  return (
+    <div className={`main-content ${collapsed ? "expanded" : ""}`}>
+      <Router>
+        <Header />
+
+        <Sidebar collapsed={collapsed} setCollapsed={setCollapsed} />
         <div
-          className={`transition-all duration-300 ${isOpen ? "ml-64" : "ml-0"}`}
+          className={`transition-all duration-300 `}
           style={{ minHeight: "calc(100vh - 64px)", padding: "20px" }}
         >
-          
           <Routes>
             {/* ── Dashboard ─────────────────────────────────────── */}
             <Route path="/dashboard1" element={<Dashboard1 />} />
@@ -102,7 +96,7 @@ export default function App() {
 
             {/* ── Patient Registration ──────────────────────────── */}
             <Route path="/registration/:typedata" element={<Registration />} />
-
+            <Route path="/registration" element={<Registration />} />
             <Route
               path="/registration/:typedata/:id"
               element={<Registration />}
@@ -209,7 +203,6 @@ export default function App() {
             {/* <Route path="/" element={<Navigate to="/dashboard1" replace />} /> */}
             {/* <Route path="*" element={<Navigate to="/dashboard1" replace />} /> */}
           </Routes>
-        
         </div>
       </Router>
     </div>

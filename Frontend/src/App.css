@@ -318,12 +318,14 @@ body {
 
 
 
+/* MAIN CONTENT */
 .main-content {
   margin-left: 260px;
   transition: all 0.3s ease;
   padding: 20px;
 }
 
+/* WHEN SIDEBAR COLLAPSED */
 .main-content.expanded {
   margin-left: 70px;
 }

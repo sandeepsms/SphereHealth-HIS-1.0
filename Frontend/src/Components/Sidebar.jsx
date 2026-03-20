@@ -382,773 +382,394 @@
 //   );
 // }
 
-
-
-
-
-
-
-
-
-
-
-
-
-// import React, { useState } from "react";
-// import { useNavigate } from "react-router-dom";
-// import { PanelMenu } from "primereact/panelmenu";
-// import "primereact/resources/themes/lara-light-blue/theme.css";
-// import "primereact/resources/primereact.min.css";
-// import "primeicons/primeicons.css";
-
-// export default function Sidebar() {
-//   const navigate = useNavigate();
-//   const [collapsed, setCollapsed] = useState(false);
-
-//   const toggleSidebar = () => {
-//     setCollapsed(!collapsed);
-//   };
-
-//   const menuModel = [
-//     {
-//       label: "Patient Management",
-//       icon: "pi pi-users",
-//       items: [
-//         {
-//           label: "Registration",
-//           icon: "pi pi-user-plus",
-//           command: () => navigate("/registration"),
-//         },
-//         {
-//           label: "Find Patient",
-//           icon: "pi pi-search",
-//           command: () => navigate("/allpatient"),
-//         },
-//       ],
-//     },
-
-  
-
-//     {
-//       label: "Billing",
-//       icon: "pi pi-money-bill",
-//       items: [
-//         {
-//           label: "Bills List",
-//           icon: "pi pi-list",
-//           command: () => {
-//             navigate("/billing");
-//             toggleSidebar();
-//           },
-//         },
-//         {
-//           label: "Generate Bill",
-//           icon: "pi pi-file-plus",
-//           command: () => {
-//             navigate("/billing/create");
-//             toggleSidebar();
-//           },
-//         },
-//       ],
-//     },
-
-//     {
-//       label: "Patient Billing",
-//       icon: "pi pi-receipt",
-//       items: [
-//         {
-//           label: "Patient Bill",
-//           icon: "pi pi-user",
-//           command: () => navigate("/patient-billing"),
-//         },
-//         {
-//           label: "Service Master",
-//           icon: "pi pi-cog",
-//           command: () => navigate("/service-master"),
-//         },
-//       ],
-//     },
-
-//     {
-//       label: "Investigation Master",
-//       icon: "pi pi-flask",
-//       command: () => {
-//         navigate("/investigation-master");
-//         toggleSidebar();
-//       },
-//     },
-//     {
-//       label: "Investigation Orders",
-//       icon: "pi pi-list",
-//       command: () => {
-//         navigate("/investigation-orders");
-//         toggleSidebar();
-//       },
-//     },
-//     {
-//       label: "Lab Staff",
-//       icon: "pi pi-users",
-//       command: () => {
-//         navigate("/lab-staff");
-//         toggleSidebar();
-//       },
-//     },
-
-//     {
-//       label: "Department",
-//       icon: "pi pi-sitemap",
-//       items: [
-//         {
-//           label: "Manage Departments",
-//           icon: "pi pi-list",
-//           command: () => {
-//             navigate("/department");
-//             toggleSidebar();
-//           },
-//         },
-//       ],
-//     },
-
-//     {
-//       label: "Master Data",
-//       icon: "pi pi-database",
-//       items: [
-//         {
-//           label: "Buildings",
-//           icon: "pi pi-building",
-//           command: () => {
-//             navigate("/buildings");
-//             toggleSidebar();
-//           },
-//         },
-
-//         {
-//           label: "Floors",
-//           icon: "pi pi-arrows-v",
-//           command: () => {
-//             navigate("/floors");
-//             toggleSidebar();
-//           },
-//         },
-
-//         {
-//           label: "Wards",
-//           icon: "pi pi-home",
-//           command: () => {
-//             navigate("/wards");
-//             toggleSidebar();
-//           },
-//         },
-//         {
-//           label: "Rooms",
-//           icon: "pi pi-box",
-//           command: () => {
-//             navigate("/rooms");
-//             toggleSidebar();
-//           },
-//         },
-//         {
-//           label: "Room Category",
-//           icon: "pi pi-th-large",
-//           command: () => {
-//             navigate("/roomcategory");
-//             toggleSidebar();
-//           },
-//         },
-//       ],
-//     },
-
-//     {
-//       label: "Bed Management",
-//       icon: "pi pi-table",
-//       items: [
-//         {
-//           label: "Manage Beds",
-//           icon: "pi pi-list",
-//           command: () => {
-//             navigate("/beds");
-//             toggleSidebar();
-//           },
-//         },
-//         {
-//           label: "Bed Visual Layout",
-//           icon: "pi pi-eye",
-//           command: () => {
-//             navigate("/bed-visual");
-//             toggleSidebar();
-//           },
-//         },
-//       ],
-//     },
-
-//     {
-//       label: "Doctor Management",
-//       icon: "pi pi-user-edit",
-//       items: [
-//         {
-//           label: "Create Doctor",
-//           icon: "pi pi-user-plus",
-//           command: () => {
-//             navigate("/doctors");
-//             toggleSidebar();
-//           },
-//         },
-//       ],
-//     },
-
-//     {
-//       label: "TPA Services",
-//       icon: "pi pi-briefcase",
-//       items: [
-//         {
-//           label: "Add Service",
-//           icon: "pi pi-plus-circle",
-//           command: () => {
-//             navigate("/addservice");
-//             toggleSidebar();
-//           },
-//         },
-//         {
-//           label: "Add TPA",
-//           icon: "pi pi-building",
-//           command: () => {
-//             navigate("/addtpa");
-//             toggleSidebar();
-//           },
-//         },
-//       ],
-//     },
-
-//     {
-//       label: "Hospital Charges",
-//       icon: "pi pi-dollar",
-//       items: [
-//         {
-//           label: "Charges List",
-//           icon: "pi pi-list",
-//           command: () => {
-//             navigate("/hospital-charges");
-//             toggleSidebar();
-//           },
-//         },
-//         {
-//           label: "Create Charges",
-//           icon: "pi pi-plus",
-//           command: () => {
-//             navigate("/hospital-charges/create");
-//             toggleSidebar();
-//           },
-//         },
-//       ],
-//     },
-//   ];
-
-//   return (
-//     <div
-//       className={`sidebar ${collapsed ? "collapsed" : ""}`}
-//       style={{
-//         width: collapsed ? "75px" : "260px",
-//         height: "100vh",
-//         position: "fixed",
-//         top: 0,
-//         left: 0,
-//         background: "#ffffff",
-//         transition: "width 0.35s ease",
-//         boxShadow: "2px 0 15px rgba(0,0,0,0.06)",
-//         overflowX: "hidden",
-//         zIndex: 1000,
-//       }}
-//     >
-//       {/* HEADER */}
-//       <div className="sidebar-header">
-//         {!collapsed && <h2 className="logo">HMS</h2>}
-
-//         <i className="pi pi-bars toggle-btn" onClick={toggleSidebar} />
-//       </div>
-
-//       {/* MENU */}
-//       <div className="menu-container">
-//         <PanelMenu model={menuModel} />
-//       </div>
-
-//       {/* FOOTER */}
-//       {!collapsed && <div className="sidebar-footer">Version 1.0</div>}
-
-//       <style>{`
-
-//       .sidebar-header{
-//         padding:20px;
-//         display:flex;
-//         align-items:center;
-//         justify-content:space-between;
-//         border-bottom:1px solid #f1f1f1;
-//         margin-top:75px;
-//       }
-
-//       .logo{
-//         font-size:20px;
-//         font-weight:700;
-//         color:#000000;
-//         margin:0;
-//       }
-
-//       .toggle-btn{
-//         font-size:18px;
-//         cursor:pointer;
-//         color:#000000;
-//       }
-
-//       .menu-container{
-//         padding-top:10px;
-//       }
-
-//       /* PANEL MENU STYLE */
-
-//       .sidebar .p-panelmenu-header-link{
-//         padding:14px 20px !important;
-//         border-radius:8px;
-//         font-weight:600;
-//         border:none !important;
-//         display:flex;
-//         align-items:center;
-//         gap:12px;
-//         transition:all 0.25s;
-//       }
-//         .p-menuitem-text {
-//         color:#000000
-//         }
-
-//       .sidebar .p-panelmenu-header-link:hover{
-//         background:#f5f7fb !important;
-//         color:#000000 !important;
-//       }
-
-//       .sidebar .p-menuitem-link{
-//         padding:10px 20px 10px 42px !important;
-//         border-radius:6px;
-//         font-size:14px;
-//       }
-
-//       .sidebar .p-menuitem-link:hover{
-//         background:#eef2ff !important;
-//         color:#000000 !important;
-//       }
-
-//       .sidebar .p-menuitem-icon{
-//         font-size:17px;
-//         color:#000000 !important;
-//       }
-
-//       /* COLLAPSED MODE */
-
-//       .sidebar.collapsed .p-menuitem-text,
-//       .sidebar.collapsed .p-panelmenu-header-label{
-//         display:none !important;
-       
-//       }
-
-//       .sidebar.collapsed .p-panelmenu-header-link{
-//         justify-content:center !important;
-//         padding:16px 0 !important;
-//       }
-
-//       .sidebar.collapsed .p-menuitem-link{
-//         justify-content:center !important;
-//         padding:12px 0 !important;
-//       }
-
-//       .sidebar.collapsed .p-menuitem-icon{
-//         margin:0 !important;
-//         font-size:18px;
-//       }
-
-//       /* FOOTER */
-
-//       .sidebar-footer{
-//         position:absolute;
-//         bottom:20px;
-//         width:100%;
-//         text-align:center;
-//         font-size:12px;
-//         color:#000000;
-//       }
-
-//       `}</style>
-//     </div>
-//   );
-// }
-
-
-
-
-
-
-
-
-
-
-
-
-
-import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { PanelMenu } from "primereact/panelmenu";
-import "primereact/resources/themes/lara-light-blue/theme.css";
-import "primereact/resources/primereact.min.css";
-import "primeicons/primeicons.css";
-
-export default function Sidebar() {
-  const navigate = useNavigate();
-  const [collapsed, setCollapsed] = useState(false);
-
-  const toggleSidebar = () => {
-    setCollapsed((prev) => !prev);
-  };
-
-   const menuModel = [
-    {
-      label: "Patient Management",
-      icon: "pi pi-users",
-      items: [
-        {
-          label: "Registration",
-          icon: "pi pi-user-plus",
-          command: () => navigate("/registration"),
-        },
-        {
-          label: "Find Patient",
-          icon: "pi pi-search",
-          command: () => navigate("/allpatient"),
-        },
-      ],
-    },
-
-  
-
-    {
-      label: "Billing",
-      icon: "pi pi-money-bill",
-      items: [
-        {
-          label: "Bills List",
-          icon: "pi pi-list",
-          command: () => {
-            navigate("/billing");
-            toggleSidebar();
+  import React, { useState } from "react";
+  import { useNavigate } from "react-router-dom";
+  import { PanelMenu } from "primereact/panelmenu";
+  import "primereact/resources/themes/lara-light-blue/theme.css";
+  import "primereact/resources/primereact.min.css";
+  import "primeicons/primeicons.css";
+
+  export default function Sidebar({ collapsed, setCollapsed }) {
+    const navigate = useNavigate();
+    // const [collapsed, setCollapsed] = useState(false);
+
+    const toggleSidebar = () => {
+      setCollapsed((prev) => !prev);
+    };
+
+    const menuModel = [
+      {
+        label: "Patient Management",
+        icon: "pi pi-users",
+        items: [
+          {
+            label: "Registration",
+            icon: "pi pi-user-plus",
+            command: () => navigate("/registration"),
           },
-        },
-        {
-          label: "Generate Bill",
-          icon: "pi pi-file-plus",
-          command: () => {
-            navigate("/billing/create");
-            toggleSidebar();
+          {
+            label: "Find Patient",
+            icon: "pi pi-search",
+            command: () => navigate("/allpatient"),
           },
-        },
-      ],
-    },
-
-    {
-      label: "Patient Billing",
-      icon: "pi pi-receipt",
-      items: [
-        {
-          label: "Patient Bill",
-          icon: "pi pi-user",
-          command: () => navigate("/patient-billing"),
-        },
-        {
-          label: "Service Master",
-          icon: "pi pi-cog",
-          command: () => navigate("/service-master"),
-        },
-
-         {
-      label: "Investigation Master",
-      icon: "pi pi-flask",
-      command: () => {
-        navigate("/investigation-master");
-        toggleSidebar();
+        ],
       },
-    },
-    {
-      label: "Investigation Orders",
-      icon: "pi pi-list",
-      command: () => {
-        navigate("/investigation-orders");
-        toggleSidebar();
+
+      {
+        label: "Billing",
+        icon: "pi pi-money-bill",
+        items: [
+          {
+            label: "Bills List",
+            icon: "pi pi-list",
+            command: () => {
+              navigate("/billing");
+              toggleSidebar();
+            },
+          },
+          {
+            label: "Generate Bill",
+            icon: "pi pi-file-plus",
+            command: () => {
+              navigate("/billing/create");
+              toggleSidebar();
+            },
+          },
+        ],
       },
-    },
-    {
-      label: "Lab Staff",
-      icon: "pi pi-users",
-      command: () => {
-        navigate("/lab-staff");
-        toggleSidebar();
+
+      {
+        label: "Patient Billing",
+        icon: "pi pi-receipt",
+        items: [
+          {
+            label: "Patient Bill",
+            icon: "pi pi-user",
+            command: () => navigate("/patient-billing"),
+          },
+          {
+            label: "Service Master",
+            icon: "pi pi-cog",
+            command: () => navigate("/service-master"),
+          },
+
+          {
+            label: "Investigation Master",
+            icon: "pi pi-flask",
+            command: () => {
+              navigate("/investigation-master");
+              toggleSidebar();
+            },
+          },
+          {
+            label: "Investigation Orders",
+            icon: "pi pi-list",
+            command: () => {
+              navigate("/investigation-orders");
+              toggleSidebar();
+            },
+          },
+          {
+            label: "Lab Staff",
+            icon: "pi pi-users",
+            command: () => {
+              navigate("/lab-staff");
+              toggleSidebar();
+            },
+          },
+        ],
       },
-    },
-      ],
-    },
 
-   
-
-    {
-      label: "Department",
-      icon: "pi pi-sitemap",
-      items: [
-        {
-          label: "Manage Departments",
-          icon: "pi pi-list",
-          command: () => {
-            navigate("/department");
-            toggleSidebar();
+      {
+        label: "Department",
+        icon: "pi pi-sitemap",
+        items: [
+          {
+            label: "Manage Departments",
+            icon: "pi pi-list",
+            command: () => {
+              navigate("/department");
+              toggleSidebar();
+            },
           },
-        },
-      ],
-    },
+        ],
+      },
 
-    {
-      label: "Master Data",
-      icon: "pi pi-database",
-      items: [
-        {
-          label: "Buildings",
-          icon: "pi pi-building",
-          command: () => {
-            navigate("/buildings");
-            toggleSidebar();
+      {
+        label: "Master Data",
+        icon: "pi pi-database",
+        items: [
+          {
+            label: "Buildings",
+            icon: "pi pi-building",
+            command: () => {
+              navigate("/buildings");
+              toggleSidebar();
+            },
           },
-        },
 
-        {
-          label: "Floors",
-          icon: "pi pi-arrows-v",
-          command: () => {
-            navigate("/floors");
-            toggleSidebar();
+          {
+            label: "Floors",
+            icon: "pi pi-arrows-v",
+            command: () => {
+              navigate("/floors");
+              toggleSidebar();
+            },
           },
-        },
 
-        {
-          label: "Wards",
-          icon: "pi pi-home",
-          command: () => {
-            navigate("/wards");
-            toggleSidebar();
+          {
+            label: "Wards",
+            icon: "pi pi-home",
+            command: () => {
+              navigate("/wards");
+              toggleSidebar();
+            },
           },
-        },
-        {
-          label: "Rooms",
-          icon: "pi pi-box",
-          command: () => {
-            navigate("/rooms");
-            toggleSidebar();
+          {
+            label: "Rooms",
+            icon: "pi pi-box",
+            command: () => {
+              navigate("/rooms");
+              toggleSidebar();
+            },
           },
-        },
-        {
-          label: "Room Category",
-          icon: "pi pi-th-large",
-          command: () => {
-            navigate("/roomcategory");
-            toggleSidebar();
+          {
+            label: "Room Category",
+            icon: "pi pi-th-large",
+            command: () => {
+              navigate("/roomcategory");
+              toggleSidebar();
+            },
           },
-        },
-      ],
-    },
+        ],
+      },
 
-    {
-      label: "Bed Management",
-      icon: "pi pi-table",
-      items: [
-        {
-          label: "Manage Beds",
-          icon: "pi pi-list",
-          command: () => {
-            navigate("/beds");
-            toggleSidebar();
+      {
+        label: "Bed Management",
+        icon: "pi pi-table",
+        items: [
+          {
+            label: "Manage Beds",
+            icon: "pi pi-list",
+            command: () => {
+              navigate("/beds");
+              toggleSidebar();
+            },
           },
-        },
-        {
-          label: "Bed Visual Layout",
-          icon: "pi pi-eye",
-          command: () => {
-            navigate("/bed-visual");
-            toggleSidebar();
+          {
+            label: "Bed Visual Layout",
+            icon: "pi pi-eye",
+            command: () => {
+              navigate("/bed-visual");
+              toggleSidebar();
+            },
           },
-        },
-      ],
-    },
+        ],
+      },
 
-    {
-      label: "Doctor Management",
-      icon: "pi pi-user-edit",
-      items: [
-        {
-          label: "Create Doctor",
-          icon: "pi pi-user-plus",
-          command: () => {
-            navigate("/doctors");
-            toggleSidebar();
+      {
+        label: "Doctor Management",
+        icon: "pi pi-user-edit",
+        items: [
+          {
+            label: "Create Doctor",
+            icon: "pi pi-user-plus",
+            command: () => {
+              navigate("/doctors");
+              toggleSidebar();
+            },
           },
-        },
-      ],
-    },
+        ],
+      },
 
-    {
-      label: "TPA Services",
-      icon: "pi pi-briefcase",
-      items: [
-        {
-          label: "Add Service",
-          icon: "pi pi-plus-circle",
-          command: () => {
-            navigate("/addservice");
-            toggleSidebar();
+      {
+        label: "TPA Services",
+        icon: "pi pi-briefcase",
+        items: [
+          {
+            label: "Add Service",
+            icon: "pi pi-plus-circle",
+            command: () => {
+              navigate("/addservice");
+              toggleSidebar();
+            },
           },
-        },
-        {
-          label: "Add TPA",
-          icon: "pi pi-building",
-          command: () => {
-            navigate("/addtpa");
-            toggleSidebar();
+          {
+            label: "Add TPA",
+            icon: "pi pi-building",
+            command: () => {
+              navigate("/addtpa");
+              toggleSidebar();
+            },
           },
-        },
-      ],
-    },
+        ],
+      },
 
-    {
-      label: "Hospital Charges",
-      icon: "pi pi-dollar",
-      items: [
-        {
-          label: "Charges List",
-          icon: "pi pi-list",
-          command: () => {
-            navigate("/hospital-charges");
-            toggleSidebar();
+      {
+        label: "Hospital Charges",
+        icon: "pi pi-dollar",
+        items: [
+          {
+            label: "Charges List",
+            icon: "pi pi-list",
+            command: () => {
+              navigate("/hospital-charges");
+              toggleSidebar();
+            },
           },
-        },
-        {
-          label: "Create Charges",
-          icon: "pi pi-plus",
-          command: () => {
-            navigate("/hospital-charges/create");
-            toggleSidebar();
+          {
+            label: "Create Charges",
+            icon: "pi pi-plus",
+            command: () => {
+              navigate("/hospital-charges/create");
+              toggleSidebar();
+            },
           },
-        },
-      ],
-    },
-  ];
+        ],
+      },
+    ];
 
+    return (
+      <div className={`sidebar ${collapsed ? "collapsed" : ""}`}>
+        {/* HEADER */}
+        <div className="header">
+          {!collapsed && <h3>HMS</h3>}
+          <i
+            className={`pi ${collapsed ? "pi-bars" : "pi-times"} toggle`}
+            onClick={toggleSidebar}
+          ></i>
+        </div>
 
-  return (
-    <div className={`sidebar ${collapsed ? "collapsed" : ""}`}>
-      
-      {/* HEADER */}
-      <div className="header">
-        {!collapsed && <h3>HMS</h3>}
-        <i  className={`pi ${collapsed ? "pi-bars" : "pi-times"} toggle`}
-    onClick={toggleSidebar}></i>
-      </div>
+        {/* MENU */}
+        <div className="menu-wrapper">
+          <PanelMenu model={menuModel} />
+        </div>
 
-      {/* MENU */}
-      <div className="menu-wrapper">
-        <PanelMenu model={menuModel} />
-      </div>
+        <style>{`
+          .sidebar {
+          margin-left:250px;
+          margin-top:61px;
+            width: 260px;
+            height: 100vh;
+            background: #fff;
+            transition: all 0.3s ease;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.08);
+            overflow: hidden;
+            position:fixed;
+          }
 
-      <style>{`
-        .sidebar {
-        margin-left:255px;
-        margin-top:70px;
-          width: 260px;
-          height: 100vh;
-          background: #fff;
-          transition: all 0.3s ease;
-          box-shadow: 2px 0 10px rgba(0,0,0,0.08);
-          overflow: hidden;
-          postion:fixed;
-        }
+          .sidebar.collapsed {
+            width: 70px !important;
+            
+          }
 
-        .sidebar.collapsed {
-          width: 70px !important;
-        }
+          /* FIX PRIME MENU WIDTH */
+          .menu-wrapper .p-panelmenu {
+            width: 100% !important;
+          }
 
-        /* FIX PRIME MENU WIDTH */
-        .menu-wrapper .p-panelmenu {
-          width: 100% !important;
-        }
+          .sidebar.collapsed .menu-wrapper .p-panelmenu {
+            width: 70px !important;
+          } 
 
-        .sidebar.collapsed .menu-wrapper .p-panelmenu {
-          width: 70px !important;
-        } 
+          /* HEADER */
+          .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px;
+            border-bottom: 1px solid #eee;
+            color:White;
+            background-color:#06a4c4
+            
+          }
 
-        /* HEADER */
-        .header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 15px;
-          border-bottom: 1px solid #eee;
-          color:black;
-        }
+          .toggle {
+            cursor: pointer;
+            font-size: 20px;
+            margin-left:10px;
+          }
 
-        .toggle {
-          cursor: pointer;
-          font-size: 20px;
-          margin-left:10px;
-        }
+          /* MENU STYLING */
+          .p-panelmenu-header-link {
+            display: flex !important;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 15px !important;
+            border-radius: 8px;
+            
+            
+          }
 
-        /* MENU STYLING */
-        .p-panelmenu-header-link {
-          display: flex !important;
-          align-items: center;
-          gap: 10px;
-          padding: 12px 15px !important;
-          border-radius: 8px;
-           color:black;
-           
-        }
-
-        .p-menuitem-link {
-          display: flex !important;
-          align-items: center;
-          gap: 10px;
-          padding: 10px 15px 10px 40px !important;
-          border-radius: 6px;
+          .p-menuitem-link {
+            display: flex !important;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 15px 10px 40px !important;
+            border-radius: 6px;
           
-        }
+          }
 
-        /* ICON */
-        .p-menuitem-icon {
-          font-size: 20px;
-          min-width: 20px;
-          text-align: center;
+          /* ICON */
+          .p-menuitem-icon {
+            font-size: 20px;
+            min-width: 20px;
+            text-align: center;
+            
 
-        }
+          }
 
-        /* 🔥 COLLAPSE FIX */
-        .sidebar.collapsed .p-menuitem-text,
-        .sidebar.collapsed .p-panelmenu-header-label {
-          display: none !important;
-        }
+          /* 🔥 COLLAPSE FIX */
+          .sidebar.collapsed .p-menuitem-text,
+          .sidebar.collapsed .p-panelmenu-header-label {
+            display: none !important;
+          
+            
+          
+          }
 
-        .sidebar.collapsed .p-panelmenu-header-link {
-          justify-content: center !important;
-          align-items:center;
-          padding: 12px 0 !important;
-        }
+  /* TEXT COLOR BLACK + REMOVE UNDERLINE */
+  .p-menuitem-text,
+  .p-panelmenu-header-label {
+    color: black !important;
+    text-decoration: none !important;
+  }
 
-        .sidebar.collapsed .p-menuitem-link {
-          justify-content: center !important;
-          padding: 10px 0 !important;
-        }
+  /* REMOVE LINK UNDERLINE */
+  .p-menuitem-link,
+  .p-panelmenu-header-link {
+    text-decoration: none !important;
+  }
 
-        .sidebar.collapsed .p-menuitem-icon {
-          margin: 0 !important;
-        }
+  /* HOVER EFFECT */
+  .p-menuitem-link:hover,
+  .p-panelmenu-header-link:hover {
+    background-color: #f5f5f5 !important;
+    color: black !important;
+    
+  }
 
-      `}</style>
-    </div>
-  );
-}
+
+
+
+          .sidebar.collapsed .p-panelmenu-header-link {
+            justify-content: center !important;
+            align-items:center;
+            padding: 12px 0 !important;
+            
+          }
+
+          .sidebar.collapsed .p-menuitem-link {
+            justify-content: center !important;
+            padding: 10px 0 !important;
+          
+          }
+
+          .sidebar.collapsed .p-menuitem-icon {
+            margin: 0 !important;
+          }
+
+        `}</style>
+      </div>
+    );
+  }
