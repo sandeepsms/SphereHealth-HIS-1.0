@@ -7,12 +7,12 @@ export default function Header({ toggleSidebar }) {
       {/* Left Section: Sidebar Toggle + Logo */}
       <div className="d-flex align-items-center">
         {/* Sidebar Toggle Button */}
-        <button
+        {/* <button
           onClick={toggleSidebar}
           className="btn btn-outline-light btn-sm me-2"
         >
           ☰
-        </button>
+        </button> */}
 
         {/* Logo */}
         <img

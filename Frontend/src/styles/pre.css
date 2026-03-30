@@ -7,22 +7,40 @@
   margin: auto;
   background: #f5f5f5;
   padding: 14px;
+<<<<<<< HEAD
+=======
+
+>>>>>>> 2a3c3f761787966ce75c6915fedd1267dd3123d6
 }
 
 #printArea {
   width: 210mm;
   min-height: 297mm;
+<<<<<<< HEAD
   padding: 10mm 12mm;
+=======
+  padding: 14mm 12mm;
+>>>>>>> 2a3c3f761787966ce75c6915fedd1267dd3123d6
   background: #fff;
   box-sizing: border-box;
 }
 
 .prescription-page {
   font-family: "Times New Roman", serif;
+<<<<<<< HEAD
   font-size: 13px;
   color: #000;
   line-height: 1.4;
+=======
+  font-size: 15px;
+  color: #000;
+  line-height: 1.5;
+>>>>>>> 2a3c3f761787966ce75c6915fedd1267dd3123d6
 }
+
+/* ===============================
+   HEADER
+================================ */
 
 /* ===============================
    HEADER
@@ -30,6 +48,7 @@
 
 .prescription-header-professional {
   display: flex;
+<<<<<<< HEAD
   justify-content: space-between;
   align-items: flex-start;
   padding-bottom: 8px;
@@ -40,12 +59,27 @@
 /* LEFT */
 .header-left {
   width: 48%;
+=======
+  justify-content: space-evenly;
+  align-items: flex-start;
+
+  padding-bottom: 10px;
+  margin-bottom: 16px;
+}
+
+
+/* LEFT */
+
+.header-left {
+  width: 45%;
+>>>>>>> 2a3c3f761787966ce75c6915fedd1267dd3123d6
 }
 
 .hospital-row {
   display: flex;
   align-items: center;
   gap: 10px;
+<<<<<<< HEAD
   margin-bottom: 6px;
 }
 
@@ -57,10 +91,21 @@
   flex-shrink: 0;
   margin: 0;
   padding: 0;
+=======
+}
+
+.hospital-logo {
+  width: 8rem;
+  height: 8rem;
+  position: relative;
+  right: 40px;
+   bottom: 30px;
+>>>>>>> 2a3c3f761787966ce75c6915fedd1267dd3123d6
 }
 
 .hospital-text {
   display: flex;
+<<<<<<< HEAD
   flex-direction: column;
   justify-content: center;
 }
@@ -89,6 +134,58 @@
 
 .contact-info p {
   margin: 1px 0;
+=======
+  align-items: center;
+}
+
+.hospital-name {
+  font-size: 22px;
+  color: #d00000;
+  font-weight: bold;
+  margin: 0;
+  line-height: 1.2;
+    position: relative;
+    right: 60px;
+    bottom: 40px;
+}
+
+
+/* CONTACT */
+
+.contact-info {
+  margin-top: 8px;
+  font-size: 14px;
+  line-height: 1.6;
+    position: relative;
+
+  bottom: 30px;
+}
+
+.contact-info p {
+  margin: 2px 0;
+}
+
+
+
+/* RIGHT */
+
+.header-right {
+  width: 45%;
+  border-left: 2px solid #d00000;
+  padding-left: 12px;
+position: relative;
+right: 50px;
+}
+
+
+
+/* ===============================
+   PATIENT INFO
+================================ */
+
+.patient-info-compact {
+  padding-left: 4px;
+>>>>>>> 2a3c3f761787966ce75c6915fedd1267dd3123d6
 }
 
 /* RIGHT */
@@ -106,14 +203,20 @@
   font-size: 12px;
   font-weight: bold;
   color: #d00000;
+<<<<<<< HEAD
   padding-bottom: 3px;
   margin-bottom: 4px;
   margin-top: 0;
+=======
+  padding-bottom: 4px;
+  margin-bottom: 6px;
+>>>>>>> 2a3c3f761787966ce75c6915fedd1267dd3123d6
   border-bottom: 1px solid #d00000;
 }
 
 .info-table {
   width: 100%;
+<<<<<<< HEAD
   border-collapse: collapse;
 }
 
@@ -128,16 +231,33 @@
   width: 25%;
   color: #444;
   white-space: nowrap;
+=======
+}
+
+.info-table td {
+  padding: 4px 5px;
+  font-size: 13px;
+}
+
+.label-cell {
+  font-weight: bold;
+  width: 25%;
+>>>>>>> 2a3c3f761787966ce75c6915fedd1267dd3123d6
 }
 
 .value-cell {
   width: 25%;
+<<<<<<< HEAD
+=======
+  white-space: nowrap;
+>>>>>>> 2a3c3f761787966ce75c6915fedd1267dd3123d6
 }
 
 /* ===============================
    SECTIONS
 ================================ */
 
+<<<<<<< HEAD
 section {
   margin-bottom: 10px;
   word-wrap: break-word;
@@ -151,6 +271,68 @@ section {
 
 .clinical-item strong {
   font-size: 12px;
+=======
+
+/* ===============================
+   SECTIONS
+================================ */
+
+section {
+  margin-bottom: 14px;
+  word-wrap: break-word;
+overflow-wrap: break-word;
+}
+
+.clinical-item {
+  margin-bottom: 6px;
+}
+
+.clinical-item p {
+  margin: 4px 0;
+  line-height: 1.5;
+}
+
+
+
+/* ===============================
+   VITALS
+================================ */
+
+.vitals-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.vital-badge {
+  border: 1px solid #d00000;
+  padding: 4px 10px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+
+
+/* ===============================
+   MEDICINE TABLE
+================================ */
+
+.medicine-table-professional {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.medicine-table-professional th {
+  background: #d00000;
+  color: #fff;
+  font-size: 12px;
+  padding: 6px;
+}
+
+.medicine-table-professional td {
+  border: 1px solid #ccc;
+  padding: 6px;
+>>>>>>> 2a3c3f761787966ce75c6915fedd1267dd3123d6
 }
 
 .clinical-item p {
@@ -247,6 +429,32 @@ section {
    SIGNATURE
 ================================ */
 
+/* ===============================
+   INVESTIGATION TABLE
+================================ */
+
+.investigations-section table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.investigations-section table th {
+  background: #d00000;
+  color: white;
+  padding: 6px;
+}
+
+.investigations-section table td {
+  border: 1px solid #ccc;
+  padding: 6px;
+}
+
+
+
+/* ===============================
+   SIGNATURE
+================================ */
+
 .doctor-signature-professional {
   margin-top: 20px;
   display: flex;
@@ -254,14 +462,21 @@ section {
 }
 
 .signature-line {
+<<<<<<< HEAD
   width: 180px;
   border-top: 2px solid #d00000;
   margin-top: 20px;
   margin-bottom: 4px;
+=======
+  width: 200px;
+  border-top: 2px solid #d00000;
+  margin-top: 20px;
+>>>>>>> 2a3c3f761787966ce75c6915fedd1267dd3123d6
 }
 
 .signature-label {
   color: #d00000;
+<<<<<<< HEAD
   font-size: 11px;
   text-align: center;
 }
@@ -273,17 +488,35 @@ section {
 
 /* ===============================
    PRINT SETTINGS
+=======
+  font-size: 12px;
+  position: relative;
+  right: 35px;
+}
+
+
+
+/* ===============================
+   PERFECT PRINT SETTINGS
+>>>>>>> 2a3c3f761787966ce75c6915fedd1267dd3123d6
 ================================ */
 
 @media print {
 
   @page {
     size: A4;
+<<<<<<< HEAD
     margin: 8mm;
   }
 
   html,
   body {
+=======
+    margin: 10mm;
+  }
+
+  html, body {
+>>>>>>> 2a3c3f761787966ce75c6915fedd1267dd3123d6
     margin: 0;
     padding: 0;
     background: white;
@@ -308,24 +541,65 @@ section {
   #printArea {
     width: 210mm;
     min-height: 297mm;
+<<<<<<< HEAD
     padding: 8mm 10mm;
+=======
+    padding: 14mm 12mm;
+>>>>>>> 2a3c3f761787966ce75c6915fedd1267dd3123d6
     box-sizing: border-box;
   }
 
   body {
     font-family: "Times New Roman", serif;
+<<<<<<< HEAD
     font-size: 11px;
+=======
+    font-size: 13px;
+>>>>>>> 2a3c3f761787966ce75c6915fedd1267dd3123d6
     color: #000;
   }
 
   section {
+<<<<<<< HEAD
     margin-bottom: 8px;
+=======
+    margin-bottom: 12px;
+>>>>>>> 2a3c3f761787966ce75c6915fedd1267dd3123d6
     page-break-inside: avoid;
   }
 
   table {
     width: 100%;
     border-collapse: collapse !important;
+<<<<<<< HEAD
+=======
+  }
+
+  th, td {
+    padding: 6px !important;
+    font-size: 12px !important;
+    color: #000 !important;
+  }
+
+  .medicine-table-professional th {
+    background: #d00000 !important;
+    color: white !important;
+  }
+
+  .investigations-section table th {
+    background: #d00000 !important;
+    color: white !important;
+  }
+
+  table, tr, td, th {
+    page-break-inside: avoid !important;
+  }
+
+  .doctor-signature-professional {
+    margin-top: 25px;
+    display: flex;
+    justify-content: space-between;
+>>>>>>> 2a3c3f761787966ce75c6915fedd1267dd3123d6
   }
 
   th,

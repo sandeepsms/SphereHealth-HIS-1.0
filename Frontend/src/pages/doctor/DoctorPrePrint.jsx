@@ -3,11 +3,16 @@ import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "primereact/button";
 import { toast } from "react-toastify";
 import logo from "../../assets/BIMSLOGO.png";
+
+// import logo from "../../../src/assets/logowebsite11.png"
 import { prescriptionService } from "../../Services/doctors/prescriptionService";
+// import "../../styles/PrintStyles.css";
 import "../../../css/PrintStyles.css";
-import "../../styles/pre.css";
+
 import jsPDF from "jspdf";
+import "../../styles/pre.css";
 import html2canvas from "html2canvas";
+import { tpaServiceService } from "../../Services/tpa/tpaServiceService";
 
 function DoctorPrePrint() {
   const [prescription, setPrescription] = useState(null);
@@ -15,6 +20,35 @@ function DoctorPrePrint() {
   const { UHID } = useParams();
   const navigate = useNavigate();
   const printRef = useRef();
+
+  //  const fetchTPAServices = (tpaId) => {
+  //     console.log("Fetching TPA Services for TPA ID:", tpaId);
+
+  //     tpaServiceService
+  //       .getTPAServiceById(tpaId)
+  //       .then((res) => {
+  //         console.log("TPA Services Response:", res);
+
+  //         const serviceArray = res.data?.service || res.service || [];
+
+  //         const formattedOptions = serviceArray.map((item) => ({
+  //           // label: [item.Name,item.Totalamount],
+  //           label: item.Name,
+  //           value: item._id,
+  //           // price: item.Totalamount,
+  //         }));
+
+  //         console.log("Formatted Service Options:", formattedOptions);
+  //         setServiceOptions(formattedOptions);
+  //       })
+  //       .catch((err) => {
+  //         console.error("❌ Error fetching TPA services:", err);
+  //       });
+  //   };
+
+  //   useEffect(()=>{
+  //     fetchTPAServices();
+  //   },[]);
 
   useEffect(() => {
     if (!UHID) {
@@ -29,16 +63,21 @@ function DoctorPrePrint() {
     try {
       setLoading(true);
       const response = await prescriptionService.getPrescriptionsByUHID(UHID);
+      console.log(
+        response.data?.referredBy,
+        "ddddddddddddddsfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      );
+
       if (response.success) {
-        const data = Array.isArray(response.data)
+        const prescriptionData = Array.isArray(response.data)
           ? response.data[0]
           : response.data;
-        setPrescription(data || null);
+        setPrescription(prescriptionData || null);
       } else {
         toast.error("No prescription found for this UHID");
         setTimeout(() => navigate(-1), 2000);
       }
-    } catch {
+    } catch (error) {
       toast.error("Failed to load prescription");
       setTimeout(() => navigate(-1), 2000);
     } finally {
@@ -46,49 +85,82 @@ function DoctorPrePrint() {
     }
   };
 
-  const formatDate = (d) =>
-    d ? new Date(d).toLocaleDateString("en-IN") : "N/A";
-
-  const calculateAge = (dob) => {
-    if (!dob) return "N/A";
-    const b = new Date(dob),
-      t = new Date();
-    let a = t.getFullYear() - b.getFullYear();
-    if (
-      t.getMonth() - b.getMonth() < 0 ||
-      (t.getMonth() === b.getMonth() && t.getDate() < b.getDate())
-    )
-      a--;
-    return a > 0 ? `${a} Years` : "N/A";
+  const formatDate = (dateString) => {
+    if (!dateString) return "N/A";
+    const date = new Date(dateString);
+    return date.toLocaleDateString("en-IN");
   };
 
+  const calculateAge = (dateOfBirth) => {
+    if (!dateOfBirth) return "N/A";
+    const dob = new Date(dateOfBirth);
+    const today = new Date();
+    let age = today.getFullYear() - dob.getFullYear();
+    const monthDiff = today.getMonth() - dob.getMonth();
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) {
+      age--;
+    }
+    return age > 0 ? `${age} Years` : "N/A";
+  };
+
+  const patientAge =
+    prescription?.patient?.age ||
+    prescription?.age ||
+    calculateAge(prescription?.patient?.dateOfBirth);
+
+  // ////////==== PDF Download Function ////////====
   const handleDownloadPDF = async () => {
     if (!printRef.current) return;
+
     try {
-      const canvas = await html2canvas(printRef.current, {
+      const element = printRef.current;
+
+      const canvas = await html2canvas(element, {
         scale: 3,
         useCORS: true,
         backgroundColor: "#ffffff",
       });
+
       const imgData = canvas.toDataURL("image/jpeg", 1.0);
+
       const pdf = new jsPDF("p", "mm", "a4");
-      const pw = pdf.internal.pageSize.getWidth();
-      const ph = pdf.internal.pageSize.getHeight();
-      const ip = pdf.getImageProperties(imgData);
-      let iw = pw,
-        ih = (ip.height * pw) / ip.width;
-      if (ih > ph) {
-        ih = ph;
-        iw = (ip.width * ih) / ip.height;
+
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+
+      const imgProps = pdf.getImageProperties(imgData);
+
+      const imgWidth = pageWidth;
+      const imgHeight = (imgProps.height * imgWidth) / imgProps.width;
+
+      // 🔥 If content height > page height → scale down
+      let finalHeight = imgHeight;
+      let finalWidth = imgWidth;
+
+      if (imgHeight > pageHeight) {
+        finalHeight = pageHeight;
+        finalWidth = (imgProps.width * finalHeight) / imgProps.height;
       }
-      pdf.addImage(imgData, "JPEG", (pw - iw) / 2, 0, iw, ih);
+
+      pdf.addImage(
+        imgData,
+        "JPEG",
+        (pageWidth - finalWidth) / 2,
+        0,
+        finalWidth,
+        finalHeight,
+      );
+
       pdf.save(`Prescription_${prescription?.UHID || "Unknown"}.pdf`);
-    } catch {
+    } catch (error) {
+      console.error("Error generating PDF:", error);
       toast.error("Failed to generate PDF");
     }
   };
 
-  if (loading)
+  // ////////////////////////////////====
+
+  if (loading) {
     return (
       <div
         className="d-flex justify-content-center align-items-center"
@@ -103,8 +175,9 @@ function DoctorPrePrint() {
         </div>
       </div>
     );
+  }
 
-  if (!prescription)
+  if (!prescription) {
     return (
       <div
         className="d-flex justify-content-center align-items-center"
@@ -114,7 +187,7 @@ function DoctorPrePrint() {
           <i
             className="pi pi-exclamation-triangle"
             style={{ fontSize: "4rem", color: "#f0ad4e" }}
-          />
+          ></i>
           <h3 className="mt-3">No Prescription Found</h3>
           <Button
             label="Go Back"
@@ -125,37 +198,18 @@ function DoctorPrePrint() {
         </div>
       </div>
     );
+  }
 
-  const patientAge =
-    prescription?.patient?.age ||
-    prescription?.age ||
-    calculateAge(prescription?.patient?.dateOfBirth);
-
-  const tdStyle = {
-    border: "1px solid #ccc",
-    padding: "3px 6px",
-    fontSize: 10,
-  };
-  const thStyle = {
-    border: "1px solid #d00000",
-    padding: "5px 6px",
-    fontSize: 10,
-    background: "#d00000",
-    color: "#fff",
-    fontWeight: 700,
-  };
-  const infoTd = { padding: "2px 5px", fontSize: 10, lineHeight: "1.4" };
-  const infoLabel = {
-    ...infoTd,
-    color: "#666",
-    fontWeight: 600,
-    whiteSpace: "nowrap",
-  };
-  const infoValue = { ...infoTd, fontWeight: 500 };
+  // ////////==== Calculate Total Price of Investigations ////////====
+  const totalInvestigationPrice = prescription.investigations.reduce(
+    (sum, inv) => sum + (inv.Totalamount || 0),
+    0,
+  );
+  // ////////////////////////////////////////======
 
   return (
     <>
-      {/* ── Action Buttons ── */}
+      {/* Buttons */}
       <div style={{ marginTop: "2%" }}>
         <div
           className="no-print text-center mb-3"
@@ -169,7 +223,7 @@ function DoctorPrePrint() {
           }}
         >
           <Button
-            label="Print Prescription"
+            label="Printss Prescription"
             icon="pi pi-print"
             severity="success"
             onClick={() => window.print()}
@@ -195,7 +249,8 @@ function DoctorPrePrint() {
         </div>
       </div>
 
-      {/* ── Prescription Page ── */}
+      {/* Prescription Content */}
+
       <div
         ref={printRef}
         id="printArea"
@@ -208,17 +263,20 @@ function DoctorPrePrint() {
         }}
       >
         <div className="prescription-page">
-          {/* ── HEADER ── */}
+          {/* Header */}
           <header className="prescription-header-professional">
+            {/* LEFT SIDE */}
             <div className="header-left">
               <div className="hospital-row">
                 <img src={logo} alt="Hospital Logo" className="hospital-logo" />
+
                 <div className="hospital-text">
                   <h1 className="hospital-name">
                     Bright Institute Of Medical Sciences
                   </h1>
                 </div>
               </div>
+
               <div className="contact-info">
                 <p>📞 +91 - 7988307850</p>
                 <p>✉️ query.bims@gmail.com</p>
@@ -226,67 +284,70 @@ function DoctorPrePrint() {
               </div>
             </div>
 
+            {/* RIGHT SIDE */}
             <div className="header-right">
               <h5 className="section-title-red">PATIENT INFORMATION</h5>
-              <table
-                className="info-table"
-                style={{ borderCollapse: "collapse", width: "100%" }}
-              >
+
+              <table className="info-table">
                 <tbody>
                   <tr>
-                    <td style={infoLabel}>Patient Name:</td>
-                    <td style={{ ...infoValue, fontWeight: "bold" }}>
+                    <td className="label-cell">Patient Name:</td>
+                    <td className="value-cell " style={{ fontWeight: "bold" }}>
                       {prescription.patient?.fullName ||
                         prescription.patientName ||
                         "N/A"}
                     </td>
-                    <td style={infoLabel}>UHID:</td>
-                    <td style={{ ...infoValue, fontWeight: "bold" }}>
+
+                    <td className="label-cell">UHID:</td>
+                    <td className="value-cell" style={{ fontWeight: "bold" }}>
                       {prescription.UHID || "N/A"}
                     </td>
                   </tr>
+
                   <tr>
-                    <td style={infoLabel}>Age:</td>
-                    <td style={infoValue}>{patientAge}</td>
-                    <td style={infoLabel}>Gender:</td>
-                    <td style={infoValue}>
+                    <td className="label-cell">Age:</td>
+                    <td className="value-cell">{patientAge}</td>
+
+                    <td className="label-cell">Gender:</td>
+                    <td className="value-cell">
                       {prescription.patient?.gender ||
                         prescription.gender ||
                         "N/A"}
                     </td>
                   </tr>
+
                   <tr>
-                    <td style={infoLabel}>Father/Guardian:</td>
-                    <td style={infoValue}>
+                    <td className="label-cell">Father/Guardian:</td>
+                    <td className="value-cell">
                       {prescription.fatherName || "N/A"}
                     </td>
-                    <td style={infoLabel}>Contact:</td>
-                    <td style={infoValue}>
+
+                    <td className="label-cell">Contact:</td>
+                    <td className="value-cell">
                       {prescription.patient?.contactNumber ||
                         prescription.contactNumber ||
                         "N/A"}
                     </td>
                   </tr>
+
                   <tr>
-                    <td style={infoLabel}>Department:</td>
-                    <td style={{ ...infoValue, fontWeight: "bold" }}>
+                    <td className="label-cell">Department:</td>
+                    <td className="value-cell" style={{ fontWeight: "bold" }}>
                       {prescription.department || "N/A"}
                     </td>
-                    <td style={infoLabel}>Date:</td>
-                    <td style={infoValue}>
+
+                    <td className="label-cell">Date:</td>
+                    <td className="value-cell">
                       {formatDate(prescription.createdAt)}
                     </td>
                   </tr>
+
                   <tr>
-                    <td style={infoLabel}>Referred By:</td>
-                    <td style={infoValue}>
+                    <td className="label-cell">Referred By:</td>
+                    <td className="value-cell">
                       {prescription.patient?.referredBy ||
                         prescription.referredBy ||
                         "N/A"}
-                    </td>
-                    <td style={infoLabel}>Reg. Type:</td>
-                    <td style={infoValue}>
-                      {prescription.registrationType || "OPD"}
                     </td>
                   </tr>
                 </tbody>
@@ -294,7 +355,9 @@ function DoctorPrePrint() {
             </div>
           </header>
 
-          {/* ── CLINICAL DETAILS ── */}
+          {/* Patient Info */}
+
+          {/* Clinical Details */}
           {(prescription.clinicalDetails?.historyOfAllergy ||
             prescription.clinicalDetails?.historyOfPresentIllness ||
             prescription.clinicalDetails?.physicalExamination) && (
@@ -303,18 +366,21 @@ function DoctorPrePrint() {
               style={{ position: "relative", bottom: "25px" }}
             >
               <h5 className="section-title-red">CLINICAL DETAILS</h5>
+
               {prescription.clinicalDetails?.historyOfAllergy && (
                 <div className="clinical-item">
                   <strong>History of Allergy:</strong>
                   <p>{prescription.clinicalDetails.historyOfAllergy}</p>
                 </div>
               )}
+
               {prescription.clinicalDetails?.historyOfPresentIllness && (
                 <div className="clinical-item">
                   <strong>History of Present Illness:</strong>
                   <p>{prescription.clinicalDetails.historyOfPresentIllness}</p>
                 </div>
               )}
+
               {prescription.clinicalDetails?.physicalExamination && (
                 <div className="clinical-item">
                   <strong>Physical Examination:</strong>
@@ -324,9 +390,9 @@ function DoctorPrePrint() {
             </section>
           )}
 
-          {/* ── VITALS ── */}
+          {/* Vitals - Compact Format */}
           {prescription.vitals &&
-            Object.values(prescription.vitals).some((v) => v) && (
+            Object.values(prescription.vitals).some((val) => val) && (
               <section
                 className="vitals-section"
                 style={{ position: "relative", bottom: "15px" }}
@@ -354,16 +420,11 @@ function DoctorPrePrint() {
                       <strong>Pulse:</strong> {prescription.vitals.pulse} bpm
                     </span>
                   )}
-                  {prescription.vitals.spo2 && (
-                    <span className="vital-badge">
-                      <strong>SpO2:</strong> {prescription.vitals.spo2}%
-                    </span>
-                  )}
                 </div>
               </section>
             )}
 
-          {/* ── DIAGNOSIS ── */}
+          {/* Diagnosis */}
           {prescription.provisionalDiagnosis && (
             <section className="diagnosis-section">
               <h5 className="section-title-red">PROVISIONAL DIAGNOSIS</h5>
@@ -373,52 +434,41 @@ function DoctorPrePrint() {
             </section>
           )}
 
-          {/* ── MEDICINES ── */}
-          {prescription.medicines?.length > 0 && (
+          {/* Medicines */}
+          {prescription.medicines && prescription.medicines.length > 0 && (
             <section className="medicines-section">
               <h5 className="section-title-red">MEDICINE ADVISED</h5>
+
               <table className="table table-bordered border-dark medicine-table-professional">
                 <thead className="table-light">
                   <tr>
-                    <th
-                      className="text-center"
-                      style={{ width: "5%", fontSize: 10 }}
-                    >
+                    <th className="text-center" style={{ width: "5%" }}>
                       S.No
                     </th>
-                    <th style={{ width: "25%", fontSize: 10 }}>
-                      Medicine Name
-                    </th>
-                    <th
-                      className="text-center"
-                      style={{ width: "15%", fontSize: 10 }}
-                    >
+                    <th style={{ width: "20%" }}>Medicine Name</th>
+                    <th className="text-center" style={{ width: "15%" }}>
                       Schedule
                     </th>
-                    <th style={{ width: "20%", fontSize: 10 }}>Instruction</th>
-                    <th
-                      className="text-center"
-                      style={{ width: "15%", fontSize: 10 }}
-                    >
+                    <th style={{ width: "20%" }}>Instruction</th>
+                    <th className="text-center" style={{ width: "15%" }}>
                       Route
                     </th>
-                    <th
-                      className="text-center"
-                      style={{ width: "15%", fontSize: 10 }}
-                    >
+                    <th className="text-center" style={{ width: "15%" }}>
                       Days
                     </th>
                   </tr>
                 </thead>
                 <tbody style={{ borderColor: "gray" }}>
-                  {prescription.medicines.map((m, i) => (
-                    <tr key={i} style={{ fontSize: 10 }}>
-                      <td className="text-center">{i + 1}</td>
-                      <td>{m.medicineName || "N/A"}</td>
-                      <td className="text-center">{m.schedule || "—"}</td>
-                      <td>{m.instruction || "—"}</td>
-                      <td className="text-center">{m.route || "—"}</td>
-                      <td className="text-center">{m.days || "—"}</td>
+                  {prescription.medicines.map((medicine, index) => (
+                    <tr key={index}>
+                      <td className="text-center">{index + 1}</td>
+                      <td>{medicine.medicineName || "N/A"}</td>
+                      <td className="text-center">
+                        {medicine.schedule || "-"}
+                      </td>
+                      <td>{medicine.instruction || "-"}</td>
+                      <td className="text-center">{medicine.route || "-"}</td>
+                      <td className="text-center">{medicine.days || "-"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -426,100 +476,57 @@ function DoctorPrePrint() {
             </section>
           )}
 
-          {/* ── INVESTIGATIONS (no price) ── */}
-          {prescription.investigations?.length > 0 && (
-            <section className="investigations-section">
-              <h5 className="section-title-red">INVESTIGATION ADVISED</h5>
-              <table>
-                <thead>
-                  <tr>
-                    <th style={{ width: "5%" }}>S.No</th>
-                    <th style={{ width: "20%" }}>Code</th>
-                    <th>Test Name</th>
-                    <th style={{ width: "18%" }}>Performed At</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(typeof prescription.investigations === "string"
-                    ? prescription.investigations
-                        .split(",")
-                        .map((n) => ({ investigationName: n.trim() }))
-                    : prescription.investigations
-                  ).map((inv, i) => (
-                    <tr key={i}>
-                      <td style={{ ...tdStyle, textAlign: "center" }}>
-                        {i + 1}
+          {/* Investigations with Price */}
+          {prescription.investigations &&
+            prescription.investigations.length > 0 && (
+              <section className="investigations-section">
+                <h5 className="section-title-red">INVESTIGATION ADVISED</h5>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      <th style={{ border: "1px solid #ccc", padding: "4px" }}>
+                        Test Name
+                      </th>
+                      <th style={{ border: "1px solid #ccc", padding: "4px" }}>
+                        Price (₹)
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(typeof prescription?.investigations === "string"
+                      ? prescription.investigations.split(",")
+                      : prescription?.investigations || []
+                    ).map((inv, index) => (
+                      <tr key={index}>
+                        <td
+                          style={{ border: "1px solid #ccc", padding: "4px" }}
+                        >
+                          {typeof inv === "string"
+                            ? inv.trim()
+                            : inv?.investigationName || inv?.label}
+                        </td>
+                        <td
+                          style={{ border: "1px solid #ccc", padding: "4px" }}
+                        >
+                          {inv?.totalServicesAmount || 0}
+                        </td>
+                      </tr>
+                    ))}
+
+                    <tr>
+                      <td style={{ border: "1px solid #ccc", padding: "4px" }}>
+                        <b>Total</b>
                       </td>
-                      <td style={{ ...tdStyle, fontFamily: "monospace" }}>
-                        {inv.investigationCode || "—"}
-                      </td>
-                      <td style={{ ...tdStyle, fontWeight: 600 }}>
-                        {inv.investigationName ||
-                          (typeof inv === "string" ? inv : "—")}
-                      </td>
-                      <td style={{ ...tdStyle, textAlign: "center" }}>
-                        {inv.investigationId?.performedAt ? (
-                          <span
-                            style={{
-                              background:
-                                inv.investigationId.performedAt === "EXTERNAL"
-                                  ? "#fef3c7"
-                                  : "#d1fae5",
-                              color:
-                                inv.investigationId.performedAt === "EXTERNAL"
-                                  ? "#92400e"
-                                  : "#065f46",
-                              borderRadius: 4,
-                              padding: "1px 6px",
-                              fontSize: 9,
-                              fontWeight: 700,
-                            }}
-                          >
-                            {inv.investigationId.performedAt}
-                          </span>
-                        ) : (
-                          "—"
-                        )}
+                      <td style={{ border: "1px solid #ccc", padding: "4px" }}>
+                        <b>₹{totalInvestigationPrice}</b>
                       </td>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </section>
-          )}
+                  </tbody>
+                </table>
+              </section>
+            )}
 
-          {/* ── SERVICES ── */}
-          {prescription.selectedServices?.length > 0 && (
-            <section className="services-section" style={{ marginBottom: 8 }}>
-              <h5 className="section-title-red">SERVICES ADVISED</h5>
-              <table>
-                <thead>
-                  <tr>
-                    <th style={{ width: "5%" }}>S.No</th>
-                    <th style={{ width: "20%" }}>Code</th>
-                    <th>Service Name</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {prescription.selectedServices.map((s, i) => (
-                    <tr key={i}>
-                      <td style={{ ...tdStyle, textAlign: "center" }}>
-                        {i + 1}
-                      </td>
-                      <td style={{ ...tdStyle, fontFamily: "monospace" }}>
-                        {s.serviceCode || "—"}
-                      </td>
-                      <td style={{ ...tdStyle, fontWeight: 600 }}>
-                        {s.serviceName || "—"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </section>
-          )}
-
-          {/* ── ADVICE ── */}
+          {/* Advice */}
           {prescription.advice && (
             <section className="advice-section">
               <h5 className="section-title-red">ADVICE & FOLLOW-UP</h5>
@@ -527,9 +534,22 @@ function DoctorPrePrint() {
             </section>
           )}
 
-          {/* ── DOCTOR SIGNATURE ── */}
-          <section className="doctor-signature-professional">
-            <div className="header-right-section"></div>
+          {/* Doctor Signature */}
+          <section className="doctor-signature-professional ">
+            <div className="header-right-section">
+              {/* <div className="contact-info">
+                <p>
+                  <strong>📞</strong> +91 - 7988307850
+                </p>
+                <p>
+                  <strong>✉️</strong> query.bims@gmail.com
+                </p>
+                <p>
+                  <strong>📍</strong> Gau Shala Road, Jatawara, Sonipat - 131001
+                  (Haryana)
+                </p>
+              </div> */}
+            </div>
             <div className="doctor-details-box" style={{ textAlign: "right" }}>
               <div className="signature-line"></div>
               <p className="signature-label">Doctor's Signature</p>
@@ -544,6 +564,18 @@ function DoctorPrePrint() {
               </p>
             </div>
           </section>
+
+          {/* Footer */}
+          {/* <footer className="prescription-footer-professional">
+            <div className="footer-divider"></div>
+            <p className="footer-text">
+              This is a computer-generated prescription. For any queries, please
+              contact the hospital.
+            </p>
+            <p className="footer-date">
+              Date: {formatDate(prescription.createdAt)}
+            </p>
+          </footer> */}
         </div>
       </div>
     </>

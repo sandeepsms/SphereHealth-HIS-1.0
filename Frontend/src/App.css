@@ -23,6 +23,14 @@ body {
   letter-spacing: 1px;
 }
 
+/*  Registration search */
+.div-dropdown{
+  z-index: 9999 !important;
+ 
+}
+
+
+/* ////////////////////////////// */
 .marginginRight10 {
   margin-right: 10px;
 }
@@ -302,4 +310,22 @@ body {
   width: 10rem !important;
   position: relative;
   left: 106px;
+}
+
+
+
+
+
+
+
+/* MAIN CONTENT */
+.main-content {
+  margin-left: 260px;
+  transition: all 0.3s ease;
+  padding: 20px;
+}
+
+/* WHEN SIDEBAR COLLAPSED */
+.main-content.expanded {
+  margin-left: 70px;
 }

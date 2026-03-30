@@ -5,16 +5,9 @@ import { Dropdown } from "primereact/dropdown";
 import { InputText } from "primereact/inputtext";
 import { InputTextarea } from "primereact/inputtextarea";
 import { Toast } from "primereact/toast";
-<<<<<<< HEAD
 import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
 import { bedService } from "../../Services/bedService";
 import { formatDateTime } from "../../utils/helpers";
-
-const BedList = ({ onEdit, onRefresh, onBook, onView }) => {
-  const [beds, setBeds] = useState([]);
-  const [loading, setLoading] = useState(false);
-=======
-
 import { bedService } from "../../Services/bedService";
 import { admissionService } from "../../Services/admissionService";
 import { wardService } from "../../Services/wardService";
@@ -216,7 +209,7 @@ const BedIcon = ({ status }) => {
 
 /* ══════════════════════════════════════════════════════════ */
 const BedVisualLayout = ({ onRefreshParent }) => {
->>>>>>> temp-fix
+
   const toast = useRef(null);
 
   /* ── data ── */
@@ -443,7 +436,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     }
   };
 
-<<<<<<< HEAD
+
   const handleDelete = (bed) => {
     confirmDialog({
       message: `Are you sure you want to delete Bed ${bed.bedNumber}?`,
@@ -467,7 +460,11 @@ const BedVisualLayout = ({ onRefreshParent }) => {
             detail: "Failed to delete bed",
             life: 3000,
           });
-=======
+        }
+      },
+    });
+  };
+
   const doFilter = () => {
     let list = [...beds];
     if (fBldg) list = list.filter((b) => getId(b.building) === fBldg);
@@ -599,66 +596,8 @@ const BedVisualLayout = ({ onRefreshParent }) => {
           setDetailPatient(patObj);
           setDetailLoad(false);
           return;
->>>>>>> temp-fix
         }
 
-<<<<<<< HEAD
-  const actionBodyTemplate = (rowData) => {
-    return (
-      <div className="flex align-items-center gap-2">
-        {/* View */}
-        <Button
-          icon="pi pi-eye"
-          rounded
-          outlined
-          severity="info"
-          size="small"
-          onClick={() => onView && onView(rowData)}
-          tooltip="View Details"
-          tooltipOptions={{ position: "top" }}
-        />
-
-        {/* Book — only when Available */}
-        {rowData.status === "Available" && (
-          <Button
-            icon="pi pi-calendar-plus"
-            rounded
-            outlined
-            severity="success"
-            size="small"
-            onClick={() => onBook(rowData)}
-            tooltip="Book Bed"
-            tooltipOptions={{ position: "top" }}
-          />
-        )}
-
-        {/* Edit */}
-        <Button
-          icon="pi pi-pencil"
-          rounded
-          outlined
-          severity="warning"
-          size="small"
-          onClick={() => onEdit(rowData)}
-          tooltip="Edit"
-          tooltipOptions={{ position: "top" }}
-        />
-
-        {/* Delete */}
-        <Button
-          icon="pi pi-trash"
-          rounded
-          outlined
-          severity="danger"
-          size="small"
-          onClick={() => handleDelete(rowData)}
-          tooltip="Delete"
-          tooltipOptions={{ position: "top" }}
-        />
-      </div>
-    );
-  };
-=======
         const uhid =
           ca.UHID ||
           ca.patientUHID ||
@@ -669,7 +608,6 @@ const BedVisualLayout = ({ onRefreshParent }) => {
           typeof ca.patientId === "string" && isMongoId(ca.patientId)
             ? ca.patientId
             : getId(ca.patientId);
->>>>>>> temp-fix
 
         if (uhid) {
           try {
@@ -700,104 +638,70 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         setDetailLoad(false);
         return;
       }
-<<<<<<< HEAD
-    };
-    return (
-      <Tag
-        value={rowData.status}
-        severity={getSeverity()}
-        style={{ minWidth: "90px", justifyContent: "center" }}
-      />
-    );
-  };
 
-  const locationBodyTemplate = (rowData) => {
-    return (
-      <div className="flex flex-column gap-1 text-sm">
-        <span>
-          <i className="pi pi-building mr-1 text-primary" />
-          <strong>Building:</strong> {rowData.buildingName}
-        </span>
-        <span>
-          <i className="pi pi-th-large mr-1 text-primary" />
-          <strong>Floor:</strong> {rowData.floorNumber}
-        </span>
-        <span>
-          <i className="pi pi-heart mr-1 text-primary" />
-          <strong>Ward:</strong> {rowData.wardName || "N/A"}
-        </span>
-        <span>
-          <i className="pi pi-home mr-1 text-primary" />
-          <strong>Room:</strong> {rowData.roomNumber}
-        </span>
-=======
+      const activeList = await admissionService.getActiveAdmissions();
+      const list = Array.isArray(activeList)
+        ? activeList
+        : activeList?.admissions || activeList?.data || [];
+      const admRecord = list.find(
+        (a) => getId(a.bedId) === bedId || getId(a.bed) === bedId,
+      );
+      if (!admRecord) {
+        setDetailLoad(false);
+        return;
+      }
+      setDetailAdm(admRecord);
 
-      try {
-        const activeList = await admissionService.getActiveAdmissions();
-        const list = Array.isArray(activeList)
-          ? activeList
-          : activeList?.admissions || activeList?.data || [];
-        const admRecord = list.find(
-          (a) => getId(a.bedId) === bedId || getId(a.bed) === bedId,
-        );
-        if (!admRecord) {
+      const uhid = admRecord.UHID || admRecord.patientUHID || null;
+      const objId = isMongoId(getId(admRecord.patientId))
+        ? getId(admRecord.patientId)
+        : null;
+
+      if (
+        admRecord.patientId &&
+        typeof admRecord.patientId === "object" &&
+        admRecord.patientId._id
+      ) {
+        const p = admRecord.patientId;
+        if (getPatientName(p)) {
+          setDetailPatient(p);
           setDetailLoad(false);
           return;
         }
-        setDetailAdm(admRecord);
-
-        const uhid = admRecord.UHID || admRecord.patientUHID || null;
-        const objId = isMongoId(getId(admRecord.patientId))
-          ? getId(admRecord.patientId)
-          : null;
-
-        if (
-          admRecord.patientId &&
-          typeof admRecord.patientId === "object" &&
-          admRecord.patientId._id
-        ) {
-          const p = admRecord.patientId;
-          if (getPatientName(p)) {
+      }
+      if (uhid) {
+        try {
+          const res = await patientService.getPatientByUHID(uhid);
+          const p = unwrapPatient(res);
+          if (p && getPatientName(p)) {
             setDetailPatient(p);
             setDetailLoad(false);
             return;
           }
-        }
-        if (uhid) {
-          try {
-            const res = await patientService.getPatientByUHID(uhid);
-            const p = unwrapPatient(res);
-            if (p && getPatientName(p)) {
-              setDetailPatient(p);
-              setDetailLoad(false);
-              return;
-            }
-          } catch (_) {}
-        }
-        if (objId) {
-          try {
-            const res = await patientService.getPatientById(objId);
-            const p = unwrapPatient(res);
-            if (p && getPatientName(p)) {
-              setDetailPatient(p);
-              setDetailLoad(false);
-              return;
-            }
-          } catch (_) {}
-        }
-        const cached = allPatients.find(
-          (p) => (uhid && p.UHID === uhid) || (objId && getId(p._id) === objId),
-        );
-        if (cached) setDetailPatient(cached);
-      } catch (e) {
-        console.error("[BedLayout] getActiveAdmissions failed:", e?.message);
+        } catch (_) {}
       }
+      if (objId) {
+        try {
+          const res = await patientService.getPatientById(objId);
+          const p = unwrapPatient(res);
+          if (p && getPatientName(p)) {
+            setDetailPatient(p);
+            setDetailLoad(false);
+            return;
+          }
+        } catch (_) {}
+      }
+      const cached = allPatients.find(
+        (p) => (uhid && p.UHID === uhid) || (objId && getId(p._id) === objId),
+      );
+      if (cached) setDetailPatient(cached);
     } catch (e) {
-      console.error("[BedLayout] handleOccupied error:", e);
+      console.error("[BedLayout] handleOccupied failed:", e?.message);
     } finally {
       setDetailLoad(false);
     }
   };
+
 
   const handleBedClick = (bed) => {
     if (bed.status === "Available") handleAvailable(bed);
@@ -1060,6 +964,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
   return (
     <div style={{ fontFamily: "'Inter',-apple-system,sans-serif" }}>
       <Toast ref={toast} />
+      <ConfirmDialog />
 
       {/* ── FILTER BAR ── */}
       <div
@@ -1214,100 +1119,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
             />
           ))}
         </div>
->>>>>>> temp-fix
       </div>
-
-<<<<<<< HEAD
-  const dateBodyTemplate = (rowData) => (
-    <span className="text-sm text-color-secondary">
-      {formatDateTime(rowData.createdAt)}
-    </span>
-  );
-
-  const bedNumberBodyTemplate = (rowData) => (
-    <span className="font-semibold text-primary">{rowData.bedNumber}</span>
-  );
-
-  const bedTypeBodyTemplate = (rowData) => (
-    <span className="font-medium">{rowData.bedType || "—"}</span>
-  );
-
-  return (
-    <>
-      <Toast ref={toast} />
-      <ConfirmDialog />
-
-      <DataTable
-        value={beds}
-        loading={loading}
-        paginator
-        rows={10}
-        rowsPerPageOptions={[5, 10, 25, 50]}
-        stripedRows
-        showGridlines
-        size="small"
-        emptyMessage="No beds found."
-        sortMode="multiple"
-        removableSort
-        filterDisplay="menu"
-        style={{ fontSize: "0.9rem" }}
-        className="p-datatable-beds"
-        paginatorTemplate="FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport RowsPerPageDropdown"
-        currentPageReportTemplate="Showing {first} to {last} of {totalRecords} beds"
-      >
-        <Column
-          field="bedNumber"
-          header="Bed No."
-          sortable
-          filter
-          filterPlaceholder="Search bed"
-          body={bedNumberBodyTemplate}
-          style={{ minWidth: "100px" }}
-        />
-
-        <Column
-          field="bedType"
-          header="Bed Type"
-          sortable
-          filter
-          filterPlaceholder="Search type"
-          body={bedTypeBodyTemplate}
-          style={{ minWidth: "130px" }}
-        />
-
-        <Column
-          header="Location"
-          body={locationBodyTemplate}
-          style={{ minWidth: "200px" }}
-        />
-
-        <Column
-          field="status"
-          header="Status"
-          sortable
-          filter
-          filterPlaceholder="Filter status"
-          body={statusBodyTemplate}
-          style={{ minWidth: "130px", textAlign: "center" }}
-        />
-
-        <Column
-          field="createdAt"
-          header="Created At"
-          sortable
-          body={dateBodyTemplate}
-          style={{ minWidth: "150px" }}
-        />
-
-        <Column
-          header="Actions"
-          body={actionBodyTemplate}
-          style={{ minWidth: "180px", textAlign: "center" }}
-          frozen
-          alignFrozen="right"
-        />
-      </DataTable>
-    </>
 =======
       {/* ── BED GRID ── */}
       {busy ? (
@@ -3080,7 +2892,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         )}
       </Dialog>
     </div>
->>>>>>> temp-fix
+
   );
 };
 

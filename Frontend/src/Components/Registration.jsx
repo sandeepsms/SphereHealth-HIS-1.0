@@ -46,6 +46,9 @@ const REG_COLOR = {
   Services: "#059669",
 };
 
+
+
+
 const calcAge = (dob) => {
   if (!dob) return "";
   const t = new Date(),
@@ -2020,6 +2023,8 @@ export default function PatientRegistration() {
             </div>
           </div>
         </div>
+
+        
 
         {/* ── Admission & Bed ── */}
         {NEEDS_BED(formData.registrationType) && (
