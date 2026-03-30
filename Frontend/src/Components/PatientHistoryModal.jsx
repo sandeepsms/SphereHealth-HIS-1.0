@@ -367,7 +367,7 @@ export default function PatientHistoryModal({ patientId, visible, onHide }) {
           {loading && (
             <div style={{ textAlign: "center", padding: 60, color: "#94a3b8" }}>
               <i
-                className="pi pi-spin pi-spinner"
+                className="pi pi-spin pi-spinner" 
                 style={{ fontSize: 30, color: "#0891b2" }}
               />
               <p style={{ marginTop: 10, fontSize: 13 }}>Loading history…</p>

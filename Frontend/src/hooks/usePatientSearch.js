@@ -38,7 +38,10 @@ const usePatientSearch = (debounceMs = 400, minChars = 2, limit = 10) => {
         );
 
         if (response.success) {
+          console.log(response.data,"datatattatatatatattaaaaaa");
           setResults(response.data || []);
+
+
         } else {
           setResults([]);
           setError(response.message || "Search failed");

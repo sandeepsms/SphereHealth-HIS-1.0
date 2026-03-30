@@ -1,0 +1,189 @@
+/* ===== RESET ===== */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", Roboto, sans-serif;
+  background: #f4f6f9;
+}
+
+/* ===== MAIN CONTAINER ===== */
+.container {
+  width: 100%;
+  max-width: 100%;
+  padding: 20px 30px;
+}
+
+/* ===== PANEL (FULL WIDTH FIX) ===== */
+.panel {
+  width: 100%;
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 20px 22px;
+  margin-bottom: 20px;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.06);
+  border-left: 5px solid #154360;
+}
+
+/* ===== PANEL TITLE ===== */
+.panel h3 {
+  margin: 0 0 15px;
+  font-size: 18px;
+  color: #154360;
+  font-weight: 600;
+  border-bottom: 2px solid #eaecee;
+  padding-bottom: 6px;
+}
+
+/* ===== SMART GRID (FIXED MAIN ISSUE) ===== */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 15px;
+  width: 100%;
+}
+
+/* ===== INPUTS FULL WIDTH ===== */
+.p-inputtext,
+.p-dropdown,
+input,
+textarea {
+  width: 100% !important;
+  font-size: 14px;
+  border-radius: 6px !important;
+}
+
+/* ===== INPUT FOCUS ===== */
+.p-inputtext:focus,
+.p-dropdown:focus,
+input:focus,
+textarea:focus {
+  border-color: #2e86c1 !important;
+  box-shadow: 0 0 4px rgba(46, 134, 193, 0.4);
+}
+
+/* ===== DISABLED INPUT ===== */
+input:disabled {
+  background: #eef2f7;
+  cursor: not-allowed;
+}
+
+/* ===== TEXTAREA ===== */
+textarea {
+  padding: 10px;
+  border: 1px solid #ccc;
+  resize: vertical;
+  min-height: 80px;
+  margin-top: 10px;
+}
+
+/* ===== RADIO GROUP FIX ===== */
+.radio-group {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 30px;
+  margin: 12px 0;
+}
+
+.radio-group label {
+  margin-left: 6px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+/* ===== TABLE FULL WIDTH FIX ===== */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 12px;
+}
+
+/* HEADER */
+.table th {
+  background: #f0f3f7;
+  padding: 12px;
+  border: 1px solid #dcdcdc;
+  font-weight: 600;
+  text-align: left;
+}
+
+/* CELLS */
+.table td {
+  padding: 10px;
+  border: 1px solid #e0e0e0;
+}
+
+/* ROW HOVER */
+.table tbody tr:hover {
+  background: #f9fbfd;
+}
+
+/* INPUT INSIDE TABLE FIX */
+.table input,
+.table .p-dropdown {
+  width: 100% !important;
+}
+
+/* ===== BUTTONS ===== */
+.p-button {
+  border-radius: 6px !important;
+  font-size: 14px;
+}
+
+/* ADD BUTTON */
+.panel .p-button {
+  margin-top: 12px;
+}
+
+/* DELETE BUTTON FIX */
+.p-button.p-button-icon-only {
+  width: 36px;
+  height: 36px;
+}
+
+/* ===== RESPONSIVE ===== */
+
+/* Tablet */
+@media (max-width: 1024px) {
+  .container {
+    padding: 15px;
+  }
+
+  .grid {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  }
+}
+
+/* Small Tablet */
+@media (max-width: 768px) {
+  .grid {
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  }
+
+  .radio-group {
+    flex-direction: column;
+    gap: 10px;
+  }
+}
+
+/* Mobile */
+@media (max-width: 480px) {
+  .container {
+    padding: 10px;
+  }
+
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .panel {
+    padding: 14px;
+  }
+
+  .panel h3 {
+    font-size: 16px;
+  }
+}

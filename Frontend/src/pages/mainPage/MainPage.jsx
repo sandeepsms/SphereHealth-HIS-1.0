@@ -5,12 +5,12 @@ const menuItems = [
   { name: "OPD", path: "/registration/OPD" },
 
   { name: "IPD", path: "/registration/IPD" },
-  { name: "Emergency", path: "/emergency" },
-  { name: "Doctor", path: "/doctor" },
-  { name: "Nursing", path: "/nursing" },
-  { name: "Pharmacy", path: "/pharmacy" },
-  { name: "Billing", path: "/billing" },
-  { name: "Reports", path: "/reports" },
+  { name: "Emergency", path: "/registration/Emergency" },
+  { name: "Daycare", path: "/registration/Daycare" },
+  { name: "Services", path: "/registration/Services" },
+  // { name: "Pharmacy", path: "/registration/Pharmacy" },
+  // { name: "Billing", path: "/registration/Billing" },
+  // { name: "Reports", path: "/registration/Reports" },
 ];
 
 const Dashboard = () => {
@@ -22,7 +22,7 @@ const Dashboard = () => {
 
       <div className="row g-4 justify-content-center">
         {menuItems.map((item, index) => (
-          <div className="col-md-3 col-sm-4 col-6" key={index}>
+          <div className="col-md-6 col-sm-6 col-6" key={index}>
             <div onClick={() => navigate(item.path)} className="menu-card">
               <div className="menu-icon">{item.name[0]}</div>
 

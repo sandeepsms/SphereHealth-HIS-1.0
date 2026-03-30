@@ -67,7 +67,7 @@ function DoctorPrescription() {
       try {
         setLoading(true);
         const response = await prescriptionService.getPrescriptionsByUHID(UHID);
-        console.log("nnnnnnnnnnccccccccccc", response);
+       
         if (response.success) {
           const prescriptionData = Array.isArray(response.data)
             ? response.data[0]

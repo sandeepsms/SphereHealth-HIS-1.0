@@ -135,7 +135,7 @@ export default function BedAdmissionDrawer({
         );
         const docArr = arr(docs);
         setAllDoctors(docArr);
-        setTpaList(
+        setTpaList(   
           arr(tpas)
             .filter((t) => t.isActive !== false)
             .map((t) => ({ label: t.tpaName, value: getId(t._id) })),
@@ -366,6 +366,8 @@ export default function BedAdmissionDrawer({
           }),
         },
       );
+
+      
       const admJson = await admRes.json();
       if (!admJson.success && !admJson.admissionNumber && !admJson._id) {
         throw new Error(admJson.message || "Admission creation failed");

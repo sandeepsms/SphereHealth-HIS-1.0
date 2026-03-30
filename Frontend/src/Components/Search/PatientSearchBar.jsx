@@ -172,6 +172,7 @@ const PatientSearchBar = ({
           {/* Results List */}
           {!loading &&
             results.map((patient, idx) => (
+             
               <div
                 key={patient._id || idx}
                 onClick={() => handleSelect(patient)}
@@ -198,6 +199,24 @@ const PatientSearchBar = ({
                     marginBottom: "4px",
                   }}
                 >
+
+
+                   {/* <span
+                    style={{
+                      fontWeight: "600",
+                      fontSize: "14px",
+                      color: "#212529",
+                    }}
+                  >
+                    <i
+                      className="pi pi-user mr-2"
+                      style={{ color: "#0d6efd" }}
+                    />
+                    {patient.title}
+                  </span> */}
+
+
+
                   <span
                     style={{
                       fontWeight: "600",

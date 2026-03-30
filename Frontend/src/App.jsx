@@ -74,7 +74,13 @@ import BillGeneration from "./pages/billing/Billgeneration";
 import PatientBilling from "./Components/billing/PatientBilling";
 import ServiceMasterManager from "./Components/ServiceMaster/ServiceMasterManager";
 import MainPage from "./pages/mainPage/MainPage";
+import NursingNotes from "./pages/nursing/NursingNotes";
 // import { PopupProvider } from "./Components/contextapi/ContextApi";
+import UpdateVitalSheet from "./Components/vital/UpdateVitalSheet";
+import VitalSheet from "./Components/vital/VitalSheet";
+import VitalsView from "./Components/vital/VitalsView";
+import NursingHandoverNotes from "./pages/nursing/NursingHandoverNotes";
+
 
 export default function App() {
   const [collapsed, setCollapsed] = useState(false);
@@ -96,7 +102,7 @@ export default function App() {
 
             {/* ── Patient Registration ──────────────────────────── */}
             <Route path="/registration/:typedata" element={<Registration />} />
-
+            <Route path="/registration" element={<Registration />} />
             <Route
               path="/registration/:typedata/:id"
               element={<Registration />}
@@ -121,7 +127,10 @@ export default function App() {
               path="/doctors/:doctorId/edit"
               element={<DoctorFormPage />}
             />
-            <Route path="/nurse" element={<Nurse />} />
+
+              {/* ── Nursing ──────────────────────────────────────────── */} 
+            <Route path="/nursing-notes" element={<NursingNotes />} />
+             <Route path="/nursing-handover-notes" element={<NursingHandoverNotes />} />
 
             {/* ── OPD ──────────────────────────────────────────── */}
             <Route path="/opd/:UHID" element={<OPDPrint />} />
@@ -141,6 +150,12 @@ export default function App() {
               path="/emergency/:emergencyNumber"
               element={<EmergencyDetails />}
             />
+
+            {/* ── Vitals ───────────────────────────────── */}
+
+            <Route path="/updateVitalSheet" element={<UpdateVitalSheet />} />
+            <Route path="/vitalSheet" element={<VitalSheet />} />
+            <Route path="/vitalsView" element={<VitalsView />} />
 
             {/* ── Patients Module ───────────────────────────────── */}
             <Route path="/patients" element={<PatientList />} />

@@ -38,6 +38,8 @@ function PatientsTable() {
   const toast = useRef(null);
   const menuRefs = useRef({});
   const navigate = useNavigate();
+  const activeMenu = useRef(null);
+  
 
   /* ── Fetch all patients ── */
   const getAllPatients = useCallback(async () => {
@@ -271,7 +273,7 @@ function PatientsTable() {
           onClick={() => handleViewHistory(rowData)}
         />
         <div>
-          <Button
+          <Button  
             icon="pi pi-ellipsis-v"
             severity="secondary"
             text
@@ -292,13 +294,19 @@ function PatientsTable() {
     );
   };
 
+
+
   const emailBody = (r) => r.email || <span className="text-400">—</span>;
 
   const header = (
+    <>
+   
+    <button style={{background:"red", color:"white",padding:"4px", position:"relative" ,bottom:"20px"}} onClick={() => navigate(-1)}>⬅ Back</button>
     <div
       className="flex flex-wrap lg:flex-row align-items-center justify-content-between gap-3 p-4 btn-custom mb-2"
       style={{ color: "white", borderRadius: "12px 12px 0 0" }}
     >
+       
       <div className="flex align-items-center gap-3">
         <i className="pi pi-users text-3xl" />
         <div>
@@ -347,6 +355,7 @@ function PatientsTable() {
         />
       </div>
     </div>
+     </>
   );
 
   if (loading && patients.length === 0) {

@@ -14,7 +14,7 @@ import { Button } from "primereact/button";
 import { Toast } from "primereact/toast";
 import { ProgressSpinner } from "primereact/progressspinner";
 import { useNavigate, useParams } from "react-router-dom";
-
+import { BreadCrumb } from 'primereact/breadcrumb';
 import { departmentService } from "../Services/departmentService";
 import { doctorService } from "../Services/doctors/doctorService";
 import { tpaService } from "../Services/tpa/tpaService";
@@ -23,6 +23,7 @@ import patientService from "../Services/patient/patientService";
 import PatientSearchBar from "./Search/PatientSearchBar";
 import BedSelectionPanel from "../Components/bed/BedSelectionPanel";
 import PatientHistoryModal from "./PatientHistoryModal";
+
 
 import "primereact/resources/themes/lara-light-blue/theme.css";
 import "primereact/resources/primereact.min.css";
@@ -45,9 +46,6 @@ const REG_COLOR = {
   Daycare: "#d97706",
   Services: "#059669",
 };
-
-
-
 
 const calcAge = (dob) => {
   if (!dob) return "";
@@ -412,7 +410,8 @@ const printReceipt = ({
 export default function PatientRegistration() {
   const toast = useRef(null);
   const navigate = useNavigate();
-  const { id: patientId } = useParams();
+  const { typedata, id: patientId } = useParams();
+  console.log("mmmmmmmmm", typedata);
 
   const [formData, setFormData] = useState({
     registrationType: "OPD",
@@ -474,6 +473,16 @@ export default function PatientRegistration() {
   // Track whether age was manually typed (to disable DOB) or DOB was picked (to disable age)
   const [ageMode, setAgeMode] = useState(null); // null | "dob" | "age"
   const [historyModal, setHistoryModal] = useState(false);
+
+  // set the registration rotes by that method......
+  useEffect(() => {
+    if (typedata) {
+      setFormData((prev) => ({
+        ...prev,
+        registrationType: typedata,
+      }));
+    }
+  }, [typedata]);
 
   /* ── Bootstrap ── */
   useEffect(() => {
@@ -620,6 +629,8 @@ export default function PatientRegistration() {
   };
 
   const prefill = useCallback((p, keepRegType = false) => {
+    console.log(p,"ooooooooooo");
+    
     setAgeMode(p.dateOfBirth ? "dob" : null);
     setFormData({
       // For existing patient search: reset to OPD so user picks the new visit type
@@ -665,6 +676,8 @@ export default function PatientRegistration() {
   }, []);
 
   const onSearchSelect = (patient) => {
+    console.log("datatatatatata",patient);
+    
     setExisting(patient);
     prefill(patient, false); // Reset registrationType — user picks new visit type
     toast.current?.show({
@@ -720,17 +733,30 @@ export default function PatientRegistration() {
   };
 
   const handleChange = (name, value) => {
+    const titleToGender = {
+      "Mr.": "Male",
+      Master: "Male",
+      "Mrs.": "Female",
+      Miss: "Female",
+    };
+
+    // Gender → Title mapping
+    const genderToTitle = {
+      Male: "Mr.",
+      Female: "Miss",
+    };
+
     if (name === "title") {
-      const m = {
-        "Mr.": "Male",
-        Master: "Male",
-        "Mrs.": "Female",
-        Miss: "Female",
-      };
       setFormData((p) => ({
         ...p,
         title: value,
-        gender: m[value] || p.gender,
+        gender: titleToGender[value] || p.gender,
+      }));
+    } else if (name === "gender") {
+      setFormData((p) => ({
+        ...p,
+        gender: value,
+        title: genderToTitle[value] || p.title,
       }));
     } else if (name === "dateOfBirth") {
       // DOB picked → auto-fill age, lock age field
@@ -831,6 +857,7 @@ export default function PatientRegistration() {
         const data = await patientService.updatePatient(existing._id, {
           registrationType: regType,
           department: formData.department,
+         
           doctor: formData.doctor,
           lastVisitDate: new Date().toISOString(),
           contactNumber: formData.contactNumber,
@@ -1032,6 +1059,15 @@ export default function PatientRegistration() {
     "Friend",
     "Other",
   ].map((r) => ({ label: r, value: r }));
+
+  // const ADM_TYPES = [
+
+  //   { label: "Emergency", value: "Emergency" },
+  //   { label: "Planned", value: "Planned" },
+  //   { label: "Transfer", value: "Transfer" },
+  //   { label: "Day Care", value: "Day Care" },
+  // ];
+
   const ADM_TYPES = [
     { label: "Emergency", value: "Emergency" },
     { label: "Planned", value: "Planned" },
@@ -1039,6 +1075,26 @@ export default function PatientRegistration() {
     { label: "Day Care", value: "Day Care" },
   ];
 
+  const filteredTypes = (() => {
+    const type = admData.admissionType;
+    const ipdtype = formData.registrationType;
+
+    if (type === "Emergency") {
+      return ADM_TYPES.filter((item) => item.value !== "Day Care");
+    }
+
+    if (ipdtype === "IPD") {
+      return ADM_TYPES.filter(
+        (item) => item.value !== "Day Care" && item.value !== "Emergency",
+      );
+    }
+
+    if (type === "Day Care") {
+      return ADM_TYPES.filter((item) => item.value !== "Emergency");
+    } else {
+      return ADM_TYPES;
+    }
+  })();
   /* ── Style helpers ── */
   const ac = REG_COLOR[formData.registrationType] || "#0891b2";
   const lbl = {
@@ -1080,6 +1136,10 @@ export default function PatientRegistration() {
 
   if (initLoad)
     return (
+
+
+    
+
       <div
         style={{
           display: "flex",
@@ -1094,6 +1154,8 @@ export default function PatientRegistration() {
         <span style={{ color: "#64748b", fontSize: 14 }}>
           Loading registration form…
         </span>
+
+        
       </div>
     );
 
@@ -1126,6 +1188,8 @@ export default function PatientRegistration() {
           fontFamily: "'Inter',-apple-system,sans-serif",
         }}
       >
+
+      
         <div
           style={{
             width: 460,
@@ -1362,6 +1426,17 @@ export default function PatientRegistration() {
 
   /* ══════════════ MAIN FORM ══════════════ */
   return (
+
+     <>
+     <div style={{position:"relative", display:"flex", justifyContent:"space-between" }}>
+     
+
+      <button style={{background:"red", color:"white",padding:"5px" }} onClick={() => navigate(-1)}>⬅ Back</button>
+      <button style={{background:"green", color:"white",padding:"5px" }} onClick={() => navigate("/patients")}>Next ➡</button>
+
+      
+    </div>
+
     <div
       style={{
         width: "100%",
@@ -2024,8 +2099,6 @@ export default function PatientRegistration() {
           </div>
         </div>
 
-        
-
         {/* ── Admission & Bed ── */}
         {NEEDS_BED(formData.registrationType) && (
           <div
@@ -2143,10 +2216,24 @@ export default function PatientRegistration() {
                 />
               </div>
               <div>
-                <label style={lbl}>Admission Type</label>
+                <label style={lbl}>Admission Typessss</label>
+                {/* <Dropdown
+                  value={admData.admissionType}
+                  options={filteredTypes}
+                  optionLabel="label"
+                  optionValue="value"
+                  placeholder="Select Admission Type"
+                  onChange={(e) =>
+                    setAdmData((prev) => ({
+                      ...prev,
+                      admissionType: e.value,
+                    }))
+                  }
+                  style={{ width: "100%" }}
+                /> */}
                 <Dropdown
                   value={admData.admissionType}
-                  options={ADM_TYPES}
+                  options={filteredTypes}
                   onChange={(e) =>
                     setAdmData((p) => ({ ...p, admissionType: e.value }))
                   }
@@ -2381,5 +2468,6 @@ export default function PatientRegistration() {
         />
       )}
     </div>
+      </>
   );
 }

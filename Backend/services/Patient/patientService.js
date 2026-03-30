@@ -135,7 +135,7 @@ class PatientService {
       .populate("doctor", "personalInfo")
       .populate("tpa", "tpaName")
       .select(
-        "fullName UHID contactNumber email gender dateOfBirth department doctor tpa registrationType bloodGroup address totalOPDVisits totalEmergencyVisits totalIPDVisits totalDaycareVisits totalServicesVisits lastVisitDate",
+        "fullName title UHID contactNumber email gender dateOfBirth maritalStatus department doctor completeAddress knownAllergies tpa companionName companionRelationship companionContact hasAppointment appointmentDate appointmentTime registrationType bloodGroup address totalOPDVisits totalEmergencyVisits totalIPDVisits totalDaycareVisits totalServicesVisits lastVisitDate",
       )
       .sort({ createdAt: -1 })
       .limit(parseInt(limit));

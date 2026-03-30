@@ -112,6 +112,8 @@ const PatientList = () => {
   };
 
   const header = (
+    <>
+    <button style={{background:"red", color:"white",padding:"3px",position:"relative",bottom:"20px" }} onClick={() => navigate(-1)}>⬅ Back</button>
     <div className="flex justify-content-between align-items-center">
       <h2 style={{ margin: 0 }}>Patients</h2>
       <div className="flex gap-2">
@@ -134,6 +136,7 @@ const PatientList = () => {
         />
       </div>
     </div>
+     </>
   );
 
   return (
