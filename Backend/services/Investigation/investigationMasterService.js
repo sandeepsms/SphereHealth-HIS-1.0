@@ -1,11 +1,12 @@
-// services/investigationMasterService.js
 const InvestigationMaster = require("../../models/Investigation/InvestigationMasterModel");
 const InvestigationPricing = require("../../models/Investigation/InvestigationPricingModel");
+const { tpaService } = require("../tpa/tpaService"); // adjust path if needed
 
 class InvestigationMasterService {
-  // ── 1. List with filters ──────────────────────────────────────
+  // ── GET all ───────────────────────────────────────────────────
   async getAll({
     category,
+    performedAt,
     isPackage,
     isActive = "true",
     search,
@@ -15,6 +16,7 @@ class InvestigationMasterService {
     const q = {};
     if (isActive !== undefined) q.isActive = isActive === "true";
     if (category) q.category = category;
+    if (performedAt) q.performedAt = performedAt;
     if (isPackage !== undefined && isPackage !== null)
       q.isPackage = isPackage === "true";
     if (search) q.$text = { $search: search };
@@ -22,15 +24,12 @@ class InvestigationMasterService {
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const [investigations, total] = await Promise.all([
       InvestigationMaster.find(q)
-        .populate(
-          "packageTests.investigationId",
-          "investigationName investigationCode defaultPrice",
-        )
         .sort({ category: 1, displayOrder: 1, investigationName: 1 })
         .limit(parseInt(limit))
         .skip(skip),
       InvestigationMaster.countDocuments(q),
     ]);
+
     return {
       investigations,
       total,
@@ -39,7 +38,7 @@ class InvestigationMasterService {
     };
   }
 
-  // ── 2. Grouped by category ────────────────────────────────────
+  // ── GET grouped ───────────────────────────────────────────────
   async getGrouped() {
     const items = await InvestigationMaster.find({ isActive: true }).sort({
       category: 1,
@@ -55,32 +54,21 @@ class InvestigationMasterService {
     return Object.values(grouped);
   }
 
-  // ── 3. Single by ID ───────────────────────────────────────────
+  // ── GET single ────────────────────────────────────────────────
   async getById(id) {
-    const inv = await InvestigationMaster.findById(id).populate(
-      "packageTests.investigationId",
-      "investigationName defaultPrice",
-    );
+    const inv = await InvestigationMaster.findById(id);
     if (!inv) throw new Error("Investigation not found");
     return inv;
   }
 
-  // ── 4. Create + auto CASH pricing ────────────────────────────
+  // ── CREATE — auto pricing for CASH + all TPAs ─────────────────
   async create(data) {
     const inv = await InvestigationMaster.create(data);
-    if (data.defaultPrice && data.defaultPrice > 0) {
-      await InvestigationPricing.create({
-        investigationId: inv._id,
-        tariffType: "CASH",
-        price: data.defaultPrice,
-        discount: 0,
-        finalPrice: data.defaultPrice,
-      });
-    }
+    await this._createAllPricings(inv);
     return inv;
   }
 
-  // ── 5. Update ─────────────────────────────────────────────────
+  // ── UPDATE ────────────────────────────────────────────────────
   async update(id, data) {
     const inv = await InvestigationMaster.findByIdAndUpdate(
       id,
@@ -89,7 +77,7 @@ class InvestigationMasterService {
     );
     if (!inv) throw new Error("Investigation not found");
 
-    // Sync CASH pricing with new defaultPrice
+    // Sync CASH if defaultPrice changed
     if (data.defaultPrice !== undefined) {
       await InvestigationPricing.findOneAndUpdate(
         { investigationId: id, tariffType: "CASH", isActive: true },
@@ -104,7 +92,7 @@ class InvestigationMasterService {
     return inv;
   }
 
-  // ── 6. Soft delete ────────────────────────────────────────────
+  // ── DEACTIVATE ────────────────────────────────────────────────
   async deactivate(id) {
     const inv = await InvestigationMaster.findByIdAndUpdate(
       id,
@@ -115,17 +103,17 @@ class InvestigationMasterService {
     return inv;
   }
 
-  // ── 7. Get pricing ────────────────────────────────────────────
+  // ── GET pricing ───────────────────────────────────────────────
   async getPricing(investigationId) {
     return InvestigationPricing.find({ investigationId, isActive: true })
       .populate("tpaId", "tpaName tpaCode")
-      .sort({ tariffType: 1 });
+      .sort({ tariffType: 1, tpaName: 1 });
   }
 
-  // ── 8. Upsert pricing (TPA / CORPORATE only — CASH auto) ─────
+  // ── UPSERT pricing manually ───────────────────────────────────
   async upsertPricing(
     investigationId,
-    { tariffType, tpaId, price, discount = 0, tpaApprovedLimit },
+    { tariffType, tpaId, tpaName, price, discount = 0, tpaApprovedLimit },
   ) {
     const query = { investigationId, tariffType, isActive: true };
     if (tariffType === "TPA" && tpaId) query.tpaId = tpaId;
@@ -138,12 +126,14 @@ class InvestigationMasterService {
       pricing.discount = discount;
       pricing.finalPrice = finalPrice;
       pricing.tpaApprovedLimit = tpaApprovedLimit || null;
+      if (tpaName) pricing.tpaName = tpaName;
       await pricing.save();
     } else {
       pricing = await InvestigationPricing.create({
         investigationId,
         tariffType,
         tpaId: tpaId || null,
+        tpaName: tpaName || null,
         price,
         discount,
         finalPrice,
@@ -153,7 +143,7 @@ class InvestigationMasterService {
     return pricing;
   }
 
-  // ── 9. Get effective price ────────────────────────────────────
+  // ── GET effective price ───────────────────────────────────────
   async getEffectivePrice(investigationId, tariffType = "CASH", tpaId = null) {
     const inv = await InvestigationMaster.findById(investigationId);
     if (!inv) throw new Error("Investigation not found");
@@ -169,400 +159,385 @@ class InvestigationMasterService {
     };
   }
 
-  // ── 10. Seed default investigations ──────────────────────────
+  // ── SEED ──────────────────────────────────────────────────────
   async seed() {
-    const DEFAULT_INVESTIGATIONS = [
-      // PATHOLOGY
+    const DEFAULT = [
       {
-        investigationCode: "PATH-001",
         investigationName: "Complete Blood Count (CBC)",
         shortName: "CBC",
         category: "PATHOLOGY",
         subCategory: "Haematology",
+        performedAt: "INTERNAL",
         sampleType: "Blood",
         defaultPrice: 300,
         tatHours: 4,
         displayOrder: 1,
       },
       {
-        investigationCode: "PATH-002",
         investigationName: "Liver Function Test (LFT)",
         shortName: "LFT",
         category: "PATHOLOGY",
         subCategory: "Clinical Biochemistry",
+        performedAt: "INTERNAL",
         sampleType: "Blood",
         defaultPrice: 600,
         tatHours: 6,
         displayOrder: 2,
       },
       {
-        investigationCode: "PATH-003",
         investigationName: "Kidney Function Test (KFT)",
         shortName: "KFT",
         category: "PATHOLOGY",
         subCategory: "Clinical Biochemistry",
+        performedAt: "INTERNAL",
         sampleType: "Blood",
         defaultPrice: 500,
         tatHours: 6,
         displayOrder: 3,
       },
       {
-        investigationCode: "PATH-004",
         investigationName: "Blood Sugar Fasting",
         shortName: "BSF",
         category: "PATHOLOGY",
         subCategory: "Clinical Biochemistry",
+        performedAt: "INTERNAL",
         sampleType: "Blood",
         defaultPrice: 80,
         tatHours: 2,
         displayOrder: 4,
       },
       {
-        investigationCode: "PATH-005",
         investigationName: "Blood Sugar PP",
         shortName: "BSPP",
         category: "PATHOLOGY",
         subCategory: "Clinical Biochemistry",
+        performedAt: "INTERNAL",
         sampleType: "Blood",
         defaultPrice: 80,
         tatHours: 2,
         displayOrder: 5,
       },
       {
-        investigationCode: "PATH-006",
         investigationName: "HbA1c",
         shortName: "HbA1c",
         category: "PATHOLOGY",
         subCategory: "Endocrinology",
+        performedAt: "INTERNAL",
         sampleType: "Blood",
         defaultPrice: 400,
         tatHours: 6,
         displayOrder: 6,
       },
       {
-        investigationCode: "PATH-007",
-        investigationName: "Thyroid Function Test (TFT)",
+        investigationName: "Thyroid Function Test",
         shortName: "TFT",
         category: "PATHOLOGY",
         subCategory: "Endocrinology",
+        performedAt: "INTERNAL",
         sampleType: "Blood",
         defaultPrice: 700,
         tatHours: 12,
         displayOrder: 7,
       },
       {
-        investigationCode: "PATH-008",
         investigationName: "Urine Routine Examination",
         shortName: "URE",
         category: "PATHOLOGY",
         subCategory: "Clinical Pathology",
+        performedAt: "INTERNAL",
         sampleType: "Urine",
         defaultPrice: 100,
         tatHours: 2,
         displayOrder: 8,
       },
       {
-        investigationCode: "PATH-009",
-        investigationName: "Serum Creatinine",
-        shortName: "Creatinine",
-        category: "PATHOLOGY",
-        subCategory: "Clinical Biochemistry",
-        sampleType: "Blood",
-        defaultPrice: 150,
-        tatHours: 4,
-        displayOrder: 9,
-      },
-      {
-        investigationCode: "PATH-010",
         investigationName: "Lipid Profile",
         shortName: "Lipid",
         category: "PATHOLOGY",
         subCategory: "Clinical Biochemistry",
+        performedAt: "INTERNAL",
         sampleType: "Blood",
         defaultPrice: 500,
         tatHours: 6,
+        displayOrder: 9,
+      },
+      {
+        investigationName: "Serum Creatinine",
+        shortName: "Creatinine",
+        category: "PATHOLOGY",
+        subCategory: "Clinical Biochemistry",
+        performedAt: "INTERNAL",
+        sampleType: "Blood",
+        defaultPrice: 150,
+        tatHours: 4,
         displayOrder: 10,
       },
       {
-        investigationCode: "PATH-011",
         investigationName: "Serum Electrolytes",
-        shortName: "Electrolytes",
+        shortName: "Electrolyte",
         category: "PATHOLOGY",
         subCategory: "Clinical Biochemistry",
+        performedAt: "INTERNAL",
         sampleType: "Blood",
         defaultPrice: 400,
         tatHours: 4,
         displayOrder: 11,
       },
       {
-        investigationCode: "PATH-012",
         investigationName: "Dengue NS1 Antigen",
         shortName: "Dengue NS1",
         category: "PATHOLOGY",
         subCategory: "Serology",
+        performedAt: "INTERNAL",
         sampleType: "Blood",
         defaultPrice: 700,
         tatHours: 4,
         displayOrder: 12,
       },
       {
-        investigationCode: "PATH-013",
         investigationName: "Malaria Antigen Test",
         shortName: "Malaria",
         category: "PATHOLOGY",
         subCategory: "Serology",
+        performedAt: "INTERNAL",
         sampleType: "Blood",
         defaultPrice: 300,
         tatHours: 2,
         displayOrder: 13,
       },
       {
-        investigationCode: "PATH-014",
         investigationName: "HIV Test",
         shortName: "HIV",
         category: "PATHOLOGY",
         subCategory: "Serology",
+        performedAt: "INTERNAL",
         sampleType: "Blood",
         defaultPrice: 200,
         tatHours: 4,
         displayOrder: 14,
       },
       {
-        investigationCode: "PATH-015",
         investigationName: "HBsAg (Hepatitis B)",
         shortName: "HBsAg",
         category: "PATHOLOGY",
         subCategory: "Serology",
+        performedAt: "INTERNAL",
         sampleType: "Blood",
         defaultPrice: 250,
         tatHours: 4,
         displayOrder: 15,
       },
       {
-        investigationCode: "PATH-016",
         investigationName: "Widal Test",
         shortName: "Widal",
         category: "PATHOLOGY",
         subCategory: "Serology",
+        performedAt: "INTERNAL",
         sampleType: "Blood",
         defaultPrice: 200,
         tatHours: 4,
         displayOrder: 16,
       },
       {
-        investigationCode: "PATH-017",
         investigationName: "PT/INR",
         shortName: "PT/INR",
         category: "PATHOLOGY",
         subCategory: "Coagulation",
+        performedAt: "INTERNAL",
         sampleType: "Blood",
         defaultPrice: 250,
         tatHours: 4,
         displayOrder: 17,
       },
       {
-        investigationCode: "PATH-018",
         investigationName: "Stool Routine Examination",
         shortName: "Stool RE",
         category: "PATHOLOGY",
         subCategory: "Clinical Pathology",
+        performedAt: "INTERNAL",
         sampleType: "Stool",
         defaultPrice: 100,
         tatHours: 4,
         displayOrder: 18,
       },
       {
-        investigationCode: "PATH-019",
         investigationName: "Blood Culture & Sensitivity",
-        shortName: "Blood Culture",
+        shortName: "Blood Cx",
         category: "MICROBIOLOGY",
         subCategory: "Microbiology",
+        performedAt: "INTERNAL",
         sampleType: "Blood",
         defaultPrice: 800,
         tatHours: 72,
         displayOrder: 1,
       },
       {
-        investigationCode: "PATH-020",
         investigationName: "Urine Culture & Sensitivity",
-        shortName: "Urine Culture",
+        shortName: "Urine Cx",
         category: "MICROBIOLOGY",
         subCategory: "Microbiology",
+        performedAt: "INTERNAL",
         sampleType: "Urine",
         defaultPrice: 600,
         tatHours: 48,
         displayOrder: 2,
       },
-      // RADIOLOGY
       {
-        investigationCode: "RAD-001",
         investigationName: "X-Ray Chest PA View",
         shortName: "X-Ray Chest",
         category: "RADIOLOGY",
         subCategory: "Plain X-Ray",
+        performedAt: "INTERNAL",
         defaultPrice: 200,
         tatHours: 1,
         displayOrder: 1,
       },
       {
-        investigationCode: "RAD-002",
         investigationName: "X-Ray Abdomen",
-        shortName: "X-Ray Abdomen",
+        shortName: "X-Ray Abd",
         category: "RADIOLOGY",
         subCategory: "Plain X-Ray",
+        performedAt: "INTERNAL",
         defaultPrice: 200,
         tatHours: 1,
         displayOrder: 2,
       },
       {
-        investigationCode: "RAD-003",
-        investigationName: "X-Ray Spine Cervical",
-        shortName: "X-Ray Spine C",
-        category: "RADIOLOGY",
-        subCategory: "Plain X-Ray",
-        defaultPrice: 250,
-        tatHours: 1,
-        displayOrder: 3,
-      },
-      {
-        investigationCode: "RAD-004",
         investigationName: "CT Scan Head (Plain)",
         shortName: "CT Head",
         category: "RADIOLOGY",
         subCategory: "CT Scan",
+        performedAt: "BOTH",
         defaultPrice: 2500,
         tatHours: 2,
-        displayOrder: 4,
+        displayOrder: 3,
       },
       {
-        investigationCode: "RAD-005",
         investigationName: "CT Scan Abdomen (Contrast)",
         shortName: "CT Abdomen",
         category: "RADIOLOGY",
         subCategory: "CT Scan",
+        performedAt: "BOTH",
         defaultPrice: 4500,
         tatHours: 3,
-        displayOrder: 5,
+        displayOrder: 4,
       },
       {
-        investigationCode: "RAD-006",
         investigationName: "MRI Brain (Plain)",
         shortName: "MRI Brain",
         category: "RADIOLOGY",
         subCategory: "MRI",
+        performedAt: "BOTH",
         defaultPrice: 6000,
         tatHours: 4,
-        displayOrder: 6,
+        displayOrder: 5,
       },
       {
-        investigationCode: "RAD-007",
         investigationName: "MRI Spine Lumbar",
         shortName: "MRI Spine",
         category: "RADIOLOGY",
         subCategory: "MRI",
+        performedAt: "BOTH",
         defaultPrice: 7000,
         tatHours: 4,
+        displayOrder: 6,
+      },
+      {
+        investigationName: "PET Scan",
+        shortName: "PET Scan",
+        category: "RADIOLOGY",
+        subCategory: "Nuclear Medicine",
+        performedAt: "EXTERNAL",
+        defaultPrice: 15000,
+        tatHours: 8,
         displayOrder: 7,
       },
-      // USG
       {
-        investigationCode: "USG-001",
         investigationName: "USG Abdomen (Whole)",
-        shortName: "USG Abdomen",
+        shortName: "USG Abd",
         category: "ULTRASONOGRAPHY",
-        subCategory: "USG",
+        performedAt: "INTERNAL",
         defaultPrice: 700,
         tatHours: 1,
         displayOrder: 1,
       },
       {
-        investigationCode: "USG-002",
         investigationName: "USG Pelvis",
         shortName: "USG Pelvis",
         category: "ULTRASONOGRAPHY",
-        subCategory: "USG",
+        performedAt: "INTERNAL",
         defaultPrice: 600,
         tatHours: 1,
         displayOrder: 2,
       },
       {
-        investigationCode: "USG-003",
         investigationName: "USG Obstetric",
         shortName: "USG OB",
         category: "ULTRASONOGRAPHY",
-        subCategory: "USG Obstetric",
+        performedAt: "INTERNAL",
         defaultPrice: 800,
         tatHours: 1,
         displayOrder: 3,
       },
       {
-        investigationCode: "USG-004",
-        investigationName: "Doppler Study (Peripheral)",
+        investigationName: "Doppler Study",
         shortName: "Doppler",
         category: "ULTRASONOGRAPHY",
-        subCategory: "Doppler",
+        performedAt: "INTERNAL",
         defaultPrice: 1500,
         tatHours: 2,
         displayOrder: 4,
       },
-      // CARDIOLOGY
       {
-        investigationCode: "CARD-001",
         investigationName: "ECG 12 Lead",
         shortName: "ECG",
         category: "CARDIOLOGY",
-        subCategory: "ECG",
+        performedAt: "INTERNAL",
         defaultPrice: 150,
         tatHours: 0,
         displayOrder: 1,
       },
       {
-        investigationCode: "CARD-002",
         investigationName: "2D Echo with Doppler",
         shortName: "2D Echo",
         category: "CARDIOLOGY",
-        subCategory: "Echo",
+        performedAt: "INTERNAL",
         defaultPrice: 2000,
         tatHours: 1,
         displayOrder: 2,
       },
       {
-        investigationCode: "CARD-003",
-        investigationName: "Holter Monitoring (24hr)",
+        investigationName: "Holter Monitoring 24hr",
         shortName: "Holter",
         category: "CARDIOLOGY",
-        subCategory: "Holter",
+        performedAt: "INTERNAL",
         defaultPrice: 2500,
         tatHours: 24,
         displayOrder: 3,
       },
       {
-        investigationCode: "CARD-004",
         investigationName: "Treadmill Test (TMT)",
         shortName: "TMT",
         category: "CARDIOLOGY",
-        subCategory: "Stress Test",
+        performedAt: "INTERNAL",
         defaultPrice: 1500,
         tatHours: 1,
         displayOrder: 4,
       },
-      // ENDOSCOPY
       {
-        investigationCode: "ENDO-001",
         investigationName: "Upper GI Endoscopy (OGD)",
         shortName: "OGD",
         category: "ENDOSCOPY",
-        subCategory: "GI Endoscopy",
+        performedAt: "INTERNAL",
         defaultPrice: 3000,
         tatHours: 1,
         displayOrder: 1,
       },
       {
-        investigationCode: "ENDO-002",
         investigationName: "Colonoscopy",
         shortName: "Colonoscopy",
         category: "ENDOSCOPY",
-        subCategory: "GI Endoscopy",
+        performedAt: "INTERNAL",
         defaultPrice: 4000,
         tatHours: 1,
         displayOrder: 2,
@@ -572,29 +547,88 @@ class InvestigationMasterService {
     let created = 0,
       skipped = 0,
       errors = [];
-    for (const inv of DEFAULT_INVESTIGATIONS) {
+
+    for (const data of DEFAULT) {
       try {
+        // Check by shortName to avoid duplicates
         const existing = await InvestigationMaster.findOne({
-          investigationCode: inv.investigationCode,
+          shortName: data.shortName,
         });
         if (existing) {
           skipped++;
           continue;
         }
-        const newInv = await InvestigationMaster.create(inv);
-        await InvestigationPricing.create({
-          investigationId: newInv._id,
-          tariffType: "CASH",
-          price: inv.defaultPrice,
-          discount: 0,
-          finalPrice: inv.defaultPrice,
-        });
+
+        const inv = await InvestigationMaster.create(data);
+        await this._createAllPricings(inv);
         created++;
       } catch (err) {
-        errors.push({ code: inv.investigationCode, error: err.message });
+        errors.push({ name: data.investigationName, error: err.message });
       }
     }
-    return { created, skipped, errors, total: DEFAULT_INVESTIGATIONS.length };
+
+    return { created, skipped, errors, total: DEFAULT.length };
+  }
+
+  // ── PRIVATE: Create CASH + all TPA pricings ───────────────────
+  async _createAllPricings(inv) {
+    const price = inv.defaultPrice || 0;
+
+    // 1. CASH pricing
+    await InvestigationPricing.findOneAndUpdate(
+      { investigationId: inv._id, tariffType: "CASH", isActive: true },
+      { price, discount: 0, finalPrice: price },
+      { upsert: true, new: true },
+    );
+
+    // 2. TPA pricing for all active TPAs
+    if (inv.availableForTPA !== false) {
+      try {
+        // Try to load TPA model dynamically
+        let TPA = null;
+        const paths = [
+          "../../models/tpa/tpaModel",
+          "../../models/TPA/tpaModel",
+          "../../models/tpa/TPA",
+          "../../models/TPA/TPA",
+        ];
+        for (const p of paths) {
+          try {
+            TPA = require(p);
+            break;
+          } catch {}
+        }
+
+        if (TPA) {
+          const allTPAs = await TPA.find({ isActive: true }).select(
+            "_id tpaName tpaCode",
+          );
+          for (const tpa of allTPAs) {
+            const exists = await InvestigationPricing.findOne({
+              investigationId: inv._id,
+              tariffType: "TPA",
+              tpaId: tpa._id,
+              isActive: true,
+            });
+            if (!exists) {
+              await InvestigationPricing.create({
+                investigationId: inv._id,
+                tariffType: "TPA",
+                tpaId: tpa._id,
+                tpaName: tpa.tpaName,
+                price,
+                discount: 0,
+                finalPrice: price,
+                tpaApprovedLimit: null,
+              });
+            }
+          }
+        }
+      } catch (e) {
+        // TPA model not found — skip TPA pricing silently
+        console.log("TPA pricing skipped:", e.message);
+      }
+    }
   }
 }
 

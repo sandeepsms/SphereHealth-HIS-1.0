@@ -1,29 +1,26 @@
 const mongoose = require("mongoose");
 
-// ═══════════════════════════════════════════════════════════════
-// INVESTIGATION MASTER MODEL
-// Hospital ke sabhi investigations/tests ka catalog
-// CBC, LFT, KFT, X-Ray, ECG, MRI — sab yahan
-// ═══════════════════════════════════════════════════════════════
-
 const InvestigationMasterSchema = new mongoose.Schema(
   {
+    // Auto-generated: PATH-001, RAD-001, CARD-001
     investigationCode: {
       type: String,
-      required: [true, "Investigation code required"],
       unique: true,
       uppercase: true,
       trim: true,
-      // Format: PATH-001, RAD-001, CARD-001
     },
 
     investigationName: {
       type: String,
-      required: [true, "Investigation name required"],
+      required: [true, "Investigation name is required"],
       trim: true,
     },
 
-    // Pathology / Radiology / Cardiology / Microbiology / Biochemistry / Other
+    shortName: {
+      type: String,
+      trim: true,
+    },
+
     category: {
       type: String,
       required: true,
@@ -43,65 +40,53 @@ const InvestigationMasterSchema = new mongoose.Schema(
     subCategory: {
       type: String,
       trim: true,
-      // e.g. "Haematology", "Clinical Biochemistry", "CT Scan"
     },
 
-    // Default/base price (CASH) — overridden by InvestigationPricing per TPA
+    // INTERNAL  → hospital lab only
+    // EXTERNAL  → always referred outside
+    // BOTH      → either option
+    performedAt: {
+      type: String,
+      enum: ["INTERNAL", "EXTERNAL", "BOTH"],
+      default: "INTERNAL",
+    },
+
     defaultPrice: {
       type: Number,
-      required: true,
+      required: [true, "Default price is required"],
       min: 0,
       default: 0,
     },
 
-    // Is this a package? e.g. "Full Body Checkup" = CBC + LFT + KFT + ...
-    isPackage: {
-      type: Boolean,
-      default: false,
+    sampleType: {
+      type: String,
+      trim: true,
     },
 
-    // Package mein kaunse tests hain (only if isPackage = true)
+    tatHours: {
+      type: Number,
+      default: 24,
+    },
+
+    isPackage: { type: Boolean, default: false },
     packageTests: [
       {
         investigationId: {
           type: mongoose.Schema.Types.ObjectId,
           ref: "InvestigationMaster",
         },
-        investigationName: String, // denormalized for display
+        investigationName: String,
         investigationCode: String,
       },
     ],
 
-    // Sample type for pathology tests
-    sampleType: {
-      type: String,
-      trim: true,
-      // e.g. "Blood", "Urine", "Stool", "Sputum", "Swab"
-    },
-
-    // Turnaround time in hours
-    tatHours: {
-      type: Number,
-      default: 24,
-    },
-
-    // Report available in how many hours
-    reportTimeHours: {
-      type: Number,
-      default: 24,
-    },
-
     isTaxable: { type: Boolean, default: false },
     taxPercentage: { type: Number, default: 0, min: 0, max: 28 },
-
     availableForTPA: { type: Boolean, default: true },
     requiresDoctorOrder: { type: Boolean, default: true },
-
     displayOrder: { type: Number, default: 999 },
     isActive: { type: Boolean, default: true },
-
     description: { type: String, trim: true },
-    shortName: { type: String, trim: true }, // CBC, LFT, KFT etc.
   },
   {
     timestamps: true,
@@ -110,10 +95,34 @@ const InvestigationMasterSchema = new mongoose.Schema(
   },
 );
 
+// ── Auto-generate investigationCode before save ────────────────
+// Format: PATH-001, RAD-001, CARD-001, MICRO-001 etc.
+const CATEGORY_PREFIX = {
+  PATHOLOGY: "PATH",
+  RADIOLOGY: "RAD",
+  CARDIOLOGY: "CARD",
+  MICROBIOLOGY: "MICRO",
+  BIOCHEMISTRY: "BIO",
+  ENDOSCOPY: "ENDO",
+  ULTRASONOGRAPHY: "USG",
+  OTHER: "OTH",
+};
+
+InvestigationMasterSchema.pre("save", async function (next) {
+  if (!this.investigationCode) {
+    const prefix = CATEGORY_PREFIX[this.category] || "INV";
+    const count = await mongoose.model("InvestigationMaster").countDocuments({
+      investigationCode: { $regex: `^${prefix}-` },
+    });
+    this.investigationCode = `${prefix}-${String(count + 1).padStart(3, "0")}`;
+  }
+  next();
+});
+
 InvestigationMasterSchema.index({ investigationCode: 1 });
 InvestigationMasterSchema.index({ category: 1 });
+InvestigationMasterSchema.index({ performedAt: 1 });
 InvestigationMasterSchema.index({ isActive: 1 });
-InvestigationMasterSchema.index({ isPackage: 1 });
 InvestigationMasterSchema.index({
   investigationName: "text",
   investigationCode: "text",
