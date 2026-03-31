@@ -1,988 +1,1064 @@
-import { useFormik } from "formik";
 import React, { useEffect, useState } from "react";
-import logo from "../../assets/BIMSLOGO.png";
 import { useParams, useNavigate } from "react-router-dom";
+import { Field, FieldArray, Formik, Form, getIn } from "formik";
+import * as yup from "yup";
+import { toast } from "react-toastify";
 import { InputText } from "primereact/inputtext";
 import { InputTextarea } from "primereact/inputtextarea";
 import { Button } from "primereact/button";
-import { toast } from "react-toastify";
+import { Dropdown } from "primereact/dropdown";
 import { MultiSelect } from "primereact/multiselect";
-import { Field, FieldArray, Formik, Form, getIn } from "formik";
-import * as yup from "yup";
+import { RadioButton } from "primereact/radiobutton";
+import logo from "../../assets/BIMSLOGO.png";
 import patientService from "../../Services/patient/patientService";
 import { doctorService } from "../../Services/doctors/doctorService";
-import { tpaServiceService } from "../../Services/tpa/tpaServiceService";
 import { prescriptionService } from "../../Services/doctors/prescriptionService";
-import DoctorPrePrint from "../../pages/doctor/DoctorPrePrint";
-import { Dropdown } from "primereact/dropdown";
+import { serviceMasterService } from "../../Services/Servicemasterservice/serviceMasterService";
+import { admissionService } from "../../Services/admissionService";
+import BedSelectionPanel from "../bed/BedSelectionPanel";
 
-function DoctorPrescription() {
-  const [uhid, setUHID] = useState(null);
-  const [currentDate] = useState(new Date());
-  const [serviceOptions, setServiceOptions] = useState([]);
-  const [selectedServices, setSelectedServices] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [doctorData, setDoctorData] = useState(null);
-  const [TesttotalPrice, setTestTotalPrice] = useState(0);
-  const [Testprice, setTestprice] = useState();
-  const [buttonmode, setButtonMode] = useState();
-  const [errors, seterrors] = useState();
-  const [editPrescription, setEditPrescription] = useState();
-  const [PrescriptionDataforEdit, setPrescriptionDataforEdit] = useState();
+const API = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
 
+// ── Dropdown options ─────────────────────────────────────────
+const SCHEDULE_OPTS = [
+  "1-0-0(Morning)",
+  "1-0-0(Afternoon)",
+  "1-0-0(Night)",
+  "1-1-1",
+  "OD",
+  "BD",
+  "TDS",
+  "QID",
+  "SOS",
+  "STAT",
+].map((v) => ({ label: v, value: v }));
+const INSTRUCTION_OPTS = [
+  "Before Food",
+  "After Food",
+  "With Food",
+  "Empty Stomach",
+  "At Bedtime",
+  "Do Not Crush/Chew",
+].map((v) => ({ label: v, value: v }));
+const ROUTE_OPTS = [
+  "Oral",
+  "IV",
+  "IM",
+  "SC",
+  "Topical",
+  "Inhalation",
+  "Sublingual",
+  "Nasal",
+].map((v) => ({ label: v, value: v }));
+const DAYS_OPTS = [
+  "1 Day",
+  "3 Days",
+  "5 Days",
+  "7 Days",
+  "10 Days",
+  "14 Days",
+  "30 Days",
+  "Once Weekly",
+  "Continue",
+].map((v) => ({ label: v, value: v }));
+const ADM_TYPES = ["Emergency", "Planned", "Transfer", "Day Care"].map((v) => ({
+  label: v,
+  value: v,
+}));
+
+const BLANK_MED = {
+  medicineName: "",
+  schedule: "",
+  instruction: "",
+  route: "",
+  days: "",
+};
+
+const validationSchema = yup.object({
+  provisionalDiagnosis: yup.string().required("Diagnosis required"),
+  medicines: yup
+    .array()
+    .of(yup.object({ medicineName: yup.string().required("Required") })),
+});
+
+const FieldInput = ({ field, form, placeholder }) => {
+  const err = getIn(form.errors, field.name);
+  return (
+    <div>
+      <input
+        {...field}
+        placeholder={placeholder}
+        className="form-control"
+        style={{ height: 34, fontSize: 13 }}
+      />
+      {err && (
+        <small className="text-danger" style={{ fontSize: 11 }}>
+          {err}
+        </small>
+      )}
+    </div>
+  );
+};
+
+const SectionHeader = ({ icon, title, color = "#0891b2" }) => (
+  <div
+    style={{
+      display: "flex",
+      alignItems: "center",
+      gap: 7,
+      marginBottom: 8,
+      paddingBottom: 6,
+      borderBottom: "1px solid #e5e7eb",
+    }}
+  >
+    <i className={`pi pi-${icon}`} style={{ fontSize: 13, color }} />
+    <span style={{ fontWeight: 700, fontSize: 13, color: "#0f172a" }}>
+      {title}
+    </span>
+  </div>
+);
+
+const card = {
+  background: "#fff",
+  border: "1px solid #e5e7eb",
+  borderRadius: 10,
+  padding: "12px 16px",
+  marginBottom: 8,
+};
+
+// ══════════════════════════════════════════════════════════════
+export default function DoctorPrescription() {
   const { UHID } = useParams();
   const navigate = useNavigate();
 
-  console.log("DoctorPrescription - UHID from URL:", UHID);
+  const [patientData, setPatientData] = useState(null);
+  const [doctorData, setDoctorData] = useState(null);
+  const [invOpts, setInvOpts] = useState([]);
+  const [serviceOpts, setServiceOpts] = useState([]);
+  const [editData, setEditData] = useState(null);
+  const [buttonMode, setButtonMode] = useState("CREATE");
+  const [loading, setLoading] = useState(false);
 
-  console.log("testprice------000000", TesttotalPrice);
+  // Admit flow
+  const [admitAnswer, setAdmitAnswer] = useState(null); // null | "YES" | "NO"
+  const [bedData, setBedData] = useState({
+    buildingId: null,
+    floorId: null,
+    wardId: null,
+    roomId: null,
+    bedId: null,
+    bedNumber: null,
+  });
+  const [admData, setAdmData] = useState({
+    reasonForAdmission: "",
+    admissionType: "Planned",
+    expectedDischargeDate: "",
+  });
 
-  // useEffect(() => {
-  //   buttonmode === "CREATE"
-  //     ? setEditPrescription(false)
-  //     : setEditPrescription(true);
-  // }, []);
-
+  // ── Load all data ──────────────────────────────────────────
   useEffect(() => {
-    if (editPrescription) {
-      fetchPrescriptionEditData();
-    }
-  }, [editPrescription]);
-
-  useEffect(() => {
-    if (UHID == null || UHID === "") return; // jab tak UHID na aaye
-
-    const fetchPrescription = async () => {
-      try {
-        const responsedata =
-          await prescriptionService.checkCreateOrUpdate(UHID);
-        setButtonMode(responsedata.data.mode);
-        fetchPrescriptionEditData();
-      } catch (error) {
-        console.error("Error while checking prescription", error);
-      }
-    };
-// Fetch Pereception data for edit.............
-    const fetchPrescriptionEditData = async () => {
-      try {
-        setLoading(true);
-        const response = await prescriptionService.getPrescriptionsByUHID(UHID);
-       
-        if (response.success) {
-          const prescriptionData = Array.isArray(response.data)
-            ? response.data[0]
-            : response.data;
-          setPrescriptionDataforEdit(prescriptionData || null);
-
-       
-        } else {
-          toast.error("No prescription data found for this UHID");
-        }
-      } catch (error) {
-        toast.error("Failed to load Edit prescription");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchPrescription();
+    if (UHID) loadAll();
   }, [UHID]);
 
-  useEffect(() => {
-    const total = selectedServices.reduce((sum, test) => {
-      return sum + (test.price || 0);
-    }, 0);
+  const loadAll = async () => {
+    setLoading(true);
+    try {
+      // Patient
+      const pRes = await patientService.getPatientByUHID(UHID);
+      const p = pRes.data;
+      setPatientData(p);
 
-    setTestTotalPrice(total);
-  }, [setSelectedServices]);
+      // Doctor
+      if (p?.doctor?._id) {
+        const dRes = await doctorService.getDoctorById(p.doctor._id);
+        setDoctorData(dRes.data || dRes);
+      }
 
-  // Fetch patient data
-  useEffect(() => {
-    if (!UHID) {
-      console.error("❌ No UHID in URL!");
-      toast.error("UHID is missing!");
+      // InvestigationMaster
+      const iRes = await fetch(`${API}/investigations?limit=300&isActive=true`);
+      const iData = await iRes.json();
+      setInvOpts(
+        (iData.data || []).map((i) => ({
+          label: `${i.investigationCode} — ${i.investigationName}`,
+          value: i._id,
+          code: i.investigationCode,
+          name: i.investigationName,
+          category: i.category,
+          performedAt: i.performedAt,
+        })),
+      );
+
+      // ServiceMaster — use serviceMasterService (returns { services, total })
+      const sResult = await serviceMasterService.getAllServices({
+        limit: 300,
+        isActive: true,
+      });
+      setServiceOpts(
+        (sResult.services || []).map((s) => ({
+          label: `${s.serviceCode} — ${s.serviceName}`,
+          value: s._id,
+          code: s.serviceCode,
+          name: s.serviceName,
+          category: s.category,
+          domain: s.domain,
+        })),
+      );
+
+      // Check CREATE or UPDATE
+      const cRes = await prescriptionService.checkCreateOrUpdate(UHID);
+      const mode = cRes.data?.mode || cRes.data?.data?.mode || "CREATE";
+      setButtonMode(mode);
+
+      if (mode === "UPDATE") {
+        const eRes = await prescriptionService.getPrescriptionsByUHID(UHID);
+        const ep = Array.isArray(eRes.data) ? eRes.data[0] : eRes.data;
+        setEditData(ep || null);
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error("Failed to load data");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ── Initial values ────────────────────────────────────────
+  const initialValues = {
+    patient: patientData?._id || "",
+    UHID: patientData?.UHID || UHID || "",
+    patientName: patientData?.fullName || "",
+    age: patientData?.age || "",
+    gender: patientData?.gender || "",
+    contactNumber: patientData?.contactNumber || "",
+    fatherName: patientData?.companionName || "",
+    department: patientData?.department?.departmentName || "",
+    registrationType: patientData?.registrationType || "OPD",
+    doctor: patientData?.doctor?._id || "",
+    referredBy: patientData?.referredBy || "Self",
+    historyOfAllergy: patientData?.knownAllergies || "",
+    historyOfPresentIllness:
+      editData?.clinicalDetails?.historyOfPresentIllness || "",
+    physicalExamination: editData?.clinicalDetails?.physicalExamination || "",
+    weight: editData?.vitals?.weight || "",
+    temperature: editData?.vitals?.temperature || "",
+    bloodPressure: editData?.vitals?.bloodPressure || "",
+    pulse: editData?.vitals?.pulse || "",
+    spo2: editData?.vitals?.spo2 || "",
+    provisionalDiagnosis: editData?.provisionalDiagnosis || "",
+    medicines:
+      editData?.medicines?.length > 0 ? editData.medicines : [{ ...BLANK_MED }],
+    investigations: editData?.investigations || [],
+    selectedServices: editData?.selectedServices || [],
+    advice: editData?.advice || "",
+  };
+
+  // ── Submit ────────────────────────────────────────────────
+  const handleSubmit = async (values, { setSubmitting }) => {
+    if (!values.UHID) {
+      toast.error("UHID missing");
+      setSubmitting(false);
+      return;
+    }
+    if (!values.patient) {
+      toast.error("Patient ID missing");
+      setSubmitting(false);
+      return;
+    }
+    if (admitAnswer === "YES" && !bedData.bedId) {
+      toast.error("Please select a bed");
+      setSubmitting(false);
       return;
     }
 
-    console.log("✅ Fetching patient data for UHID:", UHID);
+    setLoading(true);
+    try {
+      const doctorName = doctorData
+        ? `Dr. ${doctorData.personalInfo?.firstName || ""} ${doctorData.personalInfo?.lastName || ""}`.trim()
+        : "";
 
-    patientService
-      .getPatientByUHID(UHID)
-      .then((res) => {
-        const patientData = res.data;
-        console.log("✅ Patient Data Loaded:", patientData);
+      const payload = {
+        patient: values.patient,
+        patientName: values.patientName,
+        age: values.age,
+        gender: values.gender,
+        contactNumber: values.contactNumber,
+        fatherName: values.fatherName,
+        department: values.department,
+        doctor: values.doctor,
+        doctorName,
+        referredBy: values.referredBy,
+        registrationType: values.registrationType,
+        clinicalDetails: {
+          historyOfAllergy: values.historyOfAllergy,
+          historyOfPresentIllness: values.historyOfPresentIllness,
+          physicalExamination: values.physicalExamination,
+        },
+        vitals: {
+          weight: values.weight,
+          temperature: values.temperature,
+          bloodPressure: values.bloodPressure,
+          pulse: values.pulse,
+          spo2: values.spo2,
+        },
+        provisionalDiagnosis: values.provisionalDiagnosis,
+        medicines: values.medicines.filter((m) => m.medicineName),
+        investigations: values.investigations,
+        selectedServices: values.selectedServices,
+        advice: values.advice,
+      };
 
-        setUHID(patientData);
+      const res = await prescriptionService.createPrescription(
+        values.UHID,
+        payload,
+      );
+      if (!res.success) throw new Error(res.message || "Failed");
 
-        // Fetch TPA services if patient has TPA
-        if (patientData?.tpa?._id) {
-          console.log("TPA ID found:", patientData?.tpa?._id);
-          fetchTPAServices(patientData.tpa._id);
+      // Admit if YES
+      if (admitAnswer === "YES" && bedData.bedId && patientData) {
+        try {
+          await admissionService.createAdmission({
+            patientId: patientData._id,
+            UHID: patientData.UHID,
+            patientName: patientData.fullName,
+            contactNumber: patientData.contactNumber,
+            bedId: bedData.bedId,
+            department:
+              patientData.department?._id || patientData.department || "",
+            admissionDate: new Date().toISOString(),
+            reasonForAdmission: values.provisionalDiagnosis,
+            admissionType: admData.admissionType,
+            expectedDischargeDate: admData.expectedDischargeDate || undefined,
+            attendingDoctor: doctorName,
+            hasBed: true,
+          });
+          toast.success("Patient admitted & bed booked");
+        } catch (admErr) {
+          toast.warn(
+            "Prescription saved but admission failed: " + admErr.message,
+          );
         }
+      }
 
-        // Fetch doctor details
-        if (patientData?.doctor?._id) {
-          fetchDoctorDetails(patientData.doctor._id);
-        }
-      })
-      .catch((err) => {
-        console.error("❌ Error fetching patient:", err);
-        toast.error("Failed to load patient data");
-      });
-  }, [UHID]);
-
-  const fetchTPAServices = (tpaId) => {
-    console.log("Fetching TPA Services for TPA ID:", tpaId);
-
-    tpaServiceService
-      .getTPAServiceById(tpaId)
-      .then((res) => {
-        console.log("TPA Services Response:", res);
-
-        const serviceArray = res.data?.services || res.services || [];
-
-        const formattedOptions = serviceArray.map((item) => ({
-          // label: [item.Name,item.Totalamount],
-          label: item.Name,
-          value: item._id,
-          price: item.Totalamount,
-        }));
-
-        console.log(
-          "Formatted Service Options====================================:",
-          formattedOptions,
-        );
-        setServiceOptions(formattedOptions);
-      })
-      .catch((err) => {
-        console.error("❌ Error fetching TPA services:", err);
-      });
+      toast.success(res.message || "Prescription saved");
+      setTimeout(() => navigate(`/preceptionprint/${values.UHID}`), 600);
+    } catch (e) {
+      toast.error(e.response?.data?.message || e.message || "Failed");
+    } finally {
+      setLoading(false);
+      setSubmitting(false);
+    }
   };
 
-  const fetchDoctorDetails = (doctorId) => {
-    console.log("Fetching Doctor Details for Doctor ID:", doctorId);
-
-    doctorService
-      .getDoctorById(doctorId)
-      .then((res) => {
-        console.log("Doctor Data Loaded:", res.data || res);
-        setDoctorData(res.data || res);
-      })
-      .catch((err) => {
-        console.error("❌ Error fetching doctor details:", err);
-      });
-  };
-
-  const validationSchema = yup.object().shape({
-    provisionalDiagnosis: yup.string().required("Diagnosis is required"),
-    medicines: yup.array().of(
-      yup.object().shape({
-        medicineName: yup.string().required("Medicine name is required"),
-        schedule: yup.string(),
-        instruction: yup.string(),
-        route: yup.string(),
-        days: yup.string(),
-      }),
-    ),
-  });
-
-  const Input = ({ field, form, placeholder }) => {
-    const errorMessage = getIn(form.errors, field.name);
+  if (loading && !patientData) {
     return (
-      <div className="input-wrapper">
-        <input {...field} placeholder={placeholder} className="input-box" />
-        {errorMessage && <div className="error-text">{errorMessage}</div>}
+      <div className="text-center p-5">
+        <i className="pi pi-spin pi-spinner" style={{ fontSize: 32 }} />
       </div>
     );
-  };
+  }
 
-  const scheduledata = [
-    { label: "1-0-0(Morning)", value: "1-0-0(Morning)" },
-    { label: "1-0-0(Afternoon)", value: "1-0-0(Afternoon)" },
-    { label: "1-0-0(Night)", value: "1-0-0(Night)" },
-    { label: "1-1-1", value: "1-1-1" },
-    { label: "OD", value: "OD" },
-    { label: "BD", value: "BD" },
-    { label: "TDS", value: "TDS" },
-    { label: "QID", value: "QID" },
-    { label: "SOS", value: "SOS" },
-    { label: "STAT", value: "STAT" },
-  ];
-
-  const instructiondata = [
-    { label: "Before Food", value: "Before Food" },
-    { label: "After Food", value: "After Food" },
-    { label: "With Food", value: "With Food" },
-    { label: "Empty Stomach", value: "Empty Stomach" },
-    { label: "At Bedtime", value: "At Bedtime" },
-    { label: "Do Not Crush/Chew", value: "Do Not Crush/Chew" },
-  ];
-
-  const Routedata = [
-    { label: "Oral", value: "Oral" },
-    { label: "IV", value: "IV" },
-    { label: "IM", value: "IM" },
-    { label: "SC", value: "SC" },
-    { label: "Topical", value: "Topical" },
-    { label: "Inhalation", value: "Inhalation" },
-    { label: "Sublingual", value: "Sublingual" },
-    { label: "Nasal", value: "Nasal" },
-  ];
-
-  const daysdata = [
-    { label: "1 Day", value: "1 Day" },
-    { label: "3 Day", value: "3 Day" },
-    { label: "5 Day", value: "5 Day" },
-    { label: "7 Day", value: "7 Day" },
-    { label: "10 Day", value: "10 Day" },
-    { label: "14 Day", value: "14 Day" },
-    { label: "30 Day", value: "30 Day" },
-    { label: "Once Weekly", value: "Once Weekly" },
-    { label: "Custom", value: "Custom" },
-  ];
+  // ════════════════════════════════════════════════════════════
   return (
     <Formik
       enableReinitialize
-      initialValues={{
-        // Patient Info
-        patient: uhid?._id || "",
-        UHID: uhid?.UHID || "",
-        patientName: uhid?.fullName || "",
-        age: uhid?.age || "0",
-        gender: uhid?.gender || "",
-        contactNumber: uhid?.contactNumber || "",
-        date: currentDate.toLocaleDateString(),
-        fatherName: uhid?.companionName || "",
-        department: uhid?.department?.departmentName || "",
-        registrationType: uhid?.registrationType || "OPD",
-
-        // Doctor Info
-        doctor: uhid?.doctor?._id || "",
-        referredBy: uhid?.referredBy || "Self",
-
-        // Clinical Details
-        historyOfAllergy: uhid?.knownAllergies,
-        historyOfPresentIllness:
-          PrescriptionDataforEdit?.clinicalDetails?.historyOfPresentIllness ||
-          "",
-
-        physicalExamination:
-          PrescriptionDataforEdit?.clinicalDetails?.physicalExamination || "",
-
-        // Vitals
-        weight: PrescriptionDataforEdit?.vitals?.weight || "",
-
-        temperature: PrescriptionDataforEdit?.vitals?.temperature || "",
-
-        bloodPressure: PrescriptionDataforEdit?.vitals?.bloodPressure || "",
-
-        pulse: PrescriptionDataforEdit?.vitals?.pulse || "",
-
-        // Diagnosis & Treatment
-        provisionalDiagnosis:
-          PrescriptionDataforEdit?.provisionalDiagnosis || "",
-
-        // Medicines (Array Handle Properly)
-        medicines:
-          PrescriptionDataforEdit?.medicines?.length > 0
-            ? PrescriptionDataforEdit.medicines
-            : [
-                {
-                  medicineName: "",
-                  schedule: "",
-                  instruction: "",
-                  route: "",
-                  days: "",
-                },
-              ],   
-              
-              
-
-        // Investigations
-        investigations: PrescriptionDataforEdit?.investigations || [],
-
-        // Advice
-        advice: PrescriptionDataforEdit?.advice || "",
-      }}
+      initialValues={initialValues}
       validationSchema={validationSchema}
-      onSubmit={async (values, { setSubmitting }) => {
-        console.log("=== PRESCRIPTION SUBMISSION STARTED ===");
-        console.log("Form Values:", values);
-
-        console.log("UHID:", values.UHID);
-        console.log("Patient ID:", values.patient);
-        console.log("Patient test:", values.investigations);
-        // ✅ Validation before submission
-        if (!values.UHID) {
-          console.error("❌ UHID is missing in form values!");
-          toast.error("UHID is missing. Cannot create prescription.");
-          setSubmitting(false);
-          return;
-        }
-
-        if (!values.patient) {
-          console.error("❌ Patient ID is missing in form values!");
-          toast.error("Patient ID is missing. Cannot create prescription.");
-          setSubmitting(false);
-          return;
-        }
-
-        setLoading(true);
-
-        try {
-          const prescriptionData = {
-            patient: values.patient,
-            patientName: uhid?.fullName || "",
-            age: uhid?.age || "0",
-            gender: uhid?.gender || "",
-            contactNumber: uhid?.contactNumber || "",
-            department: uhid?.department?.departmentName || "",
-            doctor: uhid?.doctor?._id || "",
-            UHID: values.UHID,
-            // doctor: values.doctor,
-            registrationType: values.registrationType,
-            fatherName: uhid?.companionName || "",
-            clinicalDetails: {
-              historyOfAllergy: values.historyOfAllergy,
-              historyOfPresentIllness: values.historyOfPresentIllness,
-              physicalExamination: values.physicalExamination,
-            },
-
-            vitals: {
-              weight: values.weight,
-              temperature: values.temperature,
-              bloodPressure: values.bloodPressure,
-              pulse: values.pulse,
-            },
-
-            provisionalDiagnosis: values.provisionalDiagnosis,
-            medicines: values.medicines,
-            investigations: values.investigations,
-            advice: values.advice,
-            referredBy: values.referredBy,
-          };
-
-          console.log("Submitting Prescription Data:", prescriptionData);
-
-          const response =
-            // await prescriptionService.createPrescription(prescriptionData);
-            await prescriptionService.createPrescription(
-              UHID,
-              prescriptionData,
-            );
-
-          console.log("✅ Prescription Created Successfully:", response);
-
-          if (response.success) {
-            toast.success(
-              response.message || "Prescription created successfully!",
-            );
-
-            // ✅ Construct the print URL
-            const printUrl = `/preceptionprint/${values.UHID}`;
-            console.log("✅ Navigating to Print Page:", printUrl);
-
-            // Navigate to print page after short delay
-            setTimeout(() => {
-              navigate(printUrl);
-            }, 1000);
-          } else {
-            throw new Error(
-              response.message || "Failed to create prescription",
-            );
-          }
-        } catch (error) {
-          console.error("❌ Error creating prescription:", error);
-          console.error("Error details:", error.response?.data);
-          toast.error(
-            error.response?.data?.message ||
-              error.message ||
-              "Failed to create prescription",
-          );
-        } finally {
-          setLoading(false);
-          setSubmitting(false);
-        }
-      }}
+      onSubmit={handleSubmit}
     >
-      {({ values, handleChange, setFieldValue }) => (
-        <Form className="d-flex justify-content-center">
+      {({ values, handleChange, setFieldValue, errors }) => (
+        <Form>
           <div
-            className="card p-5 bg-white"
-            style={{ marginTop: "10px", maxWidth: "1200px" }}
+            style={{ maxWidth: 1100, margin: "0 auto", padding: "8px 10px" }}
           >
-            {/* Header */}
-            <header
-              className="navbar p-3 rounded"
+            {/* ── HEADER ── */}
+            <div
               style={{
-                border: "none",
-                boxShadow: "none",
-                justifyItems: "center",
+                ...card,
+                display: "flex",
+                alignItems: "center",
+                gap: 16,
+                padding: "10px 16px",
               }}
             >
-              <div className="navbar-logo">
-                <img src={logo} alt="Hospital Logo" style={{ width: "80px" }} />
-              </div>
-
-              <div className="navbar-center">
-                <h1 className="hospital-name" style={{ marginLeft: "80px" }}>
+              <img src={logo} alt="Logo" style={{ width: 52 }} />
+              <div style={{ flex: 1 }}>
+                <div
+                  style={{ fontWeight: 900, fontSize: 16, color: "#0891b2" }}
+                >
                   BIMS
-                </h1>
-                <p className="tagline" style={{ marginLeft: "70px" }}>
+                </div>
+                <div style={{ fontSize: 11, color: "#64748b" }}>
                   Bright Institute of Medical Sciences
-                </p>
+                </div>
               </div>
-
-              <div className="navbar-right">
-                <p>📞 +91 - 7988307850</p>
-                <p>✉️ query.bims@gmail.com</p>
-                <p>📍Gau Shala Road, Jatawara, Sonipat - 131001</p>
-              </div>
-            </header>
-
-            {/* Patient Information */}
-            <h5 className="p-2 rounded btn-custom text-white mb-3">
-              Patient Information Details:
-            </h5>
-            <div className="row">
-              <div className="col-md-4">
-                <label className="form-label">Name</label>
-                <InputText
-                  id="name"
-                  name="patientName"
-                  value={values.patientName}
-                  readOnly
-                  className="w-100 text-success fw-bold"
-                />
-              </div>
-
-              <div className="col-md-4">
-                <label className="form-label">Age</label>
-                <InputText
-                  id="age"
-                  name="age"
-                  value={values.age}
-                  readOnly
-                  className="w-100 text-success fw-bold"
-                />
-              </div>
-
-              <div className="col-md-4">
-                <label className="form-label">Gender</label>
-                <InputText
-                  id="gender"
-                  name="gender"
-                  value={values.gender}
-                  readOnly
-                  className="w-100 text-success fw-bold"
-                />
-              </div>
-
-              <div className="col-md-4">
-                <label className="form-label">Father/Guardian Name:</label>
-                <InputText
-                  id="fatherName"
-                  name="fatherName"
-                  value={values.fatherName}
-                  // onChange={handleChange}
-                  readOnly
-                  className="w-100 text-success fw-bold"
-                />
-              </div>
-
-              <div className="col-md-4">
-                <label className="form-label">Contact Number</label>
-                <InputText
-                  id="contactNumber"
-                  name="contactNumber"
-                  value={values.contactNumber}
-                  readOnly
-                  className="w-100 text-success fw-bold"
-                />
-              </div>
-
-              <div className="col-md-4">
-                <label className="form-label">Date</label>
-                <InputText
-                  id="date"
-                  name="date"
-                  value={values.date}
-                  readOnly
-                  className="w-100 text-success fw-bold"
-                />
-              </div>
-
-              <div className="col-md-4">
-                <label className="form-label">UHID No:</label>
-                <InputText
-                  id="UHID"
-                  name="UHID"
-                  value={values.UHID}
-                  readOnly
-                  className="w-100 text-success fw-bold"
-                />
-              </div>
-
-              <div className="col-md-4">
-                <label className="form-label">Department:</label>
-                <InputText
-                  id="department"
-                  name="department"
-                  value={values.department}
-                  readOnly
-                  className="w-100 text-success fw-bold"
-                />
-              </div>
-
-              <div className="col-md-4">
-                <label className="form-label">Registration Type:</label>
-                <InputText
-                  id="registrationType"
-                  name="registrationType"
-                  value={values.registrationType}
-                  readOnly
-                  className="w-100 text-success fw-bold"
-                />
-              </div>
-
-              <div className="col-md-4">
-                <label className="form-label">Referred By:</label>
-                <InputText
-                  id="referredBy"
-                  name="referredBy"
-                  value={values.referredBy}
-                  onChange={handleChange}
-                  className="w-100"
-                />
+              <div
+                style={{ textAlign: "right", fontSize: 11, color: "#64748b" }}
+              >
+                <div>📞 +91-7988307850</div>
+                <div>📍 Gau Shala Road, Jatawara, Sonipat</div>
               </div>
             </div>
 
-            {/* Clinical Details */}
-            <h5 className="p-2 rounded btn-custom text-white mt-4">
-              Clinical Details:
-            </h5>
-            <div className="col-md-12">
-              <label className="form-label fw-bold">
-                History of Any Allergy:
+            {/* ── PATIENT INFO + VITALS ── */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1.4fr 1fr",
+                gap: 8,
+                marginBottom: 8,
+              }}
+            >
+              <div style={card}>
+                <SectionHeader icon="user" title="Patient Information" />
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr 1fr",
+                    gap: "6px 10px",
+                    fontSize: 12,
+                    marginBottom: 8,
+                  }}
+                >
+                  {[
+                    ["Name", values.patientName],
+                    ["UHID", values.UHID],
+                    [
+                      "Age / Gender",
+                      `${values.age || "—"} / ${values.gender || "—"}`,
+                    ],
+                    ["Contact", values.contactNumber],
+                    ["Department", values.department],
+                    ["Reg. Type", values.registrationType],
+                  ].map(([k, v]) => (
+                    <div key={k}>
+                      <div
+                        style={{
+                          color: "#94a3b8",
+                          fontSize: 10,
+                          fontWeight: 600,
+                        }}
+                      >
+                        {k}
+                      </div>
+                      <div style={{ fontWeight: 700, color: "#0f172a" }}>
+                        {v || "—"}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: "6px 10px",
+                  }}
+                >
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 600 }}>
+                      History of Allergy
+                    </label>
+                    <InputTextarea
+                      name="historyOfAllergy"
+                      value={values.historyOfAllergy}
+                      onChange={handleChange}
+                      rows={2}
+                      style={{ width: "100%", fontSize: 12 }}
+                      placeholder="Known allergies..."
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 600 }}>
+                      Present Illness
+                    </label>
+                    <InputTextarea
+                      name="historyOfPresentIllness"
+                      value={values.historyOfPresentIllness}
+                      onChange={handleChange}
+                      rows={2}
+                      style={{ width: "100%", fontSize: 12 }}
+                      placeholder="Chief complaints..."
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div style={card}>
+                <SectionHeader icon="heart" title="Vitals" />
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: "8px 12px",
+                  }}
+                >
+                  {[
+                    ["Weight (kg)", "weight", "Kgs"],
+                    ["Temp (°F)", "temperature", "°F"],
+                    ["B.P.", "bloodPressure", "mmHg"],
+                    ["Pulse", "pulse", "bpm"],
+                    ["SpO2 (%)", "spo2", "%"],
+                    ["Referred By", "referredBy", "Self"],
+                  ].map(([label, name, ph]) => (
+                    <div key={name}>
+                      <label
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 600,
+                          display: "block",
+                          marginBottom: 2,
+                        }}
+                      >
+                        {label}
+                      </label>
+                      <InputText
+                        name={name}
+                        value={values[name] || ""}
+                        onChange={handleChange}
+                        placeholder={ph}
+                        style={{ width: "100%", height: 32, fontSize: 12 }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* ── DIAGNOSIS ── */}
+            <div style={card}>
+              <SectionHeader icon="file-edit" title="Plan of Care" />
+              <label style={{ fontSize: 12, fontWeight: 600 }}>
+                Provisional Diagnosis *
               </label>
-              <InputTextarea
-                name="historyOfAllergy"
-                value={values.historyOfAllergy}
+              <InputText
+                name="provisionalDiagnosis"
+                value={values.provisionalDiagnosis}
                 onChange={handleChange}
-                placeholder="Enter the History of Any Allergy"
-                rows={3}
-                className="w-100"
+                placeholder="Enter diagnosis"
+                style={{ width: "100%", height: 36, marginTop: 4 }}
+                className={errors.provisionalDiagnosis ? "p-invalid" : ""}
               />
+              {errors.provisionalDiagnosis && (
+                <small className="text-danger" style={{ fontSize: 11 }}>
+                  {errors.provisionalDiagnosis}
+                </small>
+              )}
             </div>
 
-            <div className="col-md-12 mt-3">
-              <label className="form-label fw-bold">
-                History of Present Illness:
-              </label>
-              <InputTextarea
-                name="historyOfPresentIllness"
-                value={values.historyOfPresentIllness}
-                onChange={handleChange}
-                placeholder="Enter the Present Illness"
-                rows={3}
-                className="w-100"
-              />
-            </div>
-
-            <div className="col-md-12 mt-3">
-              <label className="form-label fw-bold">
-                Physical Examination:
-              </label>
-              <InputTextarea
-                name="physicalExamination"
-                value={values.physicalExamination}
-                onChange={handleChange}
-                placeholder="Enter the Physical Examination"
-                rows={3}
-                className="w-100"
-              />
-            </div>
-
-            {/* Vitals */}
-            <h5 className="p-2 rounded btn-custom text-white mt-4">Vitals:</h5>
-            <div className="row mt-3">
-              <div className="col-md-3 d-flex justify-content-evenly align-items-center">
-                <label htmlFor="weight">Weight:</label>
-                <InputText
-                  id="weight"
-                  name="weight"
-                  value={values.weight}
-                  onChange={handleChange}
-                  placeholder="Kgs"
-                  style={{ width: "90px" }}
-                />
-              </div>
-
-              <div className="col-md-3 d-flex justify-content-evenly align-items-center">
-                <label htmlFor="temperature">Temp:</label>
-                <InputText
-                  id="temperature"
-                  name="temperature"
-                  placeholder="(°F)"
-                  value={values.temperature}
-                  onChange={handleChange}
-                  style={{ width: "90px" }}
-                />
-              </div>
-
-              <div className="col-md-3 d-flex justify-content-evenly align-items-center">
-                <label htmlFor="bloodPressure">B.P:</label>
-                <InputText
-                  id="bloodPressure"
-                  name="bloodPressure"
-                  placeholder="mmHg"
-                  value={values.bloodPressure}
-                  onChange={handleChange}
-                  style={{ width: "90px" }}
-                />
-              </div>
-
-              <div className="col-md-3 d-flex justify-content-evenly align-items-center">
-                <label htmlFor="pulse">Pulse:</label>
-                <InputText
-                  id="pulse"
-                  name="pulse"
-                  placeholder="bpm"
-                  value={values.pulse}
-                  onChange={handleChange}
-                  style={{ width: "90px" }}
-                />
-              </div>
-            </div>
-
-            {/* Plan of Care */}
-            <h5 className="p-2 rounded btn-custom text-white mt-4">
-              Plan of Care:
-            </h5>
-            <div className="mt-4">
-              <div className="col-md-12">
-                <label className="form-label fw-bold">
-                  Provisional Diagnosis: <span className="text-danger">*</span>
-                </label>
-                <InputText
-                  name="provisionalDiagnosis"
-                  value={values.provisionalDiagnosis}
-                  onChange={handleChange}
-                  placeholder="Enter Diagnosis"
-                  required
-                  className="w-100"
-                />
-              </div>
-
-              {/* Medicine Table */}
+            {/* ── MEDICINES ── */}
+            <div style={card}>
               <FieldArray name="medicines">
                 {({ remove, push }) => (
-                  <div className="mt-4">
-                    <div className="d-flex justify-content-between align-items-center mb-3">
-                      <h4>Medicine Advised</h4>
+                  <>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        marginBottom: 8,
+                      }}
+                    >
+                      <SectionHeader icon="list" title="Medicines Advised" />
                       <Button
                         type="button"
                         severity="success"
-                        onClick={() =>
-                          push({
-                            medicineName: "",
-                            schedule: "",
-                            instruction: "",
-                            route: "",
-                            days: "",
-                          })
-                        }
-                      >
-                        + Add Medicine
-                      </Button>
+                        size="small"
+                        icon="pi pi-plus"
+                        label="Add Medicine"
+                        onClick={() => push({ ...BLANK_MED })}
+                        style={{ height: 30, fontSize: 12 }}
+                      />
                     </div>
-                    <table className="table table-bordered">
-                      <thead className="table-primary">
-                        <tr>
-                          <th>Medicine (Brand & Generic)</th>
-                          <th>Schedule</th>
-                          <th>Instruction</th>
-                          <th>Route</th>
-                          <th>Days</th>
-                          <th>Action</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {values.medicines.map((medicine, index) => (
-                          <tr key={index}>
-                            <td style={{ lineHeight: "28px", width: "100%" }}>
-                              <Field
-                                name={`medicines[${index}].medicineName`}
-                                component={Input}
-                                placeholder="Enter Medicine"
-                              />
-                            </td>
-                            <td>
-                              <Dropdown
-                                value={
-                                  values?.medicines?.[index]?.schedule || ""
-                                }
-                                options={scheduledata}
-                                onChange={(e) =>
-                                  setFieldValue(
-                                    `medicines[${index}].schedule`,
-                                    e.value,
-                                  )
-                                }
-                                placeholder="Select Schedule"
-                                className={
-                                  errors?.medicines?.[index]?.schedule
-                                    ? "p-invalid"
-                                    : ""
-                                }
-                                style={{ width: "100%" }}
-                              />
-
-                              {errors?.medicines?.[index]?.schedule && (
-                                <small className="p-error block">
-                                  {errors.medicines[index].schedule}
-                                </small>
-                              )}
-                            </td>
-                            <td>
-                              <Dropdown
-                                value={
-                                  values?.medicines?.[index]?.instruction || ""
-                                }
-                                options={instructiondata}
-                                onChange={(e) =>
-                                  setFieldValue(
-                                    `medicines[${index}].instruction`,
-                                    e.value,
-                                  )
-                                }
-                                placeholder="Select instruction"
-                                className={
-                                  errors?.medicines?.[index]?.instruction
-                                    ? "p-invalid"
-                                    : ""
-                                }
-                                style={{ width: "100%" }}
-                              />
-
-                              {errors?.medicines?.[index]?.instruction && (
-                                <small className="p-error block">
-                                  {errors.medicines[index].instruction}
-                                </small>
-                              )}
-                            </td>
-                            <td>
-                              {/* <Field
-                                name={`medicines[${index}].route`}
-                                component={Input}
-                                placeholder="Oral/IV"
-                              /> */}
-
-                              <Dropdown
-                                value={values?.medicines?.[index]?.route || ""}
-                                options={Routedata}
-                                onChange={(e) =>
-                                  setFieldValue(
-                                    `medicines[${index}].route`,
-                                    e.value,
-                                  )
-                                }
-                                placeholder="Select route"
-                                className={
-                                  errors?.medicines?.[index]?.route
-                                    ? "p-invalid"
-                                    : ""
-                                }
-                                style={{ width: "100%" }}
-                              />
-
-                              {errors?.medicines?.[index]?.route && (
-                                <small className="p-error block">
-                                  {errors.medicines[index].route}
-                                </small>
-                              )}
-                            </td>
-                            <td>
-                              <Dropdown
-                                key={index}
-                                value={values?.medicines?.[index]?.days}
-                                options={daysdata}
-                                optionLabel="label"
-                                optionValue="value"
-                                onChange={(e) =>
-                                  setFieldValue(
-                                    `medicines[${index}].days`,
-                                    e.value,
-                                  )
-                                }
-                                placeholder="Select days"
-                                className={
-                                  errors?.medicines?.[index]?.days
-                                    ? "p-invalid"
-                                    : ""
-                                }
-                                style={{ width: "100%" }}
-                              />
-
-                              {errors?.medicines?.[index]?.days && (
-                                <small className="p-error block">
-                                  {errors.medicines[index].days}
-                                </small>
-                              )}
-                            </td>
-                            <td className="text-center">
-                              <Button
-                                type="button"
-                                icon="pi pi-trash"
-                                severity="danger"
-                                text
-                                onClick={() => remove(index)}
-                              />
-                            </td>
+                    <div style={{ overflowX: "auto" }}>
+                      <table
+                        className="table table-bordered"
+                        style={{ minWidth: 800, fontSize: 12, marginBottom: 0 }}
+                      >
+                        <thead
+                          className="table-primary"
+                          style={{ fontSize: 11 }}
+                        >
+                          <tr>
+                            <th style={{ minWidth: 180 }}>Medicine Name</th>
+                            <th style={{ minWidth: 120 }}>Schedule</th>
+                            <th style={{ minWidth: 130 }}>Instruction</th>
+                            <th style={{ minWidth: 110 }}>Route</th>
+                            <th style={{ minWidth: 110 }}>Days</th>
+                            <th style={{ width: 40 }}></th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                        </thead>
+                        <tbody>
+                          {values.medicines.map((_, idx) => (
+                            <tr key={idx} style={{ verticalAlign: "middle" }}>
+                              <td>
+                                <Field
+                                  name={`medicines[${idx}].medicineName`}
+                                  component={FieldInput}
+                                  placeholder="Medicine name"
+                                />
+                              </td>
+                              <td>
+                                <Dropdown
+                                  value={values.medicines[idx].schedule}
+                                  options={SCHEDULE_OPTS}
+                                  onChange={(e) =>
+                                    setFieldValue(
+                                      `medicines[${idx}].schedule`,
+                                      e.value,
+                                    )
+                                  }
+                                  placeholder="Schedule"
+                                  style={{ width: "100%", fontSize: 12 }}
+                                />
+                              </td>
+                              <td>
+                                <Dropdown
+                                  value={values.medicines[idx].instruction}
+                                  options={INSTRUCTION_OPTS}
+                                  onChange={(e) =>
+                                    setFieldValue(
+                                      `medicines[${idx}].instruction`,
+                                      e.value,
+                                    )
+                                  }
+                                  placeholder="Instruction"
+                                  style={{ width: "100%", fontSize: 12 }}
+                                />
+                              </td>
+                              <td>
+                                <Dropdown
+                                  value={values.medicines[idx].route}
+                                  options={ROUTE_OPTS}
+                                  onChange={(e) =>
+                                    setFieldValue(
+                                      `medicines[${idx}].route`,
+                                      e.value,
+                                    )
+                                  }
+                                  placeholder="Route"
+                                  style={{ width: "100%", fontSize: 12 }}
+                                />
+                              </td>
+                              <td>
+                                <Dropdown
+                                  value={values.medicines[idx].days}
+                                  options={DAYS_OPTS}
+                                  onChange={(e) =>
+                                    setFieldValue(
+                                      `medicines[${idx}].days`,
+                                      e.value,
+                                    )
+                                  }
+                                  placeholder="Days"
+                                  style={{ width: "100%", fontSize: 12 }}
+                                />
+                              </td>
+                              <td className="text-center">
+                                <Button
+                                  type="button"
+                                  icon="pi pi-trash"
+                                  severity="danger"
+                                  text
+                                  onClick={() => remove(idx)}
+                                  style={{ height: 28 }}
+                                />
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
                 )}
               </FieldArray>
+            </div>
 
-              {/* Investigation Advised */}
-              <h5 className="p-2 rounded btn-custom text-white mt-4">
-                Investigation Advised:
-              </h5>
-              <div className="row mt-3">
-                <div className="col-md-12 ">
-                  <label className="form-label fw-bold">Investigations:</label>
-                  {/* <MultiSelect
-                    value={selectedServices}
-                    // value={formik.values.investigations}
-                    onChange={(e) => {
-                      console.log("value like========2222221111", e.value);
+            {/* ── INVESTIGATIONS + SERVICES (side by side) ── */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 8,
+                marginBottom: 8,
+              }}
+            >
+              {/* Investigations */}
+              <div style={card}>
+                <SectionHeader icon="search" title="Investigations Advised" />
+                <MultiSelect
+                  value={values.investigations
+                    .map((i) => i.investigationId)
+                    .filter(Boolean)}
+                  options={invOpts}
+                  onChange={(e) => {
+                    const sel = e.value.map((id) => {
+                      const opt = invOpts.find((o) => o.value === id);
+                      return {
+                        investigationId: id,
+                        investigationName: opt?.name || "",
+                        investigationCode: opt?.code || "",
+                        chargedPrice: 0,
+                        tariffType: "CASH",
+                      };
+                    });
+                    setFieldValue("investigations", sel);
+                  }}
+                  optionLabel="label"
+                  optionValue="value"
+                  placeholder="Search tests..."
+                  filter
+                  display="chip"
+                  style={{ width: "100%" }}
+                  itemTemplate={(opt) => (
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        width: "100%",
+                        gap: 8,
+                      }}
+                    >
+                      <span style={{ fontSize: 12 }}>{opt.label}</span>
+                      <span
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 600,
+                          borderRadius: 4,
+                          padding: "1px 6px",
+                          background:
+                            opt.performedAt === "EXTERNAL"
+                              ? "#fef3c7"
+                              : "#e0f2fe",
+                          color:
+                            opt.performedAt === "EXTERNAL"
+                              ? "#92400e"
+                              : "#0369a1",
+                        }}
+                      >
+                        {opt.performedAt}
+                      </span>
+                    </div>
+                  )}
+                />
+                {values.investigations.length > 0 && (
+                  <div style={{ marginTop: 8, fontSize: 11, color: "#0369a1" }}>
+                    {values.investigations.map((i) => (
+                      <span
+                        key={i.investigationId}
+                        style={{
+                          display: "inline-block",
+                          background: "#e0f2fe",
+                          color: "#0369a1",
+                          borderRadius: 4,
+                          padding: "2px 8px",
+                          marginRight: 4,
+                          marginTop: 4,
+                          fontWeight: 600,
+                        }}
+                      >
+                        {i.investigationCode} {i.investigationName}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
 
-                      setSelectedServices(e.value || []);
-                      setFieldValue("investigations", e.value || []);
+              {/* Services */}
+              <div style={card}>
+                <SectionHeader icon="th-large" title="Services Advised" />
+                <MultiSelect
+                  value={values.selectedServices
+                    .map((s) => s.serviceId)
+                    .filter(Boolean)}
+                  options={serviceOpts}
+                  onChange={(e) => {
+                    const sel = e.value.map((id) => {
+                      const opt = serviceOpts.find((o) => o.value === id);
+                      return {
+                        serviceId: id,
+                        serviceName: opt?.name || "",
+                        serviceCode: opt?.code || "",
+                      };
+                    });
+                    setFieldValue("selectedServices", sel);
+                  }}
+                  optionLabel="label"
+                  optionValue="value"
+                  placeholder="Search services..."
+                  filter
+                  display="chip"
+                  style={{ width: "100%" }}
+                  itemTemplate={(opt) => (
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        width: "100%",
+                        gap: 8,
+                      }}
+                    >
+                      <span style={{ fontSize: 12 }}>{opt.label}</span>
+                      <span
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 600,
+                          borderRadius: 4,
+                          padding: "1px 6px",
+                          background: "#f3e8ff",
+                          color: "#7c3aed",
+                        }}
+                      >
+                        {opt.domain}
+                      </span>
+                    </div>
+                  )}
+                />
+                {values.selectedServices.length > 0 && (
+                  <div style={{ marginTop: 8, fontSize: 11 }}>
+                    {values.selectedServices.map((s) => (
+                      <span
+                        key={s.serviceId}
+                        style={{
+                          display: "inline-block",
+                          background: "#f3e8ff",
+                          color: "#7c3aed",
+                          borderRadius: 4,
+                          padding: "2px 8px",
+                          marginRight: 4,
+                          marginTop: 4,
+                          fontWeight: 600,
+                        }}
+                      >
+                        {s.serviceCode} {s.serviceName}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* ── ADVICE ── */}
+            <div style={card}>
+              <SectionHeader icon="comment" title="Advice & Follow-up" />
+              <InputTextarea
+                name="advice"
+                value={values.advice}
+                onChange={handleChange}
+                placeholder="Advice, follow-up instructions..."
+                rows={2}
+                style={{ width: "100%", fontSize: 12 }}
+              />
+            </div>
+
+            {/* ── ADMIT SECTION ── */}
+            <div style={{ ...card, border: "1.5px solid #e9d5ff" }}>
+              <SectionHeader icon="home" title="Admission" color="#7c3aed" />
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 16,
+                  marginBottom: admitAnswer === "YES" ? 14 : 0,
+                }}
+              >
+                <span
+                  style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}
+                >
+                  Does this patient need to be admitted?
+                </span>
+                {["YES", "NO"].map((opt) => (
+                  <div
+                    key={opt}
+                    style={{ display: "flex", alignItems: "center", gap: 6 }}
+                  >
+                    <RadioButton
+                      inputId={`admit_${opt}`}
+                      value={opt}
+                      onChange={(e) => {
+                        setAdmitAnswer(e.value);
+                        if (e.value === "NO")
+                          setBedData({
+                            buildingId: null,
+                            floorId: null,
+                            wardId: null,
+                            roomId: null,
+                            bedId: null,
+                            bedNumber: null,
+                          });
+                      }}
+                      checked={admitAnswer === opt}
+                    />
+                    <label
+                      htmlFor={`admit_${opt}`}
+                      style={{
+                        fontSize: 13,
+                        cursor: "pointer",
+                        fontWeight: admitAnswer === opt ? 700 : 500,
+                        color:
+                          opt === "YES"
+                            ? admitAnswer === "YES"
+                              ? "#7c3aed"
+                              : "#374151"
+                            : admitAnswer === "NO"
+                              ? "#dc2626"
+                              : "#374151",
+                      }}
+                    >
+                      {opt}
+                    </label>
+                  </div>
+                ))}
+              </div>
+
+              {admitAnswer === "YES" && (
+                <div style={{ borderTop: "1px solid #e9d5ff", paddingTop: 12 }}>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr 1fr",
+                      gap: "8px 12px",
+                      marginBottom: 12,
                     }}
-                    options={serviceOptions}
-                    optionLabel="label"
-                    optionValue="value"
-                    placeholder="Select Tests"
-                    filter
-                    className="w-100"
-                    display="chip"
-                  /> */}
-
-                  {/* <MultiSelect
-                    value={values.investigations}
-                    onChange={(e) => {
-                      console.log("Selected Tests000000000000:", e.value);
-
-                      setSelectedServices(e.value || []); // UI state
-                      // setFieldValue("investigations", e.value || []); // Formik state
-                      setFieldValue("investigations", [
-                        {
-                          investigationName: e.serviceOptions.label,
-                          investigationId: e.value,
-                        },
-                      ]);
-                    }}
-                    options={serviceOptions}
-                    optionLabel="label"
-                    optionValue="value"
-                    placeholder="Select Tests"
-                    filter
-                    className="w-100"
-                    display="chip"
-                  /> */}
-
-                  <MultiSelect
-                    value={values.investigations?.map(
-                      (item) => item.investigationId,
-                    )}
-                    onChange={(e) => {
-                      const selectedInvestigations = e.value.map((id) => {
-                        const selectedService = serviceOptions.find(
-                          (service) => service.value === id,
-                        );
-
-                        return {
-                          investigationName: selectedService?.label || "",
-                          investigationId: id,
-                        };
-                      });
-
-                      setFieldValue("investigations", selectedInvestigations);
-                    }}
-                    options={serviceOptions}
-                    optionLabel="label"
-                    optionValue="value"
-                    placeholder="Select Tests"
-                    filter
-                    className="w-100 ml-4"
-                    display="chip"
+                  >
+                    <div>
+                      <label
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 600,
+                          display: "block",
+                          marginBottom: 3,
+                        }}
+                      >
+                        Admission Type
+                      </label>
+                      <Dropdown
+                        value={admData.admissionType}
+                        options={ADM_TYPES}
+                        onChange={(e) =>
+                          setAdmData((p) => ({ ...p, admissionType: e.value }))
+                        }
+                        style={{ width: "100%" }}
+                      />
+                    </div>
+                    <div>
+                      <label
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 600,
+                          display: "block",
+                          marginBottom: 3,
+                        }}
+                      >
+                        Expected Discharge
+                      </label>
+                      <InputText
+                        type="date"
+                        value={admData.expectedDischargeDate}
+                        onChange={(e) =>
+                          setAdmData((p) => ({
+                            ...p,
+                            expectedDischargeDate: e.target.value,
+                          }))
+                        }
+                        style={{ width: "100%", height: 36 }}
+                        min={new Date().toISOString().slice(0, 10)}
+                      />
+                    </div>
+                    <div>
+                      <label
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 600,
+                          display: "block",
+                          marginBottom: 3,
+                        }}
+                      >
+                        Reason
+                      </label>
+                      <InputText
+                        value={admData.reasonForAdmission}
+                        onChange={(e) =>
+                          setAdmData((p) => ({
+                            ...p,
+                            reasonForAdmission: e.target.value,
+                          }))
+                        }
+                        placeholder="From diagnosis"
+                        style={{ width: "100%", height: 36, fontSize: 12 }}
+                      />
+                    </div>
+                  </div>
+                  <BedSelectionPanel
+                    value={bedData}
+                    onChange={setBedData}
+                    disabled={loading}
                   />
+                  {bedData.bedId && (
+                    <div
+                      style={{
+                        marginTop: 8,
+                        background: "#f0fdf4",
+                        border: "1px solid #86efac",
+                        borderRadius: 6,
+                        padding: "6px 12px",
+                        fontSize: 12,
+                        color: "#166534",
+                        fontWeight: 600,
+                      }}
+                    >
+                      ✓ Bed selected: <b>{bedData.bedNumber}</b>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* ── DOCTOR + SUBMIT ── */}
+            <div
+              style={{
+                ...card,
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <div>
+                <div
+                  style={{ fontSize: 11, color: "#94a3b8", fontWeight: 600 }}
+                >
+                  Prescribing Doctor
+                </div>
+                <div
+                  style={{ fontWeight: 700, color: "#0891b2", fontSize: 13 }}
+                >
+                  Dr. {doctorData?.personalInfo?.firstName}{" "}
+                  {doctorData?.personalInfo?.lastName}
+                </div>
+                <div style={{ fontSize: 11, color: "#64748b" }}>
+                  {doctorData?.professional?.specialization || ""}
+                  {doctorData?.professional?.qualification
+                    ? ` · ${doctorData.professional.qualification}`
+                    : ""}
                 </div>
               </div>
-
-              {/* Advice & Follow-up */}
-              <h5 className="p-2 rounded btn-custom text-white mt-4">
-                Advice & Follow-up:
-              </h5>
-              <div className="col-md-12 mt-3">
-                <label className="form-label fw-bold">Advice</label>
-                <InputTextarea
-                  name="advice"
-                  value={values.advice}
-                  onChange={handleChange}
-                  placeholder="Enter Advice and Follow-up Instructions"
-                  rows={4}
-                  className="w-100"
-                />
-              </div>
-
-              {/* Doctor Details */}
-              <h5 className="p-2 rounded btn-custom text-white mt-4">
-                Doctor Details:
-              </h5>
-              <div className="row mt-3">
-                <div className="col-md-4">
-                  <label className="form-label fw-bold">Doctor Name:</label>
-                  <p className="text-success fw-bold">
-                    {doctorData?.personalInfo?.firstName}{" "}
-                    {doctorData?.personalInfo?.lastName}
-                  </p>
-                </div>
-
-                <div className="col-md-4">
-                  <label className="form-label fw-bold">Speciality:</label>
-                  <p className="text-success fw-bold">
-                    {doctorData?.professional?.specialization || "N/A"}
-                  </p>
-                </div>
-
-                <div className="col-md-4">
-                  <label className="form-label fw-bold">Qualifications:</label>
-                  <p className="text-success fw-bold">
-                    {doctorData?.professional?.qualification || "N/A"}
-                  </p>
-                </div>
-              </div>
-
-              {/* Submit Button */}
-              <div className="text-center mt-4">
-                <Button
-                  type="submit"
-                  label={
-                    buttonmode === "CREATE"
-                      ? "CREATE & Print"
-                      : "UPDATE & Print"
-                  }
-                  icon={loading ? "pi pi-spin pi-spinner" : "pi pi-check"}
-                  className="btn-custom px-5 rounded"
-                  loading={loading}
-                  disabled={loading}
-                />
-              </div>
+              <Button
+                type="submit"
+                label={
+                  loading
+                    ? "Saving..."
+                    : buttonMode === "CREATE"
+                      ? "Create & Print"
+                      : "Update & Print"
+                }
+                icon={loading ? "pi pi-spin pi-spinner" : "pi pi-check"}
+                style={{
+                  background: "#0891b2",
+                  border: "none",
+                  fontWeight: 700,
+                  padding: "10px 28px",
+                }}
+                loading={loading}
+                disabled={loading}
+              />
             </div>
           </div>
         </Form>
@@ -990,5 +1066,3 @@ function DoctorPrescription() {
     </Formik>
   );
 }
-
-export default DoctorPrescription;

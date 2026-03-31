@@ -1,13 +1,4 @@
-// import React from 'react'
-
-// export default function NursingNotes() {
-
-//   return (
-
-//   )
-// }
-
-import React from "react";
+import { useEffect } from "react";
 import { Formik, FieldArray } from "formik";
 import { InputText } from "primereact/inputtext";
 import { Dropdown } from "primereact/dropdown";
@@ -16,6 +7,11 @@ import "../../../css/nursing.css";
 
 import { InputTextarea } from "primereact/inputtextarea";
 
+import {
+  createNurseNote,
+  getNurseNotes,
+  updateNurseNote,
+} from "../../Services/nurse/NursingNotes";
 const NursingNotes = () => {
   const shiftOptions = [
     { label: "Morning", value: "morning" },
@@ -28,10 +24,82 @@ const NursingNotes = () => {
     { label: "No", value: "no" },
   ];
 
+  const mapToBackend = (values) => ({
+    patientUHID: values.uhid,
+    patientName: values.patientName,
+    ipdNo: values.admissionNo,
+    shift: values.shift,
+
+    vitals: {
+      pulse: Number(values.vitals[0]?.hr),
+      temp: Number(values.vitals[0]?.temp),
+      rr: Number(values.vitals[0]?.rr),
+      spo2: Number(values.vitals[0]?.spo2),
+      bp: {
+        systolic: Number(values.vitals[0]?.bp?.split("/")[0] || 0),
+        diastolic: Number(values.vitals[0]?.bp?.split("/")[1] || 0),
+      },
+    },
+
+    intakeOutput: {
+      oral: Number(values.oralIntake),
+      ivFluids: Number(values.ivTotal),
+      urineOutput: Number(values.urineOutput),
+      otherOutput: Number(values.drainOutput),
+    },
+
+    nursingCare: {
+      positionChanged: values.positionChange === "yes",
+      catheterCare: values.catheterCare === "done",
+      woundDressing: values.dressing === "changed",
+    },
+
+    remarks: values.remarks,
+    status: "submitted",
+  });
+
+  // useEffect(() => {
+  //   const fetchData = async () => {
+  //     try {
+  //       const res = await getNurseNotes("UH00000125");
+  //       const data = res.data.data;
+
+  //       formik.setValues({
+  //         _id: data._id,
+  //         uhid: data.patientUHID,
+  //         patientName: data.patientName,
+  //         admissionNo: data.ipdNo,
+  //         shift: data.shift,
+
+  //         vitals: [
+  //           {
+  //             hr: data.vitals?.pulse || "",
+  //             temp: data.vitals?.temp || "",
+  //             rr: data.vitals?.rr || "",
+  //             spo2: data.vitals?.spo2 || "",
+  //             bp: `${data.vitals?.bp?.systolic || ""}/${data.vitals?.bp?.diastolic || ""}`,
+  //           },
+  //         ],
+
+  //         oralIntake: data.intakeOutput?.oral || "",
+  //         ivTotal: data.intakeOutput?.ivFluids || "",
+  //         urineOutput: data.intakeOutput?.urineOutput || "",
+  //         drainOutput: data.intakeOutput?.otherOutput || "",
+
+  //         remarks: data.remarks || "",
+  //       });
+  //     } catch (err) {
+  //       console.log(err);
+  //     }
+  //   };
+
+  //   fetchData();
+  // }, []);
+
   return (
     <Formik
       initialValues={{
-        uhid: "",
+        uhid: "UH00000125",
         admissionNo: "",
         patientName: "",
         ageSex: "",
@@ -82,8 +150,21 @@ const NursingNotes = () => {
 
         remarks: "",
       }}
-      onSubmit={(values) => {
-        console.log("FINAL DATA 👉", values);
+      onSubmit={async (values) => {
+        try {
+          const payload = mapToBackend(values.uhid);
+
+          if (values.uhid) {   
+            await updateNurseNote(values.uhid, payload);
+            alert("Updated ✅");
+          } else {
+            await createNurseNote(payload);
+            alert("Saved ✅");
+          }
+        } catch (err) {
+          console.error(err);
+          alert("Error ❌");
+        }
       }}
     >
       {(formik) => (
@@ -695,3 +776,278 @@ const NursingNotes = () => {
 };
 
 export default NursingNotes;
+
+// import React, { useEffect, useRef } from "react";
+// import { Formik, FieldArray } from "formik";
+// import { InputText } from "primereact/inputtext";
+// import { Dropdown } from "primereact/dropdown";
+// import { Button } from "primereact/button";
+// import { InputTextarea } from "primereact/inputtextarea";
+// import "../../../css/nursing.css";
+
+// // import {
+// //   createNurseNote,
+// //   getNurseNotes,
+// //   updateNurseNote,
+// // } from "../services/nurseService";
+
+// const NursingNotes = () => {
+//   const formikRef = useRef();
+
+//   const shiftOptions = [
+//     { label: "Morning", value: "morning" },
+//     { label: "Evening", value: "evening" },
+//     { label: "Night", value: "night" },
+//   ];
+
+//   const yesNo = [
+//     { label: "Yes", value: "yes" },
+//     { label: "No", value: "no" },
+//   ];
+
+//   // 🔥 SAFE MAPPING
+//   const mapToBackend = (values) => {
+//     const latest = values.vitals[values.vitals.length - 1] || {};
+
+//     const bp = latest.bp || "";
+//     const [sys, dia] = bp.includes("/") ? bp.split("/") : [0, 0];
+
+//     return {
+//       patientUHID: values.uhid,
+//       patientName: values.patientName,
+//       ipdNo: values.admissionNo,
+//       shift: values.shift,
+
+//       vitals: {
+//         pulse: Number(latest.hr || 0),
+//         temp: Number(latest.temp || 0),
+//         rr: Number(latest.rr || 0),
+//         spo2: Number(latest.spo2 || 0),
+//         bp: {
+//           systolic: Number(sys),
+//           diastolic: Number(dia),
+//         },
+//       },
+
+//       intakeOutput: {
+//         oral: Number(values.oralIntake || 0),
+//         ivFluids: Number(values.ivTotal || 0),
+//         urineOutput: Number(values.urineOutput || 0),
+//         otherOutput: Number(values.drainOutput || 0),
+//       },
+
+//       nursingCare: {
+//         positionChanged: values.positionChange === "yes",
+//         catheterCare: values.catheterCare === "done",
+//         woundDressing: values.dressing === "changed",
+//       },
+
+//       remarks: values.remarks,
+//       status: "submitted",
+//     };
+//   };
+
+//   // 🔥 FETCH DATA
+//   useEffect(() => {
+//     const fetchData = async () => {
+//       try {
+//         const res = await getNurseNotes("UH00000001");
+//         const data = res.data.data;
+
+//         if (!formikRef.current) return;
+
+//         formikRef.current.setValues({
+//           _id: data._id || "",
+//           uhid: data.patientUHID || "",
+//           admissionNo: data.ipdNo || "",
+//           patientName: data.patientName || "",
+//           shift: data.shift || "",
+
+//           vitals: [
+//             {
+//               time: "",
+//               hr: data.vitals?.pulse || "",
+//               bp: `${data.vitals?.bp?.systolic || ""}/${data.vitals?.bp?.diastolic || ""}`,
+//               spo2: data.vitals?.spo2 || "",
+//               rr: data.vitals?.rr || "",
+//               temp: data.vitals?.temp || "",
+//               urine: "",
+//             },
+//           ],
+
+//           oralIntake: data.intakeOutput?.oral || "",
+//           ivTotal: data.intakeOutput?.ivFluids || "",
+//           urineOutput: data.intakeOutput?.urineOutput || "",
+//           drainOutput: data.intakeOutput?.otherOutput || "",
+
+//           positionChange: data.nursingCare?.positionChanged ? "yes" : "no",
+//           catheterCare: data.nursingCare?.catheterCare ? "done" : "due",
+//           dressing: data.nursingCare?.woundDressing ? "changed" : "clean",
+
+//           remarks: data.remarks || "",
+//         });
+//       } catch (err) {
+//         console.log(err);
+//       }
+//     };
+
+//     fetchData();
+//   }, []);
+
+//   return (
+//     <Formik
+//       innerRef={formikRef}
+//       initialValues={{
+//         _id: "",
+//         uhid: "",
+//         admissionNo: "",
+//         patientName: "",
+//         ageSex: "",
+//         diagnosis: "",
+//         consultant: "",
+//         bed: "",
+//         ventilation: "",
+//         mode: "",
+//         fiO2: "",
+//         peep: "",
+//         shift: "",
+
+//         vitals: [
+//           {
+//             time: "",
+//             hr: "",
+//             bp: "",
+//             spo2: "",
+//             rr: "",
+//             temp: "",
+//             urine: "",
+//           },
+//         ],
+
+//         ivHourly: "",
+//         ivTotal: "",
+//         oralIntake: "",
+//         urineOutput: "",
+//         drainOutput: "",
+//         stool: "",
+
+//         position: "",
+//         pressureCare: "",
+//         mouthCare: "",
+//         etCare: "",
+//         ivSite: "",
+//         dressing: "",
+//         catheterCare: "",
+//         bowelCare: "",
+//         restraints: "",
+//         fallRisk: "",
+//         mouthSkinCare: "",
+//         positionChange: "",
+//         remarks: "",
+//       }}
+//       onSubmit={async (values) => {
+//         try {
+//           const payload = mapToBackend(values);
+
+//           if (values._id) {
+//             await updateNurseNote(values._id, payload);
+//             alert("Updated ✅");
+//           } else {
+//             await createNurseNote(payload);
+//             alert("Saved ✅");
+//           }
+//         } catch (err) {
+//           console.error(err);
+//           alert("Error ❌");
+//         }
+//       }}
+//     >
+//       {(formik) => (
+//         <form onSubmit={formik.handleSubmit} className="p-4 bg-gray-100 space-y-4">
+
+//           <h1 className="text-xl font-bold bg-red-800 text-white p-3">
+//             ICU Hourly Nursing Chart
+//           </h1>
+
+//           {/* PATIENT INFO */}
+//           <div className="grid grid-cols-3 gap-3 bg-white p-3 rounded">
+//             <InputText name="uhid" value={formik.values.uhid} onChange={formik.handleChange} placeholder="UHID"/>
+//             <InputText name="admissionNo" value={formik.values.admissionNo} onChange={formik.handleChange} placeholder="Admission No"/>
+//             <InputText name="patientName" value={formik.values.patientName} onChange={formik.handleChange} placeholder="Patient Name"/>
+//             <InputText name="ageSex" value={formik.values.ageSex} onChange={formik.handleChange} placeholder="Age/Sex"/>
+//             <InputText name="diagnosis" value={formik.values.diagnosis} onChange={formik.handleChange} placeholder="Diagnosis"/>
+//             <InputText name="consultant" value={formik.values.consultant} onChange={formik.handleChange} placeholder="Consultant"/>
+//             <InputText name="bed" value={formik.values.bed} onChange={formik.handleChange} placeholder="Bed"/>
+
+//             <Dropdown value={formik.values.ventilation} options={yesNo}
+//               onChange={(e)=>formik.setFieldValue("ventilation",e.value)} placeholder="Ventilation"/>
+
+//             <Dropdown value={formik.values.shift} options={shiftOptions}
+//               onChange={(e)=>formik.setFieldValue("shift",e.value)} placeholder="Shift"/>
+//           </div>
+
+//           {/* VITALS TABLE */}
+//           <FieldArray name="vitals">
+//             {(arrayHelpers)=>(
+//               <div className="bg-white p-3 rounded">
+//                 <table className="w-full border">
+//                   <thead>
+//                     <tr>
+//                       <th>Time</th><th>HR</th><th>BP</th><th>SpO2</th><th>RR</th><th>Temp</th><th>Urine</th><th></th>
+//                     </tr>
+//                   </thead>
+//                   <tbody>
+//                     {formik.values.vitals.map((v,i)=>(
+//                       <tr key={i}>
+//                         <td><InputText type="time" value={v.time}
+//                           onChange={(e)=>formik.setFieldValue(`vitals.${i}.time`,e.target.value)}/></td>
+
+//                         <td><InputText value={v.hr}
+//                           onChange={(e)=>formik.setFieldValue(`vitals.${i}.hr`,e.target.value)}/></td>
+
+//                         <td><InputText value={v.bp}
+//                           onChange={(e)=>formik.setFieldValue(`vitals.${i}.bp`,e.target.value)}/></td>
+
+//                         <td><InputText value={v.spo2}
+//                           onChange={(e)=>formik.setFieldValue(`vitals.${i}.spo2`,e.target.value)}/></td>
+
+//                         <td><InputText value={v.rr}
+//                           onChange={(e)=>formik.setFieldValue(`vitals.${i}.rr`,e.target.value)}/></td>
+
+//                         <td><InputText value={v.temp}
+//                           onChange={(e)=>formik.setFieldValue(`vitals.${i}.temp`,e.target.value)}/></td>
+
+//                         <td><InputText value={v.urine}
+//                           onChange={(e)=>formik.setFieldValue(`vitals.${i}.urine`,e.target.value)}/></td>
+
+//                         <td>
+//                           <Button type="button" icon="pi pi-trash"
+//                             onClick={()=>arrayHelpers.remove(i)} />
+//                         </td>
+//                       </tr>
+//                     ))}
+//                   </tbody>
+//                 </table>
+
+//                 <Button type="button" label="Add Row"
+//                   onClick={()=>arrayHelpers.push({
+//                     time:"",hr:"",bp:"",spo2:"",rr:"",temp:"",urine:""
+//                   })}/>
+//               </div>
+//             )}
+//           </FieldArray>
+
+//           {/* REMARKS */}
+//           <InputTextarea name="remarks"
+//             value={formik.values.remarks}
+//             onChange={formik.handleChange}
+//             placeholder="Remarks"/>
+
+//           <Button type="submit" label="Save Chart" className="w-full"/>
+//         </form>
+//       )}
+//     </Formik>
+//   );
+// };
+
+// export default NursingNotes;

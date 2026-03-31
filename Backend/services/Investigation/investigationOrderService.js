@@ -1,12 +1,10 @@
-// services/investigationOrderService.js
 const InvestigationOrder = require("../../models/Investigation/InvestigationOrderModel");
 const InvestigationMaster = require("../../models/Investigation/InvestigationMasterModel");
 const InvestigationPricing = require("../../models/Investigation/InvestigationPricingModel");
 
 class InvestigationOrderService {
-  // ── 1. Create new order ───────────────────────────────────────
-  // Doctor ya counter se aata hai
-  // investigationIds[] + patient + visitType
+  // ── CREATE ORDER ──────────────────────────────────────────────
+  // items = [{ investigationId, performedAt?, externalLabName? }]
   async createOrder({
     patientId,
     UHID,
@@ -14,7 +12,6 @@ class InvestigationOrderService {
     contactNumber,
     visitType = "OPD",
     admissionId = null,
-    opdVisitId = null,
     doctorId = null,
     doctorName = null,
     doctorNote = null,
@@ -22,52 +19,62 @@ class InvestigationOrderService {
     paymentType = "CASH",
     tpaId = null,
     tpaName = null,
-    investigationIds = [], // array of investigationId
+    items = [],
     priority = "ROUTINE",
     notes = null,
+    prescriptionId = null,
   }) {
-    if (!investigationIds.length)
-      throw new Error("Kam se kam ek investigation select karo");
+    if (!patientId) throw new Error("Patient ID is required");
+    if (!UHID) throw new Error("UHID is required");
+    if (!items.length)
+      throw new Error("At least one investigation is required");
 
-    // Fetch all investigations + their prices
-    const items = [];
-    for (const invId of investigationIds) {
-      const inv = await InvestigationMaster.findById(invId);
+    const orderItems = [];
+
+    for (const item of items) {
+      const inv = await InvestigationMaster.findById(item.investigationId);
       if (!inv || !inv.isActive) continue;
 
-      // Get effective price: TPA → CASH fallback
+      // Determine where test will be performed
+      let performedAt = item.performedAt || "INTERNAL";
+      if (inv.performedAt === "EXTERNAL") performedAt = "EXTERNAL";
+      if (inv.performedAt === "INTERNAL") performedAt = "INTERNAL";
+
+      // Get price
       const pricing = await InvestigationPricing.getPriceFor(
-        invId,
+        inv._id,
         paymentType,
         tpaId,
       );
       const chargedPrice = pricing ? pricing.finalPrice : inv.defaultPrice;
 
-      items.push({
+      orderItems.push({
         investigationId: inv._id,
-        investigationCode: inv.investigationCode,
+        investigationCode: inv.investigationCode || "",
         investigationName: inv.investigationName,
         category: inv.category,
         sampleType: inv.sampleType || "",
+        performedAt,
+        externalLabName:
+          performedAt === "EXTERNAL" ? item.externalLabName || null : null,
         chargedPrice,
         tariffType: paymentType,
         tpaApprovedLimit: pricing?.tpaApprovedLimit || null,
-        sampleStatus: "PENDING",
+        sampleStatus: performedAt === "EXTERNAL" ? "N/A" : "PENDING",
         resultStatus: "PENDING",
       });
     }
 
-    if (!items.length)
-      throw new Error("Selected investigations nahi mili ya inactive hain");
+    if (!orderItems.length) throw new Error("No valid investigations found");
 
     const order = await InvestigationOrder.create({
+      prescriptionId: prescriptionId || null,
       patientId,
-      UHID,
+      UHID: UHID.toUpperCase(),
       patientName,
       contactNumber,
       visitType,
       admissionId,
-      opdVisitId,
       doctorId,
       doctorName,
       doctorNote,
@@ -75,20 +82,27 @@ class InvestigationOrderService {
       paymentType,
       tpaId,
       tpaName,
-      items,
+      items: orderItems,
       priority,
       notes,
       orderStatus: "PENDING",
+      actionLog: [
+        {
+          action: "ORDER_CREATED",
+          performedBy: doctorName || orderedBy,
+          performedAt: new Date(),
+          remarks: `Created with ${orderItems.length} test(s)`,
+        },
+      ],
     });
 
-    return this._populate(order);
+    return this._populate(order._id);
   }
 
-  // ── 2. Get orders list ────────────────────────────────────────
+  // ── GET ORDERS ────────────────────────────────────────────────
   async getOrders({
     UHID,
     orderStatus,
-    resultStatus,
     priority,
     fromDate,
     toDate,
@@ -96,7 +110,7 @@ class InvestigationOrderService {
     limit = 50,
   } = {}) {
     const q = {};
-    if (UHID) q.UHID = UHID;
+    if (UHID) q.UHID = UHID.toUpperCase();
     if (orderStatus) q.orderStatus = orderStatus;
     if (priority) q.priority = priority;
     if (fromDate || toDate) {
@@ -105,7 +119,6 @@ class InvestigationOrderService {
       if (toDate)
         q.createdAt.$lte = new Date(new Date(toDate).setHours(23, 59, 59));
     }
-    if (resultStatus) q["items.resultStatus"] = resultStatus;
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const [orders, total] = await Promise.all([
@@ -127,93 +140,110 @@ class InvestigationOrderService {
     };
   }
 
-  // ── 3. Get single order ───────────────────────────────────────
+  // ── GET SINGLE ────────────────────────────────────────────────
   async getOrderById(orderId) {
-    const order = await this._populate(
-      await InvestigationOrder.findById(orderId),
-    );
+    const order = await this._populate(orderId);
     if (!order) throw new Error("Order not found");
     return order;
   }
 
-  // ── 4. Get orders for a patient ───────────────────────────────
+  // ── GET BY UHID ───────────────────────────────────────────────
   async getOrdersByUHID(UHID) {
-    const orders = await InvestigationOrder.find({ UHID })
+    return InvestigationOrder.find({ UHID: UHID.toUpperCase() })
+      .populate("patientId", "fullName UHID contactNumber gender")
       .populate("doctorId", "personalInfo.firstName personalInfo.lastName")
       .sort({ createdAt: -1 });
-    return orders;
   }
 
-  // ── 5. Sample collection ──────────────────────────────────────
-  // Lab assistant phlebotomist sample collect karta hai
-  async collectSamples(
-    orderId,
-    { collectedBy, itemIds = null, barcode = null },
-  ) {
+  // ── COLLECT SAMPLE ────────────────────────────────────────────
+  async collectSamples(orderId, { collectedBy, itemIds = null }) {
     const order = await InvestigationOrder.findById(orderId);
     if (!order) throw new Error("Order not found");
     if (order.orderStatus === "CANCELLED")
-      throw new Error("Cancelled order ka sample nahi le sakte");
+      throw new Error("Cannot collect sample for cancelled order");
 
     const now = new Date();
     for (const item of order.items) {
-      // Agar itemIds specified hain to sirf unke liye, warna sab
+      if (item.performedAt === "EXTERNAL") continue;
       if (itemIds && !itemIds.includes(item._id.toString())) continue;
       if (item.sampleStatus === "COLLECTED") continue;
-
       item.sampleStatus = "COLLECTED";
       item.sampleCollectedAt = now;
       item.sampleCollectedBy = collectedBy || "Lab Staff";
-      if (barcode) item.sampleBarcode = barcode;
     }
 
     order.orderStatus = "SAMPLE_COLLECTED";
-    await order.save();
-    return this._populate(order);
-  }
-
-  // ── 6. Mark sample received at lab ───────────────────────────
-  async receiveAtLab(orderId, { receivedBy, itemIds = null }) {
-    const order = await InvestigationOrder.findById(orderId);
-    if (!order) throw new Error("Order not found");
-
-    for (const item of order.items) {
-      if (itemIds && !itemIds.includes(item._id.toString())) continue;
-      if (item.sampleStatus !== "COLLECTED") continue;
-      item.sampleStatus = "RECEIVED_AT_LAB";
-      item.resultStatus = "IN_PROGRESS";
-    }
+    order.actionLog.push({
+      action: "SAMPLE_COLLECTED",
+      performedBy: collectedBy || "Lab Staff",
+      performedAt: now,
+    });
 
     await order.save();
-    return this._populate(order);
+    return this._populate(order._id);
   }
 
-  // ── 7. Enter results ──────────────────────────────────────────
-  // Lab technician results enter karta hai
-  // itemResults = [{ itemId, results: [{parameterName, value, unit, normalRange, isAbnormal}], interpretation }]
+  // ── ENTER RESULTS ─────────────────────────────────────────────
   async enterResults(orderId, { itemResults = [], enteredBy }) {
     const order = await InvestigationOrder.findById(orderId);
     if (!order) throw new Error("Order not found");
     if (order.orderStatus === "CANCELLED")
-      throw new Error("Cancelled order ka result nahi enter kar sakte");
+      throw new Error("Cannot enter results for cancelled order");
 
     const now = new Date();
     for (const { itemId, results, interpretation } of itemResults) {
       const item = order.items.id(itemId);
       if (!item) continue;
-
       item.results = results || [];
       item.interpretation = interpretation || "";
       item.resultStatus = "COMPLETED";
-      item.resultEnteredBy = enteredBy || "Lab";
+      item.resultEnteredBy = enteredBy || "Lab Technician";
       item.resultEnteredAt = now;
     }
 
+    order.actionLog.push({
+      action: "RESULTS_ENTERED",
+      performedBy: enteredBy || "Lab Technician",
+      performedAt: now,
+      remarks: `${itemResults.length} test(s)`,
+    });
+
     await order.save();
-    return this._populate(order);
+    return this._populate(order._id);
   }
 
-  // ── 8. Verify results (Senior/Pathologist) ───────────────────
+  // ── ENTER EXTERNAL RESULT ─────────────────────────────────────
+  async enterExternalResult(
+    orderId,
+    { itemId, externalLabName, externalReportRef, interpretation, enteredBy },
+  ) {
+    const order = await InvestigationOrder.findById(orderId);
+    if (!order) throw new Error("Order not found");
+
+    const item = order.items.id(itemId);
+    if (!item) throw new Error("Test item not found");
+    if (item.performedAt !== "EXTERNAL")
+      throw new Error("This test is not external");
+
+    item.externalLabName = externalLabName || item.externalLabName;
+    item.externalReportRef = externalReportRef || "";
+    item.interpretation = interpretation || "";
+    item.resultStatus = "COMPLETED";
+    item.resultEnteredBy = enteredBy || "Staff";
+    item.resultEnteredAt = new Date();
+
+    order.actionLog.push({
+      action: "EXTERNAL_RESULT_ATTACHED",
+      performedBy: enteredBy || "Staff",
+      performedAt: new Date(),
+      remarks: `From ${externalLabName}`,
+    });
+
+    await order.save();
+    return this._populate(order._id);
+  }
+
+  // ── VERIFY RESULTS ────────────────────────────────────────────
   async verifyResults(orderId, { verifiedBy, itemIds = null }) {
     const order = await InvestigationOrder.findById(orderId);
     if (!order) throw new Error("Order not found");
@@ -227,77 +257,115 @@ class InvestigationOrderService {
       item.verifiedAt = now;
     }
 
+    order.orderStatus = "COMPLETED";
+    order.actionLog.push({
+      action: "RESULTS_VERIFIED",
+      performedBy: verifiedBy || "Pathologist",
+      performedAt: now,
+    });
+
     await order.save();
-    return this._populate(order);
+    return this._populate(order._id);
   }
 
-  // ── 9. Mark report printed ────────────────────────────────────
+  // ── MARK PRINTED ──────────────────────────────────────────────
   async markReportPrinted(orderId, { printedBy }) {
     const order = await InvestigationOrder.findByIdAndUpdate(
       orderId,
-      { reportPrintedAt: new Date(), reportPrintedBy: printedBy || "Staff" },
+      {
+        reportPrintedAt: new Date(),
+        reportPrintedBy: printedBy || "Staff",
+        $push: {
+          actionLog: {
+            action: "REPORT_PRINTED",
+            performedBy: printedBy || "Staff",
+            performedAt: new Date(),
+          },
+        },
+      },
       { new: true },
     );
     if (!order) throw new Error("Order not found");
     return order;
   }
 
-  // ── 10. Cancel order ─────────────────────────────────────────
+  // ── CANCEL ────────────────────────────────────────────────────
   async cancelOrder(orderId, { cancelledBy, reason }) {
     const order = await InvestigationOrder.findById(orderId);
     if (!order) throw new Error("Order not found");
     if (order.orderStatus === "COMPLETED")
-      throw new Error("Completed order cancel nahi ho sakta");
+      throw new Error("Cannot cancel completed order");
 
     order.orderStatus = "CANCELLED";
     order.cancelledAt = new Date();
     order.cancelledBy = cancelledBy || "Staff";
     order.cancellationReason = reason || "";
+    order.actionLog.push({
+      action: "ORDER_CANCELLED",
+      performedBy: cancelledBy || "Staff",
+      performedAt: new Date(),
+      remarks: reason || "",
+    });
+
     await order.save();
     return order;
   }
 
-  // ── 11. Add test to existing order ───────────────────────────
-  async addTestToOrder(orderId, { investigationId }) {
+  // ── ADD TEST ──────────────────────────────────────────────────
+  async addTest(orderId, { investigationId, performedAt, externalLabName }) {
     const order = await InvestigationOrder.findById(orderId);
     if (!order) throw new Error("Order not found");
     if (["COMPLETED", "CANCELLED"].includes(order.orderStatus)) {
-      throw new Error("Completed/Cancelled order mein test nahi add ho sakta");
+      throw new Error("Cannot add test to completed or cancelled order");
     }
 
     const inv = await InvestigationMaster.findById(investigationId);
     if (!inv) throw new Error("Investigation not found");
 
-    const alreadyExists = order.items.find(
+    const exists = order.items.find(
       (i) => i.investigationId.toString() === investigationId.toString(),
     );
-    if (alreadyExists) throw new Error("Yeh test already is order mein hai");
+    if (exists) throw new Error("Test already in this order");
+
+    const pt =
+      inv.performedAt === "EXTERNAL"
+        ? "EXTERNAL"
+        : inv.performedAt === "INTERNAL"
+          ? "INTERNAL"
+          : performedAt || "INTERNAL";
 
     const pricing = await InvestigationPricing.getPriceFor(
-      investigationId,
+      inv._id,
       order.paymentType,
       order.tpaId,
     );
-    const chargedPrice = pricing ? pricing.finalPrice : inv.defaultPrice;
 
     order.items.push({
       investigationId: inv._id,
-      investigationCode: inv.investigationCode,
+      investigationCode: inv.investigationCode || "",
       investigationName: inv.investigationName,
       category: inv.category,
       sampleType: inv.sampleType || "",
-      chargedPrice,
+      performedAt: pt,
+      externalLabName: pt === "EXTERNAL" ? externalLabName || null : null,
+      chargedPrice: pricing ? pricing.finalPrice : inv.defaultPrice,
       tariffType: order.paymentType,
-      tpaApprovedLimit: pricing?.tpaApprovedLimit || null,
-      sampleStatus: "PENDING",
+      sampleStatus: pt === "EXTERNAL" ? "N/A" : "PENDING",
       resultStatus: "PENDING",
     });
 
+    order.actionLog.push({
+      action: "TEST_ADDED",
+      performedBy: "Staff",
+      performedAt: new Date(),
+      remarks: inv.investigationName,
+    });
+
     await order.save();
-    return this._populate(order);
+    return this._populate(order._id);
   }
 
-  // ── 12. Dashboard summary ─────────────────────────────────────
+  // ── DASHBOARD SUMMARY ─────────────────────────────────────────
   async getDashboardSummary() {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -320,10 +388,9 @@ class InvestigationOrderService {
     return { todayOrders, pending, inProgress, completed, urgent };
   }
 
-  // ── Private: populate helper ──────────────────────────────────
-  _populate(order) {
-    if (!order) return null;
-    return InvestigationOrder.findById(order._id)
+  // ── PRIVATE POPULATE ──────────────────────────────────────────
+  _populate(orderId) {
+    return InvestigationOrder.findById(orderId)
       .populate("patientId", "fullName UHID contactNumber gender dateOfBirth")
       .populate(
         "doctorId",
@@ -331,10 +398,7 @@ class InvestigationOrderService {
       )
       .populate("tpaId", "tpaName tpaCode")
       .populate("admissionId", "admissionNumber bedNumber roomCategory")
-      .populate(
-        "items.investigationId",
-        "investigationName investigationCode category sampleType tatHours",
-      );
+      .populate("prescriptionId", "provisionalDiagnosis prescriptionDate");
   }
 }
 

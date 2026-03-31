@@ -3,7 +3,8 @@
 // export const PopupContext = createContext();
 
 // export const PopupProvider = ({ children }) => {
-//   const [openBed, setOpenBed] = useState(false);
+//   const [vitalId, setVitalId] = useState(false);
+
 // console.log("mmmmmm", openBed);
 
 //   return (

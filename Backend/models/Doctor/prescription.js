@@ -1,46 +1,38 @@
-// models/prescriptionModel.js
 const mongoose = require("mongoose");
 
 const prescriptionSchema = new mongoose.Schema(
   {
+    // ── Patient ───────────────────────────────────────────────
     patient: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Patient",
       required: true,
     },
-    UHID: {
-      type: String,
-      required: true,
-      uppercase: true,
-    },
-    // Patient details (auto-populated from Patient)
+    UHID: { type: String, required: true, uppercase: true },
     patientName: String,
     age: Number,
     gender: String,
     contactNumber: String,
     fatherName: String,
-
     department: String,
-    date: {
-      type: Date,
-      default: Date.now,
-    },
+    date: { type: Date, default: Date.now },
 
-    // Doctor who wrote prescription (can be different from registration doctor)
+    // ── Doctor ────────────────────────────────────────────────
     doctor: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Doctor",
       required: true,
     },
-    doctorName: String, // Auto-populated
-
+    doctorName: String,
     referredBy: String,
+
     registrationType: {
       type: String,
-      enum: ["OPD", "IPD", "Emergency"],
+      enum: ["OPD", "IPD", "Emergency", "Daycare"],
       default: "OPD",
     },
 
+    // ── Clinical ──────────────────────────────────────────────
     clinicalDetails: {
       historyOfAllergy: String,
       historyOfPresentIllness: String,
@@ -56,141 +48,78 @@ const prescriptionSchema = new mongoose.Schema(
       spo2: Number,
     },
 
-    provisionalDiagnosis: {
-      type: String,
-      required: true,
-    },
+    provisionalDiagnosis: { type: String, required: true },
 
+    // ── Medicines ─────────────────────────────────────────────
     medicines: [
       {
-        medicineName: {
-          type: String,
-          required: true,
-        },
+        medicineName: { type: String, required: true },
         schedule: String,
         instruction: String,
-        route: {
-          type: String,
-          default: "Oral",
-        },
-        days: {
-          type: String,
-          default: 1,
-        },
+        route: { type: String, default: "Oral" },
+        days: { type: String, default: "1" },
       },
     ],
 
+    // ── Services (ref: ServiceMaster) ─────────────────────────
+    // Doctor selects service name only — billing handled by backend
     selectedServices: [
       {
         serviceId: {
           type: mongoose.Schema.Types.ObjectId,
-          ref: "TPAServices",
+          ref: "ServiceMaster",
+          default: null,
         },
-        serviceName: {
-          type: String,
-          required: true,
-        },
-        serviceType: {
-          type: String,
-          enum: ["fixed", "quantity", "hourly"],
-          required: true,
-        },
-        baseAmount: {
-          type: Number,
-          required: true,
-          min: 0,
-        },
-        discount: {
-          type: Number,
-          default: 0,
-          min: 0,
-          max: 20,
-        },
-        quantity: {
-          type: Number,
-          default: 1,
-          min: 1,
-        },
-        hours: {
-          type: Number,
-          default: 0,
-          min: 0,
-        },
-        totalAmount: {
-          type: Number,
-          required: true,
-          min: 0,
-        },
+        serviceName: { type: String, default: "" },
+        serviceCode: { type: String },
       },
     ],
 
+    // ── Investigations (ref: InvestigationMaster) ─────────────
     investigations: [
       {
-        investigationName: String,
         investigationId: {
           type: mongoose.Schema.Types.ObjectId,
-          ref: "TPAServices",
+          ref: "InvestigationMaster",
+          default: null,
+        },
+        investigationName: { type: String, default: "" },
+        investigationCode: { type: String },
+        chargedPrice: { type: Number, default: 0 },
+        tariffType: {
+          type: String,
+          enum: ["CASH", "TPA", "CORPORATE"],
+          default: "CASH",
         },
       },
     ],
 
     advice: String,
 
-    // Summary fields
-    totalServicesAmount: {
-      type: Number,
-      default: 0,
-    },
-
-    prescriptionDate: {
-      type: Date,
-      default: Date.now,
-    },
+    prescriptionDate: { type: Date, default: Date.now },
 
     status: {
       type: String,
-      enum: ["Active", "Completed", "Cancelled", "CREATED"],
+      enum: ["Active", "Completed", "Cancelled", "CREATED", "FINAL"],
       default: "Active",
     },
 
-    isActive: {
-      type: Boolean,
-      default: true,
-    },
+    isActive: { type: Boolean, default: true },
+
+    // ── Lab Orders auto-created when investigations present ────
+    labOrderIds: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "InvestigationOrder",
+      },
+    ],
   },
   { timestamps: true },
 );
 
-// Indexes
 prescriptionSchema.index({ patient: 1, createdAt: -1 });
 prescriptionSchema.index({ UHID: 1 });
 prescriptionSchema.index({ doctor: 1 });
 prescriptionSchema.index({ prescriptionDate: -1 });
-
-// Calculate total service amount before save
-prescriptionSchema.pre("save", function (next) {
-  // Calculate individual service totals
-  if (this.selectedServices && this.selectedServices.length > 0) {
-    let totalAmount = 0;
-
-    this.selectedServices.forEach((service) => {
-      let discountedPrice =
-        service.baseAmount - (service.baseAmount * service.discount) / 100;
-
-      if (service.serviceType === "quantity") {
-        service.totalAmount = discountedPrice * service.quantity;
-      } else if (service.serviceType === "hourly") {
-        service.totalAmount = discountedPrice * service.hours;
-      } else {
-        service.totalAmount = discountedPrice;
-      }
-
-      totalAmount += service.totalAmount;
-    });
-
-    this.totalServicesAmount = totalAmount;
-  }
-  next();
-});
 
 module.exports = mongoose.model("Prescription", prescriptionSchema);

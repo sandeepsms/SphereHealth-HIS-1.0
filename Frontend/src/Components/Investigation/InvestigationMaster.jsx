@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { tpaService } from "../../Services/tpa/tpaService";
 import { Card } from "primereact/card";
 import { DataTable } from "primereact/datatable";
 import { Column } from "primereact/column";
@@ -26,24 +27,18 @@ const CATEGORIES = [
 ].map((v) => ({ label: v, value: v }));
 
 const PERFORMED_AT_OPTIONS = [
-  { label: "Internal (own lab)", value: "INTERNAL" },
-  { label: "External (outside lab)", value: "EXTERNAL" },
-  { label: "Both available", value: "BOTH" },
+  { label: "Internal — hospital's own lab", value: "INTERNAL" },
+  { label: "External — outside lab only", value: "EXTERNAL" },
+  { label: "Both — either option", value: "BOTH" },
 ];
 
-const TARIFF_TYPES = [
-  { label: "TPA", value: "TPA" },
-  { label: "Corporate", value: "CORPORATE" },
-];
-
-const PERFORMED_AT_SEVERITY = {
+const PERFORMED_SEVERITY = {
   INTERNAL: "success",
   EXTERNAL: "warning",
   BOTH: "info",
 };
 
-const BLANK_FORM = {
-  investigationCode: "",
+const BLANK = {
   investigationName: "",
   shortName: "",
   category: "PATHOLOGY",
@@ -56,7 +51,6 @@ const BLANK_FORM = {
   taxPercentage: 0,
   availableForTPA: true,
   requiresDoctorOrder: true,
-  isPackage: false,
   description: "",
 };
 
@@ -68,24 +62,28 @@ const BLANK_PRICE = {
   tpaApprovedLimit: null,
 };
 
+const lbl = {
+  fontWeight: 600,
+  fontSize: 12,
+  display: "block",
+  marginBottom: 4,
+};
+
 export default function InvestigationMaster() {
   const toast = useRef(null);
   const [investigations, setInvestigations] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
-
   const [filters, setFilters] = useState({
     search: "",
     category: null,
     performedAt: null,
   });
 
-  // Form dialog
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
-  const [form, setForm] = useState(BLANK_FORM);
+  const [form, setForm] = useState(BLANK);
 
-  // Pricing dialog
   const [showPricing, setShowPricing] = useState(false);
   const [selItem, setSelItem] = useState(null);
   const [pricing, setPricing] = useState([]);
@@ -103,7 +101,6 @@ export default function InvestigationMaster() {
       if (filters.performedAt)
         params.append("performedAt", filters.performedAt);
       if (filters.search) params.append("search", filters.search);
-
       const res = await fetch(`${API}/investigations?${params}`);
       const data = await res.json();
       setInvestigations(data.data || []);
@@ -117,11 +114,9 @@ export default function InvestigationMaster() {
 
   const loadTPA = async () => {
     try {
-      const res = await fetch(`${API}/tpa`);
-      const data = await res.json();
-      setTpaList(
-        (data.data || []).map((t) => ({ label: t.tpaName, value: t._id })),
-      );
+      const res = await tpaService.getAllTPAs();
+      const list = res.data || res || [];
+      setTpaList(list.map((t) => ({ label: t.tpaName, value: t._id })));
     } catch {}
   };
 
@@ -132,16 +127,16 @@ export default function InvestigationMaster() {
     loadTPA();
   }, []);
 
-  // ── Seed ──────────────────────────────────────────────────────
   const handleSeed = async () => {
     setLoading(true);
     try {
       const res = await fetch(`${API}/investigations/seed`, { method: "POST" });
       const data = await res.json();
+      const r = data.data || data;
       showToast(
         "success",
         "Seeded",
-        `${data.data.created} tests added, ${data.data.skipped} already existed`,
+        `${r.created || 0} added, ${r.skipped || 0} already existed`,
       );
       load();
     } catch (e) {
@@ -151,17 +146,15 @@ export default function InvestigationMaster() {
     }
   };
 
-  // ── Open Add/Edit ─────────────────────────────────────────────
   const openAdd = () => {
     setEditItem(null);
-    setForm(BLANK_FORM);
+    setForm(BLANK);
     setShowForm(true);
   };
 
   const openEdit = (item) => {
     setEditItem(item);
     setForm({
-      investigationCode: item.investigationCode,
       investigationName: item.investigationName,
       shortName: item.shortName || "",
       category: item.category,
@@ -174,16 +167,14 @@ export default function InvestigationMaster() {
       taxPercentage: item.taxPercentage || 0,
       availableForTPA: item.availableForTPA,
       requiresDoctorOrder: item.requiresDoctorOrder,
-      isPackage: item.isPackage,
       description: item.description || "",
     });
     setShowForm(true);
   };
 
   const handleSave = async () => {
-    if (!form.investigationCode || !form.investigationName) {
-      return showToast("warn", "Required", "Code and Name are required");
-    }
+    if (!form.investigationName)
+      return showToast("warn", "Required", "Investigation Name is required");
     setLoading(true);
     try {
       const url = editItem
@@ -197,13 +188,12 @@ export default function InvestigationMaster() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
-
       showToast(
         "success",
         editItem ? "Updated" : "Created",
         editItem
           ? "Investigation updated"
-          : "Investigation created — CASH price auto-set",
+          : "Investigation created — CASH + TPA pricing auto-set",
       );
       setShowForm(false);
       load();
@@ -224,7 +214,6 @@ export default function InvestigationMaster() {
     }
   };
 
-  // ── Open Pricing ──────────────────────────────────────────────
   const openPricing = async (item) => {
     setSelItem(item);
     const res = await fetch(`${API}/investigations/${item._id}/pricing`);
@@ -241,14 +230,15 @@ export default function InvestigationMaster() {
       return showToast("warn", "Required", "Select a TPA");
     setLoading(true);
     try {
+      const tpa = tpaList.find((t) => t.value === priceForm.tpaId);
       const res = await fetch(`${API}/investigations/${selItem._id}/pricing`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(priceForm),
+        body: JSON.stringify({ ...priceForm, tpaName: tpa?.label || null }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
-      showToast("success", "Saved", "Pricing saved");
+      showToast("success", "Saved", "Pricing updated");
       const r2 = await fetch(`${API}/investigations/${selItem._id}/pricing`);
       const d2 = await r2.json();
       setPricing(d2.data || []);
@@ -262,13 +252,6 @@ export default function InvestigationMaster() {
 
   const previewFinal =
     priceForm.price - (priceForm.price * (priceForm.discount || 0)) / 100;
-
-  const lbl = {
-    fontWeight: 600,
-    fontSize: 12,
-    display: "block",
-    marginBottom: 4,
-  };
 
   return (
     <div style={{ maxWidth: 1400, margin: "0 auto", padding: "8px 12px" }}>
@@ -288,21 +271,18 @@ export default function InvestigationMaster() {
             <i className="pi pi-flask" style={{ marginRight: 6 }} />
             Investigation Master
           </span>
-
           <InputText
             value={filters.search}
             onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-            placeholder="Search by name / code..."
+            placeholder="Search by name..."
             style={{ width: 220 }}
           />
-
           <Dropdown
             value={filters.category}
             options={[{ label: "All Categories", value: null }, ...CATEGORIES]}
             onChange={(e) => setFilters({ ...filters, category: e.value })}
             style={{ width: 180 }}
           />
-
           <Dropdown
             value={filters.performedAt}
             options={[
@@ -314,7 +294,6 @@ export default function InvestigationMaster() {
             onChange={(e) => setFilters({ ...filters, performedAt: e.value })}
             style={{ width: 160 }}
           />
-
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
             <Button
               label="Load Default Tests"
@@ -323,7 +302,7 @@ export default function InvestigationMaster() {
               outlined
               onClick={handleSeed}
               loading={loading}
-              tooltip="Loads 40+ default investigations"
+              tooltip="Loads 35+ default investigations with CASH + TPA pricing"
             />
             <Button
               label="Add Investigation"
@@ -347,12 +326,12 @@ export default function InvestigationMaster() {
               {total} investigations
             </span>
           }
-          emptyMessage='No investigations found. Click "Load Default Tests" to get started.'
+          emptyMessage='No investigations. Click "Load Default Tests" to get started.'
         >
           <Column
             field="investigationCode"
             header="Code"
-            style={{ fontFamily: "monospace", fontSize: 12, width: 120 }}
+            style={{ fontFamily: "monospace", fontSize: 12, width: 110 }}
           />
           <Column
             header="Name"
@@ -382,7 +361,6 @@ export default function InvestigationMaster() {
             style={{ width: 130 }}
           />
           <Column
-            field="subCategory"
             header="Sub Category"
             body={(r) => (
               <span style={{ fontSize: 11, color: "#64748b" }}>
@@ -396,7 +374,7 @@ export default function InvestigationMaster() {
             body={(r) => (
               <Tag
                 value={r.performedAt}
-                severity={PERFORMED_AT_SEVERITY[r.performedAt] || "secondary"}
+                severity={PERFORMED_SEVERITY[r.performedAt] || "secondary"}
                 style={{ fontSize: 10 }}
               />
             )}
@@ -457,7 +435,7 @@ export default function InvestigationMaster() {
                   icon="pi pi-tag"
                   text
                   size="small"
-                  tooltip="Pricing"
+                  tooltip="TPA Pricing"
                   severity="info"
                   onClick={() => openPricing(r)}
                 />
@@ -478,11 +456,15 @@ export default function InvestigationMaster() {
         </DataTable>
       </Card>
 
-      {/* ── Add / Edit Dialog ── */}
+      {/* ── ADD / EDIT DIALOG ── */}
       <Dialog
         visible={showForm}
         style={{ width: "min(760px, 96vw)" }}
-        header={editItem ? "Edit Investigation" : "Add New Investigation"}
+        header={
+          editItem
+            ? `Edit — ${editItem.investigationName}`
+            : "Add New Investigation"
+        }
         onHide={() => {
           setShowForm(false);
           setEditItem(null);
@@ -505,26 +487,51 @@ export default function InvestigationMaster() {
           </div>
         }
       >
+        {/* Auto-code info */}
+        {!editItem && (
+          <div
+            style={{
+              background: "#f0fdf4",
+              border: "1px solid #bbf7d0",
+              borderRadius: 8,
+              padding: "8px 14px",
+              marginBottom: 14,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              fontSize: 13,
+              color: "#166534",
+            }}
+          >
+            <i className="pi pi-info-circle" />
+            Investigation Code will be <b>auto-generated</b> based on category
+            (e.g. PATH-001, RAD-005)
+          </div>
+        )}
+
+        {editItem && (
+          <div
+            style={{
+              background: "#f8fafc",
+              border: "1px solid #e2e8f0",
+              borderRadius: 8,
+              padding: "8px 14px",
+              marginBottom: 14,
+              fontSize: 13,
+              color: "#475569",
+            }}
+          >
+            Code:{" "}
+            <b style={{ fontFamily: "monospace" }}>
+              {editItem.investigationCode}
+            </b>
+          </div>
+        )}
+
         <div
           style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}
         >
-          <div>
-            <label style={lbl}>Investigation Code *</label>
-            <InputText
-              value={form.investigationCode}
-              onChange={(e) =>
-                setForm({
-                  ...form,
-                  investigationCode: e.target.value.toUpperCase(),
-                })
-              }
-              placeholder="PATH-001"
-              style={{ width: "100%", fontFamily: "monospace" }}
-              disabled={!!editItem}
-            />
-          </div>
-
-          <div>
+          <div style={{ gridColumn: "span 2" }}>
             <label style={lbl}>Investigation Name *</label>
             <InputText
               value={form.investigationName}
@@ -576,13 +583,6 @@ export default function InvestigationMaster() {
               onChange={(e) => setForm({ ...form, performedAt: e.value })}
               style={{ width: "100%" }}
             />
-            <small style={{ fontSize: 11, color: "#6c757d" }}>
-              {form.performedAt === "INTERNAL" && "Done in hospital's own lab"}
-              {form.performedAt === "EXTERNAL" &&
-                "Always referred to outside lab"}
-              {form.performedAt === "BOTH" &&
-                "Can be done internally or referred outside"}
-            </small>
           </div>
 
           <div>
@@ -606,7 +606,7 @@ export default function InvestigationMaster() {
               style={{ width: "100%" }}
             />
             <small style={{ color: "#16a34a", fontSize: 11 }}>
-              CASH pricing will be auto-set from this price
+              CASH + all TPA pricings auto-created from this price
             </small>
           </div>
 
@@ -641,13 +641,6 @@ export default function InvestigationMaster() {
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <InputSwitch
-                checked={form.isTaxable}
-                onChange={(e) => setForm({ ...form, isTaxable: e.value })}
-              />
-              <label style={{ fontSize: 12, fontWeight: 600 }}>Taxable</label>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <InputSwitch
                 checked={form.requiresDoctorOrder}
                 onChange={(e) =>
                   setForm({ ...form, requiresDoctorOrder: e.value })
@@ -656,6 +649,13 @@ export default function InvestigationMaster() {
               <label style={{ fontSize: 12, fontWeight: 600 }}>
                 Requires Doctor Order
               </label>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <InputSwitch
+                checked={form.isTaxable}
+                onChange={(e) => setForm({ ...form, isTaxable: e.value })}
+              />
+              <label style={{ fontSize: 12, fontWeight: 600 }}>Taxable</label>
             </div>
           </div>
 
@@ -674,25 +674,13 @@ export default function InvestigationMaster() {
               />
             </div>
           )}
-
-          <div style={{ gridColumn: "span 2" }}>
-            <label style={lbl}>Description</label>
-            <InputText
-              value={form.description}
-              onChange={(e) =>
-                setForm({ ...form, description: e.target.value })
-              }
-              placeholder="Optional description"
-              style={{ width: "100%" }}
-            />
-          </div>
         </div>
       </Dialog>
 
-      {/* ── Pricing Dialog ── */}
+      {/* ── PRICING DIALOG ── */}
       <Dialog
         visible={showPricing}
-        style={{ width: "min(720px, 96vw)" }}
+        style={{ width: "min(760px, 96vw)" }}
         header={`Pricing — ${selItem?.investigationName || ""}`}
         onHide={() => setShowPricing(false)}
       >
@@ -705,36 +693,40 @@ export default function InvestigationMaster() {
                 borderRadius: 8,
                 padding: "10px 14px",
                 marginBottom: 14,
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
+                fontSize: 13,
+                color: "#166534",
               }}
             >
-              <i className="pi pi-check-circle" style={{ color: "#16a34a" }} />
-              <span style={{ fontSize: 13, color: "#166534" }}>
-                <b>
-                  CASH Price: ₹{selItem?.defaultPrice?.toLocaleString("en-IN")}
-                </b>{" "}
-                — auto-set from default price. To change CASH price, edit the
-                investigation.
-              </span>
+              <i className="pi pi-check-circle" style={{ marginRight: 6 }} />
+              <b>CASH ₹{selItem?.defaultPrice?.toLocaleString("en-IN")}</b> —
+              auto-set. All TPAs also auto-created with this price. Override any
+              TPA price below.
             </div>
-
             <DataTable
               value={pricing}
               size="small"
-              emptyMessage="No TPA/Corporate pricing configured. Default CASH price will be used."
+              emptyMessage="No pricing found."
             >
               <Column
                 header="Tariff"
                 body={(r) => (
                   <Tag
                     value={r.tariffType}
-                    severity={r.tariffType === "TPA" ? "success" : "info"}
+                    severity={
+                      r.tariffType === "TPA"
+                        ? "success"
+                        : r.tariffType === "CASH"
+                          ? "secondary"
+                          : "info"
+                    }
                   />
                 )}
+                style={{ width: 90 }}
               />
-              <Column header="TPA" body={(r) => r.tpaId?.tpaName || "—"} />
+              <Column
+                header="TPA"
+                body={(r) => r.tpaName || r.tpaId?.tpaName || "—"}
+              />
               <Column
                 header="Price"
                 body={(r) => `₹${r.price?.toLocaleString("en-IN")}`}
@@ -762,7 +754,7 @@ export default function InvestigationMaster() {
             </DataTable>
           </TabPanel>
 
-          <TabPanel header="Add / Update Pricing">
+          <TabPanel header="Override Pricing">
             <div
               style={{
                 display: "flex",
@@ -773,23 +765,26 @@ export default function InvestigationMaster() {
             >
               <div
                 style={{
-                  background: "#f0fdf4",
-                  border: "1px solid #bbf7d0",
+                  background: "#fffbeb",
+                  border: "1px solid #fde68a",
                   borderRadius: 8,
                   padding: "10px 14px",
                   fontSize: 13,
-                  color: "#166534",
+                  color: "#92400e",
                 }}
               >
-                CASH price is auto-managed. Set <b>TPA or Corporate</b> pricing
-                here.
+                Override price for a specific TPA. CASH price — edit the
+                investigation's default price.
               </div>
 
               <div>
                 <label style={lbl}>Tariff Type *</label>
                 <Dropdown
                   value={priceForm.tariffType}
-                  options={TARIFF_TYPES}
+                  options={[
+                    { label: "TPA", value: "TPA" },
+                    { label: "Corporate", value: "CORPORATE" },
+                  ]}
                   onChange={(e) =>
                     setPriceForm({
                       ...priceForm,
@@ -818,7 +813,7 @@ export default function InvestigationMaster() {
               )}
 
               <div>
-                <label style={lbl}>Price (₹) *</label>
+                <label style={lbl}>Override Price (₹) *</label>
                 <InputNumber
                   value={priceForm.price}
                   onValueChange={(e) =>
@@ -860,7 +855,7 @@ export default function InvestigationMaster() {
                     style={{ width: "100%" }}
                   />
                   <small style={{ color: "#6c757d", fontSize: 11 }}>
-                    Amount above this limit is paid by the patient.
+                    Amount above this is paid by the patient.
                   </small>
                 </div>
               )}
@@ -873,7 +868,7 @@ export default function InvestigationMaster() {
                   fontSize: 13,
                 }}
               >
-                Final price after discount:{" "}
+                Final price:{" "}
                 <b style={{ color: "#0d6efd", fontSize: 15 }}>
                   ₹
                   {(previewFinal || 0).toLocaleString("en-IN", {
@@ -883,7 +878,7 @@ export default function InvestigationMaster() {
               </div>
 
               <Button
-                label="Save Pricing"
+                label="Save Override"
                 icon="pi pi-check"
                 severity="success"
                 onClick={handleSavePricing}

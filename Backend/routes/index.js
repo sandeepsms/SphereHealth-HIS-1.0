@@ -32,8 +32,10 @@ const hospitalChargesRoutes = require("../routes/charges/hospitalChargesRoutes")
 const serviceMasterRoutes = require("../routes/ServiceMasterRoute/serviceMasterRoutes");
 const newBillingRoutes = require("./Billing/billingRoutes");
 
-const investigationRoutes = require("./Investigation/investigationRoutes");
+const investigationRoutes = require("./Investigation/Investigationmasterroutes");
 const investigationOrderRoutes = require("./Investigation/investigationOrderRoutes");
+
+const nurseRoutes=require("./Nurse/nurseNotesRoutes");
 
 // ═════════════════════════════════════════════════════════════
 // ROUTE REGISTRATION
@@ -52,6 +54,7 @@ router.use("/patients", patientRoutes);
 router.use("/opd", opdRoutes);
 router.use("/emergency", emergencyRoutes);
 router.use("/doctors", doctorRoutes);
+router.use("/nurse-notes",nurseRoutes);
 
 router.use("/admissions", admissionRoutes);
 
@@ -67,16 +70,14 @@ router.use("/servicebilldata", TPAServicebill);
 router.use("/hospital-charges", hospitalChargesRoutes);
 
 // New Billing System (billing-v3)
- 
-router.use("/services", serviceMasterRoutes); // GET /api/services, POST /api/services/seed
-router.use("/billing", newBillingRoutes); // GET /api/billing/uhid/:UHID, POST /api/billing/create
 
+router.use("/services", serviceMasterRoutes);
+router.use("/billing", newBillingRoutes);
 
 router.use("/services", serviceMasterRoutes);
 router.use("/billing", newBillingRoutes);
 
 router.use("/investigations", investigationRoutes);
 router.use("/investigation-orders", investigationOrderRoutes);
-
 
 module.exports = router;

@@ -54,7 +54,8 @@ import EmergencyDetails from "./pages/emergency/EmergencyDetails";
 import DoctorFormPage from "./pages/doctor/DoctorFormPage";
 import DoctorListPage from "./pages/doctor/DoctorListPage";
 import DoctorForm from "./Components/doctor/DoctorForm";
-import DoctorPreception from "./Components/doctor/DoctorPreception";
+
+import DoctorPrescription from "./Components/doctor/DoctorPreception";
 
 // TPA & Services
 import ServiceAdd from "./Components/Tpa/TPAServiceManagement";
@@ -102,7 +103,7 @@ export default function App() {
 
             {/* ── Patient Registration ──────────────────────────── */}
             <Route path="/registration/:typedata" element={<Registration />} />
-            <Route path="/registration" element={<Registration />} />
+
             <Route
               path="/registration/:typedata/:id"
               element={<Registration />}
@@ -114,9 +115,9 @@ export default function App() {
             {/* ── Doctor Prescription ──────────────────────────── */}
             <Route
               path="/doctorpre/:UHID/:TpaId?"
-              element={<DoctorPreception />}
+              element={<DoctorPrescription />}
             />
-            <Route path="/doctorpre/:UHID" element={<DoctorPreception />} />
+            <Route path="/doctorpre/:UHID" element={<DoctorPrescription />} />
             <Route path="/preceptionprint/:UHID" element={<DoctorPrePrint />} />
 
             {/* ── Doctors ──────────────────────────────────────── */}
