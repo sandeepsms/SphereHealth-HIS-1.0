@@ -4,6 +4,12 @@ const API_BASE_URL =
 export const API_ENDPOINTS = {
   BASE: API_BASE_URL,
 
+  // ── Auth ──────────────────────────────────────────────────────
+  AUTH_LOGIN: `${API_BASE_URL}/auth/login`,
+  AUTH_ME:    `${API_BASE_URL}/auth/me`,
+  AUTH_LOGOUT:`${API_BASE_URL}/auth/logout`,
+  USERS:      `${API_BASE_URL}/users`,
+
   // ── Doctors & Patients ────────────────────────────────────────
   DOCTORS: `${API_BASE_URL}/doctors`,
   PATIENTS: `${API_BASE_URL}/patients`,
@@ -40,6 +46,14 @@ export const API_ENDPOINTS = {
   BILLING: `${API_BASE_URL}/billing`,
   // Bills, payments, TPA claims
   INVESTIGATIONS: `${API_BASE_URL}/investigations`, // Investigation master
+
+  // ── NABH Clinical Modules ─────────────────────────────────────
+  DOCTOR_NOTES: `${API_BASE_URL}/doctor-notes`,
+  DISCHARGE_SUMMARY: `${API_BASE_URL}/discharge-summary`,
+  CONSENT_FORMS: `${API_BASE_URL}/consent-forms`,
+  NURSING_CARE_PLANS: `${API_BASE_URL}/nursing-care-plans`,
+  MAR: `${API_BASE_URL}/mar`,
+  NURSE_NOTES: `${API_BASE_URL}/nurse-notes`,
 };
 
 export default API_ENDPOINTS;

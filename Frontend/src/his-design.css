@@ -1,0 +1,458 @@
+/* ════════════════════════════════════════════════════════════
+   SphereHealth HIS — Global Design System
+   Matches NABH HTML reference designs (DM Sans / DM Mono)
+   ════════════════════════════════════════════════════════════ */
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap');
+
+:root {
+  --his-bg:            #f0f2f5;
+  --his-card:          #ffffff;
+  --his-border:        #e2e6ea;
+  --his-text:          #1a1d23;
+  --his-muted:         #6b7280;
+  --his-accent:        #1e40af;
+  --his-accent-light:  #eff6ff;
+  --his-accent-dark:   #1e3a8a;
+  --his-green:         #16a34a;
+  --his-green-light:   #dcfce7;
+  --his-red:           #dc2626;
+  --his-red-light:     #fef2f2;
+  --his-amber:         #d97706;
+  --his-amber-light:   #fffbeb;
+  --his-blue:          #0ea5e9;
+  --his-blue-light:    #f0f9ff;
+  --his-gray:          #9ca3af;
+  --his-gray-light:    #f9fafb;
+  --his-purple:        #7c3aed;
+  --his-purple-light:  #f5f3ff;
+  --his-teal:          #0d9488;
+  --his-teal-light:    #f0fdfa;
+  --his-orange:        #ea580c;
+  --his-orange-light:  #fff7ed;
+  --his-pink:          #db2777;
+  --his-pink-light:    #fdf2f8;
+  --his-slate:         #1e293b;
+  --his-slate-mid:     #334155;
+  --his-slate-light:   #f8fafc;
+  --his-stat:          #be185d;
+  --his-stat-light:    #fdf2f8;
+  --his-sidebar-w:     258px;
+  --his-header-h:      52px;
+}
+
+/* ── Reset ── */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+  background: var(--his-bg) !important;
+  color: var(--his-text) !important;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* ── Layout Shell ── */
+.his-layout {
+  display: flex;
+  min-height: 100vh;
+  padding-top: var(--his-header-h);
+}
+
+/* ── Sidebar ── */
+.his-sidebar {
+  width: var(--his-sidebar-w);
+  min-height: calc(100vh - var(--his-header-h));
+  background: #fff;
+  border-right: 1px solid var(--his-border);
+  position: fixed;
+  top: var(--his-header-h);
+  left: 0;
+  bottom: 0;
+  overflow-y: auto;
+  z-index: 200;
+  transition: width 0.25s ease;
+  box-shadow: 2px 0 8px rgba(0,0,0,.05);
+}
+
+.his-sidebar.collapsed { width: 64px; }
+
+.his-sidebar-brand {
+  background: var(--his-slate);
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #334155;
+}
+.his-sidebar-brand-title {
+  font-weight: 700;
+  font-size: 14px;
+  color: white;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.his-sidebar-toggle {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 4px;
+  border-radius: 5px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.his-sidebar-toggle:hover { background: rgba(255,255,255,.1); color: white; }
+
+/* ── Sidebar PanelMenu overrides ── */
+.his-sidebar .p-panelmenu { border: none !important; }
+.his-sidebar .p-panelmenu .p-panelmenu-panel { border: none !important; margin-bottom: 2px !important; }
+.his-sidebar .p-panelmenu .p-panelmenu-header > a,
+.his-sidebar .p-panelmenu .p-panelmenu-header-link {
+  background: transparent !important;
+  border: none !important;
+  border-radius: 8px !important;
+  margin: 2px 8px !important;
+  padding: 10px 12px !important;
+  color: #374151 !important;
+  font-weight: 600 !important;
+  font-size: 13px !important;
+  font-family: 'DM Sans', sans-serif !important;
+  box-shadow: none !important;
+  outline: none !important;
+  transition: all 0.15s !important;
+}
+.his-sidebar .p-panelmenu .p-panelmenu-header > a:hover,
+.his-sidebar .p-panelmenu .p-panelmenu-header-link:hover {
+  background: var(--his-accent-light) !important;
+  color: var(--his-accent) !important;
+}
+.his-sidebar .p-panelmenu .p-panelmenu-header > a.p-highlight,
+.his-sidebar .p-panelmenu .p-panelmenu-header-link.p-highlight {
+  background: var(--his-accent) !important;
+  color: white !important;
+}
+.his-sidebar .p-panelmenu .p-menuitem-link {
+  padding: 9px 12px 9px 38px !important;
+  border-radius: 7px !important;
+  margin: 1px 8px !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  color: #4b5563 !important;
+  border: none !important;
+  box-shadow: none !important;
+  outline: none !important;
+  transition: all 0.15s !important;
+  font-family: 'DM Sans', sans-serif !important;
+}
+.his-sidebar .p-menuitem-link:hover { background: var(--his-accent-light) !important; color: var(--his-accent) !important; }
+.his-sidebar .p-menuitem-link.p-menuitem-link-active { background: var(--his-accent) !important; color: white !important; }
+.his-sidebar .p-menuitem-icon { color: var(--his-accent) !important; margin-right: 10px !important; font-size: 14px !important; }
+.his-sidebar .p-panelmenu-content { background: #f8fafc !important; border: none !important; border-radius: 8px !important; padding: 4px 0 !important; }
+.his-sidebar * { outline: none !important; }
+.his-sidebar .p-panelmenu-content { animation: hisSidebarSlide 0.2s ease; }
+@keyframes hisSidebarSlide { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:translateY(0); } }
+
+/* ── Main content area ── */
+.his-main {
+  margin-left: var(--his-sidebar-w);
+  flex: 1;
+  min-height: calc(100vh - var(--his-header-h));
+  padding: 20px;
+  background: var(--his-bg);
+  transition: margin-left 0.25s ease;
+}
+.his-main.sidebar-collapsed { margin-left: 64px; }
+
+/* ── Cards ── */
+.his-card {
+  background: var(--his-card);
+  border: 1px solid var(--his-border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.his-card-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px 18px;
+  border-bottom: 1px solid var(--his-border);
+  background: var(--his-gray-light);
+}
+.his-card-title {
+  font-weight: 700;
+  font-size: 13.5px;
+  color: var(--his-text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.his-card-body { padding: 18px; }
+
+/* ── Patient header (dark slate) ── */
+.his-patient-hdr {
+  background: var(--his-slate);
+  color: white;
+  border-radius: 12px;
+  padding: 16px 22px;
+  margin-bottom: 14px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 16px;
+  position: relative;
+  overflow: hidden;
+}
+.his-patient-hdr::before {
+  content: '';
+  position: absolute;
+  top: -30px; right: -30px;
+  width: 160px; height: 160px;
+  background: radial-gradient(circle, rgba(56,189,248,.15), transparent 70%);
+  pointer-events: none;
+}
+.his-patient-fields { display: flex; flex-wrap: wrap; gap: 18px; align-items: center; }
+.his-pf { display: flex; flex-direction: column; gap: 2px; }
+.his-pf-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .9px; color: #64748b; }
+.his-pf-value { font-weight: 600; font-size: 13px; color: #e2e8f0; }
+.his-pf-name { font-size: 18px; font-weight: 700; color: white; }
+.his-allergy-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: rgba(220,38,38,.25); border: 1px solid rgba(220,38,38,.4);
+  color: #fca5a5; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700;
+}
+.his-blood-chip {
+  background: rgba(220,38,38,.2); border: 1px solid rgba(220,38,38,.35);
+  color: #fca5a5; padding: 2px 10px; border-radius: 4px;
+  font-family: 'DM Mono', monospace; font-size: 13px; font-weight: 700;
+}
+.his-type-chip {
+  padding: 3px 10px; border-radius: 5px; font-size: 10px; font-weight: 700; letter-spacing: .6px;
+}
+.his-type-ipd { background: rgba(124,58,237,.3); border: 1px solid rgba(124,58,237,.4); color: #c4b5fd; }
+.his-type-opd { background: rgba(22,163,74,.25); border: 1px solid rgba(22,163,74,.4); color: #86efac; }
+
+/* ── Vitals strip ── */
+.his-vitals-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 8px; margin-bottom: 14px; }
+.his-vital-card {
+  background: var(--his-gray-light); border: 1.5px solid var(--his-border);
+  border-radius: 9px; padding: 10px 12px; text-align: center;
+}
+.his-vital-card.abnormal { background: var(--his-red-light); border-color: #fca5a5; }
+.his-vital-card.warn { background: var(--his-amber-light); border-color: #fcd34d; }
+.his-vc-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .7px; color: var(--his-muted); margin-bottom: 4px; }
+.his-vc-value { font-family: 'DM Mono', monospace; font-size: 18px; font-weight: 700; color: var(--his-text); line-height: 1; }
+.his-vc-value.red { color: var(--his-red); }
+.his-vc-value.amber { color: var(--his-amber); }
+.his-vc-unit { font-size: 9px; color: var(--his-muted); margin-top: 2px; }
+.his-vc-status { font-size: 10px; margin-top: 3px; color: var(--his-muted); }
+
+/* ── Tab navigation ── */
+.his-tab-nav {
+  display: flex; gap: 2px;
+  background: var(--his-card); border: 1px solid var(--his-border);
+  border-radius: 12px; padding: 5px; margin-bottom: 14px; overflow-x: auto;
+}
+.his-tab-btn {
+  padding: 9px 18px; border-radius: 8px; border: none;
+  background: transparent; color: var(--his-muted);
+  font-family: 'DM Sans', sans-serif; font-size: 12px; font-weight: 600;
+  cursor: pointer; white-space: nowrap; display: flex; align-items: center; gap: 6px;
+  transition: all 0.2s;
+}
+.his-tab-btn:hover { color: var(--his-text); background: var(--his-gray-light); }
+.his-tab-btn.active { background: var(--his-slate); color: white; box-shadow: 0 2px 8px rgba(30,41,59,.3); }
+.his-tab-badge { background: var(--his-red); color: white; padding: 1px 6px; border-radius: 10px; font-size: 9px; font-weight: 700; }
+.his-tab-badge.green { background: var(--his-green); }
+
+/* ── Form elements ── */
+.his-fld {
+  padding: 8px 11px; border: 1.5px solid var(--his-border); border-radius: 8px;
+  font-family: 'DM Sans', sans-serif; font-size: 13px; color: var(--his-text);
+  outline: none; background: white; width: 100%; transition: border-color .2s, box-shadow .2s;
+}
+.his-fld:focus { border-color: var(--his-accent); box-shadow: 0 0 0 3px rgba(30,64,175,.08); }
+textarea.his-fld { resize: vertical; min-height: 80px; }
+select.his-fld { cursor: pointer; }
+.his-fg { display: flex; flex-direction: column; gap: 5px; }
+.his-fg label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .7px; color: var(--his-muted); }
+.his-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.his-grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+.his-grid-4 { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; }
+.his-grid-6 { display: grid; grid-template-columns: repeat(6,1fr); gap: 10px; }
+
+/* ── Buttons ── */
+.his-btn {
+  padding: 9px 20px; border-radius: 8px; border: none;
+  font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 700;
+  cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+  transition: all .15s; line-height: 1;
+}
+.his-btn:hover { transform: translateY(-1px); filter: brightness(1.07); }
+.his-btn-primary { background: var(--his-accent); color: white; }
+.his-btn-green   { background: var(--his-green);  color: white; }
+.his-btn-red     { background: var(--his-red);    color: white; }
+.his-btn-ghost   { background: white; color: var(--his-muted); border: 1.5px solid var(--his-border); }
+.his-btn-ghost:hover { border-color: var(--his-accent); color: var(--his-accent); background: var(--his-accent-light); }
+.his-btn-stat    { background: var(--his-stat); color: white; animation: statPulse 2s infinite; }
+@keyframes statPulse { 0%,100%{box-shadow:0 0 0 0 rgba(190,24,93,.4)} 50%{box-shadow:0 0 0 6px rgba(190,24,93,0)} }
+.his-btn-sm { padding: 6px 14px; font-size: 12px; }
+
+/* ── Module launcher buttons (nursing / doctor) ── */
+.his-module-launcher { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.his-mod-btn {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 16px; border-radius: 9px; border: 1.5px solid;
+  font-family: 'DM Sans', sans-serif; font-size: 12px; font-weight: 600;
+  cursor: pointer; background: white; transition: all .2s; position: relative;
+}
+.his-mod-btn:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,.1); }
+
+/* ── Timeline ── */
+.his-timeline { background: var(--his-card); border: 1px solid var(--his-border); border-radius: 12px; overflow: hidden; }
+.his-timeline-hdr {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 20px; border-bottom: 1px solid var(--his-border); background: var(--his-gray-light);
+}
+.his-timeline-title { font-weight: 700; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+.his-count-pill { background: var(--his-accent); color: white; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
+.his-filter-chip {
+  padding: 5px 12px; border: 1.5px solid var(--his-border); border-radius: 20px;
+  font-size: 11px; font-weight: 600; cursor: pointer; background: white; color: var(--his-muted);
+  transition: all .15s;
+}
+.his-filter-chip:hover, .his-filter-chip.active { border-color: var(--his-accent); color: var(--his-accent); background: var(--his-accent-light); }
+.his-note-entry {
+  padding: 16px 20px; border-bottom: 1px solid var(--his-border);
+  display: grid; grid-template-columns: 72px 1fr auto; gap: 16px; align-items: start;
+  transition: background .15s;
+}
+.his-note-entry:last-child { border-bottom: none; }
+.his-note-entry:hover { background: #fafbff; }
+.his-note-time-col { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.his-note-time { font-family: 'DM Mono', monospace; font-size: 11px; font-weight: 500; }
+.his-shift-pill { padding: 2px 7px; border-radius: 4px; font-size: 9px; font-weight: 700; letter-spacing: .6px; }
+.his-shift-morning   { background: #dbeafe; color: #1e40af; }
+.his-shift-afternoon { background: var(--his-amber-light); color: #92400e; }
+.his-shift-evening   { background: #ede9fe; color: var(--his-purple); }
+.his-shift-night     { background: #1e293b; color: #94a3b8; }
+.his-timeline-dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid; margin-top: 3px; }
+
+/* ── Note type badges ── */
+.his-badge { display: inline-block; padding: 3px 10px; border-radius: 5px; font-size: 10px; font-weight: 700; letter-spacing: .6px; }
+.his-nb-vitals    { background: #dbeafe; color: #1e40af; }
+.his-nb-blood     { background: #fecaca; color: #9f1239; }
+.his-nb-iv        { background: var(--his-teal-light); color: var(--his-teal); }
+.his-nb-wound     { background: var(--his-red-light); color: var(--his-red); }
+.his-nb-pain      { background: var(--his-amber-light); color: #92400e; }
+.his-nb-procedure { background: var(--his-purple-light); color: var(--his-purple); }
+.his-nb-neuro     { background: var(--his-purple-light); color: var(--his-purple); }
+.his-nb-fall      { background: var(--his-orange-light); color: var(--his-orange); }
+.his-nb-skin      { background: var(--his-green-light); color: var(--his-green); }
+.his-nb-intake    { background: var(--his-accent-light); color: var(--his-accent); }
+.his-nb-general   { background: var(--his-gray-light); color: #374151; }
+.his-nb-discharge { background: var(--his-green-light); color: var(--his-green); }
+.his-nb-signed    { background: var(--his-green-light); color: var(--his-green); }
+.his-nb-draft     { background: var(--his-amber-light); color: #92400e; }
+
+/* ── Critical event badge ── */
+.his-critical { background: var(--his-red); color: white; padding: 2px 7px; border-radius: 4px; font-size: 9px; font-weight: 700; letter-spacing: .5px; animation: blink 1.5s infinite; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.6} }
+
+/* ── Table ── */
+.his-table { width: 100%; border-collapse: collapse; }
+.his-table thead th {
+  background: var(--his-slate); color: #cbd5e1;
+  padding: 10px 13px; text-align: left; font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .8px; white-space: nowrap;
+}
+.his-table tbody td { padding: 10px 13px; border-bottom: 1px solid var(--his-border); vertical-align: middle; font-size: 12px; }
+.his-table tbody tr:last-child td { border-bottom: none; }
+.his-table tbody tr:hover { background: #f8faff; }
+
+/* ── Toast ── */
+.his-toast-wrap { position: fixed; bottom: 22px; right: 22px; z-index: 9999; display: flex; flex-direction: column; gap: 7px; pointer-events: none; }
+.his-toast {
+  background: var(--his-slate); color: white; padding: 11px 16px; border-radius: 9px;
+  font-size: 12px; font-weight: 500; display: flex; align-items: center; gap: 9px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.3); max-width: 300px; pointer-events: auto;
+  animation: toastIn .25s ease;
+}
+@keyframes toastIn { from{transform:translateX(16px);opacity:0} to{transform:translateX(0);opacity:1} }
+.his-toast.ok   { border-left: 4px solid var(--his-green); }
+.his-toast.warn { border-left: 4px solid var(--his-amber); }
+.his-toast.err  { border-left: 4px solid var(--his-red); }
+.his-toast.info { border-left: 4px solid var(--his-blue); }
+
+/* ── Modal ── */
+.his-modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.55); backdrop-filter: blur(3px);
+  z-index: 1100; display: flex; align-items: center; justify-content: center; padding: 16px;
+}
+.his-modal {
+  background: white; border-radius: 14px; width: 580px; max-width: 96vw;
+  max-height: 92vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,.25);
+  animation: modalIn .2s ease;
+}
+.his-modal.wide { width: 760px; }
+.his-modal.narrow { width: 460px; }
+@keyframes modalIn { from{transform:scale(.95) translateY(10px);opacity:0} to{transform:scale(1) translateY(0);opacity:1} }
+.his-modal-hdr {
+  padding: 18px 22px; background: var(--his-slate); color: white;
+  display: flex; justify-content: space-between; align-items: center;
+  position: sticky; top: 0; z-index: 10; border-radius: 14px 14px 0 0;
+}
+.his-modal-hdr h3 { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; margin: 0; }
+.his-modal-close { background: none; border: none; color: #94a3b8; font-size: 22px; cursor: pointer; line-height: 1; padding: 0 4px; }
+.his-modal-close:hover { color: white; }
+.his-modal-body { padding: 20px 22px; }
+.his-modal-ftr {
+  padding: 13px 22px; border-top: 1px solid var(--his-border);
+  display: flex; justify-content: flex-end; gap: 10px;
+  background: var(--his-gray-light); border-radius: 0 0 14px 14px;
+  position: sticky; bottom: 0;
+}
+
+/* ── Inline section divider ── */
+.his-section-title {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px;
+  color: var(--his-muted); padding-bottom: 6px; border-bottom: 1px solid var(--his-border);
+  margin: 0 0 14px; display: flex; align-items: center; gap: 8px;
+}
+
+/* ── Audit bar ── */
+.his-audit-bar {
+  background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;
+  padding: 8px 14px; display: flex; align-items: center; gap: 12px;
+  font-size: 11px; color: var(--his-muted); margin-top: 10px; flex-wrap: wrap;
+}
+
+/* ── Search bar ── */
+.his-search-wrap {
+  background: var(--his-card); border: 1px solid var(--his-border); border-radius: 12px;
+  padding: 18px 22px; margin-bottom: 16px; display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap;
+}
+
+/* ── Status badge helpers ── */
+.his-status-active    { background: #dbeafe; color: #1e40af; }
+.his-status-pending   { background: var(--his-amber-light); color: #92400e; }
+.his-status-completed { background: var(--his-green-light); color: var(--his-green); }
+.his-status-held      { background: #fef3c7; color: #b45309; }
+.his-status-cancelled { background: var(--his-gray-light); color: #64748b; }
+.his-status-stat      { background: var(--his-stat-light); color: var(--his-stat); animation: blink 1.2s infinite; }
+
+/* ── Responsive ── */
+@media (max-width: 768px) {
+  .his-sidebar { width: 64px; }
+  .his-main    { margin-left: 64px; }
+  .his-grid-4, .his-grid-6 { grid-template-columns: 1fr 1fr; }
+  .his-grid-3  { grid-template-columns: 1fr 1fr; }
+  .his-patient-hdr { grid-template-columns: 1fr; }
+}
+@media (max-width: 480px) {
+  .his-grid-2, .his-grid-3, .his-grid-4, .his-grid-6 { grid-template-columns: 1fr; }
+}
+
+/* ── Keep existing Bootstrap + PrimeReact working ── */
+.p-component { font-family: 'DM Sans', sans-serif !important; }

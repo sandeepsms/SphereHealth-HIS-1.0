@@ -9,9 +9,13 @@ import "primeicons/primeicons.css";
 // Toast CSS
 import "react-toastify/dist/ReactToastify.css";
 
+// HIS Design System - load before index.css
+import "./his-design.css";
+
 // Your custom CSS - MUST BE LAST
 import "./index.css";
 
+import "./config/axiosInterceptor"; // attach JWT to all axios requests
 import App from "./App.jsx";
 import { ToastContainer } from "react-toastify";
 

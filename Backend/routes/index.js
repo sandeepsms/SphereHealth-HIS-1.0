@@ -1,6 +1,10 @@
 const express = require("express");
 const router = express.Router();
 
+// ── Auth ──────────────────────────────────────────────────────
+const authRoutes = require("./Auth/authRoutes");
+const userRoutes = require("./User/userRoutes");
+
 // ── Bed Management ────────────────────────────────────────────
 const buildingRoutes = require("./bedMgmt/buildingRoutes");
 const floorRoutes = require("./bedMgmt/floorRoutes");
@@ -36,10 +40,21 @@ const investigationRoutes = require("./Investigation/Investigationmasterroutes")
 const investigationOrderRoutes = require("./Investigation/investigationOrderRoutes");
 
 const nurseRoutes=require("./Nurse/nurseNotesRoutes");
+const doctorNotesRoutes = require("./Doctor/doctorNotesRoutes");
+
+// ── Phase 1: NABH Paperless Modules ──────────────────────────
+const dischargeSummaryRoutes = require("./Clinical/dischargeSummaryRoutes");
+const consentFormRoutes = require("./Clinical/consentFormRoutes");
+const nursingCarePlanRoutes = require("./Nurse/nursingCarePlanRoutes");
+const marRoutes = require("./Clinical/marRoutes");
 
 // ═════════════════════════════════════════════════════════════
 // ROUTE REGISTRATION
 // ═════════════════════════════════════════════════════════════
+
+// Auth & Users
+router.use("/auth", authRoutes);
+router.use("/users", userRoutes);
 
 // Bed Management
 router.use("/buildings", buildingRoutes);
@@ -55,6 +70,7 @@ router.use("/opd", opdRoutes);
 router.use("/emergency", emergencyRoutes);
 router.use("/doctors", doctorRoutes);
 router.use("/nurse-notes",nurseRoutes);
+router.use("/doctor-notes", doctorNotesRoutes);
 
 router.use("/admissions", admissionRoutes);
 
@@ -79,5 +95,11 @@ router.use("/billing", newBillingRoutes);
 
 router.use("/investigations", investigationRoutes);
 router.use("/investigation-orders", investigationOrderRoutes);
+
+// Phase 1: NABH Paperless Modules
+router.use("/discharge-summary", dischargeSummaryRoutes);
+router.use("/consent-forms", consentFormRoutes);
+router.use("/nursing-care-plans", nursingCarePlanRoutes);
+router.use("/mar", marRoutes);
 
 module.exports = router;

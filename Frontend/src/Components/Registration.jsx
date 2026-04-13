@@ -473,6 +473,10 @@ export default function PatientRegistration() {
   // Track whether age was manually typed (to disable DOB) or DOB was picked (to disable age)
   const [ageMode, setAgeMode] = useState(null); // null | "dob" | "age"
   const [historyModal, setHistoryModal] = useState(false);
+  // Services-type: service cart
+  const [allServices, setAllServices] = useState([]);
+  const [selectedServices, setSelectedServices] = useState([]); // [{service, qty}]
+  const [svcSearch, setSvcSearch] = useState("");
 
   // set the registration rotes by that method......
   useEffect(() => {
@@ -506,6 +510,17 @@ export default function PatientRegistration() {
         setFormData((p) => ({ ...p, doctor: "" }));
     } else setFiltDocs([]);
   }, [formData.department, doctors]);
+
+  // Load service catalog when Services type is active
+  useEffect(() => {
+    if (formData.registrationType === "Services" && allServices.length === 0) {
+      import("../Services/Servicemasterservice/serviceMasterService").then(({ serviceMasterService }) => {
+        serviceMasterService.getAllServices({ isActive: true, limit: 500 }).then(({ services }) => {
+          setAllServices(services);
+        });
+      });
+    }
+  }, [formData.registrationType]);
 
   useEffect(() => {
     setAdmData((p) => ({
@@ -985,6 +1000,8 @@ export default function PatientRegistration() {
         departmentLabel: deptLabel,
         tpaLabel: tpaLbl,
         isExisting: !!existing,
+        serviceItems: regType === "Services" ? selectedServices : [],
+        serviceTotal: regType === "Services" ? selectedServices.reduce((s, r) => s + r.qty * (r.service.defaultPrice || 0), 0) : 0,
       });
     } catch (err) {
       console.error("[PatientRegistration] submit error:", err);
@@ -1105,19 +1122,23 @@ export default function PatientRegistration() {
     color: "#374151",
   };
   const cs = {
-    marginBottom: "3px",
-    borderRadius: "8px",
-    border: "1px solid #e5e7eb",
+    marginBottom: "6px",
+    borderRadius: "10px",
+    border: "1px solid #e2e6ea",
     background: "#fff",
-    padding: "12px 14px",
+    padding: "14px 16px",
+    boxShadow: "0 1px 4px rgba(0,0,0,.04)",
   };
   const sh = {
     display: "flex",
     alignItems: "center",
-    gap: "7px",
-    marginBottom: "10px",
-    paddingBottom: "7px",
-    borderBottom: "1px solid #e5e7eb",
+    gap: "8px",
+    marginBottom: "12px",
+    paddingBottom: "8px",
+    borderBottom: "2px solid #eff6ff",
+    fontSize: "13px",
+    fontWeight: 700,
+    color: "#1a1d23",
   };
   const fs = { marginBottom: "8px" };
   const err = (k) =>
@@ -1330,6 +1351,30 @@ export default function PatientRegistration() {
                 ))}
             </div>
 
+            {/* Services summary (Services-type only) */}
+            {success.serviceItems?.length > 0 && (
+              <div style={{ marginBottom: 14, border: "2px solid #059669", borderRadius: 10, overflow: "hidden" }}>
+                <div style={{ background: "#059669", padding: "8px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ color: "white", fontWeight: 700, fontSize: 12 }}>
+                    <i className="pi pi-shopping-cart" style={{ marginRight: 6 }} />Services Availed
+                  </span>
+                  <span style={{ color: "white", fontFamily: "'DM Mono', monospace", fontWeight: 800 }}>
+                    ₹{success.serviceTotal?.toLocaleString("en-IN")}
+                  </span>
+                </div>
+                {success.serviceItems.map(({ service: sv, qty }) => (
+                  <div key={sv._id} style={{ display: "flex", justifyContent: "space-between", padding: "6px 14px", borderBottom: "1px solid #d1fae5", fontSize: 12 }}>
+                    <span style={{ color: "#1a1d23" }}>{sv.serviceName} <span style={{ color: "#6b7280" }}>× {qty}</span></span>
+                    <span style={{ fontFamily: "'DM Mono', monospace", color: "#059669", fontWeight: 700 }}>₹{(qty * (sv.defaultPrice || 0)).toLocaleString("en-IN")}</span>
+                  </div>
+                ))}
+                <div style={{ padding: "8px 14px", background: "#f0fdf4", display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 13 }}>
+                  <span style={{ color: "#dc2626" }}>⚠ Amount to Collect Before Service</span>
+                  <span style={{ fontFamily: "'DM Mono', monospace", color: "#dc2626", fontSize: 16 }}>₹{success.serviceTotal?.toLocaleString("en-IN")}</span>
+                </div>
+              </div>
+            )}
+
             {/* Buttons */}
             <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
               <button
@@ -1426,22 +1471,11 @@ export default function PatientRegistration() {
 
   /* ══════════════ MAIN FORM ══════════════ */
   return (
-
-     <>
-     <div style={{position:"relative", display:"flex", justifyContent:"space-between" }}>
-     
-
-      <button style={{background:"red", color:"white",padding:"5px" }} onClick={() => navigate(-1)}>⬅ Back</button>
-      <button style={{background:"green", color:"white",padding:"5px" }} onClick={() => navigate("/patients")}>Next ➡</button>
-
-      
-    </div>
-
     <div
       style={{
         width: "100%",
-        padding: "4px 10px",
-        fontFamily: "'Inter',-apple-system,sans-serif",
+        padding: "4px 0",
+        fontFamily: "'DM Sans',-apple-system,sans-serif",
       }}
     >
       <Toast ref={toast} position="top-right" />
@@ -1449,10 +1483,10 @@ export default function PatientRegistration() {
       {/* ── TOP BAR: Search + existing patient chip + edit back button ── */}
       <div
         style={{
-          background: "linear-gradient(135deg,#0f766e,#0891b2)",
-          borderRadius: 10,
-          padding: "10px 16px",
-          marginBottom: 6,
+          background: "linear-gradient(135deg,#1e293b 0%,#1e40af 100%)",
+          borderRadius: 12,
+          padding: "12px 18px",
+          marginBottom: 10,
           display: "flex",
           alignItems: "center",
           gap: 10,
@@ -2412,6 +2446,140 @@ export default function PatientRegistration() {
           </div>
         </div>
 
+        {/* ── Services Cart (only for Services registration type) ── */}
+        {formData.registrationType === "Services" && (() => {
+          const totalAmt = selectedServices.reduce((s, r) => s + r.qty * (r.service.defaultPrice || 0), 0);
+          const filtered = allServices.filter(sv =>
+            !svcSearch || sv.serviceName?.toLowerCase().includes(svcSearch.toLowerCase()) ||
+            sv.serviceCode?.toLowerCase().includes(svcSearch.toLowerCase()) ||
+            sv.category?.toLowerCase().includes(svcSearch.toLowerCase())
+          );
+          const addService = (sv) => {
+            setSelectedServices(prev => {
+              const existing = prev.find(r => r.service._id === sv._id);
+              if (existing) return prev.map(r => r.service._id === sv._id ? { ...r, qty: r.qty + 1 } : r);
+              return [...prev, { service: sv, qty: 1 }];
+            });
+            setSvcSearch("");
+          };
+          const updateQty = (id, qty) => {
+            if (qty < 1) setSelectedServices(prev => prev.filter(r => r.service._id !== id));
+            else setSelectedServices(prev => prev.map(r => r.service._id === id ? { ...r, qty } : r));
+          };
+          return (
+            <div style={{ ...cs, border: "2px solid #059669", background: "#f0fdf4", marginBottom: 6 }}>
+              <div style={{ ...sh, borderBottom: "2px solid #bbf7d0", color: "#059669" }}>
+                <i className="pi pi-shopping-cart" style={{ fontSize: 14, color: "#059669" }} />
+                <span style={{ fontWeight: 700, fontSize: 13, color: "#065f46" }}>Services to Avail</span>
+                <span style={{ marginLeft: "auto", fontSize: 11, color: "#6b7280", fontWeight: 400 }}>
+                  Select services — patient pays before availing
+                </span>
+              </div>
+
+              {/* Search + Add */}
+              <div style={{ display: "flex", gap: 8, marginBottom: 10, position: "relative" }}>
+                <input
+                  value={svcSearch}
+                  onChange={e => setSvcSearch(e.target.value)}
+                  placeholder="Search by service name, code or category…"
+                  style={{
+                    flex: 1, padding: "9px 12px", border: "1.5px solid #6ee7b7",
+                    borderRadius: 8, fontSize: 13, outline: "none",
+                    background: "white", fontFamily: "'DM Sans', sans-serif",
+                  }}
+                />
+                {svcSearch && filtered.length > 0 && (
+                  <div style={{
+                    position: "absolute", top: "100%", left: 0, right: 0,
+                    background: "white", border: "1px solid #d1fae5", borderRadius: 8,
+                    boxShadow: "0 8px 24px rgba(0,0,0,.1)", zIndex: 50,
+                    maxHeight: 220, overflowY: "auto",
+                  }}>
+                    {filtered.slice(0, 20).map(sv => (
+                      <div key={sv._id} onClick={() => addService(sv)}
+                        style={{
+                          padding: "10px 14px", cursor: "pointer",
+                          display: "flex", alignItems: "center", justifyContent: "space-between",
+                          borderBottom: "1px solid #f0fdf4", fontSize: 13,
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.background = "#f0fdf4"}
+                        onMouseLeave={e => e.currentTarget.style.background = "white"}
+                      >
+                        <div>
+                          <span style={{ fontWeight: 600, color: "#1a1d23" }}>{sv.serviceName}</span>
+                          <span style={{ color: "#6b7280", fontSize: 11, marginLeft: 8 }}>{sv.serviceCode}</span>
+                        </div>
+                        <span style={{ fontWeight: 700, color: "#059669", fontFamily: "'DM Mono', monospace" }}>
+                          ₹{(sv.defaultPrice || 0).toLocaleString("en-IN")}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Cart table */}
+              {selectedServices.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "16px 0", color: "#6b7280", fontSize: 13 }}>
+                  <i className="pi pi-inbox" style={{ fontSize: 22, display: "block", marginBottom: 6, color: "#a7f3d0" }} />
+                  No services selected yet. Search and add services above.
+                </div>
+              ) : (
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ background: "#d1fae5" }}>
+                      {["Service", "Code", "Rate", "Qty", "Total", ""].map(h => (
+                        <th key={h} style={{ padding: "7px 10px", fontWeight: 700, color: "#065f46", textAlign: h === "Qty" || h === "Rate" || h === "Total" ? "center" : "left", fontSize: 11, letterSpacing: ".5px" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selectedServices.map(({ service: sv, qty }) => (
+                      <tr key={sv._id} style={{ borderBottom: "1px solid #d1fae5" }}>
+                        <td style={{ padding: "8px 10px", fontWeight: 600, color: "#1a1d23" }}>{sv.serviceName}</td>
+                        <td style={{ padding: "8px 10px", color: "#6b7280", fontFamily: "'DM Mono', monospace", fontSize: 11 }}>{sv.serviceCode}</td>
+                        <td style={{ padding: "8px 10px", textAlign: "center", fontFamily: "'DM Mono', monospace" }}>₹{(sv.defaultPrice || 0).toLocaleString("en-IN")}</td>
+                        <td style={{ padding: "4px 10px", textAlign: "center" }}>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                            <button type="button" onClick={() => updateQty(sv._id, qty - 1)}
+                              style={{ width: 24, height: 24, border: "1px solid #6ee7b7", borderRadius: 5, background: "white", cursor: "pointer", fontWeight: 700, color: "#059669", fontSize: 14, lineHeight: 1 }}>−</button>
+                            <span style={{ minWidth: 24, textAlign: "center", fontWeight: 700 }}>{qty}</span>
+                            <button type="button" onClick={() => updateQty(sv._id, qty + 1)}
+                              style={{ width: 24, height: 24, border: "1px solid #6ee7b7", borderRadius: 5, background: "white", cursor: "pointer", fontWeight: 700, color: "#059669", fontSize: 14, lineHeight: 1 }}>+</button>
+                          </div>
+                        </td>
+                        <td style={{ padding: "8px 10px", textAlign: "center", fontWeight: 700, fontFamily: "'DM Mono', monospace", color: "#059669" }}>₹{(qty * (sv.defaultPrice || 0)).toLocaleString("en-IN")}</td>
+                        <td style={{ padding: "8px 10px", textAlign: "center" }}>
+                          <button type="button" onClick={() => updateQty(sv._id, 0)}
+                            style={{ border: "none", background: "none", cursor: "pointer", color: "#dc2626", fontSize: 13 }}>
+                            <i className="pi pi-trash" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+
+              {/* Total */}
+              {selectedServices.length > 0 && (
+                <div style={{
+                  marginTop: 10, padding: "12px 16px", background: "#059669",
+                  borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "space-between",
+                }}>
+                  <div style={{ color: "white", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
+                    <i className="pi pi-wallet" style={{ fontSize: 14 }} />
+                    Amount to Collect from Patient
+                  </div>
+                  <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 22, fontWeight: 800, color: "white" }}>
+                    ₹{totalAmt.toLocaleString("en-IN")}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         {/* ── Submit ── */}
         <div
           style={{
@@ -2468,6 +2636,5 @@ export default function PatientRegistration() {
         />
       )}
     </div>
-      </>
   );
 }

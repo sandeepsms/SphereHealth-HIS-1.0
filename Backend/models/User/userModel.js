@@ -89,6 +89,8 @@ const UserSchema = new mongoose.Schema(
         "Accountant",
         "Security",
         "Housekeeping",
+        "Dietician",
+        "TPA Coordinator",
       ],
     },
 
