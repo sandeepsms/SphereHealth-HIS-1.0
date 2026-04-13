@@ -1,8 +1,9 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import axios from "axios";
-import API_BASE_URL from "../../config/api";
+import { API_ENDPOINTS } from "../../config/api";
+import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 
-const API = `${API_BASE_URL}/mar`;
+const API = API_ENDPOINTS.MAR;
 
 const STATUS_COLORS = {
   GIVEN: "bg-green-100 text-green-700",
@@ -14,8 +15,17 @@ const STATUS_COLORS = {
 
 const ROUTES = ["Oral","IV","IM","SC","SL","Topical","Inhalation","Rectal","Other"];
 
-export default function MARPage() {
+function MARPageContent({ selectedPatient }) {
   const [searchIPD, setSearchIPD] = useState("");
+
+  // Auto-load when a patient is selected from the panel
+  useEffect(() => {
+    if (selectedPatient?.bedNumber || selectedPatient?.ipdNo) {
+      const id = selectedPatient.ipdNo || selectedPatient.bedNumber || selectedPatient.UHID;
+      setSearchIPD(id);
+      setTimeout(() => document.getElementById("mar-search-btn")?.click(), 100);
+    }
+  }, [selectedPatient]);
   const [searchDate, setSearchDate] = useState(new Date().toISOString().slice(0, 10));
   const [mar, setMAR] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -106,7 +116,7 @@ export default function MARPage() {
   const sectionCls = "bg-white rounded-lg shadow p-4 mb-4";
 
   return (
-    <div style={{ marginLeft: 260, padding: 24, minHeight: "100vh", background: "#f4f6fb" }}>
+    <div style={{ padding: 0, minHeight: "100vh", background: "#f4f6fb" }}>
       <div className="mb-4">
         <h2 className="text-2xl font-bold text-gray-800">Medication Administration Record (MAR)</h2>
         <p className="text-sm text-gray-500">NABH MOM.4 — Daily medication administration tracking</p>
@@ -125,7 +135,7 @@ export default function MARPage() {
             <label className={labelCls}>Date</label>
             <input className={inputCls} type="date" style={{ width: 160 }} value={searchDate} onChange={e => setSearchDate(e.target.value)} />
           </div>
-          <button onClick={search} className="px-5 py-2 bg-blue-600 text-white rounded text-sm">Load MAR</button>
+          <button id="mar-search-btn" onClick={search} className="px-5 py-2 bg-blue-600 text-white rounded text-sm">Load MAR</button>
         </div>
       </div>
 
@@ -322,5 +332,18 @@ export default function MARPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function MARPage() {
+  const [selectedPatient, setSelectedPatient] = useState(null);
+  return (
+    <ClinicalLayout
+      onPatientSelect={(adm) => setSelectedPatient(adm)}
+      selectedId={selectedPatient?._id}
+      pageType="MAR"
+    >
+      <MARPageContent selectedPatient={selectedPatient} />
+    </ClinicalLayout>
   );
 }

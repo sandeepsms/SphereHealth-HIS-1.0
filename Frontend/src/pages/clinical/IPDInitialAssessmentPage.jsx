@@ -4,6 +4,7 @@ import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
+import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 
 /* ── Design tokens ── */
 const C = {
@@ -320,13 +321,23 @@ const ROUTES = ["Oral", "IV", "IM", "SC", "SL", "Topical", "Inhaled", "PR", "Nas
 const FREQS  = ["OD", "BD", "TDS", "QID", "SOS", "Stat", "HS", "Alternate days", "Weekly"];
 
 /* ════════════════════════════════════════════════════════════════ */
-export default function IPDInitialAssessmentPage() {
+function IPDInitialAssessmentContent({ selectedPatient }) {
   const { uhid: uhidParam } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
 
   const [uhid, setUhid]           = useState(uhidParam || "");
   const [patient, setPatient]     = useState(null);
+
+  // Auto-load when patient selected from the panel
+  useEffect(() => {
+    if (selectedPatient?.UHID) {
+      setUhid(selectedPatient.UHID);
+      setIpdNo(selectedPatient.bedNumber || "");
+      setWard(selectedPatient.wardName || "");
+      setBedNo(selectedPatient.bedNumber || "");
+    }
+  }, [selectedPatient]);
   const [loadingPt, setLoadingPt] = useState(false);
   const [saving, setSaving]       = useState(false);
   const [noteId, setNoteId]       = useState(null);
@@ -1194,5 +1205,14 @@ export default function IPDInitialAssessmentPage() {
 
       </>)}
     </div>
+  );
+}
+
+export default function IPDInitialAssessmentPage() {
+  const [selectedPatient, setSelectedPatient] = useState(null);
+  return (
+    <ClinicalLayout onPatientSelect={setSelectedPatient} selectedId={selectedPatient?._id} pageType="ipd-assessment">
+      <IPDInitialAssessmentContent selectedPatient={selectedPatient} />
+    </ClinicalLayout>
   );
 }

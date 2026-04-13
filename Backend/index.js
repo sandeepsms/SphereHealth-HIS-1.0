@@ -5,6 +5,15 @@ require("dotenv").config();
 
 const app = express();
 
+// Register all Mongoose models upfront to avoid "Schema hasn't been registered" errors on populate
+require("./models/bedMgmt/bedsModel");
+require("./models/bedMgmt/wardModel");
+require("./models/bedMgmt/roomModel");
+require("./models/bedMgmt/floorModel");
+require("./models/bedMgmt/buildingModel");
+require("./models/Patient/patientModel");
+require("./models/Patient/admissionModel");
+
 const patientRoutes = require("./routes/Patient/patientRoutes");
 // const doctorRoutes = require("./routes/doctorsRoutes");
 // const ServicebillRoutes = require("./routes/ServicebillRoutes");

@@ -1,8 +1,9 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import axios from "axios";
-import API_BASE_URL from "../../config/api";
+import { API_ENDPOINTS } from "../../config/api";
+import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 
-const API = `${API_BASE_URL}/nursing-care-plans`;
+const API = API_ENDPOINTS.NURSING_CARE_PLANS;
 
 const emptyAssessment = {
   consciousnessLevel: "Alert",
@@ -46,7 +47,7 @@ const COMMON_PROBLEMS = [
   { problemStatement: "Altered Elimination", relatedTo: "Immobility / catheter / medication", evidencedBy: "Urinary catheter in situ" },
 ];
 
-export default function NursingCarePlanPage() {
+function NursingCarePlanContent({ selectedPatient }) {
   const [searchUHID, setSearchUHID] = useState("");
   const [searchIPD, setSearchIPD] = useState("");
   const [plan, setPlan] = useState(null);
@@ -55,6 +56,13 @@ export default function NursingCarePlanPage() {
   const [mode, setMode] = useState("list");
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
+
+  useEffect(() => {
+    if (selectedPatient?.UHID) {
+      setSearchUHID(selectedPatient.UHID);
+      setSearchIPD(selectedPatient.bedNumber || "");
+    }
+  }, [selectedPatient]);
 
   const search = async () => {
     setLoading(true);
@@ -381,5 +389,14 @@ export default function NursingCarePlanPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function NursingCarePlanPage() {
+  const [selectedPatient, setSelectedPatient] = useState(null);
+  return (
+    <ClinicalLayout onPatientSelect={setSelectedPatient} selectedId={selectedPatient?._id} pageType="nursing-care-plan">
+      <NursingCarePlanContent selectedPatient={selectedPatient} />
+    </ClinicalLayout>
   );
 }

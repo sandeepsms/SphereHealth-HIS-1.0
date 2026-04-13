@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
+import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 
 /* ── Design tokens ── */
 const C = {
@@ -113,11 +114,15 @@ function FL({ label, children }) {
 }
 
 /* ═══════════════════════════════════════════════════════ */
-export default function NursingNotes() {
+function NursingNotesContent({ selectedPatient }) {
   const navigate = useNavigate();
   const { user } = useAuth();
 
   const [searchUHID, setSearchUHID] = useState("");
+
+  useEffect(() => {
+    if (selectedPatient?.UHID) setSearchUHID(selectedPatient.UHID);
+  }, [selectedPatient]);
   const [patient,    setPatient]    = useState(null);
   const [notes,      setNotes]      = useState([]);
   const [loading,    setLoading]    = useState(false);
@@ -953,5 +958,14 @@ export default function NursingNotes() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function NursingNotes() {
+  const [selectedPatient, setSelectedPatient] = useState(null);
+  return (
+    <ClinicalLayout onPatientSelect={setSelectedPatient} selectedId={selectedPatient?._id} pageType="nursing-notes">
+      <NursingNotesContent selectedPatient={selectedPatient} />
+    </ClinicalLayout>
   );
 }

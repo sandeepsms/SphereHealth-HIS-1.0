@@ -91,6 +91,8 @@ import OPDAssessmentPage from "./pages/doctor/OPDAssessmentPage";
 import EmergencyAssessmentPage from "./pages/emergency/EmergencyAssessmentPage";
 import UserManagementPage from "./pages/admin/UserManagementPage";
 import IPDInitialAssessmentPage from "./pages/clinical/IPDInitialAssessmentPage";
+import IPDAdmissionPage from "./pages/ipd/IPDAdmissionPage";
+import NurseInitialAssessmentPage from "./pages/nursing/NurseInitialAssessmentPage";
 
 // Auth
 import LoginPage from "./pages/auth/LoginPage";
@@ -169,6 +171,14 @@ function AppShellRoutes() {
           <Route path="/dash"       element={<Dashboard1 />} />
           <Route path="/mainpage"   element={<MainPage />} />
           <Route path="/"           element={<Navigate to="/mainpage" />} />
+
+          {/* ── IPD Admission (NABH) ── */}
+          <Route path="/ipd-admission" element={
+            <RoleRoute roles={ADMIN_RECEPT}><IPDAdmissionPage /></RoleRoute>
+          } />
+          <Route path="/ipd-admission/:uhid" element={
+            <RoleRoute roles={ADMIN_RECEPT}><IPDAdmissionPage /></RoleRoute>
+          } />
 
           {/* ── Patient Registration — Receptionist + Admin ── */}
           <Route path="/registration/:typedata" element={
@@ -306,6 +316,10 @@ function AppShellRoutes() {
           {/* ── IPD Initial Assessment ── */}
           <Route path="/ipd-assessment"        element={<RoleRoute roles={ALL_CLINICAL}><IPDInitialAssessmentPage /></RoleRoute>} />
           <Route path="/ipd-assessment/:uhid"  element={<RoleRoute roles={ALL_CLINICAL}><IPDInitialAssessmentPage /></RoleRoute>} />
+
+          {/* ── Nurse Initial Assessment ── */}
+          <Route path="/nurse-initial-assessment"        element={<RoleRoute roles={NURSE_ROLES}><NurseInitialAssessmentPage /></RoleRoute>} />
+          <Route path="/nurse-initial-assessment/:uhid"  element={<RoleRoute roles={NURSE_ROLES}><NurseInitialAssessmentPage /></RoleRoute>} />
         </Routes>
       </div>
     </div>

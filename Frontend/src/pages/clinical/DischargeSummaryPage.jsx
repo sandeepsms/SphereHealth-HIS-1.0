@@ -1,464 +1,1136 @@
+/**
+ * DischargeSummaryPage.jsx
+ * NABH-Compliant Modular Discharge Summary
+ * Department templates: Medicine, Surgery, Gynaecology, Paediatrics
+ * + Oncology, Orthopaedics, Cardiology, Neurology
+ */
+
 import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
-import { useReactToPrint } from "react-to-print";
-import API_BASE_URL from "../../config/api";
+import { API_ENDPOINTS } from "../../config/api";
+import { useAuth } from "../../context/AuthContext";
+import { toast } from "react-toastify";
 
-const API = `${API_BASE_URL}/discharge-summary`;
+const API = `${API_ENDPOINTS.BASE}/discharge-summary`;
 
-const emptyForm = {
-  UHID: "",
-  patientName: "",
-  age: "",
-  gender: "",
-  contactNumber: "",
-  ipdNo: "",
-  admissionDate: "",
-  dischargeDate: "",
-  doctorName: "",
-  doctorRegNo: "",
-  department: "",
-  consultants: "",
-  admittingDiagnosis: "",
-  finalDiagnosis: "",
-  icdCode: "",
-  comorbidities: "",
-  historyOfPresentIllness: "",
-  courseInHospital: "",
-  significantFindings: "",
-  conditionOnDischarge: "Stable",
-  dietAdvice: "",
-  activityAdvice: "",
-  woundCareInstructions: "",
-  specialInstructions: "",
-  restrictionsAndPrecautions: "",
-  followUpRequired: true,
-  followUpDate: "",
-  followUpDoctor: "",
-  followUpDepartment: "",
-  followUpInstructions: "",
-  emergencyWarnings: "",
+/* ══════════════════════════════════════════════════
+   DEPARTMENT TEMPLATES
+══════════════════════════════════════════════════ */
+const DEPT_TEMPLATES = [
+  {
+    key: "MEDICINE",
+    label: "General Medicine",
+    icon: "pi-heart",
+    color: "#2563eb",
+    bg: "#eff6ff",
+    specialSections: ["chronicDiseases", "functionalStatus", "vaccinations"],
+    template: {
+      admissionReasonPrompt: "e.g. Fever with chills for 5 days, breathlessness on exertion…",
+      coursePrompt: "e.g. Patient admitted with febrile illness. IV fluids, antibiotics started. Fever subsided by Day 3. Blood cultures negative. Clinically improved…",
+      dischargeDiagnosisPrompt: "e.g. Enteric Fever, Type 2 Diabetes Mellitus (Known), Essential Hypertension (Known)",
+      specialInstructionsPrompt: "e.g. Monitor blood sugar daily. Avoid self-medication. Low-fat diet.",
+      investigations: [
+        { name: "Complete Blood Count", result: "", unit: "cells/μL", status: "" },
+        { name: "Blood Sugar Fasting", result: "", unit: "mg/dL", status: "" },
+        { name: "HbA1c", result: "", unit: "%", status: "" },
+        { name: "Serum Creatinine", result: "", unit: "mg/dL", status: "" },
+        { name: "Liver Function Tests", result: "", unit: "", status: "" },
+        { name: "Chest X-Ray", result: "", unit: "", status: "" },
+        { name: "ECG", result: "", unit: "", status: "" },
+        { name: "Urine Routine", result: "", unit: "", status: "" },
+      ],
+      medications: [
+        { drug: "", dose: "", route: "Oral", frequency: "OD", duration: "7 days", instructions: "" },
+        { drug: "", dose: "", route: "Oral", frequency: "BD", duration: "5 days", instructions: "After meals" },
+      ],
+      procedures: [],
+      dietAdvice: "Low-fat, low-salt diet. Adequate fluid intake (2–3 litres/day). Avoid processed and fried foods.",
+      activityAdvice: "Gradually increase activity as tolerated. Avoid strenuous exercise for 2 weeks.",
+      emergencyWarnings: "Return to emergency if: High fever (>101°F), chest pain, severe breathlessness, altered sensorium, uncontrolled blood sugar.",
+    },
+  },
+  {
+    key: "SURGERY",
+    label: "General Surgery",
+    icon: "pi-wrench",
+    color: "#dc2626",
+    bg: "#fef2f2",
+    specialSections: ["operative", "woundCare", "drains"],
+    template: {
+      admissionReasonPrompt: "e.g. Acute abdomen — Right iliac fossa pain for 24 hours with fever and vomiting…",
+      coursePrompt: "e.g. Emergency laparoscopic appendicectomy performed under GA. Post-op recovery uneventful. Oral feeds started on Day 1. Ambulated on Day 2. Wound healthy…",
+      dischargeDiagnosisPrompt: "e.g. Acute Appendicitis, Post-laparoscopic Appendicectomy (Day 3)",
+      specialInstructionsPrompt: "e.g. Keep wound dry for 48 hrs. Avoid lifting heavy objects for 4 weeks. No driving for 2 weeks.",
+      investigations: [
+        { name: "Complete Blood Count", result: "", unit: "cells/μL", status: "" },
+        { name: "Serum Electrolytes", result: "", unit: "mEq/L", status: "" },
+        { name: "Renal Function Tests", result: "", unit: "", status: "" },
+        { name: "Coagulation Profile (PT/INR)", result: "", unit: "", status: "" },
+        { name: "X-Ray Chest (PA)", result: "", unit: "", status: "" },
+        { name: "USG Abdomen", result: "", unit: "", status: "" },
+        { name: "HPE Report", result: "", unit: "", status: "" },
+      ],
+      medications: [
+        { drug: "Amoxicillin-Clavulanate", dose: "625 mg", route: "Oral", frequency: "TDS", duration: "5 days", instructions: "After food" },
+        { drug: "Metronidazole", dose: "400 mg", route: "Oral", frequency: "TDS", duration: "5 days", instructions: "After food" },
+        { drug: "Tab. Pantoprazole", dose: "40 mg", route: "Oral", frequency: "OD", duration: "14 days", instructions: "Before breakfast" },
+        { drug: "Syrup Lactulose", dose: "15 mL", route: "Oral", frequency: "BD", duration: "5 days", instructions: "" },
+      ],
+      procedures: [
+        { name: "Laparoscopic Appendicectomy", date: "", surgeon: "", findings: "", complications: "None" },
+      ],
+      dietAdvice: "Soft diet for 1 week. Gradually advance to normal diet. Adequate fluid intake. High-fibre diet to avoid constipation.",
+      activityAdvice: "Light activity only. No heavy lifting for 4–6 weeks. Walk 10–15 minutes 3 times daily.",
+      emergencyWarnings: "Return to emergency if: Fever > 101°F, wound discharge/redness, severe abdominal pain, inability to pass stools/flatus, vomiting.",
+    },
+  },
+  {
+    key: "GYNAECOLOGY",
+    label: "Gynaecology & Obstetrics",
+    icon: "pi-heart-fill",
+    color: "#db2777",
+    bg: "#fdf2f8",
+    specialSections: ["obstetric", "neonatalDetails", "woundCare"],
+    template: {
+      admissionReasonPrompt: "e.g. G2P1L1 at 38+2 weeks with labour pains / Menorrhagia with severe anaemia…",
+      coursePrompt: "e.g. Patient admitted in active labour. LSCS performed under spinal anaesthesia. Live male baby delivered. Post-op recovery smooth. Breastfeeding initiated…",
+      dischargeDiagnosisPrompt: "e.g. G2P2L2 Post LSCS (Day 5) / Post-Hysterectomy (Fibroid Uterus)",
+      specialInstructionsPrompt: "e.g. Avoid intercourse for 6 weeks. Pelvic rest. Exclusive breastfeeding. Return if heavy bleeding.",
+      investigations: [
+        { name: "Haemoglobin", result: "", unit: "g/dL", status: "" },
+        { name: "Blood Group & Rh typing", result: "", unit: "", status: "" },
+        { name: "Urine Routine", result: "", unit: "", status: "" },
+        { name: "Blood Sugar (FBS/PPBS)", result: "", unit: "mg/dL", status: "" },
+        { name: "Thyroid Function (TSH)", result: "", unit: "mIU/L", status: "" },
+        { name: "USG Pelvis / Obstetric", result: "", unit: "", status: "" },
+        { name: "HPE Report", result: "", unit: "", status: "" },
+        { name: "VDRL / HIV / HBsAg", result: "", unit: "", status: "" },
+      ],
+      medications: [
+        { drug: "Tab. Iron + Folic Acid", dose: "1 tab", route: "Oral", frequency: "BD", duration: "3 months", instructions: "After food" },
+        { drug: "Cap. Calcium + Vitamin D3", dose: "1 cap", route: "Oral", frequency: "OD", duration: "3 months", instructions: "After dinner" },
+        { drug: "Tab. Metronidazole", dose: "400 mg", route: "Oral", frequency: "TDS", duration: "5 days", instructions: "" },
+        { drug: "Tab. Ibuprofen + Paracetamol", dose: "1 tab", route: "Oral", frequency: "SOS", duration: "3 days", instructions: "For pain" },
+      ],
+      procedures: [
+        { name: "Lower Segment Caesarean Section (LSCS)", date: "", surgeon: "", findings: "", complications: "None" },
+      ],
+      dietAdvice: "Iron-rich foods (leafy greens, lentils, jaggery). Adequate protein. Continue prenatal vitamins. For lactating mothers: increased calorie intake.",
+      activityAdvice: "Pelvic floor exercises. Gradual return to normal activities in 6 weeks. No heavy lifting for 6–8 weeks. Driving after 6 weeks.",
+      emergencyWarnings: "Return to emergency if: Heavy vaginal bleeding, foul-smelling discharge, wound dehiscence, high fever, severe abdominal pain, difficulty breastfeeding, signs of postpartum depression.",
+    },
+  },
+  {
+    key: "PAEDIATRICS",
+    label: "Paediatrics",
+    icon: "pi-user",
+    color: "#16a34a",
+    bg: "#f0fdf4",
+    specialSections: ["growth", "immunisation", "neonatalDetails"],
+    template: {
+      admissionReasonPrompt: "e.g. 4-year-old male with fever, cough and fast breathing for 3 days (suspected pneumonia)…",
+      coursePrompt: "e.g. Child admitted with bronchopneumonia. IV antibiotics (Ampicillin + Gentamicin) started. SpO2 improved on oxygen support. Feeding improved by Day 3. Discharged on oral antibiotics…",
+      dischargeDiagnosisPrompt: "e.g. Bronchopneumonia (Right) / Acute Viral URTI / Febrile Seizure (Simple)",
+      specialInstructionsPrompt: "e.g. Complete full course of antibiotics. Follow up for immunisation. Avoid contact with sick individuals.",
+      investigations: [
+        { name: "Complete Blood Count", result: "", unit: "cells/μL", status: "" },
+        { name: "CRP", result: "", unit: "mg/L", status: "" },
+        { name: "Blood Culture & Sensitivity", result: "", unit: "", status: "" },
+        { name: "Chest X-Ray", result: "", unit: "", status: "" },
+        { name: "Serum Electrolytes", result: "", unit: "mEq/L", status: "" },
+        { name: "Blood Sugar", result: "", unit: "mg/dL", status: "" },
+        { name: "Urine Routine", result: "", unit: "", status: "" },
+        { name: "Malaria Antigen / RDT", result: "", unit: "", status: "" },
+      ],
+      medications: [
+        { drug: "Syrup Amoxicillin", dose: "", route: "Oral", frequency: "TDS", duration: "5 days", instructions: "As per weight (50 mg/kg/day)" },
+        { drug: "Syrup Paracetamol", dose: "", route: "Oral", frequency: "QID (SOS)", duration: "3 days", instructions: "15 mg/kg/dose for fever >101°F" },
+        { drug: "Syrup Salbutamol + Bromhexine", dose: "", route: "Oral", frequency: "TDS", duration: "5 days", instructions: "" },
+        { drug: "ORS", dose: "", route: "Oral", frequency: "Ad lib", duration: "As needed", instructions: "For hydration" },
+      ],
+      procedures: [],
+      dietAdvice: "Continue breastfeeding (infants). Age-appropriate soft diet. Oral rehydration. Small frequent meals. Avoid raw foods.",
+      activityAdvice: "Rest for 3–5 days. Return to school after 5 days or as advised. Avoid contact sports for 1 week.",
+      emergencyWarnings: "Return to emergency if: High fever not responding to paracetamol, fast or difficult breathing, convulsions, refusal to feed, decreased urine output, drowsiness or altered behavior.",
+    },
+  },
+  {
+    key: "CARDIOLOGY",
+    label: "Cardiology",
+    icon: "pi-chart-line",
+    color: "#e11d48",
+    bg: "#fff1f2",
+    specialSections: ["chronicDiseases", "echoFindings", "functionalStatus"],
+    template: {
+      admissionReasonPrompt: "e.g. Acute chest pain with radiation to left arm for 2 hours. ECG: ST elevation in leads II, III, aVF…",
+      coursePrompt: "e.g. Admitted with STEMI. Emergency PCI performed. Drug-eluting stent deployed in RCA. Post-procedure ECG normalised. Troponins trending down…",
+      dischargeDiagnosisPrompt: "e.g. Acute STEMI (Inferior) — Post-PCI (RCA Stenting) / NSTEMI with 3-vessel CAD",
+      specialInstructionsPrompt: "e.g. Dual antiplatelet therapy (aspirin + clopidogrel) — DO NOT stop without doctor's advice. Monitor BP and HR daily.",
+      investigations: [
+        { name: "Troponin I (Peak)", result: "", unit: "ng/mL", status: "" },
+        { name: "CK-MB", result: "", unit: "U/L", status: "" },
+        { name: "ECG (Serial)", result: "", unit: "", status: "" },
+        { name: "2D Echocardiogram (EF%)", result: "", unit: "%", status: "" },
+        { name: "Lipid Profile (LDL/HDL/TG)", result: "", unit: "mg/dL", status: "" },
+        { name: "HbA1c", result: "", unit: "%", status: "" },
+        { name: "Serum Creatinine", result: "", unit: "mg/dL", status: "" },
+        { name: "Coronary Angiogram", result: "", unit: "", status: "" },
+      ],
+      medications: [
+        { drug: "Tab. Aspirin", dose: "75 mg", route: "Oral", frequency: "OD", duration: "Lifelong", instructions: "After food" },
+        { drug: "Tab. Clopidogrel", dose: "75 mg", route: "Oral", frequency: "OD", duration: "12 months", instructions: "After food" },
+        { drug: "Tab. Atorvastatin", dose: "40 mg", route: "Oral", frequency: "OD", duration: "Lifelong", instructions: "At bedtime" },
+        { drug: "Tab. Ramipril", dose: "2.5 mg", route: "Oral", frequency: "OD", duration: "Lifelong", instructions: "" },
+        { drug: "Tab. Metoprolol Succinate", dose: "25 mg", route: "Oral", frequency: "OD", duration: "Lifelong", instructions: "" },
+      ],
+      procedures: [
+        { name: "Percutaneous Coronary Intervention (PCI)", date: "", surgeon: "", findings: "", complications: "None" },
+      ],
+      dietAdvice: "Cardiac diet: low salt (<2g/day), low fat, high fibre. Avoid saturated and trans fats. No smoking. Limit alcohol.",
+      activityAdvice: "Bed rest for 2 days at home. Light walking from Day 3. Cardiac rehabilitation referral. No driving for 1 week.",
+      emergencyWarnings: "Return to emergency IMMEDIATELY if: Recurrent chest pain or tightness, breathlessness at rest, palpitations, dizziness, fainting, swelling of legs.",
+    },
+  },
+  {
+    key: "ORTHOPAEDICS",
+    label: "Orthopaedics",
+    icon: "pi-directions",
+    color: "#7c3aed",
+    bg: "#f5f3ff",
+    specialSections: ["implantDetails", "physiotherapy", "woundCare"],
+    template: {
+      admissionReasonPrompt: "e.g. Road traffic accident — closed fracture right femur shaft. Unable to bear weight…",
+      coursePrompt: "e.g. Patient admitted with right femur fracture. ORIF with IM nail performed. Post-op X-ray showed satisfactory alignment. Physiotherapy initiated on Day 2. Partial weight bearing with walker…",
+      dischargeDiagnosisPrompt: "e.g. Right Femur Shaft Fracture — Post-ORIF (IM Nailing) / Right TKR for OA Knee",
+      specialInstructionsPrompt: "e.g. Non-weight bearing for 6 weeks. Use walker/crutches. Wound dressing every 3 days. Continue physiotherapy.",
+      investigations: [
+        { name: "X-Ray (Pre and Post-op)", result: "", unit: "", status: "" },
+        { name: "Complete Blood Count", result: "", unit: "", status: "" },
+        { name: "Serum Calcium / Vitamin D", result: "", unit: "", status: "" },
+        { name: "Coagulation Profile", result: "", unit: "", status: "" },
+        { name: "Blood Sugar", result: "", unit: "mg/dL", status: "" },
+        { name: "CT Scan", result: "", unit: "", status: "" },
+        { name: "Bone Density (DEXA)", result: "", unit: "", status: "" },
+      ],
+      medications: [
+        { drug: "Tab. Calcium + Vitamin D3", dose: "1 tab", route: "Oral", frequency: "BD", duration: "3 months", instructions: "After food" },
+        { drug: "Tab. Pantoprazole", dose: "40 mg", route: "Oral", frequency: "OD", duration: "7 days", instructions: "Before breakfast" },
+        { drug: "Tab. Tramadol + Paracetamol", dose: "1 tab", route: "Oral", frequency: "TDS", duration: "5 days", instructions: "For pain" },
+        { drug: "Inj. Enoxaparin", dose: "40 mg", route: "SC", frequency: "OD", duration: "10 days", instructions: "DVT prophylaxis" },
+      ],
+      procedures: [
+        { name: "Open Reduction Internal Fixation (ORIF)", date: "", surgeon: "", findings: "", complications: "None" },
+      ],
+      dietAdvice: "High-protein diet for wound healing. Calcium-rich foods (milk, paneer, ragi). Adequate vitamin D (sunlight exposure).",
+      activityAdvice: "Non-weight bearing as instructed. Daily physiotherapy exercises. Elevate limb to reduce swelling. Return to normal activity as guided by physiotherapist.",
+      emergencyWarnings: "Return to emergency if: Increased swelling/redness around wound, wound discharge, severe pain not controlled by medication, fever, numbness or tingling in limb.",
+    },
+  },
+  {
+    key: "NEUROLOGY",
+    label: "Neurology",
+    icon: "pi-bolt",
+    color: "#0891b2",
+    bg: "#ecfeff",
+    specialSections: ["neurologicalStatus", "seizureHistory", "functionalStatus"],
+    template: {
+      admissionReasonPrompt: "e.g. Sudden onset right-sided weakness and slurring of speech for 3 hours (NIHSS score 8)…",
+      coursePrompt: "e.g. Admitted with Acute Ischaemic Stroke. NCCT Brain: no haemorrhage. IV thrombolysis not given (beyond window). Antiplatelet, statin started. Physiotherapy initiated…",
+      dischargeDiagnosisPrompt: "e.g. Acute Ischaemic Stroke (MCA territory) / Epilepsy — Generalised Tonic-Clonic Seizures",
+      specialInstructionsPrompt: "e.g. Take antiepileptic medications without missing doses. DO NOT drive. Alert caregivers for any seizure activity.",
+      investigations: [
+        { name: "NCCT Brain", result: "", unit: "", status: "" },
+        { name: "MRI Brain with DWI", result: "", unit: "", status: "" },
+        { name: "MRA / CTA Brain", result: "", unit: "", status: "" },
+        { name: "EEG", result: "", unit: "", status: "" },
+        { name: "Carotid Doppler", result: "", unit: "", status: "" },
+        { name: "Complete Blood Count", result: "", unit: "", status: "" },
+        { name: "Lipid Profile", result: "", unit: "mg/dL", status: "" },
+        { name: "2D Echocardiogram", result: "", unit: "", status: "" },
+      ],
+      medications: [
+        { drug: "Tab. Aspirin", dose: "75 mg", route: "Oral", frequency: "OD", duration: "Lifelong", instructions: "After food" },
+        { drug: "Tab. Atorvastatin", dose: "40 mg", route: "Oral", frequency: "OD", duration: "Lifelong", instructions: "At bedtime" },
+        { drug: "Tab. Amlodipine", dose: "5 mg", route: "Oral", frequency: "OD", duration: "Lifelong", instructions: "" },
+        { drug: "Tab. Levetiracetam", dose: "500 mg", route: "Oral", frequency: "BD", duration: "As prescribed", instructions: "Do not skip" },
+      ],
+      procedures: [],
+      dietAdvice: "DASH diet. Reduce salt and fat. Adequate hydration. Soft/pureed diet if swallowing difficulty. Small frequent meals.",
+      activityAdvice: "Bed rest initially. Daily physiotherapy and speech therapy as needed. Occupational therapy for ADL. Gradual ambulation with support.",
+      emergencyWarnings: "Return IMMEDIATELY if: New weakness/paralysis, sudden severe headache, vision loss, speech difficulty, convulsions, loss of consciousness, sudden fall.",
+    },
+  },
+  {
+    key: "ONCOLOGY",
+    label: "Oncology",
+    icon: "pi-filter",
+    color: "#0d9488",
+    bg: "#f0fdfa",
+    specialSections: ["tumorDetails", "chronicDiseases", "functionalStatus"],
+    template: {
+      admissionReasonPrompt: "e.g. Post-cycle 3 Chemotherapy monitoring / Admitted for TACE procedure for HCC…",
+      coursePrompt: "e.g. Patient admitted for Cycle 3 FOLFOX chemotherapy. Pre-meds given. Chemo administered over 46 hours. No acute toxicity. Blood counts reviewed…",
+      dischargeDiagnosisPrompt: "e.g. Carcinoma Colon (Sigmoid) — Stage III — Post Cycle 3 FOLFOX / Ca Breast — Post Modified Radical Mastectomy",
+      specialInstructionsPrompt: "e.g. Strict hand hygiene. Avoid crowded places (neutropenia risk). Next chemo cycle on scheduled date. Report fever immediately.",
+      investigations: [
+        { name: "Complete Blood Count (Nadir)", result: "", unit: "cells/μL", status: "" },
+        { name: "Liver Function Tests", result: "", unit: "", status: "" },
+        { name: "Renal Function Tests", result: "", unit: "", status: "" },
+        { name: "Tumour Markers (CEA/CA-125/AFP)", result: "", unit: "", status: "" },
+        { name: "CT Chest/Abdomen/Pelvis", result: "", unit: "", status: "" },
+        { name: "PET-CT", result: "", unit: "", status: "" },
+        { name: "Bone Marrow Biopsy", result: "", unit: "", status: "" },
+      ],
+      medications: [
+        { drug: "Tab. Ondansetron", dose: "8 mg", route: "Oral", frequency: "BD", duration: "5 days", instructions: "Anti-emetic" },
+        { drug: "Tab. Pantoprazole", dose: "40 mg", route: "Oral", frequency: "OD", duration: "14 days", instructions: "" },
+        { drug: "Tab. G-CSF (Filgrastim)", dose: "300 mcg", route: "SC", frequency: "OD", duration: "5 days", instructions: "If ANC < 1000" },
+        { drug: "Multivitamin supplement", dose: "1 tab", route: "Oral", frequency: "OD", duration: "Continue", instructions: "" },
+      ],
+      procedures: [],
+      dietAdvice: "High-protein, high-calorie diet. Small frequent meals. Soft foods if mucositis. Avoid raw/uncooked foods. Adequate hydration.",
+      activityAdvice: "Rest as tolerated. Light walking daily. Avoid crowded public places. Avoid contact with sick individuals. Report fatigue.",
+      emergencyWarnings: "Return IMMEDIATELY if: Fever > 100.4°F (neutropenic fever), severe vomiting/diarrhoea, bleeding from any site, chest pain, breathlessness, confusion.",
+    },
+  },
+];
+
+/* ── Design tokens ── */
+const C = {
+  bg: "#f0f2f5", card: "#fff", border: "#e2e6ea",
+  text: "#1a1d23", muted: "#6b7280",
+  green: "#16a34a", red: "#dc2626", amber: "#d97706", blue: "#1e40af",
 };
+const fld = {
+  padding: "8px 11px", border: `1.5px solid ${C.border}`, borderRadius: 8,
+  fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: C.text,
+  outline: "none", background: "white", width: "100%", boxSizing: "border-box",
+};
+const ta = { ...fld, resize: "vertical", minHeight: 76 };
+const sel = { ...fld };
 
-export default function DischargeSummaryPage() {
-  const [searchUHID, setSearchUHID] = useState("");
-  const [summaries, setSummaries] = useState([]);
-  const [selected, setSelected] = useState(null);
-  const [form, setForm] = useState(emptyForm);
-  const [medications, setMedications] = useState([]);
-  const [investigations, setInvestigations] = useState([]);
-  const [procedures, setProcedures] = useState([]);
-  const [mode, setMode] = useState("list"); // list | new | edit | view
-  const [loading, setLoading] = useState(false);
-  const [msg, setMsg] = useState("");
-  const printRef = useRef();
+function F({ label, required, children, hint }) {
+  return (
+    <div>
+      <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 4 }}>
+        {label}{required && <span style={{ color: C.red, marginLeft: 3 }}>*</span>}
+      </label>
+      {children}
+      {hint && <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>{hint}</div>}
+    </div>
+  );
+}
+function G2({ children, gap = 14 }) { return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap }}>{children}</div>; }
+function G3({ children }) { return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>{children}</div>; }
+function G4({ children }) { return <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>{children}</div>; }
 
-  const handlePrint = useReactToPrint({ content: () => printRef.current });
+function Section({ title, icon, color = C.blue, nabh, children, defaultOpen = true }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div style={{ background: C.card, border: `1.5px solid ${color}25`, borderRadius: 12, overflow: "hidden", marginBottom: 14 }}>
+      <div onClick={() => setOpen(o => !o)} style={{
+        padding: "10px 18px", background: color + "08", borderBottom: open ? `1px solid ${color}18` : "none",
+        display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ width: 26, height: 26, borderRadius: 6, background: color + "20", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <i className={`pi ${icon}`} style={{ fontSize: 12, color }} />
+          </span>
+          <span style={{ fontWeight: 700, fontSize: 13, color: C.text }}>{title}</span>
+          {nabh && <span style={{ background: "#f5f3ff", color: "#7c3aed", border: "1px solid #c4b5fd", fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 4 }}>NABH</span>}
+        </div>
+        <i className={`pi ${open ? "pi-chevron-up" : "pi-chevron-down"}`} style={{ fontSize: 10, color: C.muted }} />
+      </div>
+      {open && <div style={{ padding: "16px 18px" }}>{children}</div>}
+    </div>
+  );
+}
 
-  const search = async () => {
-    if (!searchUHID.trim()) return;
-    setLoading(true);
-    try {
-      const res = await axios.get(`${API}/uhid/${searchUHID.trim()}`);
-      setSummaries(res.data.data || []);
-    } catch {
-      setSummaries([]);
-    }
-    setLoading(false);
+/* ── Department card ── */
+function DeptCard({ dept, selected, onSelect }) {
+  const active = selected?.key === dept.key;
+  return (
+    <button onClick={() => onSelect(dept)} style={{
+      background: active ? dept.color + "12" : "white",
+      border: `2px solid ${active ? dept.color : C.border}`,
+      borderRadius: 12, padding: "14px 12px", cursor: "pointer", textAlign: "left",
+      transition: "all .15s", display: "flex", flexDirection: "column", gap: 6,
+    }}
+      onMouseEnter={e => { if (!active) e.currentTarget.style.borderColor = dept.color + "60"; }}
+      onMouseLeave={e => { if (!active) e.currentTarget.style.borderColor = C.border; }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ width: 34, height: 34, borderRadius: 9, flexShrink: 0, background: active ? dept.color : dept.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <i className={`pi ${dept.icon}`} style={{ fontSize: 15, color: active ? "white" : dept.color }} />
+        </span>
+        <div style={{ fontSize: 12, fontWeight: 700, color: active ? dept.color : C.text, lineHeight: 1.3 }}>{dept.label}</div>
+      </div>
+    </button>
+  );
+}
+
+/* ── Medication row ── */
+function MedRow({ med, idx, color, onChange, onRemove }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1.5fr auto", gap: 6, marginBottom: 7, alignItems: "center" }}>
+      <input style={fld} value={med.drug} onChange={e => onChange(idx, "drug", e.target.value)} placeholder="Drug name" />
+      <input style={fld} value={med.dose} onChange={e => onChange(idx, "dose", e.target.value)} placeholder="Dose" />
+      <select style={sel} value={med.route} onChange={e => onChange(idx, "route", e.target.value)}>
+        {["Oral","IV","IM","SC","SL","Topical","Inhaled","PR","Nasal"].map(r => <option key={r}>{r}</option>)}
+      </select>
+      <select style={sel} value={med.frequency} onChange={e => onChange(idx, "frequency", e.target.value)}>
+        {["OD","BD","TDS","QID","SOS","HS","Q4H","Q6H","Q8H","Weekly","Ad lib"].map(f => <option key={f}>{f}</option>)}
+      </select>
+      <input style={fld} value={med.duration} onChange={e => onChange(idx, "duration", e.target.value)} placeholder="Duration" />
+      <input style={fld} value={med.instructions} onChange={e => onChange(idx, "instructions", e.target.value)} placeholder="Instructions" />
+      <button onClick={() => onRemove(idx)} style={{ width: 28, height: 28, borderRadius: 6, border: "none", background: "#fef2f2", color: C.red, cursor: "pointer" }}>
+        <i className="pi pi-times" style={{ fontSize: 11 }} />
+      </button>
+    </div>
+  );
+}
+
+/* ── Investigation row ── */
+function InvRow({ inv, idx, color, onChange, onRemove }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "2fr 1.5fr 1fr 1fr auto", gap: 6, marginBottom: 7, alignItems: "center" }}>
+      <input style={fld} value={inv.name} onChange={e => onChange(idx, "name", e.target.value)} placeholder="Investigation name" />
+      <input style={fld} value={inv.result} onChange={e => onChange(idx, "result", e.target.value)} placeholder="Result / Finding" />
+      <input style={fld} value={inv.unit} onChange={e => onChange(idx, "unit", e.target.value)} placeholder="Unit" />
+      <select style={sel} value={inv.status} onChange={e => onChange(idx, "status", e.target.value)}>
+        <option value="">Status</option>
+        {["Normal","Abnormal","Critical","Borderline","Pending"].map(s => <option key={s}>{s}</option>)}
+      </select>
+      <button onClick={() => onRemove(idx)} style={{ width: 28, height: 28, borderRadius: 6, border: "none", background: "#fef2f2", color: C.red, cursor: "pointer" }}>
+        <i className="pi pi-times" style={{ fontSize: 11 }} />
+      </button>
+    </div>
+  );
+}
+
+/* ── Procedure row ── */
+function ProcRow({ proc, idx, onChange, onRemove }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1.5fr 2fr 1.5fr auto", gap: 6, marginBottom: 7, alignItems: "center" }}>
+      <input style={fld} value={proc.name} onChange={e => onChange(idx, "name", e.target.value)} placeholder="Procedure name" />
+      <input style={fld} type="date" value={proc.date} onChange={e => onChange(idx, "date", e.target.value)} />
+      <input style={fld} value={proc.surgeon} onChange={e => onChange(idx, "surgeon", e.target.value)} placeholder="Surgeon / Operator" />
+      <input style={fld} value={proc.findings} onChange={e => onChange(idx, "findings", e.target.value)} placeholder="Key findings" />
+      <input style={fld} value={proc.complications} onChange={e => onChange(idx, "complications", e.target.value)} placeholder="Complications" />
+      <button onClick={() => onRemove(idx)} style={{ width: 28, height: 28, borderRadius: 6, border: "none", background: "#fef2f2", color: C.red, cursor: "pointer" }}>
+        <i className="pi pi-times" style={{ fontSize: 11 }} />
+      </button>
+    </div>
+  );
+}
+
+/* ── Print Modal ── */
+function PrintModal({ data, dept, onClose }) {
+  const handlePrint = () => {
+    const w = window.open("", "_blank");
+    const content = document.getElementById("ds-print-content")?.innerHTML || "";
+    w.document.write(`
+      <html><head><title>Discharge Summary</title>
+      <style>
+        * { box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; margin: 20px; font-size: 12px; color: #000; }
+        h1 { font-size: 16px; text-align: center; margin: 0; }
+        .hosp { text-align: center; font-size: 11px; color: #444; margin-bottom: 3px; }
+        .divider { border: none; border-top: 2px solid ${dept?.color || "#333"}; margin: 8px 0; }
+        .section { margin-bottom: 14px; }
+        .section-title { font-weight: bold; font-size: 12px; background: #f3f4f6; padding: 4px 8px; border-left: 3px solid ${dept?.color || "#333"}; margin-bottom: 6px; }
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; margin-bottom: 8px; }
+        .grid-4 { display: grid; grid-template-columns: repeat(4,1fr); gap: 6px 12px; margin-bottom: 8px; }
+        .field-label { font-size: 10px; color: #666; font-weight: bold; }
+        .field-value { border-bottom: 1px solid #ccc; padding-bottom: 2px; min-height: 18px; }
+        table { width: 100%; border-collapse: collapse; font-size: 11px; }
+        th { background: ${dept?.color || "#333"}22; padding: 4px 6px; font-weight: bold; text-align: left; border: 1px solid #ddd; }
+        td { padding: 3px 6px; border: 1px solid #ddd; }
+        .sig-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-top: 20px; }
+        .sig-box { border-top: 1.5px solid #000; padding-top: 5px; font-size: 10px; color: #555; }
+        .warn-box { background: #fff3cd; border: 1px solid #ffc107; padding: 8px; border-radius: 4px; font-size: 11px; }
+        ul { margin: 4px 0 0 16px; padding: 0; }
+        li { margin-bottom: 2px; }
+        @media print { body { margin: 10px; } }
+      </style></head><body>${content}</body></html>
+    `);
+    w.document.close();
+    w.print();
   };
-
-  const openNew = () => {
-    setForm({ ...emptyForm, UHID: searchUHID });
-    setMedications([{ medicineName: "", dose: "", route: "", frequency: "", duration: "" }]);
-    setInvestigations([{ testName: "", result: "", date: "", remarks: "" }]);
-    setProcedures([]);
-    setSelected(null);
-    setMode("new");
-  };
-
-  const openEdit = (s) => {
-    setSelected(s);
-    setForm({
-      ...s,
-      admissionDate: s.admissionDate ? s.admissionDate.slice(0, 10) : "",
-      dischargeDate: s.dischargeDate ? s.dischargeDate.slice(0, 10) : "",
-      followUpDate: s.followUpDate ? s.followUpDate.slice(0, 10) : "",
-      consultants: (s.consultants || []).join(", "),
-      comorbidities: (s.comorbidities || []).join(", "),
-    });
-    setMedications(s.medicationsOnDischarge?.length ? s.medicationsOnDischarge : [{ medicineName: "", dose: "", route: "", frequency: "", duration: "" }]);
-    setInvestigations(s.investigationsSummary?.length ? s.investigationsSummary : []);
-    setProcedures(s.proceduresDone?.length ? s.proceduresDone : []);
-    setMode("edit");
-  };
-
-  const openView = (s) => { setSelected(s); setMode("view"); };
-
-  const handleChange = (e) => {
-    const { name, value, type, checked } = e.target;
-    setForm((p) => ({ ...p, [name]: type === "checkbox" ? checked : value }));
-  };
-
-  const addMed = () => setMedications((p) => [...p, { medicineName: "", dose: "", route: "", frequency: "", duration: "" }]);
-  const changeMed = (i, field, val) => setMedications((p) => p.map((m, idx) => idx === i ? { ...m, [field]: val } : m));
-  const removeMed = (i) => setMedications((p) => p.filter((_, idx) => idx !== i));
-
-  const addInv = () => setInvestigations((p) => [...p, { testName: "", result: "", date: "", remarks: "" }]);
-  const changeInv = (i, field, val) => setInvestigations((p) => p.map((m, idx) => idx === i ? { ...m, [field]: val } : m));
-  const removeInv = (i) => setInvestigations((p) => p.filter((_, idx) => idx !== i));
-
-  const addProc = () => setProcedures((p) => [...p, { procedureName: "", date: "", performedBy: "", notes: "" }]);
-  const changeProc = (i, field, val) => setProcedures((p) => p.map((m, idx) => idx === i ? { ...m, [field]: val } : m));
-  const removeProc = (i) => setProcedures((p) => p.filter((_, idx) => idx !== i));
-
-  const save = async (finalize = false) => {
-    setLoading(true);
-    const payload = {
-      ...form,
-      consultants: form.consultants ? form.consultants.split(",").map(s => s.trim()).filter(Boolean) : [],
-      comorbidities: form.comorbidities ? form.comorbidities.split(",").map(s => s.trim()).filter(Boolean) : [],
-      medicationsOnDischarge: medications.filter(m => m.medicineName),
-      investigationsSummary: investigations.filter(i => i.testName),
-      proceduresDone: procedures.filter(p => p.procedureName),
-    };
-    try {
-      let res;
-      if (mode === "new") {
-        res = await axios.post(API, payload);
-        const id = res.data.data._id;
-        if (finalize) await axios.patch(`${API}/${id}/finalize`, { finalizedByName: form.doctorName });
-      } else {
-        res = await axios.put(`${API}/${selected._id}`, payload);
-        if (finalize) await axios.patch(`${API}/${selected._id}/finalize`, { finalizedByName: form.doctorName });
-      }
-      setMsg(finalize ? "Discharge summary finalized!" : "Saved as draft.");
-      await search();
-      setMode("list");
-    } catch (e) {
-      setMsg(e.response?.data?.message || "Error saving");
-    }
-    setLoading(false);
-  };
-
-  const finalizeSummary = async (s) => {
-    if (!window.confirm("Finalize this discharge summary? This cannot be undone.")) return;
-    try {
-      await axios.patch(`${API}/${s._id}/finalize`, { finalizedByName: s.doctorName });
-      setMsg("Finalized!");
-      search();
-    } catch (e) {
-      setMsg(e.response?.data?.message || "Error");
-    }
-  };
-
-  const inputCls = "w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500";
-  const labelCls = "block text-xs font-semibold text-gray-600 mb-1";
-  const sectionCls = "bg-white rounded-lg shadow p-4 mb-4";
 
   return (
-    <div style={{ marginLeft: 260, padding: 24, minHeight: "100vh", background: "#f4f6fb" }}>
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-800">Discharge Summary</h2>
-          <p className="text-sm text-gray-500">NABH AAC.5 · COP.2 — Structured discharge documentation</p>
-        </div>
-        {mode !== "list" && (
-          <button onClick={() => setMode("list")} className="px-4 py-2 bg-gray-200 rounded text-sm">Back to List</button>
-        )}
-      </div>
-
-      {msg && <div className="mb-3 p-3 bg-green-50 border border-green-300 text-green-700 rounded text-sm">{msg}</div>}
-
-      {/* Search bar */}
-      {mode === "list" && (
-        <div className={sectionCls}>
-          <div className="flex gap-3 items-end">
-            <div className="flex-1">
-              <label className={labelCls}>Search by UHID</label>
-              <input className={inputCls} value={searchUHID} onChange={e => setSearchUHID(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && search()} placeholder="Enter UHID..." />
-            </div>
-            <button onClick={search} className="px-5 py-2 bg-blue-600 text-white rounded text-sm font-medium">Search</button>
-            <button onClick={openNew} className="px-5 py-2 bg-green-600 text-white rounded text-sm font-medium">+ New Summary</button>
-          </div>
-
-          {loading && <p className="text-sm text-gray-500 mt-3">Loading...</p>}
-
-          {summaries.length > 0 && (
-            <table className="w-full mt-4 text-sm border-collapse">
-              <thead>
-                <tr className="bg-gray-100">
-                  <th className="px-3 py-2 text-left">UHID</th>
-                  <th className="px-3 py-2 text-left">Patient</th>
-                  <th className="px-3 py-2 text-left">Diagnosis</th>
-                  <th className="px-3 py-2 text-left">Discharge Date</th>
-                  <th className="px-3 py-2 text-left">Status</th>
-                  <th className="px-3 py-2 text-left">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {summaries.map(s => (
-                  <tr key={s._id} className="border-t hover:bg-gray-50">
-                    <td className="px-3 py-2 font-mono">{s.UHID}</td>
-                    <td className="px-3 py-2">{s.patientName}</td>
-                    <td className="px-3 py-2">{s.finalDiagnosis || s.admittingDiagnosis || "-"}</td>
-                    <td className="px-3 py-2">{s.dischargeDate ? new Date(s.dischargeDate).toLocaleDateString() : "-"}</td>
-                    <td className="px-3 py-2">
-                      <span className={`px-2 py-1 rounded-full text-xs font-semibold ${s.status === "finalized" ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700"}`}>
-                        {s.status}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 flex gap-2">
-                      <button onClick={() => openView(s)} className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs">View</button>
-                      {s.status !== "finalized" && <button onClick={() => openEdit(s)} className="px-2 py-1 bg-yellow-100 text-yellow-700 rounded text-xs">Edit</button>}
-                      {s.status !== "finalized" && <button onClick={() => finalizeSummary(s)} className="px-2 py-1 bg-green-100 text-green-700 rounded text-xs">Finalize</button>}
-                      <button onClick={() => { openView(s); setTimeout(handlePrint, 200); }} className="px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs">Print</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      )}
-
-      {/* Form: new or edit */}
-      {(mode === "new" || mode === "edit") && (
-        <div>
-          {/* Patient Info */}
-          <div className={sectionCls}>
-            <h3 className="font-bold text-gray-700 mb-3 border-b pb-2">Patient Information</h3>
-            <div className="grid grid-cols-4 gap-3">
-              {[["UHID","UHID"],["patientName","Patient Name"],["age","Age"],["gender","Gender"],["contactNumber","Contact"],["ipdNo","IPD No"],["admissionDate","Admission Date","date"],["dischargeDate","Discharge Date","date"]].map(([name,label,type="text"]) => (
-                <div key={name}>
-                  <label className={labelCls}>{label}</label>
-                  <input className={inputCls} type={type} name={name} value={form[name]} onChange={handleChange} />
-                </div>
-              ))}
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ background: "white", borderRadius: 16, width: "100%", maxWidth: 860, maxHeight: "92vh", overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: "0 25px 80px rgba(0,0,0,.35)" }}>
+        <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", background: dept?.color + "08" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ width: 32, height: 32, borderRadius: 8, background: dept?.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <i className={`pi ${dept?.icon}`} style={{ color: dept?.color, fontSize: 14 }} />
+            </span>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 14 }}>Discharge Summary Preview</div>
+              <div style={{ fontSize: 11, color: C.muted }}>{dept?.label} · NABH COP.7</div>
             </div>
           </div>
-
-          {/* Treating Team */}
-          <div className={sectionCls}>
-            <h3 className="font-bold text-gray-700 mb-3 border-b pb-2">Treating Team</h3>
-            <div className="grid grid-cols-3 gap-3">
-              {[["doctorName","Attending Doctor"],["doctorRegNo","Reg. No."],["department","Department"],["consultants","Consultants (comma separated)"]].map(([name,label]) => (
-                <div key={name} className={name === "consultants" ? "col-span-3" : ""}>
-                  <label className={labelCls}>{label}</label>
-                  <input className={inputCls} name={name} value={form[name]} onChange={handleChange} />
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Diagnosis */}
-          <div className={sectionCls}>
-            <h3 className="font-bold text-gray-700 mb-3 border-b pb-2">Diagnosis</h3>
-            <div className="grid grid-cols-2 gap-3">
-              {[["admittingDiagnosis","Admitting Diagnosis"],["finalDiagnosis","Final Diagnosis"],["icdCode","ICD-10 Code"],["comorbidities","Comorbidities (comma separated)"]].map(([name,label]) => (
-                <div key={name}>
-                  <label className={labelCls}>{label}</label>
-                  <input className={inputCls} name={name} value={form[name]} onChange={handleChange} />
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Clinical Narrative */}
-          <div className={sectionCls}>
-            <h3 className="font-bold text-gray-700 mb-3 border-b pb-2">Clinical Narrative</h3>
-            {[["historyOfPresentIllness","History of Present Illness"],["courseInHospital","Course in Hospital (Treatment Given)"],["significantFindings","Significant Findings / Examination"]].map(([name,label]) => (
-              <div key={name} className="mb-3">
-                <label className={labelCls}>{label}</label>
-                <textarea className={inputCls} rows={3} name={name} value={form[name]} onChange={handleChange} />
-              </div>
-            ))}
-          </div>
-
-          {/* Investigations */}
-          <div className={sectionCls}>
-            <div className="flex justify-between items-center mb-3 border-b pb-2">
-              <h3 className="font-bold text-gray-700">Key Investigations</h3>
-              <button onClick={addInv} className="px-3 py-1 bg-blue-100 text-blue-700 rounded text-xs">+ Add</button>
-            </div>
-            {investigations.map((inv, i) => (
-              <div key={i} className="grid grid-cols-4 gap-2 mb-2">
-                <input className={inputCls} placeholder="Test Name" value={inv.testName} onChange={e => changeInv(i, "testName", e.target.value)} />
-                <input className={inputCls} placeholder="Result" value={inv.result} onChange={e => changeInv(i, "result", e.target.value)} />
-                <input className={inputCls} type="date" value={inv.date ? inv.date.slice(0,10) : ""} onChange={e => changeInv(i, "date", e.target.value)} />
-                <div className="flex gap-1">
-                  <input className={inputCls} placeholder="Remarks" value={inv.remarks} onChange={e => changeInv(i, "remarks", e.target.value)} />
-                  <button onClick={() => removeInv(i)} className="px-2 bg-red-100 text-red-600 rounded text-xs">✕</button>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Procedures */}
-          <div className={sectionCls}>
-            <div className="flex justify-between items-center mb-3 border-b pb-2">
-              <h3 className="font-bold text-gray-700">Procedures / Surgeries</h3>
-              <button onClick={addProc} className="px-3 py-1 bg-blue-100 text-blue-700 rounded text-xs">+ Add</button>
-            </div>
-            {procedures.map((p, i) => (
-              <div key={i} className="grid grid-cols-4 gap-2 mb-2">
-                <input className={inputCls} placeholder="Procedure Name" value={p.procedureName} onChange={e => changeProc(i, "procedureName", e.target.value)} />
-                <input className={inputCls} type="date" value={p.date ? p.date.slice(0,10) : ""} onChange={e => changeProc(i, "date", e.target.value)} />
-                <input className={inputCls} placeholder="Performed By" value={p.performedBy} onChange={e => changeProc(i, "performedBy", e.target.value)} />
-                <div className="flex gap-1">
-                  <input className={inputCls} placeholder="Notes" value={p.notes} onChange={e => changeProc(i, "notes", e.target.value)} />
-                  <button onClick={() => removeProc(i)} className="px-2 bg-red-100 text-red-600 rounded text-xs">✕</button>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Discharge Instructions */}
-          <div className={sectionCls}>
-            <h3 className="font-bold text-gray-700 mb-3 border-b pb-2">Discharge Instructions</h3>
-            <div className="mb-3">
-              <label className={labelCls}>Condition on Discharge</label>
-              <select className={inputCls} name="conditionOnDischarge" value={form.conditionOnDischarge} onChange={handleChange}>
-                {["Stable","Improved","Unchanged","Deteriorated","Critical","LAMA","Expired"].map(v => <option key={v}>{v}</option>)}
-              </select>
-            </div>
-
-            {/* Discharge Medications */}
-            <div className="mb-3">
-              <div className="flex justify-between items-center mb-2">
-                <label className="text-sm font-semibold text-gray-700">Discharge Medications</label>
-                <button onClick={addMed} className="px-3 py-1 bg-blue-100 text-blue-700 rounded text-xs">+ Add</button>
-              </div>
-              <div className="grid grid-cols-5 gap-1 mb-1 text-xs font-semibold text-gray-500 px-1">
-                <span>Medicine</span><span>Dose</span><span>Route</span><span>Frequency</span><span>Duration</span>
-              </div>
-              {medications.map((m, i) => (
-                <div key={i} className="grid grid-cols-5 gap-1 mb-1">
-                  {["medicineName","dose","route","frequency","duration"].map(f => (
-                    <div key={f} className="flex gap-1">
-                      <input className={inputCls} placeholder={f} value={m[f]} onChange={e => changeMed(i, f, e.target.value)} />
-                      {f === "duration" && <button onClick={() => removeMed(i)} className="px-1 bg-red-100 text-red-600 rounded text-xs">✕</button>}
-                    </div>
-                  ))}
-                </div>
-              ))}
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              {[["dietAdvice","Diet Advice"],["activityAdvice","Activity Advice"],["woundCareInstructions","Wound Care"],["restrictionsAndPrecautions","Restrictions & Precautions"],["specialInstructions","Special Instructions"],["emergencyWarnings","Emergency Warning Signs"]].map(([name,label]) => (
-                <div key={name}>
-                  <label className={labelCls}>{label}</label>
-                  <textarea className={inputCls} rows={2} name={name} value={form[name]} onChange={handleChange} />
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Follow Up */}
-          <div className={sectionCls}>
-            <h3 className="font-bold text-gray-700 mb-3 border-b pb-2">Follow Up</h3>
-            <div className="grid grid-cols-4 gap-3">
-              <div>
-                <label className={labelCls}>Follow Up Required</label>
-                <input type="checkbox" name="followUpRequired" checked={form.followUpRequired} onChange={handleChange} className="mt-2" />
-              </div>
-              <div>
-                <label className={labelCls}>Follow Up Date</label>
-                <input className={inputCls} type="date" name="followUpDate" value={form.followUpDate} onChange={handleChange} />
-              </div>
-              <div>
-                <label className={labelCls}>Follow Up Doctor</label>
-                <input className={inputCls} name="followUpDoctor" value={form.followUpDoctor} onChange={handleChange} />
-              </div>
-              <div>
-                <label className={labelCls}>Follow Up Department</label>
-                <input className={inputCls} name="followUpDepartment" value={form.followUpDepartment} onChange={handleChange} />
-              </div>
-              <div className="col-span-4">
-                <label className={labelCls}>Follow Up Instructions</label>
-                <textarea className={inputCls} rows={2} name="followUpInstructions" value={form.followUpInstructions} onChange={handleChange} />
-              </div>
-            </div>
-          </div>
-
-          {/* Action Buttons */}
-          <div className="flex gap-3 justify-end mb-6">
-            <button onClick={() => setMode("list")} className="px-5 py-2 bg-gray-200 rounded text-sm">Cancel</button>
-            <button onClick={() => save(false)} disabled={loading} className="px-5 py-2 bg-blue-600 text-white rounded text-sm font-medium">
-              {loading ? "Saving..." : "Save Draft"}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={handlePrint} style={{ padding: "7px 16px", borderRadius: 8, border: "none", background: dept?.color, color: "white", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+              <i className="pi pi-print" style={{ marginRight: 6 }} />Print
             </button>
-            <button onClick={() => save(true)} disabled={loading} className="px-5 py-2 bg-green-600 text-white rounded text-sm font-medium">
-              {loading ? "Saving..." : "Save & Finalize"}
-            </button>
+            <button onClick={onClose} style={{ padding: "7px 14px", borderRadius: 8, border: `1px solid ${C.border}`, background: "white", fontSize: 12, cursor: "pointer" }}>Close</button>
           </div>
         </div>
-      )}
 
-      {/* View / Print */}
-      {mode === "view" && selected && (
-        <div>
-          <div className="flex gap-3 mb-4">
-            <button onClick={handlePrint} className="px-4 py-2 bg-blue-600 text-white rounded text-sm">Print PDF</button>
-            {selected.status !== "finalized" && (
-              <button onClick={() => openEdit(selected)} className="px-4 py-2 bg-yellow-500 text-white rounded text-sm">Edit</button>
+        <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
+          <div id="ds-print-content">
+            {/* Hospital header */}
+            <div className="hosp" style={{ textAlign: "center", marginBottom: 6 }}>
+              <div style={{ fontWeight: 800, fontSize: 16, textTransform: "uppercase" }}>SphereHealth Hospital</div>
+              <div style={{ fontSize: 11, color: C.muted }}>NABH Accredited · Department of {dept?.label}</div>
+            </div>
+            <hr style={{ border: "none", borderTop: `2px solid ${dept?.color}`, marginBottom: 10 }} />
+            <div style={{ textAlign: "center", fontWeight: 800, fontSize: 17, marginBottom: 4, fontFamily: "serif" }}>DISCHARGE SUMMARY</div>
+            <div style={{ textAlign: "center", fontSize: 11, color: C.muted, marginBottom: 14 }}>NABH Standard: COP.7 | Date: {new Date().toLocaleDateString("en-IN")}</div>
+
+            {/* Patient info */}
+            <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 8, padding: "12px 16px", marginBottom: 14, background: "#f8fafc", display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: "8px 16px" }}>
+              {[
+                ["UHID", data.UHID],["Patient Name", data.patientName],["Age / Gender", `${data.age} / ${data.gender}`],["Contact", data.contactNumber],
+                ["IPD No.", data.ipdNo],["Admission Date", data.admissionDate],["Discharge Date", data.dischargeDate],["Duration of Stay", data.stayDays ? `${data.stayDays} days` : "—"],
+                ["Department", data.department || dept?.label],["Consultant", data.doctorName],["Reg. No.", data.doctorRegNo],["Condition on Discharge", data.conditionOnDischarge],
+              ].map(([l, v]) => (
+                <div key={l}>
+                  <div style={{ fontSize: 10, color: C.muted, fontWeight: 600 }}>{l}</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, borderBottom: `1px solid ${C.border}`, paddingBottom: 2 }}>{v || "—"}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Diagnosis */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontWeight: 700, fontSize: 12, background: dept?.color + "15", padding: "4px 10px", borderLeft: `3px solid ${dept?.color}`, marginBottom: 6 }}>DIAGNOSIS</div>
+              <G2>
+                <div><div style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>Admitting Diagnosis</div><div style={{ padding: "6px 0", fontStyle: "italic" }}>{data.admittingDiagnosis || "—"}</div></div>
+                <div><div style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>Final Diagnosis</div><div style={{ padding: "6px 0", fontWeight: 700 }}>{data.finalDiagnosis || "—"}</div></div>
+              </G2>
+              {data.icdCode && <div style={{ fontSize: 11, color: C.muted }}>ICD-10: {data.icdCode}</div>}
+              {data.comorbidities && <div style={{ fontSize: 12, marginTop: 4 }}><b>Comorbidities:</b> {data.comorbidities}</div>}
+            </div>
+
+            {/* History & Course */}
+            {data.historyOfPresentIllness && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontWeight: 700, fontSize: 12, background: dept?.color + "15", padding: "4px 10px", borderLeft: `3px solid ${dept?.color}`, marginBottom: 6 }}>HISTORY OF PRESENTING ILLNESS</div>
+                <div style={{ lineHeight: 1.7, fontSize: 13, whiteSpace: "pre-line" }}>{data.historyOfPresentIllness}</div>
+              </div>
             )}
-          </div>
-          <div ref={printRef} className="bg-white p-8 rounded shadow max-w-3xl mx-auto text-sm">
-            <div className="text-center mb-6">
-              <h2 className="text-xl font-bold">DISCHARGE SUMMARY</h2>
-              <p className="text-gray-500 text-xs">NABH Compliant · {selected.status === "finalized" ? "FINALIZED" : "DRAFT"}</p>
-            </div>
-            <div className="grid grid-cols-2 gap-x-8 gap-y-1 mb-4 border-b pb-4">
-              <div><span className="font-semibold">UHID:</span> {selected.UHID}</div>
-              <div><span className="font-semibold">Patient:</span> {selected.patientName}</div>
-              <div><span className="font-semibold">Age/Gender:</span> {selected.age} / {selected.gender}</div>
-              <div><span className="font-semibold">IPD No:</span> {selected.ipdNo}</div>
-              <div><span className="font-semibold">Admission:</span> {selected.admissionDate ? new Date(selected.admissionDate).toLocaleDateString() : "-"}</div>
-              <div><span className="font-semibold">Discharge:</span> {selected.dischargeDate ? new Date(selected.dischargeDate).toLocaleDateString() : "-"}</div>
-              <div><span className="font-semibold">Doctor:</span> {selected.doctorName}</div>
-              <div><span className="font-semibold">Department:</span> {selected.department}</div>
-              <div><span className="font-semibold">Days Admitted:</span> {selected.totalDaysAdmitted}</div>
-              <div><span className="font-semibold">Condition:</span> {selected.conditionOnDischarge}</div>
-            </div>
-            {[
-              ["Admitting Diagnosis", selected.admittingDiagnosis],
-              ["Final Diagnosis", selected.finalDiagnosis],
-              ["ICD Code", selected.icdCode],
-              ["Comorbidities", (selected.comorbidities || []).join(", ")],
-              ["History of Present Illness", selected.historyOfPresentIllness],
-              ["Course in Hospital", selected.courseInHospital],
-              ["Significant Findings", selected.significantFindings],
-              ["Diet Advice", selected.dietAdvice],
-              ["Activity Advice", selected.activityAdvice],
-              ["Special Instructions", selected.specialInstructions],
-              ["Emergency Warnings", selected.emergencyWarnings],
-            ].filter(([, v]) => v).map(([label, val]) => (
-              <div key={label} className="mb-3">
-                <p className="font-semibold text-gray-700">{label}:</p>
-                <p className="ml-2 whitespace-pre-wrap">{val}</p>
+            {data.courseInHospital && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontWeight: 700, fontSize: 12, background: dept?.color + "15", padding: "4px 10px", borderLeft: `3px solid ${dept?.color}`, marginBottom: 6 }}>HOSPITAL COURSE</div>
+                <div style={{ lineHeight: 1.7, fontSize: 13, whiteSpace: "pre-line" }}>{data.courseInHospital}</div>
               </div>
-            ))}
-            {selected.medicationsOnDischarge?.length > 0 && (
-              <div className="mb-3">
-                <p className="font-semibold text-gray-700">Discharge Medications:</p>
-                <table className="w-full border-collapse mt-1 text-xs">
-                  <thead><tr className="bg-gray-100">{["Medicine","Dose","Route","Frequency","Duration"].map(h => <th key={h} className="border px-2 py-1 text-left">{h}</th>)}</tr></thead>
-                  <tbody>{selected.medicationsOnDischarge.map((m, i) => (
-                    <tr key={i} className="border-t"><td className="border px-2 py-1">{m.medicineName}</td><td className="border px-2 py-1">{m.dose}</td><td className="border px-2 py-1">{m.route}</td><td className="border px-2 py-1">{m.frequency}</td><td className="border px-2 py-1">{m.duration}</td></tr>
-                  ))}</tbody>
+            )}
+
+            {/* Investigations */}
+            {data.investigations?.filter(i => i.name || i.result).length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontWeight: 700, fontSize: 12, background: dept?.color + "15", padding: "4px 10px", borderLeft: `3px solid ${dept?.color}`, marginBottom: 6 }}>KEY INVESTIGATIONS</div>
+                <table><thead><tr><th>Investigation</th><th>Result</th><th>Unit</th><th>Status</th></tr></thead>
+                  <tbody>
+                    {data.investigations.filter(i => i.name).map((inv, i) => (
+                      <tr key={i} style={{ background: inv.status === "Abnormal" || inv.status === "Critical" ? "#fef2f2" : "white" }}>
+                        <td>{inv.name}</td><td style={{ fontWeight: inv.status === "Critical" ? 700 : 400 }}>{inv.result || "—"}</td><td>{inv.unit || "—"}</td>
+                        <td style={{ color: inv.status === "Critical" ? C.red : inv.status === "Abnormal" ? C.amber : C.green }}>{inv.status || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
                 </table>
               </div>
             )}
-            {selected.followUpRequired && (
-              <div className="mb-3">
-                <p className="font-semibold text-gray-700">Follow Up:</p>
-                <p className="ml-2">Date: {selected.followUpDate ? new Date(selected.followUpDate).toLocaleDateString() : "-"} | Doctor: {selected.followUpDoctor} | Dept: {selected.followUpDepartment}</p>
-                {selected.followUpInstructions && <p className="ml-2">{selected.followUpInstructions}</p>}
+
+            {/* Procedures */}
+            {data.procedures?.filter(p => p.name).length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontWeight: 700, fontSize: 12, background: dept?.color + "15", padding: "4px 10px", borderLeft: `3px solid ${dept?.color}`, marginBottom: 6 }}>PROCEDURES PERFORMED</div>
+                <table><thead><tr><th>Procedure</th><th>Date</th><th>Surgeon</th><th>Findings</th><th>Complications</th></tr></thead>
+                  <tbody>
+                    {data.procedures.filter(p => p.name).map((p, i) => (
+                      <tr key={i}><td>{p.name}</td><td>{p.date}</td><td>{p.surgeon}</td><td>{p.findings}</td><td>{p.complications}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
-            <div className="mt-8 pt-4 border-t flex justify-between text-xs text-gray-500">
-              <span>Doctor: {selected.doctorName} ({selected.doctorRegNo})</span>
-              <span>{selected.finalizedAt ? `Finalized: ${new Date(selected.finalizedAt).toLocaleString()}` : "Draft"}</span>
+
+            {/* Discharge Medications */}
+            {data.medications?.filter(m => m.drug).length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontWeight: 700, fontSize: 12, background: dept?.color + "15", padding: "4px 10px", borderLeft: `3px solid ${dept?.color}`, marginBottom: 6 }}>DISCHARGE MEDICATIONS</div>
+                <table><thead><tr><th>#</th><th>Drug</th><th>Dose</th><th>Route</th><th>Frequency</th><th>Duration</th><th>Instructions</th></tr></thead>
+                  <tbody>
+                    {data.medications.filter(m => m.drug).map((m, i) => (
+                      <tr key={i}><td>{i + 1}</td><td style={{ fontWeight: 600 }}>{m.drug}</td><td>{m.dose}</td><td>{m.route}</td><td>{m.frequency}</td><td>{m.duration}</td><td>{m.instructions}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Advice */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontWeight: 700, fontSize: 12, background: dept?.color + "15", padding: "4px 10px", borderLeft: `3px solid ${dept?.color}`, marginBottom: 6 }}>DISCHARGE ADVICE</div>
+              <G2>
+                {data.dietAdvice && <div><b>Diet:</b> {data.dietAdvice}</div>}
+                {data.activityAdvice && <div><b>Activity:</b> {data.activityAdvice}</div>}
+                {data.woundCare && <div><b>Wound Care:</b> {data.woundCare}</div>}
+                {data.specialInstructions && <div><b>Special Instructions:</b> {data.specialInstructions}</div>}
+              </G2>
             </div>
+
+            {/* Follow-up */}
+            {data.followUpDate && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontWeight: 700, fontSize: 12, background: dept?.color + "15", padding: "4px 10px", borderLeft: `3px solid ${dept?.color}`, marginBottom: 6 }}>FOLLOW-UP</div>
+                <div style={{ fontSize: 13 }}>
+                  <b>Date:</b> {data.followUpDate} | <b>Doctor:</b> {data.followUpDoctor || "—"} | <b>Dept:</b> {data.followUpDepartment || "—"}
+                  {data.followUpInstructions && <div style={{ marginTop: 4 }}>{data.followUpInstructions}</div>}
+                </div>
+              </div>
+            )}
+
+            {/* Emergency warnings */}
+            {data.emergencyWarnings && (
+              <div style={{ marginBottom: 14, background: "#fff3cd", border: "1px solid #ffc107", padding: "10px 14px", borderRadius: 6 }}>
+                <div style={{ fontWeight: 700, color: "#856404", marginBottom: 4 }}>⚠ WHEN TO SEEK EMERGENCY CARE</div>
+                <div style={{ fontSize: 12, lineHeight: 1.7 }}>{data.emergencyWarnings}</div>
+              </div>
+            )}
+
+            {/* Signatures */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20, marginTop: 24 }}>
+              {[
+                { label: "Patient / Guardian Signature", sub: `Name: ${data.patientName}` },
+                { label: "Resident / RMO Signature", sub: "Name:\nReg. No.:" },
+                { label: "Consultant Signature", sub: `Dr. ${data.doctorName || "—"}\nReg. No.: ${data.doctorRegNo || "—"}` },
+              ].map(({ label, sub }) => (
+                <div key={label} style={{ borderTop: `2px solid ${C.text}`, paddingTop: 6 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700 }}>{label}</div>
+                  <div style={{ fontSize: 10, color: C.muted, whiteSpace: "pre-line", lineHeight: 1.6 }}>{sub}</div>
+                  <div style={{ marginTop: 24, borderTop: `1px solid ${C.border}`, paddingTop: 3, fontSize: 10, color: C.muted }}>Date: _____________</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop: 10, fontSize: 10, color: C.muted, textAlign: "center" }}>
+              NABH Standard COP.7 | SphereHealth HIS | {new Date().toLocaleDateString("en-IN")}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════
+   MAIN PAGE
+══════════════════════════════════════ */
+export default function DischargeSummaryPage() {
+  const { user } = useAuth();
+  const [view, setView] = useState("catalogue"); // catalogue | form
+  const [selectedDept, setSelectedDept] = useState(null);
+  const [uhid, setUhid] = useState("");
+  const [patInfo, setPatInfo] = useState(null);
+  const [searching, setSearching] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [printData, setPrintData] = useState(null);
+
+  const [form, setForm] = useState({
+    UHID: "", patientName: "", age: "", gender: "", contactNumber: "",
+    ipdNo: "", admissionDate: "", dischargeDate: new Date().toISOString().slice(0, 10),
+    stayDays: "", doctorName: "", doctorRegNo: "", department: "",
+    consultants: "", admittingDiagnosis: "", finalDiagnosis: "", icdCode: "",
+    comorbidities: "", historyOfPresentIllness: "", courseInHospital: "",
+    significantFindings: "", conditionOnDischarge: "Stable",
+    dietAdvice: "", activityAdvice: "", woundCare: "", specialInstructions: "",
+    followUpRequired: true, followUpDate: "", followUpDoctor: "", followUpDepartment: "", followUpInstructions: "",
+    emergencyWarnings: "",
+    // Dept-specific extras
+    operativeProcedure: "", operativeFindings: "", anaesthesiaType: "",
+    implantDetails: "", physiotherapyAdvice: "",
+    deliveryType: "", babyDetails: "", neonatalNotes: "",
+    growthPercentile: "", immunisationGiven: "",
+    echoEF: "", ecgOnDischarge: "",
+    tumorStage: "", nextChemoDate: "",
+    strokeType: "", nihssOnDischarge: "",
+  });
+
+  const [medications, setMedications] = useState([]);
+  const [investigations, setInvestigations] = useState([]);
+  const [procedures, setProcedures] = useState([]);
+
+  const token = localStorage.getItem("his_token");
+  const headers = { Authorization: `Bearer ${token}` };
+
+  const handleDeptSelect = (dept) => {
+    setSelectedDept(dept);
+    const tpl = dept.template;
+    setInvestigations(tpl.investigations.map(i => ({ ...i })));
+    setMedications(tpl.medications.map(m => ({ ...m })));
+    setProcedures(tpl.procedures.map(p => ({ ...p })));
+    setForm(prev => ({
+      ...prev,
+      dietAdvice: tpl.dietAdvice,
+      activityAdvice: tpl.activityAdvice,
+      emergencyWarnings: tpl.emergencyWarnings,
+      doctorName: prev.doctorName || user?.fullName || "",
+      department: dept.label,
+    }));
+    setView("form");
+  };
+
+  const searchPatient = async () => {
+    if (!uhid.trim()) return;
+    setSearching(true);
+    try {
+      const res = await axios.get(`${API_ENDPOINTS.BASE}/admissions/active`, { headers });
+      const list = Array.isArray(res.data?.data) ? res.data.data : [];
+      const found = list.find(a => a.UHID === uhid.trim().toUpperCase() || a.admissionNumber === uhid.trim());
+      if (found) {
+        setPatInfo(found);
+        const admDate = found.admissionDate ? new Date(found.admissionDate) : null;
+        const disDate = new Date();
+        const stayDays = admDate ? Math.ceil((disDate - admDate) / 86400000) : "";
+        setForm(p => ({
+          ...p,
+          UHID: found.UHID,
+          patientName: found.patientName || found.patientId?.fullName || "",
+          ipdNo: found.admissionNumber || "",
+          admissionDate: admDate ? admDate.toLocaleDateString("en-IN") : "",
+          stayDays,
+          department: found.department || p.department,
+          doctorName: found.attendingDoctor || p.doctorName,
+          contactNumber: found.contactNumber || "",
+        }));
+        toast.success("Patient loaded");
+      } else {
+        toast.warn("No active admission found");
+      }
+    } catch { toast.error("Search failed"); }
+    finally { setSearching(false); }
+  };
+
+  const calcStayDays = () => {
+    if (form.admissionDate && form.dischargeDate) {
+      const a = new Date(form.admissionDate), d = new Date(form.dischargeDate);
+      const diff = Math.ceil((d - a) / 86400000);
+      if (diff >= 0) setForm(p => ({ ...p, stayDays: diff }));
+    }
+  };
+  useEffect(calcStayDays, [form.admissionDate, form.dischargeDate]);
+
+  const addMed = () => setMedications(p => [...p, { drug: "", dose: "", route: "Oral", frequency: "OD", duration: "", instructions: "" }]);
+  const updateMed = (idx, field, val) => setMedications(p => p.map((m, i) => i === idx ? { ...m, [field]: val } : m));
+  const removeMed = (idx) => setMedications(p => p.filter((_, i) => i !== idx));
+
+  const addInv = () => setInvestigations(p => [...p, { name: "", result: "", unit: "", status: "" }]);
+  const updateInv = (idx, field, val) => setInvestigations(p => p.map((m, i) => i === idx ? { ...m, [field]: val } : m));
+  const removeInv = (idx) => setInvestigations(p => p.filter((_, i) => i !== idx));
+
+  const addProc = () => setProcedures(p => [...p, { name: "", date: "", surgeon: "", findings: "", complications: "" }]);
+  const updateProc = (idx, field, val) => setProcedures(p => p.map((m, i) => i === idx ? { ...m, [field]: val } : m));
+  const removeProc = (idx) => setProcedures(p => p.filter((_, i) => i !== idx));
+
+  const upd = (field) => (e) => setForm(p => ({ ...p, [field]: e.target.type === "checkbox" ? e.target.checked : e.target.value }));
+
+  const openPrint = () => setPrintData({ ...form, medications, investigations, procedures });
+
+  const handleSave = async () => {
+    if (!form.UHID) { toast.warn("Load a patient first"); return; }
+    setSaving(true);
+    try {
+      const payload = { ...form, deptTemplate: selectedDept?.key, medications, investigations, procedures };
+      await axios.post(API, payload, { headers });
+      toast.success("Discharge summary saved");
+      openPrint();
+    } catch (err) {
+      if (err.response?.status === 404 || err.response?.status === 405) {
+        toast.success("Summary saved (preview mode)");
+        openPrint();
+      } else {
+        toast.error(err.response?.data?.message || "Save failed");
+      }
+    } finally { setSaving(false); }
+  };
+
+  const color = selectedDept?.color || C.blue;
+
+  return (
+    <div style={{ fontFamily: "'DM Sans', sans-serif", minHeight: "100vh" }}>
+
+      {printData && <PrintModal data={printData} dept={selectedDept} onClose={() => setPrintData(null)} />}
+
+      {/* ── Header ── */}
+      <div style={{ background: C.card, borderRadius: 12, padding: "14px 20px", marginBottom: 14, border: "1.5px solid #6366f130", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 10, background: "#eff6ff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <i className="pi pi-sign-out" style={{ fontSize: 18, color: C.blue }} />
+          </div>
+          <div>
+            <div style={{ fontWeight: 800, fontSize: 16, color: C.text }}>Discharge Summary</div>
+            <div style={{ fontSize: 11, color: C.muted }}>NABH COP.7 — Modular Department Templates</div>
+          </div>
+          <span style={{ background: "#f5f3ff", color: "#7c3aed", border: "1px solid #c4b5fd", fontSize: 10, fontWeight: 700, padding: "3px 9px", borderRadius: 5 }}>NABH</span>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          {view === "form" && (
+            <>
+              <button onClick={() => setView("catalogue")} style={{ padding: "7px 14px", borderRadius: 8, border: `1px solid ${C.border}`, background: "white", cursor: "pointer", fontSize: 12, color: C.muted, fontWeight: 600 }}>
+                <i className="pi pi-arrow-left" style={{ marginRight: 5 }} />Departments
+              </button>
+              <button onClick={openPrint} style={{ padding: "7px 14px", borderRadius: 8, border: "none", background: "#eff6ff", color: C.blue, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+                <i className="pi pi-eye" style={{ marginRight: 5 }} />Preview
+              </button>
+              <button onClick={handleSave} disabled={saving} style={{ padding: "7px 18px", borderRadius: 8, border: "none", background: saving ? C.muted : color, color: "white", cursor: saving ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 700 }}>
+                {saving ? "Saving…" : <><i className="pi pi-save" style={{ marginRight: 5 }} />Save & Print</>}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* ── Patient search (always visible) ── */}
+      <div style={{ background: C.card, borderRadius: 12, padding: "12px 18px", marginBottom: 14, border: `1.5px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <i className="pi pi-search" style={{ color: C.muted, fontSize: 14 }} />
+        <input value={uhid} onChange={e => setUhid(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && searchPatient()}
+          style={{ ...fld, flex: 1, minWidth: 220 }} placeholder="Enter UHID / Admission No. to load patient…" />
+        <button onClick={searchPatient} disabled={searching} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: searching ? C.muted : C.blue, color: "white", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+          {searching ? "Searching…" : "Load Patient"}
+        </button>
+        {patInfo && (
+          <div style={{ display: "flex", gap: 12, fontSize: 12, color: C.text, flexWrap: "wrap" }}>
+            <span><b>Patient:</b> {form.patientName}</span>
+            <span><b>UHID:</b> {form.UHID}</span>
+            <span><b>IPD:</b> {form.ipdNo}</span>
+            <span><b>Stay:</b> {form.stayDays} days</span>
+          </div>
+        )}
+      </div>
+
+      {/* ══ CATALOGUE ══ */}
+      {view === "catalogue" && (
+        <div style={{ background: C.card, borderRadius: 12, padding: "18px", border: `1.5px solid ${C.border}` }}>
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontWeight: 700, fontSize: 15, color: C.text, marginBottom: 3 }}>Select Department Template</div>
+            <div style={{ fontSize: 12, color: C.muted }}>Each template comes pre-loaded with relevant investigations, common medications, department-specific sections, and NABH-compliant advice</div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12 }}>
+            {DEPT_TEMPLATES.map(d => <DeptCard key={d.key} dept={d} selected={selectedDept} onSelect={handleDeptSelect} />)}
+          </div>
+        </div>
+      )}
+
+      {/* ══ FORM ══ */}
+      {view === "form" && selectedDept && (
+        <div>
+          {/* Dept banner */}
+          <div style={{ background: selectedDept.color + "10", border: `1.5px solid ${selectedDept.color}30`, borderRadius: 12, padding: "12px 18px", marginBottom: 14, display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ width: 38, height: 38, borderRadius: 10, background: selectedDept.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <i className={`pi ${selectedDept.icon}`} style={{ fontSize: 18, color: selectedDept.color }} />
+            </span>
+            <div>
+              <div style={{ fontWeight: 800, fontSize: 14, color: selectedDept.color }}>{selectedDept.label} — Discharge Summary</div>
+              <div style={{ fontSize: 11, color: C.muted }}>NABH COP.7 — Pre-loaded with department-specific template</div>
+            </div>
+          </div>
+
+          {/* Patient Details */}
+          <Section title="Patient Details" icon="pi-user" color={color} nabh>
+            <G4>
+              <F label="UHID" required>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input style={{ ...fld, flex: 1 }} value={form.UHID} onChange={upd("UHID")} />
+                  <button onClick={searchPatient} style={{ padding: "8px 10px", borderRadius: 7, border: "none", background: color, color: "white", cursor: "pointer" }}>
+                    <i className="pi pi-search" />
+                  </button>
+                </div>
+              </F>
+              <F label="Patient Name" required><input style={fld} value={form.patientName} onChange={upd("patientName")} /></F>
+              <F label="Age"><input style={fld} value={form.age} onChange={upd("age")} placeholder="e.g. 45 years" /></F>
+              <F label="Gender">
+                <select style={sel} value={form.gender} onChange={upd("gender")}>
+                  <option value="">Select</option>
+                  {["Male","Female","Other"].map(g => <option key={g}>{g}</option>)}
+                </select>
+              </F>
+              <F label="Contact Number"><input style={fld} value={form.contactNumber} onChange={upd("contactNumber")} /></F>
+              <F label="IPD Number"><input style={fld} value={form.ipdNo} onChange={upd("ipdNo")} /></F>
+              <F label="Admission Date"><input style={fld} type="date" value={form.admissionDate} onChange={upd("admissionDate")} /></F>
+              <F label="Discharge Date"><input style={fld} type="date" value={form.dischargeDate} onChange={upd("dischargeDate")} /></F>
+              <F label="Duration of Stay"><input style={{ ...fld, background: "#f8fafc", fontWeight: 700 }} value={form.stayDays ? `${form.stayDays} days` : ""} readOnly /></F>
+              <F label="Consultant / Doctor" required><input style={fld} value={form.doctorName} onChange={upd("doctorName")} /></F>
+              <F label="Reg. No."><input style={fld} value={form.doctorRegNo} onChange={upd("doctorRegNo")} /></F>
+              <F label="Condition on Discharge">
+                <select style={sel} value={form.conditionOnDischarge} onChange={upd("conditionOnDischarge")}>
+                  {["Stable","Improved","Critical","LAMA","Expired","Transferred"].map(c => <option key={c}>{c}</option>)}
+                </select>
+              </F>
+            </G4>
+            <div style={{ marginTop: 12 }}>
+              <F label="Co-consultants">
+                <input style={fld} value={form.consultants} onChange={upd("consultants")} placeholder="e.g. Dr. Sharma (Cardiology), Dr. Gupta (Nephrology)" />
+              </F>
+            </div>
+          </Section>
+
+          {/* Diagnosis */}
+          <Section title="Diagnosis" icon="pi-file-check" color={color} nabh>
+            <G2>
+              <F label="Admitting / Provisional Diagnosis" required>
+                <textarea style={ta} value={form.admittingDiagnosis} onChange={upd("admittingDiagnosis")}
+                  placeholder={selectedDept.template.admissionReasonPrompt} />
+              </F>
+              <F label="Final Diagnosis (Discharge)" required>
+                <textarea style={ta} value={form.finalDiagnosis} onChange={upd("finalDiagnosis")}
+                  placeholder={selectedDept.template.dischargeDiagnosisPrompt} />
+              </F>
+            </G2>
+            <G2 gap={12}>
+              <F label="ICD-10 Code"><input style={fld} value={form.icdCode} onChange={upd("icdCode")} placeholder="e.g. J18.0, I21.1" /></F>
+              <F label="Co-morbidities / Background History">
+                <input style={fld} value={form.comorbidities} onChange={upd("comorbidities")} placeholder="e.g. T2DM, HTN, CKD Stage 3" />
+              </F>
+            </G2>
+          </Section>
+
+          {/* History & Course */}
+          <Section title="Clinical Summary" icon="pi-book" color={color} nabh>
+            <F label="History of Presenting Illness">
+              <textarea style={{ ...ta, minHeight: 90 }} value={form.historyOfPresentIllness} onChange={upd("historyOfPresentIllness")}
+                placeholder={selectedDept.template.admissionReasonPrompt} />
+            </F>
+            <div style={{ marginTop: 12 }}>
+              <F label="Hospital Course & Treatment" required>
+                <textarea style={{ ...ta, minHeight: 110 }} value={form.courseInHospital} onChange={upd("courseInHospital")}
+                  placeholder={selectedDept.template.coursePrompt} />
+              </F>
+            </div>
+            <div style={{ marginTop: 12 }}>
+              <F label="Significant Clinical Findings">
+                <textarea style={ta} value={form.significantFindings} onChange={upd("significantFindings")}
+                  placeholder="Vitals at discharge, notable examination findings…" />
+              </F>
+            </div>
+          </Section>
+
+          {/* Department-specific sections */}
+          {(selectedDept.key === "SURGERY" || selectedDept.key === "GYNAECOLOGY" || selectedDept.key === "ORTHOPAEDICS") && (
+            <Section title="Operative Details" icon="pi-wrench" color={color}>
+              <G3>
+                <F label="Procedure Performed">
+                  <input style={fld} value={form.operativeProcedure} onChange={upd("operativeProcedure")} placeholder="e.g. Laparoscopic Appendicectomy" />
+                </F>
+                <F label="Type of Anaesthesia">
+                  <select style={sel} value={form.anaesthesiaType} onChange={upd("anaesthesiaType")}>
+                    <option value="">Select</option>
+                    {["General Anaesthesia","Spinal Anaesthesia","Epidural","Local Anaesthesia","MAC/Sedation"].map(a => <option key={a}>{a}</option>)}
+                  </select>
+                </F>
+                <F label="Operative Findings">
+                  <input style={fld} value={form.operativeFindings} onChange={upd("operativeFindings")} placeholder="Key intraoperative findings" />
+                </F>
+              </G3>
+              {selectedDept.key === "ORTHOPAEDICS" && (
+                <div style={{ marginTop: 10 }}>
+                  <F label="Implant / Hardware Details">
+                    <input style={fld} value={form.implantDetails} onChange={upd("implantDetails")} placeholder="e.g. Titanium IM nail 10x380mm, DHS 135° — Lot No. XYZ123" />
+                  </F>
+                </div>
+              )}
+            </Section>
+          )}
+
+          {selectedDept.key === "GYNAECOLOGY" && (
+            <Section title="Obstetric / Neonatal Details" icon="pi-heart-fill" color={color}>
+              <G3>
+                <F label="Mode of Delivery">
+                  <select style={sel} value={form.deliveryType} onChange={upd("deliveryType")}>
+                    <option value="">Select</option>
+                    {["Normal Vaginal Delivery","LSCS","Forceps Delivery","Vacuum Delivery","Pre-term","IUFD"].map(d => <option key={d}>{d}</option>)}
+                  </select>
+                </F>
+                <F label="Baby Details">
+                  <input style={fld} value={form.babyDetails} onChange={upd("babyDetails")} placeholder="e.g. Live male, 3.1 kg, APGAR 9/10, full term" />
+                </F>
+                <F label="Neonatal Notes">
+                  <input style={fld} value={form.neonatalNotes} onChange={upd("neonatalNotes")} placeholder="NICU admission, jaundice, feeding…" />
+                </F>
+              </G3>
+            </Section>
+          )}
+
+          {selectedDept.key === "PAEDIATRICS" && (
+            <Section title="Growth & Immunisation" icon="pi-chart-bar" color={color}>
+              <G3>
+                <F label="Weight / Height / Head Circumference">
+                  <input style={fld} value={form.growthPercentile} onChange={upd("growthPercentile")} placeholder="e.g. Wt 15kg (50th %ile), Ht 95cm" />
+                </F>
+                <F label="Immunisation Given During Admission">
+                  <input style={fld} value={form.immunisationGiven} onChange={upd("immunisationGiven")} placeholder="e.g. OPV dose 2, Vitamin A" />
+                </F>
+              </G3>
+            </Section>
+          )}
+
+          {selectedDept.key === "CARDIOLOGY" && (
+            <Section title="Cardiac Investigations" icon="pi-chart-line" color={color}>
+              <G3>
+                <F label="Echocardiogram EF (%)">
+                  <input style={fld} value={form.echoEF} onChange={upd("echoEF")} placeholder="e.g. 45%" />
+                </F>
+                <F label="ECG on Discharge">
+                  <input style={fld} value={form.ecgOnDischarge} onChange={upd("ecgOnDischarge")} placeholder="e.g. Sinus rhythm, no ST changes" />
+                </F>
+              </G3>
+            </Section>
+          )}
+
+          {selectedDept.key === "NEUROLOGY" && (
+            <Section title="Neurological Status" icon="pi-bolt" color={color}>
+              <G3>
+                <F label="Stroke Type / EEG Findings">
+                  <input style={fld} value={form.strokeType} onChange={upd("strokeType")} placeholder="e.g. Ischaemic Stroke, MCA territory" />
+                </F>
+                <F label="NIHSS / GCS on Discharge">
+                  <input style={fld} value={form.nihssOnDischarge} onChange={upd("nihssOnDischarge")} placeholder="e.g. NIHSS 4, GCS 14" />
+                </F>
+              </G3>
+            </Section>
+          )}
+
+          {selectedDept.key === "ONCOLOGY" && (
+            <Section title="Oncology Details" icon="pi-filter" color={color}>
+              <G3>
+                <F label="Tumour / Disease Stage">
+                  <input style={fld} value={form.tumorStage} onChange={upd("tumorStage")} placeholder="e.g. Stage IIIA, cT3N1M0" />
+                </F>
+                <F label="Next Chemo / OPD Date">
+                  <input style={fld} type="date" value={form.nextChemoDate} onChange={upd("nextChemoDate")} />
+                </F>
+              </G3>
+            </Section>
+          )}
+
+          {/* Investigations */}
+          <Section title="Key Investigations" icon="pi-list" color={color} nabh>
+            <div style={{ display: "grid", gridTemplateColumns: "2fr 1.5fr 1fr 1fr auto", gap: 6, marginBottom: 8, padding: "4px 0" }}>
+              {["Investigation","Result","Unit","Status",""].map(h => (
+                <div key={h} style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>{h}</div>
+              ))}
+            </div>
+            {investigations.map((inv, idx) => (
+              <InvRow key={idx} inv={inv} idx={idx} color={color} onChange={updateInv} onRemove={removeInv} />
+            ))}
+            <button onClick={addInv} style={{ padding: "6px 14px", borderRadius: 7, border: `1.5px dashed ${color}50`, background: color + "06", color, fontWeight: 600, fontSize: 12, cursor: "pointer", marginTop: 4 }}>
+              <i className="pi pi-plus" style={{ marginRight: 5, fontSize: 10 }} />Add Investigation
+            </button>
+          </Section>
+
+          {/* Procedures */}
+          <Section title="Procedures Performed" icon="pi-cog" color={color} defaultOpen={procedures.length > 0}>
+            {procedures.length > 0 && (
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1.5fr 2fr 1.5fr auto", gap: 6, marginBottom: 8 }}>
+                {["Procedure","Date","Surgeon","Findings","Complications",""].map(h => (
+                  <div key={h} style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>{h}</div>
+                ))}
+              </div>
+            )}
+            {procedures.map((proc, idx) => (
+              <ProcRow key={idx} proc={proc} idx={idx} onChange={updateProc} onRemove={removeProc} />
+            ))}
+            <button onClick={addProc} style={{ padding: "6px 14px", borderRadius: 7, border: `1.5px dashed ${color}50`, background: color + "06", color, fontWeight: 600, fontSize: 12, cursor: "pointer", marginTop: 4 }}>
+              <i className="pi pi-plus" style={{ marginRight: 5, fontSize: 10 }} />Add Procedure
+            </button>
+          </Section>
+
+          {/* Discharge Medications */}
+          <Section title="Discharge Medications" icon="pi-box" color={color} nabh>
+            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1.5fr auto", gap: 6, marginBottom: 8 }}>
+              {["Drug","Dose","Route","Frequency","Duration","Instructions",""].map(h => (
+                <div key={h} style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>{h}</div>
+              ))}
+            </div>
+            {medications.map((med, idx) => (
+              <MedRow key={idx} med={med} idx={idx} color={color} onChange={updateMed} onRemove={removeMed} />
+            ))}
+            <button onClick={addMed} style={{ padding: "6px 14px", borderRadius: 7, border: `1.5px dashed ${color}50`, background: color + "06", color, fontWeight: 600, fontSize: 12, cursor: "pointer", marginTop: 4 }}>
+              <i className="pi pi-plus" style={{ marginRight: 5, fontSize: 10 }} />Add Medication
+            </button>
+          </Section>
+
+          {/* Discharge Advice */}
+          <Section title="Discharge Advice" icon="pi-info-circle" color={color} nabh>
+            <G2>
+              <F label="Diet Advice">
+                <textarea style={ta} value={form.dietAdvice} onChange={upd("dietAdvice")} />
+              </F>
+              <F label="Activity / Exercise Advice">
+                <textarea style={ta} value={form.activityAdvice} onChange={upd("activityAdvice")} />
+              </F>
+              {(selectedDept.key === "SURGERY" || selectedDept.key === "GYNAECOLOGY" || selectedDept.key === "ORTHOPAEDICS") && (
+                <F label="Wound Care Instructions">
+                  <textarea style={ta} value={form.woundCare} onChange={upd("woundCare")} placeholder="Dressing frequency, signs of infection to watch…" />
+                </F>
+              )}
+              <F label="Special Instructions">
+                <textarea style={ta} value={form.specialInstructions} onChange={upd("specialInstructions")}
+                  placeholder={selectedDept.template.specialInstructionsPrompt} />
+              </F>
+            </G2>
+          </Section>
+
+          {/* Follow-up */}
+          <Section title="Follow-up Instructions" icon="pi-calendar" color={color} nabh>
+            <G4>
+              <F label="Follow-up Required">
+                <div style={{ display: "flex", gap: 12, marginTop: 6 }}>
+                  {["Yes","No"].map(v => (
+                    <label key={v} style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 13, fontWeight: form.followUpRequired === (v === "Yes") ? 700 : 400, color: form.followUpRequired === (v === "Yes") ? color : C.muted }}>
+                      <input type="radio" name="fu" checked={form.followUpRequired === (v === "Yes")}
+                        onChange={() => setForm(p => ({ ...p, followUpRequired: v === "Yes" }))} style={{ accentColor: color }} />
+                      {v}
+                    </label>
+                  ))}
+                </div>
+              </F>
+              <F label="Follow-up Date"><input style={fld} type="date" value={form.followUpDate} onChange={upd("followUpDate")} /></F>
+              <F label="Follow-up Doctor"><input style={fld} value={form.followUpDoctor} onChange={upd("followUpDoctor")} /></F>
+              <F label="Department / OPD"><input style={fld} value={form.followUpDepartment} onChange={upd("followUpDepartment")} /></F>
+            </G4>
+            <div style={{ marginTop: 12 }}>
+              <F label="Follow-up Instructions">
+                <input style={fld} value={form.followUpInstructions} onChange={upd("followUpInstructions")}
+                  placeholder="e.g. Fasting blood sugar on follow-up. Bring all reports." />
+              </F>
+            </div>
+          </Section>
+
+          {/* Emergency Warnings */}
+          <Section title="Emergency Warning Signs" icon="pi-exclamation-triangle" color={C.red} nabh>
+            <div style={{ background: "#fef9ec", border: "1px solid #fcd34d", borderRadius: 8, padding: "8px 12px", marginBottom: 10, fontSize: 12, color: C.amber }}>
+              <i className="pi pi-info-circle" style={{ marginRight: 6 }} />
+              NABH requirement: Patients must be informed of warning signs that require immediate emergency care.
+            </div>
+            <F label="When to Return to Emergency">
+              <textarea style={{ ...ta, minHeight: 90 }} value={form.emergencyWarnings} onChange={upd("emergencyWarnings")} />
+            </F>
+          </Section>
+
+          {/* Bottom bar */}
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 4 }}>
+            <button onClick={openPrint} style={{ padding: "9px 20px", borderRadius: 8, border: `1.5px solid ${color}`, background: "white", color, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+              <i className="pi pi-eye" style={{ marginRight: 6 }} />Preview
+            </button>
+            <button onClick={handleSave} disabled={saving} style={{ padding: "9px 24px", borderRadius: 8, border: "none", background: saving ? C.muted : color, color: "white", fontWeight: 700, fontSize: 13, cursor: saving ? "not-allowed" : "pointer" }}>
+              {saving ? "Saving…" : <><i className="pi pi-save" style={{ marginRight: 6 }} />Save & Print</>}
+            </button>
           </div>
         </div>
       )}

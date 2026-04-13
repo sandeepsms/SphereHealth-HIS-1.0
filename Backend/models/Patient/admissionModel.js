@@ -10,8 +10,8 @@ const mongoose = require("mongoose");
 
 const TransferHistorySchema = new mongoose.Schema(
   {
-    fromBed: { type: mongoose.Schema.Types.ObjectId, ref: "Bed" },
-    toBed: { type: mongoose.Schema.Types.ObjectId, ref: "Bed" },
+    fromBed: { type: mongoose.Schema.Types.ObjectId, ref: "Beds" },
+    toBed: { type: mongoose.Schema.Types.ObjectId, ref: "Beds" },
     reason: String,
     date: { type: Date, default: Date.now },
   },
@@ -45,7 +45,7 @@ const AdmissionSchema = new mongoose.Schema(
     email: String,
 
     // ── Bed Info (OPTIONAL — Emergency/OPD may not have bed) ──
-    bedId: { type: mongoose.Schema.Types.ObjectId, ref: "Bed", default: null },
+    bedId: { type: mongoose.Schema.Types.ObjectId, ref: "Beds", default: null },
     bedNumber: { type: String, default: "" },
     roomNumber: { type: String, default: "" },
     roomId: {

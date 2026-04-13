@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import API_ENDPOINTS from "../../config/api";
+import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 
 /* ── Design tokens ── */
 const C = {
@@ -99,7 +100,7 @@ function SectionCard({ title, children, open: initOpen = true }) {
   );
 }
 
-export default function DoctorAssessmentPage() {
+function DoctorAssessmentContent({ selectedPatient }) {
   const [search,   setSearch]   = useState("");
   const [patient,  setPatient]  = useState(null);
   const [ipdNo,    setIpdNo]    = useState("");
@@ -120,6 +121,15 @@ export default function DoctorAssessmentPage() {
   });
   const [orders, setOrders] = useState([]);
   const [newOrder, setNewOrder] = useState({ type: "medication", instruction: "", dose: "", route: "", frequency: "", duration: "", notes: "", priority: "ROUTINE" });
+
+  // Auto-load when patient selected from panel
+  useEffect(() => {
+    if (selectedPatient?.UHID || selectedPatient?.bedNumber) {
+      const id = selectedPatient.UHID || selectedPatient.bedNumber;
+      setSearch(id);
+      setIpdNo(selectedPatient.bedNumber || selectedPatient.UHID || "");
+    }
+  }, [selectedPatient]);
 
   const showToast = (msg, type = "ok") => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
 
@@ -639,5 +649,14 @@ export default function DoctorAssessmentPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function DoctorAssessmentPage() {
+  const [selectedPatient, setSelectedPatient] = useState(null);
+  return (
+    <ClinicalLayout onPatientSelect={setSelectedPatient} selectedId={selectedPatient?._id} pageType="doctor-assessment">
+      <DoctorAssessmentContent selectedPatient={selectedPatient} />
+    </ClinicalLayout>
   );
 }
