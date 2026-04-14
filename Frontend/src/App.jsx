@@ -39,11 +39,17 @@ import "primeflex/primeflex.css";
 import PatientList from "./pages/patient/PatientList";
 import PatientForm from "./pages/patient/PatientForm";
 import PatientDetails from "./pages/patient/PatientDetails";
+import PatientHistoryPage from "./pages/patient/PatientHistoryPage";
 
 // OPD
 import OPList from "././pages/OPD/OPDList";
 import OPDForm from "./pages/OPD/OPDForm";
 import OPDDetails from "./pages/OPD/OPDDetails";
+import OPDRegistrationPage from "./pages/registration/OPDRegistrationPage";
+
+// New clinical pages
+import NurseOPDQueuePage from "./pages/nurse/NurseOPDQueuePage";
+import DoctorOPDPanelPage from "./pages/doctor/DoctorOPDPanelPage";
 
 // Emergency
 import Emergencylist from "./pages/emergency/EmergencyList";
@@ -233,6 +239,26 @@ function AppShellRoutes() {
           <Route path="/opd/new"               element={<RoleRoute roles={FRONT_DESK}><OPDForm /></RoleRoute>} />
           <Route path="/opd/edit/:visitNumber" element={<RoleRoute roles={FRONT_DESK}><OPDForm /></RoleRoute>} />
           <Route path="/opd/:visitNumber"      element={<RoleRoute roles={["Admin","Doctor","Receptionist"]}><OPDDetails /></RoleRoute>} />
+
+          {/* ── OPD Registration (unified UHID + revisit flow) ── */}
+          <Route path="/opd-register" element={
+            <RoleRoute roles={FRONT_DESK}><OPDRegistrationPage /></RoleRoute>
+          } />
+
+          {/* ── Nurse OPD Queue ── */}
+          <Route path="/opd-queue" element={
+            <RoleRoute roles={NURSE_ROLES}><NurseOPDQueuePage /></RoleRoute>
+          } />
+
+          {/* ── Doctor OPD Panel ── */}
+          <Route path="/doctor-opd-panel" element={
+            <RoleRoute roles={DOCTOR_ROLES}><DoctorOPDPanelPage /></RoleRoute>
+          } />
+
+          {/* ── Patient History ── */}
+          <Route path="/patient-history" element={
+            <RoleRoute roles={ALL_CLINICAL}><PatientHistoryPage /></RoleRoute>
+          } />
 
           {/* ── Emergency ── */}
           <Route path="/emergency"                       element={<RoleRoute roles={["Admin","Doctor","Nurse","Receptionist"]}><Emergencylist /></RoleRoute>} />

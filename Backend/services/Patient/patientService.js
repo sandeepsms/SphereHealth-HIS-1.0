@@ -287,6 +287,19 @@ class PatientService {
     return { patient, admissions };
   }
 
+  /* ══════════════════════════════════════════════
+     UPDATE VISIT COUNT — called by OPDService etc.
+  ══════════════════════════════════════════════ */
+  async updateVisitCount(patientId, type) {
+    const field = visitCounterField(type);
+    if (!field) return;
+    return Patient.findByIdAndUpdate(
+      patientId,
+      { $inc: { [field]: 1 }, lastVisitDate: new Date() },
+      { new: true }
+    );
+  }
+
   async getPatientsByTPA(tpaId, filters = {}) {
     const { search, fromDate, toDate, page = 1, limit = 10 } = filters;
     const query = { isActive: true, paymentType: "TPA", tpa: tpaId };

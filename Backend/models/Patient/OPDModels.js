@@ -5,7 +5,6 @@ const OPDSchema = new mongoose.Schema(
     patientId: {
       type: String,
       required: true,
-      ref: "TestPatient",
     },
     UHID: {
       type: String,
@@ -14,6 +13,15 @@ const OPDSchema = new mongoose.Schema(
     visitNumber: {
       type: String,
       unique: true,
+    },
+    // Patient's sequential visit count (1st OPD, 2nd OPD…)
+    patientVisitSeq: {
+      type: Number,
+      default: 1,
+    },
+    // Daily token number for queue management
+    tokenNumber: {
+      type: Number,
     },
     visitDate: {
       type: Date,
@@ -24,14 +32,24 @@ const OPDSchema = new mongoose.Schema(
       enum: ["First Visit", "Follow-up", "Routine Checkup"],
       default: "First Visit",
     },
-    consultantName: {
-      type: String,
-      required: true,
+
+    // ── Department & Doctor (proper ObjectId refs for filtering) ──
+    departmentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Department",
     },
     department: {
-      type: String,
-      required: true,
+      type: String, // kept for display / backward-compat
     },
+    doctorId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Doctor",
+    },
+    consultantName: {
+      type: String,
+    },
+
+    // ── Chief Complaint & History ──
     chiefComplaint: {
       type: String,
       required: true,
@@ -41,6 +59,8 @@ const OPDSchema = new mongoose.Schema(
     pastMedicalHistory: String,
     allergyHistory: String,
     currentMedications: String,
+
+    // ── Vitals (entered by Nurse) ──
     vitals: {
       weight: Number,
       height: Number,
@@ -51,6 +71,15 @@ const OPDSchema = new mongoose.Schema(
       respiratoryRate: Number,
       oxygenSaturation: Number,
     },
+    vitalsStatus: {
+      type: String,
+      enum: ["Pending", "Done"],
+      default: "Pending",
+    },
+    vitalsEnteredBy: String,
+    vitalsEnteredAt: Date,
+
+    // ── Examination ──
     generalExamination: {
       consciousness: String,
       nutritionalStatus: String,
@@ -68,6 +97,8 @@ const OPDSchema = new mongoose.Schema(
       centralNervousSystem: String,
       musculoskeletal: String,
     },
+
+    // ── Diagnosis & Treatment ──
     provisionalDiagnosis: String,
     finalDiagnosis: String,
     investigationsOrdered: [
@@ -92,47 +123,63 @@ const OPDSchema = new mongoose.Schema(
     ],
     advice: String,
     dietaryRecommendations: String,
-    followUpRequired: {
-      type: Boolean,
-      default: false,
-    },
+
+    // ── Follow-up ──
+    followUpRequired: { type: Boolean, default: false },
     followUpDate: Date,
     followUpInstructions: String,
+
+    // ── Status ──
     status: {
       type: String,
-      enum: ["Active", "Completed", "Referred"],
-      default: "Active",
+      enum: ["Waiting", "In Progress", "Completed", "Referred"],
+      default: "Waiting",
     },
     referredTo: String,
     doctorNotes: String,
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
 OPDSchema.index({ patientId: 1, visitDate: -1 });
 OPDSchema.index({ UHID: 1 });
 OPDSchema.index({ visitNumber: 1 });
 OPDSchema.index({ visitDate: -1 });
+OPDSchema.index({ departmentId: 1, visitDate: -1 });
+OPDSchema.index({ doctorId: 1, visitDate: -1 });
+OPDSchema.index({ vitalsStatus: 1 });
 
 OPDSchema.pre("save", async function (next) {
-  if (this.isNew && !this.visitNumber) {
-    const count = await mongoose.model("OPD").countDocuments();
-    const year = new Date().getFullYear();
-    this.visitNumber = `OPD-${year}-${String(count + 1).padStart(6, "0")}`;
+  if (this.isNew) {
+    // Auto-generate visitNumber
+    if (!this.visitNumber) {
+      const count = await mongoose.model("OPDRegistration").countDocuments();
+      const year = new Date().getFullYear();
+      this.visitNumber = `OPD-${year}-${String(count + 1).padStart(6, "0")}`;
+    }
+
+    // Daily token number
+    if (!this.tokenNumber) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(today.getDate() + 1);
+      const todayCount = await mongoose
+        .model("OPDRegistration")
+        .countDocuments({ visitDate: { $gte: today, $lt: tomorrow } });
+      this.tokenNumber = todayCount + 1;
+    }
   }
 
-  if (this.vitals.weight && this.vitals.height) {
-    const heightInMeters = this.vitals.height / 100;
-    this.vitals.bmi = (
-      this.vitals.weight /
-      (heightInMeters * heightInMeters)
-    ).toFixed(2);
+  // BMI calculation
+  if (this.vitals && this.vitals.weight && this.vitals.height) {
+    const h = this.vitals.height / 100;
+    this.vitals.bmi = parseFloat((this.vitals.weight / (h * h)).toFixed(2));
   }
 
   next();
 });
 
-// module.exports = mongoose.model("OPD", OPDSchema);
-module.exports = mongoose.model("OPDReegistration", OPDSchema);
+module.exports =
+  mongoose.models.OPDRegistration ||
+  mongoose.model("OPDRegistration", OPDSchema);

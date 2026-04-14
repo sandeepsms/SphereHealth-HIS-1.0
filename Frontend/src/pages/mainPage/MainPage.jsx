@@ -31,46 +31,100 @@ const STATS = [
   { key: "discharge", label: "Discharges Today",icon: "pi-sign-out",        color: C.amber,  bg: "#fffbeb" },
 ];
 
-/* ── Quick action module launcher ── */
-const MODULES = [
-  { label: "New OPD",         icon: "pi-plus-circle",    path: "/registration/OPD",     color: C.teal },
-  { label: "IPD Registration",icon: "pi-user-plus",      path: "/registration/IPD",     color: C.accent },
-  { label: "Emergency",       icon: "pi-exclamation-circle", path: "/registration/Emergency", color: C.red },
-  { label: "Daycare",         icon: "pi-sun",            path: "/registration/Daycare",   color: C.orange },
-  { label: "Services",        icon: "pi-wrench",         path: "/registration/Services",  color: C.green  },
-  { label: "Bed Visual",      icon: "pi-th-large",       path: "/bed-visual",           color: C.purple },
-  { label: "Patient Billing", icon: "pi-receipt",        path: "/patient-billing",      color: C.green },
-  { label: "OPD Assessment",         icon: "pi-file-check",             path: "/opd-assessment",       color: C.teal },
-  { label: "Emergency Assessment",   icon: "pi-exclamation-triangle",   path: "/emergency-assessment", color: C.red },
-  { label: "IPD Initial Assessment", icon: "pi-clipboard",              path: "/ipd-assessment",       color: C.pink },
-  { label: "IPD Daily Assessment",   icon: "pi-stethoscope",            path: "/doctor-assessment",    color: C.slate },
-  { label: "User Management",      icon: "pi-users",                  path: "/admin/users",             color: C.purple },
-  { label: "Nursing Notes",   icon: "pi-heart",          path: "/nursing-notes",        color: C.pink },
-  { label: "Vital Sheet",     icon: "pi-chart-line",     path: "/vitalSheet",           color: C.teal },
-  { label: "MAR",             icon: "pi-list",           path: "/mar",                  color: C.amber },
-  { label: "Discharge Summary",icon: "pi-file-edit",     path: "/discharge-summary",    color: C.purple },
-  { label: "Consent Forms",   icon: "pi-file-check",     path: "/consent-forms",        color: C.green },
+/* ── All module definitions with role restrictions ── */
+const ALL_MODULES = [
+  // Front Desk / Receptionist
+  { label: "New OPD",              icon: "pi-plus-circle",          path: "/registration/OPD",       color: C.teal,   roles: ["Admin","Receptionist"] },
+  { label: "IPD Registration",     icon: "pi-user-plus",            path: "/registration/IPD",       color: C.accent, roles: ["Admin","Receptionist"] },
+  { label: "Emergency",            icon: "pi-exclamation-circle",   path: "/registration/Emergency", color: C.red,    roles: ["Admin","Receptionist","Nurse","Doctor"] },
+  { label: "Daycare",              icon: "pi-sun",                  path: "/registration/Daycare",   color: C.orange, roles: ["Admin","Receptionist"] },
+  { label: "Bed Visual",           icon: "pi-th-large",             path: "/bed-visual",             color: C.purple, roles: ["Admin","Doctor","Nurse","Receptionist"] },
+  { label: "Patient Billing",      icon: "pi-receipt",              path: "/patient-billing",        color: C.green,  roles: ["Admin","Receptionist","TPA Coordinator"] },
+  // Doctor
+  { label: "OPD Assessment",       icon: "pi-file-check",           path: "/opd-assessment",         color: C.teal,   roles: ["Admin","Doctor"] },
+  { label: "Emergency Assessment", icon: "pi-exclamation-triangle", path: "/emergency-assessment",   color: C.red,    roles: ["Admin","Doctor"] },
+  { label: "IPD Initial Assessment",icon: "pi-clipboard",           path: "/ipd-assessment",         color: C.pink,   roles: ["Admin","Doctor","Nurse"] },
+  { label: "IPD Daily Assessment", icon: "pi-stethoscope",          path: "/doctor-assessment",      color: C.slate,  roles: ["Admin","Doctor"] },
+  { label: "Discharge Summary",    icon: "pi-file-edit",            path: "/discharge-summary",      color: C.purple, roles: ["Admin","Doctor"] },
+  { label: "Consent Forms",        icon: "pi-shield",               path: "/consent-forms",          color: C.green,  roles: ["Admin","Doctor","Nurse"] },
+  // Nursing
+  { label: "Nursing Notes",        icon: "pi-heart",                path: "/nursing-notes",          color: C.pink,   roles: ["Admin","Nurse"] },
+  { label: "Care Plan",            icon: "pi-heart-fill",           path: "/nursing-care-plan",      color: C.pink,   roles: ["Admin","Nurse"] },
+  { label: "Handover Notes",       icon: "pi-arrow-right-arrow-left",path: "/nursing-handover-notes",color: C.teal,   roles: ["Admin","Nurse"] },
+  { label: "Initial Assessment",   icon: "pi-clipboard",            path: "/nurse-initial-assessment",color: C.accent,roles: ["Admin","Nurse"] },
+  { label: "MAR",                  icon: "pi-list-check",           path: "/mar",                    color: C.amber,  roles: ["Admin","Nurse","Doctor"] },
+  // Vitals
+  { label: "Update Vitals",        icon: "pi-plus",                 path: "/updateVitalSheet",       color: C.green,  roles: ["Admin","Nurse"] },
+  { label: "Vital Sheet",          icon: "pi-chart-line",           path: "/vitalSheet",             color: C.teal,   roles: ["Admin","Doctor","Nurse"] },
+  // Admin
+  { label: "User Management",      icon: "pi-users",                path: "/admin/users",            color: C.purple, roles: ["Admin"] },
+  { label: "IPD Admission",        icon: "pi-building",             path: "/ipd-admission",          color: C.accent, roles: ["Admin","Receptionist"] },
 ];
 
-/* ── Recent activity mock rows (will be API-driven later) ── */
-const RECENT_COLS = ["Time", "UHID", "Patient", "Type", "Department", "Doctor", "Status"];
+/* ── Filter modules by role ── */
+const getModules = (role) => ALL_MODULES.filter(m => m.roles.includes(role));
 
-/* ── Quick Access items (user will specify what goes here) ── */
-const QUICK_ACCESS = [
-  { label: "New OPD",          icon: "pi-plus-circle",       path: "/registration/OPD",    color: C.teal   },
-  { label: "Register IPD",     icon: "pi-user-plus",         path: "/registration/IPD",     color: C.accent },
-  { label: "Emergency",        icon: "pi-exclamation-circle",path: "/registration/Emergency",color: C.red    },
-  { label: "Services",         icon: "pi-wrench",            path: "/registration/Services", color: C.green  },
-  { label: "Patient Search",   icon: "pi-search",            path: "/allpatient",            color: C.purple },
-  { label: "Patient Billing",  icon: "pi-receipt",           path: "/patient-billing",       color: C.green  },
-  { label: "Bed Layout",       icon: "pi-th-large",          path: "/bed-visual",            color: C.amber  },
-];
+/* ── Quick Access per role ── */
+const QUICK_ACCESS_MAP = {
+  Admin:            [
+    { label: "New OPD",          icon: "pi-plus-circle",       path: "/registration/OPD",      color: C.teal   },
+    { label: "IPD Admission",    icon: "pi-building",          path: "/ipd-admission",          color: C.accent },
+    { label: "Emergency",        icon: "pi-exclamation-circle",path: "/registration/Emergency", color: C.red    },
+    { label: "Patient Search",   icon: "pi-search",            path: "/allpatient",             color: C.purple },
+    { label: "Patient Billing",  icon: "pi-receipt",           path: "/patient-billing",        color: C.green  },
+    { label: "User Management",  icon: "pi-users",             path: "/admin/users",            color: C.purple },
+  ],
+  Receptionist:     [
+    { label: "New OPD",          icon: "pi-plus-circle",       path: "/registration/OPD",      color: C.teal   },
+    { label: "IPD Admission",    icon: "pi-building",          path: "/ipd-admission",          color: C.accent },
+    { label: "Emergency",        icon: "pi-exclamation-circle",path: "/registration/Emergency", color: C.red    },
+    { label: "Patient Search",   icon: "pi-search",            path: "/allpatient",             color: C.purple },
+    { label: "Patient Billing",  icon: "pi-receipt",           path: "/patient-billing",        color: C.green  },
+    { label: "Bed Layout",       icon: "pi-th-large",          path: "/bed-visual",             color: C.amber  },
+  ],
+  Doctor:           [
+    { label: "OPD Assessment",   icon: "pi-file-check",        path: "/opd-assessment",         color: C.teal   },
+    { label: "IPD Assessment",   icon: "pi-stethoscope",       path: "/doctor-assessment",      color: C.slate  },
+    { label: "Discharge Summary",icon: "pi-file-edit",         path: "/discharge-summary",      color: C.purple },
+    { label: "Consent Forms",    icon: "pi-shield",            path: "/consent-forms",          color: C.green  },
+    { label: "MAR",              icon: "pi-list-check",        path: "/mar",                    color: C.amber  },
+    { label: "Patient Search",   icon: "pi-search",            path: "/allpatient",             color: C.accent },
+  ],
+  Nurse:            [
+    { label: "Nursing Notes",    icon: "pi-heart",             path: "/nursing-notes",          color: C.pink   },
+    { label: "MAR",              icon: "pi-list-check",        path: "/mar",                    color: C.amber  },
+    { label: "Update Vitals",    icon: "pi-plus",              path: "/updateVitalSheet",       color: C.green  },
+    { label: "Initial Assessment",icon: "pi-clipboard",        path: "/nurse-initial-assessment",color: C.accent},
+    { label: "Care Plan",        icon: "pi-heart-fill",        path: "/nursing-care-plan",      color: C.pink   },
+    { label: "Handover Notes",   icon: "pi-arrow-right-arrow-left",path: "/nursing-handover-notes",color: C.teal},
+  ],
+  "TPA Coordinator":[
+    { label: "Patient Billing",  icon: "pi-receipt",           path: "/patient-billing",        color: C.green  },
+    { label: "Bills List",       icon: "pi-list",              path: "/billing",                color: C.amber  },
+    { label: "Patient Search",   icon: "pi-search",            path: "/allpatient",             color: C.purple },
+    { label: "TPA Services",     icon: "pi-plus-circle",       path: "/addservice",             color: C.teal   },
+  ],
+  Pharmacist:       [
+    { label: "Patient Search",   icon: "pi-search",            path: "/allpatient",             color: C.purple },
+  ],
+  Dietician:        [
+    { label: "Patient Search",   icon: "pi-search",            path: "/allpatient",             color: C.purple },
+    { label: "Vital Sheet",      icon: "pi-chart-line",        path: "/vitalSheet",             color: C.teal   },
+  ],
+  "Lab Technician": [
+    { label: "Patient Search",   icon: "pi-search",            path: "/allpatient",             color: C.purple },
+  ],
+};
 
 const isDoctor = (role) => role === "Doctor" || role === "Admin";
+const isNurse  = (role) => role === "Nurse"  || role === "Admin";
 
 export default function MainPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const role = user?.role || "Admin";
+  const modules    = getModules(role);
+  const quickAccess = QUICK_ACCESS_MAP[role] || QUICK_ACCESS_MAP["Admin"];
   const [stats, setStats] = useState({ opd: "—", ipd: "—", emergency: "—", beds: "—", ot: "—", discharge: "—" });
   const [recent, setRecent] = useState([]);
   const [loadingRecent, setLoadingRecent] = useState(true);
@@ -251,7 +305,7 @@ export default function MainPage() {
             gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
             gap: 10,
           }}>
-            {MODULES.map(m => (
+            {modules.map(m => (
               <button key={m.path} onClick={() => navigate(m.path)}
                 style={{
                   display: "flex", alignItems: "center", gap: 10,
@@ -286,6 +340,44 @@ export default function MainPage() {
           </div>
         </div>
       </div>
+
+      {/* ── Nurse Quick Links (Nurse only) ── */}
+      {isNurse(user?.role) && !isDoctor(user?.role) && (
+        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", marginBottom: 20 }}>
+          <div style={{ padding: "13px 20px", borderBottom: `1px solid ${C.border}`, background: "#fdf2f8",
+            display: "flex", alignItems: "center", gap: 8 }}>
+            <i className="pi pi-heart" style={{ color: C.pink, fontSize: 14 }} />
+            <span style={{ fontWeight: 700, fontSize: 13 }}>Nursing Workflow</span>
+            <span style={{ fontSize: 11, color: C.muted }}>— Today's nursing tasks</span>
+          </div>
+          <div style={{ padding: "14px 20px", display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(200px,1fr))", gap: 10 }}>
+            {[
+              { label: "Initial Assessment", icon: "pi-clipboard",              path: "/nurse-initial-assessment", color: C.accent, desc: "NABH admission screening" },
+              { label: "Nursing Notes",      icon: "pi-pencil",                 path: "/nursing-notes",            color: C.pink,   desc: "Progress & observation notes" },
+              { label: "MAR",                icon: "pi-list-check",             path: "/mar",                      color: C.amber,  desc: "Medication administration" },
+              { label: "Care Plan",          icon: "pi-heart-fill",             path: "/nursing-care-plan",        color: C.pink,   desc: "Patient nursing care plan" },
+              { label: "Update Vitals",      icon: "pi-plus",                   path: "/updateVitalSheet",         color: C.green,  desc: "Record vital signs" },
+              { label: "Handover Notes",     icon: "pi-arrow-right-arrow-left", path: "/nursing-handover-notes",   color: C.teal,   desc: "Shift handover documentation" },
+            ].map(item => (
+              <button key={item.path} onClick={() => navigate(item.path)}
+                style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px",
+                  border: `1.5px solid ${item.color}25`, borderRadius: 10, background: "white",
+                  cursor: "pointer", fontFamily: "'DM Sans',sans-serif", textAlign: "left", transition: "all .2s" }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = item.color; e.currentTarget.style.background = item.color+"08"; e.currentTarget.style.transform = "translateY(-2px)"; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = item.color+"25"; e.currentTarget.style.background = "white"; e.currentTarget.style.transform = "none"; }}>
+                <span style={{ width: 36, height: 36, borderRadius: 9, flexShrink: 0,
+                  background: item.color+"15", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <i className={`pi ${item.icon}`} style={{ fontSize: 15, color: item.color }} />
+                </span>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 12, color: C.text }}>{item.label}</div>
+                  <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>{item.desc}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Doctor's Worklist (Doctor / Admin only) ── */}
       {isDoctor(user?.role) && (
@@ -524,7 +616,7 @@ export default function MainPage() {
               <span style={{ fontSize: 10, color: "#64748b" }}>Tell us what else to add here</span>
             </div>
             <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 6 }}>
-              {QUICK_ACCESS.map(item => (
+              {quickAccess.map(item => (
                 <button key={item.path}
                   onClick={() => { navigate(item.path); setQaOpen(false); }}
                   style={{

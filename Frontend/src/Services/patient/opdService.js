@@ -1,38 +1,39 @@
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api.js";
 
-const API_URL = API_ENDPOINTS.OPD;
+const BASE = API_ENDPOINTS.OPD;
 
 const opdService = {
-  createOPDVisit: (data) => axios.post(API_URL, data),
+  // ── Core CRUD ─────────────────────────────────────────────────
+  createOPDVisit:  (data)               => axios.post(BASE, data),
+  getAllOPDVisits:  (params)             => axios.get(BASE, { params }),
+  getOPDVisitById: (visitNumber)        => axios.get(`${BASE}/${visitNumber}`),
+  updateOPDVisit:  (visitNumber, data)  => axios.put(`${BASE}/${visitNumber}`, data),
+  deleteOPDVisit:  (visitNumber)        => axios.delete(`${BASE}/${visitNumber}`),
 
-  getAllOPDVisits: (params) => axios.get(API_URL, { params }),
+  // ── Patient history ───────────────────────────────────────────
+  getPatientOPDHistory: (patientId) => axios.get(`${BASE}/patient/${patientId}`),
 
-  getTodayVisits: () => axios.get(`${API_URL}/today`),
+  // ── Queue & filters ───────────────────────────────────────────
+  // params: { departmentId, doctorId, vitalsStatus }
+  getTodayVisits:        (params)       => axios.get(`${BASE}/today`, { params }),
+  getFollowUpDue:        (date)         => axios.get(`${BASE}/followup-due`, { params: { date } }),
+  getVisitsByDepartment: (deptId, date) => axios.get(`${BASE}/department/${deptId}`, { params: { date } }),
+  getVisitsByDoctor:     (docId, date)  => axios.get(`${BASE}/doctor/${docId}`, { params: { date } }),
 
-  getFollowUpDue: () => axios.get(`${API_URL}/followup-due`),
+  // ── Nurse vitals & status ─────────────────────────────────────
+  // vitalsData: { weight, height, temperature, bloodPressure, pulse, respiratoryRate, oxygenSaturation }
+  updateVitals: (visitNumber, vitalsData, nurseName) =>
+    axios.patch(`${BASE}/${visitNumber}/vitals`, { ...vitalsData, nurseName }),
 
-  getOPDVisitById: (visitNumber) => axios.get(`${API_URL}/${visitNumber}`),
+  updateStatus: (visitNumber, status) =>
+    axios.patch(`${BASE}/${visitNumber}/status`, { status }),
 
-  getPatientOPDHistory: (patientId) =>
-    axios.get(`${API_URL}/patient/${patientId}`),
-
-  updateOPDVisit: (visitNumber, data) =>
-    axios.put(`${API_URL}/${visitNumber}`, data),
-
-  deleteOPDVisit: (visitNumber) => axios.delete(`${API_URL}/${visitNumber}`),
-
-  addInvestigation: (visitNumber, data) =>
-    axios.post(`${API_URL}/${visitNumber}/investigation`, data),
-
-  updateInvestigationStatus: (visitNumber, data) =>
-    axios.put(`${API_URL}/${visitNumber}/investigation/status`, data),
-
-  addPrescription: (visitNumber, data) =>
-    axios.post(`${API_URL}/${visitNumber}/prescription`, data),
-
-  completeVisit: (visitNumber) =>
-    axios.put(`${API_URL}/${visitNumber}/complete`),
+  // ── Investigations & prescriptions ───────────────────────────
+  addInvestigation:        (visitNumber, data) => axios.post(`${BASE}/${visitNumber}/investigation`, data),
+  updateInvestigationStatus: (visitNumber, data) => axios.put(`${BASE}/${visitNumber}/investigation/status`, data),
+  addPrescription:         (visitNumber, data) => axios.post(`${BASE}/${visitNumber}/prescription`, data),
+  completeVisit:           (visitNumber, data) => axios.put(`${BASE}/${visitNumber}/complete`, data || {}),
 };
 
 export default opdService;

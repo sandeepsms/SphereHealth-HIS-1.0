@@ -38,10 +38,12 @@ const MENU = [
     bg: "#f0f9ff",
     roles: R.VIEW_PATIENTS,
     items: [
-      { label: "IPD Admission",   icon: "pi-plus-circle",  path: "/ipd-admission",    roles: R.FRONT_DESK, badge: "NEW" },
-      { label: "Registration",    icon: "pi-user-plus",    path: "/registration/ipd", roles: R.FRONT_DESK },
-      { label: "Patient List",    icon: "pi-list",         path: "/allpatient",       roles: R.VIEW_PATIENTS },
-      { label: "Patient Records", icon: "pi-id-card",      path: "/patients",         roles: R.VIEW_PATIENTS },
+      { label: "IPD Admission",    icon: "pi-plus-circle",  path: "/ipd-admission",     roles: R.FRONT_DESK, badge: "NEW" },
+      { label: "OPD Registration", icon: "pi-user-plus",    path: "/opd-register",      roles: R.FRONT_DESK, badge: "UHID" },
+      { label: "Registration",     icon: "pi-user-plus",    path: "/registration/ipd",  roles: R.FRONT_DESK },
+      { label: "Patient List",     icon: "pi-list",         path: "/allpatient",        roles: R.VIEW_PATIENTS },
+      { label: "Patient Records",  icon: "pi-id-card",      path: "/patients",          roles: R.VIEW_PATIENTS },
+      { label: "Patient History",  icon: "pi-clock",        path: "/patient-history",   roles: R.CLINICAL },
     ],
   },
   {
@@ -52,9 +54,12 @@ const MENU = [
     bg: "#fff7ed",
     roles: ["Admin","Doctor","Nurse","Receptionist"],
     items: [
-      { label: "OPD Visits",  icon: "pi-calendar",   path: "/opd-visit",  roles: ["Admin","Doctor","Receptionist"] },
-      { label: "New OPD",     icon: "pi-plus-circle", path: "/opd/new",    roles: R.FRONT_DESK },
-      { label: "Emergency",   icon: "pi-bolt",        path: "/emergency",  roles: ["Admin","Doctor","Nurse","Receptionist"], badge: "URGENT" },
+      { label: "OPD Registration", icon: "pi-user-plus",   path: "/opd-register",      roles: R.FRONT_DESK, badge: "UHID" },
+      { label: "OPD Queue",        icon: "pi-list",         path: "/opd-queue",         roles: R.NURSE },
+      { label: "My OPD Patients",  icon: "pi-stop-circle",  path: "/doctor-opd-panel",  roles: R.DOCTOR },
+      { label: "OPD Visits",       icon: "pi-calendar",    path: "/opd-visit",         roles: ["Admin","Doctor","Receptionist"] },
+      { label: "New OPD",          icon: "pi-plus-circle", path: "/opd/new",           roles: R.FRONT_DESK },
+      { label: "Emergency",        icon: "pi-bolt",         path: "/emergency",         roles: ["Admin","Doctor","Nurse","Receptionist"], badge: "URGENT" },
     ],
   },
   {
@@ -65,6 +70,7 @@ const MENU = [
     bg: "#f0fdfa",
     roles: R.DOCTOR,
     items: [
+      { label: "My OPD Patients",        icon: "pi-users",                path: "/doctor-opd-panel",     roles: R.DOCTOR, badge: "NEW" },
       { label: "OPD Assessment",         icon: "pi-file-check",           path: "/opd-assessment",       roles: R.DOCTOR },
       { label: "Emergency Assessment",   icon: "pi-exclamation-triangle", path: "/emergency-assessment", roles: R.DOCTOR },
       { label: "IPD Initial Assessment", icon: "pi-clipboard",            path: "/ipd-assessment",       roles: R.CLINICAL },
@@ -81,6 +87,7 @@ const MENU = [
     bg: "#fdf2f8",
     roles: R.NURSE_ONLY,
     items: [
+      { label: "OPD Queue",          icon: "pi-list",                   path: "/opd-queue",                roles: R.NURSE_ONLY, badge: "NEW" },
       { label: "Initial Assessment", icon: "pi-clipboard",              path: "/nurse-initial-assessment", roles: R.NURSE_ONLY, badge: "NABH" },
       { label: "Nursing Notes",      icon: "pi-pencil",                 path: "/nursing-notes",            roles: R.NURSE_ONLY },
       { label: "Care Plan",          icon: "pi-heart-fill",             path: "/nursing-care-plan",        roles: R.NURSE_ONLY },

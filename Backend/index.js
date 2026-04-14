@@ -13,6 +13,7 @@ require("./models/bedMgmt/floorModel");
 require("./models/bedMgmt/buildingModel");
 require("./models/Patient/patientModel");
 require("./models/Patient/admissionModel");
+require("./models/Patient/OPDModels");
 
 const patientRoutes = require("./routes/Patient/patientRoutes");
 // const doctorRoutes = require("./routes/doctorsRoutes");
