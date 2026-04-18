@@ -101,6 +101,19 @@ const AdmissionSchema = new mongoose.Schema(
     },
 
     attendingDoctor: { type: String, trim: true, default: "" },
+    // ObjectId ref to the User (role=Doctor) who is the attending doctor
+    // Used for strict IPD file access control
+    attendingDoctorId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    // Department as ObjectId ref (alongside the string field)
+    departmentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Department",
+      default: null,
+    },
 
     status: {
       type: String,
@@ -130,6 +143,11 @@ const AdmissionSchema = new mongoose.Schema(
 
     // ── Transfer history ─────────────────────────────────────
     transferHistory: [TransferHistorySchema],
+
+    // ── Admission / Visit Number ──────────────────────────────
+    admissionNumber: { type: String, trim: true, index: true },  // e.g. ADM-20240417-0001
+    visitNumber:     { type: String, trim: true, index: true },  // OPD visitNumber link
+    paymentType:     { type: String, enum: ["GENERAL","TPA","CORPORATE","CASH"], default: "GENERAL" },
   },
   { timestamps: true },
 );

@@ -522,6 +522,30 @@ class AdmissionService {
     return patient;
   }
 
+  /* ── My IPD Patients (for logged-in doctor) ── */
+  async getMyIPDPatients(doctorUserId, status) {
+    if (!doctorUserId) throw new Error("Doctor user ID is required");
+    const query = { attendingDoctorId: doctorUserId };
+    if (status && status !== "all") query.status = status;
+    return Admission.find(query)
+      .populate("patientId", "fullName title UHID contactNumber gender dateOfBirth bloodGroup knownAllergies")
+      .populate("bedId", "bedNumber")
+      .populate("wardId", "wardName")
+      .populate("attendingDoctorId", "fullName firstName lastName doctorDetails.registrationNumber")
+      .sort({ admissionDate: -1 });
+  }
+
+  /* ── Verify doctor access to an admission ── */
+  async checkDoctorAccess(admissionId, doctorUserId) {
+    const admission = await Admission.findById(admissionId)
+      .select("attendingDoctorId attendingDoctor patientName UHID status")
+      .populate("attendingDoctorId", "fullName firstName lastName");
+    if (!admission) throw new Error("Admission not found");
+    const ownerId = admission.attendingDoctorId?._id || admission.attendingDoctorId;
+    const isOwner = ownerId?.toString() === doctorUserId?.toString();
+    return { admission, isOwner };
+  }
+
   async getAdmissionsByDoctor(doctorName) {
     if (!doctorName) throw new Error("Doctor name is required");
     return Admission.find({

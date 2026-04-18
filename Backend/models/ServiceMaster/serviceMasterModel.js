@@ -96,6 +96,38 @@ const ServiceMasterSchema = new mongoose.Schema(
 
     // Short label shown in UI: "per day", "per visit", "per hour"
     unitLabel: { type: String, trim: true },
+
+    // ── AI Billing Intelligence ──────────────────────────────────
+    // Searchable keywords for AI charge matching
+    // e.g. ["diabetes", "blood sugar", "BSL", "DM"]
+    aiTags: { type: [String], default: [] },
+
+    // Who can add this service to a bill
+    chargeableBy: {
+      type: [String],
+      enum: ["Doctor", "Nurse", "Lab", "Radiology", "Reception", "Auto"],
+      default: ["Doctor", "Reception"],
+    },
+
+    // Functional service type for AI categorisation
+    serviceType: {
+      type: String,
+      enum: [
+        "consultation",
+        "room",
+        "nursing",
+        "procedure",
+        "investigation",
+        "radiology",
+        "package",
+        "ot",
+        "icu",
+        "medicine",
+        "consumable",
+        "other",
+      ],
+      default: "other",
+    },
   },
   {
     timestamps: true,

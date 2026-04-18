@@ -1,300 +1,175 @@
+/**
+ * OPDAssessmentPage.jsx
+ * Doctor's SOAP note + assessment page for OPD visits.
+ * Navigated from DoctorOPDPanelPage via "Assess" button:
+ *   /opd-assessment?visitNumber=OPD-XXXXXX&uhid=UH-XXXXX
+ *
+ * Every save creates a BillingTrigger automatically (DoctorAssessment type).
+ */
 import React, { useState, useEffect, useCallback } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import axios from "axios";
-import { API_ENDPOINTS } from "../../config/api";
-import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
+import API_ENDPOINTS from "../../config/api";
 
-/* ── Design tokens ── */
 const C = {
-  bg: "#f0f2f5", card: "#fff", border: "#e2e6ea", text: "#1a1d23", muted: "#6b7280",
-  accent: "#1e40af", accentL: "#eff6ff",
-  green: "#16a34a", greenL: "#dcfce7",
-  red: "#dc2626", redL: "#fef2f2",
-  amber: "#d97706", amberL: "#fffbeb",
-  teal: "#0d9488", tealL: "#f0fdfa",
-  purple: "#7c3aed", purpleL: "#f5f3ff",
-  slate: "#1e293b",
+  doctor: "#7c3aed", nurse: "#db2777", primary: "#1e40af",
+  success: "#059669", warn: "#d97706", danger: "#dc2626",
+  bg: "#f8fafc", card: "#ffffff", border: "#e2e8f0",
+  muted: "#64748b", dark: "#0f172a",
 };
 
-const fld = {
-  padding: "8px 11px", border: `1.5px solid ${C.border}`, borderRadius: 8,
-  fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: C.text,
-  outline: "none", background: "white", width: "100%", boxSizing: "border-box",
-};
-
-const ta = { ...fld, resize: "vertical", minHeight: 72 };
-
-/* ── Blank prescription row ── */
-const blankRx = () => ({
-  id: Date.now() + Math.random(),
-  drug: "", dose: "", route: "Oral", frequency: "OD", duration: "", instructions: "",
-});
-
-/* ── Section card wrapper ── */
-function SectionCard({ title, icon, color = C.accent, children, badge }) {
-  const [open, setOpen] = useState(true);
+function Field({ label, children, required }) {
   return (
-    <div style={{
-      background: C.card, border: `1px solid ${C.border}`, borderRadius: 12,
-      overflow: "hidden", marginBottom: 16,
-    }}>
-      <div
-        onClick={() => setOpen(o => !o)}
-        style={{
-          padding: "11px 18px", background: "#f8fafc", borderBottom: open ? `1px solid ${C.border}` : "none",
-          display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ width: 28, height: 28, borderRadius: 7, background: color + "18",
-            display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <i className={`pi ${icon}`} style={{ fontSize: 13, color }} />
-          </span>
-          <span style={{ fontWeight: 700, fontSize: 13, color: C.text }}>{title}</span>
-          {badge && (
-            <span style={{ background: color + "18", color, border: `1px solid ${color}30`,
-              fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 4 }}>{badge}</span>
-          )}
-        </div>
-        <i className={`pi ${open ? "pi-chevron-up" : "pi-chevron-down"}`}
-          style={{ fontSize: 11, color: C.muted }} />
-      </div>
-      {open && <div style={{ padding: "18px 20px" }}>{children}</div>}
-    </div>
-  );
-}
-
-/* ── Two-column grid ── */
-function Grid2({ children }) {
-  return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>{children}</div>;
-}
-
-/* ── Four-column grid ── */
-function Grid4({ children }) {
-  return <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>{children}</div>;
-}
-
-/* ── Field label + input ── */
-function Field({ label, children }) {
-  return (
-    <div>
-      <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: C.muted,
-        textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 5 }}>
-        {label}
+    <div style={{ marginBottom: 16 }}>
+      <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: C.muted, marginBottom: 6, letterSpacing: ".3px" }}>
+        {label}{required && <span style={{ color: C.danger }}> *</span>}
       </label>
       {children}
     </div>
   );
 }
 
-/* ── Vital input ── */
-function VitalInput({ label, value, unit, onChange, normal }) {
+function Textarea({ value, onChange, placeholder, rows = 3 }) {
   return (
-    <div style={{ background: C.bg, border: `1.5px solid ${C.border}`, borderRadius: 9,
-      padding: "10px 12px", display: "flex", flexDirection: "column", gap: 6 }}>
-      <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase",
-        letterSpacing: ".7px", color: C.muted }}>{label}</div>
-      <input value={value} onChange={e => onChange(e.target.value)}
-        placeholder={normal || "—"}
-        style={{ ...fld, textAlign: "center", fontFamily: "'DM Mono', monospace",
-          fontSize: 16, fontWeight: 700, padding: "4px 8px" }} />
-      {unit && <div style={{ fontSize: 9, color: C.muted, textAlign: "center" }}>{unit}</div>}
+    <textarea value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={rows}
+      style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 12px", fontSize: 13,
+        color: C.dark, background: C.card, resize: "vertical", fontFamily: "inherit", lineHeight: 1.5, boxSizing: "border-box", outline: "none" }}
+      onFocus={e => e.target.style.borderColor = C.doctor} onBlur={e => e.target.style.borderColor = C.border} />
+  );
+}
+
+function Input({ value, onChange, placeholder, type = "text" }) {
+  return (
+    <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+      style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 8, padding: "9px 12px",
+        fontSize: 13, color: C.dark, background: C.card, boxSizing: "border-box", outline: "none" }}
+      onFocus={e => e.target.style.borderColor = C.doctor} onBlur={e => e.target.style.borderColor = C.border} />
+  );
+}
+
+function Card({ title, icon, color = C.doctor, children, badge }) {
+  return (
+    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, marginBottom: 20, overflow: "hidden", boxShadow: "0 1px 6px rgba(0,0,0,.05)" }}>
+      <div style={{ padding: "12px 18px", background: color + "08", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10 }}>
+        <i className={`pi ${icon}`} style={{ fontSize: 14, color }} />
+        <span style={{ fontWeight: 700, fontSize: 13, color }}>{title}</span>
+        {badge && <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: ".6px", padding: "2px 8px", borderRadius: 20, background: color + "18", color, border: `1px solid ${color}30` }}>{badge}</span>}
+      </div>
+      <div style={{ padding: "18px" }}>{children}</div>
     </div>
   );
 }
 
-/* ── Checkbox toggle ── */
-function CheckItem({ label, checked, onChange }) {
+const SOURCE_COLORS = {
+  DoctorVisit: C.doctor, DoctorAssessment: C.doctor, NurseNote: C.nurse,
+  DoctorNote: C.primary, MAR: C.warn, InvestigationOrder: "#0284c7",
+  AutoCharge: C.success, Manual: C.muted,
+};
+
+function AuditItem({ trigger }) {
+  const color = SOURCE_COLORS[trigger.sourceType] || C.muted;
+  const when = new Date(trigger.createdAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+  const icons = { NurseNote: "pi-heart", DoctorAssessment: "pi-file-edit", DoctorVisit: "pi-user-edit", InvestigationOrder: "pi-search" };
   return (
-    <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer",
-      fontSize: 13, color: checked ? C.text : C.muted, fontWeight: checked ? 600 : 400 }}>
-      <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)}
-        style={{ accentColor: C.accent, width: 14, height: 14 }} />
-      {label}
-    </label>
+    <div style={{ display: "flex", gap: 10, padding: "9px 0", borderBottom: `1px solid ${C.border}` }}>
+      <div style={{ width: 30, height: 30, borderRadius: "50%", background: color + "18", border: `1.5px solid ${color}30`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        <i className={`pi ${icons[trigger.sourceType] || "pi-receipt"}`} style={{ fontSize: 11, color }} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: C.dark }}>{trigger.serviceName}</span>
+          <span style={{ fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 20,
+            background: trigger.status === "billed" ? "#d1fae5" : "#fef3c7",
+            color: trigger.status === "billed" ? C.success : C.warn }}>
+            {trigger.status?.toUpperCase()}
+          </span>
+        </div>
+        <div style={{ fontSize: 11, color: C.muted, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {trigger.orderDetails}
+        </div>
+        <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2, display: "flex", gap: 8 }}>
+          <span>{trigger.orderedByRole} — {trigger.orderedBy}</span>
+          <span>·</span><span>{when}</span>
+          {trigger.totalAmount > 0 && <><span>·</span><span>₹{trigger.totalAmount.toLocaleString("en-IN")}</span></>}
+        </div>
+      </div>
+    </div>
   );
 }
 
-const ROUTES = ["Oral", "IV", "IM", "SC", "SL", "Topical", "Inhaled", "PR", "Nasal", "Eye drops"];
-const FREQS  = ["OD", "BD", "TDS", "QID", "SOS", "Stat", "HS", "Alternate days", "Weekly"];
-
-/* ════════════════════════════════════════════════════════════════════ */
 export default function OPDAssessmentPage() {
-  const { uhid: uhidParam } = useParams();
-  const navigate = useNavigate();
-  const { user }  = useAuth();
+  const [params]    = useSearchParams();
+  const navigate    = useNavigate();
+  const visitNumber = params.get("visitNumber") || "";
+  const uhid        = params.get("uhid") || "";
 
-  /* ── Patient state ── */
-  const [uhid, setUhid]           = useState(uhidParam || "");
-  const [patient, setPatient]     = useState(null);
-  const [loadingPt, setLoadingPt] = useState(false);
-  const [saving, setSaving]       = useState(false);
+  const [visit,   setVisit]   = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving,  setSaving]  = useState(false);
+  const [audit,   setAudit]   = useState([]);
 
-  /* ── Form state ── */
-  const [cc, setCc]         = useState("");        // Chief Complaint
-  const [hpi, setHpi]       = useState("");        // History of Present Illness
-  const [pmh, setPmh]       = useState("");        // Past Medical History
-  const [psh, setPsh]       = useState("");        // Past Surgical History
-  const [famHx, setFamHx]   = useState("");        // Family History
-  const [socHx, setSocHx]   = useState("");        // Social History
-  const [allergy, setAllergy] = useState("");      // Known allergies
-
-  /* ── Vitals ── */
-  const [vitals, setVitals] = useState({
-    bpSys: "", bpDia: "", pulse: "", temp: "", spo2: "",
-    rr: "", weight: "", height: "", bmi: "",
+  const [soap, setSoap] = useState({
+    subjectiveNote: "", objectiveNote: "", assessmentNote: "", planNote: "",
+    provisionalDiagnosis: "", finalDiagnosis: "", generalExamination: "",
+    systemicExamination: "", advice: "", followUpDate: "", doctorNotes: "",
   });
 
-  /* ── General Examination ── */
-  const [genExam, setGenExam] = useState({
-    conscious: true, oriented: true, cooperative: true,
-    pallor: false, icterus: false, cyanosis: false,
-    clubbing: false, lymphNodes: false, edema: false,
-    findings: "",
-  });
+  const [meds,     setMeds]     = useState([]);
+  const [newMed,   setNewMed]   = useState({ name: "", dose: "", frequency: "", duration: "", route: "Oral" });
+  const [invests,  setInvests]  = useState([]);
+  const [newInvest,setNewInvest]= useState({ name: "", urgency: "Routine", instructions: "" });
 
-  /* ── Systemic Examination ── */
-  const [sysExam, setSysExam] = useState({ cvs: "", rs: "", abdomen: "", cns: "" });
-
-  /* ── Diagnosis ── */
-  const [provDx, setProvDx]   = useState("");
-  const [finalDx, setFinalDx] = useState("");
-  const [icd10, setIcd10]     = useState("");
-
-  /* ── Investigations ── */
-  const [investigations, setInvestigations] = useState("");
-
-  /* ── Prescription rows ── */
-  const [rxRows, setRxRows] = useState([blankRx()]);
-
-  /* ── Follow-up ── */
-  const [followupDate, setFollowupDate] = useState("");
-  const [followupNotes, setFollowupNotes] = useState("");
-
-  /* ── Existing note ID (for update) ── */
-  const [noteId, setNoteId] = useState(null);
-
-  /* ── Auto-load patient from URL param ── */
-  useEffect(() => {
-    if (uhidParam) loadPatient(uhidParam);
-  }, [uhidParam]);
-
-  /* ── Auto-calculate BMI ── */
-  useEffect(() => {
-    const h = parseFloat(vitals.height);
-    const w = parseFloat(vitals.weight);
-    if (h > 0 && w > 0) {
-      const hm = h / 100;
-      setVitals(v => ({ ...v, bmi: (w / (hm * hm)).toFixed(1) }));
-    }
-  }, [vitals.height, vitals.weight]);
-
-  const setV = (key) => (val) => setVitals(v => ({ ...v, [key]: val }));
-  const setGe = (key, val) => setGenExam(g => ({ ...g, [key]: val }));
-  const setSe = (key) => (e) => setSysExam(s => ({ ...s, [key]: e.target.value }));
-
-  /* ── Load patient ── */
-  const loadPatient = async (id) => {
-    if (!id?.trim()) return;
-    setLoadingPt(true);
-    setPatient(null);
+  const loadVisit = useCallback(async () => {
+    if (!visitNumber) { setLoading(false); return; }
     try {
-      const res = await axios.get(`${API_ENDPOINTS.PATIENTS}/uhid/${id.trim().toUpperCase()}`);
-      const pt = res.data?.data || res.data;
-      if (!pt) { toast.error("Patient not found"); return; }
-      setPatient(pt);
-      setUhid(pt.UHID || id);
-      // Pre-fill known allergies if stored
-      if (pt.allergies) setAllergy(pt.allergies);
-      // Load any existing OPD note for today
-      loadExistingNote(pt.UHID || id);
-    } catch {
-      toast.error("Patient not found");
+      const { data } = await axios.get(`${API_ENDPOINTS.OPD}/${visitNumber}`);
+      const v = data.data || data;
+      setVisit(v);
+      setSoap({
+        subjectiveNote:       v.subjectiveNote || v.chiefComplaint || "",
+        objectiveNote:        v.objectiveNote || "",
+        assessmentNote:       v.assessmentNote || "",
+        planNote:             v.planNote || "",
+        provisionalDiagnosis: v.provisionalDiagnosis || "",
+        finalDiagnosis:       v.finalDiagnosis || "",
+        generalExamination:   v.generalExamination || "",
+        systemicExamination:  v.systemicExamination || "",
+        advice:               v.advice || "",
+        followUpDate:         v.followUpDate ? v.followUpDate.slice(0, 10) : "",
+        doctorNotes:          v.doctorNotes || "",
+      });
+      setMeds(v.prescribedMedications || []);
+      setInvests(v.investigationsOrdered || []);
+    } catch (err) {
+      toast.error("Could not load visit: " + (err.response?.data?.message || err.message));
     } finally {
-      setLoadingPt(false);
+      setLoading(false);
     }
-  };
+  }, [visitNumber]);
 
-  const loadExistingNote = async (uid) => {
+  const loadAudit = useCallback(async () => {
+    if (!visitNumber) return;
     try {
-      const res = await axios.get(
-        `${API_ENDPOINTS.BASE}/doctorNotes/patient/${uid}?type=OPD&limit=1`
-      );
-      const notes = res.data?.data || res.data || [];
-      const today = new Date().toDateString();
-      const todayNote = Array.isArray(notes)
-        ? notes.find(n => new Date(n.createdAt).toDateString() === today)
-        : null;
-      if (todayNote) {
-        setNoteId(todayNote._id);
-        populateForm(todayNote);
-        toast.info("Loaded today's existing note");
-      }
-    } catch { /* no existing note is fine */ }
-  };
+      const { data } = await axios.get(`${API_ENDPOINTS.OPD}/${visitNumber}/audit-trail`);
+      setAudit(data.data?.triggers || []);
+    } catch (_) {}
+  }, [visitNumber]);
 
-  const populateForm = (note) => {
-    const d = note.formData || note;
-    if (d.cc)      setCc(d.cc);
-    if (d.hpi)     setHpi(d.hpi);
-    if (d.pmh)     setPmh(d.pmh);
-    if (d.psh)     setPsh(d.psh);
-    if (d.famHx)   setFamHx(d.famHx);
-    if (d.socHx)   setSocHx(d.socHx);
-    if (d.allergy) setAllergy(d.allergy);
-    if (d.vitals)  setVitals(v => ({ ...v, ...d.vitals }));
-    if (d.genExam) setGenExam(g => ({ ...g, ...d.genExam }));
-    if (d.sysExam) setSysExam(s => ({ ...s, ...d.sysExam }));
-    if (d.provDx)  setProvDx(d.provDx);
-    if (d.finalDx) setFinalDx(d.finalDx);
-    if (d.icd10)   setIcd10(d.icd10);
-    if (d.investigations) setInvestigations(d.investigations);
-    if (d.rxRows?.length) setRxRows(d.rxRows.map(r => ({ ...r, id: r.id || Date.now() + Math.random() })));
-    if (d.followupDate)  setFollowupDate(d.followupDate);
-    if (d.followupNotes) setFollowupNotes(d.followupNotes);
-  };
+  useEffect(() => { loadVisit(); loadAudit(); }, [loadVisit, loadAudit]);
 
-  /* ── Prescription helpers ── */
-  const addRxRow = () => setRxRows(r => [...r, blankRx()]);
-  const removeRxRow = (id) => setRxRows(r => r.filter(x => x.id !== id));
-  const updateRx = (id, key, val) =>
-    setRxRows(r => r.map(x => x.id === id ? { ...x, [key]: val } : x));
-
-  /* ── Build payload ── */
-  const buildPayload = (status = "draft") => ({
-    visitType: "OPD",
-    patientUHID: patient?.UHID || uhid,
-    patientId: patient?._id,
-    patientName: patient?.fullName || "",
-    doctorName: user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim(),
-    doctorId: user?._id,
-    status,
-    assessmentDate: new Date().toISOString(),
-    formData: {
-      cc, hpi, pmh, psh, famHx, socHx, allergy,
-      vitals, genExam, sysExam,
-      provDx, finalDx, icd10,
-      investigations,
-      rxRows: rxRows.filter(r => r.drug.trim()),
-      followupDate, followupNotes,
-    },
-  });
-
-  const handleSave = async (sign = false) => {
-    if (!patient) { toast.warn("Load a patient first"); return; }
+  const handleSave = async () => {
+    if (!soap.provisionalDiagnosis.trim()) return toast.warn("Please enter a provisional diagnosis");
     setSaving(true);
     try {
-      const payload = buildPayload(sign ? "signed" : "draft");
-      let res;
-      if (noteId) {
-        res = await axios.put(`${API_ENDPOINTS.BASE}/doctorNotes/${noteId}`, payload);
-        if (sign) await axios.patch(`${API_ENDPOINTS.BASE}/doctorNotes/${noteId}/sign`);
-      } else {
-        res = await axios.post(`${API_ENDPOINTS.BASE}/doctorNotes`, payload);
-        setNoteId(res.data?.data?._id || res.data?._id);
-      }
-      toast.success(sign ? "Assessment signed & submitted" : "Draft saved");
+      const user = (() => { try { return JSON.parse(localStorage.getItem("his_user") || "{}"); } catch { return {}; } })();
+      await axios.post(`${API_ENDPOINTS.OPD}/${visitNumber}/assessment`, {
+        ...soap,
+        doctorName: user.fullName || user.name || "Doctor",
+      });
+      toast.success("Assessment saved — audit trail updated");
+      loadVisit();
+      setTimeout(loadAudit, 1500);
     } catch (err) {
       toast.error(err.response?.data?.message || "Save failed");
     } finally {
@@ -302,392 +177,303 @@ export default function OPDAssessmentPage() {
     }
   };
 
-  /* ══════════════ RENDER ══════════════ */
+  const addMed = async () => {
+    if (!newMed.name.trim()) return toast.warn("Medicine name required");
+    try { await axios.post(`${API_ENDPOINTS.OPD}/${visitNumber}/prescription`, newMed); } catch (_) {}
+    setMeds(p => [...p, { ...newMed }]);
+    setNewMed({ name: "", dose: "", frequency: "", duration: "", route: "Oral" });
+    toast.success("Medication added");
+  };
+
+  const addInvestigation = async () => {
+    if (!newInvest.name.trim()) return toast.warn("Investigation name required");
+    try { await axios.post(`${API_ENDPOINTS.OPD}/${visitNumber}/investigation`, { ...newInvest, status: "Ordered" }); } catch (_) {}
+    setInvests(p => [...p, { ...newInvest, status: "Ordered" }]);
+    setNewInvest({ name: "", urgency: "Routine", instructions: "" });
+    toast.success("Investigation ordered");
+  };
+
+  const vitals = visit?.vitals || {};
+  const vitInfo = [
+    { label: "BP",    value: vitals.bloodPressure || "—" },
+    { label: "Pulse", value: vitals.pulse ? `${vitals.pulse} bpm` : "—" },
+    { label: "Temp",  value: vitals.temperature ? `${vitals.temperature} °F` : "—" },
+    { label: "SpO₂",  value: vitals.oxygenSaturation ? `${vitals.oxygenSaturation}%` : "—" },
+    { label: "Wt",    value: vitals.weight ? `${vitals.weight} kg` : "—" },
+    { label: "BMI",   value: vitals.bmi || "—" },
+  ];
+
+  if (loading) return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "60vh" }}>
+      <i className="pi pi-spin pi-spinner" style={{ fontSize: 32, color: C.doctor }} />
+    </div>
+  );
+
+  if (!visitNumber) return (
+    <div style={{ padding: 40, textAlign: "center", color: C.muted }}>
+      <i className="pi pi-exclamation-triangle" style={{ fontSize: 40, marginBottom: 16, display: "block" }} />
+      <p>No visit number provided. Navigate from the Doctor OPD Panel.</p>
+      <button onClick={() => navigate("/doctor-opd-panel")}
+        style={{ marginTop: 12, padding: "10px 24px", background: C.doctor, color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13 }}>
+        Go to OPD Panel
+      </button>
+    </div>
+  );
+
   return (
-    <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+    <div style={{ maxWidth: 1200, margin: "0 auto", fontFamily: "'DM Sans', sans-serif" }}>
 
-      {/* ── Page header ── */}
+      {/* Header */}
       <div style={{
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        marginBottom: 18,
+        background: `linear-gradient(135deg, #4c1d95, ${C.doctor})`,
+        borderRadius: 14, padding: "20px 24px", marginBottom: 24, color: "#fff",
+        display: "flex", alignItems: "flex-start", justifyContent: "space-between",
+        boxShadow: "0 4px 20px rgba(124,58,237,.25)",
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <button onClick={() => navigate(-1)}
-            style={{ background: "none", border: `1px solid ${C.border}`, borderRadius: 8,
-              padding: "6px 12px", cursor: "pointer", fontSize: 12, color: C.muted,
-              display: "flex", alignItems: "center", gap: 6 }}>
-            <i className="pi pi-arrow-left" style={{ fontSize: 11 }} /> Back
-          </button>
-          <div>
-            <div style={{ fontSize: 18, fontWeight: 800, color: C.text }}>OPD Assessment</div>
-            <div style={{ fontSize: 11, color: C.muted }}>
-              NABH-compliant · {new Date().toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}
-            </div>
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+            <button onClick={() => navigate("/doctor-opd-panel")}
+              style={{ background: "rgba(255,255,255,.15)", border: "none", color: "#fff", padding: "4px 12px", borderRadius: 6, cursor: "pointer", fontSize: 12 }}>
+              ← OPD Panel
+            </button>
+            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "1px", background: "rgba(255,255,255,.2)", padding: "2px 10px", borderRadius: 20 }}>
+              OPD ASSESSMENT
+            </span>
+          </div>
+          <h1 style={{ margin: "0 0 6px", fontSize: 22, fontWeight: 800 }}>
+            {visit?.patientName || uhid || "Patient"}
+          </h1>
+          <div style={{ display: "flex", gap: 16, fontSize: 12, opacity: .85, flexWrap: "wrap" }}>
+            <span><i className="pi pi-id-card" style={{ marginRight: 4 }} />{visit?.UHID || uhid}</span>
+            <span><i className="pi pi-tag" style={{ marginRight: 4 }} />{visitNumber}</span>
+            <span><i className="pi pi-calendar" style={{ marginRight: 4 }} />{new Date(visit?.visitDate || Date.now()).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</span>
+            <span><i className="pi pi-building" style={{ marginRight: 4 }} />{visit?.department || "General"}</span>
+            <span><i className="pi pi-user-edit" style={{ marginRight: 4 }} />{visit?.consultantName || "—"}</span>
           </div>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={() => handleSave(false)} disabled={saving}
-            style={{ padding: "8px 18px", border: `1.5px solid ${C.border}`, borderRadius: 8,
-              background: "white", cursor: saving ? "not-allowed" : "pointer",
-              fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, color: C.muted }}>
-            <i className="pi pi-save" style={{ marginRight: 6, fontSize: 12 }} />
-            Save Draft
-          </button>
-          <button onClick={() => handleSave(true)} disabled={saving || !patient}
-            style={{ padding: "8px 18px", border: "none", borderRadius: 8,
-              background: saving ? "#93c5fd" : C.accent, cursor: saving ? "not-allowed" : "pointer",
-              fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: "white" }}>
-            <i className="pi pi-check-circle" style={{ marginRight: 6, fontSize: 12 }} />
-            {saving ? "Saving…" : "Sign & Submit"}
-          </button>
-        </div>
-      </div>
-
-      {/* ── Patient search bar ── */}
-      <div style={{
-        background: C.card, border: `1px solid ${C.border}`, borderRadius: 12,
-        padding: "14px 20px", marginBottom: 16,
-        display: "flex", alignItems: "center", gap: 12,
-      }}>
-        <i className="pi pi-search" style={{ color: C.accent, fontSize: 16 }} />
-        <input
-          value={uhid}
-          onChange={e => setUhid(e.target.value.toUpperCase())}
-          onKeyDown={e => e.key === "Enter" && loadPatient(uhid)}
-          placeholder="Type UHID and press Enter…"
-          style={{ ...fld, maxWidth: 260 }}
-        />
-        <button onClick={() => loadPatient(uhid)} disabled={loadingPt}
-          style={{ padding: "8px 18px", border: "none", borderRadius: 8,
-            background: C.accent, color: "white", cursor: "pointer",
-            fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600 }}>
-          {loadingPt ? <i className="pi pi-spin pi-spinner" /> : "Load Patient"}
-        </button>
-        {patient && (
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginLeft: 8 }}>
-            <div style={{ width: 36, height: 36, borderRadius: "50%",
-              background: C.accentL, border: `2px solid ${C.accent}30`,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontWeight: 800, fontSize: 14, color: C.accent }}>
-              {(patient.fullName || patient.firstName || "?")[0]}
-            </div>
-            <div>
-              <div style={{ fontWeight: 700, fontSize: 14, color: C.text }}>
-                {patient.title ? `${patient.title} ` : ""}{patient.fullName || `${patient.firstName} ${patient.lastName}`}
-              </div>
-              <div style={{ fontSize: 11, color: C.muted }}>
-                {patient.UHID} &nbsp;·&nbsp; {patient.age}y / {patient.gender?.[0] || "—"} &nbsp;·&nbsp;
-                <span style={{ fontWeight: 600, color: C.teal }}>OPD</span>
-              </div>
-            </div>
-            {patient.bloodGroup && (
-              <span style={{ background: C.redL, color: C.red, border: `1px solid ${C.red}30`,
-                padding: "2px 8px", borderRadius: 5, fontSize: 11, fontWeight: 700 }}>
-                {patient.bloodGroup}
-              </span>
-            )}
-          </div>
-        )}
-      </div>
-
-      {!patient && (
-        <div style={{ textAlign: "center", padding: "60px 20px", color: C.muted }}>
-          <i className="pi pi-user-plus" style={{ fontSize: 40, display: "block", marginBottom: 12, color: "#cbd5e1" }} />
-          <div style={{ fontSize: 14, fontWeight: 600 }}>Load a patient to begin assessment</div>
-          <div style={{ fontSize: 12, marginTop: 4 }}>Enter UHID above and press Enter</div>
-        </div>
-      )}
-
-      {patient && (<>
-
-        {/* ── 1. Chief Complaint & HPI ── */}
-        <SectionCard title="Chief Complaint & History of Present Illness" icon="pi-comment" color={C.teal}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <Field label="Chief Complaint *">
-              <textarea value={cc} onChange={e => setCc(e.target.value)}
-                placeholder="Patient's main complaint in their own words…"
-                style={{ ...ta, minHeight: 64 }} />
-            </Field>
-            <Field label="History of Present Illness">
-              <textarea value={hpi} onChange={e => setHpi(e.target.value)}
-                placeholder="Onset, duration, progression, associated symptoms, relieving/aggravating factors…"
-                style={{ ...ta, minHeight: 96 }} />
-            </Field>
-            <Field label="Known Allergies">
-              <input value={allergy} onChange={e => setAllergy(e.target.value)}
-                placeholder="Drug / food / environmental allergies — None if none"
-                style={fld} />
-            </Field>
-          </div>
-        </SectionCard>
-
-        {/* ── 2. History ── */}
-        <SectionCard title="Past & Family History" icon="pi-book" color={C.purple}>
-          <Grid2>
-            <Field label="Past Medical History">
-              <textarea value={pmh} onChange={e => setPmh(e.target.value)}
-                placeholder="Diabetes, Hypertension, Asthma, Thyroid, Heart disease…"
-                style={ta} />
-            </Field>
-            <Field label="Past Surgical History">
-              <textarea value={psh} onChange={e => setPsh(e.target.value)}
-                placeholder="Previous operations, hospitalizations…"
-                style={ta} />
-            </Field>
-            <Field label="Family History">
-              <textarea value={famHx} onChange={e => setFamHx(e.target.value)}
-                placeholder="Hereditary conditions in family…"
-                style={ta} />
-            </Field>
-            <Field label="Social History">
-              <textarea value={socHx} onChange={e => setSocHx(e.target.value)}
-                placeholder="Smoking, alcohol, occupation, diet, marital status…"
-                style={ta} />
-            </Field>
-          </Grid2>
-        </SectionCard>
-
-        {/* ── 3. Vitals ── */}
-        <SectionCard title="Vitals" icon="pi-heart" color={C.red} badge="NABH Required">
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 14 }}>
-            <VitalInput label="BP Systolic" value={vitals.bpSys} unit="mmHg" normal="90–130" onChange={setV("bpSys")} />
-            <VitalInput label="BP Diastolic" value={vitals.bpDia} unit="mmHg" normal="60–90" onChange={setV("bpDia")} />
-            <VitalInput label="Pulse" value={vitals.pulse} unit="bpm" normal="60–100" onChange={setV("pulse")} />
-            <VitalInput label="Temperature" value={vitals.temp} unit="°F" normal="97–99" onChange={setV("temp")} />
-            <VitalInput label="SpO₂" value={vitals.spo2} unit="%" normal="≥95" onChange={setV("spo2")} />
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
-            <VitalInput label="Resp Rate" value={vitals.rr} unit="/min" normal="14–20" onChange={setV("rr")} />
-            <VitalInput label="Weight" value={vitals.weight} unit="kg" onChange={setV("weight")} />
-            <VitalInput label="Height" value={vitals.height} unit="cm" onChange={setV("height")} />
-            <div style={{ background: vitals.bmi ? C.accentL : C.bg, border: `1.5px solid ${vitals.bmi ? C.accent : C.border}`,
-              borderRadius: 9, padding: "10px 12px", display: "flex", flexDirection: "column",
-              gap: 6, alignItems: "center", justifyContent: "center" }}>
-              <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase",
-                letterSpacing: ".7px", color: C.muted }}>BMI</div>
-              <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 20, fontWeight: 800,
-                color: vitals.bmi ? C.accent : C.muted }}>{vitals.bmi || "—"}</div>
-              {vitals.bmi && (
-                <div style={{ fontSize: 9, color: C.muted }}>
-                  {parseFloat(vitals.bmi) < 18.5 ? "Underweight" : parseFloat(vitals.bmi) < 25 ? "Normal" :
-                   parseFloat(vitals.bmi) < 30 ? "Overweight" : "Obese"}
-                </div>
-              )}
-            </div>
-          </div>
-        </SectionCard>
-
-        {/* ── 4. General Examination ── */}
-        <SectionCard title="General Examination" icon="pi-user" color={C.amber}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "10px 24px" }}>
-              {[
-                { key: "conscious",   label: "Conscious" },
-                { key: "oriented",    label: "Oriented" },
-                { key: "cooperative", label: "Cooperative" },
-                { key: "pallor",      label: "Pallor" },
-                { key: "icterus",     label: "Icterus" },
-                { key: "cyanosis",    label: "Cyanosis" },
-                { key: "clubbing",    label: "Clubbing" },
-                { key: "lymphNodes",  label: "Lymphadenopathy" },
-                { key: "edema",       label: "Pedal Edema" },
-              ].map(({ key, label }) => (
-                <CheckItem key={key} label={label}
-                  checked={genExam[key]} onChange={v => setGe(key, v)} />
-              ))}
-            </div>
-            <Field label="General Findings / Notes">
-              <textarea value={genExam.findings} onChange={e => setGe("findings", e.target.value)}
-                placeholder="Built, nourishment, gait, decubitus, any other finding…"
-                style={{ ...ta, minHeight: 64 }} />
-            </Field>
-          </div>
-        </SectionCard>
-
-        {/* ── 5. Systemic Examination ── */}
-        <SectionCard title="Systemic Examination" icon="pi-heart-fill" color={C.red}>
-          <Grid2>
-            <Field label="Cardiovascular System (CVS)">
-              <textarea value={sysExam.cvs} onChange={setSe("cvs")}
-                placeholder="S1 S2 heard, murmurs, pulse, peripheral perfusion…"
-                style={ta} />
-            </Field>
-            <Field label="Respiratory System (RS)">
-              <textarea value={sysExam.rs} onChange={setSe("rs")}
-                placeholder="Air entry, adventitious sounds, percussion…"
-                style={ta} />
-            </Field>
-            <Field label="Abdomen">
-              <textarea value={sysExam.abdomen} onChange={setSe("abdomen")}
-                placeholder="Soft / distended, tenderness, organomegaly, bowel sounds…"
-                style={ta} />
-            </Field>
-            <Field label="Central Nervous System (CNS)">
-              <textarea value={sysExam.cns} onChange={setSe("cns")}
-                placeholder="Higher functions, cranial nerves, motor, sensory, reflexes…"
-                style={ta} />
-            </Field>
-          </Grid2>
-        </SectionCard>
-
-        {/* ── 6. Diagnosis ── */}
-        <SectionCard title="Diagnosis" icon="pi-tag" color={C.accent} badge="NABH Required">
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <Field label="Provisional Diagnosis *">
-              <textarea value={provDx} onChange={e => setProvDx(e.target.value)}
-                placeholder="Clinical impression based on history and examination…"
-                style={{ ...ta, minHeight: 64 }} />
-            </Field>
-            <Grid2>
-              <Field label="Final / Confirmed Diagnosis">
-                <textarea value={finalDx} onChange={e => setFinalDx(e.target.value)}
-                  placeholder="Confirmed diagnosis (if available)…"
-                  style={{ ...ta, minHeight: 56 }} />
-              </Field>
-              <Field label="ICD-10 Code">
-                <input value={icd10} onChange={e => setIcd10(e.target.value)}
-                  placeholder="e.g. J06.9, K30, Z00.0…"
-                  style={fld} />
-              </Field>
-            </Grid2>
-          </div>
-        </SectionCard>
-
-        {/* ── 7. Investigations ── */}
-        <SectionCard title="Investigations Ordered" icon="pi-list-check" color={C.purple}>
-          <Field label="Tests / Investigations">
-            <textarea value={investigations} onChange={e => setInvestigations(e.target.value)}
-              placeholder="CBC, LFT, RFT, Blood Sugar, X-Ray Chest PA, ECG, USG Abdomen…"
-              style={{ ...ta, minHeight: 80 }} />
-          </Field>
-          <div style={{ fontSize: 11, color: C.muted, marginTop: 8 }}>
-            <i className="pi pi-info-circle" style={{ marginRight: 4 }} />
-            These will be forwarded to the respective lab/radiology department
-          </div>
-        </SectionCard>
-
-        {/* ── 8. Prescription ── */}
-        <SectionCard title="Prescription" icon="pi-file-edit" color={C.green} badge={`${rxRows.filter(r => r.drug).length} drug(s)`}>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr style={{ background: "#f8fafc" }}>
-                  {["#", "Drug / Medicine", "Dose", "Route", "Frequency", "Duration", "Instructions", ""].map(h => (
-                    <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 10,
-                      fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px",
-                      borderBottom: `1.5px solid ${C.border}`, whiteSpace: "nowrap" }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rxRows.map((row, idx) => (
-                  <tr key={row.id} style={{ borderBottom: `1px solid ${C.border}` }}>
-                    <td style={{ padding: "8px 10px", fontSize: 12, fontWeight: 700, color: C.muted }}>
-                      {idx + 1}
-                    </td>
-                    <td style={{ padding: "6px 6px", minWidth: 180 }}>
-                      <input value={row.drug} onChange={e => updateRx(row.id, "drug", e.target.value)}
-                        placeholder="Drug name…"
-                        style={{ ...fld, padding: "6px 8px" }} />
-                    </td>
-                    <td style={{ padding: "6px 6px", minWidth: 80 }}>
-                      <input value={row.dose} onChange={e => updateRx(row.id, "dose", e.target.value)}
-                        placeholder="e.g. 500mg"
-                        style={{ ...fld, padding: "6px 8px" }} />
-                    </td>
-                    <td style={{ padding: "6px 6px", minWidth: 90 }}>
-                      <select value={row.route} onChange={e => updateRx(row.id, "route", e.target.value)}
-                        style={{ ...fld, padding: "6px 8px" }}>
-                        {ROUTES.map(r => <option key={r}>{r}</option>)}
-                      </select>
-                    </td>
-                    <td style={{ padding: "6px 6px", minWidth: 90 }}>
-                      <select value={row.frequency} onChange={e => updateRx(row.id, "frequency", e.target.value)}
-                        style={{ ...fld, padding: "6px 8px" }}>
-                        {FREQS.map(f => <option key={f}>{f}</option>)}
-                      </select>
-                    </td>
-                    <td style={{ padding: "6px 6px", minWidth: 90 }}>
-                      <input value={row.duration} onChange={e => updateRx(row.id, "duration", e.target.value)}
-                        placeholder="5 days"
-                        style={{ ...fld, padding: "6px 8px" }} />
-                    </td>
-                    <td style={{ padding: "6px 6px", minWidth: 140 }}>
-                      <input value={row.instructions} onChange={e => updateRx(row.id, "instructions", e.target.value)}
-                        placeholder="After food, SOS…"
-                        style={{ ...fld, padding: "6px 8px" }} />
-                    </td>
-                    <td style={{ padding: "6px 6px" }}>
-                      <button onClick={() => removeRxRow(row.id)}
-                        style={{ background: "none", border: "none", cursor: "pointer",
-                          color: "#ef4444", padding: 4 }}>
-                        <i className="pi pi-trash" style={{ fontSize: 13 }} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <button onClick={addRxRow}
-            style={{ marginTop: 12, padding: "7px 16px", border: `1.5px dashed ${C.green}60`,
-              borderRadius: 8, background: C.greenL, cursor: "pointer",
-              fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: C.green }}>
-            <i className="pi pi-plus" style={{ marginRight: 6, fontSize: 11 }} />
-            Add Medicine
-          </button>
-        </SectionCard>
-
-        {/* ── 9. Follow-up ── */}
-        <SectionCard title="Follow-up & Advice" icon="pi-calendar-clock" color={C.teal}>
-          <Grid2>
-            <Field label="Follow-up Date">
-              <input type="date" value={followupDate} onChange={e => setFollowupDate(e.target.value)}
-                style={fld} />
-            </Field>
-            <Field label="Follow-up Instructions / Advice">
-              <textarea value={followupNotes} onChange={e => setFollowupNotes(e.target.value)}
-                placeholder="Diet advice, activity restrictions, red flags, when to return immediately…"
-                style={{ ...ta, minHeight: 64 }} />
-            </Field>
-          </Grid2>
-        </SectionCard>
-
-        {/* ── Doctor sign-off strip ── */}
-        <div style={{
-          background: C.accentL, border: `1px solid ${C.accent}30`,
-          borderRadius: 12, padding: "14px 20px", marginBottom: 16,
-          display: "flex", alignItems: "center", justifyContent: "space-between",
+        <button onClick={handleSave} disabled={saving} style={{
+          background: saving ? "rgba(255,255,255,.25)" : "#fff", color: C.doctor,
+          border: "none", padding: "11px 24px", borderRadius: 10,
+          cursor: saving ? "not-allowed" : "pointer", fontWeight: 700, fontSize: 13,
+          display: "flex", alignItems: "center", gap: 8, boxShadow: "0 2px 8px rgba(0,0,0,.1)",
         }}>
-          <div>
-            <div style={{ fontSize: 12, fontWeight: 700, color: C.accent }}>
-              <i className="pi pi-verified" style={{ marginRight: 6 }} />
-              Doctor&apos;s Digital Signature
+          {saving ? <><i className="pi pi-spin pi-spinner" /> Saving…</> : <><i className="pi pi-save" /> Save Assessment</>}
+        </button>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 20 }}>
+
+        {/* LEFT: Forms */}
+        <div>
+
+          {/* Vitals from Nurse */}
+          <Card title="Vitals — Recorded by Nursing" icon="pi-heart" color={C.nurse}>
+            {visit?.vitalsStatus === "Done" ? (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+                {vitInfo.map(v => (
+                  <div key={v.label} style={{ background: C.bg, borderRadius: 8, padding: "10px 14px", border: `1px solid ${C.border}` }}>
+                    <div style={{ fontSize: 10, color: C.muted, fontWeight: 600, marginBottom: 2 }}>{v.label}</div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: C.dark }}>{v.value}</div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p style={{ color: C.muted, fontSize: 13, margin: 0 }}>
+                <i className="pi pi-clock" style={{ marginRight: 6 }} />Vitals not yet recorded by nurse.
+              </p>
+            )}
+          </Card>
+
+          {/* SOAP */}
+          <Card title="SOAP Assessment" icon="pi-file-edit" color={C.doctor} badge="NABH">
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <Field label="S — Subjective (Chief Complaint)">
+                <Textarea value={soap.subjectiveNote} onChange={v => setSoap(p => ({ ...p, subjectiveNote: v }))}
+                  placeholder={visit?.chiefComplaint || "Chief complaint, history…"} rows={4} />
+              </Field>
+              <Field label="O — Objective (Examination)">
+                <Textarea value={soap.objectiveNote} onChange={v => setSoap(p => ({ ...p, objectiveNote: v }))}
+                  placeholder="Physical findings, vitals, lab…" rows={4} />
+              </Field>
+              <Field label="A — Assessment (Diagnosis)">
+                <Textarea value={soap.assessmentNote} onChange={v => setSoap(p => ({ ...p, assessmentNote: v }))}
+                  placeholder="Clinical assessment, differentials…" rows={4} />
+              </Field>
+              <Field label="P — Plan">
+                <Textarea value={soap.planNote} onChange={v => setSoap(p => ({ ...p, planNote: v }))}
+                  placeholder="Treatment plan, medications, follow-up…" rows={4} />
+              </Field>
             </div>
-            <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
-              {user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim()} &nbsp;·&nbsp;
-              {new Date().toLocaleString("en-IN")}
+          </Card>
+
+          {/* Clinical Examination */}
+          <Card title="Clinical Examination" icon="pi-search" color={C.primary}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <Field label="General Examination">
+                <Textarea value={soap.generalExamination} onChange={v => setSoap(p => ({ ...p, generalExamination: v }))}
+                  placeholder="Conscious, oriented, afebrile…" />
+              </Field>
+              <Field label="Systemic Examination">
+                <Textarea value={soap.systemicExamination} onChange={v => setSoap(p => ({ ...p, systemicExamination: v }))}
+                  placeholder="CVS, RS, CNS, Abdomen findings…" />
+              </Field>
             </div>
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => handleSave(false)} disabled={saving}
-              style={{ padding: "9px 20px", border: `1.5px solid ${C.border}`, borderRadius: 8,
-                background: "white", cursor: saving ? "not-allowed" : "pointer",
-                fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, color: C.muted }}>
-              Save Draft
-            </button>
-            <button onClick={() => handleSave(true)} disabled={saving}
-              style={{ padding: "9px 22px", border: "none", borderRadius: 8,
-                background: C.accent, cursor: saving ? "not-allowed" : "pointer",
-                fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: "white",
-                boxShadow: `0 4px 14px ${C.accent}40` }}>
-              <i className="pi pi-check-circle" style={{ marginRight: 6, fontSize: 12 }} />
-              {saving ? "Submitting…" : "Sign & Submit Assessment"}
-            </button>
-          </div>
+          </Card>
+
+          {/* Diagnosis */}
+          <Card title="Diagnosis & Plan" icon="pi-verified" color={C.success}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <Field label="Provisional Diagnosis" required>
+                <Input value={soap.provisionalDiagnosis} onChange={v => setSoap(p => ({ ...p, provisionalDiagnosis: v }))}
+                  placeholder="e.g. Viral fever, URTI, Type 2 DM…" />
+              </Field>
+              <Field label="Final Diagnosis">
+                <Input value={soap.finalDiagnosis} onChange={v => setSoap(p => ({ ...p, finalDiagnosis: v }))}
+                  placeholder="Confirmed diagnosis…" />
+              </Field>
+              <Field label="Advice / Counselling">
+                <Textarea value={soap.advice} onChange={v => setSoap(p => ({ ...p, advice: v }))}
+                  placeholder="Diet, lifestyle, precautions…" rows={2} />
+              </Field>
+              <Field label="Follow-up Date">
+                <Input type="date" value={soap.followUpDate} onChange={v => setSoap(p => ({ ...p, followUpDate: v }))} />
+              </Field>
+            </div>
+            <Field label="Additional Notes">
+              <Textarea value={soap.doctorNotes} onChange={v => setSoap(p => ({ ...p, doctorNotes: v }))}
+                placeholder="Any additional observations…" rows={2} />
+            </Field>
+          </Card>
+
+          {/* Prescription */}
+          <Card title="Prescription" icon="pi-pencil" color={C.warn}>
+            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr auto", gap: 8, marginBottom: 12, alignItems: "center" }}>
+              {[["name","Medicine *"],["dose","Dose"],["frequency","Frequency"],["duration","Duration"],["route","Route"]].map(([k,ph]) => (
+                <input key={k} value={newMed[k]} onChange={e => setNewMed(p => ({ ...p, [k]: e.target.value }))}
+                  placeholder={ph}
+                  style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark }} />
+              ))}
+              <button onClick={addMed} style={{ background: C.warn, color: "#fff", border: "none", borderRadius: 7, padding: "8px 14px", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
+                + Add
+              </button>
+            </div>
+            {meds.length === 0 ? (
+              <p style={{ color: C.muted, fontSize: 12, margin: 0 }}>No medications prescribed.</p>
+            ) : (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead><tr style={{ background: C.bg }}>
+                  {["Medicine","Dose","Frequency","Duration","Route"].map(h => (
+                    <th key={h} style={{ textAlign: "left", padding: "6px 10px", fontWeight: 600, color: C.muted, borderBottom: `1px solid ${C.border}` }}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>{meds.map((m, i) => (
+                  <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
+                    {["name","dose","frequency","duration","route"].map(k => (
+                      <td key={k} style={{ padding: "7px 10px", color: C.dark }}>{m[k] || "—"}</td>
+                    ))}
+                  </tr>
+                ))}</tbody>
+              </table>
+            )}
+          </Card>
+
+          {/* Investigations */}
+          <Card title="Investigation Orders" icon="pi-search-plus" color="#0284c7">
+            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 2fr auto", gap: 8, marginBottom: 12, alignItems: "center" }}>
+              {[["name","Investigation *"],["urgency","Urgency (Routine/STAT)"],["instructions","Special instructions"]].map(([k,ph]) => (
+                <input key={k} value={newInvest[k]} onChange={e => setNewInvest(p => ({ ...p, [k]: e.target.value }))}
+                  placeholder={ph}
+                  style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark }} />
+              ))}
+              <button onClick={addInvestigation} style={{ background: "#0284c7", color: "#fff", border: "none", borderRadius: 7, padding: "8px 14px", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
+                + Order
+              </button>
+            </div>
+            {invests.length === 0 ? (
+              <p style={{ color: C.muted, fontSize: 12, margin: 0 }}>No investigations ordered.</p>
+            ) : (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead><tr style={{ background: C.bg }}>
+                  {["Investigation","Urgency","Status","Instructions"].map(h => (
+                    <th key={h} style={{ textAlign: "left", padding: "6px 10px", fontWeight: 600, color: C.muted, borderBottom: `1px solid ${C.border}` }}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>{invests.map((inv, i) => (
+                  <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
+                    <td style={{ padding: "7px 10px", color: C.dark }}>{inv.name || inv.testName}</td>
+                    <td style={{ padding: "7px 10px", color: inv.urgency === "STAT" ? C.danger : C.muted }}>{inv.urgency || "Routine"}</td>
+                    <td style={{ padding: "7px 10px" }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20,
+                        background: inv.status === "Resulted" ? "#d1fae5" : "#fef3c7",
+                        color: inv.status === "Resulted" ? C.success : C.warn }}>
+                        {inv.status || "Ordered"}
+                      </span>
+                    </td>
+                    <td style={{ padding: "7px 10px", color: C.muted }}>{inv.instructions || "—"}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            )}
+          </Card>
+
         </div>
 
-      </>)}
+        {/* RIGHT: Patient Info + Audit */}
+        <div>
+
+          <Card title="Patient Details" icon="pi-user" color={C.primary}>
+            {[
+              ["UHID", visit?.UHID || uhid],
+              ["Visit Number", visitNumber],
+              ["Visit Type", visit?.visitType || "Consultation"],
+              ["Chief Complaint", visit?.chiefComplaint || "—"],
+              ["Consultant", visit?.consultantName || "—"],
+              ["Department", visit?.department || "—"],
+              ["Token", visit?.tokenNumber ? `#${visit.tokenNumber}` : "—"],
+              ["Status", visit?.status || "—"],
+            ].map(([label, value]) => (
+              <div key={label} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "5px 0", borderBottom: `1px solid ${C.border}` }}>
+                <span style={{ color: C.muted, fontWeight: 500 }}>{label}</span>
+                <span style={{ color: C.dark, fontWeight: 600, textAlign: "right", maxWidth: "55%", wordBreak: "break-word" }}>{value}</span>
+              </div>
+            ))}
+          </Card>
+
+          {/* Quick navigation */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
+            {[
+              { label: "Full Audit Trail",  icon: "pi-list",    path: `/billing-audit-trail?uhid=${visit?.UHID || uhid}` },
+              { label: "Patient Billing",   icon: "pi-receipt", path: `/patient-billing/${visit?.UHID || uhid}` },
+              { label: "Patient History",   icon: "pi-clock",   path: `/patient-history?uhid=${visit?.UHID || uhid}` },
+            ].map(l => (
+              <button key={l.label} onClick={() => navigate(l.path)}
+                style={{ padding: "9px 14px", background: C.card, border: `1px solid ${C.border}`, borderRadius: 8,
+                  color: C.dark, fontWeight: 500, fontSize: 12, cursor: "pointer",
+                  display: "flex", alignItems: "center", gap: 8 }}>
+                <i className={`pi ${l.icon}`} style={{ color: C.muted }} />{l.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Audit Trail */}
+          <Card title="Audit Trail" icon="pi-list" color={C.success} badge="LIVE">
+            {audit.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "20px 0", color: C.muted }}>
+                <i className="pi pi-info-circle" style={{ fontSize: 28, marginBottom: 8, display: "block" }} />
+                <p style={{ fontSize: 12, margin: 0 }}>No audit entries yet.<br />Save assessment to create first entry.</p>
+              </div>
+            ) : (
+              <div>
+                {audit.map((t, i) => <AuditItem key={t._id || i} trigger={t} />)}
+                <button onClick={loadAudit} style={{ marginTop: 10, width: "100%", padding: "7px", background: "none", border: `1px solid ${C.border}`, borderRadius: 6, color: C.muted, cursor: "pointer", fontSize: 11, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                  <i className="pi pi-refresh" /> Refresh
+                </button>
+              </div>
+            )}
+          </Card>
+
+        </div>
+      </div>
     </div>
   );
 }

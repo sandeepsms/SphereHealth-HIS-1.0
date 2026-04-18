@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
-import API_ENDPOINTS from "../../config/api";
+import { API_ENDPOINTS } from "../../config/api";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
+import { useAuth } from "../../context/AuthContext";
 
 /* ── Design tokens ── */
 const C = {
@@ -101,6 +102,7 @@ function SectionCard({ title, children, open: initOpen = true }) {
 }
 
 function DoctorAssessmentContent({ selectedPatient }) {
+  const { user } = useAuth();
   const [search,   setSearch]   = useState("");
   const [patient,  setPatient]  = useState(null);
   const [ipdNo,    setIpdNo]    = useState("");
@@ -111,16 +113,49 @@ function DoctorAssessmentContent({ selectedPatient }) {
   const [allOrders,setAllOrders]= useState([]);
   const [orderModal,setOrderModal] = useState(false);
   const [editingNote,setEditingNote] = useState(null);
+  const [isOwner,  setIsOwner]  = useState(true);
 
-  // Form state
+  // My IPD patients list
+  const [myPatients, setMyPatients] = useState([]);
+  const [patientsLoading, setPatientsLoading] = useState(false);
+
+  // Pre-fill doctor info from auth user
+  const doctorDisplayName = user
+    ? user.fullName || `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.name || ""
+    : "";
+  const doctorReg = user?.doctorDetails?.registrationNumber || "";
+
+  // Form state (doctorName/Reg pre-filled from auth)
   const [form, setForm] = useState({
-    doctorName: "", doctorRegNo: "", shift: "morning",
+    doctorName: doctorDisplayName, doctorRegNo: doctorReg, shift: "morning",
     soap: { subjective: "", objective: "", assessment: "", plan: "" },
     vitals: { bp_sys: "", bp_dia: "", pulse: "", temp: "", rr: "", spo2: "", bsl: "", gcs: "", urine: "" },
     provisionalDiagnosis: "", finalDiagnosis: "", investigations: "",
   });
   const [orders, setOrders] = useState([]);
   const [newOrder, setNewOrder] = useState({ type: "medication", instruction: "", dose: "", route: "", frequency: "", duration: "", notes: "", priority: "ROUTINE" });
+
+  // Update form when user loads
+  useEffect(() => {
+    if (user) {
+      const name = user.fullName || `${user.firstName || ""} ${user.lastName || ""}`.trim() || "";
+      const reg = user.doctorDetails?.registrationNumber || "";
+      setForm(p => ({ ...p, doctorName: p.doctorName || name, doctorRegNo: p.doctorRegNo || reg }));
+    }
+  }, [user]);
+
+  // Auto-load my IPD patients on mount
+  useEffect(() => {
+    const token = localStorage.getItem("his_token");
+    if (!token) return;
+    setPatientsLoading(true);
+    axios.get(`${API_ENDPOINTS.ADMISSIONS}/my-patients?status=Active`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(res => setMyPatients(Array.isArray(res.data.data) ? res.data.data : []))
+      .catch(() => setMyPatients([]))
+      .finally(() => setPatientsLoading(false));
+  }, []);
 
   // Auto-load when patient selected from panel
   useEffect(() => {
@@ -147,21 +182,31 @@ function DoctorAssessmentContent({ selectedPatient }) {
     } catch { /* silent */ }
   };
 
+  const loadAdmission = async (admission) => {
+    setPatient(admission);
+    const ipd = admission.ipdNo || admission.admissionNumber || admission._id;
+    setIpdNo(ipd);
+    // Check ownership
+    const ownerId = admission.attendingDoctorId?._id || admission.attendingDoctorId;
+    const owned = !ownerId || !user?.id || String(ownerId) === String(user.id);
+    setIsOwner(owned);
+    await fetchNotes(ipd);
+    await fetchOrders(ipd);
+    showToast(owned ? "Patient loaded" : "Loaded (read-only — not your patient)", owned ? "ok" : "warn");
+  };
+
   const handleSearch = async (e) => {
     e.preventDefault();
     if (!search.trim()) return;
     setLoading(true);
     try {
-      const { data } = await axios.get(`${API_ENDPOINTS.ADMISSIONS}?uhid=${search.trim()}`);
+      const token = localStorage.getItem("his_token");
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const { data } = await axios.get(`${API_ENDPOINTS.ADMISSIONS}?uhid=${search.trim()}`, { headers });
       const arr = Array.isArray(data) ? data : data.data || [];
-      const active = arr.find(a => a.status === "admitted") || arr[0];
+      const active = arr.find(a => a.status === "Active") || arr[0];
       if (active) {
-        setPatient(active);
-        const ipd = active.ipdNo || active.admissionNumber || active._id;
-        setIpdNo(ipd);
-        await fetchNotes(ipd);
-        await fetchOrders(ipd);
-        showToast("Patient loaded", "ok");
+        await loadAdmission(active);
       } else showToast("No active admission found", "warn");
     } catch { showToast("Patient not found", "err"); }
     finally { setLoading(false); }
@@ -181,14 +226,17 @@ function DoctorAssessmentContent({ selectedPatient }) {
 
   const saveNote = async (status = "draft") => {
     if (!ipdNo) { showToast("Search for a patient first", "warn"); return; }
+    if (!isOwner) { showToast("Access denied — you are not the attending doctor for this patient", "err"); return; }
     setLoading(true);
+    const token = localStorage.getItem("his_token");
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
     const payload = {
       ipdNo,
       patient: patient?._id || patient?.patient?._id || "000000000000000000000000",
       patientName: patient?.patientName || patient?.patient?.name || "",
       patientUHID: patient?.uhid || patient?.UHID || search,
-      doctor: "000000000000000000000001",
-      doctorName: form.doctorName, doctorRegNo: form.doctorRegNo,
+      doctor: user?.id || user?._id || "000000000000000000000001",
+      doctorName: form.doctorName || doctorDisplayName, doctorRegNo: form.doctorRegNo || doctorReg,
       shift: form.shift,
       soap: form.soap,
       vitals: {
@@ -206,10 +254,10 @@ function DoctorAssessmentContent({ selectedPatient }) {
     };
     try {
       if (editingNote) {
-        await axios.put(`${API_ENDPOINTS.DOCTOR_NOTES}/${editingNote._id}`, payload);
+        await axios.put(`${API_ENDPOINTS.DOCTOR_NOTES}/${editingNote._id}`, payload, { headers });
         showToast("Note updated", "ok");
       } else {
-        await axios.post(API_ENDPOINTS.DOCTOR_NOTES, payload);
+        await axios.post(API_ENDPOINTS.DOCTOR_NOTES, payload, { headers });
         showToast(status === "signed" ? "Note signed ✓" : "Draft saved", "ok");
       }
       setOrders([]);
@@ -250,10 +298,10 @@ function DoctorAssessmentContent({ selectedPatient }) {
   return (
     <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: C.text }}>
 
-      {/* ── Patient Search ── */}
+      {/* ── Patient Search / My Patients ── */}
       {!patient && (
-        <div style={{ maxWidth: 640, margin: "0 auto", paddingTop: 20 }}>
-          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: 28, boxShadow: "0 4px 24px rgba(0,0,0,.06)" }}>
+        <div style={{ maxWidth: 760, margin: "0 auto", paddingTop: 20 }}>
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: 28, boxShadow: "0 4px 24px rgba(0,0,0,.06)", marginBottom: 18 }}>
             <div style={{ fontWeight: 700, fontSize: 18, color: C.slate, marginBottom: 6 }}>Doctor Assessment & Order Entry</div>
             <div style={{ color: C.muted, fontSize: 13, marginBottom: 20 }}>Enter UHID or IPD Number to load patient</div>
             <form onSubmit={handleSearch} style={{ display: "flex", gap: 10 }}>
@@ -262,6 +310,48 @@ function DoctorAssessmentContent({ selectedPatient }) {
                 {loading ? "Loading…" : "Search"}
               </button>
             </form>
+          </div>
+
+          {/* My Active IPD Patients */}
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: 22, boxShadow: "0 2px 12px rgba(0,0,0,.04)" }}>
+            <div style={{ fontWeight: 700, fontSize: 14, color: C.slate, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ background: C.accentL, color: C.accent, padding: "2px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>MY PATIENTS</span>
+              {patientsLoading && <span style={{ fontSize: 11, color: C.muted }}>Loading…</span>}
+              {!patientsLoading && <span style={{ fontSize: 11, color: C.muted }}>{myPatients.length} active IPD</span>}
+            </div>
+            {myPatients.length === 0 && !patientsLoading && (
+              <div style={{ textAlign: "center", padding: "24px 0", color: C.muted, fontSize: 13 }}>No active IPD patients assigned to you</div>
+            )}
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {myPatients.map(adm => {
+                const pt = adm.patientId || {};
+                const name = adm.patientName || pt.fullName || "Unknown";
+                const uhid = adm.UHID || pt.UHID || "";
+                const bed = adm.bedId?.bedNumber || adm.bedNumber || "—";
+                const ward = adm.wardId?.wardName || adm.wardName || "—";
+                const dayNo = adm.admissionDate ? Math.max(1, Math.ceil((Date.now() - new Date(adm.admissionDate)) / 86400000)) : "?";
+                return (
+                  <div key={adm._id} onClick={() => loadAdmission(adm)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", border: `1.5px solid ${C.border}`, borderRadius: 10, cursor: "pointer", transition: "border-color .15s, box-shadow .15s" }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.boxShadow = "0 2px 12px rgba(30,64,175,.1)"; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.boxShadow = "none"; }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <div style={{ width: 38, height: 38, borderRadius: "50%", background: C.accentL, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, fontWeight: 700, color: C.accent }}>
+                        {name.charAt(0).toUpperCase()}
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 14, color: C.text }}>{name}</div>
+                        <div style={{ fontSize: 11, color: C.muted }}>{uhid} &nbsp;·&nbsp; {ward} / Bed {bed}</div>
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ background: C.accentL, color: C.accent, padding: "2px 9px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>D{dayNo}</span>
+                      <span style={{ background: C.greenL, color: C.green, padding: "2px 9px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>Active</span>
+                      <span style={{ fontSize: 12, color: C.accent, fontWeight: 700 }}>Open →</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
       )}
@@ -310,6 +400,17 @@ function DoctorAssessmentContent({ selectedPatient }) {
               </div>
             </div>
           </div>
+
+          {/* ── Ownership banner ── */}
+          {!isOwner && (
+            <div style={{ background: "#fef3c7", border: "1.5px solid #fcd34d", borderRadius: 10, padding: "11px 16px", margin: "8px 0 4px", display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 18 }}>🔒</span>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 13, color: "#92400e" }}>Read-Only Access</div>
+                <div style={{ fontSize: 12, color: "#b45309" }}>This patient is assigned to another doctor. You can view records but cannot write progress notes or orders.</div>
+              </div>
+            </div>
+          )}
 
           {/* ── Vitals Strip ── */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(8,1fr)", gap: 8, margin: "8px 0 10px" }}>
@@ -459,12 +560,20 @@ function DoctorAssessmentContent({ selectedPatient }) {
               )}
 
               {/* Save buttons */}
-              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginBottom: 24 }}>
-                <button onClick={() => saveNote("draft")} disabled={loading}
-                  style={{ padding: "10px 24px", border: `1.5px solid ${C.border}`, borderRadius: 8, background: "white", color: C.muted, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>💾 Save Draft</button>
-                <button onClick={() => saveNote("signed")} disabled={loading}
-                  style={{ padding: "10px 24px", background: C.green, color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>✅ Sign & Submit</button>
-              </div>
+              {isOwner ? (
+                <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginBottom: 24 }}>
+                  <button onClick={() => saveNote("draft")} disabled={loading}
+                    style={{ padding: "10px 24px", border: `1.5px solid ${C.border}`, borderRadius: 8, background: "white", color: C.muted, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>💾 Save Draft</button>
+                  <button onClick={() => saveNote("signed")} disabled={loading}
+                    style={{ padding: "10px 24px", background: C.green, color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>✅ Sign & Submit</button>
+                </div>
+              ) : (
+                <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginBottom: 24 }}>
+                  <div style={{ padding: "10px 18px", background: "#fef3c7", border: "1.5px solid #fcd34d", borderRadius: 8, color: "#92400e", fontSize: 12, fontWeight: 600 }}>
+                    🔒 Read-only — not your patient
+                  </div>
+                </div>
+              )}
             </>
           )}
 

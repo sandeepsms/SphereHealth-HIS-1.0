@@ -46,6 +46,14 @@ export const API_ENDPOINTS = {
   BILLING: `${API_BASE_URL}/billing`,
   // Bills, payments, TPA claims
   INVESTIGATIONS: `${API_BASE_URL}/investigations`, // Investigation master
+  // ── AI Billing Intelligence ───────────────────────────────────
+  BILLING_AI_SUGGEST:     `${API_BASE_URL}/billing/ai-suggest`,
+  BILLING_AI_CONFIRM:     `${API_BASE_URL}/billing/ai-confirm`,
+  BILLING_NURSE_SERVICES: `${API_BASE_URL}/billing/nurse-services`,
+  // ── Billing Audit Trail ───────────────────────────────────────
+  BILLING_AUDIT_TRAIL:    `${API_BASE_URL}/billing/audit-trail`,
+  BILLING_AUDIT_SUMMARY:  `${API_BASE_URL}/billing/audit-summary`,
+  BILLING_CONFIRM_TRIGGER:`${API_BASE_URL}/billing/audit`,
 
   // ── NABH Clinical Modules ─────────────────────────────────────
   DOCTOR_NOTES: `${API_BASE_URL}/doctor-notes`,
@@ -54,6 +62,12 @@ export const API_ENDPOINTS = {
   NURSING_CARE_PLANS: `${API_BASE_URL}/nursing-care-plans`,
   MAR: `${API_BASE_URL}/mar`,
   NURSE_NOTES: `${API_BASE_URL}/nurse-notes`,
+  NURSING_NOTES: `${API_BASE_URL}/nursing-notes`,
+  NURSING_CHARGES: `${API_BASE_URL}/nursing-charges`,
+
+  // ── OPD Clinical Actions ──────────────────────────────────────
+  OPD_ASSESSMENT: (visitNumber) => `${API_BASE_URL}/opd/${visitNumber}/assessment`,
+  OPD_AUDIT_TRAIL: (visitNumber) => `${API_BASE_URL}/opd/${visitNumber}/audit-trail`,
 };
 
 export default API_ENDPOINTS;

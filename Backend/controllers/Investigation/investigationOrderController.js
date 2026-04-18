@@ -3,6 +3,11 @@ const svc = require("../../services/Investigation/investigationOrderService");
 exports.create = async (req, res) => {
   try {
     const data = await svc.createOrder(req.body);
+    // ── Auto-billing hook ──────────────────────────────────────
+    try {
+      const autoBilling = require("../../services/billing/autoBillingService");
+      autoBilling.onInvestigationOrdered(data).catch(() => {});
+    } catch {}
     res.status(201).json({ success: true, data });
   } catch (e) {
     res.status(400).json({ success: false, message: e.message });
@@ -59,6 +64,11 @@ exports.collectSample = async (req, res) => {
 exports.enterResults = async (req, res) => {
   try {
     const data = await svc.enterResults(req.params.id, req.body);
+    // ── Auto-billing hook ──────────────────────────────────────
+    try {
+      const autoBilling = require("../../services/billing/autoBillingService");
+      autoBilling.onInvestigationResulted(data).catch(() => {});
+    } catch {}
     res.json({ success: true, data });
   } catch (e) {
     res.status(400).json({ success: false, message: e.message });
@@ -77,6 +87,11 @@ exports.enterExternalResult = async (req, res) => {
 exports.verify = async (req, res) => {
   try {
     const data = await svc.verifyResults(req.params.id, req.body);
+    // ── Auto-billing hook ──────────────────────────────────────
+    try {
+      const autoBilling = require("../../services/billing/autoBillingService");
+      autoBilling.onInvestigationResulted(data).catch(() => {});
+    } catch {}
     res.json({ success: true, data });
   } catch (e) {
     res.status(400).json({ success: false, message: e.message });

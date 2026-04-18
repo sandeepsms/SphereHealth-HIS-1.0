@@ -93,6 +93,14 @@ class MARController {
       { new: true }
     );
     if (!mar) return res.status(404).json({ success: false, message: "MAR or medication not found" });
+    // ── Auto-billing hook ──────────────────────────────────────
+    try {
+      const autoBilling = require("../../services/billing/autoBillingService");
+      const med = mar.medications.id(req.params.medId);
+      if (med && status === "administered") {
+        autoBilling.onMARAdministration(mar, med, entry).catch(() => {});
+      }
+    } catch {}
     return res.json({ success: true, data: mar, message: "Administration recorded" });
   });
 

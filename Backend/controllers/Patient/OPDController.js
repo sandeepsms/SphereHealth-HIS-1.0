@@ -160,6 +160,39 @@ class OPDController {
       res.status(500).json({ success: false, message: error.message });
     }
   }
+
+  // POST /opd/:visitNumber/assessment  — Doctor saves SOAP note + diagnosis + plan
+  async saveAssessment(req, res) {
+    try {
+      const { doctorName, ...assessmentData } = req.body;
+      const visit = await opdService.saveOPDAssessment(
+        req.params.visitNumber,
+        assessmentData,
+        doctorName || req.user?.fullName || "Doctor"
+      );
+      if (!visit) return res.status(404).json({ success: false, message: "Visit not found" });
+      res.status(200).json({ success: true, message: "Assessment saved", data: visit });
+    } catch (error) {
+      res.status(400).json({ success: false, message: error.message });
+    }
+  }
+
+  // GET /opd/:visitNumber/audit-trail  — All audit triggers for an OPD visit
+  async getOPDauditTrail(req, res) {
+    try {
+      const Admission     = require("../../models/Patient/admissionModel");
+      const autoBilling   = require("../../services/Billing/autoBillingService");
+      const admission     = await Admission.findOne({
+        visitNumber:   req.params.visitNumber,
+        admissionType: "OPD",
+      }).lean();
+      if (!admission) return res.status(404).json({ success: false, message: "No audit record found for this visit" });
+      const trail = await autoBilling.getAuditTrail(admission._id, { limit: 200 });
+      res.json({ success: true, admissionId: admission._id, data: trail });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
 }
 
 module.exports = new OPDController();

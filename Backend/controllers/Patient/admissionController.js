@@ -96,6 +96,21 @@ class AdmissionController {
     return res.json({ success: true, data: admissions });
   });
 
+  // GET /api/admissions/my-patients  — Doctor's own IPD patients (requires auth)
+  getMyPatients = handle(async (req, res) => {
+    if (!req.user?.id) return res.status(401).json({ success: false, message: "Not authenticated" });
+    const { status = "Active" } = req.query;
+    const admissions = await AdmissionService.getMyIPDPatients(req.user.id, status);
+    return res.json({ success: true, data: admissions, count: admissions.length });
+  });
+
+  // GET /api/admissions/:id/access  — check if current doctor owns the admission
+  checkAccess = handle(async (req, res) => {
+    if (!req.user?.id) return res.status(401).json({ success: false, message: "Not authenticated" });
+    const { admission, isOwner } = await AdmissionService.checkDoctorAccess(req.params.id, req.user.id);
+    return res.json({ success: true, isOwner, data: admission });
+  });
+
   updateAdmission = handle(async (req, res) => {
     const admission = await AdmissionService.updateAdmission(
       req.params.id,

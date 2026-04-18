@@ -39,17 +39,11 @@ import "primeflex/primeflex.css";
 import PatientList from "./pages/patient/PatientList";
 import PatientForm from "./pages/patient/PatientForm";
 import PatientDetails from "./pages/patient/PatientDetails";
-import PatientHistoryPage from "./pages/patient/PatientHistoryPage";
 
 // OPD
 import OPList from "././pages/OPD/OPDList";
 import OPDForm from "./pages/OPD/OPDForm";
 import OPDDetails from "./pages/OPD/OPDDetails";
-import OPDRegistrationPage from "./pages/registration/OPDRegistrationPage";
-
-// New clinical pages
-import NurseOPDQueuePage from "./pages/nurse/NurseOPDQueuePage";
-import DoctorOPDPanelPage from "./pages/doctor/DoctorOPDPanelPage";
 
 // Emergency
 import Emergencylist from "./pages/emergency/EmergencyList";
@@ -77,273 +71,218 @@ import EditHospitalCharges from "./pages/charges/EditHospitalCharges";
 import BillsList from "./pages/billing/BillsList";
 import BillGeneration from "./pages/billing/Billgeneration";
 
-// New Billing System
+// ── New Billing System (billing-v3) ───────────────────────────
 import PatientBilling from "./Components/billing/PatientBilling";
 import ServiceMasterManager from "./Components/ServiceMaster/ServiceMasterManager";
+import ChargeableServices from "./pages/services/ChargeableServices";
+import BillingIntelligencePage from "./pages/billing/BillingIntelligencePage";
+import BillingAuditTrailPage from "./pages/billing/BillingAuditTrailPage";
 import MainPage from "./pages/mainPage/MainPage";
 import NursingNotes from "./pages/nursing/NursingNotes";
+// import { PopupProvider } from "./Components/contextapi/ContextApi";
 import UpdateVitalSheet from "./Components/vital/UpdateVitalSheet";
 import VitalSheet from "./Components/vital/VitalSheet";
 import VitalsView from "./Components/vital/VitalsView";
 import NursingHandoverNotes from "./pages/nursing/NursingHandoverNotes";
+import { AuthProvider } from "./context/AuthContext";
 
-// Phase 1: NABH Paperless Modules
+// Clinical pages
+import OPDRegistrationPage from "./pages/registration/OPDRegistrationPage";
+import NurseOPDQueuePage from "./pages/nurse/NurseOPDQueuePage";
+import NursePatientPanel from "./pages/nurse/NursePatientPanel";
+import DoctorOPDPanelPage from "./pages/doctor/DoctorOPDPanelPage";
+import PatientHistoryPage from "./pages/patient/PatientHistoryPage";
+import MARPage from "./pages/clinical/MARPage";
 import DischargeSummaryPage from "./pages/clinical/DischargeSummaryPage";
 import ConsentFormPage from "./pages/clinical/ConsentFormPage";
-import NursingCarePlanPage from "./pages/nursing/NursingCarePlanPage";
-import MARPage from "./pages/clinical/MARPage";
+import NurseInitialAssessmentPage from "./pages/nursing/NurseInitialAssessmentPage";
+import IPDAdmissionPage from "./pages/ipd/IPDAdmissionPage";
 import DoctorAssessmentPage from "./pages/doctor/DoctorAssessmentPage";
 import OPDAssessmentPage from "./pages/doctor/OPDAssessmentPage";
-import EmergencyAssessmentPage from "./pages/emergency/EmergencyAssessmentPage";
-import UserManagementPage from "./pages/admin/UserManagementPage";
-import IPDInitialAssessmentPage from "./pages/clinical/IPDInitialAssessmentPage";
-import IPDAdmissionPage from "./pages/ipd/IPDAdmissionPage";
-import NurseInitialAssessmentPage from "./pages/nursing/NurseInitialAssessmentPage";
+import DoctorPatientPanel from "./pages/doctor/DoctorPatientPanel";
+import NursingCarePlanPage from "./pages/nursing/NursingCarePlanPage";
+import BillPrintPage from "./pages/billing/BillPrintPage";
+import HospitalSettingsPage from "./pages/admin/HospitalSettingsPage";
+import { HospitalSettingsProvider } from "./context/HospitalSettingsContext";
 
-// Auth
-import LoginPage from "./pages/auth/LoginPage";
-import { AuthProvider } from "./context/AuthContext";
-import { PrivateRoute, RoleRoute } from "./components/auth/PrivateRoute";
-
-/* ── Role constants ── */
-const ALL_ROLES     = ["Admin","Doctor","Nurse","Receptionist","Dietician","TPA Coordinator","Pharmacist","Lab Technician"];
-const ADMIN_ONLY    = ["Admin"];
-const DOCTOR_ROLES  = ["Admin","Doctor"];                               // clinical doctor pages
-const NURSE_ONLY    = ["Admin","Nurse"];                                // nursing-exclusive pages
-const NURSE_ROLES   = ["Admin","Nurse","Doctor"];                       // MAR, vitals — both clinical
-const FRONT_DESK    = ["Admin","Receptionist"];                         // registration, IPD admission, bed mgmt
-const BILLING_ROLES = ["Admin","Receptionist","TPA Coordinator"];       // billing pages
-const VIEW_PATIENTS = ["Admin","Doctor","Nurse","Receptionist","TPA Coordinator"]; // read-only patient access
-const ALL_CLINICAL  = ["Admin","Doctor","Nurse"];                       // shared clinical pages (IPD assessment, consent, vitals view)
-const TPA_ROLES     = ["Admin","TPA Coordinator"];
-
-/* ── Shell: header + sidebar + content ── */
-function AppShell({ children }) {
-  const [collapsed, setCollapsed] = useState(false);
-  const sidebarW = collapsed ? 64 : 258;
-  return (
-    <div style={{ fontFamily: "'DM Sans', sans-serif" }}>
-      <Header />
-      <Sidebar collapsed={collapsed} setCollapsed={setCollapsed} />
-      <div style={{
-        marginLeft: sidebarW,
-        marginTop: 52,
-        minHeight: "calc(100vh - 52px)",
-        padding: "20px",
-        background: "#f0f2f5",
-        transition: "margin-left 0.25s ease",
-      }}>
-        {children}
-      </div>
-    </div>
-  );
-}
 
 export default function App() {
-  return (
-    <Router>
-      <AuthProvider>
-        <Routes>
-          {/* ── Public: Login ── */}
-          <Route path="/login" element={<LoginPage />} />
-
-          {/* ── All protected routes inside shell ── */}
-          <Route path="/*" element={
-            <PrivateRoute>
-              <AppShellRoutes />
-            </PrivateRoute>
-          } />
-        </Routes>
-      </AuthProvider>
-    </Router>
-  );
-}
-
-function AppShellRoutes() {
   const [collapsed, setCollapsed] = useState(false);
-  const sidebarW = collapsed ? 64 : 258;
 
   return (
-    <div style={{ fontFamily: "'DM Sans', sans-serif" }}>
-      <Header />
-      <Sidebar collapsed={collapsed} setCollapsed={setCollapsed} />
-      <div style={{
-        marginLeft: sidebarW,
-        marginTop: 52,
-        minHeight: "calc(100vh - 52px)",
-        padding: "20px",
-        background: "#f0f2f5",
-        transition: "margin-left 0.25s ease",
-      }}>
-        <Routes>
-          {/* ── Dashboard ── */}
-          <Route path="/dashboard1" element={<Dashboard1 />} />
-          <Route path="/dash"       element={<Dashboard1 />} />
-          <Route path="/mainpage"   element={<MainPage />} />
-          <Route path="/"           element={<Navigate to="/mainpage" />} />
+    <AuthProvider>
+    <HospitalSettingsProvider>
+    <div>
+      <Router>
+        <Header />
 
-          {/* ── IPD Admission — Front Desk only ── */}
-          <Route path="/ipd-admission" element={
-            <RoleRoute roles={FRONT_DESK}><IPDAdmissionPage /></RoleRoute>
-          } />
-          <Route path="/ipd-admission/:uhid" element={
-            <RoleRoute roles={FRONT_DESK}><IPDAdmissionPage /></RoleRoute>
-          } />
+        <Sidebar collapsed={collapsed} setCollapsed={setCollapsed} />
+        <div
+          className={`main-content ${collapsed ? "expanded" : ""}`}
+          style={{
+            marginTop: 52,
+            minHeight: "calc(100vh - 52px)",
+            background: "#f8fafc",
+          }}
+        >
+          <Routes>
+            {/* ── Dashboard ─────────────────────────────────────── */}
+            <Route path="/dashboard1" element={<Dashboard1 />} />
+            <Route path="/dash" element={<Dashboard1 />} />
 
-          {/* ── Patient Registration — Front Desk only ── */}
-          <Route path="/registration/:typedata" element={
-            <RoleRoute roles={FRONT_DESK}><Registration /></RoleRoute>
-          } />
-          <Route path="/registration/:typedata/:id" element={
-            <RoleRoute roles={FRONT_DESK}><Registration /></RoleRoute>
-          } />
-          <Route path="/allpatient" element={
-            <RoleRoute roles={VIEW_PATIENTS}><PatientsTable /></RoleRoute>
-          } />
+            {/* ── Patient Registration ──────────────────────────── */}
+            <Route path="/registration/:typedata" element={<Registration />} />
 
-          {/* ── Doctor Prescription — Doctor only ── */}
-          <Route path="/doctorpre/:UHID/:TpaId?" element={
-            <RoleRoute roles={DOCTOR_ROLES}><DoctorPrescription /></RoleRoute>
-          } />
-          <Route path="/doctorpre/:UHID" element={
-            <RoleRoute roles={DOCTOR_ROLES}><DoctorPrescription /></RoleRoute>
-          } />
-          <Route path="/preceptionprint/:UHID" element={
-            <RoleRoute roles={DOCTOR_ROLES}><DoctorPrePrint /></RoleRoute>
-          } />
+            <Route
+              path="/registration/:typedata/:id"
+              element={<Registration />}
+            />
+            {/* <Route path="/registration" element={<Registration />} /> */}
 
-          {/* ── Doctor management — Admin only ── */}
-          <Route path="/doctor/:UHID" element={<RoleRoute roles={DOCTOR_ROLES}><Doctor /></RoleRoute>} />
-          <Route path="/doctors"      element={<RoleRoute roles={ADMIN_ONLY}><DoctorListPage /></RoleRoute>} />
-          <Route path="/doctors/new"  element={<RoleRoute roles={ADMIN_ONLY}><DoctorFormPage /></RoleRoute>} />
-          <Route path="/doctors/:doctorId/edit" element={<RoleRoute roles={ADMIN_ONLY}><DoctorFormPage /></RoleRoute>} />
+            <Route path="/allpatient" element={<PatientsTable />} />
 
-          {/* ── Nursing — Nurse only ── */}
-          <Route path="/nursing-notes" element={
-            <RoleRoute roles={NURSE_ONLY}><NursingNotes /></RoleRoute>
-          } />
-          <Route path="/nursing-handover-notes" element={
-            <RoleRoute roles={NURSE_ONLY}><NursingHandoverNotes /></RoleRoute>
-          } />
-          <Route path="/nursing-care-plan" element={
-            <RoleRoute roles={NURSE_ONLY}><NursingCarePlanPage /></RoleRoute>
-          } />
-          {/* MAR — Nurse + Doctor (both administer / review) */}
-          <Route path="/mar" element={
-            <RoleRoute roles={NURSE_ROLES}><MARPage /></RoleRoute>
-          } />
+            {/* ── Doctor Prescription ──────────────────────────── */}
+            <Route
+              path="/doctorpre/:UHID/:TpaId?"
+              element={<DoctorPrescription />}
+            />
+            <Route path="/doctorpre/:UHID" element={<DoctorPrescription />} />
+            <Route path="/preceptionprint/:UHID" element={<DoctorPrePrint />} />
 
-          {/* ── OPD ── */}
-          <Route path="/opd/:UHID"             element={<RoleRoute roles={DOCTOR_ROLES}><OPDPrint /></RoleRoute>} />
-          <Route path="/opd-visit"             element={<RoleRoute roles={["Admin","Doctor","Receptionist"]}><OPList /></RoleRoute>} />
-          <Route path="/opd/new"               element={<RoleRoute roles={FRONT_DESK}><OPDForm /></RoleRoute>} />
-          <Route path="/opd/edit/:visitNumber" element={<RoleRoute roles={FRONT_DESK}><OPDForm /></RoleRoute>} />
-          <Route path="/opd/:visitNumber"      element={<RoleRoute roles={["Admin","Doctor","Receptionist"]}><OPDDetails /></RoleRoute>} />
+            {/* ── Doctors ──────────────────────────────────────── */}
+            <Route path="/doctor/:UHID" element={<Doctor />} />
+            <Route path="/doctors" element={<DoctorListPage />} />
+            <Route path="/doctors/new" element={<DoctorFormPage />} />
+            <Route
+              path="/doctors/:doctorId/edit"
+              element={<DoctorFormPage />}
+            />
 
-          {/* ── OPD Registration (unified UHID + revisit flow) ── */}
-          <Route path="/opd-register" element={
-            <RoleRoute roles={FRONT_DESK}><OPDRegistrationPage /></RoleRoute>
-          } />
+              {/* ── Nursing ──────────────────────────────────────────── */} 
+            <Route path="/nursing-notes" element={<NursingNotes />} />
+             <Route path="/nursing-handover-notes" element={<NursingHandoverNotes />} />
 
-          {/* ── Nurse OPD Queue ── */}
-          <Route path="/opd-queue" element={
-            <RoleRoute roles={NURSE_ROLES}><NurseOPDQueuePage /></RoleRoute>
-          } />
+            {/* ── OPD ──────────────────────────────────────────── */}
+            <Route path="/opd/:UHID" element={<OPDPrint />} />
+            <Route path="/opd-visit" element={<OPList />} />
+            <Route path="/opd/new" element={<OPDForm />} />
+            <Route path="/opd/edit/:visitNumber" element={<OPDForm />} />
+            <Route path="/opd/:visitNumber" element={<OPDDetails />} />
 
-          {/* ── Doctor OPD Panel ── */}
-          <Route path="/doctor-opd-panel" element={
-            <RoleRoute roles={DOCTOR_ROLES}><DoctorOPDPanelPage /></RoleRoute>
-          } />
+            {/* ── Emergency ─────────────────────────────────────── */}
+            <Route path="/emergency" element={<Emergencylist />} />
+            <Route path="/emergency/new" element={<EmergencyForm />} />
+            <Route
+              path="/emergency/edit/:emergencyNumber"
+              element={<EmergencyForm />}
+            />
+            <Route
+              path="/emergency/:emergencyNumber"
+              element={<EmergencyDetails />}
+            />
 
-          {/* ── Patient History ── */}
-          <Route path="/patient-history" element={
-            <RoleRoute roles={ALL_CLINICAL}><PatientHistoryPage /></RoleRoute>
-          } />
+            {/* ── Vitals ───────────────────────────────── */}
 
-          {/* ── Emergency ── */}
-          <Route path="/emergency"                       element={<RoleRoute roles={["Admin","Doctor","Nurse","Receptionist"]}><Emergencylist /></RoleRoute>} />
-          <Route path="/emergency/new"                   element={<RoleRoute roles={["Admin","Doctor","Nurse","Receptionist"]}><EmergencyForm /></RoleRoute>} />
-          <Route path="/emergency/edit/:emergencyNumber" element={<RoleRoute roles={["Admin","Doctor","Nurse","Receptionist"]}><EmergencyForm /></RoleRoute>} />
-          <Route path="/emergency/:emergencyNumber"      element={<RoleRoute roles={["Admin","Doctor","Nurse","Receptionist"]}><EmergencyDetails /></RoleRoute>} />
+            <Route path="/updateVitalSheet" element={<UpdateVitalSheet />} />
+            <Route path="/vitalSheet" element={<VitalSheet />} />
+            <Route path="/vitalsView" element={<VitalsView />} />
 
-          {/* ── Vitals — Nurse updates; Doctor + Nurse view ── */}
-          <Route path="/updateVitalSheet" element={
-            <RoleRoute roles={NURSE_ONLY}><UpdateVitalSheet /></RoleRoute>
-          } />
-          <Route path="/vitalSheet"  element={<RoleRoute roles={ALL_CLINICAL}><VitalSheet /></RoleRoute>} />
-          <Route path="/vitalsView"  element={<RoleRoute roles={ALL_CLINICAL}><VitalsView /></RoleRoute>} />
+            {/* ── Patients Module ───────────────────────────────── */}
+            <Route path="/patients" element={<PatientList />} />
+            <Route path="/patients/new" element={<PatientForm />} />
+            <Route path="/patients/edit/:id" element={<PatientForm />} />
+            <Route path="/patients/:id" element={<PatientDetails />} />
 
-          {/* ── Patients Module ── */}
-          <Route path="/patients"          element={<RoleRoute roles={VIEW_PATIENTS}><PatientList /></RoleRoute>} />
-          <Route path="/patients/new"      element={<RoleRoute roles={FRONT_DESK}><PatientForm /></RoleRoute>} />
-          <Route path="/patients/edit/:id" element={<RoleRoute roles={FRONT_DESK}><PatientForm /></RoleRoute>} />
-          <Route path="/patients/:id"      element={<RoleRoute roles={VIEW_PATIENTS}><PatientDetails /></RoleRoute>} />
+            {/* ── Services & TPA ────────────────────────────────── */}
+            <Route path="/addservice" element={<ServiceAdd />} />
+            <Route path="/addtpa" element={<AddTpa />} />
+            <Route path="/ServiceAlldata" element={<ServiceAlldata />} />
 
-          {/* ── Services & TPA ── */}
-          <Route path="/addservice"     element={<RoleRoute roles={TPA_ROLES}><ServiceAdd /></RoleRoute>} />
-          <Route path="/addtpa"         element={<RoleRoute roles={TPA_ROLES}><AddTpa /></RoleRoute>} />
-          <Route path="/ServiceAlldata" element={<RoleRoute roles={TPA_ROLES}><ServiceAlldata /></RoleRoute>} />
+            {/* ── Department ────────────────────────────────────── */}
+            <Route path="/department" element={<DepartmentManagement />} />
 
-          {/* ── Department — Admin only ── */}
-          <Route path="/department" element={<RoleRoute roles={ADMIN_ONLY}><DepartmentManagement /></RoleRoute>} />
+            {/* ── Bed Management ────────────────────────────────── */}
+            <Route path="/beds" element={<BedManagement />} />
+            <Route path="/bed-visual" element={<BedVisualLayout />} />
+            <Route path="/rooms" element={<RoomManagement />} />
+            <Route path="/roomcategory" element={<AddRoomCategory />} />
+            <Route path="/wards" element={<WardManagement />} />
+            <Route path="/buildings" element={<BuildingManagement />} />
+            <Route path="/floors" element={<FloorManagement />} />
 
-          {/* ── Bed Management — Front Desk ── */}
-          <Route path="/beds"         element={<RoleRoute roles={FRONT_DESK}><BedManagement /></RoleRoute>} />
-          <Route path="/bed-visual"   element={<RoleRoute roles={ALL_CLINICAL}><BedVisualLayout /></RoleRoute>} />
-          <Route path="/rooms"        element={<RoleRoute roles={FRONT_DESK}><RoomManagement /></RoleRoute>} />
-          <Route path="/roomcategory" element={<RoleRoute roles={ADMIN_ONLY}><AddRoomCategory /></RoleRoute>} />
-          <Route path="/wards"        element={<RoleRoute roles={FRONT_DESK}><WardManagement /></RoleRoute>} />
-          <Route path="/buildings"    element={<RoleRoute roles={ADMIN_ONLY}><BuildingManagement /></RoleRoute>} />
-          <Route path="/floors"       element={<RoleRoute roles={ADMIN_ONLY}><FloorManagement /></RoleRoute>} />
+            {/* ── Hospital Charges ──────────────────────────────── */}
+            <Route path="/hospital-charges" element={<HospitalChargesList />} />
+            <Route
+              path="/hospital-charges/create"
+              element={<CreateHospitalCharges />}
+            />
+            <Route
+              path="/hospital-charges/edit/:id"
+              element={<EditHospitalCharges />}
+            />
 
-          {/* ── Hospital Charges — Admin only ── */}
-          <Route path="/hospital-charges"          element={<RoleRoute roles={ADMIN_ONLY}><HospitalChargesList /></RoleRoute>} />
-          <Route path="/hospital-charges/create"   element={<RoleRoute roles={ADMIN_ONLY}><CreateHospitalCharges /></RoleRoute>} />
-          <Route path="/hospital-charges/edit/:id" element={<RoleRoute roles={ADMIN_ONLY}><EditHospitalCharges /></RoleRoute>} />
+            {/* ── Old Billing (existing) ────────────────────────── */}
+            <Route path="/billing" element={<BillsList />} />
+            <Route
+              path="/billing/create/:prescriptionId"
+              element={<BillGeneration />}
+            />
+            <Route path="/billing/view/:billId" element={<BillGeneration />} />
+            <Route path="/billing/edit/:billId" element={<BillGeneration />} />
+            <Route path="/bills" element={<Navigate to="/billing" replace />} />
 
-          {/* ── Billing — Billing roles ── */}
-          <Route path="/billing"                        element={<RoleRoute roles={BILLING_ROLES}><BillsList /></RoleRoute>} />
-          <Route path="/billing/create/:prescriptionId" element={<RoleRoute roles={BILLING_ROLES}><BillGeneration /></RoleRoute>} />
-          <Route path="/billing/view/:billId"           element={<RoleRoute roles={BILLING_ROLES}><BillGeneration /></RoleRoute>} />
-          <Route path="/billing/edit/:billId"           element={<RoleRoute roles={BILLING_ROLES}><BillGeneration /></RoleRoute>} />
-          <Route path="/bills"                          element={<Navigate to="/billing" replace />} />
-          <Route path="/patient-billing"                element={<RoleRoute roles={BILLING_ROLES}><PatientBilling /></RoleRoute>} />
-          <Route path="/patient-billing/:uhid"          element={<RoleRoute roles={BILLING_ROLES}><PatientBilling /></RoleRoute>} />
-          <Route path="/service-master"                 element={<RoleRoute roles={ADMIN_ONLY}><ServiceMasterManager /></RoleRoute>} />
+            {/* ── New Billing System (billing-v3) ──────────────── */}
 
-          {/* ── NABH Clinical ── */}
-          <Route path="/discharge-summary" element={
-            <RoleRoute roles={DOCTOR_ROLES}><DischargeSummaryPage /></RoleRoute>
-          } />
-          {/* Consent Forms — Doctor + Nurse (witness role) */}
-          <Route path="/consent-forms" element={
-            <RoleRoute roles={ALL_CLINICAL}><ConsentFormPage /></RoleRoute>
-          } />
+            {/* Patient Billing — UHID se bill open hoga */}
+            {/* /patient-billing          → blank, UHID search bar dikhega */}
+            {/* /patient-billing/:uhid    → direct UHID se bill load */}
+            <Route path="/patient-billing" element={<PatientBilling />} />
+            <Route path="/patient-billing/:uhid" element={<PatientBilling />} />
 
-          {/* ── Doctor Assessment — Doctor only ── */}
-          <Route path="/doctor-assessment"       element={<RoleRoute roles={DOCTOR_ROLES}><DoctorAssessmentPage /></RoleRoute>} />
-          <Route path="/doctor-assessment/:uhid" element={<RoleRoute roles={DOCTOR_ROLES}><DoctorAssessmentPage /></RoleRoute>} />
+            {/* Service Master — admin page, sabhi hospital services manage karo */}
+            <Route path="/service-master" element={<ServiceMasterManager />} />
 
-          {/* ── OPD Assessment — Doctor only ── */}
-          <Route path="/opd-assessment"       element={<RoleRoute roles={DOCTOR_ROLES}><OPDAssessmentPage /></RoleRoute>} />
-          <Route path="/opd-assessment/:uhid" element={<RoleRoute roles={DOCTOR_ROLES}><OPDAssessmentPage /></RoleRoute>} />
+            {/* Chargeable Services — domain-wise service management (OPD/IPD/Emergency/DayCare) */}
+            <Route path="/chargeable-services" element={<ChargeableServices />} />
 
-          {/* ── Emergency Assessment — Doctor only ── */}
-          <Route path="/emergency-assessment"       element={<RoleRoute roles={DOCTOR_ROLES}><EmergencyAssessmentPage /></RoleRoute>} />
-          <Route path="/emergency-assessment/:uhid" element={<RoleRoute roles={DOCTOR_ROLES}><EmergencyAssessmentPage /></RoleRoute>} />
+            {/* ── AI Billing Intelligence ─────────────────────────── */}
+            <Route path="/billing-intelligence" element={<BillingIntelligencePage />} />
+            <Route path="/billing-intelligence/:uhid" element={<BillingIntelligencePage />} />
 
-          {/* ── Admin: User Management ── */}
-          <Route path="/admin/users" element={<RoleRoute roles={ADMIN_ONLY}><UserManagementPage /></RoleRoute>} />
+            {/* ── Billing Audit Trail ──────────────────────────────── */}
+            <Route path="/billing-audit-trail" element={<BillingAuditTrailPage />} />
+            <Route path="/billing-audit-trail/:uhid" element={<BillingAuditTrailPage />} />
+            <Route path="/" element={<Navigate to="/mainpage" />} />
+            <Route path="/mainpage" element={<MainPage />} />
 
-          {/* ── IPD Initial Assessment — Doctor + Nurse ── */}
-          <Route path="/ipd-assessment"       element={<RoleRoute roles={ALL_CLINICAL}><IPDInitialAssessmentPage /></RoleRoute>} />
-          <Route path="/ipd-assessment/:uhid" element={<RoleRoute roles={ALL_CLINICAL}><IPDInitialAssessmentPage /></RoleRoute>} />
+            {/* ── Clinical pages ── */}
+            <Route path="/opd-register" element={<OPDRegistrationPage />} />
+            <Route path="/opd-queue" element={<NurseOPDQueuePage />} />
+            <Route path="/nurse-patient-panel" element={<NursePatientPanel />} />
+            <Route path="/doctor-opd-panel" element={<DoctorOPDPanelPage />} />
+            <Route path="/patient-history" element={<PatientHistoryPage />} />
+            <Route path="/mar" element={<MARPage />} />
+            <Route path="/discharge-summary" element={<DischargeSummaryPage />} />
+            <Route path="/consent-forms" element={<ConsentFormPage />} />
+            <Route path="/nurse-initial-assessment" element={<NurseInitialAssessmentPage />} />
+            <Route path="/ipd-admission" element={<IPDAdmissionPage />} />
+            <Route path="/doctor-assessment" element={<DoctorAssessmentPage />} />
+            <Route path="/opd-assessment" element={<OPDAssessmentPage />} />
+            <Route path="/doctor-patient-panel" element={<DoctorPatientPanel />} />
+            <Route path="/nursing-care-plan" element={<NursingCarePlanPage />} />
+            <Route path="/hospital-settings" element={<HospitalSettingsPage />} />
 
-          {/* ── Nurse Initial Assessment — Nurse only ── */}
-          <Route path="/nurse-initial-assessment"       element={<RoleRoute roles={NURSE_ONLY}><NurseInitialAssessmentPage /></RoleRoute>} />
-          <Route path="/nurse-initial-assessment/:uhid" element={<RoleRoute roles={NURSE_ONLY}><NurseInitialAssessmentPage /></RoleRoute>} />
-        </Routes>
-      </div>
+            {/* ── Bill Print (standalone, covers sidebar with fixed overlay) ── */}
+            <Route path="/bill-print/:billId" element={<BillPrintPage />} />
+
+            {/* ── Default & Catch-all ───────────────────────────── */}
+            {/* <Route path="/" element={<Navigate to="/dashboard1" replace />} /> */}
+            {/* <Route path="*" element={<Navigate to="/dashboard1" replace />} /> */}
+          </Routes>
+        </div>
+      </Router>
     </div>
+    </HospitalSettingsProvider>
+    </AuthProvider>
   );
 }

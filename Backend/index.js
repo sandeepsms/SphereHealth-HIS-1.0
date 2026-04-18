@@ -14,6 +14,12 @@ require("./models/bedMgmt/buildingModel");
 require("./models/Patient/patientModel");
 require("./models/Patient/admissionModel");
 require("./models/Patient/OPDModels");
+require("./models/nursing/NursingConsumableItem");
+require("./models/nursing/NursingChargeEntry");
+require("./models/Billing/BillingTrigger");
+
+// Seed nursing consumable master list if empty
+require("./services/nursing/nursingChargesService").seedDefaultItems().catch(() => {});
 
 const patientRoutes = require("./routes/Patient/patientRoutes");
 // const doctorRoutes = require("./routes/doctorsRoutes");

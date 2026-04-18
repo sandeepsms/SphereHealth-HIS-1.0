@@ -10,6 +10,12 @@ const OPDSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    // Denormalized for display (no populate needed)
+    patientName:   { type: String, default: "" },
+    contactNumber: { type: String, default: "" },
+    age:           { type: String, default: "" },
+    gender:        { type: String, default: "" },
+    paymentType:   { type: String, enum: ["GENERAL","TPA","CORPORATE","CASH"], default: "GENERAL" },
     visitNumber: {
       type: String,
       unique: true,
@@ -137,6 +143,14 @@ const OPDSchema = new mongoose.Schema(
     },
     referredTo: String,
     doctorNotes: String,
+
+    // ── SOAP Assessment (Doctor) ──────────────────────────────
+    subjectiveNote:  String,   // S — Chief complaint / history
+    objectiveNote:   String,   // O — Examination findings
+    assessmentNote:  String,   // A — Clinical assessment / differentials
+    planNote:        String,   // P — Treatment plan
+    assessedBy:      String,   // Doctor who completed the assessment
+    assessedAt:      Date,     // When it was saved
   },
   { timestamps: true }
 );

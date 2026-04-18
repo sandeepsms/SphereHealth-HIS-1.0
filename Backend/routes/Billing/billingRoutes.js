@@ -9,6 +9,19 @@ router.get("/uhid/:UHID", ctrl.getBillsByUHID); // GET  /api/billing/uhid/UH0000
 router.get("/price/:serviceId", ctrl.getServicePrice); // GET  /api/billing/price/:id?tariffType=TPA&tpaId=xxx
 router.get("/daycare-check/:admissionId", ctrl.checkDaycare); // GET  /api/billing/daycare-check/:admissionId
 
+// ── AI Intelligence ───────────────────────────────────────────
+router.post("/ai-suggest", ctrl.aiSuggest); // POST /api/billing/ai-suggest       {billId, diagnosis, patientType}
+router.post("/ai-confirm", ctrl.aiConfirm); // POST /api/billing/ai-confirm       {billId, serviceIds[], confirmedBy}
+router.get("/nurse-services", ctrl.getNurseChargeableServices); // GET  /api/billing/nurse-services?patientType=IPD
+
+// ── Nurse charge entry ────────────────────────────────────────
+router.post("/:billId/nurse-charge", ctrl.addNurseCharge); // POST /api/billing/:billId/nurse-charge {serviceId, quantity, nurseName}
+
+// ── Billing Audit Trail ───────────────────────────────────────────
+router.get ("/audit-trail/:admissionId",      ctrl.getAuditTrail);
+router.get ("/audit-summary/:admissionId",    ctrl.getAuditSummary);
+router.post("/audit/:triggerId/confirm-bill", ctrl.confirmTriggerBill);
+
 // ── Bill CRUD & actions ───────────────────────────────────────
 router.get("/:billId", ctrl.getBillById); // GET  /api/billing/:billId
 router.post("/create", ctrl.getOrCreateBill); // POST /api/billing/create  {UHID, visitType, admissionId?}

@@ -190,7 +190,7 @@ export default function IPDAdmissionPage() {
     admissionTime: new Date().toTimeString().slice(0, 5),
     admissionType: "Planned",
     sourceOfAdmission: "OPD Referral",
-    department: "", attendingDoctor: "", referringDoctor: "",
+    department: "", departmentId: "", attendingDoctor: "", attendingDoctorId: "", referringDoctor: "",
     ward: "", room: "", bed: "",
     chiefComplaint: "", provisionalDiagnosis: "",
     icd10Code: "", expectedLOS: "",
@@ -281,16 +281,50 @@ export default function IPDAdmissionPage() {
   const [availableBeds, setAvailableBeds] = useState([]);
   const [bedsLoading, setBedsLoading] = useState(false);
 
+  // Departments & doctors (API-driven for IPD ownership)
+  const [departments, setDepartments] = useState([]);
+  const [doctors, setDoctors] = useState([]);
+  const [doctorsLoading, setDoctorsLoading] = useState(false);
+  const [selectedDeptId, setSelectedDeptId] = useState("");
+  const [selectedDoctorUserId, setSelectedDoctorUserId] = useState("");
+
   useEffect(() => {
     const token = localStorage.getItem("his_token");
-    if (!token) return;
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+    // Load beds
     setBedsLoading(true);
-    fetch(`${API_ENDPOINTS.BEDS}/available`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${API_ENDPOINTS.BEDS}/available`, { headers })
       .then(r => r.json())
       .then(d => setAvailableBeds(Array.isArray(d.data) ? d.data : Array.isArray(d) ? d : []))
       .catch(() => setAvailableBeds([]))
       .finally(() => setBedsLoading(false));
+
+    // Load departments
+    axios.get(API_ENDPOINTS.DEPARTMENTS, { headers })
+      .then(res => {
+        const list = Array.isArray(res.data) ? res.data : res.data?.departments || res.data?.data || [];
+        setDepartments(list);
+      })
+      .catch(() => setDepartments([]));
   }, []);
+
+  // Load doctors when department changes
+  useEffect(() => {
+    if (!selectedDeptId) { setDoctors([]); return; }
+    const token = localStorage.getItem("his_token");
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    setDoctorsLoading(true);
+    setSelectedDoctorUserId("");
+    setAdmission(prev => ({ ...prev, attendingDoctor: "", attendingDoctorId: "" }));
+    axios.get(`${API_ENDPOINTS.USERS}/department/${selectedDeptId}`, { headers })
+      .then(res => {
+        const list = Array.isArray(res.data) ? res.data : res.data?.users || res.data?.data || [];
+        setDoctors(list.filter(u => u.role === "Doctor" || !u.role));
+      })
+      .catch(() => setDoctors([]))
+      .finally(() => setDoctorsLoading(false));
+  }, [selectedDeptId]);
 
   /* ── Steps config ── */
   const STEPS = [
@@ -335,24 +369,11 @@ export default function IPDAdmissionPage() {
       const token = localStorage.getItem("his_token");
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-      // 1 — Resolve department & doctor ObjectIds
-      const deptRes = await axios.get(API_ENDPOINTS.DEPARTMENTS, { headers });
-      const deptList = Array.isArray(deptRes.data) ? deptRes.data : deptRes.data?.departments || deptRes.data?.data || [];
-      const matchedDept = deptList.find(d =>
-        d.name?.toLowerCase().includes(admission.department.toLowerCase()) ||
-        admission.department.toLowerCase().includes(d.name?.toLowerCase())
-      ) || deptList[0];
-      if (!matchedDept) throw new Error("No departments found in system. Please set up departments first.");
-
-      const doctorRes = await axios.get(
-        `${API_ENDPOINTS.DOCTORS}?department=${matchedDept._id}`, { headers }
-      );
-      const docList = Array.isArray(doctorRes.data) ? doctorRes.data : doctorRes.data?.doctors || doctorRes.data?.data || [];
-      const matchedDoctor = docList.find(d =>
-        d.name?.toLowerCase().includes(admission.attendingDoctor.toLowerCase().replace("dr.", "").trim()) ||
-        d.fullName?.toLowerCase().includes(admission.attendingDoctor.toLowerCase().replace("dr.", "").trim())
-      ) || docList[0];
-      if (!matchedDoctor) throw new Error(`No doctors found in ${matchedDept.name}. Please add doctors first.`);
+      // 1 — Use already-resolved IDs from dropdowns
+      if (!selectedDeptId) throw new Error("Please select a department.");
+      if (!selectedDoctorUserId) throw new Error("Please select an attending doctor.");
+      const matchedDept = departments.find(d => d._id === selectedDeptId) || { _id: selectedDeptId, name: admission.department };
+      const matchedDoctor = doctors.find(d => d._id === selectedDoctorUserId) || { _id: selectedDoctorUserId };
 
       // 2 — Create / register patient
       const TITLE_MAP = { "Mr": "Mr.", "Mrs": "Mrs.", "Ms": "Miss", "Dr": "Dr.", "Master": "Master", "Baby": "Baby", "Baby of": "Baby" };
@@ -392,12 +413,15 @@ export default function IPDAdmissionPage() {
         companionRelationship: attendant.relationship || undefined,
         companionContact: attendant.contactNumber || undefined,
         department: matchedDept._id,
-        doctor: matchedDoctor._id,
+        // doctor field on patient references Doctor model; omit here since IPD ownership is via attendingDoctorId on admission
       };
       const patientRes = await axios.post(API_ENDPOINTS.PATIENTS, patientPayload, { headers });
       const patient = patientRes.data?.data || patientRes.data?.patient || patientRes.data;
 
       // 3 — Create admission
+      const doctorFullName = matchedDoctor.fullName ||
+        `${matchedDoctor.firstName || ""} ${matchedDoctor.lastName || ""}`.trim() ||
+        admission.attendingDoctor;
       const admissionPayload = {
         patientId: patient._id,
         UHID: patient.UHID,
@@ -405,8 +429,10 @@ export default function IPDAdmissionPage() {
         contactNumber: identity.contactNumber,
         admissionType: admission.admissionType,
         admissionDate: admission.admissionDate,
-        department: admission.department,
-        attendingDoctor: admission.attendingDoctor,
+        department: matchedDept.name || admission.department,
+        departmentId: matchedDept._id,
+        attendingDoctor: doctorFullName,
+        attendingDoctorId: selectedDoctorUserId,
         referringDoctor: admission.referringDoctor || undefined,
         reasonForAdmission: admission.chiefComplaint,
         expectedDischargeDate: admission.expectedLOS
@@ -787,17 +813,33 @@ function StepAdmission({ data, upd }) {
 
         <G3>
           <F label="Department / Speciality" required>
-            <select style={sel} value={data.department} onChange={upd("department")}>
+            <select style={sel} value={selectedDeptId} onChange={e => {
+              const deptId = e.target.value;
+              const dept = departments.find(d => d._id === deptId);
+              setSelectedDeptId(deptId);
+              setAdmission(prev => ({ ...prev, department: dept?.name || "", departmentId: deptId }));
+            }}>
               <option value="">Select Department</option>
-              {["General Medicine", "Surgery", "Orthopaedics", "Cardiology", "Neurology",
-                "Gynaecology & Obstetrics", "Paediatrics", "Urology", "Nephrology",
-                "Gastroenterology", "Pulmonology", "Oncology", "ENT", "Ophthalmology",
-                "Dermatology", "Psychiatry", "ICU / CCU", "Other"].map(d => <option key={d}>{d}</option>)}
+              {departments.map(d => <option key={d._id} value={d._id}>{d.name}</option>)}
+              {departments.length === 0 && <option disabled>Loading departments...</option>}
             </select>
           </F>
-          <F label="Attending Doctor" required>
-            <input style={fld} value={data.attendingDoctor} onChange={upd("attendingDoctor")}
-              placeholder="Dr. Name (Consultant)" />
+          <F label="Attending Doctor" required hint={doctorsLoading ? "Loading doctors..." : selectedDeptId && doctors.length === 0 ? "No doctors in this department" : ""}>
+            <select style={sel} value={selectedDoctorUserId} onChange={e => {
+              const uid = e.target.value;
+              const doc = doctors.find(d => d._id === uid);
+              const docName = doc ? (doc.fullName || `${doc.firstName || ""} ${doc.lastName || ""}`.trim()) : "";
+              setSelectedDoctorUserId(uid);
+              setAdmission(prev => ({ ...prev, attendingDoctor: docName, attendingDoctorId: uid }));
+            }} disabled={!selectedDeptId || doctorsLoading}>
+              <option value="">{doctorsLoading ? "Loading..." : "Select Doctor"}</option>
+              {doctors.map(d => (
+                <option key={d._id} value={d._id}>
+                  {d.fullName || `${d.firstName || ""} ${d.lastName || ""}`.trim()}
+                  {d.doctorDetails?.registrationNumber ? ` (${d.doctorDetails.registrationNumber})` : ""}
+                </option>
+              ))}
+            </select>
           </F>
           <F label="Referring Doctor">
             <input style={fld} value={data.referringDoctor} onChange={upd("referringDoctor")}

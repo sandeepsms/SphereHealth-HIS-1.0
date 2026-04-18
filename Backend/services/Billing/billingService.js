@@ -437,6 +437,70 @@ class BillingService {
     };
   }
 
+  // ── 16. Add a charge via nurse ────────────────────────────────
+  // Validates that the service has chargeableBy: ["Nurse"] before adding
+  async addNurseCharge(billId, serviceId, quantity, { nurseName, shift, remarks } = {}) {
+    const bill = await PatientBill.findById(billId);
+    if (!bill) throw new Error("Bill not found");
+    if (!["DRAFT", "GENERATED"].includes(bill.billStatus)) {
+      throw new Error("Bill is closed");
+    }
+
+    const service = await ServiceMaster.findById(serviceId);
+    if (!service) throw new Error("Service not found");
+    if (!service.chargeableBy?.includes("Nurse")) {
+      throw new Error("This service cannot be added by nursing staff");
+    }
+
+    const pricing = await ServicePricing.getPriceFor(
+      serviceId,
+      bill.paymentType,
+      bill.tpa?.toString(),
+    );
+    const unitPrice = pricing?.finalPrice ?? service.defaultPrice ?? 0;
+    const gross = unitPrice * (quantity || 1);
+
+    const item = {
+      serviceId: service._id,
+      serviceCode: service.serviceCode,
+      serviceName: service.serviceName,
+      category: service.category,
+      billingType: service.billingType,
+      quantity: quantity || 1,
+      unitPrice,
+      grossAmount: gross,
+      discountPercent: 0,
+      discountAmount: 0,
+      netAmount: gross,
+      tpaPayableAmount: bill.paymentType === "TPA" ? gross : 0,
+      patientPayableAmount: bill.paymentType === "TPA" ? 0 : gross,
+      chargeDate: new Date(),
+      appliedTariff: bill.paymentType,
+      remarks: remarks || `Added by nurse: ${shift || ""}`,
+      addedBySource: "Nurse",
+      addedBy: nurseName || "Nursing Staff",
+      addedByRole: "Nurse",
+    };
+
+    bill.billItems.push(item);
+    await bill.save();
+    return bill;
+  }
+
+  // ── 17. Get services a nurse can add ─────────────────────────
+  async getNurseChargeableServices(patientType = "IPD") {
+    const services = await ServiceMaster.find({
+      isActive: true,
+      chargeableBy: "Nurse",
+      $or: [{ applicableTo: patientType }, { applicableTo: "ALL" }],
+    })
+      .select(
+        "_id serviceName serviceCode category serviceType defaultPrice billingType aiTags applicableTo",
+      )
+      .lean();
+    return services;
+  }
+
   // ── 15. Daily auto-charge cron job ────────────────────────────
   async runDailyAutoCharges() {
     const today = new Date();

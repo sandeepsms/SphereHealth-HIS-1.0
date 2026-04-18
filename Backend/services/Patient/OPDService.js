@@ -1,5 +1,16 @@
-const OPD = require("../../models/Patient/OPDModels");
-const Patient = require("../../models/Patient/patientModel");
+const OPD       = require("../../models/Patient/OPDModels");
+const Patient   = require("../../models/Patient/patientModel");
+const Admission = require("../../models/Patient/admissionModel");
+
+// ── Generate OPD admission number ──────────────────────────────────────────
+async function generateOPDAdmissionNumber() {
+  const today = new Date();
+  const prefix = `OPD-${today.getFullYear()}${String(today.getMonth()+1).padStart(2,"0")}${String(today.getDate()).padStart(2,"0")}-`;
+  const last = await Admission.findOne({ admissionNumber: { $regex: `^${prefix}` } })
+    .sort({ admissionNumber: -1 }).lean();
+  const seq = last ? (parseInt(last.admissionNumber.slice(-4), 10) || 0) + 1 : 1;
+  return `${prefix}${String(seq).padStart(4, "0")}`;
+}
 
 class OPDService {
   /* ── Create a new OPD visit ── */
@@ -12,6 +23,12 @@ class OPDService {
     opdData.patientVisitSeq = seq;
     opdData.UHID = patient.UHID; // always pull fresh from Patient record
 
+    // Denormalize patient info for quick display (avoids populate on every queue fetch)
+    opdData.patientName   = patient.fullName || `${patient.firstName || ""} ${patient.lastName || ""}`.trim() || patient.name || "";
+    opdData.contactNumber = patient.phone || patient.mobile || patient.contactNumber || "";
+    opdData.age           = patient.age ? String(patient.age) : "";
+    opdData.gender        = patient.gender || "";
+
     const opd = new OPD(opdData);
     const savedOPD = await opd.save();
 
@@ -20,6 +37,44 @@ class OPDService {
       $inc: { totalOPDVisits: 1 },
       lastVisitDate: new Date(),
     });
+
+    // ── Create a lightweight Admission record (admissionType "OPD") ────────
+    // This bridges OPD visits into the billing audit trail, nurse assessment,
+    // and doctor assessment systems which all operate on Admission records.
+    try {
+      const admissionNumber = await generateOPDAdmissionNumber();
+      const admission = await Admission.create({
+        UHID:            savedOPD.UHID,
+        patientId:       patient._id,
+        patientName:     patient.fullName || `${patient.firstName || ""} ${patient.lastName || ""}`.trim() || patient.name,
+        contactNumber:   patient.phone || patient.mobile || patient.contactNumber || "N/A",
+        admissionType:   "OPD",
+        admissionNumber,
+        visitNumber:     savedOPD.visitNumber,
+        attendingDoctor: savedOPD.consultantName || "",
+        attendingDoctorId: savedOPD.doctorId || null,
+        department:      savedOPD.department || "",
+        departmentId:    savedOPD.departmentId || null,
+        reasonForAdmission: savedOPD.chiefComplaint || "OPD Consultation",
+        hasBed:          false,
+        status:          "Active",
+        paymentType:     opdData.paymentType || "GENERAL",
+        admissionDate:   savedOPD.visitDate || new Date(),
+      });
+
+      // Fire audit trigger: OPD Registration (consultation fee)
+      try {
+        const autoBilling = require("../Billing/autoBillingService");
+        if (autoBilling.onOPDRegistered) {
+          autoBilling.onOPDRegistered(savedOPD, admission).catch(() => {});
+        }
+      } catch (_) {}
+
+      savedOPD._admissionId = admission._id; // attach for response
+    } catch (admErr) {
+      console.error("[OPDService] Failed to create OPD admission record:", admErr.message);
+      // Non-fatal — OPD visit still created successfully
+    }
 
     return savedOPD;
   }
@@ -164,7 +219,64 @@ class OPDService {
       update.vitals.bmi = parseFloat((vitalsData.weight / (h * h)).toFixed(2));
     }
 
-    return OPD.findOneAndUpdate({ visitNumber }, update, { new: true });
+    const updatedVisit = await OPD.findOneAndUpdate({ visitNumber }, update, { new: true });
+
+    // Fire audit trigger for vitals
+    if (updatedVisit) {
+      try {
+        const admission = await Admission.findOne({ visitNumber, admissionType: "OPD", status: "Active" }).lean();
+        if (admission) {
+          const autoBilling = require("../Billing/autoBillingService");
+          if (autoBilling.onOPDVitalsRecorded) {
+            autoBilling.onOPDVitalsRecorded(updatedVisit, admission, nurseName).catch(() => {});
+          }
+        }
+      } catch (_) {}
+    }
+
+    return updatedVisit;
+  }
+
+  /* ── Doctor saves OPD assessment (SOAP note + diagnosis + plan) ── */
+  async saveOPDAssessment(visitNumber, assessmentData, doctorName) {
+    const update = {
+      generalExamination:    assessmentData.generalExamination || "",
+      systemicExamination:   assessmentData.systemicExamination || "",
+      provisionalDiagnosis:  assessmentData.provisionalDiagnosis || "",
+      finalDiagnosis:        assessmentData.finalDiagnosis || "",
+      advice:                assessmentData.advice || "",
+      followUpDate:          assessmentData.followUpDate || null,
+      doctorNotes:           assessmentData.doctorNotes || "",
+      // SOAP fields
+      subjectiveNote:        assessmentData.subjectiveNote || "",
+      objectiveNote:         assessmentData.objectiveNote || "",
+      assessmentNote:        assessmentData.assessmentNote || "",
+      planNote:              assessmentData.planNote || "",
+      assessedBy:            doctorName || "Doctor",
+      assessedAt:            new Date(),
+      status:                "Completed",
+    };
+
+    const updatedVisit = await OPD.findOneAndUpdate({ visitNumber }, update, { new: true });
+
+    // Fire audit trigger for doctor assessment
+    if (updatedVisit) {
+      try {
+        const admission = await Admission.findOne({ visitNumber, admissionType: "OPD", status: "Active" }).lean();
+        if (admission) {
+          const autoBilling = require("../Billing/autoBillingService");
+          if (autoBilling.onOPDAssessmentSaved) {
+            // Update admission provisional diagnosis
+            await Admission.findByIdAndUpdate(admission._id, {
+              reasonForAdmission: assessmentData.provisionalDiagnosis || admission.reasonForAdmission,
+            });
+            autoBilling.onOPDAssessmentSaved(updatedVisit, admission, doctorName).catch(() => {});
+          }
+        }
+      } catch (_) {}
+    }
+
+    return updatedVisit;
   }
 
   /* ── Update visit status (Waiting → In Progress → Completed) ── */

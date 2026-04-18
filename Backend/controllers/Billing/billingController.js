@@ -8,6 +8,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 const billingService = require("../../services/Billing/billingService");
+const BillingService = require("../../services/Billing/billingService");
 
 // ── GET /api/billing/uhid/:UHID ───────────────────────────────
 exports.getBillsByUHID = async (req, res) => {
@@ -201,4 +202,108 @@ exports.getSummary = async (req, res) => {
   } catch (e) {
     res.status(500).json({ success: false, message: e.message });
   }
+};
+
+// ── POST /api/billing/ai-suggest ──────────────────────────────
+exports.aiSuggest = async (req, res, next) => {
+  try {
+    const { billId, diagnosis, patientType, additionalContext } = req.body;
+    if (!billId || !diagnosis) {
+      return res
+        .status(400)
+        .json({ success: false, message: "billId and diagnosis are required" });
+    }
+    const aiSvc = require("../../services/billing/aiChargeService");
+    const result = await aiSvc.suggestMissedCharges({
+      billId,
+      diagnosis,
+      patientType: patientType || "IPD",
+      additionalContext,
+    });
+    res.json({ success: true, data: result });
+  } catch (e) {
+    next(e);
+  }
+};
+
+// ── POST /api/billing/ai-confirm ──────────────────────────────
+exports.aiConfirm = async (req, res, next) => {
+  try {
+    const { billId, serviceIds, confirmedBy } = req.body;
+    if (!billId || !Array.isArray(serviceIds)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "billId and serviceIds[] required" });
+    }
+    const aiSvc = require("../../services/billing/aiChargeService");
+    const result = await aiSvc.confirmAISuggestions(
+      billId,
+      serviceIds,
+      confirmedBy || "Staff",
+    );
+    res.json({ success: true, data: result });
+  } catch (e) {
+    next(e);
+  }
+};
+
+// ── POST /api/billing/:billId/nurse-charge ────────────────────
+exports.addNurseCharge = async (req, res, next) => {
+  try {
+    const { serviceId, quantity, nurseName, shift, remarks } = req.body;
+    if (!serviceId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "serviceId required" });
+    }
+    const bill = await BillingService.addNurseCharge(
+      req.params.billId,
+      serviceId,
+      quantity || 1,
+      { nurseName, shift, remarks },
+    );
+    res.json({ success: true, data: bill });
+  } catch (e) {
+    next(e);
+  }
+};
+
+// ── GET /api/billing/nurse-services?patientType=IPD ───────────
+exports.getNurseChargeableServices = async (req, res, next) => {
+  try {
+    const services = await BillingService.getNurseChargeableServices(
+      req.query.patientType || "IPD",
+    );
+    res.json({ success: true, data: services });
+  } catch (e) {
+    next(e);
+  }
+};
+
+// GET /api/billing/audit-trail/:admissionId
+exports.getAuditTrail = async (req, res, next) => {
+  try {
+    const autoBilling = require("../../services/billing/autoBillingService");
+    const result = await autoBilling.getAuditTrail(req.params.admissionId, req.query);
+    res.json({ success: true, ...result });
+  } catch (e) { next(e); }
+};
+
+// GET /api/billing/audit-summary/:admissionId
+exports.getAuditSummary = async (req, res, next) => {
+  try {
+    const autoBilling = require("../../services/billing/autoBillingService");
+    const result = await autoBilling.getAdmissionBillingSummary(req.params.admissionId);
+    res.json({ success: true, data: result });
+  } catch (e) { next(e); }
+};
+
+// POST /api/billing/audit/:triggerId/confirm-bill
+exports.confirmTriggerBill = async (req, res, next) => {
+  try {
+    const autoBilling = require("../../services/billing/autoBillingService");
+    const { confirmedBy, confirmedByRole } = req.body;
+    const result = await autoBilling.confirmAndBillTrigger(req.params.triggerId, { confirmedBy, confirmedByRole });
+    res.json({ success: true, data: result });
+  } catch (e) { next(e); }
 };

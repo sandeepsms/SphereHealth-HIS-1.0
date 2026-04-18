@@ -40,7 +40,10 @@ const investigationRoutes = require("./Investigation/Investigationmasterroutes")
 const investigationOrderRoutes = require("./Investigation/investigationOrderRoutes");
 
 const nurseRoutes=require("./Nurse/nurseNotesRoutes");
+const nurseStaffRoutes = require("./Nurse/nurseStaffRoutes");
 const doctorNotesRoutes = require("./Doctor/doctorNotesRoutes");
+const nursingChargesRoutes = require("./nursing/nursingChargesRoutes");
+const hospitalSettingsRoutes = require("../routes/hospitalSettingsRoutes");
 
 // ── Phase 1: NABH Paperless Modules ──────────────────────────
 const dischargeSummaryRoutes = require("./Clinical/dischargeSummaryRoutes");
@@ -70,6 +73,7 @@ router.use("/opd", opdRoutes);
 router.use("/emergency", emergencyRoutes);
 router.use("/doctors", doctorRoutes);
 router.use("/nurse-notes",nurseRoutes);
+router.use("/nurse-staff", nurseStaffRoutes);
 router.use("/doctor-notes", doctorNotesRoutes);
 
 router.use("/admissions", admissionRoutes);
@@ -86,12 +90,11 @@ router.use("/servicebilldata", TPAServicebill);
 router.use("/hospital-charges", hospitalChargesRoutes);
 
 // New Billing System (billing-v3)
-
 router.use("/services", serviceMasterRoutes);
 router.use("/billing", newBillingRoutes);
 
-router.use("/services", serviceMasterRoutes);
-router.use("/billing", newBillingRoutes);
+// nursing-notes alias (NABH Initial Assessment page uses /api/nursing-notes)
+router.use("/nursing-notes", nurseRoutes);
 
 router.use("/investigations", investigationRoutes);
 router.use("/investigation-orders", investigationOrderRoutes);
@@ -101,5 +104,7 @@ router.use("/discharge-summary", dischargeSummaryRoutes);
 router.use("/consent-forms", consentFormRoutes);
 router.use("/nursing-care-plans", nursingCarePlanRoutes);
 router.use("/mar", marRoutes);
+router.use("/nursing-charges", nursingChargesRoutes);
+router.use("/hospital-settings", hospitalSettingsRoutes);
 
 module.exports = router;

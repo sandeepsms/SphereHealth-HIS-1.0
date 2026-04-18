@@ -24,6 +24,10 @@ router.delete("/:visitNumber", opdController.deleteOPDVisit);
 router.patch("/:visitNumber/vitals",  opdController.updateVitals);
 router.patch("/:visitNumber/status",  opdController.updateStatus);
 
+// ── Doctor OPD Assessment + Audit Trail ──────────────────────────
+router.post("/:visitNumber/assessment",  opdController.saveAssessment);
+router.get ("/:visitNumber/audit-trail", opdController.getOPDauditTrail);
+
 // ── Investigations & prescriptions ───────────────────────────────
 router.post("/:visitNumber/investigation",         opdController.addInvestigation);
 router.put("/:visitNumber/investigation/status",   opdController.updateInvestigationStatus);

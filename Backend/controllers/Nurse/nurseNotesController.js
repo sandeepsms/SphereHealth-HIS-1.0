@@ -27,6 +27,11 @@ class NurseNotesController {
     // nurseId body mein bhi pass karo service ke liye
     const data = { ...req.body, nurseId: nurseUserId };
     const note = await nurseNotesService.createNurseNote(data, nurseUserId);
+    // ── Auto-billing hook ──────────────────────────────────────
+    try {
+      const autoBilling = require("../../services/billing/autoBillingService");
+      autoBilling.onNurseNoteSaved(note).catch(() => {});
+    } catch {}
     return res.status(201).json({ success: true, data: note });
   });
 

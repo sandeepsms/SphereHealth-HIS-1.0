@@ -59,6 +59,18 @@ const BillItemSchema = new mongoose.Schema(
     isAutoCharged: { type: Boolean, default: false },
     chargeDate: { type: Date, default: Date.now },
     remarks: { type: String, trim: true },
+
+    // ── AI Billing Intelligence ──────────────────────────────────
+    // Who added this charge — source role
+    addedBySource: {
+      type: String,
+      enum: ["Doctor", "Nurse", "Lab", "Radiology", "Reception", "AI-Confirmed", "Auto"],
+      default: "Reception",
+    },
+    addedBy: { type: String, trim: true },     // name of who added it
+    addedByRole: { type: String, trim: true },  // role label for display
+    aiSuggested: { type: Boolean, default: false }, // was this charge suggested by AI?
+    aiReason: { type: String, trim: true },    // clinical justification from AI
   },
   { _id: true },
 );
