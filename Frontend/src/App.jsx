@@ -101,6 +101,12 @@ import DoctorAssessmentPage from "./pages/doctor/DoctorAssessmentPage";
 import OPDAssessmentPage from "./pages/doctor/OPDAssessmentPage";
 import DoctorPatientPanel from "./pages/doctor/DoctorPatientPanel";
 import NursingCarePlanPage from "./pages/nursing/NursingCarePlanPage";
+import FallRiskAssessmentPage from "./pages/nursing/FallRiskAssessmentPage";
+import PressureAreaCarePage from "./pages/nursing/PressureAreaCarePage";
+import PainAssessmentPage from "./pages/nursing/PainAssessmentPage";
+import NutritionalAssessmentPage from "./pages/nursing/NutritionalAssessmentPage";
+import DailyNursingAssessmentPage from "./pages/nursing/DailyNursingAssessmentPage";
+import PatientEducationPage from "./pages/nursing/PatientEducationPage";
 import BillPrintPage from "./pages/billing/BillPrintPage";
 import HospitalSettingsPage from "./pages/admin/HospitalSettingsPage";
 import { HospitalSettingsProvider } from "./context/HospitalSettingsContext";
@@ -270,6 +276,12 @@ export default function App() {
             <Route path="/opd-assessment" element={<OPDAssessmentPage />} />
             <Route path="/doctor-patient-panel" element={<DoctorPatientPanel />} />
             <Route path="/nursing-care-plan" element={<NursingCarePlanPage />} />
+            <Route path="/fall-risk-assessment" element={<FallRiskAssessmentPage />} />
+            <Route path="/pressure-area-care" element={<PressureAreaCarePage />} />
+            <Route path="/pain-assessment" element={<PainAssessmentPage />} />
+            <Route path="/nutritional-assessment" element={<NutritionalAssessmentPage />} />
+            <Route path="/daily-nursing-assessment" element={<DailyNursingAssessmentPage />} />
+            <Route path="/patient-education" element={<PatientEducationPage />} />
             <Route path="/hospital-settings" element={<HospitalSettingsPage />} />
 
             {/* ── Bill Print (standalone, covers sidebar with fixed overlay) ── */}
