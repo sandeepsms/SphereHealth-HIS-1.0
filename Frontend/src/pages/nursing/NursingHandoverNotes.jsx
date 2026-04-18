@@ -1,7 +1,6 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useCallback } from "react";
 import { useFormik } from "formik";
-import axios from "axios";
-import { API_ENDPOINTS } from "../../config/api";
+import AdmittedPatientPanel from "../../Components/clinical/AdmittedPatientPanel";
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const C = {
@@ -35,18 +34,6 @@ const lbl = {
   textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 5,
 };
 
-// ─── Patient type config ───────────────────────────────────────────────────────
-const PATIENT_TYPES = [
-  { key: "IPD",       label: "IPD",       icon: "pi-building",          color: C.blue,   admissionTypes: ["Planned","Emergency","Transfer","Day Care"] },
-  { key: "DayCare",   label: "Day Care",  icon: "pi-sun",               color: C.amber,  admissionTypes: ["Daycare","Day Care"] },
-  { key: "Emergency", label: "Emergency", icon: "pi-exclamation-circle", color: C.red,    admissionTypes: ["Emergency"] },
-];
-
-const TYPE_COLOR = {
-  IPD:       { bg: C.blueL,   color: C.blue,   border: C.blueB   },
-  DayCare:   { bg: C.amberL,  color: C.amber,  border: C.amberB  },
-  Emergency: { bg: C.redL,    color: C.red,    border: C.redB    },
-};
 
 // ─── Section card ─────────────────────────────────────────────────────────────
 function SectionCard({ icon, title, color = C.primary, children }) {
@@ -103,173 +90,11 @@ function PillGroup({ options, value, onChange, colorActive }) {
   );
 }
 
-// ─── Patient card in sidebar ───────────────────────────────────────────────────
-function PatientCard({ adm, selected, onClick }) {
-  const tc = TYPE_COLOR[adm._typeKey] || TYPE_COLOR.IPD;
-  const name = adm.patientName || "Unknown";
-  const uhid = adm.UHID || "—";
-  const bed  = adm.bedNumber || "—";
-  const ward = adm.wardId?.wardName || adm.wardName || "—";
-  const days = adm.admissionDate
-    ? Math.max(1, Math.ceil((Date.now() - new Date(adm.admissionDate)) / 86400000))
-    : "?";
-
-  return (
-    <div
-      onClick={onClick}
-      style={{
-        padding: "12px 14px",
-        borderRadius: 10,
-        border: `1.5px solid ${selected ? C.primary : C.border}`,
-        background: selected ? C.primaryL : "white",
-        cursor: "pointer",
-        transition: "all .12s",
-        marginBottom: 8,
-      }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{
-            fontWeight: 700, fontSize: 13, color: selected ? C.primary : C.text,
-            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-          }}>{name}</div>
-          <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{uhid}</div>
-        </div>
-        <span style={{
-          background: tc.bg, color: tc.color, border: `1px solid ${tc.border}`,
-          fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 10,
-          whiteSpace: "nowrap", flexShrink: 0, marginLeft: 6,
-        }}>D{days}</span>
-      </div>
-      <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
-        {bed !== "—" && (
-          <span style={{ fontSize: 10, color: C.muted, background: "#f1f5f9", padding: "2px 7px", borderRadius: 6 }}>
-            🛏 {bed}
-          </span>
-        )}
-        {ward !== "—" && (
-          <span style={{ fontSize: 10, color: C.muted, background: "#f1f5f9", padding: "2px 7px", borderRadius: 6 }}>
-            {ward}
-          </span>
-        )}
-        {adm.department && (
-          <span style={{ fontSize: 10, color: C.muted, background: "#f1f5f9", padding: "2px 7px", borderRadius: 6 }}>
-            {adm.department}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─── Sidebar ──────────────────────────────────────────────────────────────────
-function PatientSidebar({ activeType, onTypeChange, patients, loading, selectedId, onSelect, search, onSearch }) {
-  return (
-    <div style={{
-      width: 280, flexShrink: 0,
-      background: "white",
-      border: `1.5px solid ${C.border}`,
-      borderRadius: 14,
-      display: "flex", flexDirection: "column",
-      height: "calc(100vh - 100px)",
-      position: "sticky", top: 88,
-      overflow: "hidden",
-      boxShadow: "0 1px 6px rgba(0,0,0,.06)",
-    }}>
-      {/* Sidebar header */}
-      <div style={{ padding: "14px 16px", borderBottom: `1px solid ${C.border}`, background: "#f8fafc" }}>
-        <div style={{ fontWeight: 700, fontSize: 13, color: C.text, marginBottom: 10 }}>Select Patient</div>
-
-        {/* Type tabs */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          {PATIENT_TYPES.map(pt => {
-            const active = activeType === pt.key;
-            return (
-              <button key={pt.key} type="button" onClick={() => onTypeChange(pt.key)} style={{
-                padding: "8px 12px", borderRadius: 8, border: "none",
-                background: active ? pt.color + "15" : "transparent",
-                color: active ? pt.color : C.muted,
-                fontWeight: active ? 700 : 500,
-                cursor: "pointer", fontSize: 13,
-                fontFamily: "'DM Sans',sans-serif",
-                display: "flex", alignItems: "center", gap: 8,
-                textAlign: "left", transition: "all .12s",
-                borderLeft: `3px solid ${active ? pt.color : "transparent"}`,
-              }}>
-                <i className={`pi ${pt.icon}`} style={{ fontSize: 13 }} />
-                {pt.label}
-                {active && (
-                  <span style={{
-                    marginLeft: "auto", background: pt.color + "20", color: pt.color,
-                    fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 8,
-                  }}>
-                    {patients.length}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Search */}
-      <div style={{ padding: "10px 14px", borderBottom: `1px solid ${C.border}` }}>
-        <div style={{ position: "relative" }}>
-          <i className="pi pi-search" style={{
-            position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)",
-            fontSize: 12, color: C.muted, pointerEvents: "none",
-          }} />
-          <input
-            value={search}
-            onChange={e => onSearch(e.target.value)}
-            placeholder="Search name / UHID…"
-            style={{ ...fld, paddingLeft: 32, fontSize: 12 }}
-          />
-        </div>
-      </div>
-
-      {/* Patient list */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "10px 12px" }}>
-        {loading ? (
-          <div style={{ textAlign: "center", padding: "32px 0", color: C.muted }}>
-            <div style={{
-              width: 28, height: 28, borderRadius: "50%",
-              border: `3px solid ${C.border}`, borderTopColor: C.primary,
-              animation: "spin 1s linear infinite", margin: "0 auto 10px",
-            }} />
-            <div style={{ fontSize: 12 }}>Loading patients…</div>
-          </div>
-        ) : patients.length === 0 ? (
-          <div style={{ textAlign: "center", padding: "32px 12px", color: C.muted }}>
-            <i className="pi pi-users" style={{ fontSize: 28, display: "block", marginBottom: 8, opacity: .4 }} />
-            <div style={{ fontSize: 12 }}>No active patients found</div>
-          </div>
-        ) : (
-          patients.map(adm => (
-            <PatientCard
-              key={adm._id}
-              adm={adm}
-              selected={selectedId === adm._id}
-              onClick={() => onSelect(adm)}
-            />
-          ))
-        )}
-      </div>
-
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-    </div>
-  );
-}
-
 // ─── Main component ────────────────────────────────────────────────────────────
 const NursingHandoverNotes = () => {
-  const [activeType, setActiveType]       = useState("IPD");
-  const [allPatients, setAllPatients]     = useState([]);
-  const [patientsLoading, setPatientsLoading] = useState(false);
-  const [selectedAdm, setSelectedAdm]    = useState(null);
-  const [sidebarSearch, setSidebarSearch] = useState("");
-  const [saved, setSaved]                = useState(false);
-  const [saving, setSaving]              = useState(false);
+  const [selectedAdm, setSelectedAdm] = useState(null);
+  const [saved,  setSaved]  = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const formik = useFormik({
     initialValues: {
@@ -310,37 +135,8 @@ const NursingHandoverNotes = () => {
     new Date().toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "long", year: "numeric" });
 
   // ── Fetch patients from API ───────────────────────────────────────────────────
-  const loadPatients = useCallback(async (type) => {
-    setPatientsLoading(true);
-    setAllPatients([]);
-    try {
-      const token = localStorage.getItem("his_token");
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-
-      let params = { status: "Active", limit: 200 };
-      if (type === "DayCare")   params.admissionType = "Daycare";
-      if (type === "Emergency") params.admissionType = "Emergency";
-      // IPD = everything active that is NOT daycare/emergency
-      const res = await axios.get(API_ENDPOINTS.ADMISSIONS, { params, headers });
-      let list = Array.isArray(res.data) ? res.data : res.data?.data || res.data?.admissions || [];
-
-      // For IPD: exclude DayCare and Emergency records
-      if (type === "IPD") {
-        list = list.filter(a => !["Daycare","Day Care","Emergency"].includes(a.admissionType));
-      }
-
-      setAllPatients(list.map(a => ({ ...a, _typeKey: type })));
-    } catch (e) {
-      setAllPatients([]);
-    } finally {
-      setPatientsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { loadPatients(activeType); }, [activeType, loadPatients]);
-
   // ── When patient selected: populate form ──────────────────────────────────────
-  const selectPatient = (adm) => {
+  const selectPatient = useCallback((adm) => {
     setSelectedAdm(adm);
     const pt = adm.patientId || {};
     const dob = pt.dateOfBirth || adm.dateOfBirth;
@@ -360,20 +156,8 @@ const NursingHandoverNotes = () => {
       wardBed:     [ward, bed].filter(Boolean).join(" / "),
       diagnosis:   adm.reasonForAdmission || adm.provisionalDiagnosis || "",
     });
-  };
-
-  // ── Filtered sidebar list ─────────────────────────────────────────────────────
-  const filteredPatients = allPatients.filter(a => {
-    if (!sidebarSearch.trim()) return true;
-    const s = sidebarSearch.toLowerCase();
-    return (
-      (a.patientName || "").toLowerCase().includes(s) ||
-      (a.UHID || "").toLowerCase().includes(s) ||
-      (a.bedNumber || "").toLowerCase().includes(s)
-    );
-  });
-
-  const activePtCfg = PATIENT_TYPES.find(p => p.key === activeType);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div style={{ background: C.bg, minHeight: "100vh", fontFamily: "'DM Sans',sans-serif" }}>
@@ -415,7 +199,7 @@ const NursingHandoverNotes = () => {
             }}>
               <span style={{
                 width: 8, height: 8, borderRadius: "50%",
-                background: activePtCfg?.color || C.primary,
+                background: C.primary,
                 flexShrink: 0,
               }} />
               <span style={{ color: "#fff", fontSize: 13, fontWeight: 600 }}>
@@ -436,22 +220,18 @@ const NursingHandoverNotes = () => {
       </div>
 
       {/* ── Two-pane layout ── */}
-      <div style={{ display: "flex", gap: 20, padding: "20px 24px", alignItems: "flex-start" }}>
+      <div style={{ display: "flex", alignItems: "flex-start" }}>
 
-        {/* ── Sidebar ── */}
-        <PatientSidebar
-          activeType={activeType}
-          onTypeChange={(t) => { setActiveType(t); setSelectedAdm(null); setSidebarSearch(""); }}
-          patients={filteredPatients}
-          loading={patientsLoading}
+        {/* ── Shared patient panel ── */}
+        <AdmittedPatientPanel
+          onPatientSelect={selectPatient}
           selectedId={selectedAdm?._id}
-          onSelect={selectPatient}
-          search={sidebarSearch}
-          onSearch={setSidebarSearch}
+          pageType="nursing-handover"
+          stickyTop={104}
         />
 
         {/* ── Form area ── */}
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ flex: 1, minWidth: 0, padding: "20px 24px" }}>
 
           {/* No patient selected hint */}
           {!selectedAdm && (
@@ -461,18 +241,17 @@ const NursingHandoverNotes = () => {
             }}>
               <div style={{
                 width: 56, height: 56, borderRadius: 14,
-                background: activePtCfg ? activePtCfg.color + "15" : C.primaryL,
+                background: C.primaryL,
                 display: "flex", alignItems: "center", justifyContent: "center",
                 margin: "0 auto 14px",
               }}>
-                <i className={`pi ${activePtCfg?.icon || "pi-user"}`}
-                  style={{ fontSize: 22, color: activePtCfg?.color || C.primary }} />
+                <i className="pi pi-user" style={{ fontSize: 22, color: C.primary }} />
               </div>
               <div style={{ fontWeight: 700, fontSize: 15, color: C.text, marginBottom: 6 }}>
-                Select a {activeType} Patient
+                Select a Patient
               </div>
               <div style={{ fontSize: 13, color: C.muted }}>
-                Choose a patient from the {activeType} list on the left to begin the handover note.
+                Choose a patient from the list on the left to begin the handover note.
               </div>
             </div>
           )}
