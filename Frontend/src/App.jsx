@@ -98,7 +98,6 @@ import ConsentFormPage from "./pages/clinical/ConsentFormPage";
 import NurseInitialAssessmentPage from "./pages/nursing/NurseInitialAssessmentPage";
 import IPDAdmissionPage from "./pages/ipd/IPDAdmissionPage";
 import DoctorAssessmentPage from "./pages/doctor/DoctorAssessmentPage";
-import OPDAssessmentPage from "./pages/doctor/OPDAssessmentPage";
 import DoctorPatientPanel from "./pages/doctor/DoctorPatientPanel";
 import NursingCarePlanPage from "./pages/nursing/NursingCarePlanPage";
 import FallRiskAssessmentPage from "./pages/nursing/FallRiskAssessmentPage";
@@ -273,7 +272,6 @@ export default function App() {
             <Route path="/nurse-initial-assessment" element={<NurseInitialAssessmentPage />} />
             <Route path="/ipd-admission" element={<IPDAdmissionPage />} />
             <Route path="/doctor-assessment" element={<DoctorAssessmentPage />} />
-            <Route path="/opd-assessment" element={<OPDAssessmentPage />} />
             <Route path="/doctor-patient-panel" element={<DoctorPatientPanel />} />
             <Route path="/nursing-care-plan" element={<NursingCarePlanPage />} />
             <Route path="/fall-risk-assessment" element={<FallRiskAssessmentPage />} />

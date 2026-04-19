@@ -583,14 +583,6 @@ function AuditTrailTab({ auditTrail }) {
 function QuickLinksTab({ uhid, navigate }) {
   const links = [
     {
-      label: "OPD Assessment",
-      desc: "Open doctor assessment for OPD visits",
-      icon: "🩺",
-      path: `/opd-assessment?uhid=${uhid}`,
-      color: C.blue,
-      bg: C.blueLight,
-    },
-    {
       label: "IPD Assessment",
       desc: "Doctor notes and assessment for IPD patients",
       icon: "🏥",

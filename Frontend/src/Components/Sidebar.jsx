@@ -52,7 +52,6 @@ const NAV = [
     items: [
       { label: "Patient Panel",           icon: "pi-id-card",             path: "/doctor-patient-panel" },
       { label: "IPD Assessment",         icon: "pi-file-edit",           path: "/doctor-assessment",      nabh: true },
-      { label: "OPD Assessment",         icon: "pi-file",                path: "/opd-assessment" },
       { label: "Emergency Assessment",   icon: "pi-exclamation-circle",  path: "/emergency-assessment" },
       { label: "Discharge Summary",      icon: "pi-sign-out",            path: "/discharge-summary",      nabh: true },
       { label: "Consent Forms",          icon: "pi-shield",              path: "/consent-forms",          nabh: true },

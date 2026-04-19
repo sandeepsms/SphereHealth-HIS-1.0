@@ -41,7 +41,6 @@ const ALL_MODULES = [
   { label: "Bed Visual",           icon: "pi-th-large",             path: "/bed-visual",             color: C.purple, roles: ["Admin","Doctor","Nurse","Receptionist"] },
   { label: "Patient Billing",      icon: "pi-receipt",              path: "/patient-billing",        color: C.green,  roles: ["Admin","Receptionist","TPA Coordinator"] },
   // Doctor
-  { label: "OPD Assessment",       icon: "pi-file-check",           path: "/opd-assessment",         color: C.teal,   roles: ["Admin","Doctor"] },
   { label: "Emergency Assessment", icon: "pi-exclamation-triangle", path: "/emergency-assessment",   color: C.red,    roles: ["Admin","Doctor"] },
   { label: "IPD Initial Assessment",icon: "pi-clipboard",           path: "/ipd-assessment",         color: C.pink,   roles: ["Admin","Doctor","Nurse"] },
   { label: "IPD Daily Assessment", icon: "pi-stethoscope",          path: "/doctor-assessment",      color: C.slate,  roles: ["Admin","Doctor"] },
@@ -83,7 +82,6 @@ const QUICK_ACCESS_MAP = {
     { label: "Bed Layout",       icon: "pi-th-large",          path: "/bed-visual",             color: C.amber  },
   ],
   Doctor:           [
-    { label: "OPD Assessment",   icon: "pi-file-check",        path: "/opd-assessment",         color: C.teal   },
     { label: "IPD Assessment",   icon: "pi-stethoscope",       path: "/doctor-assessment",      color: C.slate  },
     { label: "Discharge Summary",icon: "pi-file-edit",         path: "/discharge-summary",      color: C.purple },
     { label: "Consent Forms",    icon: "pi-shield",            path: "/consent-forms",          color: C.green  },
@@ -468,7 +466,7 @@ export default function MainPage() {
                             onClick={() => {
                               if (row.type === "IPD") navigate(`/ipd-assessment/${row.uhid}`);
                               else if (row.type === "Emergency") navigate(`/emergency-assessment/${row.uhid}`);
-                              else navigate(`/opd-assessment/${row.uhid}`);
+                              else navigate(`/doctor-opd-panel`);
                             }}
                             style={{ padding: "5px 12px", borderRadius: 7, border: "none",
                               background: row.type === "IPD" ? C.accent : C.teal,

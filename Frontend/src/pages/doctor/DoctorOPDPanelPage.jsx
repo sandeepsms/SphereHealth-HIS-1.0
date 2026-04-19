@@ -119,7 +119,7 @@ export default function DoctorOPDPanelPage() {
   };
 
   const goAssess = (visit) => {
-    navigate(`/opd-assessment?visitNumber=${visit.visitNumber}&uhid=${visit.UHID}`);
+    navigate(`/doctor-opd-panel?visitNumber=${visit.visitNumber}&uhid=${visit.UHID}`);
   };
 
   const filterVisits = (list) => {
