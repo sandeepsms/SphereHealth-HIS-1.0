@@ -1,7 +1,8 @@
 /**
  * NurseOrdersPanel.jsx
- * Displays doctor orders for a patient. Nurses can acknowledge / progress / complete orders.
- * Polls every 30s. Props: { UHID, visitId, onConsentRequest }
+ * Step-based doctor order workflow for nurses — mirrors the NABH audit-ready order prototype.
+ * Each order type has sequential steps; each step records nurse name + timestamp.
+ * Props: { UHID, visitId, onConsentRequest }
  */
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
@@ -10,31 +11,59 @@ import { API_ENDPOINTS } from "../../config/api";
 const C = {
   purple: "#7c3aed", nurse: "#db2777", teal: "#0f766e",
   amber: "#d97706", danger: "#dc2626", success: "#059669",
-  bg: "#f8fafc", card: "#fff", border: "#e2e8f0", muted: "#64748b", dark: "#0f172a",
+  blue: "#0284c7", bg: "#f8fafc", card: "#fff",
+  border: "#e2e8f0", muted: "#64748b", dark: "#0f172a",
 };
 
 const TYPE_COLOR = {
-  Medication:   "#7c3aed",
-  Investigation:"#0284c7",
-  Procedure:    "#db2777",
-  Diet:         "#059669",
-  Activity:     "#d97706",
-  Nursing:      "#0f766e",
+  Medication:    "#7c3aed",
+  Investigation: "#0284c7",
+  Procedure:     "#db2777",
+  Diet:          "#059669",
+  Activity:      "#d97706",
+  Nursing:       "#0f766e",
 };
+
+// ── Step definitions per order type (matches prototype logic) ─────────────────
+function getSteps(order) {
+  const type = order.orderType;
+  const subtype = order.orderDetails?.urgency || order.orderDetails?.procedureType || "";
+
+  if (type === "Investigation") {
+    if (subtype === "Radiology" || (order.orderDetails?.testName || "").toLowerCase().includes("xray") ||
+        (order.orderDetails?.testName || "").toLowerCase().includes("ct") ||
+        (order.orderDetails?.testName || "").toLowerCase().includes("mri")) {
+      return ["Scheduled", "Done", "Report Collected"];
+    }
+    return ["Sample Collected", "Sample Sent", "Report Received"];
+  }
+  if (type === "Procedure") {
+    return ["Consent Taken", "Patient Prepped", "Procedure Done"];
+  }
+  if (type === "Medication") {
+    return ["Prepared", "Administered"];
+  }
+  if (type === "Diet") {
+    return ["Ordered", "Prepared", "Delivered"];
+  }
+  if (type === "Activity") {
+    return ["Instructed", "Started", "Completed"];
+  }
+  return ["Acknowledged", "Done"];
+}
 
 const PRIORITY_STYLE = {
-  STAT:    { bg: "#fef2f2", color: "#dc2626", label: "STAT" },
-  Urgent:  { bg: "#fffbeb", color: "#d97706", label: "Urgent" },
-  Routine: { bg: "#f1f5f9", color: "#64748b", label: "Routine" },
+  STAT:    { bg: "#fef2f2", color: "#dc2626" },
+  Urgent:  { bg: "#fffbeb", color: "#d97706" },
+  Routine: { bg: "#f1f5f9", color: "#64748b" },
 };
 
-const STATUS_STYLE = {
+const STATUS_BG = {
   Pending:      { bg: "#fef3c7", color: "#d97706" },
   Acknowledged: { bg: "#dbeafe", color: "#1d4ed8" },
   InProgress:   { bg: "#e0e7ff", color: "#4f46e5" },
   Completed:    { bg: "#d1fae5", color: "#059669" },
   Cancelled:    { bg: "#fee2e2", color: "#dc2626" },
-  OnHold:       { bg: "#f1f5f9", color: "#64748b" },
 };
 
 function timeAgo(dateStr) {
@@ -47,134 +76,194 @@ function timeAgo(dateStr) {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
-function OrderCard({ order, onStatusChange, onConsentRequest }) {
+function fmtTime(dateStr) {
+  return new Date(dateStr).toLocaleString("en-IN", {
+    day: "2-digit", month: "short",
+    hour: "2-digit", minute: "2-digit", hour12: true,
+  });
+}
+
+// ── Single order card with step buttons + inline audit trail ──────────────────
+function OrderCard({ order, nurseName, onStepDone, onConsentRequest }) {
+  const [expanded, setExpanded] = useState(false);
   const typeColor = TYPE_COLOR[order.orderType] || C.muted;
   const priorityS = PRIORITY_STYLE[order.priority] || PRIORITY_STYLE.Routine;
-  const statusS = STATUS_STYLE[order.status] || STATUS_STYLE.Pending;
-  const details = order.orderDetails || {};
+  const statusS   = STATUS_BG[order.status] || STATUS_BG.Pending;
+  const details   = order.orderDetails || {};
+
   const displayName =
-    details.displayName ||
-    details.medicineName ||
-    details.testName ||
-    details.procedureName ||
-    order.orderType;
+    details.displayName || details.medicineName ||
+    details.testName || details.procedureName || order.orderType;
+
+  const steps       = getSteps(order);
+  const doneCount   = (order.auditLog || []).length;
+  const nextStep    = steps[doneCount];          // undefined when all done
+  const allDone     = doneCount >= steps.length;
 
   const needsConsent =
     order.orderType === "Procedure" &&
     details.consentRequired &&
     order.consentStatus === "Pending";
 
+  // Running status text e.g. "New → Sample Collected → Sample Sent"
+  const flowText = ["New", ...(order.auditLog || []).map(l => l.step)].join(" → ");
+
   return (
     <div style={{
-      background: C.card, border: `1px solid ${C.border}`, borderRadius: 10,
-      padding: "12px 14px", marginBottom: 10,
-      borderLeft: `4px solid ${typeColor}`,
+      background: C.card,
+      border: `1px solid ${allDone ? C.success + "50" : C.border}`,
+      borderRadius: 10,
+      marginBottom: 10,
+      borderLeft: `4px solid ${allDone ? C.success : typeColor}`,
       boxShadow: "0 1px 4px rgba(0,0,0,.04)",
+      overflow: "hidden",
     }}>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          {/* Top row: type badge + priority + name */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
-            <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: typeColor + "15", color: typeColor }}>
-              {order.orderType}
-            </span>
-            <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: priorityS.bg, color: priorityS.color }}>
-              {priorityS.label}
-            </span>
-            <span style={{ fontSize: 13, fontWeight: 600, color: C.dark }}>
-              {displayName}
-            </span>
-          </div>
-
-          {/* Details row */}
-          <div style={{ fontSize: 11, color: C.muted, display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
-            {details.dose && <span>Dose: {details.dose}</span>}
-            {details.frequency && <span>· {details.frequency}</span>}
-            {details.duration && <span>· {details.duration}</span>}
-            {details.route && <span>· {details.route}</span>}
-            {details.urgency && <span>Urgency: {details.urgency}</span>}
-            {details.instructions && <span>· {details.instructions}</span>}
-            {details.procedureType && <span>Type: {details.procedureType}</span>}
-            {details.estimatedDuration && <span>· Est: {details.estimatedDuration}</span>}
-          </div>
-
-          {/* Meta row */}
-          <div style={{ fontSize: 10, color: "#94a3b8", display: "flex", gap: 8, alignItems: "center" }}>
-            <span>By {order.orderedBy || "Doctor"}</span>
-            <span>·</span>
-            <span>{timeAgo(order.createdAt)}</span>
-            {order.consentStatus && order.consentStatus !== "NotRequired" && (
-              <>
-                <span>·</span>
-                <span style={{
-                  fontWeight: 700,
-                  color: order.consentStatus === "Obtained" ? C.success : order.consentStatus === "Declined" ? C.danger : C.amber,
-                }}>
-                  Consent: {order.consentStatus}
+      {/* ── Card header ── */}
+      <div style={{ padding: "11px 14px" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {/* Badges row */}
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 4 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: typeColor + "15", color: typeColor }}>
+                {order.orderType}
+              </span>
+              <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 20, background: priorityS.bg, color: priorityS.color }}>
+                {order.priority || "Routine"}
+              </span>
+              {allDone && (
+                <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: "#d1fae5", color: C.success }}>
+                  ✓ Completed
                 </span>
-              </>
+              )}
+            </div>
+
+            {/* Order name */}
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.dark, marginBottom: 2 }}>{displayName}</div>
+
+            {/* Details */}
+            <div style={{ fontSize: 11, color: C.muted, display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+              {details.dose && <span>Dose: {details.dose}</span>}
+              {details.frequency && <span>· {details.frequency}</span>}
+              {details.route && <span>· {details.route}</span>}
+              {details.urgency && <span>Urgency: {details.urgency}</span>}
+              {details.procedureType && <span>Type: {details.procedureType}</span>}
+              {details.estimatedDuration && <span>· Est: {details.estimatedDuration}</span>}
+              {details.instructions && <span>· {details.instructions}</span>}
+            </div>
+
+            {/* Running flow text */}
+            <div style={{ fontSize: 10, color: C.muted, fontStyle: "italic", marginBottom: 2 }}>{flowText}</div>
+
+            {/* Meta */}
+            <div style={{ fontSize: 10, color: "#94a3b8", display: "flex", gap: 6, alignItems: "center" }}>
+              <span>By {order.orderedBy || "Doctor"}</span>
+              <span>·</span>
+              <span>{timeAgo(order.createdAt)}</span>
+              {order.consentStatus && order.consentStatus !== "NotRequired" && (
+                <span style={{ fontWeight: 700, color: order.consentStatus === "Obtained" ? C.success : C.amber }}>
+                  · Consent: {order.consentStatus}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Status chip + expand toggle */}
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, flexShrink: 0 }}>
+            <span style={{ fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: statusS.bg, color: statusS.color }}>
+              {order.status}
+            </span>
+            {(order.auditLog || []).length > 0 && (
+              <button onClick={() => setExpanded(p => !p)}
+                style={{ background: "none", border: "none", cursor: "pointer", fontSize: 10, color: C.muted, padding: 0 }}>
+                {expanded ? "▲ Hide log" : "▼ View log"}
+              </button>
             )}
           </div>
         </div>
 
-        {/* Status chip */}
-        <span style={{ fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: statusS.bg, color: statusS.color, flexShrink: 0 }}>
-          {order.status}
-        </span>
+        {/* ── Step buttons ── */}
+        {!allDone && (
+          <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            {steps.map((step, i) => {
+              const done = i < doneCount;
+              const isNext = i === doneCount;
+              return (
+                <button
+                  key={step}
+                  disabled={!isNext || !nurseName?.trim()}
+                  onClick={() => onStepDone(order._id, step, steps.length)}
+                  title={!nurseName?.trim() ? "Enter your name above first" : done ? "Already done" : ""}
+                  style={{
+                    padding: "5px 12px", fontSize: 11, fontWeight: 600,
+                    border: "none", borderRadius: 6, cursor: isNext && nurseName?.trim() ? "pointer" : "not-allowed",
+                    background: done ? "#d1fae5" : isNext ? typeColor : "#f1f5f9",
+                    color: done ? C.success : isNext ? "#fff" : "#94a3b8",
+                    opacity: done || isNext ? 1 : 0.5,
+                    transition: "all .15s",
+                    display: "flex", alignItems: "center", gap: 4,
+                  }}>
+                  {done ? <span>✓</span> : isNext ? <i className="pi pi-arrow-right" style={{ fontSize: 9 }} /> : null}
+                  {step}
+                </button>
+              );
+            })}
+
+            {needsConsent && (
+              <button onClick={() => onConsentRequest && onConsentRequest(order)}
+                style={{ padding: "5px 12px", fontSize: 11, fontWeight: 600, border: "none", borderRadius: 6, background: "#fce7f3", color: "#be185d", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+                <i className="pi pi-lock" style={{ fontSize: 10 }} /> Take Consent
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* Action buttons */}
-      <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
-        {order.status === "Pending" && (
-          <button onClick={() => onStatusChange(order._id, "Acknowledged")}
-            style={{ padding: "5px 12px", fontSize: 11, fontWeight: 600, border: "none", borderRadius: 6, background: "#dbeafe", color: "#1d4ed8", cursor: "pointer" }}>
-            Acknowledge
-          </button>
-        )}
-        {(order.status === "Pending" || order.status === "Acknowledged") && (
-          <button onClick={() => onStatusChange(order._id, "InProgress")}
-            style={{ padding: "5px 12px", fontSize: 11, fontWeight: 600, border: "none", borderRadius: 6, background: "#e0e7ff", color: "#4f46e5", cursor: "pointer" }}>
-            In Progress
-          </button>
-        )}
-        {order.status !== "Completed" && order.status !== "Cancelled" && (
-          <button onClick={() => onStatusChange(order._id, "Completed")}
-            style={{ padding: "5px 12px", fontSize: 11, fontWeight: 600, border: "none", borderRadius: 6, background: "#d1fae5", color: "#059669", cursor: "pointer" }}>
-            Complete
-          </button>
-        )}
-        {needsConsent && (
-          <button onClick={() => onConsentRequest && onConsentRequest(order)}
-            style={{ padding: "5px 12px", fontSize: 11, fontWeight: 600, border: "none", borderRadius: 6, background: "#fce7f3", color: "#be185d", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
-            <i className="pi pi-lock" style={{ fontSize: 10 }} /> Take Consent
-          </button>
-        )}
-      </div>
+      {/* ── Audit trail log (expandable) ── */}
+      {expanded && (order.auditLog || []).length > 0 && (
+        <div style={{ borderTop: `1px solid ${C.border}`, background: "#f8fafc", padding: "10px 14px" }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 6 }}>
+            Audit Trail
+          </div>
+          {(order.auditLog || []).map((entry, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 5 }}>
+              <div style={{ width: 20, height: 20, borderRadius: "50%", background: typeColor + "20", border: `1.5px solid ${typeColor}40`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 }}>
+                <span style={{ fontSize: 9, fontWeight: 800, color: typeColor }}>{i + 1}</span>
+              </div>
+              <div>
+                <span style={{ fontSize: 11, fontWeight: 600, color: C.dark }}>{entry.step}</span>
+                <span style={{ fontSize: 10, color: C.muted }}> by <b>{entry.doneBy}</b></span>
+                <span style={{ fontSize: 10, color: "#94a3b8" }}> @ {fmtTime(entry.doneAt)}</span>
+                {entry.notes && <div style={{ fontSize: 10, color: C.muted, fontStyle: "italic" }}>{entry.notes}</div>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
+// ── Main panel ────────────────────────────────────────────────────────────────
 export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest }) {
-  const [orders, setOrders] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [orders,      setOrders]      = useState([]);
+  const [loading,     setLoading]     = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
+  const [nurseName,   setNurseName]   = useState(() => {
+    try { const u = JSON.parse(localStorage.getItem("his_user") || "{}"); return u.fullName || u.name || ""; } catch { return ""; }
+  });
   const intervalRef = useRef(null);
 
   const fetchOrders = useCallback(async () => {
     if (!UHID) return;
     setLoading(true);
     try {
-      const params = new URLSearchParams({ status: "Pending,Acknowledged,InProgress" });
-      if (UHID) params.append("UHID", UHID);
+      const params = new URLSearchParams({ UHID, status: "Pending,Acknowledged,InProgress,Completed" });
       if (visitId) params.append("visitId", visitId);
-      const { data } = await axios.get(`${API_ENDPOINTS.DOCTOR_ORDERS}?${params.toString()}`);
+      const { data } = await axios.get(`${API_ENDPOINTS.DOCTOR_ORDERS}?${params}`);
       setOrders(data.data || []);
       setLastUpdated(new Date());
-    } catch (_) {
-      // silently ignore — nurse panel is non-critical
-    } finally {
-      setLoading(false);
-    }
+    } catch (_) {}
+    finally { setLoading(false); }
   }, [UHID, visitId]);
 
   useEffect(() => {
@@ -183,48 +272,50 @@ export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest }) {
     return () => clearInterval(intervalRef.current);
   }, [fetchOrders]);
 
-  const handleStatusChange = async (orderId, newStatus) => {
+  // Nurse completes a step
+  const handleStepDone = async (orderId, step, totalSteps) => {
+    if (!nurseName.trim()) return;
     try {
-      await axios.patch(`${API_ENDPOINTS.DOCTOR_ORDERS}/${orderId}`, { status: newStatus });
-      setOrders((prev) =>
-        prev.map((o) => (o._id === orderId ? { ...o, status: newStatus } : o))
+      const { data } = await axios.post(
+        `${API_ENDPOINTS.DOCTOR_ORDERS}/${orderId}/step`,
+        { step, doneBy: nurseName.trim(), totalSteps }
       );
-    } catch (_) {}
+      setOrders(prev => prev.map(o => o._id === orderId ? data.data : o));
+    } catch (_) {
+      // Optimistic update on failure
+      setOrders(prev => prev.map(o => {
+        if (o._id !== orderId) return o;
+        const newLog = [...(o.auditLog || []), { step, doneBy: nurseName, doneAt: new Date().toISOString() }];
+        const done = newLog.length >= totalSteps;
+        return { ...o, auditLog: newLog, currentStepIndex: newLog.length - 1, status: done ? "Completed" : "InProgress" };
+      }));
+    }
   };
 
-  // Group by type
-  const grouped = orders.reduce((acc, order) => {
-    const type = order.orderType || "Other";
-    if (!acc[type]) acc[type] = [];
-    acc[type].push(order);
-    return acc;
-  }, {});
-
-  const pendingCount = orders.filter((o) => o.status === "Pending").length;
+  // Group: active first, completed last
+  const active    = orders.filter(o => o.status !== "Completed" && o.status !== "Cancelled");
+  const completed = orders.filter(o => o.status === "Completed");
+  const pending   = active.filter(o => o.status === "Pending").length;
 
   return (
-    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, marginBottom: 20, overflow: "hidden", boxShadow: "0 1px 6px rgba(0,0,0,.05)" }}>
-      {/* Header */}
-      <div style={{ padding: "12px 18px", background: C.nurse + "08", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, marginBottom: 20, overflow: "hidden", boxShadow: "0 1px 8px rgba(0,0,0,.06)", fontFamily: "'DM Sans',sans-serif" }}>
+
+      {/* ── Header ── */}
+      <div style={{ padding: "12px 18px", background: "linear-gradient(90deg, #db277710, #7c3aed08)", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <i className="pi pi-list" style={{ fontSize: 14, color: C.nurse }} />
-          <span style={{ fontWeight: 700, fontSize: 13, color: C.nurse }}>Doctor Orders</span>
-          {pendingCount > 0 && (
-            <span style={{
-              background: C.danger, color: "#fff",
-              fontSize: 10, fontWeight: 800, padding: "2px 8px", borderRadius: 20,
-              animation: "pulse 1.5s infinite",
-            }}>
-              {pendingCount} Pending
+          <span style={{ fontWeight: 800, fontSize: 13, color: C.nurse }}>Doctor Orders</span>
+          {pending > 0 && (
+            <span style={{ background: C.danger, color: "#fff", fontSize: 10, fontWeight: 800, padding: "2px 9px", borderRadius: 20, animation: "npulse 1.5s infinite" }}>
+              {pending} New
             </span>
+          )}
+          {orders.length > 0 && (
+            <span style={{ fontSize: 11, color: C.muted }}>{orders.length} total · {completed.length} done</span>
           )}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          {lastUpdated && (
-            <span style={{ fontSize: 10, color: C.muted }}>
-              Updated {timeAgo(lastUpdated)}
-            </span>
-          )}
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {lastUpdated && <span style={{ fontSize: 10, color: C.muted }}>Updated {timeAgo(lastUpdated)}</span>}
           <button onClick={fetchOrders} disabled={loading}
             style={{ background: "none", border: `1px solid ${C.border}`, borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontSize: 11, color: C.muted, display: "flex", alignItems: "center", gap: 4 }}>
             <i className={`pi ${loading ? "pi-spin pi-spinner" : "pi-refresh"}`} style={{ fontSize: 11 }} />
@@ -233,6 +324,22 @@ export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest }) {
         </div>
       </div>
 
+      {/* ── Nurse name bar ── */}
+      <div style={{ padding: "10px 18px", borderBottom: `1px solid ${C.border}`, background: "#fffbf0", display: "flex", alignItems: "center", gap: 10 }}>
+        <i className="pi pi-user-edit" style={{ fontSize: 13, color: C.amber }} />
+        <label style={{ fontSize: 11, fontWeight: 600, color: C.muted, whiteSpace: "nowrap" }}>Nurse Name:</label>
+        <input
+          value={nurseName}
+          onChange={e => setNurseName(e.target.value)}
+          placeholder="Enter your name before taking action"
+          style={{ flex: 1, border: `1px solid ${C.border}`, borderRadius: 6, padding: "5px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark, background: "#fff" }}
+        />
+        {!nurseName.trim() && (
+          <span style={{ fontSize: 10, color: C.amber, fontWeight: 600, whiteSpace: "nowrap" }}>Required to act on orders</span>
+        )}
+      </div>
+
+      {/* ── Orders body ── */}
       <div style={{ padding: "14px 18px" }}>
         {!UHID ? (
           <div style={{ textAlign: "center", padding: "20px 0", color: C.muted, fontSize: 13 }}>
@@ -249,30 +356,48 @@ export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest }) {
             No active orders — Doctor has not placed any orders yet.
           </div>
         ) : (
-          Object.entries(grouped).map(([type, typeOrders]) => (
-            <div key={type} style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: TYPE_COLOR[type] || C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ width: 6, height: 6, borderRadius: "50%", background: TYPE_COLOR[type] || C.muted, display: "inline-block" }} />
-                {type} ({typeOrders.length})
+          <>
+            {/* Active orders */}
+            {active.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.dark, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 8 }}>
+                  Active Orders ({active.length})
+                </div>
+                {active.map(order => (
+                  <OrderCard
+                    key={order._id}
+                    order={order}
+                    nurseName={nurseName}
+                    onStepDone={handleStepDone}
+                    onConsentRequest={onConsentRequest}
+                  />
+                ))}
               </div>
-              {typeOrders.map((order) => (
-                <OrderCard
-                  key={order._id}
-                  order={order}
-                  onStatusChange={handleStatusChange}
-                  onConsentRequest={onConsentRequest}
-                />
-              ))}
-            </div>
-          ))
+            )}
+
+            {/* Completed orders (collapsed by default) */}
+            {completed.length > 0 && (
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.success, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 8 }}>
+                  ✓ Completed ({completed.length})
+                </div>
+                {completed.map(order => (
+                  <OrderCard
+                    key={order._id}
+                    order={order}
+                    nurseName={nurseName}
+                    onStepDone={handleStepDone}
+                    onConsentRequest={onConsentRequest}
+                  />
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
 
       <style>{`
-        @keyframes pulse {
-          0%,100% { opacity:1; }
-          50%      { opacity:.6; }
-        }
+        @keyframes npulse { 0%,100%{opacity:1} 50%{opacity:.5} }
       `}</style>
     </div>
   );

@@ -58,6 +58,17 @@ const DoctorOrderSchema = new mongoose.Schema({
     notes: String,
   },
 
+  // Step-based audit trail (matches NABH order workflow)
+  auditLog: [{
+    step:   { type: String, required: true },   // e.g. "Sample Collected"
+    doneBy: { type: String, required: true },   // nurse name
+    doneAt: { type: Date,   default: Date.now },
+    notes:  { type: String },
+  }],
+
+  // Tracks which step index has been completed (0 = none started)
+  currentStepIndex: { type: Number, default: -1 },
+
 }, { timestamps: true, collection: "doctor_orders" });
 
 DoctorOrderSchema.index({ UHID: 1, status: 1 });

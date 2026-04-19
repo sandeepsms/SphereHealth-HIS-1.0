@@ -66,6 +66,42 @@ router.patch("/:id", async (req, res) => {
   }
 });
 
+// POST /:id/step — nurse completes one workflow step, appended to auditLog
+// Body: { step, doneBy, notes, totalSteps }
+// Automatically sets status to InProgress or Completed when last step is done
+router.post("/:id/step", async (req, res) => {
+  try {
+    const { step, doneBy, notes, totalSteps } = req.body;
+    if (!step || !doneBy) return res.status(400).json({ success: false, message: "step and doneBy required" });
+
+    const logEntry = { step, doneBy, doneAt: new Date(), notes: notes || "" };
+
+    // Pull current order to know how many steps are done
+    const current = await DoctorOrder.findById(req.params.id);
+    if (!current) return res.status(404).json({ success: false, message: "Not found" });
+
+    const nextIndex = (current.currentStepIndex ?? -1) + 1;
+    const isLastStep = totalSteps && nextIndex >= totalSteps - 1;
+
+    const update = {
+      $push: { auditLog: logEntry },
+      $set: {
+        currentStepIndex: nextIndex,
+        status: isLastStep ? "Completed" : "InProgress",
+      },
+    };
+    if (isLastStep) {
+      update.$set.completedBy = doneBy;
+      update.$set.completedAt = new Date();
+    }
+
+    const order = await DoctorOrder.findByIdAndUpdate(req.params.id, update, { new: true });
+    res.json({ success: true, data: order });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
 // DELETE /:id — cancel order
 router.delete("/:id", async (req, res) => {
   try {
