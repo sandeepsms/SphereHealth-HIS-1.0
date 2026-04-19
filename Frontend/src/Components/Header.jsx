@@ -18,6 +18,7 @@ const MODULE_NAMES = {
   "/nursing-handover-notes": "Nursing Handover Notes",
   "/nursing-care-plan":      "Nursing Care Plan",
   "/doctor-assessment":      "Doctor Assessment & Order Entry",
+  "/opd-assessment":         "OPD Assessment",
   "/emergency-assessment":   "Emergency Assessment",
   "/ipd-assessment":              "IPD Initial Assessment",
   "/nurse-initial-assessment":    "Nursing Initial Assessment — NABH",

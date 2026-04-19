@@ -42,6 +42,7 @@ const investigationOrderRoutes = require("./Investigation/investigationOrderRout
 const nurseRoutes=require("./Nurse/nurseNotesRoutes");
 const nurseStaffRoutes = require("./Nurse/nurseStaffRoutes");
 const doctorNotesRoutes = require("./Doctor/doctorNotesRoutes");
+const doctorOrderRoutes = require("./Doctor/doctorOrderRoutes");
 const nursingChargesRoutes = require("./nursing/nursingChargesRoutes");
 const hospitalSettingsRoutes = require("../routes/hospitalSettingsRoutes");
 
@@ -75,6 +76,7 @@ router.use("/doctors", doctorRoutes);
 router.use("/nurse-notes",nurseRoutes);
 router.use("/nurse-staff", nurseStaffRoutes);
 router.use("/doctor-notes", doctorNotesRoutes);
+router.use("/doctor-orders", doctorOrderRoutes);
 
 router.use("/admissions", admissionRoutes);
 

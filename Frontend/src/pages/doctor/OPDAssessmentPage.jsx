@@ -11,6 +11,7 @@ import { useSearchParams, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-toastify";
 import API_ENDPOINTS from "../../config/api";
+import FingerprintConsentModal from "../../Components/clinical/FingerprintConsentModal";
 
 const C = {
   doctor: "#7c3aed", nurse: "#db2777", primary: "#1e40af",
@@ -120,6 +121,10 @@ export default function OPDAssessmentPage() {
   const [invests,  setInvests]  = useState([]);
   const [newInvest,setNewInvest]= useState({ name: "", urgency: "Routine", instructions: "" });
 
+  const [procedures,   setProcedures]   = useState([]);
+  const [newProc,      setNewProc]      = useState({ procedureName: "", procedureType: "Minor", consentRequired: true, estimatedDuration: "", notes: "" });
+  const [consentModal, setConsentModal] = useState({ open: false, order: null });
+
   const loadVisit = useCallback(async () => {
     if (!visitNumber) { setLoading(false); return; }
     try {
@@ -167,6 +172,26 @@ export default function OPDAssessmentPage() {
         ...soap,
         doctorName: user.fullName || user.name || "Doctor",
       });
+      // Push meds + investigations as DoctorOrders (bulk)
+      const baseOrder = {
+        UHID: visit?.UHID || uhid, visitId: visitNumber, visitType: "OPD",
+        patientName: visit?.patientName || "",
+        orderedBy: user.fullName || "Doctor", orderedByRole: "Doctor",
+      };
+      const medOrders = meds.filter(m => m.name && !m._orderId).map(m => ({
+        ...baseOrder, orderType: "Medication",
+        orderDetails: { medicineName: m.name, dose: m.dose, frequency: m.frequency, duration: m.duration, route: m.route || "Oral", displayName: m.name },
+        consentStatus: "NotRequired",
+      }));
+      const invOrders = invests.filter(i => i.name && !i._orderId).map(i => ({
+        ...baseOrder, orderType: "Investigation",
+        orderDetails: { testName: i.name, urgency: i.urgency || "Routine", instructions: i.instructions, displayName: i.name },
+        consentStatus: "NotRequired",
+        priority: i.urgency === "STAT" ? "STAT" : "Routine",
+      }));
+      if (medOrders.length + invOrders.length > 0) {
+        try { await axios.post(`${API_ENDPOINTS.BASE}/doctor-orders/bulk`, { orders: [...medOrders, ...invOrders] }); } catch (_) {}
+      }
       toast.success("Assessment saved — audit trail updated");
       loadVisit();
       setTimeout(loadAudit, 1500);
@@ -191,6 +216,30 @@ export default function OPDAssessmentPage() {
     setInvests(p => [...p, { ...newInvest, status: "Ordered" }]);
     setNewInvest({ name: "", urgency: "Routine", instructions: "" });
     toast.success("Investigation ordered");
+  };
+
+  const addProcedure = async () => {
+    if (!newProc.procedureName.trim()) return toast.warn("Procedure name required");
+    const order = {
+      UHID: visit?.UHID || uhid,
+      patientName: visit?.patientName || "",
+      visitId: visitNumber,
+      visitType: "OPD",
+      orderType: "Procedure",
+      orderDetails: { ...newProc, displayName: newProc.procedureName, consentRequired: newProc.consentRequired },
+      orderedBy: (() => { try { return JSON.parse(localStorage.getItem("his_user") || "{}").fullName || "Doctor"; } catch { return "Doctor"; } })(),
+      orderedByRole: "Doctor",
+      consentStatus: newProc.consentRequired ? "Pending" : "NotRequired",
+      priority: "Routine",
+    };
+    try {
+      const { data } = await axios.post(`${API_ENDPOINTS.BASE}/doctor-orders`, order);
+      setProcedures(p => [...p, { ...newProc, _id: data.data._id, consentStatus: order.consentStatus }]);
+    } catch {
+      setProcedures(p => [...p, { ...newProc, consentStatus: order.consentStatus }]);
+    }
+    setNewProc({ procedureName: "", procedureType: "Minor", consentRequired: true, estimatedDuration: "", notes: "" });
+    toast.success("Procedure added");
   };
 
   const vitals = visit?.vitals || {};
@@ -416,6 +465,66 @@ export default function OPDAssessmentPage() {
             )}
           </Card>
 
+          {/* Procedures */}
+          <Card title="Procedures" icon="pi-cog" color={C.nurse}>
+            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr auto auto", gap: 8, marginBottom: 12, alignItems: "center" }}>
+              <input value={newProc.procedureName} onChange={e => setNewProc(p => ({ ...p, procedureName: e.target.value }))}
+                placeholder="Procedure name *"
+                style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark }} />
+              <select value={newProc.procedureType} onChange={e => setNewProc(p => ({ ...p, procedureType: e.target.value }))}
+                style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark, background: C.card }}>
+                {["Minor","Major","Diagnostic","Therapeutic"].map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+              <input value={newProc.estimatedDuration} onChange={e => setNewProc(p => ({ ...p, estimatedDuration: e.target.value }))}
+                placeholder="Est. Duration"
+                style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark }} />
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: C.muted, whiteSpace: "nowrap", cursor: "pointer" }}>
+                <input type="checkbox" checked={newProc.consentRequired} onChange={e => setNewProc(p => ({ ...p, consentRequired: e.target.checked }))} />
+                Consent
+              </label>
+              <button onClick={addProcedure} style={{ background: C.nurse, color: "#fff", border: "none", borderRadius: 7, padding: "8px 14px", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
+                + Add
+              </button>
+            </div>
+            {procedures.length === 0 ? (
+              <p style={{ color: C.muted, fontSize: 12, margin: 0 }}>No procedures added.</p>
+            ) : (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead><tr style={{ background: C.bg }}>
+                  {["Procedure","Type","Duration","Consent Req.","Consent Status","Actions"].map(h => (
+                    <th key={h} style={{ textAlign: "left", padding: "6px 10px", fontWeight: 600, color: C.muted, borderBottom: `1px solid ${C.border}` }}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>{procedures.map((proc, i) => {
+                  const cs = proc.consentStatus || "NotRequired";
+                  const csStyle = { NotRequired: { bg: "#f1f5f9", color: C.muted }, Pending: { bg: "#fef3c7", color: C.warn }, Obtained: { bg: "#d1fae5", color: C.success }, Declined: { bg: "#fee2e2", color: C.danger } };
+                  const s = csStyle[cs] || csStyle.NotRequired;
+                  return (
+                    <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
+                      <td style={{ padding: "7px 10px", color: C.dark, fontWeight: 500 }}>{proc.procedureName}</td>
+                      <td style={{ padding: "7px 10px", color: C.muted }}>{proc.procedureType}</td>
+                      <td style={{ padding: "7px 10px", color: C.muted }}>{proc.estimatedDuration || "—"}</td>
+                      <td style={{ padding: "7px 10px" }}>{proc.consentRequired ? "Yes" : "No"}</td>
+                      <td style={{ padding: "7px 10px" }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: s.bg, color: s.color }}>
+                          {cs === "Obtained" ? "✓ Obtained" : cs}
+                        </span>
+                      </td>
+                      <td style={{ padding: "7px 10px" }}>
+                        <button
+                          disabled={!proc.consentRequired || cs === "Obtained"}
+                          onClick={() => setConsentModal({ open: true, order: { ...proc, orderDetails: { procedureName: proc.procedureName, procedureType: proc.procedureType, notes: proc.notes, consentRequired: proc.consentRequired } } })}
+                          style={{ padding: "4px 10px", fontSize: 11, fontWeight: 600, border: "none", borderRadius: 6, background: (!proc.consentRequired || cs === "Obtained") ? C.border : "#fce7f3", color: (!proc.consentRequired || cs === "Obtained") ? C.muted : "#be185d", cursor: (!proc.consentRequired || cs === "Obtained") ? "not-allowed" : "pointer" }}>
+                          Consent
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}</tbody>
+              </table>
+            )}
+          </Card>
+
         </div>
 
         {/* RIGHT: Patient Info + Audit */}
@@ -474,6 +583,35 @@ export default function OPDAssessmentPage() {
 
         </div>
       </div>
+
+      <FingerprintConsentModal
+        open={consentModal.open}
+        onClose={() => setConsentModal({ open: false, order: null })}
+        procedure={consentModal.order?.orderDetails}
+        patient={{ patientName: visit?.patientName, UHID: visit?.UHID || uhid, age: visit?.age, gender: visit?.gender }}
+        onConfirm={async (consentData) => {
+          if (consentModal.order?._id) {
+            try {
+              await axios.patch(`${API_ENDPOINTS.BASE}/doctor-orders/${consentModal.order._id}`, {
+                consentStatus: "Obtained",
+                "consentData.obtainedAt": consentData.obtainedAt,
+                "consentData.obtainedBy": consentData.obtainedBy,
+                "consentData.fingerprintHash": consentData.fingerprintHash,
+                "consentData.fingerprintVerified": consentData.fingerprintVerified,
+                "consentData.witnessName": consentData.witnessName,
+                "consentData.guardianName": consentData.guardianName,
+                "consentData.guardianRelation": consentData.guardianRelation,
+                "consentData.notes": consentData.notes,
+              });
+            } catch (_) {}
+          }
+          setProcedures(p => p.map(proc =>
+            proc._id === consentModal.order?._id ? { ...proc, consentStatus: "Obtained" } : proc
+          ));
+          setConsentModal({ open: false, order: null });
+          toast.success("Consent obtained and recorded");
+        }}
+      />
     </div>
   );
 }

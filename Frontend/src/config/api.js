@@ -65,6 +65,9 @@ export const API_ENDPOINTS = {
   NURSING_NOTES: `${API_BASE_URL}/nursing-notes`,
   NURSING_CHARGES: `${API_BASE_URL}/nursing-charges`,
 
+  // ── Doctor Orders ─────────────────────────────────────────────
+  DOCTOR_ORDERS: `${API_BASE_URL}/doctor-orders`,
+
   // ── OPD Clinical Actions ──────────────────────────────────────
   OPD_ASSESSMENT: (visitNumber) => `${API_BASE_URL}/opd/${visitNumber}/assessment`,
   OPD_AUDIT_TRAIL: (visitNumber) => `${API_BASE_URL}/opd/${visitNumber}/audit-trail`,

@@ -7,6 +7,8 @@ import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
+import NurseOrdersPanel from "../../Components/clinical/NurseOrdersPanel";
+import FingerprintConsentModal from "../../Components/clinical/FingerprintConsentModal";
 
 const API = API_ENDPOINTS.BASE;
 
@@ -557,9 +559,42 @@ function DailyNursingContent({ patient }) {
 
 export default function DailyNursingAssessmentPage() {
   const [patient, setPatient] = useState(null);
+  const [consentModal, setConsentModal] = useState({ open: false, order: null });
+
   return (
     <ClinicalLayout onPatientSelect={setPatient} selectedId={patient?._id} pageType="daily-nursing">
+      {patient && (
+        <NurseOrdersPanel
+          UHID={patient.UHID || patient.uhid}
+          visitId={patient.currentVisitId || patient.visitNumber}
+          onConsentRequest={(order) => setConsentModal({ open: true, order })}
+        />
+      )}
       <DailyNursingContent patient={patient} />
+      <FingerprintConsentModal
+        open={consentModal.open}
+        onClose={() => setConsentModal({ open: false, order: null })}
+        procedure={consentModal.order?.orderDetails}
+        patient={patient ? { patientName: patient.patientName || patient.name, UHID: patient.UHID || patient.uhid, age: patient.age, gender: patient.gender } : {}}
+        onConfirm={async (consentData) => {
+          if (consentModal.order?._id) {
+            try {
+              await axios.patch(`${API_ENDPOINTS.DOCTOR_ORDERS}/${consentModal.order._id}`, {
+                consentStatus: "Obtained",
+                "consentData.obtainedAt": consentData.obtainedAt,
+                "consentData.obtainedBy": consentData.obtainedBy,
+                "consentData.fingerprintHash": consentData.fingerprintHash,
+                "consentData.fingerprintVerified": consentData.fingerprintVerified,
+                "consentData.witnessName": consentData.witnessName,
+                "consentData.guardianName": consentData.guardianName,
+                "consentData.guardianRelation": consentData.guardianRelation,
+                "consentData.notes": consentData.notes,
+              });
+            } catch (_) {}
+          }
+          setConsentModal({ open: false, order: null });
+        }}
+      />
     </ClinicalLayout>
   );
 }
