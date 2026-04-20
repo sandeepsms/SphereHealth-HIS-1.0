@@ -6,6 +6,7 @@ import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import NurseOrdersPanel from "../../Components/clinical/NurseOrdersPanel";
+import TreatmentChart from "../../Components/clinical/TreatmentChart";
 import FingerprintConsentModal from "../../Components/clinical/FingerprintConsentModal";
 
 /* ── Design tokens ── */
@@ -54,6 +55,12 @@ const MODULES = [
   { id: "discharge", label: "Discharge / Handover",       icon: "pi-sign-out",                border: "#6ee7b7", color: C.green, bg: C.greenL },
   { id: "mews",      label: "MEWS Score",                 icon: "pi-chart-bar",               border: "#fbbf24", color: "#92400e", bg: "#fffbeb", dot: true },
   { id: "general",   label: "General Observation",        icon: "pi-file",                    border: "#d1d5db", color: "#374151", bg: C.grayL },
+  // ── Consolidated from sidebar ──
+  { id: "daily",     label: "Daily Assessment",           icon: "pi-calendar-plus",           border: "#bae6fd", color: "#0369a1", bg: "#e0f2fe" },
+  { id: "initial",   label: "Initial Assessment",         icon: "pi-clipboard",               border: "#f9a8d4", color: "#be185d", bg: "#fdf2f8" },
+  { id: "careplan",  label: "Care Plan",                  icon: "pi-heart-fill",              border: "#6ee7b7", color: "#065f46", bg: "#ecfdf5" },
+  { id: "nutrition", label: "Nutritional Assessment",     icon: "pi-apple",                   border: "#86efac", color: "#15803d", bg: "#dcfce7" },
+  { id: "education", label: "Patient Education",          icon: "pi-book",                    border: "#c4b5fd", color: "#6d28d9", bg: "#f5f3ff" },
 ];
 
 /* ── Note badge styles ── */
@@ -71,6 +78,11 @@ const NOTE_STYLE = {
   general:   { bg: C.grayL,  color: "#374151",  dot: C.gray     },
   discharge: { bg: C.greenL, color: C.green,    dot: C.green    },
   mews:      { bg: C.amberL, color: "#92400e",  dot: C.amber    },
+  daily:     { bg: "#e0f2fe", color: "#0369a1", dot: "#0ea5e9" },
+  initial:   { bg: "#fdf2f8", color: "#be185d", dot: "#ec4899" },
+  careplan:  { bg: "#ecfdf5", color: "#065f46", dot: "#10b981" },
+  nutrition: { bg: "#dcfce7", color: "#15803d", dot: "#22c55e" },
+  education: { bg: "#f5f3ff", color: "#6d28d9", dot: "#8b5cf6" },
 };
 
 const SHIFT_STYLE = {
@@ -95,6 +107,11 @@ const MODULE_TAGS = {
   discharge: ["Patient Educated", "Instructions Given", "Valuables Returned", "Handover Completed"],
   mews:      ["Doctor Alerted", "ICU Notified", "Rapid Response Called", "Vitals Rechecked", "Family Informed"],
   general:   ["Doctor Informed", "Family Informed", "Patient Comfortable", "Monitoring Continued"],
+  daily:     ["Systems Checked", "Vitals Stable", "Doctor Informed", "Interventions Completed", "Care Continued"],
+  initial:   ["Braden Scored", "Morse Fall Scored", "Psychosocial Assessed", "Care Plan Initiated", "Family Educated"],
+  careplan:  ["Problem Identified", "Goals Set", "Intervention Planned", "Goal Achieved", "Plan Revised"],
+  nutrition: ["NRS-2002 Completed", "Dietitian Referred", "Diet Modified", "Intake Adequate", "Patient Educated"],
+  education: ["Patient Understood", "Family Included", "Verbal Confirmation", "Follow-up Planned", "Materials Given"],
 };
 
 /* ── MEWS Scoring ── */
@@ -241,6 +258,74 @@ function NursingNotesContent({ selectedPatient }) {
   const [discharge, setDischarge] = useState({ type: "Shift Handover", situation: "", background: "", assessment: "", recommendation: "", incomingNurse: "", patientStatus: "Stable", educationGiven: false, educationTopics: "", followUpDate: "", valuablesHandedOver: false });
   const [mews,      setMews]      = useState({ rr: "", spo2: "", temp: "", sbp: "", hr: "", avpu: "A" });
 
+  /* ── New consolidated module state ── */
+  const [dailyAssess, setDailyAssess] = useState({
+    // Vitals snapshot
+    bp: "", pulse: "", temp: "", spo2: "", rr: "", bsl: "", gcs: "",
+    // System assessments
+    neuroStatus: "Alert & Oriented", respiratoryStatus: "Clear bilaterally", cardiovascularStatus: "Regular rate & rhythm",
+    giStatus: "Active bowel sounds", guStatus: "Urine output adequate", musculoskeletalStatus: "Moves all extremities", skinStatus: "Intact",
+    // Interventions (checklist)
+    intReposition: false, intOralCare: false, intPressureRelief: false, intRangeOfMotion: false,
+    intFallPrecautions: false, intCallBell: false, intMedAdministered: false, intWoundCare: false,
+    intIVCheck: false, intNGTCheck: false, intFoleyCheck: false, intOxygenCheck: false,
+    intPatientEducation: false, intFamilyUpdate: false, intDoctorNotified: false, intDocumented: false,
+  });
+  const [initialAssess, setInitialAssess] = useState({
+    // Admission details
+    admissionMode: "Planned", chiefComplaint: "", duration: "", historyOfIllness: "",
+    // Past history
+    pastMedical: "", pastSurgical: "", medications: "", allergies: "None", familyHistory: "",
+    // Systems review
+    respiratory: "Normal", cardiovascular: "Normal", gastrointestinal: "Normal",
+    genitourinary: "Normal", musculoskeletal: "Normal", neurological: "Normal",
+    // Vitals at admission
+    bp: "", pulse: "", temp: "", spo2: "", rr: "", weight: "", height: "",
+    // Braden (pressure ulcer risk)
+    b1: "4", b2: "4", b3: "4", b4: "4", b5: "4", b6: "3",
+    // Morse (fall risk)
+    m1: "0", m2: "0", m3: "0", m4: "0", m5: "0", m6: "0",
+    // Psychosocial
+    anxiety: "None", depression: "None", painLevel: "0", sleepPattern: "Normal",
+    cognition: "Intact", communication: "Verbal", religion: "", languageBarrier: false,
+    // Nutrition
+    nutritionStatus: "Adequate", appetiteStatus: "Normal", swallowing: "Normal",
+    // Discharge planning
+    dischargePlan: "Home", caregiverAvailable: true, caregiverName: "", specialNeeds: "",
+    // IV access
+    ivSite: "", ivType: "", ivDate: "", ivCondition: "Patent",
+  });
+  const [carePlan, setCarePlan] = useState({
+    problems: [{ id: Date.now(), statement: "", relatedTo: "", evidencedBy: "", priority: "High", goals: "", targetDate: "", interventions: "", evaluation: "", status: "Active" }],
+  });
+  const [nutrition, setNutrition] = useState({
+    // NRS-2002 Pre-screening
+    bmi: "", bmiLow: false, weightLoss: false, reducedIntake: false, seriouslyIll: false,
+    // NRS-2002 Nutritional status score
+    nutritionScore: "0", diseaseScore: "0", ageScore: false,
+    // Anthropometrics
+    weight: "", height: "", idealBodyWeight: "", actualWeightPercent: "", midArmCirc: "",
+    // Diet assessment
+    dietType: "Regular", consistency: "Normal", fluidRestriction: false, fluidLimit: "",
+    appetite: "Good", swallowing: "Normal", feedingMode: "Oral", ngtPresent: false,
+    // Intake
+    caloriesToday: "", proteinToday: "", fluidToday: "",
+    // Referral
+    dietitianReferral: false, referralReason: "",
+  });
+  const [education, setEducation] = useState({
+    date: new Date().toISOString().split("T")[0],
+    educator: "",
+    topics: [],
+    methods: [],
+    language: "Hindi",
+    understanding: "Good",
+    barriers: [],
+    response: "Positive",
+    sessionNotes: "",
+    nextSessionDate: "",
+  });
+
   /* ── Load equipment master catalogue once ── */
   useEffect(() => {
     (async () => {
@@ -345,6 +430,10 @@ function NursingNotesContent({ selectedPatient }) {
     setIV({ fluid: "NS 0.9%", volume: "", rate: "", dropsPerMin: "", route: "IV Right Forearm", site: "Patent", cannulaDate: "", setChangeDate: "", additive: "" });
     setIntake({ oral: "", ivFluids: "", bloodProducts: "", urineOutput: "", drainOutput: "", nasogastric: "", emesis: "", bloodLoss: "" });
     setMews({ rr: "", spo2: "", temp: "", sbp: "", hr: "", avpu: "A" });
+    setDailyAssess({ bp:"", pulse:"", temp:"", spo2:"", rr:"", bsl:"", gcs:"", neuroStatus:"Alert & Oriented", respiratoryStatus:"Clear bilaterally", cardiovascularStatus:"Regular rate & rhythm", giStatus:"Active bowel sounds", guStatus:"Urine output adequate", musculoskeletalStatus:"Moves all extremities", skinStatus:"Intact", intReposition:false, intOralCare:false, intPressureRelief:false, intRangeOfMotion:false, intFallPrecautions:false, intCallBell:false, intMedAdministered:false, intWoundCare:false, intIVCheck:false, intNGTCheck:false, intFoleyCheck:false, intOxygenCheck:false, intPatientEducation:false, intFamilyUpdate:false, intDoctorNotified:false, intDocumented:false });
+    setCarePlan({ problems: [{ id: Date.now(), statement:"", relatedTo:"", evidencedBy:"", priority:"High", goals:"", targetDate:"", interventions:"", evaluation:"", status:"Active" }] });
+    setNutrition({ bmi:"", bmiLow:false, weightLoss:false, reducedIntake:false, seriouslyIll:false, nutritionScore:"0", diseaseScore:"0", ageScore:false, weight:"", height:"", idealBodyWeight:"", actualWeightPercent:"", midArmCirc:"", dietType:"Regular", consistency:"Normal", fluidRestriction:false, fluidLimit:"", appetite:"Good", swallowing:"Normal", feedingMode:"Oral", ngtPresent:false, caloriesToday:"", proteinToday:"", fluidToday:"", dietitianReferral:false, referralReason:"" });
+    setEducation({ date: new Date().toISOString().split("T")[0], educator:"", topics:[], methods:[], language:"Hindi", understanding:"Good", barriers:[], response:"Positive", sessionNotes:"", nextSessionDate:"" });
   };
 
   const toggleTag = (t) => setSelectedTags(ts => ts.includes(t) ? ts.filter(x => x !== t) : [...ts, t]);
@@ -371,6 +460,11 @@ function NursingNotesContent({ selectedPatient }) {
     if (activeModal === "procedure") payload.procedure = procedure;
     if (activeModal === "discharge") payload.discharge = discharge;
     if (activeModal === "mews")      payload.mewsScore = { ...mews, total: calcMEWS(mews), band: mewsBand(calcMEWS(mews)).label };
+    if (activeModal === "daily")     payload.dailyAssessment = dailyAssess;
+    if (activeModal === "initial")   payload.initialAssessment = initialAssess;
+    if (activeModal === "careplan")  payload.carePlan = carePlan;
+    if (activeModal === "nutrition") payload.nutritionalAssessment = { ...nutrition, nrsTotal: (Number(nutrition.nutritionScore||0)+Number(nutrition.diseaseScore||0)+(nutrition.ageScore?1:0)) };
+    if (activeModal === "education") payload.patientEducation = education;
 
     setLoading(true);
     try {
@@ -528,6 +622,17 @@ function NursingNotesContent({ selectedPatient }) {
               visitId={patient.ipdNo || patient.admissionNumber || patient._id}
               refreshTrigger={ordersRefresh}
               onConsentRequest={(order) => setConsentOrder(order)}
+            />
+          </div>
+
+          {/* ── NABH Treatment Chart (Nurse Administration View) ── */}
+          <div style={{ marginBottom: 14 }}>
+            <TreatmentChart
+              UHID={patient.uhid || patient.UHID || searchUHID}
+              visitId={patient.ipdNo || patient.admissionNumber || patient._id}
+              patientName={patient.patientName || patient.patientId?.fullName || ""}
+              nurseMode={true}
+              refreshTrigger={ordersRefresh}
             />
           </div>
 
@@ -1800,6 +1905,471 @@ function NursingNotesContent({ selectedPatient }) {
 
               {/* ── General Observation (default free text only) ── */}
               {activeModal === "general" && null}
+
+              {/* ── Daily Assessment (NABH NS.4) ── */}
+              {activeModal === "daily" && (() => {
+                const SYSTEMS = [
+                  { k:"neuroStatus",         label:"Neuro / Consciousness" },
+                  { k:"respiratoryStatus",    label:"Respiratory" },
+                  { k:"cardiovascularStatus", label:"Cardiovascular" },
+                  { k:"giStatus",             label:"GI / Abdomen" },
+                  { k:"guStatus",             label:"GU / Urine Output" },
+                  { k:"musculoskeletalStatus",label:"Musculoskeletal / Mobility" },
+                  { k:"skinStatus",           label:"Skin / Wound" },
+                ];
+                const SYS_DEFAULTS = {
+                  neuroStatus: ["Alert & Oriented","Confused","Drowsy","Unresponsive","Sedated"],
+                  respiratoryStatus: ["Clear bilaterally","Rhonchi present","Crackles present","Wheeze","On O₂ support"],
+                  cardiovascularStatus: ["Regular rate & rhythm","Tachycardia","Bradycardia","Irregular","Oedema present"],
+                  giStatus: ["Active bowel sounds","Absent bowel sounds","Distension","Nausea/vomiting","NGT in situ"],
+                  guStatus: ["Urine output adequate","Reduced output","Foley catheter patent","Haematuria","Anuria"],
+                  musculoskeletalStatus: ["Moves all extremities","Reduced mobility","Bed-bound","Contractures","Oedema limbs"],
+                  skinStatus: ["Intact","Redness noted","Stage I pressure injury","Stage II pressure injury","Wound present"],
+                };
+                const INTERVENTIONS = [
+                  { k:"intReposition",       label:"Repositioning done" },
+                  { k:"intOralCare",         label:"Oral care given" },
+                  { k:"intPressureRelief",   label:"Pressure relief applied" },
+                  { k:"intRangeOfMotion",    label:"ROM exercises performed" },
+                  { k:"intFallPrecautions",  label:"Fall precautions active" },
+                  { k:"intCallBell",         label:"Call bell within reach" },
+                  { k:"intMedAdministered",  label:"Medications administered" },
+                  { k:"intWoundCare",        label:"Wound/dressing care done" },
+                  { k:"intIVCheck",          label:"IV site checked" },
+                  { k:"intNGTCheck",         label:"NGT position verified" },
+                  { k:"intFoleyCheck",       label:"Foley catheter patent" },
+                  { k:"intOxygenCheck",      label:"O₂ therapy check" },
+                  { k:"intPatientEducation", label:"Patient education given" },
+                  { k:"intFamilyUpdate",     label:"Family updated" },
+                  { k:"intDoctorNotified",   label:"Doctor notified" },
+                  { k:"intDocumented",       label:"Documentation complete" },
+                ];
+                return (
+                  <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+                    {/* Vitals snapshot */}
+                    <div style={{ background:"#f8fafc", borderRadius:10, padding:"12px 14px", border:`1px solid ${C.border}` }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>Vitals Snapshot</div>
+                      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8 }}>
+                        {[{k:"bp",label:"BP (mmHg)",ph:"120/80"},{k:"pulse",label:"Pulse (/min)",ph:"80"},{k:"temp",label:"Temp (°F)",ph:"98.6"},{k:"spo2",label:"SpO₂ (%)",ph:"98"},{k:"rr",label:"RR (/min)",ph:"16"},{k:"bsl",label:"BSL (mg/dL)",ph:"110"},{k:"gcs",label:"GCS",ph:"15"}].map(f=>(
+                          <FL key={f.k} label={f.label}>
+                            <input style={fld} value={dailyAssess[f.k]} placeholder={f.ph} onChange={e=>setDailyAssess(p=>({...p,[f.k]:e.target.value}))} />
+                          </FL>
+                        ))}
+                      </div>
+                    </div>
+                    {/* System assessments */}
+                    <div style={{ background:"#f8fafc", borderRadius:10, padding:"12px 14px", border:`1px solid ${C.border}` }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>Body Systems Assessment</div>
+                      <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                        {SYSTEMS.map(sys=>(
+                          <div key={sys.k} style={{ display:"grid", gridTemplateColumns:"160px 1fr", alignItems:"center", gap:10 }}>
+                            <label style={{ fontSize:12, fontWeight:600, color:C.text }}>{sys.label}</label>
+                            <select style={sel} value={dailyAssess[sys.k]} onChange={e=>setDailyAssess(p=>({...p,[sys.k]:e.target.value}))}>
+                              {SYS_DEFAULTS[sys.k].map(o=><option key={o}>{o}</option>)}
+                            </select>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    {/* Interventions checklist */}
+                    <div style={{ background:"#f8fafc", borderRadius:10, padding:"12px 14px", border:`1px solid ${C.border}` }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>Nursing Interventions</div>
+                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6 }}>
+                        {INTERVENTIONS.map(iv=>(
+                          <label key={iv.k} style={{ display:"flex", alignItems:"center", gap:7, fontSize:12, fontWeight:500, color:dailyAssess[iv.k]?C.primary:C.text, cursor:"pointer", padding:"4px 6px", borderRadius:6, background:dailyAssess[iv.k]?C.primaryL:"transparent" }}>
+                            <input type="checkbox" checked={dailyAssess[iv.k]} onChange={e=>setDailyAssess(p=>({...p,[iv.k]:e.target.checked}))} style={{ accentColor:C.primary, width:14, height:14 }} />
+                            {iv.label}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* ── Initial Assessment (NABH COP.1) ── */}
+              {activeModal === "initial" && (() => {
+                const bradenScore = calcBraden(initialAssess);
+                const morseScore  = calcMorse(initialAssess);
+                const bb = bradenBand(bradenScore);
+                const mb = morseBand(morseScore);
+                return (
+                  <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+                    {/* Admission Info */}
+                    <div style={{ background:"#f8fafc", borderRadius:10, padding:"12px 14px", border:`1px solid ${C.border}` }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>Admission Details</div>
+                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                        <FL label="Mode of Admission">
+                          <select style={sel} value={initialAssess.admissionMode} onChange={e=>setInitialAssess(p=>({...p,admissionMode:e.target.value}))}>
+                            {["Planned","Emergency","Transfer","OPD Referral"].map(o=><option key={o}>{o}</option>)}
+                          </select>
+                        </FL>
+                        <FL label="Chief Complaint">
+                          <input style={fld} value={initialAssess.chiefComplaint} placeholder="e.g. Chest pain" onChange={e=>setInitialAssess(p=>({...p,chiefComplaint:e.target.value}))} />
+                        </FL>
+                        <FL label="Duration of Complaint">
+                          <input style={fld} value={initialAssess.duration} placeholder="e.g. 2 days" onChange={e=>setInitialAssess(p=>({...p,duration:e.target.value}))} />
+                        </FL>
+                        <FL label="Allergies">
+                          <input style={fld} value={initialAssess.allergies} placeholder="None / NKDA" onChange={e=>setInitialAssess(p=>({...p,allergies:e.target.value}))} />
+                        </FL>
+                      </div>
+                      <div style={{ marginTop:10 }}>
+                        <FL label="History of Present Illness">
+                          <textarea style={{...ta,minHeight:56}} value={initialAssess.historyOfIllness} placeholder="Brief history..." onChange={e=>setInitialAssess(p=>({...p,historyOfIllness:e.target.value}))} />
+                        </FL>
+                      </div>
+                    </div>
+                    {/* Vitals at Admission */}
+                    <div style={{ background:"#f8fafc", borderRadius:10, padding:"12px 14px", border:`1px solid ${C.border}` }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>Vitals on Admission</div>
+                      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8 }}>
+                        {[{k:"bp",l:"BP",ph:"120/80"},{k:"pulse",l:"Pulse",ph:"80"},{k:"temp",l:"Temp°F",ph:"98.6"},{k:"spo2",l:"SpO₂%",ph:"98"},{k:"rr",l:"RR/min",ph:"16"},{k:"weight",l:"Weight kg",ph:"60"},{k:"height",l:"Height cm",ph:"165"}].map(f=>(
+                          <FL key={f.k} label={f.l}>
+                            <input style={fld} value={initialAssess[f.k]} placeholder={f.ph} onChange={e=>setInitialAssess(p=>({...p,[f.k]:e.target.value}))} />
+                          </FL>
+                        ))}
+                      </div>
+                    </div>
+                    {/* Braden Scale */}
+                    <div style={{ background:"#f8fafc", borderRadius:10, padding:"12px 14px", border:`1px solid ${C.border}` }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                        <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px" }}>Braden Scale — Pressure Ulcer Risk</div>
+                        <span style={{ background:bb.bg, color:bb.color, padding:"2px 10px", borderRadius:5, fontSize:11, fontWeight:700 }}>{bradenScore}/23 — {bb.label}</span>
+                      </div>
+                      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8 }}>
+                        {[
+                          {k:"b1",l:"Sensory Perception",opts:["1 – Completely Limited","2 – Very Limited","3 – Slightly Limited","4 – No Impairment"]},
+                          {k:"b2",l:"Moisture",opts:["1 – Constantly Moist","2 – Often Moist","3 – Occasionally Moist","4 – Rarely Moist"]},
+                          {k:"b3",l:"Activity",opts:["1 – Bedfast","2 – Chairfast","3 – Walks Occasionally","4 – Walks Frequently"]},
+                          {k:"b4",l:"Mobility",opts:["1 – Completely Immobile","2 – Very Limited","3 – Slightly Limited","4 – No Limitation"]},
+                          {k:"b5",l:"Nutrition",opts:["1 – Very Poor","2 – Probably Inadequate","3 – Adequate","4 – Excellent"]},
+                          {k:"b6",l:"Friction & Shear",opts:["1 – Problem","2 – Potential Problem","3 – No Apparent Problem"]},
+                        ].map(f=>(
+                          <FL key={f.k} label={f.l}>
+                            <select style={{...sel,fontSize:11}} value={initialAssess[f.k]} onChange={e=>setInitialAssess(p=>({...p,[f.k]:e.target.value}))}>
+                              {f.opts.map(o=><option key={o} value={o[0]}>{o}</option>)}
+                            </select>
+                          </FL>
+                        ))}
+                      </div>
+                    </div>
+                    {/* Morse Fall Scale */}
+                    <div style={{ background:"#f8fafc", borderRadius:10, padding:"12px 14px", border:`1px solid ${C.border}` }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                        <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px" }}>Morse Fall Scale</div>
+                        <span style={{ background:mb.bg, color:mb.color, padding:"2px 10px", borderRadius:5, fontSize:11, fontWeight:700 }}>{morseScore} — {mb.label}</span>
+                      </div>
+                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                        {[
+                          {k:"m1",l:"Fall History (last 3 months)",opts:[{v:"0",l:"No (0)"},{v:"25",l:"Yes (25)"}]},
+                          {k:"m2",l:"Secondary Diagnosis",opts:[{v:"0",l:"No (0)"},{v:"15",l:"Yes (15)"}]},
+                          {k:"m3",l:"Ambulatory Aid",opts:[{v:"0",l:"None/Bedrest/Wheelchair (0)"},{v:"15",l:"Crutches/Cane/Walker (15)"},{v:"30",l:"Furniture (30)"}]},
+                          {k:"m4",l:"IV / Hep-Lock",opts:[{v:"0",l:"No (0)"},{v:"20",l:"Yes (20)"}]},
+                          {k:"m5",l:"Gait",opts:[{v:"0",l:"Normal/Bedrest/Wheelchair (0)"},{v:"10",l:"Weak (10)"},{v:"20",l:"Impaired (20)"}]},
+                          {k:"m6",l:"Mental Status",opts:[{v:"0",l:"Oriented (0)"},{v:"15",l:"Overestimates ability (15)"}]},
+                        ].map(f=>(
+                          <FL key={f.k} label={f.l}>
+                            <select style={sel} value={initialAssess[f.k]} onChange={e=>setInitialAssess(p=>({...p,[f.k]:e.target.value}))}>
+                              {f.opts.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
+                            </select>
+                          </FL>
+                        ))}
+                      </div>
+                    </div>
+                    {/* Psychosocial */}
+                    <div style={{ background:"#f8fafc", borderRadius:10, padding:"12px 14px", border:`1px solid ${C.border}` }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>Psychosocial & Discharge Planning</div>
+                      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8 }}>
+                        {[
+                          {k:"anxiety",l:"Anxiety",opts:["None","Mild","Moderate","Severe"]},
+                          {k:"cognition",l:"Cognition",opts:["Intact","Mild Impairment","Moderate Impairment","Severe"]},
+                          {k:"painLevel",l:"Pain Score (0-10)",opts:["0","1","2","3","4","5","6","7","8","9","10"]},
+                          {k:"sleepPattern",l:"Sleep Pattern",opts:["Normal","Disturbed","Insomnia","Excessive"]},
+                          {k:"communication",l:"Communication",opts:["Verbal","Written","Non-verbal","Interpreter needed"]},
+                          {k:"dischargePlan",l:"Planned Discharge To",opts:["Home","Rehab","SNF","Transfer","Unknown"]},
+                        ].map(f=>(
+                          <FL key={f.k} label={f.l}>
+                            <select style={sel} value={initialAssess[f.k]} onChange={e=>setInitialAssess(p=>({...p,[f.k]:e.target.value}))}>
+                              {f.opts.map(o=><option key={o}>{o}</option>)}
+                            </select>
+                          </FL>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* ── Care Plan (NABH COP.8) ── */}
+              {activeModal === "careplan" && (() => {
+                const QUICK_TEMPLATES = [
+                  { statement:"Impaired gas exchange", relatedTo:"respiratory disease", interventions:"O₂ therapy, position, breathing exercises" },
+                  { statement:"Risk for pressure injury", relatedTo:"immobility", interventions:"Reposition 2-hourly, barrier cream, Braden monitoring" },
+                  { statement:"Acute pain", relatedTo:"surgical intervention", interventions:"Analgesics as ordered, non-pharmacological pain relief, reassess q4h" },
+                  { statement:"Risk for falls", relatedTo:"weakness/altered gait", interventions:"Bed rails up, call bell within reach, non-slip footwear, supervision" },
+                  { statement:"Imbalanced nutrition (less than requirements)", relatedTo:"decreased appetite", interventions:"Diet monitoring, encourage intake, dietitian referral" },
+                  { statement:"Fluid volume deficit", relatedTo:"vomiting/diarrhoea", interventions:"IV fluids as ordered, I/O monitoring, daily weight" },
+                  { statement:"Risk for infection", relatedTo:"invasive device/surgery", interventions:"Sterile technique, site monitoring, hand hygiene" },
+                  { statement:"Deficient knowledge", relatedTo:"new diagnosis", interventions:"Patient education on condition, medications, follow-up care" },
+                ];
+                const addProblem = () => setCarePlan(p=>({ problems:[...p.problems,{ id:Date.now(), statement:"", relatedTo:"", evidencedBy:"", priority:"High", goals:"", targetDate:"", interventions:"", evaluation:"", status:"Active" }] }));
+                const removeProblem = (id) => setCarePlan(p=>({ problems: p.problems.filter(pr=>pr.id!==id) }));
+                const updateProblem = (id,field,val) => setCarePlan(p=>({ problems: p.problems.map(pr=>pr.id===id?{...pr,[field]:val}:pr) }));
+                const applyTemplate = (tpl) => setCarePlan(p=>({ problems:[...p.problems,{ id:Date.now(), statement:tpl.statement, relatedTo:tpl.relatedTo, evidencedBy:"", priority:"High", goals:"Patient will improve within 24-48 hrs", targetDate:"", interventions:tpl.interventions, evaluation:"", status:"Active" }] }));
+                return (
+                  <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+                    {/* Quick templates */}
+                    <div style={{ background:"#f8fafc", borderRadius:10, padding:"12px 14px", border:`1px solid ${C.border}` }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:8 }}>Quick Templates</div>
+                      <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                        {QUICK_TEMPLATES.map((tpl,i)=>(
+                          <button key={i} onClick={()=>applyTemplate(tpl)}
+                            style={{ padding:"4px 10px", borderRadius:6, border:`1.5px solid #6ee7b7`, background:"white", color:"#065f46", fontSize:11, fontWeight:600, cursor:"pointer" }}
+                            onMouseEnter={e=>{e.currentTarget.style.background="#ecfdf5"}} onMouseLeave={e=>{e.currentTarget.style.background="white"}}>
+                            + {tpl.statement}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {/* Problems */}
+                    {carePlan.problems.map((prob,idx)=>(
+                      <div key={prob.id} style={{ background:"white", border:`1.5px solid ${C.border}`, borderRadius:10, padding:"14px 16px" }}>
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                          <div style={{ fontSize:12, fontWeight:700, color:C.text }}>Problem #{idx+1}</div>
+                          <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                            <select style={{...sel,maxWidth:100,fontSize:11,padding:"4px 8px"}} value={prob.priority} onChange={e=>updateProblem(prob.id,"priority",e.target.value)}>
+                              {["High","Medium","Low"].map(o=><option key={o}>{o}</option>)}
+                            </select>
+                            <select style={{...sel,maxWidth:100,fontSize:11,padding:"4px 8px"}} value={prob.status} onChange={e=>updateProblem(prob.id,"status",e.target.value)}>
+                              {["Active","Resolved","On Hold"].map(o=><option key={o}>{o}</option>)}
+                            </select>
+                            {carePlan.problems.length > 1 && (
+                              <button onClick={()=>removeProblem(prob.id)} style={{ width:24, height:24, borderRadius:6, border:`1px solid #fca5a5`, background:C.redL, color:C.red, cursor:"pointer", fontSize:14, display:"flex", alignItems:"center", justifyContent:"center" }}>×</button>
+                            )}
+                          </div>
+                        </div>
+                        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                          <FL label="Problem Statement"><input style={fld} value={prob.statement} placeholder="e.g. Impaired gas exchange" onChange={e=>updateProblem(prob.id,"statement",e.target.value)} /></FL>
+                          <FL label="Related To"><input style={fld} value={prob.relatedTo} placeholder="Underlying cause" onChange={e=>updateProblem(prob.id,"relatedTo",e.target.value)} /></FL>
+                          <FL label="Evidenced By"><input style={fld} value={prob.evidencedBy} placeholder="Signs / symptoms" onChange={e=>updateProblem(prob.id,"evidencedBy",e.target.value)} /></FL>
+                          <FL label="Target Date"><input type="date" style={fld} value={prob.targetDate} onChange={e=>updateProblem(prob.id,"targetDate",e.target.value)} /></FL>
+                        </div>
+                        <div style={{ marginTop:8, display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                          <FL label="Goals / Expected Outcomes"><textarea style={{...ta,minHeight:48}} value={prob.goals} placeholder="Patient will..." onChange={e=>updateProblem(prob.id,"goals",e.target.value)} /></FL>
+                          <FL label="Nursing Interventions"><textarea style={{...ta,minHeight:48}} value={prob.interventions} placeholder="Actions to take..." onChange={e=>updateProblem(prob.id,"interventions",e.target.value)} /></FL>
+                        </div>
+                        <div style={{ marginTop:8 }}>
+                          <FL label="Evaluation / Patient Response"><textarea style={{...ta,minHeight:40}} value={prob.evaluation} placeholder="Goal met / partially met / not met..." onChange={e=>updateProblem(prob.id,"evaluation",e.target.value)} /></FL>
+                        </div>
+                      </div>
+                    ))}
+                    <button onClick={addProblem}
+                      style={{ padding:"9px 20px", border:`1.5px dashed #6ee7b7`, borderRadius:9, background:"#f0fdf4", color:"#065f46", fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", gap:7, justifyContent:"center" }}>
+                      <i className="pi pi-plus" style={{ fontSize:12 }} /> Add Another Problem
+                    </button>
+                  </div>
+                );
+              })()}
+
+              {/* ── Nutritional Assessment (NRS-2002, NABH) ── */}
+              {activeModal === "nutrition" && (() => {
+                const nrsTotal = Number(nutrition.nutritionScore||0) + Number(nutrition.diseaseScore||0) + (nutrition.ageScore ? 1 : 0);
+                const nrsBand = nrsTotal >= 3 ? { label:"At Risk — Dietitian Referral Recommended", color:C.red, bg:C.redL } : nrsTotal >= 1 ? { label:"Borderline — Monitor Closely", color:C.amber, bg:C.amberL } : { label:"Not At Risk — Reassess Weekly", color:C.green, bg:C.greenL };
+                const preScreenFailed = nutrition.bmiLow || nutrition.weightLoss || nutrition.reducedIntake || nutrition.seriouslyIll;
+                return (
+                  <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+                    {/* NRS-2002 Pre-screening */}
+                    <div style={{ background:"#f8fafc", borderRadius:10, padding:"12px 14px", border:`1px solid ${C.border}` }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>NRS-2002 Pre-screening</div>
+                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                        {[
+                          {k:"bmiLow",l:"BMI < 20.5 kg/m²"},
+                          {k:"weightLoss",l:"Weight lost in past 3 months"},
+                          {k:"reducedIntake",l:"Food intake reduced in past week"},
+                          {k:"seriouslyIll",l:"Patient is seriously ill / ICU"},
+                        ].map(f=>(
+                          <label key={f.k} style={{ display:"flex", alignItems:"center", gap:7, fontSize:12, fontWeight:500, cursor:"pointer", padding:"6px 10px", borderRadius:7, background:nutrition[f.k]?C.amberL:"white", border:`1px solid ${nutrition[f.k]?C.amber:C.border}`, color:nutrition[f.k]?"#92400e":C.text }}>
+                            <input type="checkbox" checked={nutrition[f.k]} onChange={e=>setNutrition(p=>({...p,[f.k]:e.target.checked}))} style={{ accentColor:C.amber, width:14, height:14 }} />
+                            {f.l}
+                          </label>
+                        ))}
+                      </div>
+                      {!preScreenFailed && (
+                        <div style={{ marginTop:10, padding:"8px 12px", background:C.greenL, borderRadius:7, fontSize:12, fontWeight:600, color:C.green }}>
+                          <i className="pi pi-check-circle" style={{ marginRight:6, fontSize:12 }} />Pre-screening negative — no nutritional risk detected
+                        </div>
+                      )}
+                    </div>
+                    {/* NRS-2002 Full scoring */}
+                    {preScreenFailed && (
+                      <div style={{ background:"#f8fafc", borderRadius:10, padding:"12px 14px", border:`1.5px solid ${C.amber}30` }}>
+                        <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>NRS-2002 Full Scoring</div>
+                        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                          <FL label="Nutritional Status Score">
+                            <select style={sel} value={nutrition.nutritionScore} onChange={e=>setNutrition(p=>({...p,nutritionScore:e.target.value}))}>
+                              <option value="0">0 — Normal nutritional status</option>
+                              <option value="1">1 — Weight loss &gt;5% in 3 months / intake 50-75% of requirement</option>
+                              <option value="2">2 — Weight loss &gt;5% in 2 months / BMI 18.5-20.5 + impaired condition</option>
+                              <option value="3">3 — Weight loss &gt;5% in 1 month / BMI &lt;18.5 + impaired condition</option>
+                            </select>
+                          </FL>
+                          <FL label="Disease Severity Score">
+                            <select style={sel} value={nutrition.diseaseScore} onChange={e=>setNutrition(p=>({...p,diseaseScore:e.target.value}))}>
+                              <option value="0">0 — Normal requirements</option>
+                              <option value="1">1 — Hip fracture, chronic illness (COPD, DM, dialysis, cancer)</option>
+                              <option value="2">2 — Major abdominal surgery, stroke, severe pneumonia, haematology</option>
+                              <option value="3">3 — Head injury, bone marrow transplant, ICU (APACHE &gt;10)</option>
+                            </select>
+                          </FL>
+                        </div>
+                        <label style={{ display:"flex", alignItems:"center", gap:7, marginTop:10, fontSize:12, fontWeight:500, cursor:"pointer" }}>
+                          <input type="checkbox" checked={nutrition.ageScore} onChange={e=>setNutrition(p=>({...p,ageScore:e.target.checked}))} style={{ accentColor:C.amber, width:14, height:14 }} />
+                          Age ≥ 70 years (+1 point)
+                        </label>
+                        <div style={{ marginTop:12, padding:"10px 14px", background:nrsBand.bg, borderRadius:8, fontWeight:700, color:nrsBand.color, fontSize:13 }}>
+                          NRS-2002 Total: {nrsTotal} — {nrsBand.label}
+                        </div>
+                      </div>
+                    )}
+                    {/* Anthropometrics */}
+                    <div style={{ background:"#f8fafc", borderRadius:10, padding:"12px 14px", border:`1px solid ${C.border}` }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>Anthropometrics & Intake</div>
+                      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8 }}>
+                        {[{k:"weight",l:"Weight (kg)",ph:"60"},{k:"height",l:"Height (cm)",ph:"165"},{k:"midArmCirc",l:"Mid-Arm Circ. (cm)",ph:"28"},{k:"caloriesToday",l:"Calories Today (kcal)",ph:"1800"},{k:"proteinToday",l:"Protein (g)",ph:"60"},{k:"fluidToday",l:"Fluid Intake (ml)",ph:"2000"}].map(f=>(
+                          <FL key={f.k} label={f.l}>
+                            <input type="number" style={fld} value={nutrition[f.k]} placeholder={f.ph} onChange={e=>setNutrition(p=>({...p,[f.k]:e.target.value}))} />
+                          </FL>
+                        ))}
+                      </div>
+                    </div>
+                    {/* Diet & Feeding */}
+                    <div style={{ background:"#f8fafc", borderRadius:10, padding:"12px 14px", border:`1px solid ${C.border}` }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>Diet & Feeding</div>
+                      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8 }}>
+                        <FL label="Diet Type">
+                          <select style={sel} value={nutrition.dietType} onChange={e=>setNutrition(p=>({...p,dietType:e.target.value}))}>
+                            {["Regular","Soft","Semi-solid","Liquid","Clear Liquid","NPO","Diabetic","Low-sodium","Renal Diet","Cardiac Diet"].map(o=><option key={o}>{o}</option>)}
+                          </select>
+                        </FL>
+                        <FL label="Appetite">
+                          <select style={sel} value={nutrition.appetite} onChange={e=>setNutrition(p=>({...p,appetite:e.target.value}))}>
+                            {["Good","Fair","Poor","Anorexic"].map(o=><option key={o}>{o}</option>)}
+                          </select>
+                        </FL>
+                        <FL label="Swallowing">
+                          <select style={sel} value={nutrition.swallowing} onChange={e=>setNutrition(p=>({...p,swallowing:e.target.value}))}>
+                            {["Normal","Dysphagia — Mild","Dysphagia — Moderate","Dysphagia — Severe","NPO"].map(o=><option key={o}>{o}</option>)}
+                          </select>
+                        </FL>
+                        <FL label="Feeding Mode">
+                          <select style={sel} value={nutrition.feedingMode} onChange={e=>setNutrition(p=>({...p,feedingMode:e.target.value}))}>
+                            {["Oral","NGT","PEG","TPN","Combination"].map(o=><option key={o}>{o}</option>)}
+                          </select>
+                        </FL>
+                      </div>
+                      <label style={{ display:"flex", alignItems:"center", gap:7, marginTop:10, fontSize:12, fontWeight:600, cursor:"pointer", color:nutrition.dietitianReferral?C.primary:C.muted }}>
+                        <input type="checkbox" checked={nutrition.dietitianReferral} onChange={e=>setNutrition(p=>({...p,dietitianReferral:e.target.checked}))} style={{ accentColor:C.primary, width:14, height:14 }} />
+                        Refer to Dietitian
+                      </label>
+                      {nutrition.dietitianReferral && (
+                        <FL label="Reason for Referral" style={{ marginTop:8 }}>
+                          <textarea style={{...ta,minHeight:48}} value={nutrition.referralReason} placeholder="Reason..." onChange={e=>setNutrition(p=>({...p,referralReason:e.target.value}))} />
+                        </FL>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* ── Patient Education (NABH MOM.4) ── */}
+              {activeModal === "education" && (() => {
+                const ALL_TOPICS = ["Disease Process","Medications","Diet & Nutrition","Activity Restrictions","Wound Care","Infection Prevention","Pain Management","Fall Prevention","Equipment Use","Warning Signs","Follow-up Care","When to Seek Help","Discharge Instructions","Lifestyle Modification"];
+                const ALL_METHODS = ["Verbal","Demonstration","Pamphlet/Leaflet","Video","Return Demonstration","Group Education"];
+                const ALL_BARRIERS = ["Language","Low Literacy","Hearing Impairment","Vision Impairment","Cognitive Impairment","Anxiety","Cultural Beliefs","Denial","Pain","None"];
+                const toggle = (field, val) => setEducation(p => ({ ...p, [field]: p[field].includes(val) ? p[field].filter(x=>x!==val) : [...p[field], val] }));
+                return (
+                  <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+                      <FL label="Date">
+                        <input type="date" style={fld} value={education.date} onChange={e=>setEducation(p=>({...p,date:e.target.value}))} />
+                      </FL>
+                      <FL label="Educator Name">
+                        <input style={fld} value={education.educator} placeholder="Nurse name" onChange={e=>setEducation(p=>({...p,educator:e.target.value}))} />
+                      </FL>
+                      <FL label="Language of Education">
+                        <select style={sel} value={education.language} onChange={e=>setEducation(p=>({...p,language:e.target.value}))}>
+                          {["Hindi","English","Marathi","Bengali","Tamil","Telugu","Gujarati","Punjabi","Other"].map(o=><option key={o}>{o}</option>)}
+                        </select>
+                      </FL>
+                    </div>
+                    {/* Topics */}
+                    <div style={{ background:"#f8fafc", borderRadius:10, padding:"12px 14px", border:`1px solid ${C.border}` }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:8 }}>Topics Covered</div>
+                      <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                        {ALL_TOPICS.map(t=>{
+                          const sel2 = education.topics.includes(t);
+                          return (
+                            <button key={t} onClick={()=>toggle("topics",t)}
+                              style={{ padding:"4px 10px", borderRadius:5, fontSize:11, fontWeight:600, cursor:"pointer", border:`1.5px solid ${sel2?"#8b5cf6":C.border}`, background:sel2?"#f5f3ff":"white", color:sel2?"#6d28d9":C.muted, transition:"all .15s" }}>
+                              {sel2 && <i className="pi pi-check" style={{ fontSize:9, marginRight:4 }} />}{t}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    {/* Methods */}
+                    <div style={{ background:"#f8fafc", borderRadius:10, padding:"12px 14px", border:`1px solid ${C.border}` }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:8 }}>Teaching Methods</div>
+                      <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                        {ALL_METHODS.map(t=>{
+                          const sel2 = education.methods.includes(t);
+                          return (
+                            <button key={t} onClick={()=>toggle("methods",t)}
+                              style={{ padding:"4px 10px", borderRadius:5, fontSize:11, fontWeight:600, cursor:"pointer", border:`1.5px solid ${sel2?"#8b5cf6":C.border}`, background:sel2?"#f5f3ff":"white", color:sel2?"#6d28d9":C.muted, transition:"all .15s" }}>
+                              {sel2 && <i className="pi pi-check" style={{ fontSize:9, marginRight:4 }} />}{t}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    {/* Understanding & Response */}
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                      <FL label="Level of Understanding">
+                        <select style={sel} value={education.understanding} onChange={e=>setEducation(p=>({...p,understanding:e.target.value}))}>
+                          {["Excellent","Good","Fair","Poor","Unable to Assess"].map(o=><option key={o}>{o}</option>)}
+                        </select>
+                      </FL>
+                      <FL label="Patient Response">
+                        <select style={sel} value={education.response} onChange={e=>setEducation(p=>({...p,response:e.target.value}))}>
+                          {["Positive","Cooperative","Anxious","Resistant","Indifferent"].map(o=><option key={o}>{o}</option>)}
+                        </select>
+                      </FL>
+                    </div>
+                    {/* Barriers */}
+                    <div style={{ background:"#f8fafc", borderRadius:10, padding:"12px 14px", border:`1px solid ${C.border}` }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:8 }}>Learning Barriers</div>
+                      <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                        {ALL_BARRIERS.map(t=>{
+                          const sel2 = education.barriers.includes(t);
+                          return (
+                            <button key={t} onClick={()=>toggle("barriers",t)}
+                              style={{ padding:"4px 10px", borderRadius:5, fontSize:11, fontWeight:600, cursor:"pointer", border:`1.5px solid ${sel2?C.orange:C.border}`, background:sel2?C.orangeL:"white", color:sel2?C.orange:C.muted, transition:"all .15s" }}>
+                              {sel2 && <i className="pi pi-check" style={{ fontSize:9, marginRight:4 }} />}{t}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <FL label="Session Notes">
+                      <textarea style={{...ta,minHeight:56}} value={education.sessionNotes} placeholder="Additional observations, patient questions answered..." onChange={e=>setEducation(p=>({...p,sessionNotes:e.target.value}))} />
+                    </FL>
+                    <FL label="Next Education Session Date">
+                      <input type="date" style={{...fld,maxWidth:200}} value={education.nextSessionDate} onChange={e=>setEducation(p=>({...p,nextSessionDate:e.target.value}))} />
+                    </FL>
+                  </div>
+                );
+              })()}
 
               {/* ── Common: Notes + Tags ── */}
               <div style={{ marginTop: 16 }}>

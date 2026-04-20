@@ -5,6 +5,7 @@ import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import DoctorOrdersPanel from "../../Components/doctor/DoctorOrdersPanel";
+import TreatmentChart from "../../Components/clinical/TreatmentChart";
 
 /* ── Design tokens (blue/indigo — doctor theme) ── */
 const C = {
@@ -28,8 +29,41 @@ const sel = { ...fld, cursor: "pointer" };
 const ta  = { ...fld, resize: "vertical", minHeight: 78 };
 const lbl = { display: "block", fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 5 };
 
+/* ── NABH Medication Routes & Frequencies (from Medication Order Sheet) ── */
+const ROUTES = [
+  "IV","IV Infusion","IV Bolus","IM","SC","ID","PO","SL","Buccal","NG Tube","PEG Tube",
+  "Inhalation","Nebulization","Topical","Transdermal","Ophthalmic","Otic","Nasal","PR","PV",
+  "Intra-arterial","Intraosseous","Intrathecal","Epidural","Intraperitoneal","Intrapleural","Intra-articular",
+];
+const FREQ_TIMES = {
+  "OD":         ["08:00"],
+  "BD":         ["08:00","20:00"],
+  "TDS":        ["08:00","14:00","20:00"],
+  "QID":        ["06:00","12:00","18:00","00:00"],
+  "Q4H":        ["06:00","10:00","14:00","18:00","22:00","02:00"],
+  "Q6H":        ["06:00","12:00","18:00","00:00"],
+  "Q8H":        ["06:00","14:00","22:00"],
+  "Q12H":       ["08:00","20:00"],
+  "STAT":       ["Immediate"],
+  "SOS":        ["As Needed"],
+  "HS":         ["22:00"],
+  "Before Food":["Before Meals"],
+  "After Food": ["After Meals"],
+  "Weekly":     ["Once Weekly"],
+  "Continuous": ["Continuous Infusion"],
+};
+const FREQ_LIST = Object.keys(FREQ_TIMES);
+
+const emptyMedRow  = () => ({ id: Date.now() + Math.random(), datetime: new Date().toISOString().slice(0,16), drug:"", dose:"", route:"PO", frequency:"OD", indication:"", status:"Active", stopReason:"" });
+const emptyInfRow  = () => ({ id: Date.now() + Math.random(), datetime: new Date().toISOString().slice(0,16), type:"Fluid", drugFluid:"", dilution:"", volume:"", rate:"", titrationGoal:"", startTime:"", status:"Active", stopReason:"" });
+
 /* ── NABH Note Modules ── */
 const MODULES = [
+  // ── Priority top row ──
+  { id: "initial",     label: "Initial Assessment",    icon: "pi-clipboard",           border: "#fbbf24", color: "#92400e", bg: "#fffbeb", priority: true },
+  { id: "medication",  label: "Medication Orders",     icon: "pi-tablet",              border: "#93c5fd", color: C.blue,   bg: C.blueL   },
+  { id: "infusion",    label: "Infusion Orders",       icon: "pi-plus-circle",         border: "#99f6e4", color: C.teal,   bg: C.tealL   },
+  // ── Notes ──
   { id: "daily",       label: "Daily Progress",       icon: "pi-file-edit",           border: C.blueB,   color: C.blue,   bg: C.blueL   },
   { id: "icu",         label: "ICU / Critical Care",   icon: "pi-heart",               border: C.redB,    color: C.red,    bg: C.redL,    dot: true },
   { id: "procedure",   label: "Procedure Note",        icon: "pi-cog",                 border: C.orangeB, color: C.orange, bg: C.orangeL },
@@ -41,6 +75,9 @@ const MODULES = [
 ];
 
 const NOTE_STYLE = {
+  initial:      { bg: "#fffbeb", color: "#92400e", dot: "#f59e0b" },
+  medication:   { bg: C.blueL,  color: C.blue,   dot: C.blue   },
+  infusion:     { bg: C.tealL,  color: C.teal,   dot: C.teal   },
   daily:        { bg: C.blueL,   color: C.blue,   dot: C.blue   },
   icu:          { bg: C.redL,    color: C.red,    dot: C.red    },
   procedure:    { bg: C.orangeL, color: C.orange, dot: C.orange },
@@ -59,6 +96,9 @@ const SHIFT_STYLE = {
 };
 
 const MODULE_TAGS = {
+  initial:      ["Initial Assessment Complete", "Braden Scored", "Morse Scored", "Allergies Documented", "Care Plan Initiated"],
+  medication:   ["STAT Order", "New Medication", "Dose Changed", "Medication Stopped", "Allergy Checked"],
+  infusion:     ["IV Access Confirmed", "Infusion Started", "Rate Changed", "Infusion Stopped", "Monitoring Active"],
   daily:        ["Stable", "Improving", "Deteriorating", "Critical", "Doctor Review Done", "Informed Family"],
   icu:          ["Ventilated", "Weaning Initiated", "Extubated", "Vasopressors On", "Goals Met", "Family Counselled"],
   procedure:    ["Consent Obtained", "Aseptic Technique", "Patient Tolerated", "Specimen Sent", "Complication Noted"],
@@ -115,6 +155,44 @@ function DoctorNotesContent({ selectedPatient }) {
   const [isCritical,   setIsCritical]   = useState(false);
   const [ordersRefresh, setOrdersRefresh] = useState(0);
 
+  /* ── Recently admitted patients panel ── */
+  const [recentPatients,   setRecentPatients]   = useState([]);
+  const [recentLoading,    setRecentLoading]    = useState(false);
+  const [recentSearch,     setRecentSearch]     = useState("");
+
+  /* ── Assessment gate ── */
+  const assessmentDone = notes.some(n => n.noteType === "initial" && n.status === "signed");
+  const isNewAdmission = patient ? (() => {
+    const admDate = patient.admissionDate || patient.createdAt;
+    if (!admDate) return false;
+    const hours = (Date.now() - new Date(admDate).getTime()) / 3600000;
+    return hours < 48; // < 48hrs = new admission requiring initial assessment
+  })() : false;
+  const gateActive = isNewAdmission && !assessmentDone;
+
+  /* ── NABH Medication Order Sheet state ── */
+  const [medOrders,  setMedOrders]  = useState([emptyMedRow()]);
+  /* ── NABH Infusion Order Sheet state ── */
+  const [infOrders,  setInfOrders]  = useState([emptyInfRow()]);
+
+  /* ── Initial Assessment form state ── */
+  const [initAssess, setInitAssess] = useState({
+    // Admission
+    admissionMode:"Planned", chiefComplaint:"", duration:"", hpi:"",
+    // Past history
+    pastMedical:"", pastSurgical:"", familyHistory:"", socialHistory:"", currentMeds:"", allergies:"NKDA",
+    // Vitals on admission
+    bp:"", pulse:"", temp:"", spo2:"", rr:"", weight:"", height:"", bsl:"",
+    // Examination
+    generalCondition:"Conscious & Oriented", builtNutrition:"Average", pallor:"Absent", icterus:"Absent", cyanosis:"Absent", clubbing:"Absent", lymphadenopathy:"Absent", oedema:"Absent",
+    // Systems
+    resp:"Normal vesicular breath sounds bilaterally", cvs:"S1 S2 heard, no murmur", abdomen:"Soft, non-tender, no organomegaly", cns:"Conscious, oriented to time place person",
+    // Diagnosis
+    provisionalDx:"", differentialDx:"", finalDx:"", icd10:"",
+    // Plan
+    investigations:"", managementPlan:"",
+  });
+
   /* Doctor info from auth */
   const doctorName = user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim() || "Dr. —";
   const doctorRegNo = user?.doctorDetails?.registrationNumber || user?.registrationNumber || "";
@@ -124,6 +202,19 @@ function DoctorNotesContent({ selectedPatient }) {
   useEffect(() => {
     if (selectedPatient?.UHID) setSearchUHID(selectedPatient.UHID);
   }, [selectedPatient]);
+
+  /* Fetch recently admitted patients on mount */
+  useEffect(() => {
+    (async () => {
+      setRecentLoading(true);
+      try {
+        const { data } = await axios.get(`${API_ENDPOINTS.ADMISSIONS}/active`);
+        const arr = Array.isArray(data) ? data : (data.data || []);
+        setRecentPatients(arr.sort((a, b) => new Date(b.admissionDate || b.createdAt) - new Date(a.admissionDate || a.createdAt)));
+      } catch { /* silent */ }
+      finally { setRecentLoading(false); }
+    })();
+  }, []);
 
   /* ── Module form state ── */
   const initSoap = () => ({ subjective: "", objective: "", assessment: "", plan: "" });
@@ -188,12 +279,22 @@ function DoctorNotesContent({ selectedPatient }) {
   };
 
   const openModal = (id) => {
+    // Workflow gate: if new admission and initial not done, only allow initial assessment
+    if (gateActive && id !== "initial") {
+      toast.warn("⚠ Initial Assessment must be completed and signed before adding other notes", { autoClose: 4000 });
+      setActiveModal("initial");
+      return;
+    }
     setActiveModal(id);
     setSelectedTags([]); setIsCritical(false); setShowOrderRow(false);
     setSoap(initSoap()); setVitals(initVitals());
     setDiag({ provisional: "", final: "", icd10: "", status: "Stable" });
     setInvx(""); setOrders([]);
     setOrderRow({ type: "medication", instruction: "", dose: "", route: "Oral", frequency: "TDS", duration: "3 days", notes: "", priority: "ROUTINE" });
+    // Reset medication / infusion sheets when opening those modals
+    if (id === "medication") setMedOrders([emptyMedRow()]);
+    if (id === "infusion")   setInfOrders([emptyInfRow()]);
+    if (id === "initial")    setInitAssess(p => ({ ...p, bp:"", pulse:"", temp:"", spo2:"", rr:"", weight:"", height:"", bsl:"", chiefComplaint:"", duration:"", hpi:"", provisionalDx:"", differentialDx:"", finalDx:"", icd10:"", investigations:"", managementPlan:"" }));
   };
 
   const toggleTag = (t) => setSelectedTags(ts => ts.includes(t) ? ts.filter(x => x !== t) : [...ts, t]);
@@ -243,6 +344,9 @@ function DoctorNotesContent({ selectedPatient }) {
                  : activeModal === "postop"      ? postop
                  : activeModal === "death"       ? death
                  : activeModal === "amendment"   ? amendment
+                 : activeModal === "initial"     ? { ...initAssess, medicationOrders: medOrders, infusionOrders: infOrders }
+                 : activeModal === "medication"  ? { medicationOrders: medOrders }
+                 : activeModal === "infusion"    ? { infusionOrders: infOrders }
                  : {},
     };
 
@@ -294,17 +398,76 @@ function DoctorNotesContent({ selectedPatient }) {
         </div>
       </div>
 
-      {/* ── Patient Search ── */}
+      {/* ── Recently Admitted Patients Panel ── */}
+      <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden", marginBottom: 14 }}>
+        <div style={{ padding: "10px 20px", borderBottom: `1px solid ${C.border}`, background: "#f8fafc", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ width: 26, height: 26, borderRadius: 6, background: C.primary + "18", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <i className="pi pi-users" style={{ color: C.primary, fontSize: 12 }} />
+            </span>
+            <span style={{ fontWeight: 700, fontSize: 12, textTransform: "uppercase", letterSpacing: ".8px", color: C.muted }}>Active IPD Patients</span>
+            <span style={{ background: C.primary, color: "white", padding: "1px 8px", borderRadius: 8, fontSize: 10, fontWeight: 700 }}>{recentPatients.length}</span>
+          </div>
+          <input value={recentSearch} onChange={e=>setRecentSearch(e.target.value.toUpperCase())} placeholder="Search name / UHID…"
+            style={{ ...fld, maxWidth: 220, padding: "5px 10px", fontSize: 11 }} />
+        </div>
+        <div style={{ padding: "10px 14px", display: "flex", gap: 8, overflowX: "auto", alignItems: "stretch", minHeight: 80 }}>
+          {recentLoading ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, color: C.muted, fontSize: 12, flex: 1, justifyContent: "center" }}>
+              <i className="pi pi-spin pi-spinner" style={{ fontSize: 16 }} /> Loading patients…
+            </div>
+          ) : recentPatients.filter(p => {
+            if (!recentSearch) return true;
+            const s = recentSearch.toLowerCase();
+            return (p.patientName||p.patientId?.fullName||"").toLowerCase().includes(s) || (p.UHID||p.uhid||"").toLowerCase().includes(s);
+          }).length === 0 ? (
+            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: C.muted, fontSize: 12 }}>
+              <i className="pi pi-inbox" style={{ marginRight: 6, fontSize: 14 }} /> No active IPD admissions
+            </div>
+          ) : recentPatients.filter(p => {
+            if (!recentSearch) return true;
+            const s = recentSearch.toLowerCase();
+            return (p.patientName||p.patientId?.fullName||"").toLowerCase().includes(s) || (p.UHID||p.uhid||"").toLowerCase().includes(s);
+          }).map(rp => {
+            const isSelected = patient && (patient._id === rp._id || patient.UHID === rp.UHID);
+            const admHours = rp.admissionDate ? Math.floor((Date.now() - new Date(rp.admissionDate)) / 3600000) : null;
+            const isNew = admHours !== null && admHours < 48;
+            return (
+              <button key={rp._id} onClick={() => { setSearchUHID(rp.UHID || rp.uhid || ""); setPatient(rp); fetchNotes(rp.ipdNo || rp.admissionNumber || rp._id); toast.success(`Loaded: ${rp.patientName || rp.patientId?.fullName || "Patient"}`); }}
+                style={{ flexShrink: 0, width: 176, padding: "10px 12px", border: `2px solid ${isSelected ? C.primary : isNew ? "#fbbf24" : C.border}`, borderRadius: 10, background: isSelected ? C.primaryL : isNew ? "#fffbeb" : "white", cursor: "pointer", textAlign: "left", position: "relative", transition: "all .15s" }}
+                onMouseEnter={e => { if (!isSelected) e.currentTarget.style.borderColor = C.primary + "80"; }}
+                onMouseLeave={e => { if (!isSelected) e.currentTarget.style.borderColor = isNew ? "#fbbf24" : C.border; }}>
+                {isNew && <span style={{ position: "absolute", top: 6, right: 6, background: "#f59e0b", color: "white", fontSize: 8, fontWeight: 800, padding: "1px 5px", borderRadius: 3, letterSpacing: ".5px" }}>NEW</span>}
+                {isSelected && <span style={{ position: "absolute", top: 6, right: 6, background: C.primary, color: "white", fontSize: 8, fontWeight: 800, padding: "1px 5px", borderRadius: 3 }}>ACTIVE</span>}
+                <div style={{ fontWeight: 700, fontSize: 12, color: isSelected ? C.primary : C.text, marginBottom: 3, paddingRight: 36, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {rp.patientName || rp.patientId?.fullName || "Patient"}
+                </div>
+                <div style={{ fontFamily: "monospace", fontSize: 10, color: C.muted, marginBottom: 4 }}>{rp.UHID || rp.uhid}</div>
+                <div style={{ fontSize: 10, color: C.muted }}>
+                  {rp.wardName ? `${rp.wardName} · ` : ""}{rp.bedNumber ? `Bed ${rp.bedNumber}` : ""}
+                </div>
+                {admHours !== null && (
+                  <div style={{ fontSize: 9, color: isNew ? "#92400e" : C.muted, fontWeight: isNew ? 700 : 400, marginTop: 3 }}>
+                    Admitted {admHours < 24 ? `${admHours}h ago` : `${Math.floor(admHours/24)}d ago`}
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── Patient Search (fallback manual) ── */}
       {!patient ? (
-        <div style={{ maxWidth: 560, margin: "0 auto", paddingTop: 8 }}>
-          <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 14, padding: "28px", boxShadow: "0 4px 24px rgba(0,0,0,.06)" }}>
+        <div style={{ maxWidth: 560, margin: "0 auto", paddingTop: 4 }}>
+          <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 14, padding: "24px 28px", boxShadow: "0 4px 24px rgba(0,0,0,.06)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
               <div style={{ width: 36, height: 36, borderRadius: 9, background: C.primaryL, display: "flex", alignItems: "center", justifyContent: "center" }}>
                 <i className="pi pi-user-plus" style={{ fontSize: 16, color: C.primary }} />
               </div>
               <div>
                 <div style={{ fontWeight: 700, fontSize: 15, color: C.slate }}>Load Patient</div>
-                <div style={{ color: C.muted, fontSize: 12 }}>Enter UHID or Admission No to begin</div>
+                <div style={{ color: C.muted, fontSize: 12 }}>Select from above or enter UHID manually</div>
               </div>
             </div>
             <div style={{ height: 1, background: C.border, margin: "16px 0" }} />
@@ -365,6 +528,32 @@ function DoctorNotesContent({ selectedPatient }) {
             </div>
           </div>
 
+          {/* ── Assessment Gate Banner ── */}
+          {gateActive && (
+            <div style={{ background: "#fffbeb", border: "2px solid #fbbf24", borderRadius: 12, padding: "14px 20px", marginBottom: 14, display: "flex", alignItems: "center", gap: 14 }}>
+              <div style={{ width: 40, height: 40, borderRadius: 10, background: "#fef3c7", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <i className="pi pi-exclamation-triangle" style={{ fontSize: 18, color: "#d97706" }} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 800, fontSize: 14, color: "#92400e" }}>Initial Assessment Required — NABH COP.1</div>
+                <div style={{ fontSize: 12, color: "#a16207", marginTop: 3 }}>
+                  This patient was admitted within 48 hours. Doctor's Initial Assessment must be completed and signed before adding other clinical notes, medication orders, or infusion orders.
+                </div>
+              </div>
+              <button onClick={() => openModal("initial")}
+                style={{ padding: "9px 20px", background: "#d97706", color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", boxShadow: "0 4px 12px #d9770630" }}>
+                <i className="pi pi-clipboard" style={{ marginRight: 6, fontSize: 12 }} />
+                Do Initial Assessment
+              </button>
+            </div>
+          )}
+          {!gateActive && assessmentDone && (
+            <div style={{ background: "#f0fdf4", border: "1.5px solid #bbf7d0", borderRadius: 10, padding: "9px 16px", marginBottom: 14, display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#15803d", fontWeight: 600 }}>
+              <i className="pi pi-check-circle" style={{ fontSize: 14 }} />
+              Initial Assessment completed &amp; signed — full documentation access unlocked
+            </div>
+          )}
+
           {/* ── Doctor Orders Panel ── */}
           <DoctorOrdersPanel
             UHID={patient?.UHID || patient?.uhid || searchUHID}
@@ -373,6 +562,17 @@ function DoctorNotesContent({ selectedPatient }) {
             patientName={patient?.patientName || patient?.patientId?.fullName || ""}
             refreshSignal={ordersRefresh}
           />
+
+          {/* ── NABH Treatment Chart (Doctor Full View) ── */}
+          <div style={{ marginBottom: 14 }}>
+            <TreatmentChart
+              UHID={patient?.UHID || patient?.uhid || searchUHID}
+              visitId={patient?.ipdNo || patient?.admissionNumber || patient?.visitId}
+              patientName={patient?.patientName || patient?.patientId?.fullName || ""}
+              nurseMode={false}
+              refreshTrigger={ordersRefresh}
+            />
+          </div>
 
           {/* ── Shift Selector ── */}
           <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: "12px 20px", marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -399,18 +599,43 @@ function DoctorNotesContent({ selectedPatient }) {
               <span style={{ width: 26, height: 26, borderRadius: 6, background: C.primary + "18", display: "flex", alignItems: "center", justifyContent: "center" }}>
                 <i className="pi pi-plus-circle" style={{ color: C.primary, fontSize: 12 }} />
               </span>
-              <span style={{ fontWeight: 700, fontSize: 12, textTransform: "uppercase", letterSpacing: ".8px", color: C.muted }}>Add Doctor Note — NABH</span>
+              <span style={{ fontWeight: 700, fontSize: 12, textTransform: "uppercase", letterSpacing: ".8px", color: C.muted }}>Clinical Documentation — NABH</span>
             </div>
-            <div style={{ padding: "14px 18px", display: "flex", flexWrap: "wrap", gap: 8 }}>
-              {MODULES.map(m => (
-                <button key={m.id} onClick={() => openModal(m.id)}
-                  style={{ display: "flex", alignItems: "center", gap: 7, padding: "8px 14px", borderRadius: 9, border: `1.5px solid ${m.border}`, fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 600, cursor: "pointer", background: "white", color: m.color, transition: "all .2s", position: "relative" }}
-                  onMouseEnter={e => { e.currentTarget.style.background = m.bg; e.currentTarget.style.transform = "translateY(-1px)"; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = "white"; e.currentTarget.style.transform = "none"; }}>
-                  <i className={`pi ${m.icon}`} style={{ fontSize: 13 }} />{m.label}
-                  {m.dot && <span style={{ position: "absolute", top: -4, right: -4, width: 8, height: 8, background: m.color, borderRadius: "50%", border: "2px solid white" }} />}
-                </button>
-              ))}
+
+            {/* Priority modules row */}
+            <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, background: "#fffbeb", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: "#92400e", textTransform: "uppercase", letterSpacing: ".6px", whiteSpace: "nowrap" }}>Required / Treatment:</span>
+              {MODULES.filter(m => m.priority || m.id === "medication" || m.id === "infusion").map(m => {
+                const locked = gateActive && m.id !== "initial";
+                return (
+                  <button key={m.id} onClick={() => openModal(m.id)}
+                    style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 16px", borderRadius: 9, border: `2px solid ${locked ? C.border : m.border}`, fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, cursor: "pointer", background: locked ? "#f1f5f9" : (m.id === "initial" && gateActive ? "#fef3c7" : "white"), color: locked ? C.muted : m.color, transition: "all .2s", position: "relative", opacity: locked ? 0.6 : 1 }}
+                    onMouseEnter={e => { if (!locked) { e.currentTarget.style.background = m.bg; e.currentTarget.style.transform = "translateY(-1px)"; } }}
+                    onMouseLeave={e => { if (!locked) { e.currentTarget.style.background = m.id === "initial" && gateActive ? "#fef3c7" : "white"; e.currentTarget.style.transform = "none"; } }}>
+                    <i className={`pi ${locked ? "pi-lock" : m.icon}`} style={{ fontSize: 13 }} />
+                    {m.label}
+                    {m.id === "initial" && gateActive && <span style={{ marginLeft: 4, background: "#d97706", color: "white", fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 3 }}>REQUIRED</span>}
+                    {m.id === "initial" && assessmentDone && <span style={{ marginLeft: 4, background: C.green, color: "white", fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 3 }}>✓ DONE</span>}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* All other modules */}
+            <div style={{ padding: "12px 18px", display: "flex", flexWrap: "wrap", gap: 8 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", alignSelf: "center", marginRight: 4 }}>Notes:</span>
+              {MODULES.filter(m => !m.priority && m.id !== "medication" && m.id !== "infusion").map(m => {
+                const locked = gateActive;
+                return (
+                  <button key={m.id} onClick={() => openModal(m.id)}
+                    style={{ display: "flex", alignItems: "center", gap: 7, padding: "8px 14px", borderRadius: 9, border: `1.5px solid ${locked ? C.border : m.border}`, fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 600, cursor: "pointer", background: "white", color: locked ? C.muted : m.color, transition: "all .2s", position: "relative", opacity: locked ? 0.55 : 1 }}
+                    onMouseEnter={e => { if (!locked) { e.currentTarget.style.background = m.bg; e.currentTarget.style.transform = "translateY(-1px)"; } }}
+                    onMouseLeave={e => { if (!locked) { e.currentTarget.style.background = "white"; e.currentTarget.style.transform = "none"; } }}>
+                    <i className={`pi ${locked ? "pi-lock" : m.icon}`} style={{ fontSize: 13 }} />{m.label}
+                    {m.dot && !locked && <span style={{ position: "absolute", top: -4, right: -4, width: 8, height: 8, background: m.color, borderRadius: "50%", border: "2px solid white" }} />}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -535,7 +760,7 @@ function DoctorNotesContent({ selectedPatient }) {
       {activeModal && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.6)", backdropFilter: "blur(4px)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
           onClick={() => setActiveModal(null)}>
-          <div style={{ background: "white", borderRadius: 16, width: 740, maxWidth: "96vw", maxHeight: "92vh", overflowY: "auto", boxShadow: "0 24px 60px rgba(0,0,0,.28)" }}
+          <div style={{ background: "white", borderRadius: 16, width: ["medication","infusion","initial"].includes(activeModal) ? 1060 : 740, maxWidth: "98vw", maxHeight: "94vh", overflowY: "auto", boxShadow: "0 24px 60px rgba(0,0,0,.28)" }}
             onClick={e => e.stopPropagation()}>
 
             {/* Modal Header */}
@@ -556,6 +781,379 @@ function DoctorNotesContent({ selectedPatient }) {
             </div>
 
             <div style={{ padding: "20px 22px" }}>
+
+              {/* ══ INITIAL ASSESSMENT (NABH COP.1) ══ */}
+              {activeModal === "initial" && (() => {
+                const ia = initAssess;
+                const set = (k, v) => setInitAssess(p => ({ ...p, [k]: v }));
+                return (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                    <div style={{ background: "#fffbeb", border: "1.5px solid #fbbf24", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#92400e", fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
+                      <i className="pi pi-clipboard" style={{ fontSize: 13 }} /> Initial Medical Assessment — NABH COP.1 · Must be signed within 24 hours of admission
+                    </div>
+
+                    {/* Admission details */}
+                    <div style={{ background: "#f8fafc", borderRadius: 10, padding: "12px 14px", border: `1px solid ${C.border}` }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Admission Details</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                        <FL label="Mode of Admission">
+                          <select style={sel} value={ia.admissionMode} onChange={e => set("admissionMode", e.target.value)}>
+                            {["Planned","Emergency","Transfer","OPD Referral","Day Care"].map(o => <option key={o}>{o}</option>)}
+                          </select>
+                        </FL>
+                        <FL label="Chief Complaint *">
+                          <input style={fld} value={ia.chiefComplaint} placeholder="e.g. Chest pain" onChange={e => set("chiefComplaint", e.target.value)} />
+                        </FL>
+                        <FL label="Duration">
+                          <input style={fld} value={ia.duration} placeholder="e.g. 2 days" onChange={e => set("duration", e.target.value)} />
+                        </FL>
+                      </div>
+                      <div style={{ marginTop: 10 }}>
+                        <FL label="History of Present Illness *">
+                          <textarea style={{ ...ta, minHeight: 72 }} value={ia.hpi} placeholder="Detailed history of the presenting complaint, onset, progression, associated symptoms, relevant negatives…" onChange={e => set("hpi", e.target.value)} />
+                        </FL>
+                      </div>
+                    </div>
+
+                    {/* Past History */}
+                    <div style={{ background: "#f8fafc", borderRadius: 10, padding: "12px 14px", border: `1px solid ${C.border}` }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Past History</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                        <FL label="Past Medical History"><textarea style={{ ...ta, minHeight: 48 }} value={ia.pastMedical} placeholder="HTN, DM, CAD, COPD, CKD, prior hospitalizations…" onChange={e => set("pastMedical", e.target.value)} /></FL>
+                        <FL label="Past Surgical History"><textarea style={{ ...ta, minHeight: 48 }} value={ia.pastSurgical} placeholder="Previous operations, procedures, implants…" onChange={e => set("pastSurgical", e.target.value)} /></FL>
+                        <FL label="Current Medications"><textarea style={{ ...ta, minHeight: 48 }} value={ia.currentMeds} placeholder="List all current medications with doses…" onChange={e => set("currentMeds", e.target.value)} /></FL>
+                        <FL label="Allergies *">
+                          <input style={{ ...fld, borderColor: ia.allergies && ia.allergies !== "NKDA" ? C.red : "#e2e8f0" }} value={ia.allergies} placeholder="NKDA or list allergens + reactions" onChange={e => set("allergies", e.target.value)} />
+                          {ia.allergies && ia.allergies !== "NKDA" && (
+                            <div style={{ fontSize: 10, color: C.red, fontWeight: 700, marginTop: 3 }}>⚠ Allergy documented — verify before prescribing</div>
+                          )}
+                        </FL>
+                        <FL label="Family History"><input style={fld} value={ia.familyHistory} placeholder="Hereditary conditions, sudden cardiac death…" onChange={e => set("familyHistory", e.target.value)} /></FL>
+                        <FL label="Social History"><input style={fld} value={ia.socialHistory} placeholder="Smoking, alcohol, occupation, marital status…" onChange={e => set("socialHistory", e.target.value)} /></FL>
+                      </div>
+                    </div>
+
+                    {/* Vitals on Admission */}
+                    <div style={{ background: "#f8fafc", borderRadius: 10, padding: "12px 14px", border: `1px solid ${C.border}` }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Vitals on Admission</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8 }}>
+                        {[{k:"bp",l:"BP (mmHg)",ph:"120/80"},{k:"pulse",l:"Pulse (/min)",ph:"80"},{k:"temp",l:"Temp (°F)",ph:"98.6"},{k:"spo2",l:"SpO₂ (%)",ph:"98"},{k:"rr",l:"RR (/min)",ph:"16"},{k:"weight",l:"Weight (kg)",ph:"60"},{k:"height",l:"Height (cm)",ph:"165"},{k:"bsl",l:"BSL (mg/dL)",ph:"100"}].map(f => (
+                          <FL key={f.k} label={f.l}><input style={fld} value={ia[f.k]} placeholder={f.ph} onChange={e => set(f.k, e.target.value)} /></FL>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Physical Examination */}
+                    <div style={{ background: "#f8fafc", borderRadius: 10, padding: "12px 14px", border: `1px solid ${C.border}` }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Physical Examination</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, marginBottom: 10 }}>
+                        {[
+                          {k:"generalCondition",l:"General Condition",opts:["Conscious & Oriented","Alert","Drowsy","Confused","Unresponsive"]},
+                          {k:"builtNutrition",l:"Built & Nutrition",opts:["Average","Good","Poor","Obese","Emaciated"]},
+                          {k:"pallor",l:"Pallor",opts:["Absent","Present (mild)","Present (moderate)","Present (severe)"]},
+                          {k:"icterus",l:"Icterus",opts:["Absent","Present (mild)","Present (moderate)","Present (severe)"]},
+                          {k:"cyanosis",l:"Cyanosis",opts:["Absent","Peripheral","Central"]},
+                          {k:"clubbing",l:"Clubbing",opts:["Absent","Present (Grade I)","Present (Grade II)","Present (Grade III)","Present (Grade IV)"]},
+                          {k:"lymphadenopathy",l:"Lymphadenopathy",opts:["Absent","Present — cervical","Present — axillary","Present — inguinal","Generalised"]},
+                          {k:"oedema",l:"Oedema",opts:["Absent","Pedal (pitting)","Pedal (non-pitting)","Sacral","Generalised"]},
+                        ].map(f => (
+                          <FL key={f.k} label={f.l}>
+                            <select style={{ ...sel, fontSize: 11 }} value={ia[f.k]} onChange={e => set(f.k, e.target.value)}>
+                              {f.opts.map(o => <option key={o}>{o}</option>)}
+                            </select>
+                          </FL>
+                        ))}
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                        <FL label="Respiratory System"><textarea style={{ ...ta, minHeight: 48 }} value={ia.resp} placeholder="Breath sounds, added sounds, air entry…" onChange={e => set("resp", e.target.value)} /></FL>
+                        <FL label="Cardiovascular System"><textarea style={{ ...ta, minHeight: 48 }} value={ia.cvs} placeholder="S1 S2, murmurs, JVP, peripheral pulses…" onChange={e => set("cvs", e.target.value)} /></FL>
+                        <FL label="Abdomen"><textarea style={{ ...ta, minHeight: 48 }} value={ia.abdomen} placeholder="Inspection, palpation, percussion, auscultation…" onChange={e => set("abdomen", e.target.value)} /></FL>
+                        <FL label="CNS / Neurological"><textarea style={{ ...ta, minHeight: 48 }} value={ia.cns} placeholder="Consciousness, GCS, cranial nerves, motor, sensory…" onChange={e => set("cns", e.target.value)} /></FL>
+                      </div>
+                    </div>
+
+                    {/* Diagnosis */}
+                    <div style={{ background: "#f8fafc", borderRadius: 10, padding: "12px 14px", border: `1px solid ${C.border}` }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Diagnosis</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                        <FL label="Provisional Diagnosis *"><input style={fld} value={ia.provisionalDx} placeholder="Working diagnosis on admission" onChange={e => set("provisionalDx", e.target.value)} /></FL>
+                        <FL label="Differential Diagnosis"><input style={fld} value={ia.differentialDx} placeholder="Differential diagnoses (comma separated)" onChange={e => set("differentialDx", e.target.value)} /></FL>
+                        <FL label="Final Diagnosis (if known)"><input style={fld} value={ia.finalDx} placeholder="Confirmed diagnosis" onChange={e => set("finalDx", e.target.value)} /></FL>
+                        <FL label="ICD-10 Code"><input style={fld} value={ia.icd10} placeholder="e.g. J18.9 — Pneumonia" onChange={e => set("icd10", e.target.value)} /></FL>
+                      </div>
+                    </div>
+
+                    {/* Management Plan */}
+                    <div style={{ background: "#f8fafc", borderRadius: 10, padding: "12px 14px", border: `1px solid ${C.border}` }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Investigations & Management Plan</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                        <FL label="Investigations Ordered"><textarea style={{ ...ta, minHeight: 60 }} value={ia.investigations} placeholder="CBC, CMP, CXR, ECG, Echo, CT, MRI, cultures…" onChange={e => set("investigations", e.target.value)} /></FL>
+                        <FL label="Management Plan *"><textarea style={{ ...ta, minHeight: 60 }} value={ia.managementPlan} placeholder="Treatment goals, monitoring plan, nursing orders, diet, activity, DVT prophylaxis, targets…" onChange={e => set("managementPlan", e.target.value)} /></FL>
+                      </div>
+                    </div>
+
+                    {/* Embedded Medication Orders */}
+                    {(() => {
+                      const updateMed = (id, field, val) => setMedOrders(p => p.map(r => r.id === id ? { ...r, [field]: val } : r));
+                      const addMed    = () => setMedOrders(p => [...p, emptyMedRow()]);
+                      const removeMed = (id) => setMedOrders(p => p.filter(r => r.id !== id));
+                      return (
+                        <div style={{ background: "#eff6ff", borderRadius: 10, padding: "12px 14px", border: "1.5px solid #93c5fd" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: C.blue, textTransform: "uppercase", letterSpacing: ".6px" }}>
+                              <i className="pi pi-tablet" style={{ marginRight: 6 }} />Medication Orders (NABH) — No overwrite · STOP + New Order only
+                            </div>
+                            <button onClick={addMed} style={{ padding: "5px 12px", background: C.blue, color: "white", border: "none", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}>
+                              <i className="pi pi-plus" style={{ fontSize: 10 }} /> Add Medication
+                            </button>
+                          </div>
+                          <div style={{ overflowX: "auto" }}>
+                            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                              <thead>
+                                <tr style={{ background: "#dbeafe" }}>
+                                  {["Date/Time","Drug *","Dose *","Route","Frequency","Times (Auto)","Indication","Status","Stop Reason",""].map(h => (
+                                    <th key={h} style={{ padding: "6px 8px", border: "1px solid #93c5fd", fontWeight: 700, color: C.blue, textAlign: "left", whiteSpace: "nowrap", fontSize: 10 }}>{h}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {medOrders.map(row => (
+                                  <tr key={row.id} style={{ background: row.status === "Stopped" ? "#fef2f2" : "white" }}>
+                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px" }}><input type="datetime-local" style={{ ...fld, fontSize: 10, padding: "4px 6px" }} value={row.datetime} onChange={e => updateMed(row.id, "datetime", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 120 }}><input style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.drug} placeholder="Drug name" onChange={e => updateMed(row.id, "drug", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 80 }}><input style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.dose} placeholder="e.g. 500mg" onChange={e => updateMed(row.id, "dose", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 100 }}>
+                                      <select style={{ ...sel, fontSize: 11, padding: "4px 6px" }} value={row.route} onChange={e => updateMed(row.id, "route", e.target.value)}>
+                                        {ROUTES.map(r => <option key={r}>{r}</option>)}
+                                      </select>
+                                    </td>
+                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 90 }}>
+                                      <select style={{ ...sel, fontSize: 11, padding: "4px 6px" }} value={row.frequency} onChange={e => updateMed(row.id, "frequency", e.target.value)}>
+                                        {FREQ_LIST.map(f => <option key={f}>{f}</option>)}
+                                      </select>
+                                    </td>
+                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 120, fontFamily: "monospace", fontSize: 10, color: C.blue, fontWeight: 700 }}>
+                                      {(FREQ_TIMES[row.frequency] || []).join(" · ")}
+                                    </td>
+                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 100 }}><input style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.indication} placeholder="Indication" onChange={e => updateMed(row.id, "indication", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px" }}>
+                                      <select style={{ ...sel, fontSize: 11, padding: "4px 6px", color: row.status === "Stopped" ? C.red : C.green, fontWeight: 700 }} value={row.status} onChange={e => updateMed(row.id, "status", e.target.value)}>
+                                        <option value="Active">Active</option>
+                                        <option value="Stopped">Stopped</option>
+                                      </select>
+                                    </td>
+                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 100 }}>
+                                      <input style={{ ...fld, fontSize: 11, padding: "4px 6px", borderColor: row.status === "Stopped" && !row.stopReason ? C.red : "#e2e8f0" }} value={row.stopReason} placeholder={row.status === "Stopped" ? "Required!" : "—"} onChange={e => updateMed(row.id, "stopReason", e.target.value)} />
+                                    </td>
+                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px" }}>
+                                      <button onClick={() => removeMed(row.id)} style={{ width: 22, height: 22, borderRadius: 4, border: "1px solid #fca5a5", background: "#fef2f2", color: C.red, cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Embedded Infusion Orders */}
+                    {(() => {
+                      const updateInf = (id, field, val) => setInfOrders(p => p.map(r => r.id === id ? { ...r, [field]: val } : r));
+                      const addInf    = () => setInfOrders(p => [...p, emptyInfRow()]);
+                      const removeInf = (id) => setInfOrders(p => p.filter(r => r.id !== id));
+                      return (
+                        <div style={{ background: "#f0fdfa", borderRadius: 10, padding: "12px 14px", border: "1.5px solid #99f6e4" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: C.teal, textTransform: "uppercase", letterSpacing: ".6px" }}>
+                              <i className="pi pi-plus-circle" style={{ marginRight: 6 }} />Infusion Orders (NABH) — All changes must be documented · STOP infusion with reason
+                            </div>
+                            <button onClick={addInf} style={{ padding: "5px 12px", background: C.teal, color: "white", border: "none", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}>
+                              <i className="pi pi-plus" style={{ fontSize: 10 }} /> Add Infusion
+                            </button>
+                          </div>
+                          <div style={{ overflowX: "auto" }}>
+                            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                              <thead>
+                                <tr style={{ background: "#ccfbf1" }}>
+                                  {["Date/Time","Type","Drug / Fluid *","Dilution","Vol (ml)","Rate (ml/hr)","Titration Goal","Start Time","Status","Stop Reason",""].map(h => (
+                                    <th key={h} style={{ padding: "6px 8px", border: "1px solid #99f6e4", fontWeight: 700, color: C.teal, textAlign: "left", whiteSpace: "nowrap", fontSize: 10 }}>{h}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {infOrders.map(row => (
+                                  <tr key={row.id} style={{ background: row.status === "Stopped" ? "#fef2f2" : "white" }}>
+                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px" }}><input type="datetime-local" style={{ ...fld, fontSize: 10, padding: "4px 6px" }} value={row.datetime} onChange={e => updateInf(row.id, "datetime", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px" }}>
+                                      <select style={{ ...sel, fontSize: 11, padding: "4px 6px" }} value={row.type} onChange={e => updateInf(row.id, "type", e.target.value)}>
+                                        {["Fluid","Drug Infusion","Blood","Blood Product","TPN"].map(t => <option key={t}>{t}</option>)}
+                                      </select>
+                                    </td>
+                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 130 }}><input style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.drugFluid} placeholder="NS 0.9% / Noradrenaline / PRBC" onChange={e => updateInf(row.id, "drugFluid", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 110 }}><input style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.dilution} placeholder="e.g. 4mg in 50ml NS" onChange={e => updateInf(row.id, "dilution", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 70 }}><input type="number" style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.volume} placeholder="500" onChange={e => updateInf(row.id, "volume", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 80 }}><input type="number" style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.rate} placeholder="100" onChange={e => updateInf(row.id, "rate", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 120 }}><input style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.titrationGoal} placeholder="MAP > 65 / Hb > 8" onChange={e => updateInf(row.id, "titrationGoal", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px" }}><input type="time" style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.startTime} onChange={e => updateInf(row.id, "startTime", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px" }}>
+                                      <select style={{ ...sel, fontSize: 11, padding: "4px 6px", color: row.status === "Stopped" ? C.red : C.teal, fontWeight: 700 }} value={row.status} onChange={e => updateInf(row.id, "status", e.target.value)}>
+                                        <option value="Active">Active</option>
+                                        <option value="Stopped">Stopped</option>
+                                      </select>
+                                    </td>
+                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 100 }}>
+                                      <input style={{ ...fld, fontSize: 11, padding: "4px 6px", borderColor: row.status === "Stopped" && !row.stopReason ? C.red : "#e2e8f0" }} value={row.stopReason} placeholder={row.status === "Stopped" ? "Required!" : "—"} onChange={e => updateInf(row.id, "stopReason", e.target.value)} />
+                                    </td>
+                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px" }}>
+                                      <button onClick={() => removeInf(row.id)} style={{ width: 22, height: 22, borderRadius: 4, border: "1px solid #fca5a5", background: "#fef2f2", color: C.red, cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                );
+              })()}
+
+              {/* ══ MEDICATION ORDERS SHEET (standalone) ══ */}
+              {activeModal === "medication" && (() => {
+                const updateMed = (id, field, val) => setMedOrders(p => p.map(r => r.id === id ? { ...r, [field]: val } : r));
+                const addMed    = () => setMedOrders(p => [...p, emptyMedRow()]);
+                const removeMed = (id) => setMedOrders(p => p.filter(r => r.id !== id));
+                return (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                    <div style={{ background: C.blueL, border: `1.5px solid ${C.blueB}`, borderRadius: 8, padding: "10px 14px", fontSize: 12, color: C.blue, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
+                      <i className="pi pi-tablet" style={{ fontSize: 13 }} />
+                      Medication Order Sheet — NABH MOM.1 · No overwrite · STOP + New Order only · Frequency auto-generates MAR times
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                      <button onClick={addMed} style={{ padding: "8px 18px", background: C.primary, color: "white", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                        <i className="pi pi-plus" style={{ fontSize: 11 }} /> Add Medication Order
+                      </button>
+                    </div>
+                    <div style={{ overflowX: "auto" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                        <thead>
+                          <tr style={{ background: C.blueL }}>
+                            {["Date/Time","Drug *","Dose *","Route","Frequency","Times (Auto-MAR)","Indication","Status","Stop Reason",""].map(h => (
+                              <th key={h} style={{ padding: "8px 10px", border: `1px solid ${C.blueB}`, fontWeight: 700, color: C.blue, textAlign: "left", whiteSpace: "nowrap", fontSize: 11 }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {medOrders.map((row, idx) => (
+                            <tr key={row.id} style={{ background: row.status === "Stopped" ? "#fff1f2" : idx % 2 === 0 ? "white" : "#fafcff" }}>
+                              <td style={{ border: `1px solid ${C.blueB}`, padding: "5px" }}><input type="datetime-local" style={{ ...fld, fontSize: 11, padding: "5px 7px" }} value={row.datetime} onChange={e => updateMed(row.id, "datetime", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.blueB}`, padding: "5px", minWidth: 130 }}><input style={{ ...fld, fontSize: 12, padding: "5px 7px", fontWeight: 600 }} value={row.drug} placeholder="Drug name" onChange={e => updateMed(row.id, "drug", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.blueB}`, padding: "5px", minWidth: 90 }}><input style={{ ...fld, fontSize: 12, padding: "5px 7px" }} value={row.dose} placeholder="500mg" onChange={e => updateMed(row.id, "dose", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.blueB}`, padding: "5px", minWidth: 110 }}>
+                                <select style={{ ...sel, fontSize: 11, padding: "5px 7px" }} value={row.route} onChange={e => updateMed(row.id, "route", e.target.value)}>
+                                  {ROUTES.map(r => <option key={r}>{r}</option>)}
+                                </select>
+                              </td>
+                              <td style={{ border: `1px solid ${C.blueB}`, padding: "5px", minWidth: 100 }}>
+                                <select style={{ ...sel, fontSize: 12, padding: "5px 7px", fontWeight: 700 }} value={row.frequency} onChange={e => updateMed(row.id, "frequency", e.target.value)}>
+                                  {FREQ_LIST.map(f => <option key={f}>{f}</option>)}
+                                </select>
+                              </td>
+                              <td style={{ border: `1px solid ${C.blueB}`, padding: "5px", minWidth: 140, background: "#eff6ff" }}>
+                                <div style={{ fontFamily: "monospace", fontSize: 11, color: C.blue, fontWeight: 700, lineHeight: 1.5 }}>
+                                  {(FREQ_TIMES[row.frequency] || []).join(" · ")}
+                                </div>
+                              </td>
+                              <td style={{ border: `1px solid ${C.blueB}`, padding: "5px", minWidth: 110 }}><input style={{ ...fld, fontSize: 11, padding: "5px 7px" }} value={row.indication} placeholder="Indication" onChange={e => updateMed(row.id, "indication", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.blueB}`, padding: "5px" }}>
+                                <select style={{ ...sel, fontSize: 12, padding: "5px 7px", color: row.status === "Stopped" ? C.red : C.green, fontWeight: 700 }} value={row.status} onChange={e => updateMed(row.id, "status", e.target.value)}>
+                                  <option value="Active">Active</option>
+                                  <option value="Stopped">Stopped</option>
+                                </select>
+                              </td>
+                              <td style={{ border: `1px solid ${C.blueB}`, padding: "5px", minWidth: 120 }}>
+                                <input style={{ ...fld, fontSize: 11, padding: "5px 7px", borderColor: row.status === "Stopped" && !row.stopReason ? C.red : "#e2e8f0", background: row.status === "Stopped" && !row.stopReason ? "#fef2f2" : "white" }} value={row.stopReason} placeholder={row.status === "Stopped" ? "Required ⚠" : "—"} onChange={e => updateMed(row.id, "stopReason", e.target.value)} />
+                              </td>
+                              <td style={{ border: `1px solid ${C.blueB}`, padding: "5px" }}>
+                                <button onClick={() => removeMed(row.id)} title="Remove row" style={{ width: 24, height: 24, borderRadius: 5, border: "1px solid #fca5a5", background: "#fef2f2", color: C.red, cursor: "pointer", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700 }}>×</button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div style={{ background: "#f8fafc", borderRadius: 8, padding: "8px 12px", fontSize: 11, color: C.muted }}>
+                      <b style={{ color: C.blue }}>MAR Note:</b> Times shown will be populated in the Medication Administration Record. STAT orders execute immediately. SOS orders as needed. Continuous infusions use the Infusion Orders module.
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* ══ INFUSION ORDERS SHEET (standalone) ══ */}
+              {activeModal === "infusion" && (() => {
+                const updateInf = (id, field, val) => setInfOrders(p => p.map(r => r.id === id ? { ...r, [field]: val } : r));
+                const addInf    = () => setInfOrders(p => [...p, emptyInfRow()]);
+                const removeInf = (id) => setInfOrders(p => p.filter(r => r.id !== id));
+                return (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                    <div style={{ background: C.tealL, border: `1.5px solid ${C.tealB}`, borderRadius: 8, padding: "10px 14px", fontSize: 12, color: C.teal, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
+                      <i className="pi pi-plus-circle" style={{ fontSize: 13 }} />
+                      Infusion Order & Monitoring Sheet — NABH MOM.2 · No overwrite · STOP infusion with reason · All changes documented
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                      <button onClick={addInf} style={{ padding: "8px 18px", background: C.teal, color: "white", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                        <i className="pi pi-plus" style={{ fontSize: 11 }} /> Add Infusion Order
+                      </button>
+                    </div>
+                    <div style={{ overflowX: "auto" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                        <thead>
+                          <tr style={{ background: C.tealL }}>
+                            {["Date/Time","Type","Drug / Fluid *","Dilution","Total Vol (ml)","Initial Rate (ml/hr)","Target / Titration Goal","Start Time","Status","Stop Reason",""].map(h => (
+                              <th key={h} style={{ padding: "8px 10px", border: `1px solid ${C.tealB}`, fontWeight: 700, color: C.teal, textAlign: "left", whiteSpace: "nowrap", fontSize: 11 }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {infOrders.map((row, idx) => (
+                            <tr key={row.id} style={{ background: row.status === "Stopped" ? "#fff1f2" : idx % 2 === 0 ? "white" : "#f0fdfa" }}>
+                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px" }}><input type="datetime-local" style={{ ...fld, fontSize: 11, padding: "5px 7px" }} value={row.datetime} onChange={e => updateInf(row.id, "datetime", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 110 }}>
+                                <select style={{ ...sel, fontSize: 11, padding: "5px 7px" }} value={row.type} onChange={e => updateInf(row.id, "type", e.target.value)}>
+                                  {["Fluid","Drug Infusion","Blood","Blood Product","TPN"].map(t => <option key={t}>{t}</option>)}
+                                </select>
+                              </td>
+                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 140 }}><input style={{ ...fld, fontSize: 12, padding: "5px 7px", fontWeight: 600 }} value={row.drugFluid} placeholder="NS 0.9% / Noradrenaline / PRBC" onChange={e => updateInf(row.id, "drugFluid", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 120 }}><input style={{ ...fld, fontSize: 11, padding: "5px 7px" }} value={row.dilution} placeholder="e.g. 2mg in 50ml NS" onChange={e => updateInf(row.id, "dilution", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 75 }}><input type="number" style={{ ...fld, fontSize: 12, padding: "5px 7px" }} value={row.volume} placeholder="500" onChange={e => updateInf(row.id, "volume", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 90 }}><input type="number" style={{ ...fld, fontSize: 12, padding: "5px 7px" }} value={row.rate} placeholder="100" onChange={e => updateInf(row.id, "rate", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 140 }}><input style={{ ...fld, fontSize: 11, padding: "5px 7px" }} value={row.titrationGoal} placeholder="MAP > 65 / Hb > 8" onChange={e => updateInf(row.id, "titrationGoal", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px" }}><input type="time" style={{ ...fld, fontSize: 11, padding: "5px 7px" }} value={row.startTime} onChange={e => updateInf(row.id, "startTime", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px" }}>
+                                <select style={{ ...sel, fontSize: 12, padding: "5px 7px", color: row.status === "Stopped" ? C.red : C.teal, fontWeight: 700 }} value={row.status} onChange={e => updateInf(row.id, "status", e.target.value)}>
+                                  <option value="Active">Active</option>
+                                  <option value="Stopped">Stopped</option>
+                                </select>
+                              </td>
+                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 120 }}>
+                                <input style={{ ...fld, fontSize: 11, padding: "5px 7px", borderColor: row.status === "Stopped" && !row.stopReason ? C.red : "#e2e8f0", background: row.status === "Stopped" && !row.stopReason ? "#fef2f2" : "white" }} value={row.stopReason} placeholder={row.status === "Stopped" ? "Required ⚠" : "—"} onChange={e => updateInf(row.id, "stopReason", e.target.value)} />
+                              </td>
+                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px" }}>
+                                <button onClick={() => removeInf(row.id)} title="Remove row" style={{ width: 24, height: 24, borderRadius: 5, border: "1px solid #fca5a5", background: "#fef2f2", color: C.red, cursor: "pointer", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700 }}>×</button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div style={{ background: "#f0fdfa", borderRadius: 8, padding: "8px 12px", fontSize: 11, color: C.muted }}>
+                      <b style={{ color: C.teal }}>Nursing Note:</b> All rate changes, stops, and restarts must be documented in Nursing Notes with time, reason, and nurse signature. Monitoring vitals every 30 min for vasoactive infusions.
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* ══ DAILY PROGRESS NOTE (SOAP) ══ */}
               {activeModal === "daily" && (
