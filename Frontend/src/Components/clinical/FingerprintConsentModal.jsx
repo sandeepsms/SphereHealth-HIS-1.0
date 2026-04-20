@@ -47,44 +47,28 @@ export default function FingerprintConsentModal({ open, onClose, onConfirm, proc
   const capture = async () => {
     setScanState("scanning");
     try {
-      const available =
-        typeof PublicKeyCredential !== "undefined" &&
-        (await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable());
-
-      if (available) {
-        const challenge = crypto.getRandomValues(new Uint8Array(32));
-        const cred = await navigator.credentials.get({
-          publicKey: { challenge, timeout: 60000, userVerification: "required" },
-        });
-        const authBytes = new Uint8Array(cred.response.authenticatorData);
-        const hash = Array.from(authBytes)
-          .map((b) => b.toString(16).padStart(2, "0"))
-          .join("")
-          .slice(0, 32);
-        setFingerprintHash(hash);
-        setFingerprintVerified(true);
-        setScanState("success");
-      } else {
-        // Simulate with random hash + 2s delay
-        await new Promise((r) => setTimeout(r, 2000));
-        const rnd = Array.from(crypto.getRandomValues(new Uint8Array(16)))
-          .map((b) => b.toString(16).padStart(2, "0"))
-          .join("");
-        setFingerprintHash(rnd);
-        setFingerprintVerified(false);
-        setScanState("success");
-      }
-    } catch (err) {
-      if (err.name === "NotAllowedError") {
-        setScanState("failed");
-      } else {
-        // fallback on any other error
-        const rnd = Array.from(crypto.getRandomValues(new Uint8Array(16)))
-          .map((b) => b.toString(16).padStart(2, "0"))
-          .join("");
-        setFingerprintHash(rnd);
-        setScanState("success");
-      }
+      /**
+       * BIOMETRIC INTEGRATION POINT
+       * ─────────────────────────────────────────────────────────────────────
+       * In production replace this block with your biometric SDK call.
+       * Common hospital devices (Mantra MFS100, SecuGen Hamster):
+       *   const res = await fetch("http://localhost:11100/SGIFPCapture", { method: "POST" });
+       *   const { ErrorCode, BMPBase64 } = await res.json();
+       *   if (ErrorCode !== 0) throw new Error("Capture failed");
+       *   const hash = await crypto.subtle.digest("SHA-256", base64ToBytes(BMPBase64));
+       *   → setFingerprintHash, setFingerprintVerified(true), setScanState("success")
+       * ─────────────────────────────────────────────────────────────────────
+       * Demo mode: 2-second simulated capture with a random secure hash.
+       */
+      await new Promise((r) => setTimeout(r, 2000));
+      const rnd = Array.from(crypto.getRandomValues(new Uint8Array(16)))
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+      setFingerprintHash(rnd);
+      setFingerprintVerified(false); // set true when real hardware confirms
+      setScanState("success");
+    } catch (_err) {
+      setScanState("failed");
     }
   };
 

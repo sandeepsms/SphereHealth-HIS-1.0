@@ -5,6 +5,8 @@ import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
+import NurseOrdersPanel from "../../Components/clinical/NurseOrdersPanel";
+import FingerprintConsentModal from "../../Components/clinical/FingerprintConsentModal";
 
 /* ── Design tokens ── */
 const C = {
@@ -50,6 +52,7 @@ const MODULES = [
   { id: "fall",      label: "Fall Risk (Morse)",          icon: "pi-exclamation-triangle",    border: "#fdba74", color: C.orange, bg: C.orangeL },
   { id: "procedure", label: "Procedure / Intervention",   icon: "pi-cog",                     border: "#c4b5fd", color: C.purple, bg: C.purpleL },
   { id: "discharge", label: "Discharge / Handover",       icon: "pi-sign-out",                border: "#6ee7b7", color: C.green, bg: C.greenL },
+  { id: "mews",      label: "MEWS Score",                 icon: "pi-chart-bar",               border: "#fbbf24", color: "#92400e", bg: "#fffbeb", dot: true },
   { id: "general",   label: "General Observation",        icon: "pi-file",                    border: "#d1d5db", color: "#374151", bg: C.grayL },
 ];
 
@@ -67,6 +70,7 @@ const NOTE_STYLE = {
   intake:    { bg: C.accentL,color: C.accent,   dot: C.accent   },
   general:   { bg: C.grayL,  color: "#374151",  dot: C.gray     },
   discharge: { bg: C.greenL, color: C.green,    dot: C.green    },
+  mews:      { bg: C.amberL, color: "#92400e",  dot: C.amber    },
 };
 
 const SHIFT_STYLE = {
@@ -89,7 +93,60 @@ const MODULE_TAGS = {
   skin:      ["Repositioned", "Barrier Cream Applied", "Foam Dressing", "Dietician Alerted"],
   procedure: ["Consent Obtained", "Doctor Present", "Patient Tolerated Well", "Specimen Sent"],
   discharge: ["Patient Educated", "Instructions Given", "Valuables Returned", "Handover Completed"],
+  mews:      ["Doctor Alerted", "ICU Notified", "Rapid Response Called", "Vitals Rechecked", "Family Informed"],
   general:   ["Doctor Informed", "Family Informed", "Patient Comfortable", "Monitoring Continued"],
+};
+
+/* ── MEWS Scoring ── */
+const calcMEWS = (m) => {
+  let s = 0;
+  const rr = Number(m.rr), spo2 = Number(m.spo2), temp = Number(m.temp), sbp = Number(m.sbp), hr = Number(m.hr);
+  if (rr)   { if (rr<=8) s+=3; else if (rr<=11) s+=1; else if (rr<=20) s+=0; else if (rr<=24) s+=2; else s+=3; }
+  if (spo2) { if (spo2>=96) s+=0; else if (spo2>=94) s+=1; else if (spo2>=92) s+=2; else s+=3; }
+  if (temp) { if (temp<=35) s+=3; else if (temp<=36) s+=1; else if (temp<=38) s+=0; else if (temp<=38.5) s+=1; else s+=2; }
+  if (sbp)  { if (sbp<=90) s+=3; else if (sbp<=100) s+=2; else if (sbp<=110) s+=1; else if (sbp<=219) s+=0; else s+=3; }
+  if (hr)   { if (hr<=40) s+=3; else if (hr<=50) s+=1; else if (hr<=90) s+=0; else if (hr<=110) s+=1; else if (hr<=130) s+=2; else s+=3; }
+  const avpuMap = { A:0, V:1, P:2, U:3 };
+  s += (avpuMap[m.avpu] ?? 0);
+  return s;
+};
+const mewsBand = (score) => {
+  if (score <= 1) return { label:"Normal", color:C.green, bg:C.greenL, action:"Routine monitoring", icon:"pi-check-circle" };
+  if (score <= 4) return { label:"Increased Monitoring", color:C.amber, bg:C.amberL, action:"Increase frequency, inform nurse-in-charge", icon:"pi-exclamation-circle" };
+  if (score <= 6) return { label:"Urgent Review", color:C.orange, bg:C.orangeL, action:"Immediate review — consider calling doctor urgently", icon:"pi-exclamation-triangle" };
+  return { label:"EMERGENCY", color:C.red, bg:C.redL, action:"Call doctor IMMEDIATELY — consider ICU/HDU transfer", icon:"pi-bolt" };
+};
+const mewsParamScore = (param, val) => {
+  const v = Number(val); if (!v && param!=="avpu") return null;
+  if (param==="rr")   return v<=8?3:v<=11?1:v<=20?0:v<=24?2:3;
+  if (param==="spo2") return v>=96?0:v>=94?1:v>=92?2:3;
+  if (param==="temp") return v<=35?3:v<=36?1:v<=38?0:v<=38.5?1:2;
+  if (param==="sbp")  return v<=90?3:v<=100?2:v<=110?1:v<=219?0:3;
+  if (param==="hr")   return v<=40?3:v<=50?1:v<=90?0:v<=110?1:v<=130?2:3;
+  if (param==="avpu") return {A:0,V:1,P:2,U:3}[val]??0;
+  return null;
+};
+
+/* ── Morse Fall Scale ── */
+const calcMorse = (f) => {
+  return Number(f.m1||0) + Number(f.m2||0) + Number(f.m3||0) + Number(f.m4||0) + Number(f.m5||0) + Number(f.m6||0);
+};
+const morseBand = (score) => {
+  if (score < 25)  return { label:"No Risk", color:C.green, bg:C.greenL };
+  if (score < 45)  return { label:"Low Risk", color:C.amber, bg:C.amberL };
+  return { label:"High Risk", color:C.red, bg:C.redL };
+};
+
+/* ── Braden Scale ── */
+const calcBraden = (s) => {
+  return Number(s.b1||1) + Number(s.b2||1) + Number(s.b3||1) + Number(s.b4||1) + Number(s.b5||1) + Number(s.b6||1);
+};
+const bradenBand = (score) => {
+  if (score <= 9)  return { label:"Very High Risk", color:C.red, bg:C.redL };
+  if (score <= 12) return { label:"High Risk", color:C.orange, bg:C.orangeL };
+  if (score <= 14) return { label:"Moderate Risk", color:C.amber, bg:C.amberL };
+  if (score <= 18) return { label:"Mild Risk", color:C.blue, bg:C.blueL };
+  return { label:"No Risk", color:C.green, bg:C.greenL };
 };
 
 function getShift() {
@@ -166,18 +223,23 @@ function NursingNotesContent({ selectedPatient }) {
   const [equipSaving,   setEquipSaving]   = useState(false);
   const [equipSaved,    setEquipSaved]    = useState(false);
 
+  /* ── Doctor Orders panel ── */
+  const [ordersRefresh, setOrdersRefresh] = useState(0);
+  const [consentOrder,  setConsentOrder]  = useState(null);
+
   /* ── Module-specific form state ── */
-  const [vitals,    setVitals]    = useState({ bp: "", pulse: "", temp: "", spo2: "", rr: "", gcs: "", bsl: "" });
-  const [blood,     setBlood]     = useState({ product: "PRC (Packed RBC)", bagNo: "", volume: "350", groupVerified: true, status: "Transfusing" });
-  const [iv,        setIV]        = useState({ fluid: "NS 0.9%", volume: "", rate: "", route: "IV Right Forearm", site: "Patent" });
-  const [intake,    setIntake]    = useState({ oral: "", ivFluids: "", urineOutput: "", drainOutput: "", nasogastric: "" });
-  const [neuro,     setNeuro]     = useState({ gcs: "", gcse: "", gcsv: "", gcsm: "", pupils: "Equal & Reactive", seizure: false, orientation: "Alert & Oriented \xd73" });
-  const [pain,      setPain]      = useState({ score: "", location: "", character: "Dull", radiation: false, analgesicGiven: false, analgesic: "", reassessScore: "" });
-  const [wound,     setWound]     = useState({ site: "", size: "", exudate: "None", odour: false, dressing: "", healingStage: "Granulating" });
-  const [skin,      setSkin]      = useState({ area: "", stage: "Stage I", intervention: "", repositioned: false });
-  const [fallRisk,  setFallRisk]  = useState({ morseScore: "", risk: "Low", interventions: "" });
-  const [procedure, setProcedure] = useState({ procedureName: "", indication: "", consentObtained: true, performedBy: "", outcome: "Tolerated Well" });
-  const [discharge, setDischarge] = useState({ type: "Shift Handover", summary: "", incomingNurse: "", patientStatus: "Stable" });
+  const [vitals,    setVitals]    = useState({ bp: "", pulse: "", temp: "", spo2: "", rr: "", gcs: "", bsl: "", painScore: "", o2Flow: "", o2Device: "None", weight: "", position: "Supine" });
+  const [blood,     setBlood]     = useState({ product: "PRC (Packed RBC)", bagNo: "", crossMatchNo: "", volume: "350", groupVerified: true, secondNurse: "", startTime: "", status: "Transfusing", endTime: "", reactionType: "None", preBP: "", prePulse: "", preTemp: "", postBP: "", postPulse: "" });
+  const [iv,        setIV]        = useState({ fluid: "NS 0.9%", volume: "", rate: "", dropsPerMin: "", route: "IV Right Forearm", site: "Patent", cannulaDate: "", setChangeDate: "", additive: "" });
+  const [intake,    setIntake]    = useState({ oral: "", ivFluids: "", bloodProducts: "", urineOutput: "", drainOutput: "", nasogastric: "", emesis: "", bloodLoss: "" });
+  const [neuro,     setNeuro]     = useState({ gcse: "", gcsv: "", gcsm: "", pupils: "Equal & Reactive", pupilSizeL: "", pupilSizeR: "", lightReflex: "Present", seizure: false, orientation: "Alert & Oriented ×3", limbUL: "Normal", limbUR: "Normal", limbLL: "Normal", limbLR: "Normal" });
+  const [pain,      setPain]      = useState({ scale: "NRS", score: "", location: "", type: "Acute", character: "Dull", onset: "Sudden", duration: "", frequency: "Constant", radiation: false, radiationSite: "", aggravating: "", relieving: "", painOnMovement: false, nonPharm: "", analgesicGiven: false, analgesic: "", analgesicRoute: "IV", analgesicTime: "", reassessScore: "", reassessTime: "" });
+  const [wound,     setWound]     = useState({ type: "Surgical", site: "", length: "", width: "", depth: "", exudateAmt: "None", exudateType: "Serous", healingStage: "Granulating", surroundingSkin: "Intact", tunneling: false, undermining: false, odour: false, dressing: "", painDuring: "", nextDressingDate: "", swabSent: false });
+  const [skin,      setSkin]      = useState({ area: "", b1: "4", b2: "4", b3: "4", b4: "4", b5: "4", b6: "3", stage: "Stage I", intervention: "", repositioned: false, repositionFreq: "2-hourly" });
+  const [fallRisk,  setFallRisk]  = useState({ m1: "0", m2: "0", m3: "0", m4: "0", m5: "0", m6: "0", intBedRails: false, intCallBell: false, intNonSlip: false, intBedLowest: false, intSupervision: false, intPatientEd: false, intFamilyEd: false });
+  const [procedure, setProcedure] = useState({ procedureName: "", indication: "", site: "", laterality: "N/A", time: "", consentObtained: true, performedBy: "", designation: "Staff Nurse", assistant: "", sterile: true, position: "Supine", outcome: "Tolerated Well", complications: "None", specimenSent: false, specimenType: "", postProcVitals: "", followUp: "" });
+  const [discharge, setDischarge] = useState({ type: "Shift Handover", situation: "", background: "", assessment: "", recommendation: "", incomingNurse: "", patientStatus: "Stable", educationGiven: false, educationTopics: "", followUpDate: "", valuablesHandedOver: false });
+  const [mews,      setMews]      = useState({ rr: "", spo2: "", temp: "", sbp: "", hr: "", avpu: "A" });
 
   /* ── Load equipment master catalogue once ── */
   useEffect(() => {
@@ -246,16 +308,24 @@ function NursingNotesContent({ selectedPatient }) {
     if (!searchUHID.trim()) return;
     setLoading(true);
     try {
-      const { data } = await axios.get(`${API_ENDPOINTS.ADMISSIONS}?uhid=${searchUHID.trim()}`);
+      // Use /active endpoint — it returns { data: [...] } and already filters status:"Active"
+      // Also supports ?UHID= filter (both cases handled in service)
+      const { data } = await axios.get(
+        `${API_ENDPOINTS.ADMISSIONS}/active?UHID=${encodeURIComponent(searchUHID.trim())}`
+      );
       const arr = Array.isArray(data) ? data : data.data || [];
-      const active = arr.find(a => a.status === "admitted") || arr[0];
+      const active = arr[0]; // all results are already Active; take latest
       if (active) {
         setPatient(active);
         await fetchNotes(active.ipdNo || active.admissionNumber || active._id);
         await loadTodayCharges(active._id);
-        toast.success("Patient loaded");
-      } else toast.warn("No active admission found");
-    } catch { toast.error("Patient not found"); }
+        toast.success(`Loaded: ${active.patientName || active.patientId?.fullName || searchUHID}`);
+      } else {
+        toast.warn("No active IPD admission found for UHID: " + searchUHID);
+      }
+    } catch (err) {
+      toast.error(err?.response?.data?.message || "Patient not found");
+    }
     finally { setLoading(false); }
   };
 
@@ -270,10 +340,11 @@ function NursingNotesContent({ selectedPatient }) {
   const openModal = (id) => {
     setActiveModal(id);
     setNoteText(""); setIsCritical(false); setSelectedTags([]);
-    setVitals({ bp: "", pulse: "", temp: "", spo2: "", rr: "", gcs: "", bsl: "" });
-    setBlood({ product: "PRC (Packed RBC)", bagNo: "", volume: "350", groupVerified: true, status: "Transfusing" });
-    setIV({ fluid: "NS 0.9%", volume: "", rate: "", route: "IV Right Forearm", site: "Patent" });
-    setIntake({ oral: "", ivFluids: "", urineOutput: "", drainOutput: "", nasogastric: "" });
+    setVitals({ bp: "", pulse: "", temp: "", spo2: "", rr: "", gcs: "", bsl: "", painScore: "", o2Flow: "", o2Device: "None", weight: "", position: "Supine" });
+    setBlood({ product: "PRC (Packed RBC)", bagNo: "", crossMatchNo: "", volume: "350", groupVerified: true, secondNurse: "", startTime: "", status: "Transfusing", endTime: "", reactionType: "None", preBP: "", prePulse: "", preTemp: "", postBP: "", postPulse: "" });
+    setIV({ fluid: "NS 0.9%", volume: "", rate: "", dropsPerMin: "", route: "IV Right Forearm", site: "Patent", cannulaDate: "", setChangeDate: "", additive: "" });
+    setIntake({ oral: "", ivFluids: "", bloodProducts: "", urineOutput: "", drainOutput: "", nasogastric: "", emesis: "", bloodLoss: "" });
+    setMews({ rr: "", spo2: "", temp: "", sbp: "", hr: "", avpu: "A" });
   };
 
   const toggleTag = (t) => setSelectedTags(ts => ts.includes(t) ? ts.filter(x => x !== t) : [...ts, t]);
@@ -299,6 +370,7 @@ function NursingNotesContent({ selectedPatient }) {
     if (activeModal === "fall")     payload.fallRisk = fallRisk;
     if (activeModal === "procedure") payload.procedure = procedure;
     if (activeModal === "discharge") payload.discharge = discharge;
+    if (activeModal === "mews")      payload.mewsScore = { ...mews, total: calcMEWS(mews), band: mewsBand(calcMEWS(mews)).label };
 
     setLoading(true);
     try {
@@ -447,6 +519,16 @@ function NursingNotesContent({ selectedPatient }) {
                 </button>
               </div>
             </div>
+          </div>
+
+          {/* ── Doctor's Active Orders (NurseOrdersPanel) ── */}
+          <div style={{ marginBottom: 14 }}>
+            <NurseOrdersPanel
+              UHID={patient.uhid || patient.UHID || searchUHID}
+              visitId={patient.ipdNo || patient.admissionNumber || patient._id}
+              refreshTrigger={ordersRefresh}
+              onConsentRequest={(order) => setConsentOrder(order)}
+            />
           </div>
 
           {/* ── Shift Selector ── */}
@@ -724,6 +806,7 @@ function NursingNotesContent({ selectedPatient }) {
                   { key: "neuro",    label: "Neuro" },
                   { key: "intake",   label: "I/O" },
                   { key: "general",  label: "General" },
+                  { key: "mews",     label: "MEWS" },
                 ].map(f => (
                   <button key={f.key} onClick={() => setFilterType(f.key)}
                     style={{ padding: "4px 12px", border: `1.5px solid ${filterType === f.key ? C.primary : C.border}`, borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: "pointer", background: filterType === f.key ? C.primaryL : "white", color: filterType === f.key ? C.primary : C.muted, transition: "all .15s" }}>
@@ -879,6 +962,32 @@ function NursingNotesContent({ selectedPatient }) {
                         </div>
                       )}
 
+                      {/* MEWS Score data */}
+                      {note.mewsScore && note.noteType === "mews" && (() => {
+                        const band = mewsBand(note.mewsScore.total || 0);
+                        return (
+                          <div style={{ display:"flex", gap:12, flexWrap:"wrap", padding:"8px 14px", background:band.bg, borderRadius:7, marginBottom:8, alignItems:"center", border:`1px solid ${band.color}20` }}>
+                            <div style={{ display:"flex", flexDirection:"column", gap:1 }}>
+                              <span style={{ fontSize:9, fontWeight:700, textTransform:"uppercase", letterSpacing:".6px", color:C.muted }}>MEWS TOTAL</span>
+                              <span style={{ fontFamily:"'DM Mono',monospace", fontSize:20, fontWeight:900, color:band.color }}>{note.mewsScore.total}</span>
+                            </div>
+                            <div style={{ flex:1 }}>
+                              <div style={{ fontSize:12, fontWeight:800, color:band.color }}>{note.mewsScore.band}</div>
+                              <div style={{ fontSize:11, color:band.color+"cc" }}>{band.action}</div>
+                            </div>
+                            {[
+                              {l:"RR", v:note.mewsScore.rr},{l:"SpO₂", v:note.mewsScore.spo2},{l:"Temp", v:note.mewsScore.temp},
+                              {l:"SBP", v:note.mewsScore.sbp},{l:"HR", v:note.mewsScore.hr},{l:"AVPU", v:note.mewsScore.avpu}
+                            ].filter(x=>x.v).map(v=>(
+                              <div key={v.l} style={{ display:"flex", flexDirection:"column", gap:1 }}>
+                                <span style={{ fontSize:9, fontWeight:700, textTransform:"uppercase", letterSpacing:".6px", color:C.muted }}>{v.l}</span>
+                                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:500 }}>{v.v}</span>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
+
                       {/* Remarks */}
                       {note.remarks && (
                         <div style={{ fontSize: 12.5, color: C.text, lineHeight: 1.6, marginBottom: 8 }}>{note.remarks}</div>
@@ -913,6 +1022,31 @@ function NursingNotesContent({ selectedPatient }) {
         </>
       )}
 
+      {/* ── Fingerprint Consent Modal ── */}
+      {consentOrder && (
+        <FingerprintConsentModal
+          order={consentOrder}
+          onClose={() => setConsentOrder(null)}
+          onConfirm={async (hash) => {
+            try {
+              const token = localStorage.getItem("his_token");
+              const headers = token ? { Authorization: `Bearer ${token}` } : {};
+              const nurseName = user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim();
+              await axios.patch(
+                `/api/doctor-orders/${consentOrder._id}`,
+                { consentStatus: "Obtained", consentData: { fingerprintHash: hash, obtainedAt: new Date().toISOString(), nurseName } },
+                { headers }
+              );
+              toast.success("Biometric consent captured & stored");
+              setConsentOrder(null);
+              setOrdersRefresh(n => n + 1);
+            } catch (err) {
+              toast.error(err?.response?.data?.message || "Failed to save consent");
+            }
+          }}
+        />
+      )}
+
       {/* ══════════════ MODAL ══════════════ */}
       {activeModal && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.6)", backdropFilter: "blur(4px)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
@@ -942,250 +1076,727 @@ function NursingNotesContent({ selectedPatient }) {
             {/* Modal body */}
             <div style={{ padding: "20px 22px" }}>
 
-              {/* ── Vitals ── */}
-              {activeModal === "vitals" && (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
-                  {[
-                    { k: "bp",    label: "BP (sys/dia)",     placeholder: "120/80" },
-                    { k: "pulse", label: "Pulse (/min)",     placeholder: "88" },
-                    { k: "temp",  label: "Temperature (\u00b0F)", placeholder: "98.6" },
-                    { k: "spo2",  label: "SpO\u2082 (%)",        placeholder: "96" },
-                    { k: "rr",    label: "Resp Rate (/min)", placeholder: "18" },
-                    { k: "bsl",   label: "BSL (mg/dL)",      placeholder: "120" },
-                  ].map(v => (
-                    <FL key={v.k} label={v.label}>
-                      <input style={fld} value={vitals[v.k]} placeholder={v.placeholder}
-                        onChange={e => setVitals(p => ({ ...p, [v.k]: e.target.value }))} />
-                    </FL>
-                  ))}
-                  <FL label="GCS">
-                    <input style={fld} value={vitals.gcs} placeholder="E4V5M6 / 15"
-                      onChange={e => setVitals(p => ({ ...p, gcs: e.target.value }))} />
-                  </FL>
-                </div>
-              )}
+              {/* ── Vitals (NABH NS.3) ── */}
+              {activeModal === "vitals" && (() => {
+                const abnFields = { bp_sys: vitals.bp.split("/")[0], pulse: vitals.pulse, temp: vitals.temp, spo2: vitals.spo2, rr: vitals.rr, bsl: vitals.bsl };
+                return (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
+                      {[
+                        { k:"bp",    label:"BP (Sys/Dia mmHg) *", placeholder:"120/80" },
+                        { k:"pulse", label:"Pulse Rate (/min) *",  placeholder:"80" },
+                        { k:"temp",  label:"Temperature (°F) *",   placeholder:"98.6" },
+                        { k:"spo2",  label:"SpO₂ (%) *",           placeholder:"98" },
+                        { k:"rr",    label:"Resp Rate (/min) *",   placeholder:"16" },
+                        { k:"bsl",   label:"BSL (mg/dL)",          placeholder:"110" },
+                      ].map(v => (
+                        <FL key={v.k} label={v.label}>
+                          <input style={{ ...fld, borderColor: isAbnormal(v.k === "bp" ? "bp_sys" : v.k, v.k === "bp" ? vitals.bp.split("/")[0] : vitals[v.k]) ? C.red : "#e2e8f0" }}
+                            value={vitals[v.k]} placeholder={v.placeholder}
+                            onChange={e => setVitals(p => ({ ...p, [v.k]: e.target.value }))} />
+                        </FL>
+                      ))}
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
+                      <FL label="GCS (E/V/M total)">
+                        <input style={fld} value={vitals.gcs} placeholder="E4V5M6 / 15" onChange={e => setVitals(p => ({ ...p, gcs: e.target.value }))} />
+                      </FL>
+                      <FL label="Pain Score (NRS 0-10) *">
+                        <input type="number" min="0" max="10" style={{ ...fld, borderColor: Number(vitals.painScore) >= 7 ? C.red : Number(vitals.painScore) >= 4 ? C.amber : "#e2e8f0" }}
+                          value={vitals.painScore} placeholder="0" onChange={e => setVitals(p => ({ ...p, painScore: e.target.value }))} />
+                      </FL>
+                      <FL label="Weight (kg)">
+                        <input type="number" style={fld} value={vitals.weight} placeholder="60" onChange={e => setVitals(p => ({ ...p, weight: e.target.value }))} />
+                      </FL>
+                    </div>
+                    {vitals.painScore && <div style={{ display:"flex", gap:4, alignItems:"center" }}>
+                      {[0,1,2,3,4,5,6,7,8,9,10].map(n => (
+                        <div key={n} style={{ flex:1, height:14, borderRadius:3, background: Number(vitals.painScore)>=n ? (n>=7?C.red:n>=4?C.amber:C.green) : "#e2e8f0", cursor:"pointer", transition:"all .15s" }}
+                          onClick={() => setVitals(p => ({ ...p, painScore: String(n) }))} title={String(n)} />
+                      ))}
+                      <span style={{ fontSize:11, fontWeight:700, color: Number(vitals.painScore)>=7?C.red:Number(vitals.painScore)>=4?C.amber:C.green, marginLeft:6 }}>{vitals.painScore}/10</span>
+                    </div>}
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+                      <FL label="O₂ Delivery Device">
+                        <select style={sel} value={vitals.o2Device} onChange={e => setVitals(p => ({ ...p, o2Device: e.target.value }))}>
+                          {["None","Nasal Prongs","Simple Mask","Venturi Mask","NRM Mask","CPAP","BiPAP","Ventilator"].map(o => <option key={o}>{o}</option>)}
+                        </select>
+                      </FL>
+                      {vitals.o2Device !== "None" && <FL label="O₂ Flow Rate (L/min)">
+                        <input type="number" style={fld} value={vitals.o2Flow} placeholder="4" onChange={e => setVitals(p => ({ ...p, o2Flow: e.target.value }))} />
+                      </FL>}
+                      <FL label="Patient Position">
+                        <select style={sel} value={vitals.position} onChange={e => setVitals(p => ({ ...p, position: e.target.value }))}>
+                          {["Supine","Semi-Fowler's","Fowler's","Left Lateral","Right Lateral","Prone","Sitting"].map(o => <option key={o}>{o}</option>)}
+                        </select>
+                      </FL>
+                    </div>
+                    {(vitals.bp||vitals.pulse||vitals.spo2||vitals.rr) && (() => {
+                      const mewsVals = { rr: vitals.rr, spo2: vitals.spo2, temp: vitals.temp, sbp: vitals.bp.split("/")[0], hr: vitals.pulse, avpu: "A" };
+                      const total = calcMEWS(mewsVals);
+                      const band = mewsBand(total);
+                      return (
+                        <div style={{ background: band.bg, border: `1.5px solid ${band.color}30`, borderRadius:8, padding:"10px 14px", display:"flex", alignItems:"center", gap:10 }}>
+                          <i className={`pi ${band.icon}`} style={{ fontSize:16, color: band.color }} />
+                          <div>
+                            <div style={{ fontSize:12, fontWeight:800, color: band.color }}>MEWS: {total} — {band.label}</div>
+                            <div style={{ fontSize:11, color: band.color + "cc" }}>{band.action}</div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                );
+              })()}
 
-              {/* ── Neuro / GCS ── */}
+              {/* ── Neuro / GCS (NABH COP.2) ── */}
               {activeModal === "neuro" && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10 }}>
-                    <FL label="Eyes (E 1-4)"><input style={fld} value={neuro.gcse} onChange={e => setNeuro(p => ({ ...p, gcse: e.target.value }))} placeholder="4" /></FL>
-                    <FL label="Verbal (V 1-5)"><input style={fld} value={neuro.gcsv} onChange={e => setNeuro(p => ({ ...p, gcsv: e.target.value }))} placeholder="5" /></FL>
-                    <FL label="Motor (M 1-6)"><input style={fld} value={neuro.gcsm} onChange={e => setNeuro(p => ({ ...p, gcsm: e.target.value }))} placeholder="6" /></FL>
-                    <FL label="GCS Total">
-                      <div style={{ ...fld, fontWeight: 800, textAlign: "center", fontFamily: "monospace", color: C.primary, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        {(Number(neuro.gcse) || 0) + (Number(neuro.gcsv) || 0) + (Number(neuro.gcsm) || 0) || "\u2014"}/15
-                      </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  {/* GCS */}
+                  <div style={{ background:"#f8fafc", borderRadius:10, padding:"12px 14px", border:`1px solid ${C.border}` }}>
+                    <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>Glasgow Coma Scale</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10 }}>
+                      <FL label="Eyes (E 1-4)">
+                        <select style={sel} value={neuro.gcse} onChange={e => setNeuro(p => ({ ...p, gcse: e.target.value }))}>
+                          <option value="">—</option>
+                          {[{v:"1",l:"1 – No response"},{v:"2",l:"2 – To pain"},{v:"3",l:"3 – To sound"},{v:"4",l:"4 – Spontaneous"}].map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
+                        </select>
+                      </FL>
+                      <FL label="Verbal (V 1-5)">
+                        <select style={sel} value={neuro.gcsv} onChange={e => setNeuro(p => ({ ...p, gcsv: e.target.value }))}>
+                          <option value="">—</option>
+                          {[{v:"1",l:"1 – None"},{v:"2",l:"2 – Sounds"},{v:"3",l:"3 – Words"},{v:"4",l:"4 – Confused"},{v:"5",l:"5 – Oriented"}].map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
+                        </select>
+                      </FL>
+                      <FL label="Motor (M 1-6)">
+                        <select style={sel} value={neuro.gcsm} onChange={e => setNeuro(p => ({ ...p, gcsm: e.target.value }))}>
+                          <option value="">—</option>
+                          {[{v:"1",l:"1 – None"},{v:"2",l:"2 – Extension"},{v:"3",l:"3 – Flexion"},{v:"4",l:"4 – Withdrawal"},{v:"5",l:"5 – Localises"},{v:"6",l:"6 – Obeys"}].map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
+                        </select>
+                      </FL>
+                      <FL label="GCS Total">
+                        <div style={{ ...fld, fontWeight:800, textAlign:"center", fontFamily:"monospace", fontSize:18, color: (() => { const t=(Number(neuro.gcse)||0)+(Number(neuro.gcsv)||0)+(Number(neuro.gcsm)||0); return t<=8?C.red:t<=12?C.amber:C.green; })(), display:"flex", alignItems:"center", justifyContent:"center" }}>
+                          {(Number(neuro.gcse)||0)+(Number(neuro.gcsv)||0)+(Number(neuro.gcsm)||0)||"—"}/15
+                        </div>
+                      </FL>
+                    </div>
+                  </div>
+                  {/* Pupils */}
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:10 }}>
+                    <FL label="Pupil Reaction">
+                      <select style={sel} value={neuro.pupils} onChange={e => setNeuro(p => ({ ...p, pupils: e.target.value }))}>
+                        {["Equal & Reactive","Unequal","Fixed & Dilated","Pinpoint","Sluggish"].map(o => <option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                    <FL label="Pupil Size L (mm)">
+                      <input type="number" min="1" max="8" style={fld} value={neuro.pupilSizeL} placeholder="3" onChange={e => setNeuro(p => ({ ...p, pupilSizeL: e.target.value }))} />
+                    </FL>
+                    <FL label="Pupil Size R (mm)">
+                      <input type="number" min="1" max="8" style={fld} value={neuro.pupilSizeR} placeholder="3" onChange={e => setNeuro(p => ({ ...p, pupilSizeR: e.target.value }))} />
+                    </FL>
+                    <FL label="Light Reflex">
+                      <select style={sel} value={neuro.lightReflex} onChange={e => setNeuro(p => ({ ...p, lightReflex: e.target.value }))}>
+                        {["Present","Absent","Sluggish"].map(o => <option key={o}>{o}</option>)}
+                      </select>
                     </FL>
                   </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                    <FL label="Pupils">
-                      <select style={sel} value={neuro.pupils} onChange={e => setNeuro(p => ({ ...p, pupils: e.target.value }))}>
-                        {["Equal & Reactive", "Unequal", "Fixed & Dilated", "Pinpoint", "Sluggish"].map(o => <option key={o}>{o}</option>)}
-                      </select>
-                    </FL>
-                    <FL label="Orientation">
+                  {/* Orientation & Limbs */}
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                    <FL label="Orientation / Consciousness">
                       <select style={sel} value={neuro.orientation} onChange={e => setNeuro(p => ({ ...p, orientation: e.target.value }))}>
-                        {["Alert & Oriented \xd73", "Confused", "Drowsy", "Unconscious", "Sedated"].map(o => <option key={o}>{o}</option>)}
+                        {["Alert & Oriented ×3","Oriented to person only","Confused","Drowsy","Unconscious","Sedated"].map(o => <option key={o}>{o}</option>)}
                       </select>
                     </FL>
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                      {[{k:"limbUL",l:"Upper L"},{k:"limbUR",l:"Upper R"},{k:"limbLL",l:"Lower L"},{k:"limbLR",l:"Lower R"}].map(f=>(
+                        <FL key={f.k} label={`Limb Movement ${f.l}`}>
+                          <select style={{ ...sel, fontSize:12 }} value={neuro[f.k]} onChange={e => setNeuro(p => ({ ...p, [f.k]: e.target.value }))}>
+                            {["Normal","Weak","Absent","Paralysed"].map(o=><option key={o}>{o}</option>)}
+                          </select>
+                        </FL>
+                      ))}
+                    </div>
                   </div>
                   <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontWeight: 700, fontSize: 13, color: neuro.seizure ? C.red : C.muted }}>
                     <input type="checkbox" checked={neuro.seizure} onChange={e => setNeuro(p => ({ ...p, seizure: e.target.checked }))} style={{ accentColor: C.red, width: 15, height: 15 }} />
-                    Seizure activity noted
+                    Seizure / Abnormal movement noted
                   </label>
                 </div>
               )}
 
-              {/* ── Pain ── */}
+              {/* ── Pain Assessment (NABH COP.5) ── */}
               {activeModal === "pain" && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr 2fr", gap: 10 }}>
-                    <FL label="Pain Score (0-10)"><input type="number" min="0" max="10" style={fld} value={pain.score} onChange={e => setPain(p => ({ ...p, score: e.target.value }))} /></FL>
-                    <FL label="Location"><input style={fld} value={pain.location} onChange={e => setPain(p => ({ ...p, location: e.target.value }))} placeholder="e.g. Lower abdomen, chest" /></FL>
-                    <FL label="Character">
-                      <select style={sel} value={pain.character} onChange={e => setPain(p => ({ ...p, character: e.target.value }))}>
-                        {["Dull", "Sharp", "Burning", "Stabbing", "Colicky", "Throbbing", "Cramping"].map(o => <option key={o}>{o}</option>)}
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+                    <FL label="Pain Scale Used">
+                      <select style={sel} value={pain.scale} onChange={e => setPain(p => ({ ...p, scale: e.target.value }))}>
+                        {["NRS (Numeric)","VAS","Wong-Baker Faces","FLACC (Paediatric)","CPOT (Non-verbal)"].map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                    <FL label="Pain Score (0-10) *">
+                      <input type="number" min="0" max="10" style={{ ...fld, fontWeight:800, fontSize:15, textAlign:"center", borderColor: Number(pain.score)>=7?C.red:Number(pain.score)>=4?C.amber:"#e2e8f0" }}
+                        value={pain.score} placeholder="0" onChange={e => setPain(p => ({ ...p, score: e.target.value }))} />
+                    </FL>
+                    <FL label="Pain Type">
+                      <select style={sel} value={pain.type} onChange={e => setPain(p => ({ ...p, type: e.target.value }))}>
+                        {["Acute","Chronic","Neuropathic","Breakthrough","Procedural"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                   </div>
-                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontWeight: 700, fontSize: 13, color: pain.analgesicGiven ? C.green : C.muted }}>
-                    <input type="checkbox" checked={pain.analgesicGiven} onChange={e => setPain(p => ({ ...p, analgesicGiven: e.target.checked }))} style={{ accentColor: C.green, width: 15, height: 15 }} />
-                    Analgesic given
-                  </label>
+                  {pain.score && <div style={{ display:"flex", gap:3, alignItems:"center" }}>
+                    {[0,1,2,3,4,5,6,7,8,9,10].map(n=>(
+                      <div key={n} style={{ flex:1, height:12, borderRadius:3, background:Number(pain.score)>=n?(n>=7?C.red:n>=4?C.amber:C.green):"#e2e8f0", cursor:"pointer" }}
+                        onClick={() => setPain(p => ({ ...p, score: String(n) }))} title={String(n)} />
+                    ))}
+                    <span style={{ fontSize:11, fontWeight:800, color:Number(pain.score)>=7?C.red:Number(pain.score)>=4?C.amber:C.green, marginLeft:6, minWidth:36 }}>{pain.score}/10</span>
+                  </div>}
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+                    <FL label="Location *"><input style={fld} value={pain.location} placeholder="e.g. Right lower abdomen" onChange={e => setPain(p => ({ ...p, location: e.target.value }))} /></FL>
+                    <FL label="Character">
+                      <select style={sel} value={pain.character} onChange={e => setPain(p => ({ ...p, character: e.target.value }))}>
+                        {["Dull","Sharp","Burning","Stabbing","Colicky","Throbbing","Cramping","Aching","Shooting"].map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                    <FL label="Onset">
+                      <select style={sel} value={pain.onset} onChange={e => setPain(p => ({ ...p, onset: e.target.value }))}>
+                        {["Sudden","Gradual","Intermittent"].map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                  </div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+                    <FL label="Frequency">
+                      <select style={sel} value={pain.frequency} onChange={e => setPain(p => ({ ...p, frequency: e.target.value }))}>
+                        {["Constant","Intermittent","Episodic"].map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                    <FL label="Duration"><input style={fld} value={pain.duration} placeholder="e.g. 2 hrs, since morning" onChange={e => setPain(p => ({ ...p, duration: e.target.value }))} /></FL>
+                    <FL label="Aggravating Factors"><input style={fld} value={pain.aggravating} placeholder="movement, breathing…" onChange={e => setPain(p => ({ ...p, aggravating: e.target.value }))} /></FL>
+                  </div>
+                  <div style={{ display:"flex", gap:20, flexWrap:"wrap" }}>
+                    <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontWeight:600, fontSize:13, color:pain.radiation?C.amber:C.muted }}>
+                      <input type="checkbox" checked={pain.radiation} onChange={e => setPain(p => ({ ...p, radiation: e.target.checked }))} style={{ accentColor:C.amber, width:15, height:15 }} />
+                      Radiates
+                    </label>
+                    <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontWeight:600, fontSize:13, color:pain.painOnMovement?C.red:C.muted }}>
+                      <input type="checkbox" checked={pain.painOnMovement} onChange={e => setPain(p => ({ ...p, painOnMovement: e.target.checked }))} style={{ accentColor:C.red, width:15, height:15 }} />
+                      Pain on movement
+                    </label>
+                    <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontWeight:600, fontSize:13, color:pain.analgesicGiven?C.green:C.muted }}>
+                      <input type="checkbox" checked={pain.analgesicGiven} onChange={e => setPain(p => ({ ...p, analgesicGiven: e.target.checked }))} style={{ accentColor:C.green, width:15, height:15 }} />
+                      Analgesic given
+                    </label>
+                  </div>
+                  {pain.radiation && <FL label="Radiation Site"><input style={fld} value={pain.radiationSite} placeholder="e.g. radiates to left shoulder" onChange={e => setPain(p => ({ ...p, radiationSite: e.target.value }))} /></FL>}
                   {pain.analgesicGiven && (
-                    <FL label="Analgesic Given"><input style={fld} value={pain.analgesic} onChange={e => setPain(p => ({ ...p, analgesic: e.target.value }))} placeholder="Drug name and dose" /></FL>
+                    <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr", gap:10 }}>
+                      <FL label="Drug & Dose"><input style={fld} value={pain.analgesic} placeholder="Inj. Paracetamol 1g" onChange={e => setPain(p => ({ ...p, analgesic: e.target.value }))} /></FL>
+                      <FL label="Route">
+                        <select style={sel} value={pain.analgesicRoute} onChange={e => setPain(p => ({ ...p, analgesicRoute: e.target.value }))}>
+                          {["IV","IM","Oral","Sublingual","Topical","PR","Epidural"].map(o=><option key={o}>{o}</option>)}
+                        </select>
+                      </FL>
+                      <FL label="Time Given"><input type="time" style={fld} value={pain.analgesicTime} onChange={e => setPain(p => ({ ...p, analgesicTime: e.target.value }))} /></FL>
+                    </div>
                   )}
-                  <FL label="Reassessment Score"><input type="number" min="0" max="10" style={{ ...fld, maxWidth: 120 }} value={pain.reassessScore} onChange={e => setPain(p => ({ ...p, reassessScore: e.target.value }))} /></FL>
+                  <FL label="Non-Pharmacological Interventions"><input style={fld} value={pain.nonPharm} placeholder="Positioning, ice pack, heat, relaxation, distraction…" onChange={e => setPain(p => ({ ...p, nonPharm: e.target.value }))} /></FL>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                    <FL label="Reassessment Score (0-10)"><input type="number" min="0" max="10" style={fld} value={pain.reassessScore} onChange={e => setPain(p => ({ ...p, reassessScore: e.target.value }))} /></FL>
+                    <FL label="Reassessment Time"><input type="time" style={fld} value={pain.reassessTime} onChange={e => setPain(p => ({ ...p, reassessTime: e.target.value }))} /></FL>
+                  </div>
                 </div>
               )}
 
-              {/* ── IV Infusion ── */}
+              {/* ── IV Infusion (NABH COP.3) ── */}
               {activeModal === "iv" && (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                  <FL label="IV Fluid">
-                    <select style={sel} value={iv.fluid} onChange={e => setIV(p => ({ ...p, fluid: e.target.value }))}>
-                      {["NS 0.9%", "RL", "DNS", "D5W", "D10W", "NS 0.45%", "Plasmalyte", "Other"].map(o => <option key={o}>{o}</option>)}
-                    </select>
-                  </FL>
-                  <FL label="Volume (mL)"><input type="number" style={fld} value={iv.volume} onChange={e => setIV(p => ({ ...p, volume: e.target.value }))} placeholder="500" /></FL>
-                  <FL label="Rate (mL/hr)"><input type="number" style={fld} value={iv.rate} onChange={e => setIV(p => ({ ...p, rate: e.target.value }))} placeholder="84" /></FL>
-                  <FL label="Route"><input style={fld} value={iv.route} onChange={e => setIV(p => ({ ...p, route: e.target.value }))} placeholder="IV Right Forearm" /></FL>
-                  <FL label="IV Site Status">
-                    <select style={sel} value={iv.site} onChange={e => setIV(p => ({ ...p, site: e.target.value }))}>
-                      {["Patent", "Redness", "Swelling", "Infiltration", "Replaced", "Blocked"].map(o => <option key={o}>{o}</option>)}
-                    </select>
-                  </FL>
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                    <FL label="IV Fluid *">
+                      <select style={sel} value={iv.fluid} onChange={e => setIV(p => ({ ...p, fluid: e.target.value }))}>
+                        {["NS 0.9%","RL (Ringer's Lactate)","DNS","D5W","D10W","NS 0.45%","Plasmalyte","Isolyte S","Haemaccel","Other"].map(o => <option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                    <FL label="Volume (mL) *"><input type="number" style={fld} value={iv.volume} placeholder="500" onChange={e => setIV(p => ({ ...p, volume: e.target.value }))} /></FL>
+                    <FL label="Rate (mL/hr) *"><input type="number" style={fld} value={iv.rate} placeholder="84" onChange={e => { const r=e.target.value; const d=r?Math.round(Number(r)*20/60):""  ; setIV(p => ({ ...p, rate: r, dropsPerMin: String(d) })); }} /></FL>
+                  </div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+                    <FL label="Drip Rate (drops/min)">
+                      <div style={{ ...fld, background:"#f8fafc", fontFamily:"monospace", fontWeight:700, color:C.primary }}>{iv.dropsPerMin || "—"}</div>
+                    </FL>
+                    <FL label="Route / Access *"><input style={fld} value={iv.route} placeholder="IV Right Forearm" onChange={e => setIV(p => ({ ...p, route: e.target.value }))} /></FL>
+                    <FL label="IV Site Status *">
+                      <select style={{ ...sel, borderColor: iv.site==="Patent"?C.green:iv.site==="Infiltration"||iv.site==="Blocked"?C.red:C.amber }} value={iv.site} onChange={e => setIV(p => ({ ...p, site: e.target.value }))}>
+                        {["Patent","Redness","Swelling","Infiltration","Replaced","Blocked","Phlebitis"].map(o => <option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                  </div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                    <FL label="Cannula Insertion Date"><input type="date" style={fld} value={iv.cannulaDate} onChange={e => setIV(p => ({ ...p, cannulaDate: e.target.value }))} /></FL>
+                    <FL label="IV Set Last Changed"><input type="date" style={fld} value={iv.setChangeDate} onChange={e => setIV(p => ({ ...p, setChangeDate: e.target.value }))} /></FL>
+                  </div>
+                  <FL label="Medication Additive (if any)"><input style={fld} value={iv.additive} placeholder="e.g. Inj. KCl 20 mEq, Inj. MgSO₄ 1g" onChange={e => setIV(p => ({ ...p, additive: e.target.value }))} /></FL>
                 </div>
               )}
 
-              {/* ── Blood Transfusion ── */}
+              {/* ── Blood Transfusion (NABH COP.7) ── */}
               {activeModal === "blood" && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   <div style={{ background: C.redL, border: `1.5px solid #fca5a5`, borderRadius: 8, padding: "10px 14px", fontSize: 12, color: C.red, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
-                    <i className="pi pi-exclamation-triangle" style={{ fontSize: 13 }} /> Blood Product Administration — Dual ID Check Required
+                    <i className="pi pi-exclamation-triangle" style={{ fontSize: 13 }} /> NABH COP.7 — Blood Product Administration · Dual RN Verification Mandatory
                   </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                    <FL label="Blood Product">
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                    <FL label="Blood Product *">
                       <select style={sel} value={blood.product} onChange={e => setBlood(p => ({ ...p, product: e.target.value }))}>
-                        {["PRC (Packed RBC)", "FFP", "Platelets", "Whole Blood", "Albumin", "Cryoprecipitate"].map(o => <option key={o}>{o}</option>)}
+                        {["PRC (Packed RBC)","FFP","Platelets (RDP)","Platelets (SDP)","Whole Blood","Albumin 5%","Albumin 20%","Cryoprecipitate","Granulocytes"].map(o => <option key={o}>{o}</option>)}
                       </select>
                     </FL>
-                    <FL label="Bag No."><input style={fld} value={blood.bagNo} onChange={e => setBlood(p => ({ ...p, bagNo: e.target.value }))} placeholder="BT-YYYYMMDD-01" /></FL>
-                    <FL label="Volume (mL)"><input type="number" style={fld} value={blood.volume} onChange={e => setBlood(p => ({ ...p, volume: e.target.value }))} placeholder="350" /></FL>
-                    <FL label="Transfusion Status">
+                    <FL label="Bag / Unit No. *"><input style={fld} value={blood.bagNo} placeholder="BT-YYYYMMDD-01" onChange={e => setBlood(p => ({ ...p, bagNo: e.target.value }))} /></FL>
+                    <FL label="Cross-Match Report No. *"><input style={fld} value={blood.crossMatchNo} placeholder="CM-2024-001" onChange={e => setBlood(p => ({ ...p, crossMatchNo: e.target.value }))} /></FL>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                    <FL label="Volume (mL) *"><input type="number" style={fld} value={blood.volume} placeholder="350" onChange={e => setBlood(p => ({ ...p, volume: e.target.value }))} /></FL>
+                    <FL label="Transfusion Start Time *"><input type="time" style={fld} value={blood.startTime} onChange={e => setBlood(p => ({ ...p, startTime: e.target.value }))} /></FL>
+                    <FL label="End Time / Status *">
                       <select style={sel} value={blood.status} onChange={e => setBlood(p => ({ ...p, status: e.target.value }))}>
-                        {["Transfusing", "Completed", "Held", "Reaction", "Stopped"].map(o => <option key={o}>{o}</option>)}
+                        {["Transfusing","Completed","Held","Reaction","Stopped"].map(o => <option key={o}>{o}</option>)}
                       </select>
                     </FL>
                   </div>
-                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontWeight: 700, fontSize: 13, color: blood.groupVerified ? C.green : C.red }}>
-                    <input type="checkbox" checked={blood.groupVerified} onChange={e => setBlood(p => ({ ...p, groupVerified: e.target.checked }))} style={{ accentColor: C.green, width: 15, height: 15 }} />
-                    Group &amp; crossmatch verified &#10003;
-                  </label>
-                </div>
-              )}
-
-              {/* ── Intake / Output ── */}
-              {activeModal === "intake" && (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                  {[
-                    { k: "oral",        label: "Oral Intake (mL)",   placeholder: "200" },
-                    { k: "ivFluids",    label: "IV Fluids (mL)",     placeholder: "500" },
-                    { k: "urineOutput", label: "Urine Output (mL)",  placeholder: "300" },
-                    { k: "drainOutput", label: "Drain / Other (mL)", placeholder: "0" },
-                    { k: "nasogastric", label: "Nasogastric (mL)",   placeholder: "0" },
-                  ].map(f => (
-                    <FL key={f.k} label={f.label}>
-                      <input type="number" style={fld} value={intake[f.k]} placeholder={f.placeholder}
-                        onChange={e => setIntake(p => ({ ...p, [f.k]: e.target.value }))} />
-                    </FL>
-                  ))}
-                  <div style={{ display: "flex", flexDirection: "column", gap: 5, justifyContent: "flex-end" }}>
-                    <div style={lbl}>Total Balance</div>
-                    <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 18, fontWeight: 800, color: (Number(intake.oral) + Number(intake.ivFluids)) - (Number(intake.urineOutput) + Number(intake.drainOutput)) >= 0 ? C.primary : C.red }}>
-                      {(Number(intake.oral) + Number(intake.ivFluids)) - (Number(intake.urineOutput) + Number(intake.drainOutput))} mL
+                  {/* Pre-transfusion vitals */}
+                  <div style={{ background:"#fff7ed", border:`1px solid #fed7aa`, borderRadius:8, padding:"10px 14px" }}>
+                    <div style={{ fontSize:11, fontWeight:700, color:C.orange, textTransform:"uppercase", letterSpacing:".6px", marginBottom:8 }}>Pre-Transfusion Vitals *</div>
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+                      <FL label="BP (mmHg)"><input style={fld} value={blood.preBP} placeholder="120/80" onChange={e => setBlood(p => ({ ...p, preBP: e.target.value }))} /></FL>
+                      <FL label="Pulse (/min)"><input type="number" style={fld} value={blood.prePulse} placeholder="80" onChange={e => setBlood(p => ({ ...p, prePulse: e.target.value }))} /></FL>
+                      <FL label="Temp (°F)"><input type="number" style={fld} value={blood.preTemp} placeholder="98.6" onChange={e => setBlood(p => ({ ...p, preTemp: e.target.value }))} /></FL>
                     </div>
                   </div>
+                  {/* Post-transfusion vitals */}
+                  {blood.status === "Completed" && (
+                    <div style={{ background:C.greenL, border:`1px solid ${C.greenB}`, borderRadius:8, padding:"10px 14px" }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:C.green, textTransform:"uppercase", letterSpacing:".6px", marginBottom:8 }}>Post-Transfusion Vitals *</div>
+                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                        <FL label="BP (mmHg)"><input style={fld} value={blood.postBP} placeholder="118/76" onChange={e => setBlood(p => ({ ...p, postBP: e.target.value }))} /></FL>
+                        <FL label="Pulse (/min)"><input type="number" style={fld} value={blood.postPulse} placeholder="78" onChange={e => setBlood(p => ({ ...p, postPulse: e.target.value }))} /></FL>
+                      </div>
+                    </div>
+                  )}
+                  <div style={{ display:"flex", gap:20, alignItems:"center", flexWrap:"wrap" }}>
+                    <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontWeight:700, fontSize:13, color:blood.groupVerified?C.green:C.red }}>
+                      <input type="checkbox" checked={blood.groupVerified} onChange={e => setBlood(p => ({ ...p, groupVerified: e.target.checked }))} style={{ accentColor:C.green, width:15, height:15 }} />
+                      Group & crossmatch verified (Dual RN sign) ✓
+                    </label>
+                  </div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                    <FL label="Second Nurse Verified (Name) *"><input style={fld} value={blood.secondNurse} placeholder="Verifying nurse name" onChange={e => setBlood(p => ({ ...p, secondNurse: e.target.value }))} /></FL>
+                    <FL label="Transfusion Reaction">
+                      <select style={{ ...sel, borderColor: blood.reactionType!=="None"?C.red:"#e2e8f0" }} value={blood.reactionType} onChange={e => setBlood(p => ({ ...p, reactionType: e.target.value }))}>
+                        {["None","Febrile","Allergic / Urticaria","Anaphylaxis","Haemolytic","TACO","TRALI","Other"].map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                  </div>
+                  {blood.reactionType !== "None" && (
+                    <div style={{ background:C.redL, border:`1.5px solid #fca5a5`, borderRadius:8, padding:10, fontSize:12, color:C.red, fontWeight:600 }}>
+                      ⚠️ Reaction reported — stop transfusion, notify doctor, send blood bag to lab. Document in critical event.
+                    </div>
+                  )}
                 </div>
               )}
 
-              {/* ── Wound / Dressing ── */}
+              {/* ── Intake / Output (NABH COP.2) ── */}
+              {activeModal === "intake" && (() => {
+                const totalIn  = Number(intake.oral||0)+Number(intake.ivFluids||0)+Number(intake.bloodProducts||0);
+                const totalOut = Number(intake.urineOutput||0)+Number(intake.drainOutput||0)+Number(intake.nasogastric||0)+Number(intake.emesis||0)+Number(intake.bloodLoss||0);
+                const balance  = totalIn - totalOut;
+                return (
+                  <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                      <div style={{ background:"#eff6ff", border:`1px solid ${C.blueB}`, borderRadius:10, padding:"10px 14px" }}>
+                        <div style={{ fontSize:11, fontWeight:700, color:C.blue, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>Intake</div>
+                        <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                          {[{k:"oral",l:"Oral (mL)"},{k:"ivFluids",l:"IV Fluids (mL)"},{k:"bloodProducts",l:"Blood Products (mL)"}].map(f=>(
+                            <FL key={f.k} label={f.l}>
+                              <input type="number" style={{ ...fld, fontSize:13 }} value={intake[f.k]} placeholder="0" onChange={e => setIntake(p => ({ ...p, [f.k]: e.target.value }))} />
+                            </FL>
+                          ))}
+                          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:700, color:C.blue, paddingTop:4, borderTop:`1px solid ${C.blueB}` }}>Total In: {totalIn} mL</div>
+                        </div>
+                      </div>
+                      <div style={{ background:C.amberL, border:`1px solid ${C.amberB}`, borderRadius:10, padding:"10px 14px" }}>
+                        <div style={{ fontSize:11, fontWeight:700, color:C.amber, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>Output</div>
+                        <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                          {[{k:"urineOutput",l:"Urine Output (mL)"},{k:"drainOutput",l:"Drain Output (mL)"},{k:"nasogastric",l:"Nasogastric (mL)"},{k:"emesis",l:"Emesis / Vomit (mL)"},{k:"bloodLoss",l:"Blood Loss (mL)"}].map(f=>(
+                            <FL key={f.k} label={f.l}>
+                              <input type="number" style={{ ...fld, fontSize:13 }} value={intake[f.k]} placeholder="0" onChange={e => setIntake(p => ({ ...p, [f.k]: e.target.value }))} />
+                            </FL>
+                          ))}
+                          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:700, color:C.amber, paddingTop:4, borderTop:`1px solid ${C.amberB}` }}>Total Out: {totalOut} mL</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ background: balance>=0?C.greenL:C.redL, border:`1.5px solid ${balance>=0?C.greenB:"#fca5a5"}`, borderRadius:10, padding:"12px 18px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                      <span style={{ fontSize:13, fontWeight:700, color:balance>=0?C.green:C.red }}>Fluid Balance (This Entry)</span>
+                      <span style={{ fontFamily:"'DM Mono',monospace", fontSize:22, fontWeight:800, color:balance>=0?C.green:C.red }}>{balance>=0?"+":""}{balance} mL</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* ── Wound / Dressing (NABH COP.4) ── */}
               {activeModal === "wound" && (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                  <FL label="Wound Site"><input style={fld} value={wound.site} onChange={e => setWound(p => ({ ...p, site: e.target.value }))} placeholder="e.g. Right lower leg" /></FL>
-                  <FL label="Wound Size"><input style={fld} value={wound.size} onChange={e => setWound(p => ({ ...p, size: e.target.value }))} placeholder="e.g. 3\xd72 cm" /></FL>
-                  <FL label="Exudate">
-                    <select style={sel} value={wound.exudate} onChange={e => setWound(p => ({ ...p, exudate: e.target.value }))}>
-                      {["None", "Minimal (serous)", "Moderate (sero-sanguinous)", "Heavy (purulent)"].map(o => <option key={o}>{o}</option>)}
-                    </select>
-                  </FL>
-                  <FL label="Healing Stage">
-                    <select style={sel} value={wound.healingStage} onChange={e => setWound(p => ({ ...p, healingStage: e.target.value }))}>
-                      {["Granulating", "Epithelializing", "Sloughy", "Infected", "Necrotic", "Dehisced"].map(o => <option key={o}>{o}</option>)}
-                    </select>
-                  </FL>
-                  <FL label="Dressing Applied"><input style={fld} value={wound.dressing} onChange={e => setWound(p => ({ ...p, dressing: e.target.value }))} placeholder="e.g. Povidone + gauze" /></FL>
-                  <label style={{ display: "flex", alignItems: "center", gap: 8, alignSelf: "flex-end", cursor: "pointer", fontWeight: 700, fontSize: 13, color: wound.odour ? C.amber : C.muted, paddingBottom: 8 }}>
-                    <input type="checkbox" checked={wound.odour} onChange={e => setWound(p => ({ ...p, odour: e.target.checked }))} style={{ accentColor: C.amber, width: 15, height: 15 }} />
-                    Odour present
-                  </label>
-                </div>
-              )}
-
-              {/* ── Skin / Pressure ── */}
-              {activeModal === "skin" && (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                  <FL label="Pressure Area"><input style={fld} value={skin.area} onChange={e => setSkin(p => ({ ...p, area: e.target.value }))} placeholder="e.g. Sacrum, heels" /></FL>
-                  <FL label="Stage">
-                    <select style={sel} value={skin.stage} onChange={e => setSkin(p => ({ ...p, stage: e.target.value }))}>
-                      {["Stage I", "Stage II", "Stage III", "Stage IV", "Unstageable", "Deep Tissue"].map(o => <option key={o}>{o}</option>)}
-                    </select>
-                  </FL>
-                  <FL label="Intervention"><input style={fld} value={skin.intervention} onChange={e => setSkin(p => ({ ...p, intervention: e.target.value }))} placeholder="Foam dressing, barrier cream\u2026" /></FL>
-                  <label style={{ display: "flex", alignItems: "center", gap: 8, alignSelf: "flex-end", cursor: "pointer", fontWeight: 700, fontSize: 13, color: skin.repositioned ? C.green : C.muted, paddingBottom: 8 }}>
-                    <input type="checkbox" checked={skin.repositioned} onChange={e => setSkin(p => ({ ...p, repositioned: e.target.checked }))} style={{ accentColor: C.green, width: 15, height: 15 }} />
-                    Patient repositioned
-                  </label>
-                </div>
-              )}
-
-              {/* ── Fall Risk ── */}
-              {activeModal === "fall" && (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                  <FL label="Morse Fall Score"><input type="number" style={fld} value={fallRisk.morseScore} onChange={e => setFallRisk(p => ({ ...p, morseScore: e.target.value }))} placeholder="0-125" /></FL>
-                  <FL label="Risk Level">
-                    <select style={sel} value={fallRisk.risk} onChange={e => setFallRisk(p => ({ ...p, risk: e.target.value }))}>
-                      {["No Risk (<25)", "Low Risk (25-44)", "High Risk (\u226545)"].map(o => <option key={o}>{o}</option>)}
-                    </select>
-                  </FL>
-                  <div style={{ gridColumn: "span 2" }}>
-                    <FL label="Interventions Applied">
-                      <textarea style={ta} value={fallRisk.interventions} onChange={e => setFallRisk(p => ({ ...p, interventions: e.target.value }))} placeholder="Bed rails up, non-slip socks, call bell within reach, bed in lowest position\u2026" />
-                    </FL>
-                  </div>
-                </div>
-              )}
-
-              {/* ── Procedure ── */}
-              {activeModal === "procedure" && (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                  <FL label="Procedure Name"><input style={fld} value={procedure.procedureName} onChange={e => setProcedure(p => ({ ...p, procedureName: e.target.value }))} placeholder="e.g. Urinary catheterisation" /></FL>
-                  <FL label="Indication"><input style={fld} value={procedure.indication} onChange={e => setProcedure(p => ({ ...p, indication: e.target.value }))} placeholder="Reason for procedure" /></FL>
-                  <FL label="Performed By"><input style={fld} value={procedure.performedBy} onChange={e => setProcedure(p => ({ ...p, performedBy: e.target.value }))} placeholder="Nurse / Doctor name" /></FL>
-                  <FL label="Outcome">
-                    <select style={sel} value={procedure.outcome} onChange={e => setProcedure(p => ({ ...p, outcome: e.target.value }))}>
-                      {["Tolerated Well", "Partial Cooperation", "Procedure Abandoned", "Complication Noted"].map(o => <option key={o}>{o}</option>)}
-                    </select>
-                  </FL>
-                  <label style={{ display: "flex", alignItems: "center", gap: 8, alignSelf: "center", cursor: "pointer", fontWeight: 700, fontSize: 13, color: procedure.consentObtained ? C.green : C.red }}>
-                    <input type="checkbox" checked={procedure.consentObtained} onChange={e => setProcedure(p => ({ ...p, consentObtained: e.target.checked }))} style={{ accentColor: C.green, width: 15, height: 15 }} />
-                    Consent Obtained
-                  </label>
-                </div>
-              )}
-
-              {/* ── Discharge / Handover ── */}
-              {activeModal === "discharge" && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                    <FL label="Type">
-                      <select style={sel} value={discharge.type} onChange={e => setDischarge(p => ({ ...p, type: e.target.value }))}>
-                        {["Shift Handover", "Patient Discharge", "Transfer Handover", "Death Summary"].map(o => <option key={o}>{o}</option>)}
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+                    <FL label="Wound Type *">
+                      <select style={sel} value={wound.type} onChange={e => setWound(p => ({ ...p, type: e.target.value }))}>
+                        {["Surgical","Pressure Injury","Traumatic","Burn","Diabetic Foot","Vascular","Fungating","Other"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
-                    <FL label="Patient Status">
-                      <select style={sel} value={discharge.patientStatus} onChange={e => setDischarge(p => ({ ...p, patientStatus: e.target.value }))}>
-                        {["Stable", "Improving", "Critical", "Deteriorating", "Deceased"].map(o => <option key={o}>{o}</option>)}
+                    <FL label="Wound Site / Location *"><input style={fld} value={wound.site} placeholder="e.g. Right lower leg, sacrum" onChange={e => setWound(p => ({ ...p, site: e.target.value }))} /></FL>
+                    <FL label="Healing Stage *">
+                      <select style={sel} value={wound.healingStage} onChange={e => setWound(p => ({ ...p, healingStage: e.target.value }))}>
+                        {["Haemostasis","Inflammatory","Granulating","Epithelializing","Sloughy","Infected","Necrotic","Dehisced"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
-                    <FL label="Incoming Nurse"><input style={fld} value={discharge.incomingNurse} onChange={e => setDischarge(p => ({ ...p, incomingNurse: e.target.value }))} placeholder="Receiving nurse name" /></FL>
                   </div>
-                  <FL label="Handover Summary">
-                    <textarea style={{ ...ta, minHeight: 100 }} value={discharge.summary} onChange={e => setDischarge(p => ({ ...p, summary: e.target.value }))} placeholder="Summary of patient condition, pending orders, special instructions\u2026" />
-                  </FL>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+                    <FL label="Length (cm) *"><input type="number" style={fld} value={wound.length} placeholder="3" onChange={e => setWound(p => ({ ...p, length: e.target.value }))} /></FL>
+                    <FL label="Width (cm) *"><input type="number" style={fld} value={wound.width} placeholder="2" onChange={e => setWound(p => ({ ...p, width: e.target.value }))} /></FL>
+                    <FL label="Depth (cm)"><input type="number" style={fld} value={wound.depth} placeholder="0.5" onChange={e => setWound(p => ({ ...p, depth: e.target.value }))} /></FL>
+                  </div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                    <FL label="Exudate Amount">
+                      <select style={sel} value={wound.exudateAmt} onChange={e => setWound(p => ({ ...p, exudateAmt: e.target.value }))}>
+                        {["None","Scant","Minimal","Moderate","Heavy"].map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                    <FL label="Exudate Type">
+                      <select style={sel} value={wound.exudateType} onChange={e => setWound(p => ({ ...p, exudateType: e.target.value }))}>
+                        {["Serous","Sero-sanguinous","Sanguinous","Purulent","Haemopurulent"].map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                  </div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                    <FL label="Surrounding Skin">
+                      <select style={sel} value={wound.surroundingSkin} onChange={e => setWound(p => ({ ...p, surroundingSkin: e.target.value }))}>
+                        {["Intact","Erythema","Macerated","Oedematous","Dry/Scaly","Excoriated"].map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                    <FL label="Dressing Applied *"><input style={fld} value={wound.dressing} placeholder="e.g. Povidone-Iodine + paraffin gauze" onChange={e => setWound(p => ({ ...p, dressing: e.target.value }))} /></FL>
+                  </div>
+                  <div style={{ display:"flex", gap:20, flexWrap:"wrap" }}>
+                    {[
+                      {k:"tunneling",l:"Tunnelling present",c:C.amber},{k:"undermining",l:"Undermining present",c:C.amber},
+                      {k:"odour",l:"Malodour present",c:C.red},{k:"swabSent",l:"Wound swab sent",c:C.green},
+                    ].map(f=>(
+                      <label key={f.k} style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontWeight:600, fontSize:13, color:wound[f.k]?f.c:C.muted }}>
+                        <input type="checkbox" checked={wound[f.k]} onChange={e => setWound(p => ({ ...p, [f.k]: e.target.checked }))} style={{ accentColor:f.c, width:15, height:15 }} />
+                        {f.l}
+                      </label>
+                    ))}
+                  </div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                    <FL label="Pain During Dressing (NRS 0-10)"><input type="number" min="0" max="10" style={fld} value={wound.painDuring} placeholder="0" onChange={e => setWound(p => ({ ...p, painDuring: e.target.value }))} /></FL>
+                    <FL label="Next Dressing Due"><input type="date" style={fld} value={wound.nextDressingDate} onChange={e => setWound(p => ({ ...p, nextDressingDate: e.target.value }))} /></FL>
+                  </div>
                 </div>
               )}
+
+              {/* ── Skin / Pressure (NABH COP.4 — Braden Scale) ── */}
+              {activeModal === "skin" && (() => {
+                const bradenTotal = calcBraden(skin);
+                const band = bradenBand(bradenTotal);
+                const bradenFields = [
+                  { k:"b1", label:"Sensory Perception", opts:[{v:"1",l:"1 – Completely Limited"},{v:"2",l:"2 – Very Limited"},{v:"3",l:"3 – Slightly Limited"},{v:"4",l:"4 – No Impairment"}] },
+                  { k:"b2", label:"Moisture", opts:[{v:"1",l:"1 – Constantly Moist"},{v:"2",l:"2 – Often Moist"},{v:"3",l:"3 – Occasionally Moist"},{v:"4",l:"4 – Rarely Moist"}] },
+                  { k:"b3", label:"Activity", opts:[{v:"1",l:"1 – Bedfast"},{v:"2",l:"2 – Chairfast"},{v:"3",l:"3 – Walks Occasionally"},{v:"4",l:"4 – Walks Frequently"}] },
+                  { k:"b4", label:"Mobility", opts:[{v:"1",l:"1 – Completely Immobile"},{v:"2",l:"2 – Very Limited"},{v:"3",l:"3 – Slightly Limited"},{v:"4",l:"4 – No Limitation"}] },
+                  { k:"b5", label:"Nutrition", opts:[{v:"1",l:"1 – Very Poor"},{v:"2",l:"2 – Probably Inadequate"},{v:"3",l:"3 – Adequate"},{v:"4",l:"4 – Excellent"}] },
+                  { k:"b6", label:"Friction & Shear", opts:[{v:"1",l:"1 – Problem"},{v:"2",l:"2 – Potential Problem"},{v:"3",l:"3 – No Apparent Problem"}] },
+                ];
+                return (
+                  <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+                    {/* Braden Score */}
+                    <div style={{ background:"#f8fafc", border:`1px solid ${C.border}`, borderRadius:10, padding:"12px 14px" }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+                        <div style={{ fontSize:12, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px" }}>Braden Pressure Injury Risk Scale</div>
+                        <div style={{ background:band.bg, color:band.color, border:`1.5px solid ${band.color}30`, borderRadius:8, padding:"4px 14px", fontWeight:800, fontSize:14 }}>
+                          {bradenTotal}/23 — {band.label}
+                        </div>
+                      </div>
+                      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8 }}>
+                        {bradenFields.map(f => (
+                          <FL key={f.k} label={f.label}>
+                            <select style={{ ...sel, borderColor: Number(skin[f.k])<=2?C.red:Number(skin[f.k])===3?C.amber:"#e2e8f0" }}
+                              value={skin[f.k]} onChange={e => setSkin(p => ({ ...p, [f.k]: e.target.value }))}>
+                              {f.opts.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
+                            </select>
+                          </FL>
+                        ))}
+                      </div>
+                    </div>
+                    {/* Pressure injury details */}
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+                      <FL label="Pressure Area Location"><input style={fld} value={skin.area} placeholder="e.g. Sacrum, heels, occiput" onChange={e => setSkin(p => ({ ...p, area: e.target.value }))} /></FL>
+                      <FL label="Pressure Injury Stage">
+                        <select style={sel} value={skin.stage} onChange={e => setSkin(p => ({ ...p, stage: e.target.value }))}>
+                          {["No Injury","Stage I","Stage II","Stage III","Stage IV","Unstageable","Deep Tissue Injury"].map(o=><option key={o}>{o}</option>)}
+                        </select>
+                      </FL>
+                      <FL label="Repositioning Frequency">
+                        <select style={sel} value={skin.repositionFreq} onChange={e => setSkin(p => ({ ...p, repositionFreq: e.target.value }))}>
+                          {["Hourly","2-hourly","4-hourly","As tolerated","On request"].map(o=><option key={o}>{o}</option>)}
+                        </select>
+                      </FL>
+                    </div>
+                    <FL label="Interventions Applied"><input style={fld} value={skin.intervention} placeholder="Foam dressing, barrier cream, pressure-relieving mattress, heel wedge…" onChange={e => setSkin(p => ({ ...p, intervention: e.target.value }))} /></FL>
+                    <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontWeight:700, fontSize:13, color:skin.repositioned?C.green:C.muted }}>
+                      <input type="checkbox" checked={skin.repositioned} onChange={e => setSkin(p => ({ ...p, repositioned: e.target.checked }))} style={{ accentColor:C.green, width:15, height:15 }} />
+                      Patient repositioned this entry
+                    </label>
+                  </div>
+                );
+              })()}
+
+              {/* ── Fall Risk — Morse Scale (NABH FMS.2) ── */}
+              {activeModal === "fall" && (() => {
+                const morseTotal = calcMorse(fallRisk);
+                const band = morseBand(morseTotal);
+                const morseItems = [
+                  { k:"m1", label:"1. History of Falls (within 3 months)", opts:[{v:"0",l:"No — 0"},{v:"25",l:"Yes — 25"}] },
+                  { k:"m2", label:"2. Secondary Diagnosis", opts:[{v:"0",l:"No — 0"},{v:"15",l:"Yes — 15"}] },
+                  { k:"m3", label:"3. Ambulatory Aid", opts:[{v:"0",l:"None / Bedrest / Nurse — 0"},{v:"15",l:"Crutch / Cane / Walker — 15"},{v:"30",l:"Furniture — 30"}] },
+                  { k:"m4", label:"4. IV / Heparin Lock", opts:[{v:"0",l:"No — 0"},{v:"20",l:"Yes — 20"}] },
+                  { k:"m5", label:"5. Gait / Transferring", opts:[{v:"0",l:"Normal / Bedrest / Immobile — 0"},{v:"10",l:"Weak — 10"},{v:"20",l:"Impaired — 20"}] },
+                  { k:"m6", label:"6. Mental Status", opts:[{v:"0",l:"Aware of own ability — 0"},{v:"15",l:"Forgets limitations — 15"}] },
+                ];
+                const intList = [
+                  {k:"intBedRails",l:"Bed rails raised (×2)"},{k:"intCallBell",l:"Call bell within reach"},
+                  {k:"intNonSlip",l:"Non-slip footwear"},{k:"intBedLowest",l:"Bed in lowest position"},
+                  {k:"intSupervision",l:"Supervision / escort for ambulation"},{k:"intPatientEd",l:"Patient educated on fall risk"},
+                  {k:"intFamilyEd",l:"Family educated"},
+                ];
+                return (
+                  <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+                    <div style={{ background:"#f8fafc", border:`1px solid ${C.border}`, borderRadius:10, padding:"12px 14px" }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+                        <div style={{ fontSize:12, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px" }}>Morse Fall Scale</div>
+                        <div style={{ background:band.bg, color:band.color, border:`1.5px solid ${band.color}30`, borderRadius:8, padding:"4px 16px", fontWeight:800, fontSize:14 }}>
+                          {morseTotal}/125 — {band.label}
+                        </div>
+                      </div>
+                      <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                        {morseItems.map(item => (
+                          <div key={item.k} style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, alignItems:"center" }}>
+                            <div style={{ fontSize:12, fontWeight:600, color:C.text }}>{item.label}</div>
+                            <select style={{ ...sel, borderColor: Number(fallRisk[item.k])>0?C.amber:"#e2e8f0" }}
+                              value={fallRisk[item.k]} onChange={e => setFallRisk(p => ({ ...p, [item.k]: e.target.value }))}>
+                              {item.opts.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
+                            </select>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={lbl}>Interventions Applied (check all that apply)</div>
+                      <div style={{ display:"flex", flexWrap:"wrap", gap:8, marginTop:6 }}>
+                        {intList.map(f=>(
+                          <label key={f.k} style={{ display:"flex", alignItems:"center", gap:7, cursor:"pointer", fontWeight:600, fontSize:12, color:fallRisk[f.k]?C.green:C.muted, padding:"6px 12px", border:`1.5px solid ${fallRisk[f.k]?C.green:C.border}`, borderRadius:20, background:fallRisk[f.k]?C.greenL:"white", transition:"all .15s" }}>
+                            <input type="checkbox" checked={fallRisk[f.k]} onChange={e => setFallRisk(p => ({ ...p, [f.k]: e.target.checked }))} style={{ accentColor:C.green, width:13, height:13 }} />
+                            {f.l}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* ── Procedure / Intervention (NABH COP.3) ── */}
+              {activeModal === "procedure" && (
+                <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+                    <FL label="Procedure Name *"><input style={fld} value={procedure.procedureName} placeholder="e.g. Urinary catheterisation" onChange={e => setProcedure(p => ({ ...p, procedureName: e.target.value }))} /></FL>
+                    <FL label="Indication / Reason *"><input style={fld} value={procedure.indication} placeholder="Reason for procedure" onChange={e => setProcedure(p => ({ ...p, indication: e.target.value }))} /></FL>
+                    <FL label="Time of Procedure *"><input type="time" style={fld} value={procedure.time} onChange={e => setProcedure(p => ({ ...p, time: e.target.value }))} /></FL>
+                  </div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+                    <FL label="Performed By *"><input style={fld} value={procedure.performedBy} placeholder="Name of performer" onChange={e => setProcedure(p => ({ ...p, performedBy: e.target.value }))} /></FL>
+                    <FL label="Designation *">
+                      <select style={sel} value={procedure.designation} onChange={e => setProcedure(p => ({ ...p, designation: e.target.value }))}>
+                        {["Staff Nurse","Senior Nurse","Resident Doctor","Consultant","Anaesthetist","Technician"].map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                    <FL label="Assistant"><input style={fld} value={procedure.assistant} placeholder="Assisting nurse/doctor" onChange={e => setProcedure(p => ({ ...p, assistant: e.target.value }))} /></FL>
+                  </div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+                    <FL label="Site / Location"><input style={fld} value={procedure.site} placeholder="e.g. Right subclavian" onChange={e => setProcedure(p => ({ ...p, site: e.target.value }))} /></FL>
+                    <FL label="Laterality">
+                      <select style={sel} value={procedure.laterality} onChange={e => setProcedure(p => ({ ...p, laterality: e.target.value }))}>
+                        {["N/A","Left","Right","Bilateral","Midline"].map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                    <FL label="Patient Position">
+                      <select style={sel} value={procedure.position} onChange={e => setProcedure(p => ({ ...p, position: e.target.value }))}>
+                        {["Supine","Left Lateral","Right Lateral","Lithotomy","Trendelenburg","Prone","Sitting"].map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                  </div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                    <FL label="Patient Outcome">
+                      <select style={{ ...sel, borderColor: procedure.outcome==="Complication Noted"||procedure.outcome==="Procedure Abandoned"?C.red:"#e2e8f0" }}
+                        value={procedure.outcome} onChange={e => setProcedure(p => ({ ...p, outcome: e.target.value }))}>
+                        {["Tolerated Well","Partial Cooperation","Procedure Abandoned","Complication Noted"].map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                    <FL label="Complications (if any)"><input style={fld} value={procedure.complications} placeholder="None / describe" onChange={e => setProcedure(p => ({ ...p, complications: e.target.value }))} /></FL>
+                  </div>
+                  <FL label="Post-Procedure Monitoring / Follow-up"><input style={fld} value={procedure.followUp} placeholder="e.g. Monitor urine output, check site for bleeding in 30 min" onChange={e => setProcedure(p => ({ ...p, followUp: e.target.value }))} /></FL>
+                  <div style={{ display:"flex", gap:20, flexWrap:"wrap" }}>
+                    <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontWeight:700, fontSize:13, color:procedure.consentObtained?C.green:C.red }}>
+                      <input type="checkbox" checked={procedure.consentObtained} onChange={e => setProcedure(p => ({ ...p, consentObtained: e.target.checked }))} style={{ accentColor:C.green, width:15, height:15 }} />
+                      Consent Obtained *
+                    </label>
+                    <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontWeight:700, fontSize:13, color:procedure.sterile?C.green:C.amber }}>
+                      <input type="checkbox" checked={procedure.sterile} onChange={e => setProcedure(p => ({ ...p, sterile: e.target.checked }))} style={{ accentColor:C.green, width:15, height:15 }} />
+                      Sterile technique maintained
+                    </label>
+                    <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontWeight:700, fontSize:13, color:procedure.specimenSent?C.blue:C.muted }}>
+                      <input type="checkbox" checked={procedure.specimenSent} onChange={e => setProcedure(p => ({ ...p, specimenSent: e.target.checked }))} style={{ accentColor:C.blue, width:15, height:15 }} />
+                      Specimen sent
+                    </label>
+                  </div>
+                  {procedure.specimenSent && <FL label="Specimen Type"><input style={fld} value={procedure.specimenType} placeholder="e.g. Urine C&S, Blood culture, Tissue biopsy" onChange={e => setProcedure(p => ({ ...p, specimenType: e.target.value }))} /></FL>}
+                </div>
+              )}
+
+              {/* ── Discharge / Handover — SBAR (NABH COP.6) ── */}
+              {activeModal === "discharge" && (
+                <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+                    <FL label="Handover Type *">
+                      <select style={sel} value={discharge.type} onChange={e => setDischarge(p => ({ ...p, type: e.target.value }))}>
+                        {["Shift Handover","Patient Discharge","Ward Transfer","ICU Transfer","LAMA","Death Summary"].map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                    <FL label="Patient Status *">
+                      <select style={{ ...sel, borderColor: discharge.patientStatus==="Critical"||discharge.patientStatus==="Deteriorating"?C.red:"#e2e8f0" }}
+                        value={discharge.patientStatus} onChange={e => setDischarge(p => ({ ...p, patientStatus: e.target.value }))}>
+                        {["Stable","Improving","Unchanged","Critical","Deteriorating","Deceased"].map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                    <FL label="Receiving Nurse / Handover To *"><input style={fld} value={discharge.incomingNurse} placeholder="Name of incoming nurse" onChange={e => setDischarge(p => ({ ...p, incomingNurse: e.target.value }))} /></FL>
+                  </div>
+                  {/* SBAR */}
+                  <div style={{ background:"#f8fafc", border:`1px solid ${C.border}`, borderRadius:10, padding:"12px 14px" }}>
+                    <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:12 }}>SBAR Handover Format (NABH Std)</div>
+                    {[
+                      {k:"situation", label:"S — Situation", placeholder:"Current status, immediate concern, reason for handover…", color:C.blue},
+                      {k:"background", label:"B — Background", placeholder:"Admission diagnosis, relevant history, current medications & treatments…", color:C.purple},
+                      {k:"assessment", label:"A — Assessment", placeholder:"Clinical condition now, vital signs, pain score, any recent changes…", color:C.amber},
+                      {k:"recommendation", label:"R — Recommendation", placeholder:"Pending orders, actions needed, follow-up, special precautions…", color:C.green},
+                    ].map(f=>(
+                      <div key={f.k} style={{ marginBottom:10 }}>
+                        <label style={{ ...lbl, color:f.color }}>{f.label}</label>
+                        <textarea style={{ ...ta, minHeight:60, borderColor:`${f.color}40` }} value={discharge[f.k]} placeholder={f.placeholder}
+                          onChange={e => setDischarge(p => ({ ...p, [f.k]: e.target.value }))} />
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                    <div>
+                      <div style={lbl}>Patient / Family Education</div>
+                      <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
+                        <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontWeight:600, fontSize:13, color:discharge.educationGiven?C.green:C.muted }}>
+                          <input type="checkbox" checked={discharge.educationGiven} onChange={e => setDischarge(p => ({ ...p, educationGiven: e.target.checked }))} style={{ accentColor:C.green, width:14, height:14 }} />
+                          Education given
+                        </label>
+                        <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontWeight:600, fontSize:13, color:discharge.valuablesHandedOver?C.green:C.muted }}>
+                          <input type="checkbox" checked={discharge.valuablesHandedOver} onChange={e => setDischarge(p => ({ ...p, valuablesHandedOver: e.target.checked }))} style={{ accentColor:C.green, width:14, height:14 }} />
+                          Valuables handed over
+                        </label>
+                      </div>
+                    </div>
+                    <FL label="Follow-up Date"><input type="date" style={fld} value={discharge.followUpDate} onChange={e => setDischarge(p => ({ ...p, followUpDate: e.target.value }))} /></FL>
+                  </div>
+                  {discharge.educationGiven && <FL label="Education Topics Covered"><input style={fld} value={discharge.educationTopics} placeholder="Medication adherence, wound care, diet, warning signs, follow-up…" onChange={e => setDischarge(p => ({ ...p, educationTopics: e.target.value }))} /></FL>}
+                </div>
+              )}
+
+              {/* ── MEWS Calculator ── */}
+              {activeModal === "mews" && (() => {
+                const total = calcMEWS(mews);
+                const band  = mewsBand(total);
+                const params = [
+                  { k:"rr",   label:"Respiratory Rate (/min)",  placeholder:"16", scoreLabel: mewsParamScore("rr",   mews.rr)   },
+                  { k:"spo2", label:"SpO₂ (%)",                 placeholder:"98", scoreLabel: mewsParamScore("spo2", mews.spo2) },
+                  { k:"temp", label:"Temperature (°C)",         placeholder:"37", scoreLabel: mewsParamScore("temp", mews.temp) },
+                  { k:"sbp",  label:"Systolic BP (mmHg)",       placeholder:"120",scoreLabel: mewsParamScore("sbp",  mews.sbp)  },
+                  { k:"hr",   label:"Heart Rate (/min)",        placeholder:"80", scoreLabel: mewsParamScore("hr",   mews.hr)   },
+                ];
+                return (
+                  <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+                    {/* Big score display */}
+                    <div style={{ background:band.bg, border:`2px solid ${band.color}30`, borderRadius:14, padding:"18px 24px", display:"flex", alignItems:"center", gap:20 }}>
+                      <div style={{ textAlign:"center" }}>
+                        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:52, fontWeight:900, color:band.color, lineHeight:1 }}>{total}</div>
+                        <div style={{ fontSize:11, fontWeight:700, color:band.color+"aa", textTransform:"uppercase", letterSpacing:".8px" }}>MEWS Score</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize:16, fontWeight:800, color:band.color, marginBottom:4 }}>
+                          <i className={`pi ${band.icon}`} style={{ marginRight:8 }} />{band.label}
+                        </div>
+                        <div style={{ fontSize:12, color:band.color+"cc", lineHeight:1.5 }}>{band.action}</div>
+                        <div style={{ display:"flex", gap:4, marginTop:10 }}>
+                          {[0,1,2,3,4,5,6,7,8,9].map(n=>(
+                            <div key={n} style={{ width:28, height:8, borderRadius:4, background: total>n?(n>=7?C.red:n>=5?C.orange:n>=2?C.amber:C.green):"#e2e8f0", transition:"all .3s" }} />
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                    {/* Parameter inputs */}
+                    <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
+                      {params.map(p => {
+                        const sc = p.scoreLabel;
+                        return (
+                          <div key={p.k} style={{ background:"#f8fafc", border:`1px solid ${sc!==null&&sc>0?C.amber:C.border}`, borderRadius:10, padding:"10px 12px" }}>
+                            <div style={{ fontSize:10, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:6 }}>{p.label}</div>
+                            <input type="number" style={{ ...fld, background:"white", marginBottom:6 }} value={mews[p.k]} placeholder={p.placeholder}
+                              onChange={e => setMews(pr => ({ ...pr, [p.k]: e.target.value }))} />
+                            {sc !== null && (
+                              <div style={{ fontSize:11, fontWeight:700, color:sc>0?C.red:C.green, textAlign:"center" }}>
+                                Score: {sc} {sc>0?"⚠":"✓"}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                      {/* AVPU */}
+                      <div style={{ background:"#f8fafc", border:`1px solid ${mews.avpu!=="A"?C.red:C.border}`, borderRadius:10, padding:"10px 12px" }}>
+                        <div style={{ fontSize:10, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:6 }}>AVPU Consciousness</div>
+                        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6 }}>
+                          {[{v:"A",l:"Alert"},{v:"V",l:"Voice"},{v:"P",l:"Pain"},{v:"U",l:"Unresponsive"}].map(opt=>(
+                            <button key={opt.v} onClick={() => setMews(p=>({...p, avpu:opt.v}))}
+                              style={{ padding:"6px 8px", border:`1.5px solid ${mews.avpu===opt.v?(opt.v==="A"?C.green:C.red):C.border}`, borderRadius:7, background:mews.avpu===opt.v?(opt.v==="A"?C.greenL:C.redL):"white", fontFamily:"'DM Sans',sans-serif", fontSize:12, fontWeight:700, cursor:"pointer", color:mews.avpu===opt.v?(opt.v==="A"?C.green:C.red):C.muted }}>
+                              <span style={{ fontSize:14, fontWeight:900 }}>{opt.v}</span> {opt.l}
+                            </button>
+                          ))}
+                        </div>
+                        <div style={{ fontSize:11, fontWeight:700, color:mews.avpu==="A"?C.green:C.red, textAlign:"center", marginTop:6 }}>
+                          Score: {{A:0,V:1,P:2,U:3}[mews.avpu]} {mews.avpu!=="A"?"⚠":"✓"}
+                        </div>
+                      </div>
+                    </div>
+                    {/* Reference table */}
+                    <div style={{ background:"#f1f5f9", borderRadius:8, padding:"10px 14px", fontSize:11, color:C.muted }}>
+                      <div style={{ fontWeight:700, marginBottom:4 }}>Escalation Protocol (as per NABH/WHO Rapid Response)</div>
+                      <div style={{ display:"flex", gap:16 }}>
+                        {[{score:"0–1",label:"Normal",c:C.green},{score:"2–4",label:"↑ Monitoring",c:C.amber},{score:"5–6",label:"Urgent Review",c:C.orange},{score:"≥7",label:"Emergency",c:C.red}].map(b=>(
+                          <span key={b.score} style={{ fontWeight:700, color:b.c }}>{b.score}: {b.label}</span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* ── General Observation (default free text only) ── */}
               {activeModal === "general" && null}

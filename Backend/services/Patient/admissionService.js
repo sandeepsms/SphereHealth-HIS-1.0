@@ -248,7 +248,9 @@ class AdmissionService {
         $regex: filters.attendingDoctor,
         $options: "i",
       };
-    if (filters.UHID) query.UHID = { $regex: filters.UHID, $options: "i" };
+    // Accept both ?UHID= and ?uhid= query params
+    const uhidFilter = filters.UHID || filters.uhid;
+    if (uhidFilter) query.UHID = { $regex: uhidFilter, $options: "i" };
     if (filters.patientName)
       query.patientName = { $regex: filters.patientName, $options: "i" };
 
@@ -318,6 +320,9 @@ class AdmissionService {
 
   async getActiveAdmissions(filters = {}) {
     const query = { status: "Active" };
+    // Support UHID filtering (accept both ?UHID= and ?uhid=)
+    const uhidFilter = filters.UHID || filters.uhid;
+    if (uhidFilter) query.UHID = { $regex: uhidFilter, $options: "i" };
     if (filters.department)
       query.department = { $regex: filters.department, $options: "i" };
     if (filters.admissionType) query.admissionType = filters.admissionType;

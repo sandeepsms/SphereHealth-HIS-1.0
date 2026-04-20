@@ -560,6 +560,8 @@ function DailyNursingContent({ patient }) {
 export default function DailyNursingAssessmentPage() {
   const [patient, setPatient] = useState(null);
   const [consentModal, setConsentModal] = useState({ open: false, order: null });
+  // Incrementing this triggers NurseOrdersPanel to re-fetch orders immediately
+  const [ordersRefresh, setOrdersRefresh] = useState(0);
 
   return (
     <ClinicalLayout onPatientSelect={setPatient} selectedId={patient?._id} pageType="daily-nursing">
@@ -568,6 +570,7 @@ export default function DailyNursingAssessmentPage() {
           UHID={patient.UHID || patient.uhid}
           visitId={patient.currentVisitId || patient.visitNumber}
           onConsentRequest={(order) => setConsentModal({ open: true, order })}
+          refreshTrigger={ordersRefresh}
         />
       )}
       <DailyNursingContent patient={patient} />
@@ -590,6 +593,8 @@ export default function DailyNursingAssessmentPage() {
                 "consentData.guardianRelation": consentData.guardianRelation,
                 "consentData.notes": consentData.notes,
               });
+              // Re-fetch orders so the consent badge updates immediately
+              setOrdersRefresh(n => n + 1);
             } catch (_) {}
           }
           setConsentModal({ open: false, order: null });

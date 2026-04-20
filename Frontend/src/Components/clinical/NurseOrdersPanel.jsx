@@ -207,13 +207,16 @@ function OrderCard({ order, nurseName, onStepDone, onConsentRequest }) {
                 </button>
               );
             })}
+          </div>
+        )}
 
-            {needsConsent && (
-              <button onClick={() => onConsentRequest && onConsentRequest(order)}
-                style={{ padding: "5px 12px", fontSize: 11, fontWeight: 600, border: "none", borderRadius: 6, background: "#fce7f3", color: "#be185d", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
-                <i className="pi pi-lock" style={{ fontSize: 10 }} /> Take Consent
-              </button>
-            )}
+        {/* ── Take Consent button — always visible when consent is pending (even after steps done) ── */}
+        {needsConsent && (
+          <div style={{ marginTop: allDone ? 10 : 6 }}>
+            <button onClick={() => onConsentRequest && onConsentRequest(order)}
+              style={{ padding: "5px 14px", fontSize: 11, fontWeight: 700, border: "1.5px solid #be185d", borderRadius: 6, background: "#fce7f3", color: "#be185d", cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}>
+              <i className="pi pi-fingerprint" style={{ fontSize: 11 }} /> Capture Biometric Consent
+            </button>
           </div>
         )}
       </div>
@@ -244,12 +247,15 @@ function OrderCard({ order, nurseName, onStepDone, onConsentRequest }) {
 }
 
 // ── Main panel ────────────────────────────────────────────────────────────────
-export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest }) {
+export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest, refreshTrigger }) {
   const [orders,      setOrders]      = useState([]);
   const [loading,     setLoading]     = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [nurseName,   setNurseName]   = useState(() => {
-    try { const u = JSON.parse(localStorage.getItem("his_user") || "{}"); return u.fullName || u.name || ""; } catch { return ""; }
+    try {
+      const u = JSON.parse(localStorage.getItem("his_user") || "{}");
+      return u.fullName || u.firstName ? `${u.firstName || ""} ${u.lastName || ""}`.trim() : u.name || "";
+    } catch { return ""; }
   });
   const intervalRef = useRef(null);
 
@@ -271,6 +277,12 @@ export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest }) {
     intervalRef.current = setInterval(fetchOrders, 30000);
     return () => clearInterval(intervalRef.current);
   }, [fetchOrders]);
+
+  // Immediately re-fetch when parent signals a refresh (e.g. after consent saved)
+  useEffect(() => {
+    if (refreshTrigger > 0) fetchOrders();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshTrigger]);
 
   // Nurse completes a step
   const handleStepDone = async (orderId, step, totalSteps) => {
