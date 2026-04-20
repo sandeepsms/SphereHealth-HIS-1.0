@@ -274,7 +274,7 @@ export default function App() {
             <Route path="/nurse-initial-assessment" element={<NurseInitialAssessmentPage />} />
             <Route path="/ipd-admission" element={<IPDAdmissionPage />} />
             <Route path="/doctor-assessment" element={<DoctorAssessmentPage />} />
-            <Route path="/opd-assessment" element={<OPDAssessmentPage />} />
+            <Route path="/opd-assessment" element={<DoctorNotesPage />} />
             <Route path="/doctor-patient-panel" element={<DoctorPatientPanel />} />
             <Route path="/doctor-notes" element={<DoctorNotesPage />} />
             <Route path="/nursing-care-plan" element={<NursingCarePlanPage />} />
