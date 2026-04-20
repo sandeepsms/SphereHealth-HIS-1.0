@@ -52,7 +52,7 @@ const NAV = [
     items: [
       { label: "Patient Panel",           icon: "pi-id-card",             path: "/doctor-patient-panel" },
       { label: "IPD Assessment",         icon: "pi-file-edit",           path: "/doctor-assessment",      nabh: true },
-      { label: "Doctor Notes",            icon: "pi-file-edit",           path: "/opd-assessment",         nabh: true },
+      { label: "Doctor Notes",            icon: "pi-file-edit",           path: "/doctor-notes",           nabh: true },
       { label: "Emergency Assessment",   icon: "pi-exclamation-circle",  path: "/emergency-assessment" },
       { label: "Discharge Summary",      icon: "pi-sign-out",            path: "/discharge-summary",      nabh: true },
       { label: "Consent Forms",          icon: "pi-shield",              path: "/consent-forms",          nabh: true },

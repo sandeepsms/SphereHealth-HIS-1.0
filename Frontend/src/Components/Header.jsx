@@ -19,6 +19,7 @@ const MODULE_NAMES = {
   "/nursing-care-plan":      "Nursing Care Plan",
   "/doctor-assessment":      "Doctor Assessment & Order Entry",
   "/opd-assessment":         "Doctor Notes",
+  "/doctor-notes":           "Doctor Notes",
   "/emergency-assessment":   "Emergency Assessment",
   "/ipd-assessment":              "IPD Initial Assessment",
   "/nurse-initial-assessment":    "Nursing Initial Assessment — NABH",
