@@ -4,6 +4,7 @@ import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
+import DoctorOrdersPanel from "../../Components/doctor/DoctorOrdersPanel";
 
 /* ── Design tokens (blue/indigo — doctor theme) ── */
 const C = {
@@ -112,6 +113,7 @@ function DoctorNotesContent({ selectedPatient }) {
   const [shift,        setShift]        = useState(getShift());
   const [selectedTags, setSelectedTags] = useState([]);
   const [isCritical,   setIsCritical]   = useState(false);
+  const [ordersRefresh, setOrdersRefresh] = useState(0);
 
   /* Doctor info from auth */
   const doctorName = user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim() || "Dr. —";
@@ -362,6 +364,15 @@ function DoctorNotesContent({ selectedPatient }) {
               </div>
             </div>
           </div>
+
+          {/* ── Doctor Orders Panel ── */}
+          <DoctorOrdersPanel
+            UHID={patient?.UHID || patient?.uhid || searchUHID}
+            visitId={patient?.ipdNo || patient?.admissionNumber || patient?.visitId}
+            ipdNo={patient?.ipdNo || patient?.admissionNumber}
+            patientName={patient?.patientName || patient?.patientId?.fullName || ""}
+            refreshSignal={ordersRefresh}
+          />
 
           {/* ── Shift Selector ── */}
           <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: "12px 20px", marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
