@@ -100,6 +100,7 @@ import IPDAdmissionPage from "./pages/ipd/IPDAdmissionPage";
 import DoctorAssessmentPage from "./pages/doctor/DoctorAssessmentPage";
 import OPDAssessmentPage from "./pages/doctor/OPDAssessmentPage";
 import DoctorPatientPanel from "./pages/doctor/DoctorPatientPanel";
+import DoctorNotesPage from "./pages/doctor/DoctorNotesPage";
 import NursingCarePlanPage from "./pages/nursing/NursingCarePlanPage";
 import FallRiskAssessmentPage from "./pages/nursing/FallRiskAssessmentPage";
 import PressureAreaCarePage from "./pages/nursing/PressureAreaCarePage";
@@ -275,6 +276,7 @@ export default function App() {
             <Route path="/doctor-assessment" element={<DoctorAssessmentPage />} />
             <Route path="/opd-assessment" element={<OPDAssessmentPage />} />
             <Route path="/doctor-patient-panel" element={<DoctorPatientPanel />} />
+            <Route path="/doctor-notes" element={<DoctorNotesPage />} />
             <Route path="/nursing-care-plan" element={<NursingCarePlanPage />} />
             <Route path="/fall-risk-assessment" element={<FallRiskAssessmentPage />} />
             <Route path="/pressure-area-care" element={<PressureAreaCarePage />} />
