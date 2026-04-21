@@ -21,9 +21,10 @@ const NAV = [
     light: "#ecfeff",
     nabh: true,
     items: [
-      { label: "IPD Admission",    icon: "pi-plus-circle",          path: "/ipd-admission",     nabh: true },
-      { label: "OPD Registration", icon: "pi-user-plus",             path: "/opd-register" },
-      { label: "Emergency",        icon: "pi-exclamation-triangle",  path: "/emergency" },
+      { label: "IPD Admission",       icon: "pi-plus-circle",          path: "/ipd-admission",        nabh: true },
+      { label: "OPD Registration",   icon: "pi-user-plus",             path: "/opd-register",         nabh: true },
+      { label: "ER Registration",    icon: "pi-bolt",                  path: "/emergency/register",   nabh: true },
+      { label: "Emergency List",     icon: "pi-exclamation-triangle",  path: "/emergency" },
       { label: "Patient Search",   icon: "pi-search",                path: "/allpatient" },
       { label: "Patient Records",  icon: "pi-id-card",               path: "/patients" },
       { label: "Visit History",    icon: "pi-clock",                 path: "/patient-history" },

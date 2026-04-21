@@ -49,6 +49,7 @@ import OPDDetails from "./pages/OPD/OPDDetails";
 import Emergencylist from "./pages/emergency/EmergencyList";
 import EmergencyForm from "./pages/emergency/EmergencyForm";
 import EmergencyDetails from "./pages/emergency/EmergencyDetails";
+import EmergencyRegistrationPage from "./pages/emergency/EmergencyRegistrationPage";
 
 // Doctors
 import DoctorFormPage from "./pages/doctor/DoctorFormPage";
@@ -178,6 +179,7 @@ export default function App() {
 
             {/* ── Emergency ─────────────────────────────────────── */}
             <Route path="/emergency" element={<Emergencylist />} />
+            <Route path="/emergency/register" element={<EmergencyRegistrationPage />} />
             <Route path="/emergency/new" element={<EmergencyForm />} />
             <Route
               path="/emergency/edit/:emergencyNumber"
