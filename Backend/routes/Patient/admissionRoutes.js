@@ -39,4 +39,16 @@ router.post("/:id/discharge", ctrl.dischargePatient);
 router.post("/:id/cancel", ctrl.cancelAdmission);
 router.post("/:id/transfer", ctrl.transferBed);
 
+// ── Multi-doctor Consultation / Treatment Team (NABH COP.1) ──────────
+// Get all admissions where current doctor is primary OR consulting
+router.get("/my-team-patients", authenticate, authorize("Doctor", "Admin"), ctrl.getMyTeamPatients);
+// Add a consulting doctor — only primary consultant can call this
+router.post("/:id/consultation", authenticate, ctrl.addConsultation);
+// Get the full treatment team for an admission
+router.get("/:id/consultation", ctrl.getConsultations);
+// Update consultation notes (by consulting doctor) or status (by primary)
+router.put("/:id/consultation/:consultId", authenticate, ctrl.updateConsultation);
+// Remove a consultation — primary consultant only
+router.delete("/:id/consultation/:consultId", authenticate, ctrl.removeConsultation);
+
 module.exports = router;

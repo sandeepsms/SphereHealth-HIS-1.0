@@ -6,6 +6,7 @@ import { toast } from "react-toastify";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import DoctorOrdersPanel from "../../Components/doctor/DoctorOrdersPanel";
 import TreatmentChart from "../../Components/clinical/TreatmentChart";
+import TreatmentTeamPanel from "../../Components/clinical/TreatmentTeamPanel";
 
 /* ── Design tokens (blue/indigo — doctor theme) ── */
 const C = {
@@ -157,8 +158,10 @@ function DoctorNotesContent({ selectedPatient }) {
 
   /* ── Recently admitted patients panel ── */
   const [recentPatients,   setRecentPatients]   = useState([]);
+  const [consultPatients,  setConsultPatients]  = useState([]);  // admissions where I am consulting
   const [recentLoading,    setRecentLoading]    = useState(false);
   const [recentSearch,     setRecentSearch]     = useState("");
+  const [patientListTab,   setPatientListTab]   = useState("primary");  // "primary" | "consulting"
 
   /* ── Assessment gate ── */
   const assessmentDone = notes.some(n => n.noteType === "initial" && n.status === "signed");
@@ -203,14 +206,23 @@ function DoctorNotesContent({ selectedPatient }) {
     if (selectedPatient?.UHID) setSearchUHID(selectedPatient.UHID);
   }, [selectedPatient]);
 
-  /* Fetch recently admitted patients on mount */
+  /* Fetch patients on mount — primary IPD list + consulting list */
   useEffect(() => {
     (async () => {
       setRecentLoading(true);
       try {
-        const { data } = await axios.get(`${API_ENDPOINTS.ADMISSIONS}/active`);
-        const arr = Array.isArray(data) ? data : (data.data || []);
-        setRecentPatients(arr.sort((a, b) => new Date(b.admissionDate || b.createdAt) - new Date(a.admissionDate || a.createdAt)));
+        // Try to load role-specific team patients first
+        const teamRes = await axios.get(`${API_ENDPOINTS.ADMISSIONS}/my-team-patients`).catch(() => null);
+        if (teamRes?.data?.success) {
+          const { asPrimary = [], asConsulting = [] } = teamRes.data.data;
+          setRecentPatients(asPrimary.sort((a, b) => new Date(b.admissionDate || b.createdAt) - new Date(a.admissionDate || a.createdAt)));
+          setConsultPatients(asConsulting);
+        } else {
+          // Fallback: all active admissions (for Admin or unauthenticated)
+          const { data } = await axios.get(`${API_ENDPOINTS.ADMISSIONS}/active`);
+          const arr = Array.isArray(data) ? data : (data.data || []);
+          setRecentPatients(arr.sort((a, b) => new Date(b.admissionDate || b.createdAt) - new Date(a.admissionDate || a.createdAt)));
+        }
       } catch { /* silent */ }
       finally { setRecentLoading(false); }
     })();
@@ -398,62 +410,131 @@ function DoctorNotesContent({ selectedPatient }) {
         </div>
       </div>
 
-      {/* ── Recently Admitted Patients Panel ── */}
+      {/* ── My Patients Panel — Primary + Consulting tabs ── */}
       <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden", marginBottom: 14 }}>
-        <div style={{ padding: "10px 20px", borderBottom: `1px solid ${C.border}`, background: "#f8fafc", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ width: 26, height: 26, borderRadius: 6, background: C.primary + "18", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ padding: "10px 16px", borderBottom: `1px solid ${C.border}`, background: "#f8fafc", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          {/* Tab switcher */}
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <span style={{ width: 26, height: 26, borderRadius: 6, background: C.primary + "18", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
               <i className="pi pi-users" style={{ color: C.primary, fontSize: 12 }} />
             </span>
-            <span style={{ fontWeight: 700, fontSize: 12, textTransform: "uppercase", letterSpacing: ".8px", color: C.muted }}>Active IPD Patients</span>
-            <span style={{ background: C.primary, color: "white", padding: "1px 8px", borderRadius: 8, fontSize: 10, fontWeight: 700 }}>{recentPatients.length}</span>
+            {[
+              { id: "primary",    label: "My IPD Patients",  count: recentPatients.length,  color: C.primary  },
+              { id: "consulting", label: "Consulting",        count: consultPatients.length, color: "#7c3aed"  },
+            ].map(tab => (
+              <button key={tab.id} onClick={() => setPatientListTab(tab.id)} style={{
+                padding: "4px 12px", borderRadius: 20, border: "none", cursor: "pointer",
+                fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700,
+                background: patientListTab === tab.id ? tab.color : "transparent",
+                color: patientListTab === tab.id ? "#fff" : C.muted,
+                display: "flex", alignItems: "center", gap: 5, transition: ".15s",
+              }}>
+                {tab.label}
+                <span style={{
+                  background: patientListTab === tab.id ? "rgba(255,255,255,.3)" : tab.color + "20",
+                  color: patientListTab === tab.id ? "#fff" : tab.color,
+                  padding: "0px 6px", borderRadius: 10, fontSize: 10,
+                }}>{tab.count}</span>
+              </button>
+            ))}
           </div>
-          <input value={recentSearch} onChange={e=>setRecentSearch(e.target.value.toUpperCase())} placeholder="Search name / UHID…"
-            style={{ ...fld, maxWidth: 220, padding: "5px 10px", fontSize: 11 }} />
+          <input value={recentSearch} onChange={e => setRecentSearch(e.target.value.toUpperCase())}
+            placeholder="Search name / UHID…"
+            style={{ ...fld, maxWidth: 200, padding: "5px 10px", fontSize: 11 }} />
         </div>
+
         <div style={{ padding: "10px 14px", display: "flex", gap: 8, overflowX: "auto", alignItems: "stretch", minHeight: 80 }}>
           {recentLoading ? (
             <div style={{ display: "flex", alignItems: "center", gap: 8, color: C.muted, fontSize: 12, flex: 1, justifyContent: "center" }}>
               <i className="pi pi-spin pi-spinner" style={{ fontSize: 16 }} /> Loading patients…
             </div>
-          ) : recentPatients.filter(p => {
-            if (!recentSearch) return true;
-            const s = recentSearch.toLowerCase();
-            return (p.patientName||p.patientId?.fullName||"").toLowerCase().includes(s) || (p.UHID||p.uhid||"").toLowerCase().includes(s);
-          }).length === 0 ? (
-            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: C.muted, fontSize: 12 }}>
-              <i className="pi pi-inbox" style={{ marginRight: 6, fontSize: 14 }} /> No active IPD admissions
-            </div>
-          ) : recentPatients.filter(p => {
-            if (!recentSearch) return true;
-            const s = recentSearch.toLowerCase();
-            return (p.patientName||p.patientId?.fullName||"").toLowerCase().includes(s) || (p.UHID||p.uhid||"").toLowerCase().includes(s);
-          }).map(rp => {
-            const isSelected = patient && (patient._id === rp._id || patient.UHID === rp.UHID);
-            const admHours = rp.admissionDate ? Math.floor((Date.now() - new Date(rp.admissionDate)) / 3600000) : null;
-            const isNew = admHours !== null && admHours < 48;
-            return (
-              <button key={rp._id} onClick={() => { setSearchUHID(rp.UHID || rp.uhid || ""); setPatient(rp); fetchNotes(rp.ipdNo || rp.admissionNumber || rp._id); toast.success(`Loaded: ${rp.patientName || rp.patientId?.fullName || "Patient"}`); }}
-                style={{ flexShrink: 0, width: 176, padding: "10px 12px", border: `2px solid ${isSelected ? C.primary : isNew ? "#fbbf24" : C.border}`, borderRadius: 10, background: isSelected ? C.primaryL : isNew ? "#fffbeb" : "white", cursor: "pointer", textAlign: "left", position: "relative", transition: "all .15s" }}
-                onMouseEnter={e => { if (!isSelected) e.currentTarget.style.borderColor = C.primary + "80"; }}
-                onMouseLeave={e => { if (!isSelected) e.currentTarget.style.borderColor = isNew ? "#fbbf24" : C.border; }}>
-                {isNew && <span style={{ position: "absolute", top: 6, right: 6, background: "#f59e0b", color: "white", fontSize: 8, fontWeight: 800, padding: "1px 5px", borderRadius: 3, letterSpacing: ".5px" }}>NEW</span>}
-                {isSelected && <span style={{ position: "absolute", top: 6, right: 6, background: C.primary, color: "white", fontSize: 8, fontWeight: 800, padding: "1px 5px", borderRadius: 3 }}>ACTIVE</span>}
-                <div style={{ fontWeight: 700, fontSize: 12, color: isSelected ? C.primary : C.text, marginBottom: 3, paddingRight: 36, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {rp.patientName || rp.patientId?.fullName || "Patient"}
-                </div>
-                <div style={{ fontFamily: "monospace", fontSize: 10, color: C.muted, marginBottom: 4 }}>{rp.UHID || rp.uhid}</div>
-                <div style={{ fontSize: 10, color: C.muted }}>
-                  {rp.wardName ? `${rp.wardName} · ` : ""}{rp.bedNumber ? `Bed ${rp.bedNumber}` : ""}
-                </div>
-                {admHours !== null && (
-                  <div style={{ fontSize: 9, color: isNew ? "#92400e" : C.muted, fontWeight: isNew ? 700 : 400, marginTop: 3 }}>
-                    Admitted {admHours < 24 ? `${admHours}h ago` : `${Math.floor(admHours/24)}d ago`}
-                  </div>
-                )}
-              </button>
+          ) : (() => {
+            /* Pick active list */
+            const activeList = patientListTab === "consulting" ? consultPatients : recentPatients;
+            const filtered = activeList.filter(p => {
+              if (!recentSearch) return true;
+              const s = recentSearch.toLowerCase();
+              return (p.patientName||p.patientId?.fullName||"").toLowerCase().includes(s) ||
+                     (p.UHID||p.uhid||"").toLowerCase().includes(s);
+            });
+
+            if (filtered.length === 0) return (
+              <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: C.muted, fontSize: 12 }}>
+                <i className="pi pi-inbox" style={{ marginRight: 6, fontSize: 14 }} />
+                {patientListTab === "consulting"
+                  ? "No active consultation requests"
+                  : "No active IPD admissions"}
+              </div>
             );
-          })}
+
+            return filtered.map(rp => {
+              const isSelected = patient && (patient._id === rp._id || patient.UHID === rp.UHID);
+              const admHours = rp.admissionDate ? Math.floor((Date.now() - new Date(rp.admissionDate)) / 3600000) : null;
+              const isNew = admHours !== null && admHours < 48;
+              const myRole = rp.myRole || (patientListTab === "consulting" ? rp.myConsultEntry?.role || "Consulting" : "Primary");
+              const accentColor = patientListTab === "consulting" ? "#7c3aed" : C.primary;
+              const urgency = rp.myConsultEntry?.urgency;
+
+              return (
+                <button key={rp._id}
+                  onClick={() => {
+                    setSearchUHID(rp.UHID || rp.uhid || "");
+                    setPatient(rp);
+                    fetchNotes(rp.ipdNo || rp.admissionNumber || rp._id);
+                    toast.success(`Loaded: ${rp.patientName || rp.patientId?.fullName || "Patient"}`);
+                  }}
+                  style={{
+                    flexShrink: 0, width: 180, padding: "10px 12px",
+                    border: `2px solid ${isSelected ? accentColor : isNew ? "#fbbf24" : C.border}`,
+                    borderRadius: 10,
+                    background: isSelected ? (patientListTab === "consulting" ? "#f5f3ff" : C.primaryL) : isNew ? "#fffbeb" : "white",
+                    cursor: "pointer", textAlign: "left", position: "relative", transition: "all .15s",
+                  }}
+                  onMouseEnter={e => { if (!isSelected) e.currentTarget.style.borderColor = accentColor + "80"; }}
+                  onMouseLeave={e => { if (!isSelected) e.currentTarget.style.borderColor = isNew ? "#fbbf24" : C.border; }}>
+
+                  {/* Badges */}
+                  {isNew && !isSelected && (
+                    <span style={{ position: "absolute", top: 6, right: 6, background: "#f59e0b", color: "white", fontSize: 8, fontWeight: 800, padding: "1px 5px", borderRadius: 3, letterSpacing: ".5px" }}>NEW</span>
+                  )}
+                  {isSelected && (
+                    <span style={{ position: "absolute", top: 6, right: 6, background: accentColor, color: "white", fontSize: 8, fontWeight: 800, padding: "1px 5px", borderRadius: 3 }}>OPEN</span>
+                  )}
+                  {urgency && urgency !== "Routine" && !isSelected && (
+                    <span style={{
+                      position: "absolute", top: 6, right: 6,
+                      background: urgency === "Emergent" ? "#dc2626" : "#d97706",
+                      color: "white", fontSize: 8, fontWeight: 800, padding: "1px 5px", borderRadius: 3,
+                    }}>{urgency.toUpperCase()}</span>
+                  )}
+
+                  <div style={{ fontWeight: 700, fontSize: 12, color: isSelected ? accentColor : C.text, marginBottom: 3, paddingRight: 36, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {rp.patientName || rp.patientId?.fullName || "Patient"}
+                  </div>
+                  <div style={{ fontFamily: "monospace", fontSize: 10, color: C.muted, marginBottom: 3 }}>{rp.UHID || rp.uhid}</div>
+                  {/* Role tag */}
+                  <div style={{
+                    fontSize: 9, fontWeight: 700, color: accentColor,
+                    background: accentColor + "15", display: "inline-block",
+                    padding: "1px 6px", borderRadius: 8, marginBottom: 3, letterSpacing: .4,
+                  }}>{myRole}</div>
+                  <div style={{ fontSize: 10, color: C.muted }}>
+                    {rp.bedNumber ? `Bed ${rp.bedNumber}` : rp.department || ""}
+                  </div>
+                  {rp.attendingDoctor && patientListTab === "consulting" && (
+                    <div style={{ fontSize: 9, color: C.muted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      Primary: {rp.attendingDoctor}
+                    </div>
+                  )}
+                  {admHours !== null && (
+                    <div style={{ fontSize: 9, color: isNew ? "#92400e" : C.muted, fontWeight: isNew ? 700 : 400, marginTop: 2 }}>
+                      {admHours < 24 ? `${admHours}h ago` : `${Math.floor(admHours/24)}d ago`}
+                    </div>
+                  )}
+                </button>
+              );
+            });
+          })()}
         </div>
       </div>
 
@@ -573,6 +654,14 @@ function DoctorNotesContent({ selectedPatient }) {
               refreshTrigger={ordersRefresh}
             />
           </div>
+
+          {/* ── Treatment Team / Multi-doctor Consultation (NABH COP.1) ── */}
+          <TreatmentTeamPanel
+            admissionId={patient?._id || patient?.admissionId}
+            patientName={patient?.patientName || patient?.patientId?.fullName || ""}
+            UHID={patient?.UHID || patient?.uhid || searchUHID}
+            refreshTrigger={ordersRefresh}
+          />
 
           {/* ── Shift Selector ── */}
           <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: "12px 20px", marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between" }}>

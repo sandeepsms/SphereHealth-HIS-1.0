@@ -5,8 +5,48 @@
 //   - reasonForAdmission is now optional
 //   - admissionType includes "OPD" and "Services" types
 //   - hasBed flag added for quick filtering
+//   - treatmentTeam added for multi-doctor consultation (NABH COP.1)
 
 const mongoose = require("mongoose");
+
+/* ── Treatment Team Member (NABH COP.1 — Multi-disciplinary care) ── */
+const TreatmentTeamMemberSchema = new mongoose.Schema(
+  {
+    doctorId:    { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    doctorName:  { type: String, required: true, trim: true },
+    department:  { type: String, trim: true, default: "" },
+    departmentId:{ type: mongoose.Schema.Types.ObjectId, ref: "Department", default: null },
+    specialization: { type: String, trim: true, default: "" },
+
+    role: {
+      type: String,
+      enum: ["Primary Consultant", "Co-Consultant", "Consulting Specialist",
+             "Physiotherapist", "Dietician", "Other"],
+      default: "Consulting Specialist",
+    },
+
+    // Who added this consultant and when
+    addedBy:     { type: String, trim: true, default: "" },   // Primary doctor name
+    addedById:   { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    addedAt:     { type: Date, default: Date.now },
+
+    // Reason for requesting consultation
+    reason:      { type: String, trim: true, default: "" },
+    urgency:     { type: String, enum: ["Routine", "Urgent", "Emergent"], default: "Routine" },
+
+    // Consulting doctor's response / notes
+    consultationNotes: { type: String, trim: true, default: "" },
+    notesUpdatedAt:    { type: Date },
+    notesUpdatedBy:    { type: String, trim: true, default: "" },
+
+    status: {
+      type: String,
+      enum: ["Pending", "Active", "Completed", "Declined"],
+      default: "Active",
+    },
+  },
+  { timestamps: true },
+);
 
 const TransferHistorySchema = new mongoose.Schema(
   {
@@ -148,6 +188,11 @@ const AdmissionSchema = new mongoose.Schema(
     admissionNumber: { type: String, trim: true, index: true },  // e.g. ADM-20240417-0001
     visitNumber:     { type: String, trim: true, index: true },  // OPD visitNumber link
     paymentType:     { type: String, enum: ["GENERAL","TPA","CORPORATE","CASH"], default: "GENERAL" },
+
+    // ── Treatment Team (NABH COP.1 — Multi-disciplinary consultation) ──
+    // Primary consultant is attendingDoctor/attendingDoctorId.
+    // Additional consultants are tracked here.
+    treatmentTeam: { type: [TreatmentTeamMemberSchema], default: [] },
   },
   { timestamps: true },
 );

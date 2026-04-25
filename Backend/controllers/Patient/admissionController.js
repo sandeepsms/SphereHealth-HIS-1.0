@@ -170,6 +170,220 @@ class AdmissionController {
     const result = await AdmissionService.deleteAdmission(req.params.id);
     return res.json({ success: true, message: result.message });
   });
+
+  /* ══════════════════════════════════════════════════════════════
+     NABH COP.1 — Multi-doctor Consultation / Treatment Team
+  ══════════════════════════════════════════════════════════════ */
+
+  /**
+   * POST /:id/consultation
+   * Add a consulting doctor to an admission's treatment team.
+   * RULE: Only the primary consultant (attendingDoctorId) may add consultants.
+   */
+  addConsultation = handle(async (req, res) => {
+    const Admission = require("../../models/Patient/admissionModel");
+    const admission = await Admission.findById(req.params.id);
+    if (!admission) return res.status(404).json({ success: false, message: "Admission not found" });
+
+    // Auth check: only primary consultant or Admin can add
+    const callerId = req.user?._id?.toString() || req.user?.id?.toString();
+    const primaryId = admission.attendingDoctorId?.toString();
+    if (req.user?.role !== "Admin" && callerId !== primaryId) {
+      return res.status(403).json({
+        success: false,
+        message: "Only the primary consultant can appoint additional doctors.",
+      });
+    }
+
+    const {
+      doctorId, doctorName, department, departmentId, specialization,
+      role = "Consulting Specialist",
+      reason, urgency = "Routine",
+    } = req.body;
+
+    if (!doctorName) return res.status(400).json({ success: false, message: "doctorName is required" });
+
+    // Prevent adding the primary consultant as a team member
+    if (doctorId && doctorId === primaryId) {
+      return res.status(400).json({ success: false, message: "Primary consultant is already on the team." });
+    }
+
+    // Prevent duplicates
+    const already = admission.treatmentTeam.some(
+      m => (m.doctorId?.toString() === doctorId) ||
+           (!doctorId && m.doctorName === doctorName && m.status !== "Completed")
+    );
+    if (already) {
+      return res.status(409).json({ success: false, message: `${doctorName} is already on the treatment team.` });
+    }
+
+    const member = {
+      doctorId: doctorId || null,
+      doctorName,
+      department: department || "",
+      departmentId: departmentId || null,
+      specialization: specialization || "",
+      role,
+      addedBy: admission.attendingDoctor || req.user?.name || "Primary Consultant",
+      addedById: callerId,
+      addedAt: new Date(),
+      reason: reason || "",
+      urgency,
+      status: "Active",
+      consultationNotes: "",
+    };
+
+    admission.treatmentTeam.push(member);
+    await admission.save();
+
+    return res.status(201).json({
+      success: true,
+      message: `${doctorName} added to treatment team`,
+      data: admission.treatmentTeam[admission.treatmentTeam.length - 1],
+    });
+  });
+
+  /**
+   * GET /:id/consultation
+   * Return treatment team with primary consultant prepended.
+   */
+  getConsultations = handle(async (req, res) => {
+    const Admission = require("../../models/Patient/admissionModel");
+    const admission = await Admission.findById(req.params.id)
+      .select("attendingDoctor attendingDoctorId department departmentId treatmentTeam patientName UHID admissionNumber");
+    if (!admission) return res.status(404).json({ success: false, message: "Admission not found" });
+
+    const primaryMember = {
+      _id: "primary",
+      doctorId: admission.attendingDoctorId,
+      doctorName: admission.attendingDoctor || "Primary Consultant",
+      department: admission.department || "",
+      role: "Primary Consultant",
+      status: "Active",
+      isPrimary: true,
+    };
+
+    return res.json({
+      success: true,
+      data: {
+        primary: primaryMember,
+        team: admission.treatmentTeam || [],
+        patientName: admission.patientName,
+        UHID: admission.UHID,
+        admissionNumber: admission.admissionNumber,
+      },
+    });
+  });
+
+  /**
+   * PUT /:id/consultation/:consultId
+   * Primary consultant: change status ("Completed" / "Declined")
+   * Consulting doctor: add/update their consultationNotes
+   * Either: any other allowed update
+   */
+  updateConsultation = handle(async (req, res) => {
+    const Admission = require("../../models/Patient/admissionModel");
+    const admission = await Admission.findById(req.params.id);
+    if (!admission) return res.status(404).json({ success: false, message: "Admission not found" });
+
+    const member = admission.treatmentTeam.id(req.params.consultId);
+    if (!member) return res.status(404).json({ success: false, message: "Consultation not found" });
+
+    const callerId = req.user?._id?.toString() || req.user?.id?.toString();
+    const primaryId = admission.attendingDoctorId?.toString();
+    const consultingId = member.doctorId?.toString();
+    const isAdmin = req.user?.role === "Admin";
+    const isPrimary = callerId === primaryId;
+    const isConsulting = callerId === consultingId;
+
+    if (!isAdmin && !isPrimary && !isConsulting) {
+      return res.status(403).json({ success: false, message: "You do not have permission to update this consultation." });
+    }
+
+    const { status, consultationNotes, urgency, reason } = req.body;
+
+    // Primary can change status / urgency / reason
+    if (isPrimary || isAdmin) {
+      if (status) member.status = status;
+      if (urgency) member.urgency = urgency;
+      if (reason !== undefined) member.reason = reason;
+    }
+
+    // Consulting doctor can add/update their notes
+    if (isConsulting || isAdmin) {
+      if (consultationNotes !== undefined) {
+        member.consultationNotes = consultationNotes;
+        member.notesUpdatedAt = new Date();
+        member.notesUpdatedBy = req.user?.name || member.doctorName;
+        if (!member.status || member.status === "Pending") member.status = "Active";
+      }
+    }
+
+    await admission.save();
+    return res.json({ success: true, message: "Consultation updated", data: member });
+  });
+
+  /**
+   * DELETE /:id/consultation/:consultId
+   * Remove a consultant — primary only.
+   */
+  removeConsultation = handle(async (req, res) => {
+    const Admission = require("../../models/Patient/admissionModel");
+    const admission = await Admission.findById(req.params.id);
+    if (!admission) return res.status(404).json({ success: false, message: "Admission not found" });
+
+    const callerId = req.user?._id?.toString() || req.user?.id?.toString();
+    const primaryId = admission.attendingDoctorId?.toString();
+    if (req.user?.role !== "Admin" && callerId !== primaryId) {
+      return res.status(403).json({ success: false, message: "Only the primary consultant can remove team members." });
+    }
+
+    admission.treatmentTeam = admission.treatmentTeam.filter(
+      m => m._id.toString() !== req.params.consultId
+    );
+    await admission.save();
+    return res.json({ success: true, message: "Consultant removed from team" });
+  });
+
+  /**
+   * GET /my-team-patients
+   * Returns all active admissions where the current doctor is primary OR consulting.
+   * Route must be mounted BEFORE /:id routes.
+   */
+  getMyTeamPatients = handle(async (req, res) => {
+    const Admission = require("../../models/Patient/admissionModel");
+    const userId = req.user?._id?.toString() || req.user?.id?.toString();
+    const userName = req.user?.name || "";
+
+    const [asPrimary, asConsulting] = await Promise.all([
+      Admission.find({ attendingDoctorId: userId, status: "Active" })
+        .select("patientName UHID admissionNumber department admissionDate bedNumber attendingDoctor treatmentTeam")
+        .sort({ admissionDate: -1 }),
+      Admission.find({
+        "treatmentTeam.doctorId": userId,
+        "treatmentTeam.status": "Active",
+        status: "Active",
+      }).select("patientName UHID admissionNumber department admissionDate bedNumber attendingDoctor treatmentTeam"),
+    ]);
+
+    // Tag each admission with the doctor's role
+    const primaryList = asPrimary.map(a => ({ ...a.toObject(), myRole: "Primary Consultant" }));
+    const consultingList = asConsulting
+      .filter(a => !asPrimary.some(p => p._id.toString() === a._id.toString()))  // dedup
+      .map(a => {
+        const myEntry = a.treatmentTeam.find(m => m.doctorId?.toString() === userId);
+        return { ...a.toObject(), myRole: myEntry?.role || "Consulting Specialist", myConsultEntry: myEntry };
+      });
+
+    return res.json({
+      success: true,
+      data: {
+        asPrimary: primaryList,
+        asConsulting: consultingList,
+        total: primaryList.length + consultingList.length,
+      },
+    });
+  });
 }
 
 module.exports = new AdmissionController();
