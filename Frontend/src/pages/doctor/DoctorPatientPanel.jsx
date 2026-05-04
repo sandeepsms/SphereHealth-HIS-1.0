@@ -275,68 +275,251 @@ function OverviewTab({ patient, admission, opdVisits, billing }) {
 }
 
 // ── Tab: Clinical Notes ───────────────────────────────────────────────────────
+const CN_FIELD_LBL = {
+  admissionMode:"Admission Mode", chiefComplaint:"Chief Complaint", duration:"Duration", hpi:"HPI",
+  pastMedical:"Past Medical Hx", pastSurgical:"Past Surgical Hx",
+  familyHistory:"Family Hx", socialHistory:"Social Hx",
+  currentMeds:"Current Meds", allergies:"Allergies",
+  weight:"Weight (kg)", height:"Height (cm)",
+  generalCondition:"Gen Condition", builtNutrition:"Built/Nutrition",
+  pallor:"Pallor", icterus:"Icterus", cyanosis:"Cyanosis",
+  clubbing:"Clubbing", lymphadenopathy:"Lymphadenopathy", oedema:"Oedema",
+  resp:"Resp System", cvs:"CVS", abdomen:"Abdomen", cns:"CNS",
+  provisionalDx:"Provisional Dx", differentialDx:"Differential Dx",
+  finalDx:"Final Dx", icd10:"ICD-10",
+  investigations:"Investigations", managementPlan:"Management Plan",
+  ventMode:"Vent Mode", fio2:"FiO₂", peep:"PEEP",
+  tv:"Tidal Vol", ventRR:"Vent RR", pip:"PIP", map:"MAP", cvp:"CVP",
+  rassScore:"RASS Score", bpsScore:"BPS Score",
+  dailyGoals:"Daily Goals", neuro:"Neuro", renal:"Renal",
+  gi:"GI", haem:"Haem", infective:"Infective",
+  sedation:"Sedation", vasopressors:"Vasopressors", vasopressorDetail:"Vasopressor",
+  procedureName:"Procedure", indication:"Indication",
+  surgeon:"Surgeon", assistant:"Assistant", anaesthesia:"Anaesthesia",
+  position:"Position", consentObtained:"Consent",
+  technique:"Technique", findings:"Findings",
+  complications:"Complications", bloodLoss:"Blood Loss",
+  specimenSent:"Specimen Sent", specimenType:"Specimen",
+  consultantName:"Consultant", speciality:"Speciality",
+  consultantRegNo:"Reg No", referredBy:"Referred By",
+  reason:"Reason", clinicalSummary:"Clinical Summary",
+  impression:"Impression", recommendations:"Recommendations", followUp:"Follow-up",
+  procedure:"Procedure", preopDiagnosis:"Pre-op Dx",
+  asaGrade:"ASA Grade", plannedAnaesthesia:"Planned Anaesthesia",
+  bloodGroup:"Blood Group", crossMatch:"Cross Match",
+  comorbidities:"Comorbidities", preopOrders:"Pre-op Orders",
+  cbcReviewed:"CBC ✓", ptReviewed:"PT/APTT ✓", ecgReviewed:"ECG ✓",
+  cxrReviewed:"CXR ✓", echoReviewed:"Echo ✓", lftsReviewed:"LFTs ✓", rftReviewed:"RFTs ✓",
+  procedurePerformed:"Procedure", operativeFindings:"Op Findings",
+  startTime:"Start", endTime:"End", transfusion:"Transfusion",
+  fluidsGiven:"Fluids", urineOutput:"Urine Output",
+  postopDiagnosis:"Post-op Dx", conditionLeavingOT:"Condition (OT)",
+  recoveryInstructions:"Recovery", postopOrders:"Post-op Orders",
+  dateTime:"Date/Time", causeDeath1:"Cause 1", causeDeath2:"Cause 2", causeDeath3:"Cause 3",
+  contributing:"Contributing", sequenceOfEvents:"Sequence", modeOfDeath:"Mode of Death",
+  dnrInPlace:"DNR", familyInformed:"Family Informed", familyInformedBy:"Informed By",
+  familyInformedTime:"Informed At", mlc:"MLC", pmAdvised:"PM Advised",
+  certificateIssued:"Certificate", correction:"Correction", witness:"Witness",
+};
+
+function cnFmtVal(v) {
+  if (v === null || v === undefined || v === "" || v === false) return null;
+  if (typeof v === "boolean") return "✓ Yes";
+  if (Array.isArray(v)) {
+    if (!v.length) return null;
+    return v.map(x => typeof x === "object" ? (x.drug || x.drugFluid || x.name || JSON.stringify(x)) : String(x)).join(", ").slice(0, 80);
+  }
+  if (typeof v === "object") {
+    if ("systolic" in v) return `${v.systolic || "—"}/${v.diastolic || "—"}`;
+    return null;
+  }
+  const s = String(v);
+  return s.length > 80 ? s.slice(0, 80) + "…" : s;
+}
+
+function cnFmtKey(k) {
+  return CN_FIELD_LBL[k] || k.replace(/([A-Z])/g, " $1").trim();
+}
+
 function ClinicalNotesTab({ notes }) {
   if (!notes || notes.length === 0) {
     return <EmptyState icon="🩺" message="No clinical notes found for this patient" />;
   }
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {notes.map((note, i) => (
-        <div key={i} style={{
-          background: C.card, border: `1px solid ${C.border}`, borderRadius: 12,
-          overflow: "hidden",
-        }}>
-          {/* Header */}
-          <div style={{
-            display: "flex", justifyContent: "space-between", alignItems: "center",
-            flexWrap: "wrap", gap: 8,
-            padding: "12px 18px", background: C.primaryLight, borderBottom: `1px solid ${C.primaryMid}`,
+      {notes.map((note, i) => {
+        const isSigned = note?.status === "signed";
+        // Vitals
+        const v = note?.vitals;
+        const bpStr = v?.bp ? `${v.bp.systolic || "—"}/${v.bp.diastolic || "—"}` : null;
+        const vFields = v ? [
+          { l: "BP",     val: bpStr },
+          { l: "Pulse",  val: v.pulse ? `${v.pulse} /min` : null },
+          { l: "Temp",   val: v.temp  ? `${v.temp}°F`    : null },
+          { l: "SpO₂",  val: v.spo2  ? `${v.spo2}%`     : null },
+          { l: "RR",     val: v.rr    ? `${v.rr} /min`   : null },
+          { l: "BSL",    val: v.bsl   ? `${v.bsl} mg/dL` : null },
+          { l: "GCS",    val: v.gcs   ? String(v.gcs)    : null },
+        ].filter(f => f.val) : [];
+
+        // noteDetails chips
+        const nd = note?.noteDetails;
+        const ndChips = nd && typeof nd === "object" && !Array.isArray(nd)
+          ? Object.entries(nd)
+              .filter(([k]) => k !== "medicationOrders" && k !== "infusionOrders")
+              .map(([k, val]) => ({ label: cnFmtKey(k), value: cnFmtVal(val) }))
+              .filter(c => c.value !== null)
+          : [];
+        const medOrders = nd?.medicationOrders;
+        const infOrders = nd?.infusionOrders;
+
+        return (
+          <div key={i} style={{
+            background: C.card, border: `1px solid ${C.border}`, borderRadius: 12,
+            overflow: "hidden",
           }}>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <Badge>{note?.noteType || "Note"}</Badge>
-              {note?.isSigned && <Badge color={C.success} bg={C.successLight}>✓ Signed</Badge>}
+            {/* Header */}
+            <div style={{
+              display: "flex", justifyContent: "space-between", alignItems: "center",
+              flexWrap: "wrap", gap: 8,
+              padding: "12px 18px", background: C.primaryLight, borderBottom: `1px solid ${C.primaryMid}`,
+            }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <Badge>{note?.noteType || "Note"}</Badge>
+                {isSigned
+                  ? <Badge color={C.success} bg={C.successLight}>✓ Signed</Badge>
+                  : <Badge color={C.warn} bg={C.warnLight}>Draft</Badge>}
+                {note?.isCritical && <Badge color={C.danger} bg={C.dangerLight}>⚠ Critical</Badge>}
+                {note?.shift && <Badge color={C.muted} bg="#f1f5f9">{note.shift}</Badge>}
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 12, color: C.muted }}>{fmtDT(note?.createdAt)}</div>
+                {(note?.doctorName || note?.createdBy) && (
+                  <div style={{ fontSize: 12, fontWeight: 600, color: C.primaryDark }}>
+                    {note.doctorName || note.createdBy}
+                    {note?.doctorRegNo && <span style={{ fontWeight: 400, color: C.muted }}> · {note.doctorRegNo}</span>}
+                  </div>
+                )}
+              </div>
             </div>
-            <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: 12, color: C.muted }}>{fmtDT(note?.createdAt)}</div>
-              {note?.createdBy && (
-                <div style={{ fontSize: 12, fontWeight: 600, color: C.primaryDark }}>{note.createdBy}</div>
+
+            {/* Body */}
+            <div style={{ padding: 18, display: "flex", flexDirection: "column", gap: 10 }}>
+              {/* SOAP */}
+              {[
+                { label: "S — Subjective",  value: note?.soap?.subjective || note?.subjective,  color: "#1e40af", bg: "#eff6ff" },
+                { label: "O — Objective",   value: note?.soap?.objective  || note?.objective,   color: "#0f766e", bg: "#f0fdfa" },
+                { label: "A — Assessment",  value: note?.soap?.assessment || note?.assessment || note?.provisionalDiagnosis || note?.finalDiagnosis, color: "#9a3412", bg: "#fff7ed" },
+                { label: "P — Plan",        value: note?.soap?.plan       || note?.plan,        color: "#166534", bg: "#f0fdf4" },
+              ].filter(s => s.value).map((s, j) => (
+                <div key={j} style={{ padding: "10px 14px", borderRadius: 8, background: s.bg, borderLeft: `3px solid ${s.color}` }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: s.color, marginBottom: 4, letterSpacing: ".3px" }}>{s.label}</div>
+                  <div style={{ fontSize: 13, color: C.dark, lineHeight: 1.6 }}>{s.value}</div>
+                </div>
+              ))}
+
+              {/* Diagnosis */}
+              {(note?.provisionalDiagnosis || note?.finalDiagnosis) && !note?.soap?.assessment && (
+                <div style={{ padding: "10px 14px", borderRadius: 8, background: "#fdf4ff", border: `1.5px solid ${C.primary}` }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.primary, marginBottom: 4 }}>🏷️ DIAGNOSIS</div>
+                  {note.provisionalDiagnosis && <div style={{ fontSize: 13, color: C.dark }}><b>Provisional:</b> {note.provisionalDiagnosis}</div>}
+                  {note.finalDiagnosis && <div style={{ fontSize: 13, color: C.dark, marginTop: 2 }}><b>Final:</b> {note.finalDiagnosis}</div>}
+                </div>
+              )}
+
+              {/* Investigations */}
+              {note?.investigations?.length > 0 && (
+                <div style={{ display: "flex", gap: 5, flexWrap: "wrap", alignItems: "center" }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: C.muted }}>Inv:</span>
+                  {note.investigations.map((inv, ii) => (
+                    <span key={ii} style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600, background: "#f5f3ff", color: "#7c3aed", border: "1px solid #c4b5fd" }}>{inv}</span>
+                  ))}
+                </div>
+              )}
+
+              {/* Orders */}
+              {note?.orders?.length > 0 && (
+                <div style={{ display: "flex", gap: 5, flexWrap: "wrap", alignItems: "center" }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: C.muted }}>Orders ({note.orders.length}):</span>
+                  {note.orders.slice(0, 4).map((o, oi) => (
+                    <span key={oi} style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600, background: "#eff6ff", color: "#1e40af", border: "1px solid #bfdbfe" }}>{o.instruction?.slice(0, 35)}</span>
+                  ))}
+                  {note.orders.length > 4 && <span style={{ fontSize: 10, color: C.muted }}>+{note.orders.length - 4} more</span>}
+                </div>
+              )}
+
+              {/* Vitals */}
+              {vFields.length > 0 && (
+                <div style={{ display: "flex", gap: "5px 14px", flexWrap: "wrap", padding: "7px 10px", background: "#eff6ff", borderRadius: 7, border: "1px solid #bfdbfe" }}>
+                  <span style={{ fontSize: 9, fontWeight: 800, textTransform: "uppercase", color: "#1e40af", alignSelf: "center", minWidth: 44 }}>Vitals</span>
+                  {vFields.map(f => (
+                    <div key={f.l} style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                      <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: C.muted }}>{f.l}</span>
+                      <span style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 600, color: C.dark }}>{f.val}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Tags */}
+              {note?.tags?.length > 0 && (
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                  {note.tags.map(t => (
+                    <span key={t} style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600, background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0" }}>{t}</span>
+                  ))}
+                </div>
+              )}
+
+              {/* noteDetails generic chips */}
+              {ndChips.length > 0 && (
+                <div style={{ padding: "8px 12px", background: C.primaryLight, borderRadius: 7, border: `1px solid ${C.primaryMid}` }}>
+                  <div style={{ fontSize: 9, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: C.primary, marginBottom: 6 }}>
+                    {note?.noteType ? note.noteType.replace(/([A-Z])/g, " $1").trim().toUpperCase() : "NOTE DETAILS"}
+                  </div>
+                  <div style={{ display: "flex", gap: "5px 14px", flexWrap: "wrap" }}>
+                    {ndChips.map(c => (
+                      <div key={c.label} style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                        <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: C.muted }}>{c.label}</span>
+                        <span style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 500, color: C.dark }}>{c.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Medication orders (from noteDetails) */}
+              {medOrders?.length > 0 && (
+                <div style={{ padding: "7px 10px", background: "#eff6ff", borderRadius: 6, border: "1px solid #bfdbfe" }}>
+                  <div style={{ fontSize: 9, fontWeight: 800, textTransform: "uppercase", color: "#1e40af", marginBottom: 5 }}>MEDICATION ORDERS ({medOrders.length})</div>
+                  <div style={{ display: "flex", gap: "4px 10px", flexWrap: "wrap" }}>
+                    {medOrders.slice(0, 6).map((m, mi) => (
+                      <span key={mi} style={{ padding: "2px 7px", borderRadius: 4, fontSize: 10, fontWeight: 600, background: "white", color: "#1e40af", border: "1px solid #bfdbfe" }}>
+                        {m.drug || "—"}{m.dose ? ` ${m.dose}` : ""}{m.route ? ` · ${m.route}` : ""}{m.frequency ? ` · ${m.frequency}` : ""}
+                      </span>
+                    ))}
+                    {medOrders.length > 6 && <span style={{ fontSize: 10, color: C.muted }}>+{medOrders.length - 6} more</span>}
+                  </div>
+                </div>
+              )}
+
+              {/* Infusion orders (from noteDetails) */}
+              {infOrders?.length > 0 && (
+                <div style={{ padding: "7px 10px", background: "#f0fdfa", borderRadius: 6, border: "1px solid #99f6e4" }}>
+                  <div style={{ fontSize: 9, fontWeight: 800, textTransform: "uppercase", color: "#0d9488", marginBottom: 5 }}>INFUSION ORDERS ({infOrders.length})</div>
+                  <div style={{ display: "flex", gap: "4px 10px", flexWrap: "wrap" }}>
+                    {infOrders.slice(0, 6).map((inf, ii) => (
+                      <span key={ii} style={{ padding: "2px 7px", borderRadius: 4, fontSize: 10, fontWeight: 600, background: "white", color: "#0d9488", border: "1px solid #99f6e4" }}>
+                        {inf.drugFluid || inf.type || "—"}{inf.volume ? ` ${inf.volume} mL` : ""}{inf.rate ? ` @ ${inf.rate}` : ""}
+                      </span>
+                    ))}
+                    {infOrders.length > 6 && <span style={{ fontSize: 10, color: C.muted }}>+{infOrders.length - 6} more</span>}
+                  </div>
+                </div>
               )}
             </div>
           </div>
-
-          {/* SOAP body */}
-          <div style={{ padding: 18, display: "flex", flexDirection: "column", gap: 12 }}>
-            {[
-              { label: "S — Subjective",  value: note?.soap?.subjective || note?.subjective,  color: "#1e40af", bg: "#eff6ff" },
-              { label: "O — Objective",   value: note?.soap?.objective  || note?.objective,   color: "#0f766e", bg: "#f0fdfa" },
-              { label: "A — Assessment",  value: note?.soap?.assessment || note?.assessment || note?.provisionalDiagnosis || note?.finalDiagnosis,  color: "#9a3412", bg: "#fff7ed" },
-              { label: "P — Plan",        value: note?.soap?.plan       || note?.plan,        color: "#166534", bg: "#f0fdf4" },
-            ].filter(s => s.value).map((s, j) => (
-              <div key={j} style={{
-                padding: "10px 14px", borderRadius: 8,
-                background: s.bg, borderLeft: `3px solid ${s.color}`,
-              }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: s.color, marginBottom: 4, letterSpacing: ".3px" }}>
-                  {s.label}
-                </div>
-                <div style={{ fontSize: 13, color: C.dark, lineHeight: 1.6 }}>{s.value}</div>
-              </div>
-            ))}
-
-            {note?.diagnosis && (
-              <div style={{
-                padding: "10px 14px", borderRadius: 8,
-                background: "#fdf4ff", border: `1.5px solid ${C.primary}`,
-              }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: C.primary, marginBottom: 4, letterSpacing: ".3px" }}>
-                  🏷️ DIAGNOSIS
-                </div>
-                <div style={{ fontSize: 13, color: C.dark, fontWeight: 600 }}>{note.diagnosis}</div>
-              </div>
-            )}
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
