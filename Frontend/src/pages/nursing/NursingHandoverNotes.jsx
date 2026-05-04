@@ -1,6 +1,11 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useFormik } from "formik";
 import AdmittedPatientPanel from "../../Components/clinical/AdmittedPatientPanel";
+import { useAuth } from "../../context/AuthContext";
+import { useAutoSave } from "../../hooks/useAutoSave";
+import { useDigitalSignature } from "../../hooks/useDigitalSignature";
+import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
+import SignaturePad from "../../Components/signature/SignaturePad";
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const C = {
@@ -92,9 +97,11 @@ function PillGroup({ options, value, onChange, colorActive }) {
 
 // ─── Main component ────────────────────────────────────────────────────────────
 const NursingHandoverNotes = () => {
+  const { user } = useAuth();
   const [selectedAdm, setSelectedAdm] = useState(null);
   const [saved,  setSaved]  = useState(false);
   const [saving, setSaving] = useState(false);
+  const clearDraftRef = useRef(null);
 
   const formik = useFormik({
     initialValues: {
@@ -112,12 +119,36 @@ const NursingHandoverNotes = () => {
     onSubmit: async (values) => {
       setSaving(true);
       await new Promise(r => setTimeout(r, 600)); // replace with real API call
-      console.log("Handover submitted:", values);
+      console.log("Handover submitted:", { ...values, nurseEmployeeId: user?.employeeId || "", nurseSignature: signature || undefined });
+      clearDraftRef.current?.();
       setSaved(true);
       setSaving(false);
       setTimeout(() => setSaved(false), 3000);
     },
   });
+
+  const draftKey = selectedAdm?._id ? `sphere_draft_handover_${selectedAdm._id}` : null;
+  const { savedAt, hasDraft, loadDraft, clearDraft } = useAutoSave(draftKey, formik.values, 2000);
+  const { signature, showSetup, setShowSetup, saveSignature } = useDigitalSignature();
+  clearDraftRef.current = clearDraft;
+
+  // Auto-fill outgoing nurse from logged-in user
+  useEffect(() => {
+    if (!user) return;
+    const nurseName = user.fullName || `${user.firstName || ""} ${user.lastName || ""}`.trim();
+    formik.setFieldValue("outgoing", nurseName);
+    formik.setFieldValue("outgoingSignature", nurseName);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
+  // Restore draft when patient is selected
+  useEffect(() => {
+    if (!selectedAdm) return;
+    const draft = loadDraft();
+    if (draft?.data) {
+      formik.setValues(draft.data);
+    }
+  }, [selectedAdm?._id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const shiftOptions  = ["Morning", "Evening", "Night"];
   const intakeOptions = ["Nil", "<500 ml", "500–1000 ml", ">1000 ml"];
@@ -455,25 +486,41 @@ const NursingHandoverNotes = () => {
               </div>
             </SectionCard>
 
-            {/* Save button */}
-            <button type="submit" disabled={saving} style={{
-              width: "100%", padding: "14px 24px", borderRadius: 12, border: "none",
-              background: saved
-                ? `linear-gradient(135deg,${C.green},#15803d)`
-                : `linear-gradient(135deg,${C.primary},${C.primaryMid})`,
-              color: "#fff", fontWeight: 800, fontSize: 15, cursor: saving ? "not-allowed" : "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-              fontFamily: "'DM Sans',sans-serif",
-              boxShadow: `0 4px 16px rgba(15,118,110,.3)`,
-              letterSpacing: "-.2px", marginBottom: 32, opacity: saving ? .8 : 1,
-              transition: "background .3s",
-            }}>
-              <i className={`pi ${saving ? "pi-spin pi-spinner" : saved ? "pi-check" : "pi-save"}`} style={{ fontSize: 16 }} />
-              {saving ? "Saving…" : saved ? "Saved!" : "Save Handover Notes"}
-            </button>
+            {/* Save button row */}
+            <div style={{ display:"flex", gap:12, alignItems:"center", marginBottom:32, flexWrap:"wrap", justifyContent:"space-between" }}>
+              <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+                <AutoSaveIndicator savedAt={savedAt} hasDraft={hasDraft} />
+                <button type="button" onClick={() => setShowSetup(true)}
+                  style={{ padding:"7px 12px", background: signature ? "#f0fdf4" : "#fffbeb", border:`1.5px solid ${signature ? "#bbf7d0" : "#fde68a"}`, borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:700, color: signature ? "#16a34a" : "#92400e", display:"flex", alignItems:"center", gap:5 }}>
+                  {signature ? <><i className="pi pi-verified" /> Signature Set</> : <><i className="pi pi-pen-to-square" /> Setup Signature</>}
+                </button>
+              </div>
+              <button type="submit" disabled={saving} style={{
+                padding: "14px 36px", borderRadius: 12, border: "none",
+                background: saved
+                  ? `linear-gradient(135deg,${C.green},#15803d)`
+                  : `linear-gradient(135deg,${C.primary},${C.primaryMid})`,
+                color: "#fff", fontWeight: 800, fontSize: 15, cursor: saving ? "not-allowed" : "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+                fontFamily: "'DM Sans',sans-serif",
+                boxShadow: `0 4px 16px rgba(15,118,110,.3)`,
+                letterSpacing: "-.2px", opacity: saving ? .8 : 1,
+                transition: "background .3s",
+              }}>
+                <i className={`pi ${saving ? "pi-spin pi-spinner" : saved ? "pi-check" : "pi-save"}`} style={{ fontSize: 16 }} />
+                {saving ? "Saving…" : saved ? "Saved!" : "Save Handover Notes"}
+              </button>
+            </div>
           </form>
         </div>
       </div>
+      {showSetup && (
+        <SignaturePad
+          existing={signature}
+          onSave={async (dataUrl) => { await saveSignature(dataUrl); setShowSetup(false); }}
+          onCancel={() => setShowSetup(false)}
+        />
+      )}
     </div>
   );
 };

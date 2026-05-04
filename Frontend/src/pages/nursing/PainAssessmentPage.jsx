@@ -6,7 +6,12 @@
 import React, { useState, useCallback, useEffect } from "react";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
+import { useAuth } from "../../context/AuthContext";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
+import { useAutoSave } from "../../hooks/useAutoSave";
+import { useDigitalSignature } from "../../hooks/useDigitalSignature";
+import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
+import SignaturePad from "../../Components/signature/SignaturePad";
 
 const API = API_ENDPOINTS.BASE;
 
@@ -145,11 +150,16 @@ function PillSelect({ options, value=[], onChange, color=C.primary }) {
 }
 
 function PainContent({ patient }) {
+  const { user } = useAuth();
   const [form, setForm] = useState(defaultForm);
   const [reassessLog, setReassessLog] = useState([]);
   const [history, setHistory] = useState([]);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+
+  const draftKey = patient?._id ? `sphere_draft_pain_${patient._id}` : null;
+  const { savedAt, hasDraft, clearDraft } = useAutoSave(draftKey, { form, reassessLog }, 2000);
+  const { signature, showSetup, setShowSetup, saveSignature } = useDigitalSignature();
 
   useEffect(() => {
     if (!patient) return;
@@ -161,6 +171,16 @@ function PainContent({ patient }) {
         setReassessLog(data.reassessLog || []);
       } catch {}
     }
+    // Restore auto-save draft
+    const dKey = `sphere_draft_pain_${patient._id}`;
+    try {
+      const raw = localStorage.getItem(dKey);
+      if (raw) {
+        const { form: df, reassessLog: dr } = JSON.parse(raw);
+        if (df) setForm(f => ({ ...f, ...df }));
+        if (dr) setReassessLog(dr);
+      }
+    } catch {}
   }, [patient]);
 
   const set = (field, val) => { setForm(prev=>({...prev,[field]:val})); setSaved(false); };
@@ -177,8 +197,14 @@ function PainContent({ patient }) {
     localStorage.setItem(`nabh_pain_${patient._id}`, JSON.stringify({ history:newHistory, reassessLog }));
     setHistory(newHistory);
     try {
-      await axios.post(`${API}/nursing-assessments/pain`, { patientId:patient._id, ...entry });
+      await axios.post(`${API}/nursing-assessments/pain`, {
+        patientId: patient._id, ...entry,
+        nurseName: user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim(),
+        nurseEmployeeId: user?.employeeId || "",
+        nurseSignature: signature || undefined,
+      });
     } catch {}
+    clearDraft();
     setSaving(false); setSaved(true);
     setTimeout(()=>setSaved(false),2500);
   };
@@ -322,7 +348,7 @@ function PainContent({ patient }) {
         ))}
       </Section>
 
-      <div style={{ display:"flex", gap:12, alignItems:"center", marginBottom:24 }}>
+      <div style={{ display:"flex", gap:12, alignItems:"center", marginBottom:24, flexWrap:"wrap" }}>
         <button onClick={handleSave} disabled={saving}
           style={{
             padding:"10px 28px", borderRadius:10, border:"none", cursor:saving?"not-allowed":"pointer",
@@ -332,6 +358,10 @@ function PainContent({ patient }) {
           }}>
           <i className={`pi ${saved?"pi-check":saving?"pi-spin pi-spinner":"pi-save"}`} />
           {saved?"Saved!":saving?"Saving…":"Save Assessment"}
+        </button>
+        <AutoSaveIndicator savedAt={savedAt} hasDraft={hasDraft} />
+        <button onClick={() => setShowSetup(true)} style={{ padding:"8px 14px", background: signature ? "#f0fdf4" : "#fffbeb", border:`1.5px solid ${signature ? "#bbf7d0" : "#fde68a"}`, borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:700, color: signature ? "#16a34a" : "#92400e", display:"flex", alignItems:"center", gap:5 }}>
+          {signature ? <><i className="pi pi-verified" /> Signature Set</> : <><i className="pi pi-pen-to-square" /> Setup Signature</>}
         </button>
       </div>
 
@@ -362,6 +392,13 @@ function PainContent({ patient }) {
             </table>
           </div>
         </Section>
+      )}
+      {showSetup && (
+        <SignaturePad
+          existing={signature}
+          onSave={async (dataUrl) => { await saveSignature(dataUrl); setShowSetup(false); }}
+          onCancel={() => setShowSetup(false)}
+        />
       )}
     </div>
   );

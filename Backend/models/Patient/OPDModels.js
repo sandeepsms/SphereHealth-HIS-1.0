@@ -144,6 +144,20 @@ const OPDSchema = new mongoose.Schema(
     referredTo: String,
     doctorNotes: String,
 
+    // ── HOPI — structured History of Present Illness ──
+    hopiOnset:              String,
+    hopiDurationValue:      String,
+    hopiDurationUnit:       String,
+    hopiProgression:        String,
+    hopiCharacter:          String,
+    hopiAssociatedSymptoms: [String],
+    hopiAggravating:        String,
+    hopiRelieving:          String,
+
+    // ── Chronic Illnesses / Past Medical History ──
+    chronicConditions: [{ condition: String, duration: String }],
+    chronicOthers:     String,
+
     // ── SOAP Assessment (Doctor) ──────────────────────────────
     subjectiveNote:  String,   // S — Chief complaint / history
     objectiveNote:   String,   // O — Examination findings

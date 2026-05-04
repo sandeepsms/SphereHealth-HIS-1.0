@@ -1,7 +1,12 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
+import { useAuth } from "../../context/AuthContext";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
+import { useAutoSave } from "../../hooks/useAutoSave";
+import { useDigitalSignature } from "../../hooks/useDigitalSignature";
+import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
+import SignaturePad from "../../Components/signature/SignaturePad";
 
 const API = API_ENDPOINTS.NURSING_CARE_PLANS;
 
@@ -140,6 +145,7 @@ function Toggle({ label, checked, onChange }) {
 
 /* ═══════════════════════════════════════════════════════ */
 function NursingCarePlanContent({ selectedPatient }) {
+  const { user } = useAuth();
   const [searchUHID, setSearchUHID] = useState("");
   const [searchIPD, setSearchIPD] = useState("");
   const [plan, setPlan] = useState(null);
@@ -155,12 +161,24 @@ function NursingCarePlanContent({ selectedPatient }) {
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
 
+  /* ── Auto-save + signature ── */
+  const draftKey = form.ipdNo ? `sphere_draft_careplan_${form.ipdNo}` : null;
+  const { savedAt, hasDraft, clearDraft } = useAutoSave(draftKey, { form, problems }, 2000);
+  const { signature, showSetup, setShowSetup, saveSignature } = useDigitalSignature();
+
   useEffect(() => {
     if (selectedPatient?.UHID) {
       setSearchUHID(selectedPatient.UHID);
       setSearchIPD(selectedPatient.bedNumber || "");
     }
   }, [selectedPatient]);
+
+  // Auto-fill nurse name from logged-in user
+  useEffect(() => {
+    if (!user) return;
+    const name = user.fullName || `${user.firstName || ""} ${user.lastName || ""}`.trim();
+    if (name) setForm(p => ({ ...p, nurseName: p.nurseName || name }));
+  }, [user]);
 
   const search = async () => {
     setLoading(true);
@@ -216,6 +234,9 @@ function NursingCarePlanContent({ selectedPatient }) {
     setLoading(true);
     const payload = {
       ...form,
+      nurseName: form.nurseName || user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim(),
+      nurseEmployeeId: user?.employeeId || "",
+      nurseSignature: signature || undefined,
       educationTopics: form.educationTopics ? form.educationTopics.split(",").map(s => s.trim()).filter(Boolean) : [],
       nursingProblems: problems,
     };
@@ -227,6 +248,7 @@ function NursingCarePlanContent({ selectedPatient }) {
         await axios.post(API, payload);
         setMsg("Care plan created.");
       }
+      clearDraft();
       setMode("list");
     } catch (e) { setMsg(e.response?.data?.message || "Error"); }
     setLoading(false);
@@ -521,15 +543,23 @@ function NursingCarePlanContent({ selectedPatient }) {
           </Section>
 
           {/* Save Actions */}
-          <div style={{ display: "flex", gap: 12, justifyContent: "flex-end", marginBottom: 32, padding: "0 4px" }}>
-            <button onClick={() => setMode("list")} style={{ padding: "11px 24px", border: `1.5px solid ${C.border}`, borderRadius: 10, background: "white", fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, cursor: "pointer", color: C.muted }}>
-              Cancel
-            </button>
-            <button onClick={save} disabled={loading}
-              style={{ padding: "11px 32px", background: loading ? "#5eead4" : `linear-gradient(135deg, ${C.primary}, ${C.primaryMid})`, color: "white", border: "none", borderRadius: 10, fontFamily: "'DM Sans',sans-serif", fontSize: 14, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 8, boxShadow: `0 4px 16px ${C.primary}40` }}>
-              <i className={`pi ${loading ? "pi-spin pi-spinner" : "pi-check"}`} style={{ fontSize: 13 }} />
-              {loading ? "Saving..." : "Save Care Plan"}
-            </button>
+          <div style={{ display: "flex", gap: 12, justifyContent: "space-between", alignItems: "center", marginBottom: 32, padding: "0 4px", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <AutoSaveIndicator savedAt={savedAt} hasDraft={hasDraft} />
+              <button onClick={() => setShowSetup(true)} style={{ padding:"7px 12px", background: signature ? "#f0fdf4" : "#fffbeb", border:`1.5px solid ${signature ? "#bbf7d0" : "#fde68a"}`, borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:700, color: signature ? "#16a34a" : "#92400e", display:"flex", alignItems:"center", gap:5 }}>
+                {signature ? <><i className="pi pi-verified" /> Signature Set</> : <><i className="pi pi-pen-to-square" /> Setup Signature</>}
+              </button>
+            </div>
+            <div style={{ display: "flex", gap: 12 }}>
+              <button onClick={() => setMode("list")} style={{ padding: "11px 24px", border: `1.5px solid ${C.border}`, borderRadius: 10, background: "white", fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, cursor: "pointer", color: C.muted }}>
+                Cancel
+              </button>
+              <button onClick={save} disabled={loading}
+                style={{ padding: "11px 32px", background: loading ? "#5eead4" : `linear-gradient(135deg, ${C.primary}, ${C.primaryMid})`, color: "white", border: "none", borderRadius: 10, fontFamily: "'DM Sans',sans-serif", fontSize: 14, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 8, boxShadow: `0 4px 16px ${C.primary}40` }}>
+                <i className={`pi ${loading ? "pi-spin pi-spinner" : "pi-check"}`} style={{ fontSize: 13 }} />
+                {loading ? "Saving..." : "Save Care Plan"}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -613,6 +643,13 @@ function NursingCarePlanContent({ selectedPatient }) {
             })}
           </Section>
         </div>
+      )}
+      {showSetup && (
+        <SignaturePad
+          existing={signature}
+          onSave={async (dataUrl) => { await saveSignature(dataUrl); setShowSetup(false); }}
+          onCancel={() => setShowSetup(false)}
+        />
       )}
     </div>
   );

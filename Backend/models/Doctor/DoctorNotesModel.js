@@ -15,13 +15,10 @@ const OrderSchema = new mongoose.Schema(
         "diet",
         "other",
       ],
-      required: true,
+      default: "other",
     },
-    instruction: { type: String, required: true, trim: true },
-    route: {
-      type: String,
-      enum: ["IV", "IM", "Oral", "SC", "SL", "Topical", "Inhalation", ""],
-    },
+    instruction: { type: String, trim: true, default: "" },
+    route: { type: String },           // free-form — no enum restriction
     frequency: { type: String },
     duration: { type: String },
     notes: { type: String },
@@ -74,8 +71,7 @@ const DoctorNotesSchema = new mongoose.Schema(
 
     doctor: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Doctor",
-      required: true,
+      ref: "User",
     },
     doctorName: { type: String },
     doctorId: { type: String },
@@ -103,8 +99,21 @@ const DoctorNotesSchema = new mongoose.Schema(
       default: "draft",
     },
     signedAt: { type: Date },
-    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" },
-    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" },
+
+    // Extended NABH fields
+    noteType:     { type: String },                              // "daily","icu","procedure", etc.
+    isCritical:   { type: Boolean, default: false },
+    tags:         [{ type: String }],
+    noteDetails:  { type: mongoose.Schema.Types.Mixed },        // ICU/procedure/consultation specifics
+    patientStatus:{ type: String },
+
+    // Digital signature
+    signature:    { type: String },                             // base64 PNG
+    signedByName: { type: String },
+    signedByReg:  { type: String },
+
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   },
   { timestamps: true, collection: "doctor_notes" },
 );

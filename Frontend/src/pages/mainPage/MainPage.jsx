@@ -48,13 +48,8 @@ const ALL_MODULES = [
   { label: "Consent Forms",        icon: "pi-shield",               path: "/consent-forms",          color: C.green,  roles: ["Admin","Doctor","Nurse"] },
   // Nursing
   { label: "Nursing Notes",        icon: "pi-heart",                path: "/nursing-notes",          color: C.pink,   roles: ["Admin","Nurse"] },
-  { label: "Care Plan",            icon: "pi-heart-fill",           path: "/nursing-care-plan",      color: C.pink,   roles: ["Admin","Nurse"] },
   { label: "Handover Notes",       icon: "pi-arrow-right-arrow-left",path: "/nursing-handover-notes",color: C.teal,   roles: ["Admin","Nurse"] },
-  { label: "Initial Assessment",   icon: "pi-clipboard",            path: "/nurse-initial-assessment",color: C.accent,roles: ["Admin","Nurse"] },
   { label: "MAR",                  icon: "pi-list-check",           path: "/mar",                    color: C.amber,  roles: ["Admin","Nurse","Doctor"] },
-  // Vitals
-  { label: "Update Vitals",        icon: "pi-plus",                 path: "/updateVitalSheet",       color: C.green,  roles: ["Admin","Nurse"] },
-  { label: "Vital Sheet",          icon: "pi-chart-line",           path: "/vitalSheet",             color: C.teal,   roles: ["Admin","Doctor","Nurse"] },
   // Admin
   { label: "User Management",      icon: "pi-users",                path: "/admin/users",            color: C.purple, roles: ["Admin"] },
   { label: "IPD Admission",        icon: "pi-building",             path: "/ipd-admission",          color: C.accent, roles: ["Admin","Receptionist"] },
@@ -91,9 +86,6 @@ const QUICK_ACCESS_MAP = {
   Nurse:            [
     { label: "Nursing Notes",    icon: "pi-heart",             path: "/nursing-notes",          color: C.pink   },
     { label: "MAR",              icon: "pi-list-check",        path: "/mar",                    color: C.amber  },
-    { label: "Update Vitals",    icon: "pi-plus",              path: "/updateVitalSheet",       color: C.green  },
-    { label: "Initial Assessment",icon: "pi-clipboard",        path: "/nurse-initial-assessment",color: C.accent},
-    { label: "Care Plan",        icon: "pi-heart-fill",        path: "/nursing-care-plan",      color: C.pink   },
     { label: "Handover Notes",   icon: "pi-arrow-right-arrow-left",path: "/nursing-handover-notes",color: C.teal},
   ],
   "TPA Coordinator":[
@@ -107,7 +99,7 @@ const QUICK_ACCESS_MAP = {
   ],
   Dietician:        [
     { label: "Patient Search",   icon: "pi-search",            path: "/allpatient",             color: C.purple },
-    { label: "Vital Sheet",      icon: "pi-chart-line",        path: "/vitalSheet",             color: C.teal   },
+    { label: "Nursing Notes",    icon: "pi-heart",             path: "/nursing-notes",          color: C.pink   },
   ],
   "Lab Technician": [
     { label: "Patient Search",   icon: "pi-search",            path: "/allpatient",             color: C.purple },
@@ -350,11 +342,8 @@ export default function MainPage() {
           </div>
           <div style={{ padding: "14px 20px", display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(200px,1fr))", gap: 10 }}>
             {[
-              { label: "Initial Assessment", icon: "pi-clipboard",              path: "/nurse-initial-assessment", color: C.accent, desc: "NABH admission screening" },
-              { label: "Nursing Notes",      icon: "pi-pencil",                 path: "/nursing-notes",            color: C.pink,   desc: "Progress & observation notes" },
+              { label: "Nursing Notes",      icon: "pi-pencil",                 path: "/nursing-notes",            color: C.pink,   desc: "All nursing assessments & notes" },
               { label: "MAR",                icon: "pi-list-check",             path: "/mar",                      color: C.amber,  desc: "Medication administration" },
-              { label: "Care Plan",          icon: "pi-heart-fill",             path: "/nursing-care-plan",        color: C.pink,   desc: "Patient nursing care plan" },
-              { label: "Update Vitals",      icon: "pi-plus",                   path: "/updateVitalSheet",         color: C.green,  desc: "Record vital signs" },
               { label: "Handover Notes",     icon: "pi-arrow-right-arrow-left", path: "/nursing-handover-notes",   color: C.teal,   desc: "Shift handover documentation" },
             ].map(item => (
               <button key={item.path} onClick={() => navigate(item.path)}
@@ -577,11 +566,13 @@ export default function MainPage() {
                               background: "white", cursor: "pointer", fontSize: 11, fontWeight: 600, color: C.accent }}>
                             <i className="pi pi-eye" style={{ fontSize: 10, marginRight: 4 }} />View
                           </button>
-                          <button onClick={() => navigate(`/registration/IPD/${p._id}`)}
-                            style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${C.border}`,
-                              background: "white", cursor: "pointer", fontSize: 11, fontWeight: 600, color: C.muted }}>
-                            <i className="pi pi-file-edit" style={{ fontSize: 10, marginRight: 4 }} />Edit
-                          </button>
+                          {(role === "Admin" || role === "Receptionist") && (
+                            <button onClick={() => navigate(`/registration/IPD/${p._id}`)}
+                              style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${C.border}`,
+                                background: "white", cursor: "pointer", fontSize: 11, fontWeight: 600, color: C.muted }}>
+                              <i className="pi pi-file-edit" style={{ fontSize: 10, marginRight: 4 }} />Edit
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>

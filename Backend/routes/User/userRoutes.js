@@ -35,6 +35,10 @@ router.put("/:id/deactivate", userController.deactivateUser);
 
 router.put("/:id/activate", userController.activateUser);
 
+router.put("/:id/reset-password", userController.adminResetPassword);
+
+router.patch("/:id/signature", userController.adminSetSignature);
+
 router.put("/change-password", userController.changePassword);
 
 module.exports = router;

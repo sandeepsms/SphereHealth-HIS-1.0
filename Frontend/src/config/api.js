@@ -5,9 +5,10 @@ export const API_ENDPOINTS = {
   BASE: API_BASE_URL,
 
   // ── Auth ──────────────────────────────────────────────────────
-  AUTH_LOGIN: `${API_BASE_URL}/auth/login`,
-  AUTH_ME:    `${API_BASE_URL}/auth/me`,
-  AUTH_LOGOUT:`${API_BASE_URL}/auth/logout`,
+  AUTH_LOGIN:      `${API_BASE_URL}/auth/login`,
+  AUTH_ME:         `${API_BASE_URL}/auth/me`,
+  AUTH_LOGOUT:     `${API_BASE_URL}/auth/logout`,
+  AUTH_SIGNATURE:  `${API_BASE_URL}/auth/signature`,
   USERS:      `${API_BASE_URL}/users`,
 
   // ── Doctors & Patients ────────────────────────────────────────

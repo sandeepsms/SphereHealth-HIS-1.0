@@ -2,6 +2,10 @@ import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
+import { useAutoSave } from "../../hooks/useAutoSave";
+import { useDigitalSignature } from "../../hooks/useDigitalSignature";
+import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
+import SignaturePad from "../../Components/signature/SignaturePad";
 
 const API = API_ENDPOINTS.MAR;
 
@@ -773,6 +777,11 @@ function MARPageContent({ selectedPatient }) {
   const [viewMode, setViewMode]     = useState("list"); // "list" | "chart"
   const [showIndent, setShowIndent] = useState(false);
 
+  // Auto-save draft for add-medication form
+  const draftKey = mar?._id ? `sphere_draft_mar_${mar._id}` : null;
+  const { savedAt, hasDraft, clearDraft } = useAutoSave(draftKey, { newMed }, 2000);
+  const { signature, showSetup, setShowSetup, saveSignature } = useDigitalSignature();
+
   useEffect(() => {
     if(selectedPatient?.ipdNo || selectedPatient?.bedNumber || selectedPatient?.UHID) {
       const id = selectedPatient.ipdNo || selectedPatient.bedNumber || selectedPatient.UHID;
@@ -786,9 +795,22 @@ function MARPageContent({ selectedPatient }) {
     setLoading(true);
     try {
       const res = await axios.get(`${API}/ipd/${searchIPD.trim()}/date/${searchDate}`);
-      setMAR(res.data.data);
+      const marData = res.data.data;
+      setMAR(marData);
       setMsg("");
       setShowCreate(false);
+      // Restore draft for this MAR if available
+      const dKey = `sphere_draft_mar_${marData._id}`;
+      const raw = localStorage.getItem(dKey);
+      if (raw) {
+        try {
+          const { data } = JSON.parse(raw);
+          if (data?.newMed) {
+            setNewMed(data.newMed);
+            setShowAddMed(true);
+          }
+        } catch { /* ignore */ }
+      }
     } catch {
       setMAR(null);
       setMsg("No MAR found for this date. You can create one below.");
@@ -816,6 +838,7 @@ function MARPageContent({ selectedPatient }) {
       const med = { ...newMed, scheduledTimes: newMed.scheduledTimes ? newMed.scheduledTimes.split(",").map(s=>s.trim()).filter(Boolean) : [], startDate: newMed.startDate || searchDate };
       const res = await axios.post(`${API}/${mar._id}/medication`, med);
       setMAR(res.data.data); setShowAddMed(false);
+      clearDraft();
       setNewMed({ medicineName:"", genericName:"", dose:"", unit:"", route:"Oral", frequency:"", scheduledTimes:"", startDate:searchDate, isHighAlert:false, isLASA:false, specialInstructions:"", prescribedByName:"" });
       setMsg("Medication added."); setChartBuilt(false);
     } catch(e) { setMsg(e.response?.data?.message || "Error"); }
@@ -826,7 +849,7 @@ function MARPageContent({ selectedPatient }) {
     if(!adminDialog) return;
     setLoading(true);
     try {
-      const res = await axios.patch(`${API}/${mar._id}/medication/${adminDialog}/administer`, adminEntry);
+      const res = await axios.patch(`${API}/${mar._id}/medication/${adminDialog}/administer`, { ...adminEntry, ...(signature ? { nurseSignature: signature } : {}) });
       setMAR(res.data.data); setAdminDialog(null);
       setAdminEntry({ scheduledTime:"", status:"GIVEN", nurseName:"", batchNumber:"", reason:"", remarks:"" });
       setMsg("Administration recorded.");
@@ -881,19 +904,25 @@ function MARPageContent({ selectedPatient }) {
           <h2 style={{ fontSize:22, fontWeight:700, color:"#1e293b", margin:0 }}>Medication Administration Record</h2>
           <p style={{ fontSize:12, color:"#6b7280", margin:"4px 0 0" }}>NABH MMU.4 — Medication chart with pharmacy indent system</p>
         </div>
-        {mar && chartBuilt && (
-          <div style={{ display:"flex", gap:8 }}>
-            <button onClick={() => setViewMode(v => v==="list"?"chart":"list")}
-              style={{ padding:"8px 18px", background:"white", border:"1.5px solid #e2e6ea", borderRadius:8, fontSize:12, fontWeight:600, cursor:"pointer", color:"#374151" }}>
-              {viewMode==="list" ? "📊 Chart View" : "📋 List View"}
-            </button>
-            <button onClick={() => setShowIndent(true)}
-              style={{ padding:"8px 18px", background:"#16a34a", color:"white", border:"none", borderRadius:8, fontSize:12, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", gap:6 }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg>
-              Pharmacy Indent
-            </button>
-          </div>
-        )}
+        <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+          <button onClick={() => setShowSetup(true)}
+            style={{ padding:"7px 12px", background: signature ? "#f0fdf4" : "#fffbeb", border:`1.5px solid ${signature ? "#bbf7d0" : "#fde68a"}`, borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:700, color: signature ? "#16a34a" : "#92400e", display:"flex", alignItems:"center", gap:5 }}>
+            {signature ? <><i className="pi pi-verified" /> Signature Set</> : <><i className="pi pi-pen-to-square" /> Setup Signature</>}
+          </button>
+          {mar && chartBuilt && (
+            <>
+              <button onClick={() => setViewMode(v => v==="list"?"chart":"list")}
+                style={{ padding:"8px 18px", background:"white", border:"1.5px solid #e2e6ea", borderRadius:8, fontSize:12, fontWeight:600, cursor:"pointer", color:"#374151" }}>
+                {viewMode==="list" ? "📊 Chart View" : "📋 List View"}
+              </button>
+              <button onClick={() => setShowIndent(true)}
+                style={{ padding:"8px 18px", background:"#16a34a", color:"white", border:"none", borderRadius:8, fontSize:12, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", gap:6 }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg>
+                Pharmacy Indent
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {msg && <div style={{ marginBottom:12, padding:"10px 16px", background:"#eff6ff", border:"1px solid #bfdbfe", borderRadius:8, fontSize:13, color:"#1d4ed8" }}>{msg}</div>}
@@ -976,7 +1005,10 @@ function MARPageContent({ selectedPatient }) {
           {/* Add Medication */}
           {showAddMed && (
             <div style={{ ...sectionStyle, border:"2px solid #bbf7d0", background:"#f0fdf4" }}>
-              <h3 style={{ fontWeight:700, fontSize:14, marginBottom:14, paddingBottom:10, borderBottom:"1px solid #bbf7d0", color:"#166534" }}>Add Medication to MAR</h3>
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14, paddingBottom:10, borderBottom:"1px solid #bbf7d0" }}>
+                <h3 style={{ fontWeight:700, fontSize:14, color:"#166534", margin:0 }}>Add Medication to MAR</h3>
+                <AutoSaveIndicator savedAt={savedAt} hasDraft={hasDraft} />
+              </div>
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(180px,1fr))", gap:12, marginBottom:12 }}>
                 {[["medicineName","Medicine Name *"],["genericName","Generic Name"],["dose","Dose"],["unit","Unit (mg/ml)"],["frequency","Frequency"],["scheduledTimes","Scheduled Times (comma sep.)"],["prescribedByName","Prescribed By"]].map(([name,label]) => (
                   <div key={name}>
@@ -1265,6 +1297,13 @@ function MARPageContent({ selectedPatient }) {
           scheduleData={scheduleData}
           admDate={admDate}
           onClose={() => setShowIndent(false)}
+        />
+      )}
+      {showSetup && (
+        <SignaturePad
+          existing={signature}
+          onSave={async (dataUrl) => { await saveSignature(dataUrl); setShowSetup(false); }}
+          onCancel={() => setShowSetup(false)}
         />
       )}
     </div>

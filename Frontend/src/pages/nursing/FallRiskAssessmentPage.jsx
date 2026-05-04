@@ -6,7 +6,12 @@
 import React, { useState, useCallback, useEffect } from "react";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
+import { useAuth } from "../../context/AuthContext";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
+import { useAutoSave } from "../../hooks/useAutoSave";
+import { useDigitalSignature } from "../../hooks/useDigitalSignature";
+import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
+import SignaturePad from "../../Components/signature/SignaturePad";
 
 const API = API_ENDPOINTS.BASE;
 
@@ -172,12 +177,25 @@ function getRisk(score) {
 }
 
 function FallRiskContent({ patient }) {
+  const { user } = useAuth();
   const [scores, setScores] = useState(defaultScores);
   const [nurseName, setNurseName] = useState("");
   const [actionsNote, setActionsNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [history, setHistory] = useState([]);
+
+  /* ── Auto-save + signature ── */
+  const draftKey = patient?._id ? `sphere_draft_fall_${patient._id}` : null;
+  const { savedAt, hasDraft, clearDraft } = useAutoSave(draftKey, { scores, nurseName, actionsNote }, 2000);
+  const { signature, showSetup, setShowSetup, saveSignature } = useDigitalSignature();
+
+  // Auto-fill nurse name from logged-in user
+  useEffect(() => {
+    if (!user) return;
+    const name = user.fullName || `${user.firstName || ""} ${user.lastName || ""}`.trim();
+    setNurseName(prev => prev || name);
+  }, [user]);
 
   useEffect(() => {
     if (!patient) return;
@@ -189,6 +207,17 @@ function FallRiskContent({ patient }) {
         setHistory(data.history || []);
       } catch {}
     }
+    // Restore auto-save draft
+    const dKey = `sphere_draft_fall_${patient._id}`;
+    try {
+      const raw = localStorage.getItem(dKey);
+      if (raw) {
+        const { scores: ds, nurseName: dn, actionsNote: da } = JSON.parse(raw);
+        if (ds) setScores(s => ({ ...s, ...ds }));
+        if (dn) setNurseName(dn);
+        if (da) setActionsNote(da);
+      }
+    } catch {}
   }, [patient]);
 
   const totalScore = Object.values(scores).reduce((a, v) => a + (v ?? 0), 0);
@@ -219,8 +248,11 @@ function FallRiskContent({ patient }) {
       await axios.post(`${API}/nursing-assessments/fall-risk`, {
         patientId: patient._id,
         ...entry,
+        nurseEmployeeId: user?.employeeId || "",
+        nurseSignature: signature || undefined,
       });
     } catch {}
+    clearDraft();
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
@@ -305,7 +337,7 @@ function FallRiskContent({ patient }) {
             <input style={fld} value={actionsNote} onChange={e => setActionsNote(e.target.value)} placeholder="e.g. Wristband applied, family educated" />
           </Field>
         </div>
-        <div style={{ marginTop:16 }}>
+        <div style={{ marginTop:16, display:"flex", alignItems:"center", gap:12, flexWrap:"wrap" }}>
           <button
             onClick={handleSave}
             disabled={saving || !allAnswered}
@@ -319,7 +351,11 @@ function FallRiskContent({ patient }) {
             <i className={`pi ${saved ? "pi-check" : saving ? "pi-spin pi-spinner" : "pi-save"}`} />
             {saved ? "Saved!" : saving ? "Saving…" : "Save Assessment"}
           </button>
-          {!allAnswered && <div style={{ fontSize:11, color:C.muted, marginTop:6 }}>Please answer all 6 items to save.</div>}
+          <AutoSaveIndicator savedAt={savedAt} hasDraft={hasDraft} />
+          <button onClick={() => setShowSetup(true)} style={{ padding:"8px 14px", background: signature ? "#f0fdf4" : "#fffbeb", border:`1.5px solid ${signature ? "#bbf7d0" : "#fde68a"}`, borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:700, color: signature ? "#16a34a" : "#92400e", display:"flex", alignItems:"center", gap:5 }}>
+            {signature ? <><i className="pi pi-verified" /> Signature Set</> : <><i className="pi pi-pen-to-square" /> Setup Signature</>}
+          </button>
+          {!allAnswered && <div style={{ fontSize:11, color:C.muted }}>Please answer all 6 items to save.</div>}
         </div>
       </Section>
 
@@ -353,6 +389,15 @@ function FallRiskContent({ patient }) {
             </table>
           </div>
         </Section>
+      )}
+
+      {showSetup && (
+        <SignaturePad
+          existing={signature}
+          userName={nurseName}
+          onSave={async (dataUrl) => { await saveSignature(dataUrl); setShowSetup(false); }}
+          onCancel={() => setShowSetup(false)}
+        />
       )}
     </div>
   );

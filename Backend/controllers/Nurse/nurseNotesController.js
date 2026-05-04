@@ -15,16 +15,16 @@ const handle = (fn) => async (req, res) => {
 class NurseNotesController {
   // POST /api/nurse-notes
   createNote = handle(async (req, res) => {
-    // nurseId: body se lo, ya header se
+    // nurseId: body se lo, ya header se, ya JWT token se
     const nurseUserId =
-      req.body.nurseId || req.headers["x-user-id"] || req.user;
+      req.body.nurseId || req.headers["x-user-id"] ||
+      (req.user?._id || req.user?.id || req.user);
     if (!nurseUserId)
       return res.status(400).json({
         success: false,
-        message: "nurseId is required in request body",
+        message: "nurseId is required (send in body, X-User-Id header, or login token)",
       });
 
-    // nurseId body mein bhi pass karo service ke liye
     const data = { ...req.body, nurseId: nurseUserId };
     const note = await nurseNotesService.createNurseNote(data, nurseUserId);
     // ── Auto-billing hook ──────────────────────────────────────
@@ -86,6 +86,39 @@ class NurseNotesController {
       nurseUserId,
     );
     return res.json({ success: true, data: result });
+  });
+
+  // GET /api/nurse-notes?ipdNo=XXX  (query-param fallback used by NursingNotesPage)
+  getNotesByQuery = handle(async (req, res) => {
+    const { ipdNo, patientId } = req.query;
+    if (ipdNo) {
+      const notes = await nurseNotesService.getNotesByIPD(ipdNo, req.query);
+      return res.json({ success: true, data: notes, count: notes.length });
+    }
+    if (patientId) {
+      const result = await nurseNotesService.getNotesByPatient(patientId, req.query);
+      return res.json({ success: true, ...result });
+    }
+    return res.json({ success: true, data: [], count: 0 });
+  });
+
+  // GET /api/nurse-notes/report/:ipdNo  — full patient nursing record for print/PDF/insurance
+  getPatientReport = handle(async (req, res) => {
+    const notes = await nurseNotesService.getNotesByIPD(req.params.ipdNo, {});
+    // Group by date and sort
+    const grouped = {};
+    notes.forEach(n => {
+      const day = new Date(n.noteDate || n.createdAt).toISOString().slice(0, 10);
+      if (!grouped[day]) grouped[day] = [];
+      grouped[day].push(n);
+    });
+    return res.json({
+      success: true,
+      ipdNo: req.params.ipdNo,
+      totalNotes: notes.length,
+      grouped,
+      notes,
+    });
   });
 
   // DELETE /api/nurse-notes/:id

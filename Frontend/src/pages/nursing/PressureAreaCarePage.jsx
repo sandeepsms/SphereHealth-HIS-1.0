@@ -6,7 +6,12 @@
 import React, { useState, useCallback, useEffect } from "react";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
+import { useAuth } from "../../context/AuthContext";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
+import { useAutoSave } from "../../hooks/useAutoSave";
+import { useDigitalSignature } from "../../hooks/useDigitalSignature";
+import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
+import SignaturePad from "../../Components/signature/SignaturePad";
 
 const API = API_ENDPOINTS.BASE;
 
@@ -173,12 +178,17 @@ function getCarePlan(score) {
 }
 
 function PressureAreaContent({ patient }) {
+  const { user } = useAuth();
   const [scores, setScores] = useState(Object.fromEntries(BRADEN_SCALES.map(s => [s.key, null])));
   const [pressurePoints, setPressurePoints] = useState({});
   const [woundLog, setWoundLog] = useState([]);
   const [history, setHistory] = useState([]);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+
+  const draftKey = patient?._id ? `sphere_draft_pressure_${patient._id}` : null;
+  const { savedAt, hasDraft, clearDraft } = useAutoSave(draftKey, { scores, pressurePoints, woundLog }, 2000);
+  const { signature, showSetup, setShowSetup, saveSignature } = useDigitalSignature();
 
   useEffect(() => {
     if (!patient) return;
@@ -191,6 +201,17 @@ function PressureAreaContent({ patient }) {
         setPressurePoints(data.pressurePoints || {});
       } catch {}
     }
+    // Restore auto-save draft
+    const dKey = `sphere_draft_pressure_${patient._id}`;
+    try {
+      const raw = localStorage.getItem(dKey);
+      if (raw) {
+        const { scores: ds, pressurePoints: dp, woundLog: dw } = JSON.parse(raw);
+        if (ds) setScores(s => ({ ...s, ...ds }));
+        if (dp) setPressurePoints(dp);
+        if (dw) setWoundLog(dw);
+      }
+    } catch {}
   }, [patient]);
 
   const totalScore = Object.values(scores).reduce((a, v) => a + (v ?? 0), 0);
@@ -223,8 +244,12 @@ function PressureAreaContent({ patient }) {
     try {
       await axios.post(`${API}/nursing-assessments/pressure-area`, {
         patientId: patient._id, ...entry, woundLog, pressurePoints,
+        nurseName: user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim(),
+        nurseEmployeeId: user?.employeeId || "",
+        nurseSignature: signature || undefined,
       });
     } catch {}
+    clearDraft();
     setSaving(false); setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   };
@@ -364,7 +389,7 @@ function PressureAreaContent({ patient }) {
         ))}
       </Section>
 
-      <div style={{ display:"flex", gap:12, alignItems:"center", marginBottom:24 }}>
+      <div style={{ display:"flex", gap:12, alignItems:"center", marginBottom:24, flexWrap:"wrap" }}>
         <button onClick={handleSave} disabled={saving || !allAnswered}
           style={{
             padding:"10px 28px", borderRadius:10, border:"none", cursor:(!allAnswered||saving)?"not-allowed":"pointer",
@@ -374,6 +399,10 @@ function PressureAreaContent({ patient }) {
           }}>
           <i className={`pi ${saved?"pi-check":saving?"pi-spin pi-spinner":"pi-save"}`} />
           {saved?"Saved!":saving?"Saving…":"Save Assessment"}
+        </button>
+        <AutoSaveIndicator savedAt={savedAt} hasDraft={hasDraft} />
+        <button onClick={() => setShowSetup(true)} style={{ padding:"8px 14px", background: signature ? "#f0fdf4" : "#fffbeb", border:`1.5px solid ${signature ? "#bbf7d0" : "#fde68a"}`, borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:700, color: signature ? "#16a34a" : "#92400e", display:"flex", alignItems:"center", gap:5 }}>
+          {signature ? <><i className="pi pi-verified" /> Signature Set</> : <><i className="pi pi-pen-to-square" /> Setup Signature</>}
         </button>
         {!allAnswered && <span style={{ fontSize:11, color:C.muted }}>Complete all 6 Braden subscales to save.</span>}
       </div>
@@ -406,6 +435,13 @@ function PressureAreaContent({ patient }) {
             </table>
           </div>
         </Section>
+      )}
+      {showSetup && (
+        <SignaturePad
+          existing={signature}
+          onSave={async (dataUrl) => { await saveSignature(dataUrl); setShowSetup(false); }}
+          onCancel={() => setShowSetup(false)}
+        />
       )}
     </div>
   );

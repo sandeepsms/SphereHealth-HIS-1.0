@@ -971,7 +971,46 @@ export default function DoctorPatientPanel() {
             </div>
           </div>
 
-          {/* ── Tab Bar ──────────────────────────────────────────────────────── */}
+          {/* ── Initial Assessment Gate ─────────────────────────────────────── */}
+          {admission && !admission.initialAssessment?.doctorCompleted && (
+            <div style={{
+              margin: "16px 28px 0",
+              background: "#fff7ed", border: "2px solid #fb923c",
+              borderRadius: 14, padding: "20px 24px",
+              display: "flex", alignItems: "flex-start", gap: 16,
+            }}>
+              <span style={{ fontSize: 32, flexShrink: 0 }}>📋</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 800, fontSize: 16, color: "#9a3412", marginBottom: 4 }}>
+                  Initial Assessment Required (NABH COP.2)
+                </div>
+                <div style={{ fontSize: 13, color: "#c2410c", marginBottom: 14, lineHeight: 1.6 }}>
+                  You must complete the <strong>Doctor Initial Assessment</strong> before accessing this patient's clinical records.
+                  This is mandatory for all newly admitted IPD patients.
+                </div>
+                <button
+                  onClick={() => navigate(`/ipd-initial-assessment?uhid=${activeUhid}`)}
+                  style={{
+                    padding: "10px 22px", borderRadius: 9, border: "none",
+                    background: "#ea580c", color: "#fff", fontWeight: 700, fontSize: 13,
+                    cursor: "pointer", display: "flex", alignItems: "center", gap: 8,
+                  }}
+                >
+                  <i className="pi pi-pencil" style={{ fontSize: 13 }} />
+                  Complete Initial Assessment
+                </button>
+              </div>
+              <div style={{
+                padding: "8px 14px", background: "#fed7aa", borderRadius: 8,
+                fontSize: 11, fontWeight: 700, color: "#9a3412", whiteSpace: "nowrap",
+              }}>
+                ⏳ PENDING
+              </div>
+            </div>
+          )}
+
+          {/* ── Tab Bar (only shown after initial assessment done) ───────────── */}
+          {admission && !admission.initialAssessment?.doctorCompleted ? null : (
           <div style={{
             margin: "16px 28px 0",
             background: C.card, border: `1px solid ${C.border}`,
@@ -1055,6 +1094,7 @@ export default function DoctorPatientPanel() {
               )}
             </div>
           </div>
+          )} {/* end initialAssessment gate */}
 
           <div style={{ height: 40 }} />
         </>

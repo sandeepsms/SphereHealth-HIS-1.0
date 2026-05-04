@@ -451,10 +451,10 @@ router.post("/seed-demo", async (req, res) => {
       {
         UHID, patientName, visitId, visitType: "IPD", orderType: "Medication", priority: "STAT",
         orderedBy: createdBy, orderedAt: new Date(now - 3600000 * 2),
-        orderDetails: { medicineName: "Inj. Pantoprazole", dose: "40mg", route: "IV", frequency: "OD", duration: "5 days", indication: "GI prophylaxis", notes: "Dilute in 100ml NS, give over 15 min" },
+        orderDetails: { medicineName: "Inj. Pantoprazole", dose: "40mg", route: "IV", frequency: "OD", duration: "5 days", indication: "GI prophylaxis", dilution: "NS 0.9%", totalVolume: "100", notes: "Dilute in 100ml NS, give over 15 min" },
         scheduledTimes: ["08:00"],
         administrationRecord: [
-          { scheduledTime: "08:00", scheduledDate: today, status: "delayed", delayedTo: "10:00", delayReason: "Pharmacy — stock replenishment in progress", givenBy: "Sr. Kavita R." },
+          { scheduledTime: "08:00", scheduledDate: today, status: "given", givenAt: new Date(today.getTime() + 8*3600000), givenBy: "Sr. Kavita R.", verifiedBy: "Sr. Meena Devi", fiveRightsChecked: true, notes: "Diluted in 100ml NS, infused over 15 min" },
         ],
         status: "InProgress",
       },

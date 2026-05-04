@@ -6,7 +6,12 @@
 import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
+import { useAuth } from "../../context/AuthContext";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
+import { useAutoSave } from "../../hooks/useAutoSave";
+import { useDigitalSignature } from "../../hooks/useDigitalSignature";
+import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
+import SignaturePad from "../../Components/signature/SignaturePad";
 
 const API = API_ENDPOINTS.BASE;
 
@@ -238,10 +243,15 @@ function EducationSessionCard({ session, idx, onChange, onRemove }) {
 }
 
 function PatientEducationContent({ patient }) {
+  const { user } = useAuth();
   const [sessions, setSessions] = useState([]);
   const [savedSessions, setSavedSessions] = useState([]);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+
+  const draftKey = patient?._id ? `sphere_draft_education_${patient._id}` : null;
+  const { savedAt, hasDraft, loadDraft, clearDraft } = useAutoSave(draftKey, { sessions }, 2000);
+  const { signature, showSetup, setShowSetup, saveSignature } = useDigitalSignature();
 
   useEffect(() => {
     if (!patient) return;
@@ -252,7 +262,12 @@ function PatientEducationContent({ patient }) {
         setSavedSessions(data.sessions || []);
       } catch {}
     }
-  }, [patient]);
+    // Restore auto-save draft if available
+    const draft = loadDraft();
+    if (draft?.data?.sessions?.length) {
+      setSessions(draft.data.sessions);
+    }
+  }, [patient]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const addSession = () => setSessions(prev=>[...prev, emptySession()]);
 
@@ -275,8 +290,12 @@ function PatientEducationContent({ patient }) {
       await axios.post(`${API}/nursing-assessments/education`, {
         patientId: patient._id,
         sessions: newSessions.slice(0, sessions.length),
+        nurseName: user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim(),
+        nurseEmployeeId: user?.employeeId || "",
+        nurseSignature: signature || undefined,
       });
     } catch {}
+    clearDraft();
     setSaving(false); setSaved(true);
     setTimeout(()=>setSaved(false),2500);
   };
@@ -359,18 +378,27 @@ function PatientEducationContent({ patient }) {
       ))}
 
       {sessions.length > 0 && (
-        <div style={{ display:"flex", gap:12, alignItems:"center", marginBottom:24 }}>
-          <button onClick={handleSave} disabled={saving}
-            style={{
-              padding:"10px 28px", borderRadius:10, border:"none", cursor:saving?"not-allowed":"pointer",
-              background: saved?`linear-gradient(135deg,${C.green},#15803d)`:`linear-gradient(135deg,${C.purple},#6d28d9)`,
-              color:"#fff", fontWeight:700, fontSize:13, display:"flex", alignItems:"center", gap:8,
-              opacity:saving?.65:1, transition:"all .2s",
-            }}>
-            <i className={`pi ${saved?"pi-check":saving?"pi-spin pi-spinner":"pi-save"}`} />
-            {saved?"Sessions Saved!":saving?"Saving…":`Save ${sessions.length} Session(s)`}
-          </button>
-          <span style={{ fontSize:11, color:C.muted }}>Sessions will be added to the summary table below</span>
+        <div style={{ display:"flex", gap:12, alignItems:"center", marginBottom:24, flexWrap:"wrap", justifyContent:"space-between" }}>
+          <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+            <AutoSaveIndicator savedAt={savedAt} hasDraft={hasDraft} />
+            <button onClick={() => setShowSetup(true)}
+              style={{ padding:"7px 12px", background: signature ? "#f0fdf4" : "#fffbeb", border:`1.5px solid ${signature ? "#bbf7d0" : "#fde68a"}`, borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:700, color: signature ? "#16a34a" : "#92400e", display:"flex", alignItems:"center", gap:5 }}>
+              {signature ? <><i className="pi pi-verified" /> Signature Set</> : <><i className="pi pi-pen-to-square" /> Setup Signature</>}
+            </button>
+          </div>
+          <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+            <button onClick={handleSave} disabled={saving}
+              style={{
+                padding:"10px 28px", borderRadius:10, border:"none", cursor:saving?"not-allowed":"pointer",
+                background: saved?`linear-gradient(135deg,${C.green},#15803d)`:`linear-gradient(135deg,${C.purple},#6d28d9)`,
+                color:"#fff", fontWeight:700, fontSize:13, display:"flex", alignItems:"center", gap:8,
+                opacity:saving?.65:1, transition:"all .2s",
+              }}>
+              <i className={`pi ${saved?"pi-check":saving?"pi-spin pi-spinner":"pi-save"}`} />
+              {saved?"Sessions Saved!":saving?"Saving…":`Save ${sessions.length} Session(s)`}
+            </button>
+            <span style={{ fontSize:11, color:C.muted }}>Sessions will be added to the summary table below</span>
+          </div>
         </div>
       )}
 
@@ -445,6 +473,13 @@ function PatientEducationContent({ patient }) {
           </div>
         </div>
       </div>
+      {showSetup && (
+        <SignaturePad
+          existing={signature}
+          onSave={async (dataUrl) => { await saveSignature(dataUrl); setShowSetup(false); }}
+          onCancel={() => setShowSetup(false)}
+        />
+      )}
     </div>
   );
 }

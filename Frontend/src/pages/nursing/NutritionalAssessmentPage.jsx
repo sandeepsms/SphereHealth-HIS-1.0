@@ -6,7 +6,12 @@
 import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
+import { useAuth } from "../../context/AuthContext";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
+import { useAutoSave } from "../../hooks/useAutoSave";
+import { useDigitalSignature } from "../../hooks/useDigitalSignature";
+import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
+import SignaturePad from "../../Components/signature/SignaturePad";
 
 const API = API_ENDPOINTS.BASE;
 
@@ -133,10 +138,15 @@ function calcPUBW(w, usual) {
 }
 
 function NutritionalContent({ patient }) {
+  const { user } = useAuth();
   const [form, setForm] = useState(defaultForm);
   const [history, setHistory] = useState([]);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+
+  const draftKey = patient?._id ? `sphere_draft_nutrition_${patient._id}` : null;
+  const { savedAt, hasDraft, clearDraft } = useAutoSave(draftKey, { form }, 2000);
+  const { signature, showSetup, setShowSetup, saveSignature } = useDigitalSignature();
 
   useEffect(() => {
     if (!patient) return;
@@ -147,6 +157,15 @@ function NutritionalContent({ patient }) {
         setHistory(data.history || []);
       } catch {}
     }
+    // Restore auto-save draft
+    const dKey = `sphere_draft_nutrition_${patient._id}`;
+    try {
+      const raw = localStorage.getItem(dKey);
+      if (raw) {
+        const { form: df } = JSON.parse(raw);
+        if (df) setForm(f => ({ ...f, ...df }));
+      }
+    } catch {}
   }, [patient]);
 
   const setF = (field, val) => { setForm(prev=>({...prev,[field]:val})); setSaved(false); };
@@ -182,8 +201,14 @@ function NutritionalContent({ patient }) {
     localStorage.setItem(`nabh_nutrition_${patient._id}`, JSON.stringify({ history:newHistory }));
     setHistory(newHistory);
     try {
-      await axios.post(`${API}/nursing-assessments/nutrition`, { patientId:patient._id, ...entry });
+      await axios.post(`${API}/nursing-assessments/nutrition`, {
+        patientId: patient._id, ...entry,
+        nurseName: user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim(),
+        nurseEmployeeId: user?.employeeId || "",
+        nurseSignature: signature || undefined,
+      });
     } catch {}
+    clearDraft();
     setSaving(false); setSaved(true);
     setTimeout(()=>setSaved(false),2500);
   };
@@ -362,7 +387,7 @@ function NutritionalContent({ patient }) {
               placeholder="Document nutritional support plan, goals, supplements, monitoring frequency…" />
           </Field>
         </div>
-        <div style={{ marginTop:16 }}>
+        <div style={{ marginTop:16, display:"flex", gap:12, alignItems:"center", flexWrap:"wrap" }}>
           <button onClick={handleSave} disabled={saving}
             style={{
               padding:"10px 28px", borderRadius:10, border:"none", cursor:saving?"not-allowed":"pointer",
@@ -372,6 +397,10 @@ function NutritionalContent({ patient }) {
             }}>
             <i className={`pi ${saved?"pi-check":saving?"pi-spin pi-spinner":"pi-save"}`} />
             {saved?"Saved!":saving?"Saving…":"Save Assessment"}
+          </button>
+          <AutoSaveIndicator savedAt={savedAt} hasDraft={hasDraft} />
+          <button onClick={() => setShowSetup(true)} style={{ padding:"8px 14px", background: signature ? "#f0fdf4" : "#fffbeb", border:`1.5px solid ${signature ? "#bbf7d0" : "#fde68a"}`, borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:700, color: signature ? "#16a34a" : "#92400e", display:"flex", alignItems:"center", gap:5 }}>
+            {signature ? <><i className="pi pi-verified" /> Signature Set</> : <><i className="pi pi-pen-to-square" /> Setup Signature</>}
           </button>
         </div>
       </Section>
@@ -403,6 +432,13 @@ function NutritionalContent({ patient }) {
             </table>
           </div>
         </Section>
+      )}
+      {showSetup && (
+        <SignaturePad
+          existing={signature}
+          onSave={async (dataUrl) => { await saveSignature(dataUrl); setShowSetup(false); }}
+          onCancel={() => setShowSetup(false)}
+        />
       )}
     </div>
   );

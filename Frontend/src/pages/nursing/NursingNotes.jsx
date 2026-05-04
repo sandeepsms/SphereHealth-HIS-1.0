@@ -1,13 +1,19 @@
-import React, { useState, useEffect, useRef } from "react";
+﻿import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
+import { useAutoSave } from "../../hooks/useAutoSave";
+import { useDigitalSignature } from "../../hooks/useDigitalSignature";
+import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
+import SignaturePad from "../../Components/signature/SignaturePad";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import NurseOrdersPanel from "../../Components/clinical/NurseOrdersPanel";
 import TreatmentChart from "../../Components/clinical/TreatmentChart";
 import FingerprintConsentModal from "../../Components/clinical/FingerprintConsentModal";
+import IntegratedVitalsPanel from "../../Components/clinical/IntegratedVitalsPanel";
+import NursingPatientReport from "../../Components/nursing/NursingPatientReport";
 
 /* ── Design tokens ── */
 const C = {
@@ -216,6 +222,7 @@ function NursingNotesContent({ selectedPatient }) {
   const { user } = useAuth();
 
   const [searchUHID, setSearchUHID] = useState("");
+  const [ipdNoForDraft, setIpdNoForDraft] = useState("");
 
   useEffect(() => {
     if (selectedPatient?.UHID) setSearchUHID(selectedPatient.UHID);
@@ -244,11 +251,17 @@ function NursingNotesContent({ selectedPatient }) {
   const [ordersRefresh, setOrdersRefresh] = useState(0);
   const [consentOrder,  setConsentOrder]  = useState(null);
 
+  /* ── Patient Report (print / PDF) ── */
+  const [showReport, setShowReport] = useState(false);
+
   /* ── Module-specific form state ── */
   const [vitals,    setVitals]    = useState({ bp: "", pulse: "", temp: "", spo2: "", rr: "", gcs: "", bsl: "", painScore: "", o2Flow: "", o2Device: "None", weight: "", position: "Supine" });
   const [blood,     setBlood]     = useState({ product: "PRC (Packed RBC)", bagNo: "", crossMatchNo: "", volume: "350", groupVerified: true, secondNurse: "", startTime: "", status: "Transfusing", endTime: "", reactionType: "None", preBP: "", prePulse: "", preTemp: "", postBP: "", postPulse: "" });
   const [iv,        setIV]        = useState({ fluid: "NS 0.9%", volume: "", rate: "", dropsPerMin: "", route: "IV Right Forearm", site: "Patent", cannulaDate: "", setChangeDate: "", additive: "" });
   const [intake,    setIntake]    = useState({ oral: "", ivFluids: "", bloodProducts: "", urineOutput: "", drainOutput: "", nasogastric: "", emesis: "", bloodLoss: "" });
+  const [ivMedOrders,    setIvMedOrders]    = useState([]); // IV dilution volumes from Treatment Chart
+  const [ivMedLoading,   setIvMedLoading]   = useState(false);
+  const [includedMedIds, setIncludedMedIds] = useState(new Set());
   const [neuro,     setNeuro]     = useState({ gcse: "", gcsv: "", gcsm: "", pupils: "Equal & Reactive", pupilSizeL: "", pupilSizeR: "", lightReflex: "Present", seizure: false, orientation: "Alert & Oriented ×3", limbUL: "Normal", limbUR: "Normal", limbLL: "Normal", limbLR: "Normal" });
   const [pain,      setPain]      = useState({ scale: "NRS", score: "", location: "", type: "Acute", character: "Dull", onset: "Sudden", duration: "", frequency: "Constant", radiation: false, radiationSite: "", aggravating: "", relieving: "", painOnMovement: false, nonPharm: "", analgesicGiven: false, analgesic: "", analgesicRoute: "IV", analgesicTime: "", reassessScore: "", reassessTime: "" });
   const [wound,     setWound]     = useState({ type: "Surgical", site: "", length: "", width: "", depth: "", exudateAmt: "None", exudateType: "Serous", healingStage: "Granulating", surroundingSkin: "Intact", tunneling: false, undermining: false, odour: false, dressing: "", painDuring: "", nextDressingDate: "", swabSent: false });
@@ -257,6 +270,68 @@ function NursingNotesContent({ selectedPatient }) {
   const [procedure, setProcedure] = useState({ procedureName: "", indication: "", site: "", laterality: "N/A", time: "", consentObtained: true, performedBy: "", designation: "Staff Nurse", assistant: "", sterile: true, position: "Supine", outcome: "Tolerated Well", complications: "None", specimenSent: false, specimenType: "", postProcVitals: "", followUp: "" });
   const [discharge, setDischarge] = useState({ type: "Shift Handover", situation: "", background: "", assessment: "", recommendation: "", incomingNurse: "", patientStatus: "Stable", educationGiven: false, educationTopics: "", followUpDate: "", valuablesHandedOver: false });
   const [mews,      setMews]      = useState({ rr: "", spo2: "", temp: "", sbp: "", hr: "", avpu: "A" });
+
+  /* ── Fetch IV dilution orders when I/O tab opens ── */
+  useEffect(() => {
+    if (activeModal !== "intake" || !patient) return;
+    const uhid = patient?.uhid || patient?.UHID || patient?.patientId?.uhid || patient?.patientId?.UHID;
+    if (!uhid) return;
+    setIvMedLoading(true);
+    axios.get(`${API_ENDPOINTS.DOCTOR_ORDERS}?UHID=${uhid}`)
+      .then(({ data }) => {
+        const orders = Array.isArray(data) ? data : (data.data || []);
+        const isToday = (dateStr) => {
+          if (!dateStr) return false;
+          const d = new Date(dateStr), t = new Date();
+          return d.getFullYear() === t.getFullYear() && d.getMonth() === t.getMonth() && d.getDate() === t.getDate();
+        };
+        // Parse "Dilute in Xml ..." from notes as fallback when totalVolume not set
+        const parseDilutionVolume = (od = {}) => {
+          if (Number(od.totalVolume || 0) > 0) return Number(od.totalVolume);
+          const m = (od.notes || "").match(/dilute\s+in\s+(\d+)\s*ml/i);
+          return m ? Number(m[1]) : 0;
+        };
+        const parseDilutionFluid = (od = {}) => {
+          if (od.dilution) return od.dilution;
+          const m = (od.notes || "").match(/dilute\s+in\s+\d+\s*ml\s+(\S+)/i);
+          return m ? m[1] : "";
+        };
+        const ivOrders = orders
+          .filter(o => {
+            const route = (o.orderDetails?.route || "").toLowerCase();
+            return (route.includes("iv") || route.includes("intravenous")) &&
+                   parseDilutionVolume(o.orderDetails) > 0;
+          })
+          .map(o => {
+            const vol = parseDilutionVolume(o.orderDetails);
+            const dilutionFluid = parseDilutionFluid(o.orderDetails);
+            const todayGiven = (o.administrationRecord || []).filter(r =>
+              r.status === "given" && isToday(r.givenAt)
+            );
+            const infusionVol = (o.infusionMonitoring || [])
+              .filter(m => m.volumeInfused && isToday(m.time))
+              .reduce((s, m) => s + Number(m.volumeInfused || 0), 0);
+            const totalVol = todayGiven.length > 0
+              ? todayGiven.length * vol
+              : infusionVol;
+            return {
+              id: o._id,
+              name: o.orderDetails.medicineName || "Unknown",
+              dose: o.orderDetails.dose || "",
+              dilution: dilutionFluid,
+              volPerDose: vol,
+              administered: todayGiven.length,
+              totalVol,
+              times: todayGiven.map(r => new Date(r.givenAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })),
+            };
+          });
+        setIvMedOrders(ivOrders);
+        setIncludedMedIds(new Set(ivOrders.filter(o => o.totalVol > 0).map(o => o.id)));
+      })
+      .catch(() => {})
+      .finally(() => setIvMedLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeModal, patient]);
 
   /* ── New consolidated module state ── */
   const [dailyAssess, setDailyAssess] = useState({
@@ -325,6 +400,18 @@ function NursingNotesContent({ selectedPatient }) {
     sessionNotes: "",
     nextSessionDate: "",
   });
+
+  /* ── Auto-save draft (saves all module states keyed by IPD) ── */
+  const draftKey = ipdNoForDraft ? `sphere_draft_nurse_${ipdNoForDraft}` : null;
+  const { savedAt, hasDraft, clearDraft } = useAutoSave(
+    draftKey,
+    { vitals, blood, iv, intake, neuro, pain, wound, skin, fallRisk, procedure, discharge, mews,
+      dailyAssess, initialAssess, carePlan, nutrition, education, noteText, shift },
+    2000
+  );
+
+  /* ── Digital signature ── */
+  const { signature, showSetup, setShowSetup, saveSignature } = useDigitalSignature();
 
   /* ── Load equipment master catalogue once ── */
   useEffect(() => {
@@ -402,7 +489,49 @@ function NursingNotesContent({ selectedPatient }) {
       const active = arr[0]; // all results are already Active; take latest
       if (active) {
         setPatient(active);
-        await fetchNotes(active.ipdNo || active.admissionNumber || active._id);
+        const ipd = active.ipdNo || active.admissionNumber || active._id;
+        setIpdNoForDraft(ipd);
+
+        // Restore draft if one exists for this patient
+        const dKey = `sphere_draft_nurse_${ipd}`;
+        let draftRestored = false;
+        try {
+          const raw = localStorage.getItem(dKey);
+          if (raw) {
+            const { _meta, vitals: dv, blood: db, iv: div, intake: di, neuro: dn, pain: dp, wound: dw,
+              skin: dsk, fallRisk: dfr, procedure: dpr, discharge: ddc, mews: dmw,
+              dailyAssess: dda, initialAssess: dia, carePlan: dcp, nutrition: dnu, education: ded,
+              noteText: dnt, shift: dsh } = JSON.parse(raw);
+            if (dv)  setVitals(v => ({ ...v, ...dv }));
+            if (db)  setBlood(b => ({ ...b, ...db }));
+            if (div) setIV(i => ({ ...i, ...div }));
+            if (di)  setIntake(i => ({ ...i, ...di }));
+            if (dn)  setNeuro(n => ({ ...n, ...dn }));
+            if (dp)  setPain(p => ({ ...p, ...dp }));
+            if (dw)  setWound(w => ({ ...w, ...dw }));
+            if (dsk) setSkin(s => ({ ...s, ...dsk }));
+            if (dfr) setFallRisk(f => ({ ...f, ...dfr }));
+            if (dpr) setProcedure(p => ({ ...p, ...dpr }));
+            if (ddc) setDischarge(d => ({ ...d, ...ddc }));
+            if (dmw) setMews(m => ({ ...m, ...dmw }));
+            if (dda) setDailyAssess(d => ({ ...d, ...dda }));
+            if (dia) setInitialAssess(i => ({ ...i, ...dia }));
+            if (dcp) setCarePlan(c => ({ ...c, ...dcp }));
+            if (dnu) setNutrition(n => ({ ...n, ...dnu }));
+            if (ded) setEducation(e => ({ ...e, ...ded }));
+            if (dnt) setNoteText(dnt);
+            if (dsh) setShift(dsh);
+            draftRestored = true;
+            toast.info(`📝 Draft restored (${_meta?.savedAt ? new Date(_meta.savedAt).toLocaleTimeString() : "last session"})`, { autoClose: 3000 });
+          }
+        } catch (_) {}
+
+        if (!draftRestored) {
+          setVitals({ bp: "", pulse: "", temp: "", spo2: "", rr: "", gcs: "", bsl: "", painScore: "", o2Flow: "", o2Device: "None", weight: "", position: "Supine" });
+          setMews({ rr: "", spo2: "", temp: "", sbp: "", hr: "", avpu: "A" });
+        }
+        setIvMedOrders([]); setIncludedMedIds(new Set());
+        await fetchNotes(ipd);
         await loadTodayCharges(active._id);
         toast.success(`Loaded: ${active.patientName || active.patientId?.fullName || searchUHID}`);
       } else {
@@ -425,11 +554,17 @@ function NursingNotesContent({ selectedPatient }) {
   const openModal = (id) => {
     setActiveModal(id);
     setNoteText(""); setIsCritical(false); setSelectedTags([]);
-    setVitals({ bp: "", pulse: "", temp: "", spo2: "", rr: "", gcs: "", bsl: "", painScore: "", o2Flow: "", o2Device: "None", weight: "", position: "Supine" });
+    // vitals persist across tab switches — they're updated live by IntegratedVitalsPanel
     setBlood({ product: "PRC (Packed RBC)", bagNo: "", crossMatchNo: "", volume: "350", groupVerified: true, secondNurse: "", startTime: "", status: "Transfusing", endTime: "", reactionType: "None", preBP: "", prePulse: "", preTemp: "", postBP: "", postPulse: "" });
     setIV({ fluid: "NS 0.9%", volume: "", rate: "", dropsPerMin: "", route: "IV Right Forearm", site: "Patent", cannulaDate: "", setChangeDate: "", additive: "" });
     setIntake({ oral: "", ivFluids: "", bloodProducts: "", urineOutput: "", drainOutput: "", nasogastric: "", emesis: "", bloodLoss: "" });
-    setMews({ rr: "", spo2: "", temp: "", sbp: "", hr: "", avpu: "A" });
+    // When opening MEWS tab, seed from current vitals; otherwise reset
+    if (id === "mews") {
+      const [sbp = ""] = (vitals.bp || "").split("/");
+      setMews(p => ({ ...p, rr: vitals.rr || p.rr, spo2: vitals.spo2 || p.spo2, temp: vitals.temp || p.temp, sbp: sbp || p.sbp, hr: vitals.pulse || p.hr }));
+    } else {
+      setMews({ rr: "", spo2: "", temp: "", sbp: "", hr: "", avpu: "A" });
+    }
     setDailyAssess({ bp:"", pulse:"", temp:"", spo2:"", rr:"", bsl:"", gcs:"", neuroStatus:"Alert & Oriented", respiratoryStatus:"Clear bilaterally", cardiovascularStatus:"Regular rate & rhythm", giStatus:"Active bowel sounds", guStatus:"Urine output adequate", musculoskeletalStatus:"Moves all extremities", skinStatus:"Intact", intReposition:false, intOralCare:false, intPressureRelief:false, intRangeOfMotion:false, intFallPrecautions:false, intCallBell:false, intMedAdministered:false, intWoundCare:false, intIVCheck:false, intNGTCheck:false, intFoleyCheck:false, intOxygenCheck:false, intPatientEducation:false, intFamilyUpdate:false, intDoctorNotified:false, intDocumented:false });
     setCarePlan({ problems: [{ id: Date.now(), statement:"", relatedTo:"", evidencedBy:"", priority:"High", goals:"", targetDate:"", interventions:"", evaluation:"", status:"Active" }] });
     setNutrition({ bmi:"", bmiLow:false, weightLoss:false, reducedIntake:false, seriouslyIll:false, nutritionScore:"0", diseaseScore:"0", ageScore:false, weight:"", height:"", idealBodyWeight:"", actualWeightPercent:"", midArmCirc:"", dietType:"Regular", consistency:"Normal", fluidRestriction:false, fluidLimit:"", appetite:"Good", swallowing:"Normal", feedingMode:"Oral", ngtPresent:false, caloriesToday:"", proteinToday:"", fluidToday:"", dietitianReferral:false, referralReason:"" });
@@ -442,16 +577,22 @@ function NursingNotesContent({ selectedPatient }) {
     if (!patient) { toast.warn("No patient loaded"); return; }
     const ipdNo = patient.ipdNo || patient.admissionNumber || patient._id;
     let payload = {
+      patientId: patient._id || patient.patientId || undefined,
       patientUHID: patient.uhid || patient.UHID || searchUHID,
       patientName: patient.patientName || patient.patient?.name || "",
       ipdNo, shift, noteType: activeModal, isCriticalEvent: isCritical,
       remarks: noteText, tags: selectedTags, status: "submitted",
       nurseName: user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim(),
+      nurseEmployeeId: user?.employeeId || "",
+      nurseId: user?._id || user?.id || undefined,
     };
     if (activeModal === "vitals")   payload.vitals = { bp: { systolic: Number(vitals.bp.split("/")[0] || 0), diastolic: Number(vitals.bp.split("/")[1] || 0) }, pulse: Number(vitals.pulse), temp: Number(vitals.temp), spo2: Number(vitals.spo2), rr: Number(vitals.rr), gcs: vitals.gcs, bsl: Number(vitals.bsl) };
     if (activeModal === "blood")    payload.bloodTransfusion = blood;
     if (activeModal === "iv")       payload.ivInfusion = iv;
-    if (activeModal === "intake")   payload.intakeOutput = { oral: Number(intake.oral), ivFluids: Number(intake.ivFluids), urineOutput: Number(intake.urineOutput), nasogastricOutput: Number(intake.nasogastric), otherOutput: Number(intake.drainOutput) };
+    if (activeModal === "intake") {
+      const _autoMedVol = ivMedOrders.filter(o => includedMedIds.has(o.id)).reduce((s, o) => s + o.totalVol, 0);
+      payload.intakeOutput = { oral: Number(intake.oral), ivFluids: Number(intake.ivFluids) + _autoMedVol, ivMedFluids: _autoMedVol, urineOutput: Number(intake.urineOutput), nasogastricOutput: Number(intake.nasogastric), otherOutput: Number(intake.drainOutput) };
+    }
     if (activeModal === "neuro")    payload.neuroAssessment = neuro;
     if (activeModal === "pain")     payload.painAssessment = pain;
     if (activeModal === "wound")    payload.woundCare = wound;
@@ -466,9 +607,14 @@ function NursingNotesContent({ selectedPatient }) {
     if (activeModal === "nutrition") payload.nutritionalAssessment = { ...nutrition, nrsTotal: (Number(nutrition.nutritionScore||0)+Number(nutrition.diseaseScore||0)+(nutrition.ageScore?1:0)) };
     if (activeModal === "education") payload.patientEducation = education;
 
+    // Include nurse's digital signature
+    payload.signature = signature || undefined;
+    payload.signedByName = user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim();
+
     setLoading(true);
     try {
       await axios.post(API_ENDPOINTS.NURSE_NOTES, payload);
+      clearDraft(); // clear auto-saved draft after successful save
       toast.success("Note saved");
       setActiveModal(null);
       await fetchNotes(ipdNo);
@@ -500,9 +646,16 @@ function NursingNotesContent({ selectedPatient }) {
             <p style={{ margin: "2px 0 0", fontSize: 12, color: "rgba(255,255,255,.75)" }}>IPD / Day Care — Clinical Documentation</p>
           </div>
         </div>
-        <div style={{ background: "rgba(255,255,255,.15)", borderRadius: 8, padding: "6px 14px", fontSize: 12, color: "white", fontWeight: 600 }}>
-          <i className="pi pi-calendar" style={{ marginRight: 6, fontSize: 11 }} />
-          {today}
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <AutoSaveIndicator savedAt={savedAt} hasDraft={hasDraft} />
+          <button onClick={() => setShowSetup(true)} title={signature ? "Signature set — click to change" : "Setup your digital signature"}
+            style={{ background: signature ? "rgba(34,197,94,.25)" : "rgba(255,255,255,.15)", border: `1.5px solid ${signature ? "rgba(34,197,94,.5)" : "rgba(255,255,255,.3)"}`, borderRadius: 8, padding: "6px 12px", fontSize: 11, fontWeight: 700, color: "white", cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}>
+            {signature ? <><i className="pi pi-verified" /> Signature Set</> : <><i className="pi pi-pen-to-square" /> Setup Signature</>}
+          </button>
+          <div style={{ background: "rgba(255,255,255,.15)", borderRadius: 8, padding: "6px 14px", fontSize: 12, color: "white", fontWeight: 600 }}>
+            <i className="pi pi-calendar" style={{ marginRight: 6, fontSize: 11 }} />
+            {today}
+          </div>
         </div>
       </div>
 
@@ -599,9 +752,9 @@ function NursingNotesContent({ selectedPatient }) {
                   style={{ padding: "6px 12px", border: `1.5px solid ${C.border}`, borderRadius: 7, background: "white", fontSize: 11, fontWeight: 600, cursor: "pointer", color: C.text, display: "flex", alignItems: "center", gap: 5 }}>
                   <i className="pi pi-chart-bar" style={{ fontSize: 11 }} /> Vitals Trend
                 </button>
-                <button
-                  style={{ padding: "6px 12px", border: `1.5px solid ${C.border}`, borderRadius: 7, background: "white", fontSize: 11, fontWeight: 600, cursor: "pointer", color: C.text, display: "flex", alignItems: "center", gap: 5 }}>
-                  <i className="pi pi-print" style={{ fontSize: 11 }} /> Print Notes
+                <button onClick={() => setShowReport(true)}
+                  style={{ padding: "6px 12px", border: `1.5px solid ${C.primary}40`, borderRadius: 7, background: C.primaryL, fontSize: 11, fontWeight: 600, cursor: "pointer", color: C.primary, display: "flex", alignItems: "center", gap: 5 }}>
+                  <i className="pi pi-print" style={{ fontSize: 11 }} /> Print / PDF Report
                 </button>
                 <button onClick={() => navigate(`/ipd-assessment/${patient.uhid || patient.UHID || searchUHID}`)}
                   style={{ padding: "6px 12px", border: `1.5px solid ${C.primary}30`, borderRadius: 7, background: C.primaryL, fontSize: 11, fontWeight: 600, cursor: "pointer", color: C.primary, display: "flex", alignItems: "center", gap: 5 }}>
@@ -633,6 +786,7 @@ function NursingNotesContent({ selectedPatient }) {
               patientName={patient.patientName || patient.patientId?.fullName || ""}
               nurseMode={true}
               refreshTrigger={ordersRefresh}
+              onAdminSave={() => setOrdersRefresh(p => p + 1)}
             />
           </div>
 
@@ -987,8 +1141,8 @@ function NursingNotesContent({ selectedPatient }) {
                             { label: "TEMP",  value: note.vitals.temp ? `${note.vitals.temp}\u00b0F` : "\u2014", abnormal: isAbnormal("temp", note.vitals.temp) },
                             { label: "SPO\u2082",  value: note.vitals.spo2 ? `${note.vitals.spo2}%` : "\u2014", abnormal: isAbnormal("spo2", note.vitals.spo2) },
                             { label: "RR",    value: note.vitals.rr ? `${note.vitals.rr} /min` : "\u2014", abnormal: isAbnormal("rr", note.vitals.rr) },
-                            { label: "GCS",   value: note.vitals.gcs || "\u2014" },
-                            { label: "BSL",   value: note.vitals.bsl ? `${note.vitals.bsl} mg/dL` : "\u2014", abnormal: isAbnormal("bsl", note.vitals.bsl) },
+                            { label: "GCS",   value: note.moduleData?.vitals?.gcs || note.vitals.gcs || "\u2014" },
+                            { label: "BSL",   value: (note.moduleData?.vitals?.bsl || note.vitals.bsl) ? `${note.moduleData?.vitals?.bsl || note.vitals.bsl} mg/dL` : "\u2014", abnormal: isAbnormal("bsl", note.moduleData?.vitals?.bsl || note.vitals.bsl) },
                           ].map(v => (
                             <div key={v.label} style={{ display: "flex", flexDirection: "column", gap: 1 }}>
                               <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".6px", color: C.muted }}>{v.label}</span>
@@ -998,95 +1152,166 @@ function NursingNotesContent({ selectedPatient }) {
                         </div>
                       )}
 
-                      {/* Blood transfusion data */}
-                      {note.bloodTransfusion && note.noteType === "blood" && (
-                        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "8px 14px", background: C.grayL, borderRadius: 7, marginBottom: 8 }}>
-                          {[
-                            { label: "BLOOD PRODUCT", value: note.bloodTransfusion.product },
-                            { label: "BAG NO.",        value: note.bloodTransfusion.bagNo },
-                            { label: "VOLUME",         value: note.bloodTransfusion.volume ? `${note.bloodTransfusion.volume} mL` : "\u2014" },
-                            { label: "GROUP VERIFIED", value: note.bloodTransfusion.groupVerified ? "\u2713 Match" : "\u2717 Not Verified", color: note.bloodTransfusion.groupVerified ? C.green : C.red },
-                            { label: "STATUS",         value: note.bloodTransfusion.status, color: C.teal },
-                          ].map(v => (
-                            <div key={v.label} style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-                              <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".6px", color: C.muted }}>{v.label}</span>
-                              <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 12, fontWeight: 500, color: v.color || C.text }}>{v.value || "\u2014"}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* IV Infusion data */}
-                      {note.ivInfusion && note.noteType === "iv" && (
-                        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "8px 14px", background: C.grayL, borderRadius: 7, marginBottom: 8 }}>
-                          {[
-                            { label: "FLUID",  value: note.ivInfusion.fluid },
-                            { label: "RATE",   value: note.ivInfusion.rate ? `${note.ivInfusion.rate} mL/hr` : "\u2014" },
-                            { label: "ROUTE",  value: note.ivInfusion.route },
-                            { label: "SITE",   value: note.ivInfusion.site, color: C.green },
-                          ].map(v => (
-                            <div key={v.label} style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-                              <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".6px", color: C.muted }}>{v.label}</span>
-                              <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 12, fontWeight: 500, color: v.color || C.text }}>{v.value || "\u2014"}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Intake/Output data */}
-                      {note.intakeOutput && note.noteType === "intake" && (
-                        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "8px 14px", background: C.grayL, borderRadius: 7, marginBottom: 8 }}>
-                          {[
-                            { label: "ORAL",         value: `${note.intakeOutput.oral || 0} mL` },
-                            { label: "IV FLUIDS",    value: `${note.intakeOutput.ivFluids || 0} mL` },
-                            { label: "URINE OUTPUT", value: `${note.intakeOutput.urineOutput || 0} mL` },
-                            { label: "DRAIN",        value: `${note.intakeOutput.otherOutput || 0} mL` },
-                          ].map(v => (
-                            <div key={v.label} style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-                              <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".6px", color: C.muted }}>{v.label}</span>
-                              <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 12, fontWeight: 500 }}>{v.value}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Pain data */}
-                      {note.painAssessment && note.noteType === "pain" && (
-                        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "8px 14px", background: C.grayL, borderRadius: 7, marginBottom: 8 }}>
-                          {[
-                            { label: "SCORE",     value: `${note.painAssessment.score || "\u2014"}/10`, color: Number(note.painAssessment.score) >= 7 ? C.red : C.text },
-                            { label: "LOCATION",  value: note.painAssessment.location || "\u2014" },
-                            { label: "CHARACTER", value: note.painAssessment.character || "\u2014" },
-                            { label: "ANALGESIC", value: note.painAssessment.analgesicGiven ? note.painAssessment.analgesic || "Given" : "Not given" },
-                          ].map(v => (
-                            <div key={v.label} style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-                              <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".6px", color: C.muted }}>{v.label}</span>
-                              <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 12, fontWeight: 500, color: v.color || C.text }}>{v.value}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* MEWS Score data */}
-                      {note.mewsScore && note.noteType === "mews" && (() => {
-                        const band = mewsBand(note.mewsScore.total || 0);
+                      {/* ── MEWS Score (special colored band display) ── */}
+                      {note.moduleData?.mewsScore && note.noteType === "mews" && (() => {
+                        const ms = note.moduleData.mewsScore;
+                        const band = mewsBand(ms.total || 0);
                         return (
                           <div style={{ display:"flex", gap:12, flexWrap:"wrap", padding:"8px 14px", background:band.bg, borderRadius:7, marginBottom:8, alignItems:"center", border:`1px solid ${band.color}20` }}>
                             <div style={{ display:"flex", flexDirection:"column", gap:1 }}>
                               <span style={{ fontSize:9, fontWeight:700, textTransform:"uppercase", letterSpacing:".6px", color:C.muted }}>MEWS TOTAL</span>
-                              <span style={{ fontFamily:"'DM Mono',monospace", fontSize:20, fontWeight:900, color:band.color }}>{note.mewsScore.total}</span>
+                              <span style={{ fontFamily:"'DM Mono',monospace", fontSize:20, fontWeight:900, color:band.color }}>{ms.total}</span>
                             </div>
                             <div style={{ flex:1 }}>
-                              <div style={{ fontSize:12, fontWeight:800, color:band.color }}>{note.mewsScore.band}</div>
+                              <div style={{ fontSize:12, fontWeight:800, color:band.color }}>{ms.band}</div>
                               <div style={{ fontSize:11, color:band.color+"cc" }}>{band.action}</div>
                             </div>
-                            {[
-                              {l:"RR", v:note.mewsScore.rr},{l:"SpO₂", v:note.mewsScore.spo2},{l:"Temp", v:note.mewsScore.temp},
-                              {l:"SBP", v:note.mewsScore.sbp},{l:"HR", v:note.mewsScore.hr},{l:"AVPU", v:note.mewsScore.avpu}
-                            ].filter(x=>x.v).map(v=>(
+                            {[{l:"RR",v:ms.rr},{l:"SpO₂",v:ms.spo2},{l:"Temp",v:ms.temp},{l:"SBP",v:ms.sbp},{l:"HR",v:ms.hr},{l:"AVPU",v:ms.avpu}].filter(x=>x.v).map(v=>(
                               <div key={v.l} style={{ display:"flex", flexDirection:"column", gap:1 }}>
                                 <span style={{ fontSize:9, fontWeight:700, textTransform:"uppercase", letterSpacing:".6px", color:C.muted }}>{v.l}</span>
                                 <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:500 }}>{v.v}</span>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
+
+                      {/* ── All module data: generic renderer from note.moduleData ──
+                           Covers: pain, blood, iv, intake, neuro, wound, skin, fall,
+                           procedure, discharge, daily, initial, carePlan, nutrition, education */}
+                      {note.moduleData && (() => {
+                        const SKIP = new Set(
+                          note.noteType === "mews"   ? ["mewsScore"] :
+                          note.noteType === "vitals" ? ["vitals"]    : []
+                        );
+                        const MOD_SECTION_LBL = {
+                          painAssessment:"Pain Assessment", neuroAssessment:"Neuro / GCS",
+                          bloodTransfusion:"Blood Transfusion", ivInfusion:"IV Infusion",
+                          intakeOutput:"Intake / Output", woundCare:"Wound / Dressing",
+                          skinAssessment:"Skin / Pressure (Braden)", fallRisk:"Fall Risk (Morse Scale)",
+                          procedure:"Procedure / Intervention", discharge:"Discharge / Handover (SBAR)",
+                          dailyAssessment:"Daily Assessment", initialAssessment:"Initial Assessment",
+                          carePlan:"Care Plan", nutritionalAssessment:"Nutritional Assessment (NRS-2002)",
+                          patientEducation:"Patient Education",
+                        };
+                        const FIELD_LBL = {
+                          m1:"History of Falls", m2:"Secondary Dx", m3:"Ambul. Aid",
+                          m4:"IV / Heparin Lock", m5:"Gait / Transfer", m6:"Mental Status",
+                          intBedRails:"Bed Rails ↑", intCallBell:"Call Bell", intNonSlip:"Non-Slip",
+                          intBedLowest:"Bed Lowest", intSupervision:"Supervision",
+                          intPatientEd:"Patient Edu.", intFamilyEd:"Family Edu.",
+                          gcse:"Eyes (E)", gcsv:"Verbal (V)", gcsm:"Motor (M)",
+                          scale:"Scale", score:"Score", location:"Location", character:"Character",
+                          onset:"Onset", frequency:"Frequency", duration:"Duration",
+                          analgesicGiven:"Analgesic Given", analgesic:"Drug", analgesicRoute:"Route",
+                          painOnMovement:"Pain on Movement", reassessScore:"Reassess Score",
+                          reassessTime:"Reassess Time", nonPharmacological:"Non-Pharm",
+                          aggravatingFactors:"Aggravating",
+                          pupils:"Pupils", pupilSizeL:"Pupil L (mm)", pupilSizeR:"Pupil R (mm)",
+                          lightReflex:"Light Reflex", orientation:"Orientation",
+                          seizure:"Seizure", limbUL:"Upper-L", limbUR:"Upper-R",
+                          limbLL:"Lower-L", limbLR:"Lower-R",
+                          product:"Product", bagNo:"Bag No.", crossMatchNo:"X-Match No.",
+                          volume:"Volume (mL)", groupVerified:"Group Verified", secondNurse:"2nd Nurse",
+                          startTime:"Start", endTime:"End", reactionType:"Reaction",
+                          preBP:"Pre-BP", prePulse:"Pre-Pulse", postBP:"Post-BP", postPulse:"Post-Pulse",
+                          fluid:"Fluid", rate:"Rate (mL/hr)", dropsPerMin:"gtts/min",
+                          route:"Route", site:"Site", cannulaDate:"Cannula Date",
+                          setChangeDate:"Set Change", additive:"Additive",
+                          oral:"Oral (mL)", ivFluids:"IV Fluids (mL)", urineOutput:"Urine (mL)",
+                          otherOutput:"Other Out (mL)", nasogastricOutput:"NGT Out (mL)",
+                          ivMedFluids:"IV Med (mL)",
+                          type:"Type", length:"Length (cm)", width:"Width (cm)", depth:"Depth (cm)",
+                          exudateAmt:"Exudate Amt", exudateType:"Exudate Type",
+                          healingStage:"Healing Stage", surroundingSkin:"Surrounding Skin",
+                          tunneling:"Tunneling", undermining:"Undermining", odour:"Odour",
+                          dressing:"Dressing Used", painDuring:"Pain During",
+                          nextDressingDate:"Next Dressing", swabSent:"Swab Sent",
+                          area:"Area", b1:"Sensory", b2:"Moisture", b3:"Activity",
+                          b4:"Mobility", b5:"Nutrition(Braden)", b6:"Friction/Shear",
+                          stage:"Pressure Stage", repositioned:"Repositioned", repositionFreq:"Freq.",
+                          procedureName:"Procedure", indication:"Indication", laterality:"Laterality",
+                          time:"Time", consentObtained:"Consent", performedBy:"Performed By",
+                          designation:"Designation", assistant:"Assistant",
+                          sterile:"Sterile", position:"Position", outcome:"Outcome",
+                          complications:"Complications", specimenSent:"Specimen Sent",
+                          specimenType:"Specimen Type", postProcVitals:"Post-Proc Vitals",
+                          followUp:"Follow-Up",
+                          situation:"S – Situation", background:"B – Background",
+                          assessment:"A – Assessment", recommendation:"R – Recommendation",
+                          incomingNurse:"Incoming Nurse", patientStatus:"Patient Status",
+                          educationGiven:"Edu. Given", educationTopics:"Topics",
+                          followUpDate:"Follow-Up Date", valuablesHandedOver:"Valuables",
+                          neuroStatus:"Neuro", respiratoryStatus:"Respiratory",
+                          cardiovascularStatus:"CVS", giStatus:"GI", guStatus:"GU",
+                          musculoskeletalStatus:"MSK", skinStatus:"Skin",
+                          intReposition:"Reposition", intOralCare:"Oral Care",
+                          intPressureRelief:"Pressure Relief", intRangeOfMotion:"ROM",
+                          intFallPrecautions:"Fall Precautions", intMedAdministered:"Meds Given",
+                          intWoundCare:"Wound Care", intIVCheck:"IV Check",
+                          intNGTCheck:"NGT Check", intFoleyCheck:"Foley Check",
+                          intOxygenCheck:"O₂ Check", intPatientEducation:"Pt. Edu.",
+                          intFamilyUpdate:"Family Update", intDoctorNotified:"Dr. Notified",
+                          intDocumented:"Documented",
+                          dietType:"Diet", appetite:"Appetite", feedingMode:"Mode",
+                          swallowing:"Swallowing", ngtPresent:"NGT Present",
+                          caloriesToday:"Calories", proteinToday:"Protein", fluidToday:"Fluid",
+                          dietitianReferral:"Dietitian Ref.", referralReason:"Ref. Reason",
+                          nutritionScore:"Nutrition Score", diseaseScore:"Disease Score",
+                          ageScore:"Age Score (>70yr)", weight:"Weight", height:"Height",
+                          topics:"Topics", methods:"Methods", understanding:"Understanding",
+                          language:"Language", response:"Response", barriers:"Barriers",
+                          sessionNotes:"Session Notes", nextSessionDate:"Next Session",
+                        };
+                        const fmtKey = k => FIELD_LBL[k] || k.replace(/([A-Z])/g," $1").replace(/^[Ii]nt /,"").trim();
+                        const fmtVal = v => {
+                          if (v === null || v === undefined || v === "" || v === false) return null;
+                          if (typeof v === "boolean") return "✓ Yes";
+                          if (Array.isArray(v)) {
+                            if (!v.length) return null;
+                            return v.map(x => typeof x === "object" ? (x.statement || x.topic || x.name || JSON.stringify(x)) : String(x)).join(", ");
+                          }
+                          if (typeof v === "object") {
+                            if ("systolic" in v && "diastolic" in v) return `${v.systolic||"—"}/${v.diastolic||"—"}`;
+                            const inner = Object.entries(v).filter(([,x])=>x).map(([k2,v2])=>`${k2}:${v2}`).join(" | ");
+                            return inner || null;
+                          }
+                          return String(v);
+                        };
+                        const blocks = Object.entries(note.moduleData)
+                          .filter(([k]) => !SKIP.has(k))
+                          .map(([mk, mv]) => {
+                            if (!mv) return null;
+                            if (Array.isArray(mv)) {
+                              const items = mv.filter(Boolean);
+                              if (!items.length) return null;
+                              const summary = items.map((x,i) => typeof x === "object" ? (x.statement||x.topic||x.name||`Item ${i+1}`) : String(x)).join(" | ");
+                              return { key: mk, label: MOD_SECTION_LBL[mk]||mk, chips:[{label:`${items.length} item(s)`, value: summary}] };
+                            }
+                            if (typeof mv !== "object") return null;
+                            const chips = Object.entries(mv)
+                              .map(([k,v]) => ({ label: fmtKey(k), value: fmtVal(v) }))
+                              .filter(c => c.value !== null);
+                            if (!chips.length) return null;
+                            return { key: mk, label: MOD_SECTION_LBL[mk]||mk.replace(/([A-Z])/g," $1").trim(), chips };
+                          })
+                          .filter(Boolean);
+                        if (!blocks.length) return null;
+                        return (
+                          <div style={{ display:"flex", flexDirection:"column", gap:5, marginBottom:8 }}>
+                            {blocks.map(({ key, label, chips }) => (
+                              <div key={key} style={{ padding:"7px 12px", background:C.grayL, borderRadius:7, border:`1px solid ${C.border}` }}>
+                                <div style={{ fontSize:9, fontWeight:700, textTransform:"uppercase", letterSpacing:".5px", color:C.primary, marginBottom:5 }}>
+                                  {label}
+                                </div>
+                                <div style={{ display:"flex", gap:"5px 14px", flexWrap:"wrap" }}>
+                                  {chips.map(c => (
+                                    <div key={c.label} style={{ display:"flex", flexDirection:"column", gap:1 }}>
+                                      <span style={{ fontSize:9, fontWeight:700, textTransform:"uppercase", letterSpacing:".5px", color:C.muted }}>{c.label}</span>
+                                      <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, fontWeight:500, color:C.text }}>{c.value}</span>
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
                             ))}
                           </div>
@@ -1181,78 +1406,18 @@ function NursingNotesContent({ selectedPatient }) {
             {/* Modal body */}
             <div style={{ padding: "20px 22px" }}>
 
-              {/* ── Vitals (NABH NS.3) ── */}
-              {activeModal === "vitals" && (() => {
-                const abnFields = { bp_sys: vitals.bp.split("/")[0], pulse: vitals.pulse, temp: vitals.temp, spo2: vitals.spo2, rr: vitals.rr, bsl: vitals.bsl };
-                return (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
-                      {[
-                        { k:"bp",    label:"BP (Sys/Dia mmHg) *", placeholder:"120/80" },
-                        { k:"pulse", label:"Pulse Rate (/min) *",  placeholder:"80" },
-                        { k:"temp",  label:"Temperature (°F) *",   placeholder:"98.6" },
-                        { k:"spo2",  label:"SpO₂ (%) *",           placeholder:"98" },
-                        { k:"rr",    label:"Resp Rate (/min) *",   placeholder:"16" },
-                        { k:"bsl",   label:"BSL (mg/dL)",          placeholder:"110" },
-                      ].map(v => (
-                        <FL key={v.k} label={v.label}>
-                          <input style={{ ...fld, borderColor: isAbnormal(v.k === "bp" ? "bp_sys" : v.k, v.k === "bp" ? vitals.bp.split("/")[0] : vitals[v.k]) ? C.red : "#e2e8f0" }}
-                            value={vitals[v.k]} placeholder={v.placeholder}
-                            onChange={e => setVitals(p => ({ ...p, [v.k]: e.target.value }))} />
-                        </FL>
-                      ))}
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
-                      <FL label="GCS (E/V/M total)">
-                        <input style={fld} value={vitals.gcs} placeholder="E4V5M6 / 15" onChange={e => setVitals(p => ({ ...p, gcs: e.target.value }))} />
-                      </FL>
-                      <FL label="Pain Score (NRS 0-10) *">
-                        <input type="number" min="0" max="10" style={{ ...fld, borderColor: Number(vitals.painScore) >= 7 ? C.red : Number(vitals.painScore) >= 4 ? C.amber : "#e2e8f0" }}
-                          value={vitals.painScore} placeholder="0" onChange={e => setVitals(p => ({ ...p, painScore: e.target.value }))} />
-                      </FL>
-                      <FL label="Weight (kg)">
-                        <input type="number" style={fld} value={vitals.weight} placeholder="60" onChange={e => setVitals(p => ({ ...p, weight: e.target.value }))} />
-                      </FL>
-                    </div>
-                    {vitals.painScore && <div style={{ display:"flex", gap:4, alignItems:"center" }}>
-                      {[0,1,2,3,4,5,6,7,8,9,10].map(n => (
-                        <div key={n} style={{ flex:1, height:14, borderRadius:3, background: Number(vitals.painScore)>=n ? (n>=7?C.red:n>=4?C.amber:C.green) : "#e2e8f0", cursor:"pointer", transition:"all .15s" }}
-                          onClick={() => setVitals(p => ({ ...p, painScore: String(n) }))} title={String(n)} />
-                      ))}
-                      <span style={{ fontSize:11, fontWeight:700, color: Number(vitals.painScore)>=7?C.red:Number(vitals.painScore)>=4?C.amber:C.green, marginLeft:6 }}>{vitals.painScore}/10</span>
-                    </div>}
-                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
-                      <FL label="O₂ Delivery Device">
-                        <select style={sel} value={vitals.o2Device} onChange={e => setVitals(p => ({ ...p, o2Device: e.target.value }))}>
-                          {["None","Nasal Prongs","Simple Mask","Venturi Mask","NRM Mask","CPAP","BiPAP","Ventilator"].map(o => <option key={o}>{o}</option>)}
-                        </select>
-                      </FL>
-                      {vitals.o2Device !== "None" && <FL label="O₂ Flow Rate (L/min)">
-                        <input type="number" style={fld} value={vitals.o2Flow} placeholder="4" onChange={e => setVitals(p => ({ ...p, o2Flow: e.target.value }))} />
-                      </FL>}
-                      <FL label="Patient Position">
-                        <select style={sel} value={vitals.position} onChange={e => setVitals(p => ({ ...p, position: e.target.value }))}>
-                          {["Supine","Semi-Fowler's","Fowler's","Left Lateral","Right Lateral","Prone","Sitting"].map(o => <option key={o}>{o}</option>)}
-                        </select>
-                      </FL>
-                    </div>
-                    {(vitals.bp||vitals.pulse||vitals.spo2||vitals.rr) && (() => {
-                      const mewsVals = { rr: vitals.rr, spo2: vitals.spo2, temp: vitals.temp, sbp: vitals.bp.split("/")[0], hr: vitals.pulse, avpu: "A" };
-                      const total = calcMEWS(mewsVals);
-                      const band = mewsBand(total);
-                      return (
-                        <div style={{ background: band.bg, border: `1.5px solid ${band.color}30`, borderRadius:8, padding:"10px 14px", display:"flex", alignItems:"center", gap:10 }}>
-                          <i className={`pi ${band.icon}`} style={{ fontSize:16, color: band.color }} />
-                          <div>
-                            <div style={{ fontSize:12, fontWeight:800, color: band.color }}>MEWS: {total} — {band.label}</div>
-                            <div style={{ fontSize:11, color: band.color + "cc" }}>{band.action}</div>
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </div>
-                );
-              })()}
+              {/* ── Vitals (NABH NS.3) — Integrated VitalSheet Panel ── */}
+              {activeModal === "vitals" && (
+                <IntegratedVitalsPanel
+                  UHID={patient?.uhid || patient?.UHID || searchUHID}
+                  nurseName={user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim()}
+                  onVitalsChange={v => {
+                    setVitals(v);
+                    const [sbp = ""] = (v.bp || "").split("/");
+                    setMews(p => ({ ...p, rr: v.rr || p.rr, spo2: v.spo2 || p.spo2, temp: v.temp || p.temp, sbp: sbp || p.sbp, hr: v.pulse || p.hr }));
+                  }}
+                />
+              )}
 
               {/* ── Neuro / GCS (NABH COP.2) ── */}
               {activeModal === "neuro" && (
@@ -1509,20 +1674,93 @@ function NursingNotesContent({ selectedPatient }) {
 
               {/* ── Intake / Output (NABH COP.2) ── */}
               {activeModal === "intake" && (() => {
-                const totalIn  = Number(intake.oral||0)+Number(intake.ivFluids||0)+Number(intake.bloodProducts||0);
+                const autoMedVol = ivMedOrders.filter(o => includedMedIds.has(o.id)).reduce((s, o) => s + o.totalVol, 0);
+                const totalIn  = Number(intake.oral||0)+Number(intake.ivFluids||0)+Number(intake.bloodProducts||0)+autoMedVol;
                 const totalOut = Number(intake.urineOutput||0)+Number(intake.drainOutput||0)+Number(intake.nasogastric||0)+Number(intake.emesis||0)+Number(intake.bloodLoss||0);
                 const balance  = totalIn - totalOut;
+                const toggleMed = (id) => setIncludedMedIds(prev => {
+                  const next = new Set(prev);
+                  next.has(id) ? next.delete(id) : next.add(id);
+                  return next;
+                });
                 return (
                   <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+
+                    {/* ── IV Medication Volumes from Treatment Chart ── */}
+                    <div style={{ background:"#f0f9ff", border:"1.5px solid #bae6fd", borderRadius:10, overflow:"hidden" }}>
+                      <div style={{ padding:"9px 14px", background:"#e0f2fe", borderBottom:"1px solid #bae6fd", display:"flex", alignItems:"center", gap:8 }}>
+                        <i className="pi pi-tablets" style={{ fontSize:13, color:"#0369a1" }} />
+                        <span style={{ fontSize:12, fontWeight:700, color:"#0369a1", textTransform:"uppercase", letterSpacing:".5px" }}>IV Medication Fluids — Auto from Treatment Chart</span>
+                        {ivMedLoading && <i className="pi pi-spin pi-spinner" style={{ fontSize:11, color:"#0369a1", marginLeft:"auto" }} />}
+                        {!ivMedLoading && <span style={{ fontSize:11, color:"#0369a1", marginLeft:"auto", fontWeight:600 }}>
+                          {ivMedOrders.length === 0 ? "No IV dilution orders found for today" : `${ivMedOrders.length} order${ivMedOrders.length!==1?"s":""} found`}
+                        </span>}
+                      </div>
+                      {ivMedOrders.length > 0 && (
+                        <div style={{ padding:"10px 14px", display:"flex", flexDirection:"column", gap:7 }}>
+                          {ivMedOrders.map(o => {
+                            const included = includedMedIds.has(o.id);
+                            const hasVol = o.totalVol > 0;
+                            return (
+                              <div key={o.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 10px", background: included ? "#f0fdf4" : "#f8fafc", border:`1px solid ${included ? "#86efac" : "#e2e8f0"}`, borderRadius:8, opacity: hasVol ? 1 : 0.6 }}>
+                                <input
+                                  type="checkbox"
+                                  checked={included}
+                                  onChange={() => toggleMed(o.id)}
+                                  style={{ width:15, height:15, accentColor:"#16a34a", cursor:"pointer", flexShrink:0 }}
+                                />
+                                <div style={{ flex:1, minWidth:0 }}>
+                                  <div style={{ fontSize:13, fontWeight:700, color:"#0f172a" }}>
+                                    {o.name}{o.dose ? ` ${o.dose}` : ""}
+                                  </div>
+                                  <div style={{ fontSize:11, color:"#64748b", marginTop:1 }}>
+                                    {o.dilution ? `Dilute in ${o.volPerDose} mL ${o.dilution}` : `${o.volPerDose} mL IV`}
+                                    {o.administered > 1 ? ` × ${o.administered} doses` : ""}
+                                    {o.times.length > 0 && <span style={{ marginLeft:6, color:"#0369a1" }}>@ {o.times.join(", ")}</span>}
+                                  </div>
+                                </div>
+                                <div style={{ textAlign:"right", flexShrink:0 }}>
+                                  {hasVol ? (
+                                    <span style={{ fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:800, color: included ? "#16a34a" : "#64748b" }}>
+                                      {included ? "+" : ""}{o.totalVol} mL
+                                    </span>
+                                  ) : (
+                                    <span style={{ fontSize:11, color:"#94a3b8", fontStyle:"italic" }}>Pending</span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                          {autoMedVol > 0 && (
+                            <div style={{ display:"flex", justifyContent:"flex-end", paddingTop:4, borderTop:"1px solid #bae6fd" }}>
+                              <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:700, color:"#0369a1" }}>
+                                Auto IV Total: +{autoMedVol} mL (included in Total In)
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* ── Manual Intake / Output ── */}
                     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                       <div style={{ background:"#eff6ff", border:`1px solid ${C.blueB}`, borderRadius:10, padding:"10px 14px" }}>
                         <div style={{ fontSize:11, fontWeight:700, color:C.blue, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>Intake</div>
                         <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-                          {[{k:"oral",l:"Oral (mL)"},{k:"ivFluids",l:"IV Fluids (mL)"},{k:"bloodProducts",l:"Blood Products (mL)"}].map(f=>(
+                          {[{k:"oral",l:"Oral (mL)"},{k:"ivFluids",l:"IV Drip Fluids (mL)"},{k:"bloodProducts",l:"Blood Products (mL)"}].map(f=>(
                             <FL key={f.k} label={f.l}>
                               <input type="number" style={{ ...fld, fontSize:13 }} value={intake[f.k]} placeholder="0" onChange={e => setIntake(p => ({ ...p, [f.k]: e.target.value }))} />
                             </FL>
                           ))}
+                          {autoMedVol > 0 && (
+                            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"5px 8px", background:"#dcfce7", borderRadius:6 }}>
+                              <span style={{ fontSize:11, color:"#166534", fontWeight:600 }}>
+                                <i className="pi pi-tablets" style={{ marginRight:4, fontSize:10 }} />
+                                Medication IV Fluids (Auto)
+                              </span>
+                              <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:800, color:"#16a34a" }}>+{autoMedVol} mL</span>
+                            </div>
+                          )}
                           <div style={{ fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:700, color:C.blue, paddingTop:4, borderTop:`1px solid ${C.blueB}` }}>Total In: {totalIn} mL</div>
                         </div>
                       </div>
@@ -2429,6 +2667,41 @@ function NursingNotesContent({ selectedPatient }) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Digital Signature Setup Modal ── */}
+      {showSetup && (
+        <SignaturePad
+          existing={signature}
+          userName={user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim()}
+          onSave={async (dataUrl) => {
+            await saveSignature(dataUrl);
+            setShowSetup(false);
+            toast.success("Signature saved — auto-embedded in all notes you submit");
+          }}
+          onCancel={() => setShowSetup(false)}
+        />
+      )}
+
+      {/* ── Nursing Patient Report (Print / PDF for insurance) ── */}
+      {showReport && patient && (
+        <NursingPatientReport
+          ipdNo={patient.ipdNo || patient.admissionNumber || patient._id}
+          patientName={patient.patientName || patient.patientId?.fullName || searchUHID}
+          patientUHID={patient.uhid || patient.UHID || searchUHID}
+          patientInfo={{
+            age: patient.age || patient.patientId?.age,
+            gender: patient.gender || patient.patientId?.gender,
+            ward: patient.wardName,
+            bed: patient.bedNumber,
+            admissionDate: patient.admissionDate,
+            diagnosis: patient.diagnosis || patient.admittingDiagnosis,
+            consultant: patient.doctorName || patient.consultantName,
+            bloodGroup: patient.bloodGroup,
+          }}
+          hospitalName="SphereHealth Hospital"
+          onClose={() => setShowReport(false)}
+        />
       )}
     </div>
   );

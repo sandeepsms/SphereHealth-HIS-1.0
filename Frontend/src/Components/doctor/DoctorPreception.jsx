@@ -239,6 +239,18 @@ export default function DoctorPrescription() {
     historyOfPresentIllness:
       editData?.clinicalDetails?.historyOfPresentIllness || "",
     physicalExamination: editData?.clinicalDetails?.physicalExamination || "",
+    // HOPI — structured
+    hopiOnset:              editData?.clinicalDetails?.hopiOnset || "",
+    hopiDurationValue:      editData?.clinicalDetails?.hopiDurationValue || "",
+    hopiDurationUnit:       editData?.clinicalDetails?.hopiDurationUnit || "Days",
+    hopiProgression:        editData?.clinicalDetails?.hopiProgression || "",
+    hopiCharacter:          editData?.clinicalDetails?.hopiCharacter || "",
+    hopiAssociatedSymptoms: editData?.clinicalDetails?.hopiAssociatedSymptoms || [],
+    hopiAggravating:        editData?.clinicalDetails?.hopiAggravating || "",
+    hopiRelieving:          editData?.clinicalDetails?.hopiRelieving || "",
+    // Chronic illnesses
+    chronicConditions:      editData?.clinicalDetails?.chronicConditions || [],
+    chronicOthers:          editData?.clinicalDetails?.chronicOthers || "",
     weight: editData?.vitals?.weight || "",
     temperature: editData?.vitals?.temperature || "",
     bloodPressure: editData?.vitals?.bloodPressure || "",
@@ -292,6 +304,16 @@ export default function DoctorPrescription() {
           historyOfAllergy: values.historyOfAllergy,
           historyOfPresentIllness: values.historyOfPresentIllness,
           physicalExamination: values.physicalExamination,
+          hopiOnset:              values.hopiOnset,
+          hopiDurationValue:      values.hopiDurationValue,
+          hopiDurationUnit:       values.hopiDurationUnit,
+          hopiProgression:        values.hopiProgression,
+          hopiCharacter:          values.hopiCharacter,
+          hopiAssociatedSymptoms: values.hopiAssociatedSymptoms,
+          hopiAggravating:        values.hopiAggravating,
+          hopiRelieving:          values.hopiRelieving,
+          chronicConditions:      values.chronicConditions,
+          chronicOthers:          values.chronicOthers,
         },
         vitals: {
           weight: values.weight,
@@ -520,6 +542,130 @@ export default function DoctorPrescription() {
                     </div>
                   ))}
                 </div>
+              </div>
+            </div>
+
+            {/* ── HOPI — structured History of Present Illness ── */}
+            <div style={{ ...card, borderLeft: "3px solid #7c3aed" }}>
+              <SectionHeader icon="calendar" title="History of Present Illness (HOPI)" color="#7c3aed" />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: "8px 12px", marginBottom: 12 }}>
+                {/* Onset */}
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 600, display: "block", marginBottom: 4 }}>Onset</label>
+                  {["Sudden", "Gradual", "Intermittent"].map(opt => (
+                    <label key={opt} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, marginBottom: 3, cursor: "pointer" }}>
+                      <input type="radio" name="hopiOnset" value={opt}
+                        checked={values.hopiOnset === opt}
+                        onChange={() => setFieldValue("hopiOnset", opt)}
+                        style={{ accentColor: "#7c3aed" }} />
+                      {opt}
+                    </label>
+                  ))}
+                </div>
+                {/* Duration */}
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 600, display: "block", marginBottom: 4 }}>Duration</label>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <InputText name="hopiDurationValue" value={values.hopiDurationValue} onChange={handleChange}
+                      placeholder="e.g. 3" style={{ width: "45%", height: 32, fontSize: 12 }} />
+                    <Dropdown value={values.hopiDurationUnit}
+                      onChange={e => setFieldValue("hopiDurationUnit", e.value)}
+                      options={["Hours","Days","Weeks","Months"].map(v => ({ label: v, value: v }))}
+                      style={{ width: "55%", fontSize: 12 }} />
+                  </div>
+                </div>
+                {/* Progression */}
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 600, display: "block", marginBottom: 4 }}>Progression</label>
+                  <Dropdown value={values.hopiProgression}
+                    onChange={e => setFieldValue("hopiProgression", e.value)}
+                    options={["Improving","Stable","Worsening","Fluctuating"].map(v => ({ label: v, value: v }))}
+                    placeholder="Select…"
+                    style={{ width: "100%", fontSize: 12 }} />
+                </div>
+                {/* Character */}
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 600, display: "block", marginBottom: 4 }}>Character of Complaint</label>
+                  <InputText name="hopiCharacter" value={values.hopiCharacter} onChange={handleChange}
+                    placeholder="Sharp / Dull / Burning…"
+                    style={{ width: "100%", height: 32, fontSize: 12 }} />
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: "8px 12px" }}>
+                {/* Associated symptoms */}
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 600, display: "block", marginBottom: 4 }}>Associated Symptoms</label>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 10px" }}>
+                    {["Fever","Vomiting","Nausea","Diarrhea","Cough","Headache","Dizziness","Dyspnea","Chest Pain","Abdominal Pain","Weakness","Loss of Appetite"].map(sym => (
+                      <label key={sym} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, cursor: "pointer" }}>
+                        <input type="checkbox"
+                          checked={values.hopiAssociatedSymptoms.includes(sym)}
+                          onChange={e => {
+                            const arr = e.target.checked
+                              ? [...values.hopiAssociatedSymptoms, sym]
+                              : values.hopiAssociatedSymptoms.filter(s => s !== sym);
+                            setFieldValue("hopiAssociatedSymptoms", arr);
+                          }}
+                          style={{ accentColor: "#7c3aed" }} />
+                        {sym}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 600, display: "block", marginBottom: 4 }}>Aggravating Factors</label>
+                  <InputTextarea name="hopiAggravating" value={values.hopiAggravating} onChange={handleChange}
+                    rows={3} style={{ width: "100%", fontSize: 12 }} placeholder="What makes it worse…" />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 600, display: "block", marginBottom: 4 }}>Relieving Factors</label>
+                  <InputTextarea name="hopiRelieving" value={values.hopiRelieving} onChange={handleChange}
+                    rows={3} style={{ width: "100%", fontSize: 12 }} placeholder="What makes it better…" />
+                </div>
+              </div>
+            </div>
+
+            {/* ── CHRONIC ILLNESSES ── */}
+            <div style={{ ...card, borderLeft: "3px solid #dc2626" }}>
+              <SectionHeader icon="heart" title="Chronic Illnesses / Past Medical History" color="#dc2626" />
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 20px", marginBottom: 10 }}>
+                {["DM (Diabetes)","HTN (Hypertension)","CAD / IHD","CKD","COPD","Asthma","Epilepsy","Hypothyroidism","Hyperthyroidism","TB","Stroke","Cancer"].map(cond => {
+                  const entry = values.chronicConditions.find(c => c.condition === cond);
+                  return (
+                    <label key={cond} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, cursor: "pointer" }}>
+                      <input type="checkbox"
+                        checked={!!entry}
+                        onChange={e => {
+                          const arr = e.target.checked
+                            ? [...values.chronicConditions, { condition: cond, duration: "" }]
+                            : values.chronicConditions.filter(c => c.condition !== cond);
+                          setFieldValue("chronicConditions", arr);
+                        }}
+                        style={{ accentColor: "#dc2626" }} />
+                      <span style={{ fontWeight: entry ? 700 : 400, color: entry ? "#dc2626" : "#374151" }}>{cond}</span>
+                      {entry && (
+                        <InputText
+                          value={entry.duration}
+                          onChange={e => {
+                            const arr = values.chronicConditions.map(c =>
+                              c.condition === cond ? { ...c, duration: e.target.value } : c
+                            );
+                            setFieldValue("chronicConditions", arr);
+                          }}
+                          placeholder="Since…"
+                          style={{ width: 72, height: 24, fontSize: 11, marginLeft: 2 }}
+                          onClick={ev => ev.stopPropagation()}
+                        />
+                      )}
+                    </label>
+                  );
+                })}
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 600 }}>Other conditions / Surgical History</label>
+                <InputText name="chronicOthers" value={values.chronicOthers} onChange={handleChange}
+                  placeholder="Other conditions, previous surgeries…"
+                  style={{ width: "100%", height: 32, marginTop: 4, fontSize: 12 }} />
               </div>
             </div>
 

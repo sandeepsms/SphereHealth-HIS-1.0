@@ -6,8 +6,13 @@
 import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
+import { useAuth } from "../../context/AuthContext";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import NurseOrdersPanel from "../../Components/clinical/NurseOrdersPanel";
+import { useAutoSave } from "../../hooks/useAutoSave";
+import { useDigitalSignature } from "../../hooks/useDigitalSignature";
+import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
+import SignaturePad from "../../Components/signature/SignaturePad";
 import FingerprintConsentModal from "../../Components/clinical/FingerprintConsentModal";
 
 const API = API_ENDPOINTS.BASE;
@@ -138,10 +143,15 @@ function Checkbox({ label, checked, onChange }) {
 }
 
 function DailyNursingContent({ patient }) {
+  const { user } = useAuth();
   const [form, setForm] = useState(defaultForm);
   const [entries, setEntries] = useState([]);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+
+  const draftKey = patient?._id ? `sphere_draft_daily_${patient._id}` : null;
+  const { savedAt, hasDraft, clearDraft } = useAutoSave(draftKey, { form }, 2000);
+  const { signature, showSetup, setShowSetup, saveSignature } = useDigitalSignature();
 
   useEffect(() => {
     if (!patient) return;
@@ -152,7 +162,26 @@ function DailyNursingContent({ patient }) {
         setEntries(data.entries || []);
       } catch {}
     }
+    // Restore auto-save draft
+    const dKey = `sphere_draft_daily_${patient._id}`;
+    try {
+      const raw = localStorage.getItem(dKey);
+      if (raw) {
+        const { form: df } = JSON.parse(raw);
+        if (df) setForm(f => ({ ...f, ...df }));
+      }
+    } catch {}
   }, [patient]);
+
+  // Auto-fill sign-off nurse name from logged-in user
+  useEffect(() => {
+    if (!user) return;
+    const name = user.fullName || `${user.firstName || ""} ${user.lastName || ""}`.trim();
+    setForm(prev => ({
+      ...prev,
+      signOff: { ...prev.signOff, nurseName: prev.signOff.nurseName || name },
+    }));
+  }, [user]);
 
   const setSection = useCallback((section, field, val) => {
     setForm(prev => ({ ...prev, [section]: { ...prev[section], [field]: val } }));
@@ -187,8 +216,14 @@ function DailyNursingContent({ patient }) {
     localStorage.setItem(`nabh_daily_nursing_${patient._id}`, JSON.stringify({ entries:newEntries }));
     setEntries(newEntries);
     try {
-      await axios.post(`${API}/nursing-assessments/daily`, { patientId:patient._id, ...entry });
+      await axios.post(`${API}/nursing-assessments/daily`, {
+        patientId: patient._id, ...entry,
+        nurseName: entry.signOff?.nurseName || user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim(),
+        nurseEmployeeId: user?.employeeId || "",
+        nurseSignature: signature || undefined,
+      });
     } catch {}
+    clearDraft();
     setSaving(false); setSaved(true);
     setTimeout(()=>setSaved(false),2500);
   };
@@ -508,7 +543,7 @@ function DailyNursingContent({ patient }) {
         </div>
       </Section>
 
-      <div style={{ display:"flex", gap:12, alignItems:"center", marginBottom:24 }}>
+      <div style={{ display:"flex", gap:12, alignItems:"center", marginBottom:24, flexWrap:"wrap" }}>
         <button onClick={handleSave} disabled={saving}
           style={{
             padding:"10px 28px", borderRadius:10, border:"none", cursor:saving?"not-allowed":"pointer",
@@ -518,6 +553,10 @@ function DailyNursingContent({ patient }) {
           }}>
           <i className={`pi ${saved?"pi-check":saving?"pi-spin pi-spinner":"pi-save"}`} />
           {saved?"Entry Saved!":saving?"Saving…":"Save Shift Assessment"}
+        </button>
+        <AutoSaveIndicator savedAt={savedAt} hasDraft={hasDraft} />
+        <button onClick={() => setShowSetup(true)} style={{ padding:"8px 14px", background: signature ? "#f0fdf4" : "#fffbeb", border:`1.5px solid ${signature ? "#bbf7d0" : "#fde68a"}`, borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:700, color: signature ? "#16a34a" : "#92400e", display:"flex", alignItems:"center", gap:5 }}>
+          {signature ? <><i className="pi pi-verified" /> Signature Set</> : <><i className="pi pi-pen-to-square" /> Setup Signature</>}
         </button>
       </div>
 
@@ -552,6 +591,13 @@ function DailyNursingContent({ patient }) {
             })}
           </div>
         </Section>
+      )}
+      {showSetup && (
+        <SignaturePad
+          existing={signature}
+          onSave={async (dataUrl) => { await saveSignature(dataUrl); setShowSetup(false); }}
+          onCancel={() => setShowSetup(false)}
+        />
       )}
     </div>
   );

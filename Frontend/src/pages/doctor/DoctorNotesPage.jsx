@@ -1,12 +1,18 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
+import { useNavigate } from "react-router-dom";
 import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
+import { DoctorAssessmentContent } from "./DoctorAssessmentPage";
 import DoctorOrdersPanel from "../../Components/doctor/DoctorOrdersPanel";
 import TreatmentChart from "../../Components/clinical/TreatmentChart";
 import TreatmentTeamPanel from "../../Components/clinical/TreatmentTeamPanel";
+import { useAutoSave } from "../../hooks/useAutoSave";
+import { useDigitalSignature } from "../../hooks/useDigitalSignature";
+import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
+import SignaturePad from "../../Components/signature/SignaturePad";
 
 /* ── Design tokens (blue/indigo — doctor theme) ── */
 const C = {
@@ -142,6 +148,8 @@ function SBARBox({ letter, title, color, value, onChange, placeholder }) {
 /* ═══════════════════════════════════════════════════════════ */
 function DoctorNotesContent({ selectedPatient }) {
   const { user } = useAuth();
+  const navigate = useNavigate();
+  const [showAssessmentModal, setShowAssessmentModal] = useState(false);
 
   const [searchUHID,   setSearchUHID]   = useState("");
   const [patient,      setPatient]      = useState(null);
@@ -261,6 +269,15 @@ function DoctorNotesContent({ selectedPatient }) {
   /* Amendment */
   const [amendment, setAmendment] = useState({ originalNoteId: "", correction: "", reason: "", witness: "" });
 
+  /* ── Auto-save draft ── */
+  const draftKey = patient?._id ? `sphere_draft_docnotes_${patient._id}` : null;
+  const { savedAt, hasDraft, loadDraft, clearDraft } = useAutoSave(
+    draftKey,
+    { soap, vitals, diag, invx, orders, icu, proc, consult, preop, postop, death, amendment, initAssess, medOrders, infOrders, selectedTags, isCritical, shift },
+    2000
+  );
+  const { signature, showSetup, setShowSetup, saveSignature } = useDigitalSignature();
+
   /* ── Load Patient ── */
   const loadPatient = async (e) => {
     e?.preventDefault();
@@ -274,6 +291,33 @@ function DoctorNotesContent({ selectedPatient }) {
         setPatient(active);
         await fetchNotes(active.ipdNo || active.admissionNumber || active._id);
         toast.success(`Loaded: ${active.patientName || active.patientId?.fullName || searchUHID}`);
+        // Restore auto-save draft if available for this patient
+        const dKey = `sphere_draft_docnotes_${active._id}`;
+        const raw = localStorage.getItem(dKey);
+        if (raw) {
+          try {
+            const { data } = JSON.parse(raw);
+            if (data) {
+              if (data.soap)       setSoap(data.soap);
+              if (data.vitals)     setVitals(data.vitals);
+              if (data.diag)       setDiag(data.diag);
+              if (data.invx !== undefined) setInvx(data.invx);
+              if (data.orders)     setOrders(data.orders);
+              if (data.icu)        setIcu(data.icu);
+              if (data.proc)       setProc(data.proc);
+              if (data.consult)    setConsult(data.consult);
+              if (data.preop)      setPreop(data.preop);
+              if (data.postop)     setPostop(data.postop);
+              if (data.death)      setDeath(data.death);
+              if (data.amendment)  setAmendment(data.amendment);
+              if (data.initAssess) setInitAssess(data.initAssess);
+              if (data.medOrders)  setMedOrders(data.medOrders);
+              if (data.infOrders)  setInfOrders(data.infOrders);
+              if (data.selectedTags) setSelectedTags(data.selectedTags);
+              toast.info("Draft restored", { autoClose: 2000 });
+            }
+          } catch { /* ignore */ }
+        }
       } else {
         toast.warn("No active IPD admission found for UHID: " + searchUHID);
       }
@@ -291,10 +335,15 @@ function DoctorNotesContent({ selectedPatient }) {
   };
 
   const openModal = (id) => {
-    // Workflow gate: if new admission and initial not done, only allow initial assessment
-    if (gateActive && id !== "initial") {
+    // Initial assessment always opens the new DoctorAssessmentContent modal
+    if (id === "initial") {
+      setShowAssessmentModal(true);
+      return;
+    }
+    // Workflow gate: if new admission and initial not done, block other notes
+    if (gateActive) {
       toast.warn("⚠ Initial Assessment must be completed and signed before adding other notes", { autoClose: 4000 });
-      setActiveModal("initial");
+      setShowAssessmentModal(true);
       return;
     }
     setActiveModal(id);
@@ -303,10 +352,8 @@ function DoctorNotesContent({ selectedPatient }) {
     setDiag({ provisional: "", final: "", icd10: "", status: "Stable" });
     setInvx(""); setOrders([]);
     setOrderRow({ type: "medication", instruction: "", dose: "", route: "Oral", frequency: "TDS", duration: "3 days", notes: "", priority: "ROUTINE" });
-    // Reset medication / infusion sheets when opening those modals
     if (id === "medication") setMedOrders([emptyMedRow()]);
     if (id === "infusion")   setInfOrders([emptyInfRow()]);
-    if (id === "initial")    setInitAssess(p => ({ ...p, bp:"", pulse:"", temp:"", spo2:"", rr:"", weight:"", height:"", bsl:"", chiefComplaint:"", duration:"", hpi:"", provisionalDx:"", differentialDx:"", finalDx:"", icd10:"", investigations:"", managementPlan:"" }));
   };
 
   const toggleTag = (t) => setSelectedTags(ts => ts.includes(t) ? ts.filter(x => x !== t) : [...ts, t]);
@@ -331,8 +378,10 @@ function DoctorNotesContent({ selectedPatient }) {
       patientName: patient?.patientName || patient?.patientId?.fullName || "",
       patientUHID: patient?.UHID || patient?.uhid || searchUHID,
       doctor: doctorId,
+      doctorId: doctorId,   // backend key
       doctorName, doctorRegNo,
       shift, status,
+      ...(status === "signed" && signature ? { signature, signedByName: doctorName, signedByReg: doctorRegNo } : {}),
       soap,
       vitals: vitals.bp ? {
         bp: { systolic: Number(vitals.bp.split("/")[0] || 0), diastolic: Number(vitals.bp.split("/")[1] || 0) },
@@ -369,6 +418,7 @@ function DoctorNotesContent({ selectedPatient }) {
         try { await axios.patch(`${API_ENDPOINTS.DOCTOR_NOTES}/${res.data._id}/sign`, {}, { headers }); } catch { /* already saved */ }
       }
       toast.success(status === "signed" ? "Note signed & submitted ✓" : "Draft saved");
+      clearDraft();
       setActiveModal(null);
       await fetchNotes(ipdNo);
     } catch (err) {
@@ -621,7 +671,8 @@ function DoctorNotesContent({ selectedPatient }) {
                   This patient was admitted within 48 hours. Doctor's Initial Assessment must be completed and signed before adding other clinical notes, medication orders, or infusion orders.
                 </div>
               </div>
-              <button onClick={() => openModal("initial")}
+              <button
+                onClick={() => setShowAssessmentModal(true)}
                 style={{ padding: "9px 20px", background: "#d97706", color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", boxShadow: "0 4px 12px #d9770630" }}>
                 <i className="pi pi-clipboard" style={{ marginRight: 6, fontSize: 12 }} />
                 Do Initial Assessment
@@ -694,7 +745,7 @@ function DoctorNotesContent({ selectedPatient }) {
             {/* Priority modules row */}
             <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, background: "#fffbeb", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
               <span style={{ fontSize: 10, fontWeight: 700, color: "#92400e", textTransform: "uppercase", letterSpacing: ".6px", whiteSpace: "nowrap" }}>Required / Treatment:</span>
-              {MODULES.filter(m => m.priority || m.id === "medication" || m.id === "infusion").map(m => {
+              {MODULES.filter(m => m.id === "medication" || m.id === "infusion").map(m => {
                 const locked = gateActive && m.id !== "initial";
                 return (
                   <button key={m.id} onClick={() => openModal(m.id)}
@@ -871,12 +922,9 @@ function DoctorNotesContent({ selectedPatient }) {
 
             <div style={{ padding: "20px 22px" }}>
 
-              {/* ══ INITIAL ASSESSMENT (NABH COP.1) ══ */}
-              {activeModal === "initial" && (() => {
-                const ia = initAssess;
-                const set = (k, v) => setInitAssess(p => ({ ...p, [k]: v }));
-                return (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {/* ══ PLACEHOLDER — initial assessment now opens via DoctorAssessmentContent modal ══ */}
+              {activeModal === "initial" && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                     <div style={{ background: "#fffbeb", border: "1.5px solid #fbbf24", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#92400e", fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
                       <i className="pi pi-clipboard" style={{ fontSize: 13 }} /> Initial Medical Assessment — NABH COP.1 · Must be signed within 24 hours of admission
                     </div>
@@ -1106,8 +1154,7 @@ function DoctorNotesContent({ selectedPatient }) {
                       );
                     })()}
                   </div>
-                );
-              })()}
+              )}
 
               {/* ══ MEDICATION ORDERS SHEET (standalone) ══ */}
               {activeModal === "medication" && (() => {
@@ -1666,13 +1713,18 @@ function DoctorNotesContent({ selectedPatient }) {
             </div>
 
             {/* Modal Footer */}
-            <div style={{ padding: "14px 22px", borderTop: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", background: C.bg, borderRadius: "0 0 16px 16px", position: "sticky", bottom: 0 }}>
-              <div style={{ fontSize: 11, color: C.muted, display: "flex", alignItems: "center", gap: 6 }}>
-                <i className="pi pi-user" style={{ fontSize: 10 }} />{doctorName}
-                {doctorRegNo && <><span>·</span><span>Reg: {doctorRegNo}</span></>}
-                <span>·</span><i className="pi pi-clock" style={{ fontSize: 10 }} />
-                {new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
-                <span style={{ ...SHIFT_STYLE[shift], padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 700, marginLeft: 4 }}>{shift[0].toUpperCase() + shift.slice(1)}</span>
+            <div style={{ padding: "14px 22px", borderTop: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", background: C.bg, borderRadius: "0 0 16px 16px", position: "sticky", bottom: 0, flexWrap: "wrap", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <AutoSaveIndicator savedAt={savedAt} hasDraft={hasDraft} />
+                <button onClick={() => setShowSetup(true)}
+                  style={{ padding:"6px 11px", background: signature ? "#f0fdf4" : "#fffbeb", border:`1.5px solid ${signature ? "#bbf7d0" : "#fde68a"}`, borderRadius:8, cursor:"pointer", fontSize:10, fontWeight:700, color: signature ? "#16a34a" : "#92400e", display:"flex", alignItems:"center", gap:4 }}>
+                  {signature ? <><i className="pi pi-verified" style={{ fontSize:10 }} /> Sig Set</> : <><i className="pi pi-pen-to-square" style={{ fontSize:10 }} /> Setup Sig</>}
+                </button>
+                <div style={{ fontSize: 11, color: C.muted, display: "flex", alignItems: "center", gap: 6 }}>
+                  <i className="pi pi-user" style={{ fontSize: 10 }} />{doctorName}
+                  {doctorRegNo && <><span>·</span><span>Reg: {doctorRegNo}</span></>}
+                  <span style={{ ...SHIFT_STYLE[shift], padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 700 }}>{shift[0].toUpperCase() + shift.slice(1)}</span>
+                </div>
               </div>
               <div style={{ display: "flex", gap: 8 }}>
                 <button onClick={() => setActiveModal(null)} style={{ padding: "9px 20px", border: `1.5px solid ${C.border}`, borderRadius: 8, background: "white", fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, cursor: "pointer", color: C.muted }}>Cancel</button>
@@ -1680,12 +1732,55 @@ function DoctorNotesContent({ selectedPatient }) {
                   style={{ padding: "9px 20px", border: `1.5px solid ${C.amberB}`, borderRadius: 8, background: C.amberL, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer", color: C.amber, display: "flex", alignItems: "center", gap: 6 }}>
                   <i className="pi pi-save" style={{ fontSize: 11 }} /> Save Draft
                 </button>
-                <button onClick={() => saveNote("signed")} disabled={saving}
+                <button onClick={() => { if (!signature) { setShowSetup(true); toast.info("Please set your signature first"); return; } saveNote("signed"); }} disabled={saving}
                   style={{ padding: "9px 28px", background: saving ? "#5eead4" : `linear-gradient(135deg, ${C.primary}, ${C.primaryMid})`, color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 7, boxShadow: `0 4px 12px ${C.primary}35` }}>
                   <i className={`pi ${saving ? "pi-spin pi-spinner" : "pi-check-circle"}`} style={{ fontSize: 12 }} />
                   {saving ? "Saving…" : "Sign & Submit"}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ SIGNATURE PAD MODAL ══ */}
+      {showSetup && (
+        <SignaturePad
+          existing={signature}
+          onSave={async (dataUrl) => { await saveSignature(dataUrl); setShowSetup(false); }}
+          onCancel={() => setShowSetup(false)}
+        />
+      )}
+
+      {/* ══ INITIAL ASSESSMENT MODAL ══ */}
+      {showAssessmentModal && (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 1200, background: "rgba(15,23,42,.65)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={() => setShowAssessmentModal(false)}
+        >
+          <div
+            style={{ background: "white", borderRadius: 16, width: "min(1100px, 96vw)", maxHeight: "92vh", display: "flex", flexDirection: "column", boxShadow: "0 24px 60px rgba(0,0,0,.35)", overflow: "hidden" }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Modal header */}
+            <div style={{ padding: "14px 22px", background: `linear-gradient(135deg, ${C.primary}, ${C.primaryMid})`, color: "white", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ width: 32, height: 32, borderRadius: 8, background: "rgba(255,255,255,.2)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <i className="pi pi-clipboard" style={{ fontSize: 15, color: "white" }} />
+                </span>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 15 }}>Initial Assessment — NABH COP.1</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,.75)" }}>
+                    {patient?.patientName || patient?.patientId?.fullName || "—"} · IPD: {patient?.ipdNo || patient?.admissionNumber || "—"}
+                  </div>
+                </div>
+              </div>
+              <button onClick={() => setShowAssessmentModal(false)}
+                style={{ background: "rgba(255,255,255,.2)", border: "none", color: "white", fontSize: 20, cursor: "pointer", width: 32, height: 32, borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700 }}>×</button>
+            </div>
+            {/* Scrollable content */}
+            <div style={{ flex: 1, overflowY: "auto", background: "#f0f2f5", padding: "20px 24px" }}>
+              <DoctorAssessmentContent selectedPatient={patient} />
             </div>
           </div>
         </div>

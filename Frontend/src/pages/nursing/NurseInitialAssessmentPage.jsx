@@ -11,6 +11,10 @@ import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
+import { useAutoSave } from "../../hooks/useAutoSave";
+import { useDigitalSignature } from "../../hooks/useDigitalSignature";
+import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
+import SignaturePad from "../../Components/signature/SignaturePad";
 
 /* ── Design tokens ── */
 const C = {
@@ -314,14 +318,36 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
     notes: "",
   });
 
+  const draftKey = selectedPatient?._id ? `sphere_draft_nurse_initial_${selectedPatient._id}` : null;
+  const { savedAt, hasDraft, loadDraft, clearDraft } = useAutoSave(
+    draftKey,
+    { vitals, systems, psycho, nutrition, braden, morse, discharge, signoff },
+    2000
+  );
+  const { signature, showSetup, setShowSetup, saveSignature } = useDigitalSignature();
+
   // ── Auto-fill when selectedPatient changes ────────────────────
   useEffect(() => {
     if (selectedPatient) {
       setUhid(selectedPatient.UHID || "");
       setIpdNo(selectedPatient.admissionNumber || selectedPatient.bedNumber || "");
       setPatInfo(selectedPatient);
+      // Restore auto-save draft if available
+      const draft = loadDraft();
+      if (draft?.data) {
+        const d = draft.data;
+        if (d.vitals)    setVitals(d.vitals);
+        if (d.systems)   setSystems(d.systems);
+        if (d.psycho)    setPsycho(d.psycho);
+        if (d.nutrition) setNutrition(d.nutrition);
+        if (d.braden)    setBraden(d.braden);
+        if (d.morse)     setMorse(d.morse);
+        if (d.discharge) setDischarge(d.discharge);
+        if (d.signoff)   setSignoff(d.signoff);
+        toast.info("Draft restored", { autoClose: 2000 });
+      }
     }
-  }, [selectedPatient]);
+  }, [selectedPatient]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Derived scores ────────────────────────────────────────────
   const bradenScore = Object.values(braden).reduce((s, v) => s + parseInt(v || 0), 0);
@@ -397,16 +423,19 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
         },
         dischargePlanning: discharge,
         notes: signoff.notes,
+        nurseSignature: signature || undefined,
       };
 
       await axios.post(API_ENDPOINTS.NURSING_NOTES || `${API_ENDPOINTS.BASE}/nursing-notes`, payload, {
         headers: { Authorization: `Bearer ${token}` },
       });
       toast.success("Nursing Initial Assessment saved");
+      clearDraft();
       setSaved(true);
     } catch (err) {
       if (err.response?.status === 404 || err.response?.status === 405) {
         toast.success("Assessment recorded (offline mode)");
+        clearDraft();
         setSaved(true);
       } else {
         toast.error(err.response?.data?.message || "Failed to save assessment");
@@ -1185,15 +1214,22 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
         background: "rgba(248,250,252,.92)", backdropFilter: "blur(12px)",
         borderTop: `1.5px solid ${C.border}`,
         padding: "12px 28px",
-        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14,
+        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap",
       }}>
-        <div style={{ fontSize: 12, color: C.muted }}>
-          {saved
-            ? <span style={{ color: C.green, fontWeight: 700 }}><i className="pi pi-check-circle" style={{ marginRight: 5 }} />Assessment saved successfully</span>
-            : patInfo
-              ? <span><i className="pi pi-user" style={{ marginRight: 5, color: C.primary }} />Patient loaded: <b style={{ color: C.text }}>{patName}</b></span>
-              : <span><i className="pi pi-info-circle" style={{ marginRight: 5 }} />Load a patient to enable saving</span>
-          }
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <AutoSaveIndicator savedAt={savedAt} hasDraft={hasDraft} />
+          <button onClick={() => setShowSetup(true)}
+            style={{ padding:"7px 12px", background: signature ? "#f0fdf4" : "#fffbeb", border:`1.5px solid ${signature ? "#bbf7d0" : "#fde68a"}`, borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:700, color: signature ? "#16a34a" : "#92400e", display:"flex", alignItems:"center", gap:5 }}>
+            {signature ? <><i className="pi pi-verified" /> Signature Set</> : <><i className="pi pi-pen-to-square" /> Setup Signature</>}
+          </button>
+          <div style={{ fontSize: 12, color: C.muted }}>
+            {saved
+              ? <span style={{ color: C.green, fontWeight: 700 }}><i className="pi pi-check-circle" style={{ marginRight: 5 }} />Assessment saved successfully</span>
+              : patInfo
+                ? <span><i className="pi pi-user" style={{ marginRight: 5, color: C.primary }} />Patient: <b style={{ color: C.text }}>{patName}</b></span>
+                : <span><i className="pi pi-info-circle" style={{ marginRight: 5 }} />Load a patient to enable saving</span>
+            }
+          </div>
         </div>
         <button
           onClick={handleSave}
@@ -1221,7 +1257,13 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
           }
         </button>
       </div>
-
+      {showSetup && (
+        <SignaturePad
+          existing={signature}
+          onSave={async (dataUrl) => { await saveSignature(dataUrl); setShowSetup(false); }}
+          onCancel={() => setShowSetup(false)}
+        />
+      )}
     </div>
   );
 }

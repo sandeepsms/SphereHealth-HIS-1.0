@@ -53,7 +53,6 @@ const NurseNotesSchema = new mongoose.Schema(
     patient: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Patient",
-      required: true,
       index: true,
     },
     patientName: { type: String },
@@ -63,20 +62,28 @@ const NurseNotesSchema = new mongoose.Schema(
     noteDate: { type: Date, required: true, default: Date.now },
     shift: {
       type: String,
-      enum: ["morning", "evening", "night"],
-      required: true,
+      enum: ["morning", "afternoon", "evening", "night"],
+      default: "morning",
     },
 
     nurse: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "NurseStaff",
-      required: true,
+      ref: "User",
     },
     nurseName: { type: String },
+    nurseEmployeeId: { type: String },
     nurseStaffId: { type: String },
     nurseDesignation: { type: String },
+    nurseSignature: { type: String },
 
-    doctor: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" },
+    // Extended note fields (from NursingNotesPage modal)
+    noteType:      { type: String },
+    tags:          [{ type: String }],
+    isCriticalEvent: { type: Boolean, default: false },
+    signature:     { type: String },
+    signedByName:  { type: String },
+
+    doctor: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     doctorName: { type: String },
     department: { type: mongoose.Schema.Types.ObjectId, ref: "Department" },
 
@@ -90,7 +97,7 @@ const NurseNotesSchema = new mongoose.Schema(
 
     vitals: NurseVitalsSchema,
     painScore: { type: Number, min: 0, max: 10, default: 0 },
-    painAssessment: { type: String },
+    painAssessment: { type: mongoose.Schema.Types.Mixed },
 
     ivLine: {
       site: { type: String },
@@ -116,10 +123,12 @@ const NurseNotesSchema = new mongoose.Schema(
     },
 
     remarks: { type: String },
+    // Extended module data (vitals, neuro, pain, wound, etc. from NursingNotesPage)
+    moduleData: { type: mongoose.Schema.Types.Mixed },
     status: { type: String, enum: ["draft", "submitted"], default: "draft" },
     submittedAt: { type: Date },
-    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "NurseStaff" },
-    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "NurseStaff" },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   },
   { timestamps: true, collection: "nurse_notes" },
 );

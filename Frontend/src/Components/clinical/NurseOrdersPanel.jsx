@@ -246,6 +246,49 @@ function OrderCard({ order, nurseName, onStepDone, onConsentRequest }) {
   );
 }
 
+// ── Medication order display (administered via Treatment Chart MAR below) ──────
+function MedOrderCard({ order, inProgress }) {
+  const details = order.orderDetails || {};
+  const isSTAT  = order.priority === "STAT";
+  const borderColor = isSTAT ? "#dc2626" : inProgress ? "#1d4ed8" : "#db2777";
+  const bgColor     = isSTAT ? "#fef2f2" : inProgress ? "#eff6ff" : "#fdf2f8";
+
+  return (
+    <div style={{
+      border: `1.5px solid ${borderColor}40`, borderRadius: 10, marginBottom: 8,
+      borderLeft: `4px solid ${borderColor}`, background: bgColor, padding: "10px 14px",
+      display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+    }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          {isSTAT && (
+            <span style={{ background: "#dc2626", color: "#fff", fontSize: 9, fontWeight: 800, padding: "2px 7px", borderRadius: 4 }}>STAT</span>
+          )}
+          <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: "#db277715", color: "#db2777" }}>Medication</span>
+          <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 20, background: inProgress ? "#dbeafe" : "#fef3c7", color: inProgress ? "#1d4ed8" : "#d97706" }}>
+            {order.status}
+          </span>
+          {order.hamFlag && <span style={{ background: "#fef2f2", color: "#dc2626", border: "1px solid #fca5a5", fontSize: 9, fontWeight: 800, padding: "2px 7px", borderRadius: 4 }}>🔴 HAM</span>}
+        </div>
+        <div style={{ fontWeight: 700, fontSize: 13, color: "#0f172a" }}>{details.medicineName || "Medication"}</div>
+        <div style={{ fontSize: 11, color: "#64748b" }}>
+          {details.dose && <span>{details.dose}</span>}
+          {details.frequency && <span> · {details.frequency}</span>}
+          {details.route && <span> · {details.route}</span>}
+          {details.duration && <span> · {details.duration}</span>}
+        </div>
+        <div style={{ fontSize: 10, color: "#94a3b8" }}>
+          Ordered by {order.orderedBy || "Doctor"} · {timeAgo(order.createdAt)}
+        </div>
+      </div>
+      <div style={{ background: inProgress ? "#dbeafe" : "#fce7f3", border: `1px solid ${inProgress ? "#93c5fd" : "#f9a8d4"}`, borderRadius: 8, padding: "6px 12px", fontSize: 11, fontWeight: 600, color: inProgress ? "#1d4ed8" : "#be185d", flexShrink: 0, textAlign: "center" }}>
+        <i className="pi pi-arrow-down" style={{ fontSize: 10, marginRight: 4 }} />
+        {inProgress ? "Recording in Treatment Chart ↓" : "Administer via Treatment Chart (MAR) ↓"}
+      </div>
+    </div>
+  );
+}
+
 // ── Main panel ────────────────────────────────────────────────────────────────
 export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest, refreshTrigger }) {
   const [orders,      setOrders]      = useState([]);
@@ -304,10 +347,12 @@ export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest, refr
     }
   };
 
-  // Group: active first, completed last
-  const active    = orders.filter(o => o.status !== "Completed" && o.status !== "Cancelled");
-  const completed = orders.filter(o => o.status === "Completed");
-  const pending   = active.filter(o => o.status === "Pending").length;
+  // Group orders into 3 buckets
+  const newOrders    = orders.filter(o => o.status === "Pending").sort((a,b) => a.priority === "STAT" ? -1 : b.priority === "STAT" ? 1 : 0);
+  const inProgress   = orders.filter(o => ["InProgress","OnHold","Acknowledged"].includes(o.status));
+  const completed    = orders.filter(o => o.status === "Completed");
+  const cancelled    = orders.filter(o => o.status === "Cancelled");
+  const pending      = newOrders.length;
 
   return (
     <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, marginBottom: 20, overflow: "hidden", boxShadow: "0 1px 8px rgba(0,0,0,.06)", fontFamily: "'DM Sans',sans-serif" }}>
@@ -369,38 +414,54 @@ export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest, refr
           </div>
         ) : (
           <>
-            {/* Active orders */}
-            {active.length > 0 && (
+            {/* ── NEW ORDERS ── */}
+            {newOrders.length > 0 && (
               <div style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: C.dark, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 8 }}>
-                  Active Orders ({active.length})
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: C.danger, textTransform: "uppercase", letterSpacing: ".6px" }}>
+                    🔔 New Orders
+                  </div>
+                  <span style={{ background: C.danger, color: "#fff", fontSize: 10, fontWeight: 800, padding: "1px 8px", borderRadius: 20 }}>{newOrders.length}</span>
+                  <span style={{ fontSize: 10, color: C.muted }}>— Pending nurse action</span>
                 </div>
-                {active.map(order => (
-                  <OrderCard
-                    key={order._id}
-                    order={order}
-                    nurseName={nurseName}
-                    onStepDone={handleStepDone}
-                    onConsentRequest={onConsentRequest}
-                  />
+                {newOrders.map(order => (
+                  <div key={order._id}>
+                    {order.orderType === "Medication" ? (
+                      <MedOrderCard order={order} />
+                    ) : (
+                      <OrderCard order={order} nurseName={nurseName} onStepDone={handleStepDone} onConsentRequest={onConsentRequest} />
+                    )}
+                  </div>
                 ))}
               </div>
             )}
 
-            {/* Completed orders (collapsed by default) */}
+            {/* ── IN PROGRESS ── */}
+            {inProgress.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#1d4ed8", textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 8 }}>
+                  ⏳ In Progress ({inProgress.length})
+                </div>
+                {inProgress.map(order => (
+                  <div key={order._id}>
+                    {order.orderType === "Medication" ? (
+                      <MedOrderCard order={order} inProgress />
+                    ) : (
+                      <OrderCard order={order} nurseName={nurseName} onStepDone={handleStepDone} onConsentRequest={onConsentRequest} />
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* ── COMPLETED ── */}
             {completed.length > 0 && (
               <div>
                 <div style={{ fontSize: 11, fontWeight: 700, color: C.success, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 8 }}>
-                  ✓ Completed ({completed.length})
+                  ✅ Completed ({completed.length})
                 </div>
                 {completed.map(order => (
-                  <OrderCard
-                    key={order._id}
-                    order={order}
-                    nurseName={nurseName}
-                    onStepDone={handleStepDone}
-                    onConsentRequest={onConsentRequest}
-                  />
+                  <OrderCard key={order._id} order={order} nurseName={nurseName} onStepDone={handleStepDone} onConsentRequest={onConsentRequest} />
                 ))}
               </div>
             )}

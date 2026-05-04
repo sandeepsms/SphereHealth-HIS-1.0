@@ -397,6 +397,26 @@ class UserService {
     return { message: "Password changed successfully" };
   }
 
+  // Admin-initiated password reset (bypasses old-password check)
+  async adminResetPassword(userId, newPassword) {
+    const user = await User.findById(userId);
+    if (!user) throw new Error("User not found");
+    user.password = newPassword;
+    await user.save(); // triggers bcrypt pre-save hook
+    return { message: "Password reset successfully" };
+  }
+
+  // Admin set/update a user's digital signature
+  async adminSetSignature(userId, signature) {
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { signature },
+      { new: true }
+    ).select("fullName firstName lastName signature");
+    if (!user) throw new Error("User not found");
+    return user;
+  }
+
   // Update last login
   async updateLastLogin(userId) {
     await User.findByIdAndUpdate(userId, {

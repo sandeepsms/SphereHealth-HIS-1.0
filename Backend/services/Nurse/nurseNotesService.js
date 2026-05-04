@@ -12,61 +12,94 @@ const TreatmentChart = require("../../models/Doctor/treatmentChartModel");
 ───────────────────────────────────────────────────────────── */
 const createNurseNote = async (data, nurseUserId) => {
   const {
-    patientId,
-    ipdNo,
-    noteDate,
-    shift,
-    doctorId,
-    generalCondition,
-    vitals,
-    painScore,
-    painAssessment,
-    ivLine,
-    intakeOutput,
-    ordersExecuted,
-    nursingCare,
-    remarks,
-    status,
+    patientId, patientUHID, patientName: pName,
+    ipdNo, noteDate, shift, doctorId,
+    generalCondition, vitals, painScore, painAssessment,
+    ivLine, intakeOutput, ordersExecuted, nursingCare,
+    remarks, status,
+    // Extended fields from NursingNotesPage
+    noteType, tags, isCriticalEvent, signature, signedByName,
+    nurseEmployeeId,
+    nurseSignature,
+    // module-specific payloads
+    ...rest
   } = data;
 
-  // ── Patient ──
-  const patient = await Patient.findById(patientId);
-  if (!patient) {
-    const e = new Error("Patient not found");
-    e.statusCode = 404;
-    throw e;
-  }
+  // ── Nurse: resolve from User model (app uses User, not old NurseStaff) ──
+  let nurseObjectId = null;
+  let nurseName = data.nurseName || "";
+  let nurseStaffId = nurseEmployeeId || "";
+  let nurseDesignation = "";
+  try {
+    const User = require("../../models/User/userModel");
+    const userDoc = await User.findById(nurseUserId).lean();
+    if (userDoc) {
+      nurseObjectId = userDoc._id;
+      nurseName = userDoc.fullName || `${userDoc.firstName || ""} ${userDoc.lastName || ""}`.trim() || nurseName;
+      nurseStaffId = userDoc.employeeId || nurseEmployeeId || "";
+      nurseDesignation = userDoc.designation || "";
+    }
+  } catch (_) { /* use data from frontend */ }
 
-  // ── Nurse ──
-  const nurse = await NurseStaff.findById(nurseUserId);
-  if (!nurse) {
-    const e = new Error(`Nurse staff not found — id: ${nurseUserId}`);
-    e.statusCode = 404;
-    throw e;
-  }
-  if (!nurse.isActive) {
-    const e = new Error("Nurse account is inactive");
-    e.statusCode = 403;
-    throw e;
+  // ── Patient: accept reference if provided, don't block if not ──
+  let patRef = patientId || undefined;
+  let resolvedPatientName = pName || "";
+  let resolvedPatientUHID = patientUHID || "";
+  if (patRef) {
+    try {
+      const pat = await Patient.findById(patRef).lean();
+      if (pat) {
+        resolvedPatientName = pat.fullName || pName || "";
+        resolvedPatientUHID = pat.UHID || patientUHID || "";
+      }
+    } catch (_) {}
   }
 
   const noteStatus = status || "submitted";
 
+  // Capture ALL 15 module-specific payloads into moduleData (Mixed field)
+  // so nothing is ever lost — every clinical module is fully preserved
+  const MODULE_KEYS = [
+    "vitals",              // vitals module (full BP/pulse/temp/spo2/gcs/bsl etc.)
+    "neuroAssessment",     // neuro/GCS module
+    "bloodTransfusion",    // blood transfusion module
+    "ivInfusion",          // IV infusion module
+    "intakeOutput",        // intake/output module (full object)
+    "painAssessment",      // pain module (object — different from model's string field)
+    "woundCare",           // wound/dressing module
+    "skinAssessment",      // skin/pressure assessment module
+    "fallRisk",            // Morse fall scale module
+    "procedure",           // procedure/intervention module
+    "discharge",           // discharge/handover module
+    "mewsScore",           // MEWS score module
+    "dailyAssessment",     // daily assessment module
+    "initialAssessment",   // initial assessment module
+    "carePlan",            // care plan module
+    "nutritionalAssessment", // nutrition module
+    "patientEducation",    // patient education module
+  ];
+  const moduleData = {};
+  MODULE_KEYS.forEach(k => { if (data[k] !== undefined) moduleData[k] = data[k]; });
+
   const note = await NurseNotes.create({
-    patient: patientId,
-    patientName: patient.fullName,
-    patientUHID: patient.UHID,
-    ipdNo: ipdNo || patient.UHID,
+    patient: patRef || undefined,
+    patientName: resolvedPatientName,
+    patientUHID: resolvedPatientUHID,
+    ipdNo: ipdNo || resolvedPatientUHID || "N/A",
     noteDate: noteDate || new Date(),
-    shift,
-    nurse: nurse._id, // ✅ required field
-    nurseName:
-      nurse.personalInfo?.fullName ||
-      `${nurse.personalInfo?.firstName} ${nurse.personalInfo?.lastName}`,
-    nurseStaffId: nurse.staffId,
-    nurseDesignation: nurse.professional?.designation,
-    doctor: doctorId || patient.doctor || null,
-    department: patient.department || null,
+    shift: shift || "morning",
+    nurse: nurseObjectId || undefined,
+    nurseName,
+    nurseEmployeeId: nurseStaffId,
+    nurseStaffId,
+    nurseDesignation,
+    nurseSignature: nurseSignature || undefined,
+    noteType,
+    tags: tags || [],
+    isCriticalEvent: isCriticalEvent || false,
+    signature: signature || undefined,
+    signedByName: signedByName || nurseName || undefined,
+    doctor: doctorId || undefined,
     generalCondition: generalCondition || {},
     vitals: vitals || {},
     painScore: painScore || 0,
@@ -76,13 +109,14 @@ const createNurseNote = async (data, nurseUserId) => {
     ordersExecuted: ordersExecuted || [],
     nursingCare: nursingCare || {},
     remarks: remarks || "",
+    moduleData: Object.keys(moduleData).length ? moduleData : undefined,
     status: noteStatus,
     submittedAt: noteStatus === "submitted" ? new Date() : undefined,
-    createdBy: nurse._id,
+    createdBy: nurseObjectId || undefined,
   });
 
   // Update TreatmentChart executions
-  if (note.status === "submitted" && ordersExecuted?.length) {
+  if (note.status === "submitted" && ordersExecuted?.length && nurseObjectId) {
     for (const exec of ordersExecuted) {
       if (!exec.orderId) continue;
       try {
@@ -96,10 +130,7 @@ const createNurseNote = async (data, nurseUserId) => {
             shift: note.shift,
             nurseNoteId: note._id,
           },
-          {
-            _id: nurse._id,
-            name: nurse.personalInfo?.fullName || nurse.nurseName,
-          },
+          { _id: nurseObjectId, name: nurseName },
         );
       } catch (e) {
         console.error("TreatmentChart recordNurseExecution error:", e.message);
@@ -107,12 +138,7 @@ const createNurseNote = async (data, nurseUserId) => {
     }
   }
 
-  return NurseNotes.findById(note._id)
-    .populate("patient", "fullName UHID age gender")
-    .populate("nurse", "personalInfo.fullName staffId professional.designation")
-    .populate("doctor", "personalInfo.fullName doctorId")
-    .populate("department", "departmentName")
-    .lean();
+  return NurseNotes.findById(note._id).lean();
 };
 
 /* ─────────────────────────────────────────────────────────────
@@ -215,7 +241,7 @@ const updateNurseNote = async (id, data, nurseUserId) => {
     e.statusCode = 400;
     throw e;
   }
-  if (note.nurse.toString() !== nurseUserId.toString()) {
+  if (note.nurse && nurseUserId && note.nurse.toString() !== nurseUserId.toString()) {
     const e = new Error("Not authorised");
     e.statusCode = 403;
     throw e;
@@ -251,12 +277,18 @@ const confirmSingleOrder = async (data, nurseUserId) => {
     throw e;
   }
 
-  const nurse = await NurseStaff.findById(nurseUserId);
-  if (!nurse) {
-    const e = new Error("Nurse not found");
-    e.statusCode = 404;
-    throw e;
-  }
+  // Resolve nurse from User model (app uses User, not old NurseStaff)
+  let nurseDoc = null;
+  let nurseName = "";
+  let nurseId = nurseUserId;
+  try {
+    const User = require("../../models/User/userModel");
+    nurseDoc = await User.findById(nurseUserId).lean();
+    if (nurseDoc) {
+      nurseName = nurseDoc.fullName || `${nurseDoc.firstName || ""} ${nurseDoc.lastName || ""}`.trim();
+      nurseId = nurseDoc._id;
+    }
+  } catch (_) {}
 
   const result = await DoctorNotes.updateOne(
     {
@@ -266,7 +298,7 @@ const confirmSingleOrder = async (data, nurseUserId) => {
     {
       $set: {
         "orders.$.nurseStatus": status || "done",
-        "orders.$.nurseConfirmedBy": nurse._id,
+        "orders.$.nurseConfirmedBy": nurseId,
         "orders.$.nurseConfirmedAt": new Date(),
         "orders.$.nurseRemarks": remarks || "",
       },
@@ -279,22 +311,24 @@ const confirmSingleOrder = async (data, nurseUserId) => {
   }
 
   const doctorNote = await DoctorNotes.findById(doctorNoteId).lean();
-  if (doctorNote) {
-    await TreatmentChart.recordNurseExecution(
-      doctorNote.ipdNo,
-      {
-        orderId,
-        status: status || "done",
-        remarks: remarks || "",
-        executedAt: new Date(),
-        shift: shift || "morning",
-      },
-      { _id: nurse._id, name: nurse.personalInfo?.fullName },
-    );
+  if (doctorNote && nurseId) {
+    try {
+      await TreatmentChart.recordNurseExecution(
+        doctorNote.ipdNo,
+        {
+          orderId,
+          status: status || "done",
+          remarks: remarks || "",
+          executedAt: new Date(),
+          shift: shift || "morning",
+        },
+        { _id: nurseId, name: nurseName },
+      );
+    } catch (_) {}
   }
 
   return {
-    confirmedBy: nurse.personalInfo?.fullName,
+    confirmedBy: nurseName,
     status: status || "done",
   };
 };
@@ -314,7 +348,7 @@ const deleteNurseNote = async (id, nurseUserId) => {
     e.statusCode = 400;
     throw e;
   }
-  if (note.nurse.toString() !== nurseUserId.toString()) {
+  if (note.nurse && nurseUserId && note.nurse.toString() !== nurseUserId.toString()) {
     const e = new Error("Not authorised");
     e.statusCode = 403;
     throw e;

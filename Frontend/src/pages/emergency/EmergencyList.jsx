@@ -118,12 +118,6 @@ const EmergencyList = () => {
             style={{ width: "250px" }}
           />
         </span>
-        <Button
-          label="New Emergency"
-          icon="pi pi-plus"
-          severity="danger"
-          onClick={() => navigate("/emergency/new")}
-        />
       </div>
     </div>
   );

@@ -268,6 +268,44 @@ class UserController {
     }
   }
 
+  // Admin reset password (no old-password required)
+  async adminResetPassword(req, res) {
+    try {
+      const { password } = req.body;
+      if (!password || password.length < 6) {
+        return res.status(400).json({
+          success: false,
+          message: "Password must be at least 6 characters",
+        });
+      }
+      const result = await userService.adminResetPassword(req.params.id, password);
+      res.json({ success: true, message: result.message });
+    } catch (err) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  }
+
+  // Admin set digital signature for any user
+  async adminSetSignature(req, res) {
+    try {
+      const { signature } = req.body;
+      if (!signature) {
+        return res.status(400).json({
+          success: false,
+          message: "Signature data required",
+        });
+      }
+      const user = await userService.adminSetSignature(req.params.id, signature);
+      res.json({
+        success: true,
+        message: "Signature saved successfully",
+        data: { signature: user.signature },
+      });
+    } catch (err) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  }
+
   // Change password
   async changePassword(req, res) {
     try {

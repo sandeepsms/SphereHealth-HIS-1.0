@@ -9,6 +9,10 @@ import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
+import { useAutoSave } from "../../hooks/useAutoSave";
+import { useDigitalSignature } from "../../hooks/useDigitalSignature";
+import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
+import SignaturePad from "../../Components/signature/SignaturePad";
 
 const API = `${API_ENDPOINTS.BASE}/consent-forms`;
 
@@ -743,6 +747,13 @@ export default function ConsentFormPage() {
   const [alternatives, setAlternatives] = useState([]);
   const [saving, setSaving] = useState(false);
 
+  // Auto-save draft
+  const draftKey = patInfo?._id ? `sphere_draft_consent_${patInfo._id}` : null;
+  const { savedAt, hasDraft, clearDraft } = useAutoSave(
+    draftKey, { consentData, body, risks, benefits, alternatives }, 2000
+  );
+  const { signature, showSetup, setShowSetup, saveSignature } = useDigitalSignature();
+
   // Preview modal
   const [previewData, setPreviewData] = useState(null);
   const [previewType, setPreviewType] = useState(null);
@@ -783,6 +794,22 @@ export default function ConsentFormPage() {
           wardBed: `${found.wardId?.wardName || ""} / ${found.bedNumber || ""}`,
           admissionDate: found.admissionDate ? new Date(found.admissionDate).toLocaleDateString("en-IN") : "",
         }));
+        // Restore auto-save draft if available
+        const dKey = `sphere_draft_consent_${found._id}`;
+        const raw = localStorage.getItem(dKey);
+        if (raw) {
+          try {
+            const { data } = JSON.parse(raw);
+            if (data) {
+              if (data.consentData) setConsentData(p => ({ ...p, ...data.consentData }));
+              if (data.body !== undefined) setBody(data.body);
+              if (data.risks) setRisks(data.risks);
+              if (data.benefits) setBenefits(data.benefits);
+              if (data.alternatives) setAlternatives(data.alternatives);
+              toast.info("Draft restored", { autoClose: 2000 });
+            }
+          } catch { /* ignore */ }
+        }
         toast.success("Patient loaded");
       } else {
         toast.warn("No active admission found");
@@ -833,11 +860,13 @@ export default function ConsentFormPage() {
       };
       await axios.post(API, payload, { headers });
       toast.success("Consent form saved");
+      clearDraft();
       fetchSavedForms();
       openPreview();
     } catch (err) {
       if (err.response?.status === 404) {
         toast.success("Consent recorded (preview mode)");
+        clearDraft();
         openPreview();
       } else {
         toast.error(err.response?.data?.message || "Save failed");
@@ -1021,7 +1050,12 @@ export default function ConsentFormPage() {
               <div style={{ fontWeight: 800, fontSize: 14, color: selectedType.color }}>{selectedType.label} Consent</div>
               <div style={{ fontSize: 11, color: C.muted }}>{selectedType.description} · NABH {selectedType.nabh}</div>
             </div>
-            <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+            <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <AutoSaveIndicator savedAt={savedAt} hasDraft={hasDraft} />
+              <button onClick={() => setShowSetup(true)}
+                style={{ padding:"6px 11px", background: signature ? "#f0fdf4" : "#fffbeb", border:`1.5px solid ${signature ? "#bbf7d0" : "#fde68a"}`, borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:700, color: signature ? "#16a34a" : "#92400e", display:"flex", alignItems:"center", gap:4 }}>
+                {signature ? <><i className="pi pi-verified" style={{ fontSize:10 }} /> Sig Set</> : <><i className="pi pi-pen-to-square" style={{ fontSize:10 }} /> Setup Sig</>}
+              </button>
               <button onClick={openPreview} style={{
                 padding: "7px 14px", borderRadius: 8, border: "none",
                 background: selectedType.color + "15", color: selectedType.color,
@@ -1212,6 +1246,13 @@ export default function ConsentFormPage() {
             </button>
           </div>
         </div>
+      )}
+      {showSetup && (
+        <SignaturePad
+          existing={signature}
+          onSave={async (dataUrl) => { await saveSignature(dataUrl); setShowSetup(false); }}
+          onCancel={() => setShowSetup(false)}
+        />
       )}
     </div>
   );

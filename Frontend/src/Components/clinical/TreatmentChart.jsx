@@ -103,7 +103,7 @@ function FL({ label, children }) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
-export default function TreatmentChart({ UHID, visitId, patientName, nurseMode = true, refreshTrigger = 0 }) {
+export default function TreatmentChart({ UHID, visitId, patientName, nurseMode = true, refreshTrigger = 0, onAdminSave }) {
   const { user } = useAuth();
   const nurseName = user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim() || "Nurse";
 
@@ -179,6 +179,11 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
 
   /* ── Open action modal ── */
   const openAction = (order, type, doseEntry = null) => {
+    // Lock: nurse cannot undo a "given" dose — requires doctor action
+    if (doseEntry?.status === "given" && nurseMode) {
+      toast.warn("🔒 This dose is already marked Given. Only a doctor can undo this action.", { autoClose: 4000 });
+      return;
+    }
     setActionModal({ order, type, doseEntry });
     const now = new Date().toTimeString().slice(0, 5);
     setAdminForm({
@@ -236,6 +241,7 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
       const statusLabel = STATUS_CFG[f.status]?.label || f.status;
       toast.success(`${order.orderDetails?.medicineName || "Medication"} — ${statusLabel}`);
       setActionModal(null);
+      onAdminSave?.();        // signal NurseOrdersPanel to refresh
       await fetchOrders(true);
     } catch (err) {
       toast.error(err?.response?.data?.message || "Action failed");
@@ -416,8 +422,11 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
   };
 
   /* ── Derived lists ── */
-  const medOrders = orders.filter(o => o.orderType === "Medication");
-  const infOrders = orders.filter(o => ["IV_Fluid","BloodTransfusion"].includes(o.orderType));
+  const medOrders    = orders.filter(o => o.orderType === "Medication");
+  const infOrders    = orders.filter(o => ["IV_Fluid","BloodTransfusion"].includes(o.orderType));
+  // New Orders = Pending (not yet touched by nurse), sorted STAT first
+  const newMedOrders = medOrders.filter(o => o.status === "Pending")
+    .sort((a, b) => (a.priority === "STAT" ? -1 : b.priority === "STAT" ? 1 : 0));
 
   const timeNow = new Date().toTimeString().slice(0, 5); // "HH:MM"
 
@@ -525,6 +534,41 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                 No active medication orders. Use Doctor Notes → Medication Orders to prescribe.
               </div>
             ) : (
+              <>
+              {/* ── New Orders Banner ── */}
+              {newMedOrders.length > 0 && nurseMode && (
+                <div style={{ marginBottom: 14, border: `2px solid #fca5a5`, borderRadius: 10, overflow: "hidden" }}>
+                  <div style={{ padding: "8px 14px", background: "#fef2f2", display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{ background: C.red, color: "white", borderRadius: 6, padding: "2px 10px", fontSize: 11, fontWeight: 800, letterSpacing: ".5px" }}>
+                      🔔 NEW ORDERS — {newMedOrders.length}
+                    </span>
+                    <span style={{ fontSize: 11, color: C.red, fontWeight: 600 }}>
+                      Doctor has placed {newMedOrders.length} new medication order{newMedOrders.length > 1 ? "s" : ""}. Click the dose cell below to administer.
+                    </span>
+                  </div>
+                  <div style={{ padding: "10px 14px", background: "#fff8f8", display: "flex", flexDirection: "column", gap: 6 }}>
+                    {newMedOrders.map(o => {
+                      const isSTAT = o.priority === "STAT";
+                      return (
+                        <div key={o._id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", border: `1.5px solid ${isSTAT ? C.red : "#fca5a5"}`, borderRadius: 8, background: isSTAT ? "#fef2f2" : "white" }}>
+                          {isSTAT && <span style={{ background: C.red, color: "white", fontSize: 9, fontWeight: 800, padding: "2px 7px", borderRadius: 4, flexShrink: 0 }}>STAT</span>}
+                          <span style={{ fontWeight: 700, fontSize: 12, flex: 1 }}>{o.orderDetails?.medicineName}</span>
+                          <span style={{ fontSize: 11, color: C.muted }}>{o.orderDetails?.dose} · {o.orderDetails?.route} · {o.orderDetails?.frequency}</span>
+                          <span style={{ fontSize: 10, color: C.muted }}>By: {o.orderedBy || "Doctor"}</span>
+                          <button
+                            onClick={() => {
+                              const times = getScheduledTimes(o);
+                              openAction(o, "administer", { scheduledTime: times[0] });
+                            }}
+                            style={{ padding: "4px 12px", background: C.blue, color: "white", border: "none", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
+                            <i className="pi pi-check" style={{ fontSize: 9, marginRight: 4 }} />Administer
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                   <thead>
@@ -603,10 +647,11 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                                     <div style={{ fontSize: 9, fontWeight: 700, color: overdue ? C.red : C.muted, fontFamily: "monospace" }}>{t}</div>
                                     <div
                                       onClick={() => nurseMode && !isStopped && openAction(order, "administer", rec || { scheduledTime: t })}
-                                      style={{ padding: "4px 8px", borderRadius: 6, border: `1.5px solid ${overdue && st === "pending" ? C.red : cfg.border}`, background: overdue && st === "pending" ? "#fef2f2" : cfg.bg, color: overdue && st === "pending" ? C.red : cfg.color, fontSize: 10, fontWeight: 700, cursor: nurseMode && !isStopped ? "pointer" : "default", textAlign: "center", minWidth: 64, transition: "all .15s" }}
-                                      title={rec?.notes || rec?.holdReason || rec?.delayReason || ""}
+                                      style={{ padding: "4px 8px", borderRadius: 6, border: `1.5px solid ${overdue && st === "pending" ? C.red : cfg.border}`, background: overdue && st === "pending" ? "#fef2f2" : cfg.bg, color: overdue && st === "pending" ? C.red : cfg.color, fontSize: 10, fontWeight: 700, cursor: nurseMode && !isStopped ? (st === "given" ? "not-allowed" : "pointer") : "default", textAlign: "center", minWidth: 64, transition: "all .15s" }}
+                                      title={st === "given" ? `🔒 Given by ${rec?.givenBy || "Nurse"} — Doctor approval required to undo` : (rec?.notes || rec?.holdReason || rec?.delayReason || "")}
                                     >
                                       <div>{cfg.icon} {cfg.label}</div>
+                                      {st === "given" && <div style={{ fontSize: 8, color: C.green }}>🔒 Locked</div>}
                                       {rec?.givenAt && <div style={{ fontSize: 9, fontWeight: 400, marginTop: 1 }}>{new Date(rec.givenAt).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}</div>}
                                       {rec?.givenBy && <div style={{ fontSize: 8, color: cfg.color + "cc" }}>{rec.givenBy.split(" ").slice(-1)[0]}</div>}
                                       {rec?.verifiedBy && <div style={{ fontSize: 8, color: C.green }}>👥 {rec.verifiedBy.split(" ").slice(-1)[0]}</div>}
@@ -677,6 +722,7 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                   </tbody>
                 </table>
               </div>
+              </>
             )
 
           /* ════════ INFUSIONS TAB ════════ */

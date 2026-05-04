@@ -10,6 +10,10 @@ import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
+import { useAutoSave } from "../../hooks/useAutoSave";
+import { useDigitalSignature } from "../../hooks/useDigitalSignature";
+import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
+import SignaturePad from "../../Components/signature/SignaturePad";
 
 const API = `${API_ENDPOINTS.BASE}/discharge-summary`;
 
@@ -665,6 +669,13 @@ export default function DischargeSummaryPage() {
   const [investigations, setInvestigations] = useState([]);
   const [procedures, setProcedures] = useState([]);
 
+  // Auto-save draft
+  const draftKey = patInfo?._id ? `sphere_draft_discharge_${patInfo._id}` : null;
+  const { savedAt, hasDraft, clearDraft } = useAutoSave(
+    draftKey, { form, medications, investigations, procedures }, 2000
+  );
+  const { signature, showSetup, setShowSetup, saveSignature } = useDigitalSignature();
+
   const token = localStorage.getItem("his_token");
   const headers = { Authorization: `Bearer ${token}` };
 
@@ -708,6 +719,21 @@ export default function DischargeSummaryPage() {
           doctorName: found.attendingDoctor || p.doctorName,
           contactNumber: found.contactNumber || "",
         }));
+        // Restore auto-save draft if available
+        const dKey = `sphere_draft_discharge_${found._id}`;
+        const raw = localStorage.getItem(dKey);
+        if (raw) {
+          try {
+            const { data } = JSON.parse(raw);
+            if (data) {
+              if (data.form)           setForm(p => ({ ...p, ...data.form }));
+              if (data.medications)    setMedications(data.medications);
+              if (data.investigations) setInvestigations(data.investigations);
+              if (data.procedures)     setProcedures(data.procedures);
+              toast.info("Draft restored", { autoClose: 2000 });
+            }
+          } catch { /* ignore */ }
+        }
         toast.success("Patient loaded");
       } else {
         toast.warn("No active admission found");
@@ -748,10 +774,12 @@ export default function DischargeSummaryPage() {
       const payload = { ...form, deptTemplate: selectedDept?.key, medications, investigations, procedures };
       await axios.post(API, payload, { headers });
       toast.success("Discharge summary saved");
+      clearDraft();
       openPrint();
     } catch (err) {
       if (err.response?.status === 404 || err.response?.status === 405) {
         toast.success("Summary saved (preview mode)");
+        clearDraft();
         openPrint();
       } else {
         toast.error(err.response?.data?.message || "Save failed");
@@ -778,9 +806,14 @@ export default function DischargeSummaryPage() {
           </div>
           <span style={{ background: "#f5f3ff", color: "#7c3aed", border: "1px solid #c4b5fd", fontSize: 10, fontWeight: 700, padding: "3px 9px", borderRadius: 5 }}>NABH</span>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           {view === "form" && (
             <>
+              <AutoSaveIndicator savedAt={savedAt} hasDraft={hasDraft} />
+              <button onClick={() => setShowSetup(true)}
+                style={{ padding:"6px 11px", background: signature ? "#f0fdf4" : "#fffbeb", border:`1.5px solid ${signature ? "#bbf7d0" : "#fde68a"}`, borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:700, color: signature ? "#16a34a" : "#92400e", display:"flex", alignItems:"center", gap:4 }}>
+                {signature ? <><i className="pi pi-verified" style={{ fontSize:10 }} /> Sig Set</> : <><i className="pi pi-pen-to-square" style={{ fontSize:10 }} /> Setup Sig</>}
+              </button>
               <button onClick={() => setView("catalogue")} style={{ padding: "7px 14px", borderRadius: 8, border: `1px solid ${C.border}`, background: "white", cursor: "pointer", fontSize: 12, color: C.muted, fontWeight: 600 }}>
                 <i className="pi pi-arrow-left" style={{ marginRight: 5 }} />Departments
               </button>
@@ -1124,15 +1157,31 @@ export default function DischargeSummaryPage() {
           </Section>
 
           {/* Bottom bar */}
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 4 }}>
-            <button onClick={openPrint} style={{ padding: "9px 20px", borderRadius: 8, border: `1.5px solid ${color}`, background: "white", color, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
-              <i className="pi pi-eye" style={{ marginRight: 6 }} />Preview
-            </button>
-            <button onClick={handleSave} disabled={saving} style={{ padding: "9px 24px", borderRadius: 8, border: "none", background: saving ? C.muted : color, color: "white", fontWeight: 700, fontSize: 13, cursor: saving ? "not-allowed" : "pointer" }}>
-              {saving ? "Saving…" : <><i className="pi pi-save" style={{ marginRight: 6 }} />Save & Print</>}
-            </button>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, marginTop: 4, flexWrap: "wrap", alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <AutoSaveIndicator savedAt={savedAt} hasDraft={hasDraft} />
+              <button onClick={() => setShowSetup(true)}
+                style={{ padding:"7px 12px", background: signature ? "#f0fdf4" : "#fffbeb", border:`1.5px solid ${signature ? "#bbf7d0" : "#fde68a"}`, borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:700, color: signature ? "#16a34a" : "#92400e", display:"flex", alignItems:"center", gap:5 }}>
+                {signature ? <><i className="pi pi-verified" /> Signature Set</> : <><i className="pi pi-pen-to-square" /> Setup Signature</>}
+              </button>
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={openPrint} style={{ padding: "9px 20px", borderRadius: 8, border: `1.5px solid ${color}`, background: "white", color, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                <i className="pi pi-eye" style={{ marginRight: 6 }} />Preview
+              </button>
+              <button onClick={handleSave} disabled={saving} style={{ padding: "9px 24px", borderRadius: 8, border: "none", background: saving ? C.muted : color, color: "white", fontWeight: 700, fontSize: 13, cursor: saving ? "not-allowed" : "pointer" }}>
+                {saving ? "Saving…" : <><i className="pi pi-save" style={{ marginRight: 6 }} />Save & Print</>}
+              </button>
+            </div>
           </div>
         </div>
+      )}
+      {showSetup && (
+        <SignaturePad
+          existing={signature}
+          onSave={async (dataUrl) => { await saveSignature(dataUrl); setShowSetup(false); }}
+          onCancel={() => setShowSetup(false)}
+        />
       )}
     </div>
   );

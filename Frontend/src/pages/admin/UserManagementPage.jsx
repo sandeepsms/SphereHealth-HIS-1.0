@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 import { toast } from "react-toastify";
+import SignaturePad from "../../Components/signature/SignaturePad";
 
 /* ── Design tokens ── */
 const C = {
@@ -91,12 +92,14 @@ export default function UserManagementPage() {
   const [editUser, setEditUser]       = useState(null);    // user object for edit
   const [pwdUser, setPwdUser]         = useState(null);    // user object for password reset
   const [confirmDel, setConfirmDel]   = useState(null);    // user object for deactivate confirm
+  const [sigUser, setSigUser]         = useState(null);    // user object for signature management
 
   /* ── Forms ── */
   const [form, setForm]         = useState({ ...EMPTY_FORM });
   const [newPwd, setNewPwd]     = useState("");
   const [showPwd, setShowPwd]   = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [sigSaving, setSigSaving]   = useState(false);
 
   /* ── Load users ── */
   const loadUsers = async () => {
@@ -157,18 +160,34 @@ export default function UserManagementPage() {
     } finally { setSubmitting(false); }
   };
 
-  /* ── Change password ── */
+  /* ── Change password (admin reset — no old password required) ── */
   const handleChangePassword = async () => {
     if (!newPwd || newPwd.length < 6) { toast.warn("Password must be at least 6 characters"); return; }
     setSubmitting(true);
     try {
-      // Admin override: PUT the password field directly
-      await axios.put(`${API_ENDPOINTS.USERS}/${pwdUser._id}`, { password: newPwd });
+      await axios.put(`${API_ENDPOINTS.USERS}/${pwdUser._id}/reset-password`, { password: newPwd });
       toast.success(`Password updated for ${pwdUser.fullName || pwdUser.firstName}`);
       setPwdUser(null); setNewPwd("");
     } catch (err) {
       toast.error(err.response?.data?.message || "Password change failed");
     } finally { setSubmitting(false); }
+  };
+
+  /* ── Save signature for a user (admin) ── */
+  const handleSaveSignature = async (dataUrl) => {
+    if (!sigUser) return;
+    setSigSaving(true);
+    try {
+      await axios.patch(`${API_ENDPOINTS.USERS}/${sigUser._id}/signature`, { signature: dataUrl });
+      // Update signature in local users list so table reflects the change immediately
+      setUsers(prev => prev.map(u => u._id === sigUser._id ? { ...u, signature: dataUrl } : u));
+      toast.success(`Signature saved for ${sigUser.fullName || sigUser.firstName}`);
+      setSigUser(null);
+    } catch (err) {
+      toast.error(err.response?.data?.message || "Failed to save signature");
+    } finally {
+      setSigSaving(false);
+    }
   };
 
   /* ── Deactivate / Activate ── */
@@ -212,7 +231,7 @@ export default function UserManagementPage() {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
         <div>
           <div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>User Management</div>
-          <div style={{ fontSize: 12, color: C.muted }}>Admin panel — manage staff IDs, roles, and passwords</div>
+          <div style={{ fontSize: 12, color: C.muted }}>Admin panel — manage staff IDs, roles, passwords, and digital signatures</div>
         </div>
         <button onClick={() => { setForm({ ...EMPTY_FORM }); setShowCreate(true); }}
           style={{ padding: "10px 22px", border: "none", borderRadius: 9,
@@ -283,7 +302,7 @@ export default function UserManagementPage() {
             <table className="his-table">
               <thead>
                 <tr>
-                  {["Employee ID", "Name", "Email / Phone", "Role", "Status", "Last Login", "Actions"].map(h => (
+                  {["Employee ID", "Name", "Email / Phone", "Role", "Status / Sig", "Last Login", "Actions"].map(h => (
                     <th key={h}>{h}</th>
                   ))}
                 </tr>
@@ -325,13 +344,27 @@ export default function UserManagementPage() {
                         </span>
                       </td>
                       <td>
-                        <span style={{
-                          background: active ? C.greenL : C.redL,
-                          color: active ? C.green : C.red,
-                          border: `1px solid ${active ? C.green : C.red}30`,
-                          padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700 }}>
-                          {active ? "Active" : "Inactive"}
-                        </span>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                          <span style={{
+                            background: active ? C.greenL : C.redL,
+                            color: active ? C.green : C.red,
+                            border: `1px solid ${active ? C.green : C.red}30`,
+                            padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700,
+                            display: "inline-block" }}>
+                            {active ? "Active" : "Inactive"}
+                          </span>
+                          {u.signature ? (
+                            <span style={{ fontSize: 9, fontWeight: 700, color: C.purple,
+                              display: "flex", alignItems: "center", gap: 3 }}>
+                              <i className="pi pi-check-circle" style={{ fontSize: 9 }} /> Sig ✓
+                            </span>
+                          ) : (
+                            <span style={{ fontSize: 9, color: C.muted,
+                              display: "flex", alignItems: "center", gap: 3 }}>
+                              <i className="pi pi-minus-circle" style={{ fontSize: 9 }} /> No sig
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td style={{ fontSize: 11, color: C.muted, fontFamily: "'DM Mono', monospace" }}>
                         {u.lastLogin
@@ -340,7 +373,7 @@ export default function UserManagementPage() {
                           : "Never"}
                       </td>
                       <td>
-                        <div style={{ display: "flex", gap: 5 }}>
+                        <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
                           <button onClick={() => openEdit(u)}
                             title="Edit user details"
                             style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${C.border}`,
@@ -348,10 +381,17 @@ export default function UserManagementPage() {
                             <i className="pi pi-pencil" style={{ fontSize: 10 }} />
                           </button>
                           <button onClick={() => setPwdUser(u)}
-                            title="Change password"
+                            title="Reset password"
                             style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${C.amber}40`,
                               background: C.amberL, cursor: "pointer", fontSize: 11, fontWeight: 600, color: C.amber }}>
                             <i className="pi pi-lock" style={{ fontSize: 10 }} />
+                          </button>
+                          <button onClick={() => setSigUser(u)}
+                            title={u.signature ? "Update digital signature" : "Add digital signature"}
+                            style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${C.purple}40`,
+                              background: u.signature ? C.purpleL : "white", cursor: "pointer",
+                              fontSize: 11, fontWeight: 600, color: C.purple }}>
+                            <i className="pi pi-pen-to-square" style={{ fontSize: 10 }} />
                           </button>
                           <button onClick={() => setConfirmDel(u)}
                             title={active ? "Deactivate user" : "Activate user"}
@@ -564,6 +604,17 @@ export default function UserManagementPage() {
           </div>
         </Modal>
       )}
+
+      {/* ════ SIGNATURE MANAGEMENT (SignaturePad overlay) ════ */}
+      {sigUser && (
+        <SignaturePad
+          existing={sigUser.signature || null}
+          userName={sigUser.fullName || `${sigUser.firstName || ""} ${sigUser.lastName || ""}`.trim()}
+          onSave={handleSaveSignature}
+          onCancel={() => setSigUser(null)}
+        />
+      )}
+
     </div>
   );
 }

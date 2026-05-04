@@ -16,6 +16,7 @@ import { API_ENDPOINTS } from "../config/api";
 import patientService from "../Services/patient/patientService";
 import PatientSearchBar from "./Search/PatientSearchBar";
 import PatientHistoryModal from "../Components/PatientHistoryModal"; // ✅ NEW
+import { useAuth } from "../context/AuthContext";
 
 import "primereact/resources/themes/lara-light-blue/theme.css";
 import "primereact/resources/primereact.min.css";
@@ -23,6 +24,8 @@ import "primeicons/primeicons.css";
 import "../../css/Radiobutton.css";
 
 function PatientsTable() {
+  const { user } = useAuth();
+  const canRegister = ["Admin", "Receptionist"].includes(user?.role);
   const [patients, setPatients] = useState([]);
   const [filters, setFilters] = useState({
     global: { value: null, matchMode: FilterMatchMode.CONTAINS },
@@ -223,16 +226,6 @@ function PatientsTable() {
         command: () => navigate(`/opd/${rowData.UHID}`),
       },
       {
-        label: "Doctor Prescription",
-        icon: "pi pi-file-edit",
-        command: () => navigate(`/doctorpre/${rowData.UHID}`),
-      },
-      {
-        label: "Doctor Prescription Print",
-        icon: "pi pi-print",
-        command: () => navigate(`/Preceptionbill/${rowData.UHID}`),
-      },
-      {
         label: "Bed Management",
         icon: "pi pi-th-large",
         command: () => navigate(`/BedManagementSingleFile/${rowData.UHID}`),
@@ -251,16 +244,18 @@ function PatientsTable() {
           tooltipOptions={{ position: "top" }}
           onClick={() => handleView(rowData)}
         />
-        <Button
-          icon="pi pi-pencil"
-          severity="success"
-          text
-          rounded
-          size="small"
-          tooltip="Edit Patient"
-          tooltipOptions={{ position: "top" }}
-          onClick={() => handleEdit(rowData)}
-        />
+        {canRegister && (
+          <Button
+            icon="pi pi-pencil"
+            severity="success"
+            text
+            rounded
+            size="small"
+            tooltip="Edit Patient"
+            tooltipOptions={{ position: "top" }}
+            onClick={() => handleEdit(rowData)}
+          />
+        )}
         {/* ✅ History button directly in row */}
         <Button
           icon="pi pi-history"
@@ -345,14 +340,16 @@ function PatientsTable() {
           size="small"
           className="text-white"
         />
-        <Button
-          icon="pi pi-plus"
-          label="Add Patient"
-          severity="success"
-          size="small"
-          onClick={() => navigate("/registration")}
-          className="border"
-        />
+        {canRegister && (
+          <Button
+            icon="pi pi-plus"
+            label="Add Patient"
+            severity="success"
+            size="small"
+            onClick={() => navigate("/registration")}
+            className="border"
+          />
+        )}
       </div>
     </div>
      </>

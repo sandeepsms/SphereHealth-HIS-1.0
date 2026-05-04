@@ -193,6 +193,18 @@ const AdmissionSchema = new mongoose.Schema(
     // Primary consultant is attendingDoctor/attendingDoctorId.
     // Additional consultants are tracked here.
     treatmentTeam: { type: [TreatmentTeamMemberSchema], default: [] },
+
+    // ── Initial Assessment Gate (NABH COP.2) ─────────────────────────
+    // Both doctor AND nurse must complete initial assessment before
+    // accessing other patient records. Set to true after sign-off.
+    initialAssessment: {
+      doctorCompleted:   { type: Boolean, default: false },
+      nurseCompleted:    { type: Boolean, default: false },
+      doctorCompletedAt: { type: Date, default: null },
+      nurseCompletedAt:  { type: Date, default: null },
+      doctorName:        { type: String, default: "" },
+      nurseName:         { type: String, default: "" },
+    },
   },
   { timestamps: true },
 );

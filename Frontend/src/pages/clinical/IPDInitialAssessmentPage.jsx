@@ -1,10 +1,14 @@
 import React, { useState, useEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
+import { useAutoSave } from "../../hooks/useAutoSave";
+import { useDigitalSignature } from "../../hooks/useDigitalSignature";
+import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
+import SignaturePad from "../../Components/signature/SignaturePad";
 
 /* ── Design tokens ── */
 const C = {
@@ -323,11 +327,15 @@ const FREQS  = ["OD", "BD", "TDS", "QID", "SOS", "Stat", "HS", "Alternate days",
 /* ════════════════════════════════════════════════════════════════ */
 function IPDInitialAssessmentContent({ selectedPatient }) {
   const { uhid: uhidParam } = useParams();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  const [uhid, setUhid]           = useState(uhidParam || "");
+  // Support both path param (:uhid) and query param (?uhid=)
+  const initUhid = uhidParam || searchParams.get("uhid") || "";
+  const [uhid, setUhid]           = useState(initUhid);
   const [patient, setPatient]     = useState(null);
+  const [admission, setAdmission] = useState(null); // active admission for initialAssessment gate
 
   // Auto-load when patient selected from the panel
   useEffect(() => {
@@ -437,20 +445,97 @@ function IPDInitialAssessmentContent({ selectedPatient }) {
   const [dietAdvice, setDietAdvice]     = useState("");
   const [activityAdvice, setActivityAdvice] = useState("");
 
+  /* ── Auto-save draft ── */
+  const draftKey = patient?._id ? `sphere_draft_ipd_initial_${patient._id}` : null;
+  const { savedAt, hasDraft, clearDraft } = useAutoSave(
+    draftKey,
+    { admitDate, admitTime, ipdNo, nurseName, ward, bedNo, modeOfAdmit, consciousnessLevel, mobility, allergy, chiefComplaint, vitals, painPresent, painScore, painLocation, painCharacter, devices, skinIntact, skinNotes, morse, braden, nutri, vte, nursingProblems, nursingGoals, nursingNotes, doctorName, regNo, hopi, pmh, psh, famHx, socHx, docAllergy, genExam, cvs, rs, abdomen, cns, provDx, finalDx, icd10, investigations, rxRows, treatmentPlan, followupNotes, dietAdvice, activityAdvice },
+    2000
+  );
+  const { signature, showSetup, setShowSetup, saveSignature } = useDigitalSignature();
+
   useEffect(() => {
-    if (uhidParam) loadPatient(uhidParam);
-  }, [uhidParam]);
+    if (initUhid) loadPatient(initUhid);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const loadPatient = async (id) => {
     if (!id?.trim()) return;
-    setLoadingPt(true); setPatient(null);
+    setLoadingPt(true); setPatient(null); setAdmission(null);
     try {
-      const res = await axios.get(`${API_ENDPOINTS.PATIENTS}/uhid/${id.trim().toUpperCase()}`);
-      const pt  = res.data?.data || res.data;
+      const [ptRes, admRes] = await Promise.all([
+        axios.get(`${API_ENDPOINTS.PATIENTS}/uhid/${id.trim().toUpperCase()}`),
+        axios.get(`${API_ENDPOINTS.BASE}/admissions?uhid=${id.trim().toUpperCase()}`).catch(() => ({ data: [] })),
+      ]);
+      const pt = ptRes.data?.data || ptRes.data;
       if (!pt) { toast.error("Patient not found"); return; }
       setPatient(pt);
       setUhid(pt.UHID || id);
       if (pt.allergies) { setAllergy(pt.allergies); setDocAllergy(pt.allergies); }
+      // Restore auto-save draft if available
+      const dKey = `sphere_draft_ipd_initial_${pt._id}`;
+      const raw = localStorage.getItem(dKey);
+      if (raw) {
+        try {
+          const { data: d } = JSON.parse(raw);
+          if (d) {
+            if (d.admitDate)          setAdmitDate(d.admitDate);
+            if (d.admitTime)          setAdmitTime(d.admitTime);
+            if (d.ipdNo)              setIpdNo(d.ipdNo);
+            if (d.nurseName)          setNurseName(d.nurseName);
+            if (d.ward)               setWard(d.ward);
+            if (d.bedNo)              setBedNo(d.bedNo);
+            if (d.modeOfAdmit)        setModeOfAdmit(d.modeOfAdmit);
+            if (d.consciousnessLevel) setConsciousnessLevel(d.consciousnessLevel);
+            if (d.mobility)           setMobility(d.mobility);
+            if (d.chiefComplaint)     setChiefComplaint(d.chiefComplaint);
+            if (d.vitals)             setVitals(d.vitals);
+            if (d.painPresent !== undefined) setPainPresent(d.painPresent);
+            if (d.painScore)          setPainScore(d.painScore);
+            if (d.painLocation)       setPainLocation(d.painLocation);
+            if (d.painCharacter)      setPainCharacter(d.painCharacter);
+            if (d.devices)            setDevices(d.devices);
+            if (d.skinIntact !== undefined) setSkinIntact(d.skinIntact);
+            if (d.skinNotes)          setSkinNotes(d.skinNotes);
+            if (d.morse)              setMorse(d.morse);
+            if (d.braden)             setBraden(d.braden);
+            if (d.nutri)              setNutri(d.nutri);
+            if (d.vte)                setVte(d.vte);
+            if (d.nursingProblems)    setNursingProblems(d.nursingProblems);
+            if (d.nursingGoals)       setNursingGoals(d.nursingGoals);
+            if (d.nursingNotes)       setNursingNotes(d.nursingNotes);
+            if (d.hopi)               setHopi(d.hopi);
+            if (d.pmh)                setPmh(d.pmh);
+            if (d.psh)                setPsh(d.psh);
+            if (d.famHx)              setFamHx(d.famHx);
+            if (d.socHx)              setSocHx(d.socHx);
+            if (d.genExam)            setGenExam(d.genExam);
+            if (d.cvs)                setCvs(d.cvs);
+            if (d.rs)                 setRs(d.rs);
+            if (d.abdomen)            setAbdomen(d.abdomen);
+            if (d.cns)                setCns(d.cns);
+            if (d.provDx)             setProvDx(d.provDx);
+            if (d.finalDx)            setFinalDx(d.finalDx);
+            if (d.icd10)              setIcd10(d.icd10);
+            if (d.investigations)     setInvestigations(d.investigations);
+            if (d.rxRows)             setRxRows(d.rxRows);
+            if (d.treatmentPlan)      setTreatmentPlan(d.treatmentPlan);
+            if (d.followupNotes)      setFollowupNotes(d.followupNotes);
+            if (d.dietAdvice)         setDietAdvice(d.dietAdvice);
+            if (d.activityAdvice)     setActivityAdvice(d.activityAdvice);
+            toast.info("Draft restored", { autoClose: 2000 });
+          }
+        } catch { /* ignore */ }
+      }
+      // Find active admission
+      const admList = Array.isArray(admRes.data?.admissions) ? admRes.data.admissions
+                    : Array.isArray(admRes.data?.data) ? admRes.data.data
+                    : Array.isArray(admRes.data) ? admRes.data : [];
+      const adm = admList.find(a => a.status === "Active" || a.status === "Admitted") || admList[0] || null;
+      setAdmission(adm);
+      if (adm?.admissionNumber) setIpdNo(adm.admissionNumber);
+      if (adm?.department) setWard(adm.department);
+      if (adm?.bedNumber) setBedNo(adm.bedNumber);
     } catch { toast.error("Patient not found"); }
     finally { setLoadingPt(false); }
   };
@@ -499,7 +584,26 @@ function IPDInitialAssessmentContent({ selectedPatient }) {
         res = await axios.post(`${API_ENDPOINTS.BASE}/doctorNotes`, payload);
         setNoteId(res.data?.data?._id || res.data?._id);
       }
-      toast.success(sign ? "Assessment signed & submitted" : "Draft saved");
+      // On sign-off, mark the corresponding initial assessment flag on the admission
+      if (sign && admission?._id) {
+        const role = section === "nursing" ? "nurse" : "doctor";
+        const name = section === "nursing"
+          ? (nurseName || user?.fullName || "")
+          : (doctorName || user?.fullName || "");
+        await axios.put(`${API_ENDPOINTS.BASE}/admissions/${admission._id}/initial-assessment`, { role, name })
+          .catch(() => {}); // non-blocking; flag is a UX gate not a hard constraint
+        // Update local admission state so the gate lifts without page reload
+        setAdmission(prev => prev ? {
+          ...prev,
+          initialAssessment: {
+            ...prev.initialAssessment,
+            [`${role}Completed`]: true,
+            [`${role}CompletedAt`]: new Date().toISOString(),
+          },
+        } : prev);
+      }
+      toast.success(sign ? "Assessment signed & submitted ✓" : "Draft saved");
+      if (sign) clearDraft();
     } catch (err) {
       toast.error(err.response?.data?.message || "Save failed");
     } finally { setSaving(false); }
@@ -534,7 +638,12 @@ function IPDInitialAssessmentContent({ selectedPatient }) {
             </div>
           </div>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <AutoSaveIndicator savedAt={savedAt} hasDraft={hasDraft} />
+          <button onClick={() => setShowSetup(true)}
+            style={{ padding:"7px 12px", background: signature ? "#f0fdf4" : "#fffbeb", border:`1.5px solid ${signature ? "#bbf7d0" : "#fde68a"}`, borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:700, color: signature ? "#16a34a" : "#92400e", display:"flex", alignItems:"center", gap:5 }}>
+            {signature ? <><i className="pi pi-verified" /> Signature Set</> : <><i className="pi pi-pen-to-square" /> Setup Signature</>}
+          </button>
           <button onClick={() => handleSave(false)} disabled={saving}
             style={{ padding: "8px 18px", border: `1.5px solid ${C.border}`, borderRadius: 8,
               background: "white", cursor: saving ? "not-allowed" : "pointer",
@@ -1204,6 +1313,13 @@ function IPDInitialAssessmentContent({ selectedPatient }) {
         </>)}
 
       </>)}
+      {showSetup && (
+        <SignaturePad
+          existing={signature}
+          onSave={async (dataUrl) => { await saveSignature(dataUrl); setShowSetup(false); }}
+          onCancel={() => setShowSetup(false)}
+        />
+      )}
     </div>
   );
 }

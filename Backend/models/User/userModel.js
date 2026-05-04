@@ -35,6 +35,9 @@ const UserSchema = new mongoose.Schema(
 
     profilePhoto: String,
 
+    // Digital signature — base64 PNG data URL drawn/uploaded once, auto-embedded in all signed documents
+    signature: { type: String },
+
     email: {
       type: String,
       required: true,

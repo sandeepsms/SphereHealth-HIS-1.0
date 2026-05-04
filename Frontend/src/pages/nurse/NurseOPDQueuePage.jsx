@@ -145,6 +145,7 @@ export default function NurseOPDQueuePage() {
   const [vitals, setVitals] = useState({
     weight: null, height: null, temperature: null,
     bloodPressure: "", pulse: null, respiratoryRate: null, oxygenSaturation: null,
+    chiefComplaint: "", allergyHistory: "",
   });
   const [savingVitals, setSavingVitals] = useState(false);
 
@@ -193,6 +194,8 @@ export default function NurseOPDQueuePage() {
       pulse: visit.vitals?.pulse || null,
       respiratoryRate: visit.vitals?.respiratoryRate || null,
       oxygenSaturation: visit.vitals?.oxygenSaturation || null,
+      chiefComplaint: visit.chiefComplaint || "",
+      allergyHistory: visit.allergyHistory || "",
     });
     setVitalsModal(true);
   };
@@ -482,10 +485,10 @@ export default function NurseOPDQueuePage() {
                 </div>
                 <div>
                   <div style={{ color: "#fff", fontWeight: 700, fontSize: 15 }}>
-                    Enter Vitals
+                    Nurse Pre-Assessment
                   </div>
                   <div style={{ color: "rgba(255,255,255,.7)", fontSize: 12, marginTop: 1 }}>
-                    {selectedVisit?.UHID} · Token #{selectedVisit?.tokenNumber}
+                    {selectedVisit?.patientName} · {selectedVisit?.UHID} · Token #{selectedVisit?.tokenNumber}
                   </div>
                 </div>
               </div>
@@ -514,8 +517,38 @@ export default function NurseOPDQueuePage() {
               <span style={{ color: C.muted }}>{selectedVisit?.chiefComplaint}</span>
             </div>
 
-            {/* Vitals form */}
+            {/* Pre-assessment form */}
             <div style={{ padding: "20px 24px" }}>
+              {/* ── Chief Complaint + Allergy (required before vitals) ── */}
+              <div style={{
+                background: "#fffbeb", border: "1.5px solid #fde68a", borderRadius: 10,
+                padding: "14px 16px", marginBottom: 16,
+              }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#92400e", textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>
+                  <i className="pi pi-exclamation-circle" style={{ marginRight: 5 }} />
+                  Clinical Information
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div>
+                    <label style={lbl}>Chief Complaint *</label>
+                    <input value={vitals.chiefComplaint} onChange={e => vSet("chiefComplaint", e.target.value)}
+                      placeholder="e.g. Fever, cough, chest pain…"
+                      style={{ ...fld, borderColor: vitals.chiefComplaint ? "#86efac" : "#fcd34d" }} />
+                  </div>
+                  <div>
+                    <label style={lbl}>Known Allergies</label>
+                    <input value={vitals.allergyHistory} onChange={e => vSet("allergyHistory", e.target.value)}
+                      placeholder="e.g. Penicillin, Sulfa, NKDA"
+                      style={fld} />
+                  </div>
+                </div>
+              </div>
+
+              {/* ── Vitals grid ── */}
+              <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>
+                <i className="pi pi-heart" style={{ marginRight: 5, color: C.primary }} />
+                Vitals
+              </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
                 <VitalInputCustom label="Weight (kg)" value={vitals.weight} onChange={v => vSet("weight", v)} placeholder="e.g. 70" />
                 <VitalInputCustom label="Height (cm)" value={vitals.height} onChange={v => vSet("height", v)} placeholder="e.g. 170" />
@@ -585,7 +618,7 @@ export default function NurseOPDQueuePage() {
                   boxShadow: savingVitals ? "none" : "0 2px 8px rgba(15,118,110,.3)",
                 }}>
                   <i className={`pi ${savingVitals ? "pi-spin pi-spinner" : "pi-check"}`} style={{ fontSize: 13 }} />
-                  {savingVitals ? "Saving…" : "Save Vitals"}
+                  {savingVitals ? "Saving…" : "Save Pre-Assessment"}
                 </button>
               </div>
             </div>

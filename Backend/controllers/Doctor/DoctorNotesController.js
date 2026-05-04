@@ -17,7 +17,7 @@ class DoctorNotesController {
   createNote = handle(async (req, res) => {
     // ✅ doctorId: body se lo, ya header se, ya req.user se
     const doctorUserId =
-      req.body.doctorId || req.headers["x-user-id"] || req.user;
+      req.body.doctorId || req.body.doctor || req.headers["x-user-id"] || req.user;
     if (!doctorUserId)
       return res
         .status(400)
@@ -68,7 +68,7 @@ class DoctorNotesController {
   // PUT /api/doctor-notes/:id
   updateNote = handle(async (req, res) => {
     const doctorUserId =
-      req.body.doctorId || req.headers["x-user-id"] || req.user;
+      req.body.doctorId || req.body.doctor || req.headers["x-user-id"] || req.user;
     const note = await doctorNotesService.updateDoctorNote(
       req.params.id,
       req.body,
@@ -80,7 +80,7 @@ class DoctorNotesController {
   // PATCH /api/doctor-notes/:id/sign
   signNote = handle(async (req, res) => {
     const doctorUserId =
-      req.body.doctorId || req.headers["x-user-id"] || req.user;
+      req.body.doctorId || req.body.doctor || req.headers["x-user-id"] || req.user;
     const note = await doctorNotesService.signDoctorNote(
       req.params.id,
       doctorUserId,
@@ -91,7 +91,7 @@ class DoctorNotesController {
   // DELETE /api/doctor-notes/:id
   deleteNote = handle(async (req, res) => {
     const doctorUserId =
-      req.body.doctorId || req.headers["x-user-id"] || req.user;
+      req.body.doctorId || req.body.doctor || req.headers["x-user-id"] || req.user;
     await doctorNotesService.deleteDoctorNote(req.params.id, doctorUserId);
     return res.json({ success: true, message: "Note deleted" });
   });

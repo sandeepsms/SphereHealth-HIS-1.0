@@ -6,7 +6,11 @@ const ctrl = require("../../controllers/Nurse/nurseNotesController");
 router.get("/today/:ipdNo", ctrl.getTodayNotes);
 router.get("/patient/:patientId", ctrl.getNotesByPatient);
 router.get("/ipd/:ipdNo", ctrl.getNotesByIPD);
+// Full patient nursing report (all notes + full module data, for print/PDF/insurance)
+router.get("/report/:ipdNo", ctrl.getPatientReport);
 router.post("/", ctrl.createNote);
+// Query-param fallback: GET /nurse-notes?ipdNo=XXX (used by NursingNotesPage)
+router.get("/", ctrl.getNotesByQuery);
 router.get("/:id", ctrl.getNoteById);
 router.put("/:id", ctrl.updateNote);
 router.patch("/:id/confirm-order", ctrl.confirmOrder);

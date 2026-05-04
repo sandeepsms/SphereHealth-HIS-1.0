@@ -38,6 +38,7 @@ router.delete("/:id", ctrl.deleteAdmission);
 router.post("/:id/discharge", ctrl.dischargePatient);
 router.post("/:id/cancel", ctrl.cancelAdmission);
 router.post("/:id/transfer", ctrl.transferBed);
+router.put("/:id/initial-assessment", ctrl.markInitialAssessment);
 
 // ── Multi-doctor Consultation / Treatment Team (NABH COP.1) ──────────
 // Get all admissions where current doctor is primary OR consulting

@@ -1,8 +1,14 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
+import { useLocation } from "react-router-dom";
 import { API_ENDPOINTS } from "../../config/api";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import { useAuth } from "../../context/AuthContext";
+import { useAutoSave } from "../../hooks/useAutoSave";
+import { useDigitalSignature } from "../../hooks/useDigitalSignature";
+import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
+import SignaturePad from "../../Components/signature/SignaturePad";
+import SignatureStamp from "../../Components/signature/SignatureStamp";
 
 /* ── Design tokens ── */
 const C = {
@@ -69,12 +75,15 @@ const PRIORITY_COLOR = {
 function VitalCard({ label, value, unit, status, statusColor }) {
   const isAbnormal = statusColor === "red";
   const isWarn     = statusColor === "amber";
+  const arrow = !status ? "" :
+    ["Low","Severe","Hypo"].some(w => status.startsWith(w)) ? "↓ " :
+    ["High","Febrile","Moderate","Borderline"].some(w => status.startsWith(w)) ? "↑ " : "→ ";
   return (
     <div style={{ background: isAbnormal ? C.redL : isWarn ? C.amberL : C.grayL, border: `1.5px solid ${isAbnormal ? "#fca5a5" : isWarn ? "#fcd34d" : C.border}`, borderRadius: 9, padding: "10px 12px", textAlign: "center" }}>
       <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".7px", color: C.muted, marginBottom: 4 }}>{label}</div>
       <div style={{ fontFamily: "monospace", fontSize: 18, fontWeight: 700, color: isAbnormal ? C.red : isWarn ? C.amber : C.text, lineHeight: 1 }}>{value || "—"}</div>
       {unit && <div style={{ fontSize: 9, color: C.muted, marginTop: 2 }}>{unit}</div>}
-      {status && <div style={{ fontSize: 10, marginTop: 3, color: isAbnormal ? C.red : isWarn ? C.amber : C.green }}>↑ {status}</div>}
+      {status && <div style={{ fontSize: 10, marginTop: 3, color: isAbnormal ? C.red : isWarn ? C.amber : C.green }}>{arrow}{status}</div>}
     </div>
   );
 }
@@ -101,8 +110,9 @@ function SectionCard({ title, children, open: initOpen = true }) {
   );
 }
 
-function DoctorAssessmentContent({ selectedPatient }) {
+export function DoctorAssessmentContent({ selectedPatient }) {
   const { user } = useAuth();
+  const location = useLocation();
   const [search,   setSearch]   = useState("");
   const [patient,  setPatient]  = useState(null);
   const [ipdNo,    setIpdNo]    = useState("");
@@ -131,9 +141,33 @@ function DoctorAssessmentContent({ selectedPatient }) {
     soap: { subjective: "", objective: "", assessment: "", plan: "" },
     vitals: { bp_sys: "", bp_dia: "", pulse: "", temp: "", rr: "", spo2: "", bsl: "", gcs: "", urine: "" },
     provisionalDiagnosis: "", finalDiagnosis: "", investigations: "",
+    // General Examination
+    consciousness: "", nutritionalStatus: "",
+    pallor: "", icterus: "", cyanosis: "", clubbing: "", lymphadenopathy: "", pedalEdema: "",
+    painScore: 0,
+    // Systemic Examination
+    rs: { breathSounds: "", addedSounds: "", percussionNote: "", tracheaPosition: "" },
+    cvs: { heartRhythm: "", heartSounds: "", murmur: "", peripheralEdema: "", jvp: "" },
+    abdomen: { tenderness: "", organomegaly: [], bowelSounds: "", ascites: "" },
+    cns: { motorSystem: "", motorSide: "", tone: "", reflexes: "", cranialNerves: "", speech: "" },
+    // History
+    currentMedication: "", familyHistory: "", birthHistory: "",
+    // MLC / Restraints
+    restraints: "No", restraintType: "", restraintComment: "",
   });
   const [orders, setOrders] = useState([]);
   const [newOrder, setNewOrder] = useState({ type: "medication", instruction: "", dose: "", route: "", frequency: "", duration: "", notes: "", priority: "ROUTINE" });
+
+  /* ── Auto-save draft ── */
+  const draftKey = ipdNo ? `sphere_draft_doctor_ipd_${ipdNo}` : null;
+  const { savedAt, hasDraft, loadDraft, clearDraft } = useAutoSave(
+    draftKey,
+    { form, orders },
+    2000
+  );
+
+  /* ── Digital signature ── */
+  const { signature, showSetup, setShowSetup, saveSignature } = useDigitalSignature();
 
   // Update form when user loads
   useEffect(() => {
@@ -157,14 +191,36 @@ function DoctorAssessmentContent({ selectedPatient }) {
       .finally(() => setPatientsLoading(false));
   }, []);
 
-  // Auto-load when patient selected from panel
+  // Auto-load when patient selected from panel or passed directly (e.g. from modal)
   useEffect(() => {
     if (selectedPatient?.UHID || selectedPatient?.bedNumber) {
       const id = selectedPatient.UHID || selectedPatient.bedNumber;
       setSearch(id);
       setIpdNo(selectedPatient.bedNumber || selectedPatient.UHID || "");
+      // If a full admission record is passed, load it directly without a search round-trip
+      if (selectedPatient.ipdNo || selectedPatient.admissionNumber) {
+        loadAdmission(selectedPatient);
+      }
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPatient]);
+
+  // Auto-load patient when navigated from Doctor Notes with a UHID in route state
+  useEffect(() => {
+    const uhid = location.state?.uhid;
+    if (!uhid) return;
+    setSearch(uhid);
+    const token = localStorage.getItem("his_token");
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    axios.get(`${API_ENDPOINTS.ADMISSIONS}?uhid=${uhid}`, { headers })
+      .then(res => {
+        const arr = Array.isArray(res.data) ? res.data : res.data?.data || [];
+        const active = arr.find(a => a.status === "Active") || arr[0];
+        if (active) loadAdmission(active);
+      })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const showToast = (msg, type = "ok") => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
 
@@ -192,6 +248,21 @@ function DoctorAssessmentContent({ selectedPatient }) {
     setIsOwner(owned);
     await fetchNotes(ipd);
     await fetchOrders(ipd);
+
+    // Restore draft if one exists for this patient
+    const dKey = `sphere_draft_doctor_ipd_${ipd}`;
+    try {
+      const raw = localStorage.getItem(dKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const { _meta, form: savedForm, orders: savedOrders } = parsed;
+        if (savedForm) setForm(f => ({ ...f, ...savedForm }));
+        if (savedOrders) setOrders(savedOrders);
+        showToast(`Draft restored (${_meta?.savedAt ? new Date(_meta.savedAt).toLocaleTimeString() : "unsaved"})`, "warn");
+        return;
+      }
+    } catch (_) {}
+
     showToast(owned ? "Patient loaded" : "Loaded (read-only — not your patient)", owned ? "ok" : "warn");
   };
 
@@ -212,9 +283,13 @@ function DoctorAssessmentContent({ selectedPatient }) {
     finally { setLoading(false); }
   };
 
-  const sf   = (k, v) => setForm(p => ({ ...p, [k]: v }));
-  const ssoap = (k, v) => setForm(p => ({ ...p, soap: { ...p.soap, [k]: v } }));
+  const sf     = (k, v) => setForm(p => ({ ...p, [k]: v }));
+  const ssoap  = (k, v) => setForm(p => ({ ...p, soap: { ...p.soap, [k]: v } }));
   const svital = (k, v) => setForm(p => ({ ...p, vitals: { ...p.vitals, [k]: v } }));
+  const srs    = (k, v) => setForm(p => ({ ...p, rs: { ...p.rs, [k]: v } }));
+  const scvs   = (k, v) => setForm(p => ({ ...p, cvs: { ...p.cvs, [k]: v } }));
+  const sabd   = (k, v) => setForm(p => ({ ...p, abdomen: { ...p.abdomen, [k]: v } }));
+  const scns   = (k, v) => setForm(p => ({ ...p, cns: { ...p.cns, [k]: v } }));
 
   const addOrder = () => {
     if (!newOrder.instruction.trim()) return;
@@ -232,10 +307,11 @@ function DoctorAssessmentContent({ selectedPatient }) {
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
     const payload = {
       ipdNo,
-      patient: patient?._id || patient?.patient?._id || "000000000000000000000000",
+      patient: patient?.patientId?._id || patient?.patientId || patient?._id || patient?.patient?._id,
       patientName: patient?.patientName || patient?.patient?.name || "",
       patientUHID: patient?.uhid || patient?.UHID || search,
-      doctor: user?.id || user?._id || "000000000000000000000001",
+      doctor: user?._id || user?.id,
+      doctorId: user?._id || user?.id,
       doctorName: form.doctorName || doctorDisplayName, doctorRegNo: form.doctorRegNo || doctorReg,
       shift: form.shift,
       soap: form.soap,
@@ -246,12 +322,33 @@ function DoctorAssessmentContent({ selectedPatient }) {
       },
       provisionalDiagnosis: form.provisionalDiagnosis, finalDiagnosis: form.finalDiagnosis,
       investigations: form.investigations ? form.investigations.split(",").map(s => s.trim()).filter(Boolean) : [],
+      generalExamination: {
+        consciousness: form.consciousness, nutritionalStatus: form.nutritionalStatus,
+        pallor: form.pallor, icterus: form.icterus, cyanosis: form.cyanosis,
+        clubbing: form.clubbing, lymphadenopathy: form.lymphadenopathy, pedalEdema: form.pedalEdema,
+        painScore: form.painScore,
+      },
+      systemicExamination: { rs: form.rs, cvs: form.cvs, abdomen: form.abdomen, cns: form.cns },
+      history: { currentMedication: form.currentMedication, familyHistory: form.familyHistory, birthHistory: form.birthHistory },
+      restraints: { used: form.restraints, type: form.restraintType, comment: form.restraintComment },
       orders: orders.map(o => ({
         type: ["medication","iv_fluid","procedure","diet"].includes(o.type) ? o.type : "other",
         instruction: o.instruction, route: o.route || "", frequency: o.frequency || "", duration: o.duration || "", notes: o.notes || "",
       })),
       status,
+      // Digital signature — auto-embedded when user has set one
+      signature: signature || undefined,
+      signedByName: form.doctorName || doctorDisplayName,
+      signedByReg: form.doctorRegNo || doctorReg,
     };
+
+    // If signing and no signature yet, prompt setup first
+    if (status === "signed" && !signature) {
+      setShowSetup(true);
+      setLoading(false);
+      return;
+    }
+
     try {
       if (editingNote) {
         await axios.put(`${API_ENDPOINTS.DOCTOR_NOTES}/${editingNote._id}`, payload, { headers });
@@ -260,6 +357,7 @@ function DoctorAssessmentContent({ selectedPatient }) {
         await axios.post(API_ENDPOINTS.DOCTOR_NOTES, payload, { headers });
         showToast(status === "signed" ? "Note signed ✓" : "Draft saved", "ok");
       }
+      clearDraft(); // clear localStorage draft on successful save
       setOrders([]);
       setForm({ doctorName: "", doctorRegNo: "", shift: "morning", soap: { subjective: "", objective: "", assessment: "", plan: "" }, vitals: { bp_sys: "", bp_dia: "", pulse: "", temp: "", rr: "", spo2: "", bsl: "", gcs: "", urine: "" }, provisionalDiagnosis: "", finalDiagnosis: "", investigations: "" });
       setEditingNote(null);
@@ -273,24 +371,41 @@ function DoctorAssessmentContent({ selectedPatient }) {
     catch { showToast("Sign failed", "err"); }
   };
 
-  const vitalCards = !patient ? [] : [
-    { label: "BP",    value: `${form.vitals.bp_sys || "—"}/${form.vitals.bp_dia || "—"}`, unit: "mmHg",   status: Number(form.vitals.bp_sys) > 160 ? "High" : "Normal", statusColor: Number(form.vitals.bp_sys) > 160 ? "red" : "ok" },
-    { label: "PULSE", value: form.vitals.pulse || "—",    unit: "/min",   status: Number(form.vitals.pulse) > 100 ? "High" : "Normal", statusColor: "ok" },
-    { label: "TEMP",  value: form.vitals.temp ? `${form.vitals.temp}` : "—", unit: "°F", status: Number(form.vitals.temp) > 99.5 ? "Low grade" : "Normal", statusColor: Number(form.vitals.temp) > 99.5 ? "amber" : "ok" },
-    { label: "SPO₂",  value: form.vitals.spo2 ? `${form.vitals.spo2}` : "—", unit: "%", status: Number(form.vitals.spo2) < 95 ? "Low" : "Acceptable", statusColor: Number(form.vitals.spo2) < 95 ? "red" : "ok" },
-    { label: "RR",    value: form.vitals.rr || "—",       unit: "/min",   status: "Normal", statusColor: "ok" },
-    { label: "BSL",   value: form.vitals.bsl || "—",      unit: "mg/dL",  status: Number(form.vitals.bsl) > 200 ? "High" : "Normal", statusColor: Number(form.vitals.bsl) > 200 ? "red" : "ok" },
-    { label: "GCS",   value: form.vitals.gcs || "—",      unit: "",       status: "Normal", statusColor: "ok" },
-    { label: "URINE", value: form.vitals.urine || "—",    unit: "mL/8hr", status: "Adequate", statusColor: "ok" },
-  ];
+  const vitalCards = !patient ? [] : (() => {
+    const v = form.vitals;
+    const bpS = Number(v.bp_sys), bpD = Number(v.bp_dia);
+    const pu = Number(v.pulse), tmp = Number(v.temp), sp = Number(v.spo2);
+    const rr = Number(v.rr), bsl = Number(v.bsl), gcs = Number(v.gcs), ur = Number(v.urine);
+    return [
+      { label: "BP",    value: v.bp_sys ? `${v.bp_sys}/${v.bp_dia||"?"}` : "—", unit: "mmHg",
+        status:      !v.bp_sys ? null : bpS > 160 ? "Hypertensive" : bpS < 90 ? "Low" : "Normal",
+        statusColor: !v.bp_sys ? null : (bpS > 160 || bpS < 90) ? "red" : "ok" },
+      { label: "PULSE", value: v.pulse || "—", unit: "/min",
+        status:      !v.pulse ? null : pu > 100 ? "High (Tachy)" : pu < 60 ? "Low (Brady)" : "Normal",
+        statusColor: !v.pulse ? null : (pu > 100 || pu < 60) ? "red" : "ok" },
+      { label: "TEMP",  value: v.temp || "—", unit: "°F",
+        status:      !v.temp ? null : tmp > 100.4 ? "Febrile" : tmp < 96.8 ? "Hypothermia" : "Afebrile",
+        statusColor: !v.temp ? null : (tmp > 100.4 || tmp < 96.8) ? "amber" : "ok" },
+      { label: "SPO₂",  value: v.spo2 || "—", unit: "%",
+        status:      !v.spo2 ? null : sp < 90 ? "Low — Critical" : sp < 94 ? "Low" : sp < 97 ? "Borderline" : "Normal",
+        statusColor: !v.spo2 ? null : sp < 90 ? "red" : sp < 94 ? "red" : sp < 97 ? "amber" : "ok" },
+      { label: "RR",    value: v.rr || "—", unit: "/min",
+        status:      !v.rr ? null : rr > 24 ? "High (Tachypnoea)" : rr < 12 ? "Low (Bradypnoea)" : "Normal",
+        statusColor: !v.rr ? null : (rr > 24 || rr < 12) ? "amber" : "ok" },
+      { label: "BSL",   value: v.bsl || "—", unit: "mg/dL",
+        status:      !v.bsl ? null : bsl > 200 ? "High" : bsl < 70 ? "Low (Hypo)" : "Normal",
+        statusColor: !v.bsl ? null : (bsl > 200 || bsl < 70) ? "red" : "ok" },
+      { label: "GCS",   value: v.gcs || "—", unit: "/ 15",
+        status:      !v.gcs ? null : gcs <= 8 ? "Severe" : gcs <= 12 ? "Moderate" : "Normal",
+        statusColor: !v.gcs ? null : gcs <= 8 ? "red" : gcs <= 12 ? "amber" : "ok" },
+      { label: "URINE", value: v.urine || "—", unit: "mL/8hr",
+        status:      !v.urine ? null : ur < 200 ? "Low (Oliguria)" : ur > 2000 ? "High" : "Adequate",
+        statusColor: !v.urine ? null : ur < 200 ? "red" : "ok" },
+    ];
+  })();
 
   const tabs = [
     { id: "assessment", label: "Assessment" },
-    { id: "orders",     label: "Active Orders",   badge: allOrders.length },
-    { id: "notes",      label: "Progress Notes",  badge: notes.length },
-    { id: "pending",    label: "Pending / Scheduled", badge: allOrders.filter(o => o.nurseStatus === "pending").length },
-    { id: "results",    label: "Results / Reports" },
-    { id: "discharge",  label: "Discharge Summary" },
   ];
 
   let orderCounter = 1;
@@ -417,16 +532,6 @@ function DoctorAssessmentContent({ selectedPatient }) {
             {vitalCards.map(v => <VitalCard key={v.label} {...v} />)}
           </div>
 
-          {/* ── Tab Nav ── */}
-          <div style={{ display: "flex", gap: 2, background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 5, marginBottom: 14, overflowX: "auto" }}>
-            {tabs.map(t => (
-              <button key={t.id} onClick={() => setActiveTab(t.id)}
-                style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: activeTab === t.id ? C.slate : "transparent", color: activeTab === t.id ? "white" : C.muted, fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6, boxShadow: activeTab === t.id ? "0 2px 8px rgba(30,41,59,.3)" : "none", transition: "all .2s" }}>
-                {t.label}
-                {t.badge ? <span style={{ background: t.id === "orders" ? C.stat : C.red, color: "white", padding: "1px 6px", borderRadius: 10, fontSize: 9, fontWeight: 700 }}>{t.badge}</span> : null}
-              </button>
-            ))}
-          </div>
 
           {/* ══ ASSESSMENT TAB ══ */}
           {activeTab === "assessment" && (
@@ -477,6 +582,289 @@ function DoctorAssessmentContent({ selectedPatient }) {
                       <textarea style={{ ...fld, minHeight: 90, resize: "vertical" }} value={form.soap[s.k]} onChange={e => ssoap(s.k, e.target.value)} placeholder={s.ph} />
                     </FG>
                   ))}
+                </div>
+              </SectionCard>
+
+              {/* ── General Examination ── */}
+              <SectionCard title="🔍 General Examination">
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+                  <FG label="Level of Consciousness">
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 16px" }}>
+                      {["Alert & Oriented","Confused","Drowsy","Stuporous","Comatose"].map(opt => (
+                        <label key={opt} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, cursor: "pointer" }}>
+                          <input type="radio" name="consciousness" checked={form.consciousness === opt}
+                            onChange={() => sf("consciousness", opt)} style={{ accentColor: C.accent }} />
+                          {opt}
+                        </label>
+                      ))}
+                    </div>
+                  </FG>
+                  <FG label="Nutritional Status">
+                    <div style={{ display: "flex", gap: 16 }}>
+                      {["Well-Nourished","Malnourished","Cachectic"].map(opt => (
+                        <label key={opt} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, cursor: "pointer" }}>
+                          <input type="radio" name="nutritionalStatus" checked={form.nutritionalStatus === opt}
+                            onChange={() => sf("nutritionalStatus", opt)} style={{ accentColor: C.accent }} />
+                          {opt}
+                        </label>
+                      ))}
+                    </div>
+                  </FG>
+                </div>
+
+                {/* Physical Signs — PICLLEM */}
+                <div style={{ background: C.grayL, border: `1px solid ${C.border}`, borderRadius: 9, padding: "12px 16px", marginBottom: 16 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".7px", color: C.muted, marginBottom: 10 }}>Physical Signs (ICCPLE)</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(6,1fr)", gap: 10 }}>
+                    {[
+                      { key: "pallor",          label: "Pallor" },
+                      { key: "icterus",         label: "Icterus" },
+                      { key: "cyanosis",        label: "Cyanosis" },
+                      { key: "clubbing",        label: "Clubbing" },
+                      { key: "lymphadenopathy", label: "Lymphadenopathy" },
+                      { key: "pedalEdema",      label: "Pedal Edema" },
+                    ].map(({ key, label }) => (
+                      <div key={key} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 10px" }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: C.muted, marginBottom: 6 }}>{label}</div>
+                        <div style={{ display: "flex", gap: 10 }}>
+                          {["Present","Absent"].map(opt => (
+                            <label key={opt} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, cursor: "pointer" }}>
+                              <input type="radio" name={key} checked={form[key] === opt}
+                                onChange={() => sf(key, opt)}
+                                style={{ accentColor: opt === "Present" ? C.red : C.green }} />
+                              <span style={{ color: opt === "Present" && form[key] === "Present" ? C.red : opt === "Absent" && form[key] === "Absent" ? C.green : C.text, fontWeight: form[key] === opt ? 700 : 400 }}>{opt}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Pain Score VAS */}
+                <FG label={`Pain Score (VAS) — ${form.painScore}/10 · ${["No Pain","","Mild","","Moderate","","Moderately Severe","","Severe","","Worst Possible"][form.painScore] || ""}`}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <span style={{ fontSize: 11, color: C.green, fontWeight: 700 }}>0</span>
+                    <input type="range" min={0} max={10} step={1} value={form.painScore}
+                      onChange={e => sf("painScore", Number(e.target.value))}
+                      style={{ flex: 1, accentColor: form.painScore >= 7 ? C.red : form.painScore >= 4 ? C.amber : C.green }} />
+                    <span style={{ fontSize: 11, color: C.red, fontWeight: 700 }}>10</span>
+                    <span style={{
+                      minWidth: 28, textAlign: "center", padding: "4px 10px", borderRadius: 6, fontWeight: 800, fontSize: 15,
+                      background: form.painScore >= 7 ? C.redL : form.painScore >= 4 ? C.amberL : C.greenL,
+                      color: form.painScore >= 7 ? C.red : form.painScore >= 4 ? C.amber : C.green,
+                    }}>{form.painScore}</span>
+                  </div>
+                </FG>
+              </SectionCard>
+
+              {/* ── Systemic Examination ── */}
+              <SectionCard title="🫁 Systemic Examination" open={false}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                  {/* Respiratory */}
+                  <div style={{ background: C.blueL, border: `1px solid #bae6fd`, borderRadius: 10, padding: "12px 14px" }}>
+                    <div style={{ fontWeight: 700, fontSize: 12, color: "#0369a1", marginBottom: 10 }}>🫁 Respiratory System (RS)</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      <FG label="Breath Sounds">
+                        <select style={fld} value={form.rs.breathSounds} onChange={e => srs("breathSounds", e.target.value)}>
+                          <option value="">Select…</option>
+                          {["Clear","Vesicular","Bronchial","Diminished","Absent"].map(o => <option key={o}>{o}</option>)}
+                        </select>
+                      </FG>
+                      <FG label="Added Sounds">
+                        <select style={fld} value={form.rs.addedSounds} onChange={e => srs("addedSounds", e.target.value)}>
+                          <option value="">None</option>
+                          {["Crepitations","Rhonchi","Wheeze","Pleural Rub","Stridor"].map(o => <option key={o}>{o}</option>)}
+                        </select>
+                      </FG>
+                      <FG label="Percussion Note">
+                        <select style={fld} value={form.rs.percussionNote} onChange={e => srs("percussionNote", e.target.value)}>
+                          <option value="">Select…</option>
+                          {["Resonant","Dull","Stony Dull","Hyper-resonant","Tympanic"].map(o => <option key={o}>{o}</option>)}
+                        </select>
+                      </FG>
+                      <FG label="Trachea Position">
+                        <select style={fld} value={form.rs.tracheaPosition} onChange={e => srs("tracheaPosition", e.target.value)}>
+                          <option value="">Select…</option>
+                          {["Central","Shifted to Right","Shifted to Left"].map(o => <option key={o}>{o}</option>)}
+                        </select>
+                      </FG>
+                    </div>
+                  </div>
+
+                  {/* CVS */}
+                  <div style={{ background: C.redL, border: `1px solid #fecaca`, borderRadius: 10, padding: "12px 14px" }}>
+                    <div style={{ fontWeight: 700, fontSize: 12, color: C.red, marginBottom: 10 }}>❤️ Cardiovascular System (CVS)</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      <FG label="Heart Rhythm">
+                        <select style={fld} value={form.cvs.heartRhythm} onChange={e => scvs("heartRhythm", e.target.value)}>
+                          <option value="">Select…</option>
+                          {["Regular","Irregularly Irregular","Regularly Irregular"].map(o => <option key={o}>{o}</option>)}
+                        </select>
+                      </FG>
+                      <FG label="Heart Sounds">
+                        <select style={fld} value={form.cvs.heartSounds} onChange={e => scvs("heartSounds", e.target.value)}>
+                          <option value="">Select…</option>
+                          {["S1 S2 Normal","S1 S2 + S3","S1 S2 + S4","Muffled","Prosthetic Valve"].map(o => <option key={o}>{o}</option>)}
+                        </select>
+                      </FG>
+                      <FG label="Murmur">
+                        <input style={fld} value={form.cvs.murmur} onChange={e => scvs("murmur", e.target.value)} placeholder="Timing, grade, location…" />
+                      </FG>
+                      <FG label="JVP">
+                        <select style={fld} value={form.cvs.jvp} onChange={e => scvs("jvp", e.target.value)}>
+                          <option value="">Select…</option>
+                          {["Normal","Raised","Not Visible"].map(o => <option key={o}>{o}</option>)}
+                        </select>
+                      </FG>
+                    </div>
+                  </div>
+
+                  {/* Abdomen */}
+                  <div style={{ background: C.amberL, border: `1px solid #fde68a`, borderRadius: 10, padding: "12px 14px" }}>
+                    <div style={{ fontWeight: 700, fontSize: 12, color: C.amber, marginBottom: 10 }}>🫃 Abdomen</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      <FG label="Tenderness">
+                        <input style={fld} value={form.abdomen.tenderness} onChange={e => sabd("tenderness", e.target.value)} placeholder="Location of tenderness…" />
+                      </FG>
+                      <FG label="Organomegaly">
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px" }}>
+                          {["Hepatomegaly","Splenomegaly","Renal Mass","None"].map(o => (
+                            <label key={o} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer" }}>
+                              <input type="checkbox"
+                                checked={(form.abdomen.organomegaly || []).includes(o)}
+                                onChange={e => {
+                                  const arr = e.target.checked
+                                    ? [...(form.abdomen.organomegaly || []), o]
+                                    : (form.abdomen.organomegaly || []).filter(x => x !== o);
+                                  sabd("organomegaly", arr);
+                                }} style={{ accentColor: C.amber }} />
+                              {o}
+                            </label>
+                          ))}
+                        </div>
+                      </FG>
+                      <FG label="Bowel Sounds">
+                        <select style={fld} value={form.abdomen.bowelSounds} onChange={e => sabd("bowelSounds", e.target.value)}>
+                          <option value="">Select…</option>
+                          {["Normal","Increased","Decreased","Absent"].map(o => <option key={o}>{o}</option>)}
+                        </select>
+                      </FG>
+                      <FG label="Ascites">
+                        <select style={fld} value={form.abdomen.ascites} onChange={e => sabd("ascites", e.target.value)}>
+                          <option value="">Select…</option>
+                          {["Absent","Mild","Moderate","Gross"].map(o => <option key={o}>{o}</option>)}
+                        </select>
+                      </FG>
+                    </div>
+                  </div>
+
+                  {/* CNS */}
+                  <div style={{ background: C.purpleL, border: `1px solid #ddd6fe`, borderRadius: 10, padding: "12px 14px" }}>
+                    <div style={{ fontWeight: 700, fontSize: 12, color: C.purple, marginBottom: 10 }}>🧠 CNS / Neuro</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      <FG label="Motor System">
+                        <select style={fld} value={form.cns.motorSystem} onChange={e => scns("motorSystem", e.target.value)}>
+                          <option value="">Select…</option>
+                          {["Normal","Hemiparesis","Hemiplegia","Paraparesis","Paraplegia","Quadriparesis","Quadriplegia","Focal Deficit"].map(o => <option key={o}>{o}</option>)}
+                        </select>
+                      </FG>
+                      {form.cns.motorSystem && form.cns.motorSystem !== "Normal" && (
+                        <FG label="Affected Side">
+                          <select style={fld} value={form.cns.motorSide} onChange={e => scns("motorSide", e.target.value)}>
+                            <option value="">Select…</option>
+                            {["Right","Left","Bilateral"].map(o => <option key={o}>{o}</option>)}
+                          </select>
+                        </FG>
+                      )}
+                      <FG label="Tone">
+                        <select style={fld} value={form.cns.tone} onChange={e => scns("tone", e.target.value)}>
+                          <option value="">Select…</option>
+                          {["Normal","Hypertonia","Hypotonia","Flaccid"].map(o => <option key={o}>{o}</option>)}
+                        </select>
+                      </FG>
+                      <FG label="Reflexes (DTR/Plantar)">
+                        <input style={fld} value={form.cns.reflexes} onChange={e => scns("reflexes", e.target.value)} placeholder="e.g. DTR+2, Plantar flexor…" />
+                      </FG>
+                      <FG label="Speech">
+                        <select style={fld} value={form.cns.speech} onChange={e => scns("speech", e.target.value)}>
+                          <option value="">Select…</option>
+                          {["Normal","Slurred","Aphasia","Dysarthria","Non-verbal"].map(o => <option key={o}>{o}</option>)}
+                        </select>
+                      </FG>
+                    </div>
+                  </div>
+                </div>
+              </SectionCard>
+
+              {/* ── Additional History ── */}
+              <SectionCard title="📋 Additional History" open={false}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+                  <FG label="Current Medications">
+                    <textarea style={{ ...fld, minHeight: 70, resize: "vertical" }} value={form.currentMedication}
+                      onChange={e => sf("currentMedication", e.target.value)} placeholder="Ongoing drugs, doses…" />
+                  </FG>
+                  <FG label="Family / Personal History">
+                    <textarea style={{ ...fld, minHeight: 70, resize: "vertical" }} value={form.familyHistory}
+                      onChange={e => sf("familyHistory", e.target.value)} placeholder="Family illness, personal habits…" />
+                  </FG>
+                  <FG label="Birth History / Milestones (Paeds)">
+                    <textarea style={{ ...fld, minHeight: 70, resize: "vertical" }} value={form.birthHistory}
+                      onChange={e => sf("birthHistory", e.target.value)} placeholder="Applicable for paediatric patients…" />
+                  </FG>
+                </div>
+              </SectionCard>
+
+              {/* ── Restraints / MLC ── */}
+              <SectionCard title="⚠️ Restraints / MLC" open={false}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                  <FG label="Restraints Used">
+                    <div style={{ display: "flex", gap: 16 }}>
+                      {["No","Yes"].map(opt => (
+                        <label key={opt} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
+                          <input type="radio" name="restraints" checked={form.restraints === opt}
+                            onChange={() => sf("restraints", opt)}
+                            style={{ accentColor: opt === "Yes" ? C.red : C.green }} />
+                          <span style={{ fontWeight: 700, color: opt === "Yes" && form.restraints === "Yes" ? C.red : C.text }}>{opt}</span>
+                        </label>
+                      ))}
+                    </div>
+                    {form.restraints === "Yes" && (
+                      <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+                        <FG label="Type">
+                          <div style={{ display: "flex", gap: 12 }}>
+                            {["Physical","Chemical","Both"].map(t => (
+                              <label key={t} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, cursor: "pointer" }}>
+                                <input type="radio" name="restraintType" checked={form.restraintType === t}
+                                  onChange={() => sf("restraintType", t)} style={{ accentColor: C.red }} />
+                                {t}
+                              </label>
+                            ))}
+                          </div>
+                        </FG>
+                        <FG label="Justification / Comments">
+                          <textarea style={{ ...fld, minHeight: 60, resize: "vertical" }} value={form.restraintComment}
+                            onChange={e => sf("restraintComment", e.target.value)} placeholder="Reason for restraint, review plan…" />
+                        </FG>
+                      </div>
+                    )}
+                  </FG>
+                  <div>
+                    <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".7px", color: C.muted, marginBottom: 6 }}>MLC Status</div>
+                    {patient?.mlcNumber || patient?.MLC ? (
+                      <div style={{ background: C.redL, border: `1.5px solid #fca5a5`, borderRadius: 8, padding: "10px 14px", display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ fontSize: 20 }}>⚠️</span>
+                        <div>
+                          <div style={{ fontWeight: 700, color: C.red, fontSize: 13 }}>MEDICO-LEGAL CASE</div>
+                          <div style={{ fontSize: 12, color: C.muted }}>MLC No: {patient.mlcNumber || patient.MLC}</div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ background: C.greenL, border: `1px solid #86efac`, borderRadius: 8, padding: "10px 14px", fontSize: 13, color: C.green }}>
+                        ✓ Not an MLC case
+                      </div>
+                    )}
+                  </div>
                 </div>
               </SectionCard>
 
@@ -559,14 +947,28 @@ function DoctorAssessmentContent({ selectedPatient }) {
                 </div>
               )}
 
-              {/* Save buttons */}
+              {/* Save buttons + Auto-save indicator + Signature */}
               {isOwner ? (
-                <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginBottom: 24 }}>
-                  <button onClick={() => saveNote("draft")} disabled={loading}
-                    style={{ padding: "10px 24px", border: `1.5px solid ${C.border}`, borderRadius: 8, background: "white", color: C.muted, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>💾 Save Draft</button>
-                  <button onClick={() => saveNote("signed")} disabled={loading}
-                    style={{ padding: "10px 24px", background: C.green, color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>✅ Sign & Submit</button>
-                </div>
+                <>
+                  {/* Signature stamp row */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
+                    <AutoSaveIndicator savedAt={savedAt} hasDraft={hasDraft} />
+                    <SignatureStamp
+                      signature={signature}
+                      userName={form.doctorName || doctorDisplayName}
+                      role="Doctor"
+                      regNo={form.doctorRegNo || doctorReg}
+                      timestamp={null}
+                      onSetup={() => setShowSetup(true)}
+                    />
+                  </div>
+                  <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginBottom: 24 }}>
+                    <button onClick={() => saveNote("draft")} disabled={loading}
+                      style={{ padding: "10px 24px", border: `1.5px solid ${C.border}`, borderRadius: 8, background: "white", color: C.muted, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>💾 Save Draft</button>
+                    <button onClick={() => saveNote("signed")} disabled={loading}
+                      style={{ padding: "10px 24px", background: C.green, color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>✅ Sign & Submit</button>
+                  </div>
+                </>
               ) : (
                 <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginBottom: 24 }}>
                   <div style={{ padding: "10px 18px", background: "#fef3c7", border: "1.5px solid #fcd34d", borderRadius: 8, color: "#92400e", fontSize: 12, fontWeight: 600 }}>
@@ -756,6 +1158,20 @@ function DoctorAssessmentContent({ selectedPatient }) {
         <div style={{ position: "fixed", bottom: 22, right: 22, zIndex: 9999, background: C.slate, color: "white", padding: "11px 16px", borderRadius: 9, fontSize: 12, fontWeight: 500, display: "flex", alignItems: "center", gap: 9, boxShadow: "0 6px 24px rgba(0,0,0,.3)", borderLeft: `4px solid ${toast.type === "ok" ? C.green : toast.type === "err" ? C.red : C.amber}` }}>
           {toast.msg}
         </div>
+      )}
+
+      {/* ── Digital Signature Setup Modal ── */}
+      {showSetup && (
+        <SignaturePad
+          existing={signature}
+          userName={form.doctorName || doctorDisplayName}
+          onSave={async (dataUrl) => {
+            await saveSignature(dataUrl);
+            setShowSetup(false);
+            showToast("Signature saved — will be auto-embedded in all signed documents", "ok");
+          }}
+          onCancel={() => setShowSetup(false)}
+        />
       )}
     </div>
   );

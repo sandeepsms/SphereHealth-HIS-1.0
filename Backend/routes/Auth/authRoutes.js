@@ -49,6 +49,7 @@ router.post("/login", async (req, res) => {
         lastLogin: user.lastLogin,
         doctorDetails: user.doctorDetails,
         nurseDetails: user.nurseDetails,
+        signature: user.signature || null,
       },
     });
   } catch (err) {
@@ -72,6 +73,51 @@ router.get("/me", async (req, res) => {
       return res.status(404).json({ message: "User not found" });
 
     res.json({ user });
+  } catch (err) {
+    res.status(401).json({ message: "Invalid or expired token" });
+  }
+});
+
+/* ── PATCH /api/auth/signature ── save user's digital signature */
+router.patch("/signature", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer "))
+      return res.status(401).json({ message: "No token provided" });
+
+    const token = authHeader.split(" ")[1];
+    const decoded = jwt.verify(token, JWT_SECRET);
+
+    const { signature } = req.body;
+    if (!signature) return res.status(400).json({ message: "Signature data required" });
+
+    const user = await User.findByIdAndUpdate(
+      decoded.id,
+      { signature },
+      { new: true, select: "-password" }
+    );
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    res.json({ message: "Signature saved", signature: user.signature });
+  } catch (err) {
+    res.status(401).json({ message: "Invalid or expired token" });
+  }
+});
+
+/* ── GET /api/auth/signature ── get user's digital signature */
+router.get("/signature", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer "))
+      return res.status(401).json({ message: "No token provided" });
+
+    const token = authHeader.split(" ")[1];
+    const decoded = jwt.verify(token, JWT_SECRET);
+
+    const user = await User.findById(decoded.id).select("signature fullName firstName lastName role");
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    res.json({ signature: user.signature || null });
   } catch (err) {
     res.status(401).json({ message: "Invalid or expired token" });
   }

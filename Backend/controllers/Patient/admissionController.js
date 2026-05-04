@@ -384,6 +384,33 @@ class AdmissionController {
       },
     });
   });
+  /**
+   * PUT /:id/initial-assessment
+   * Body: { role: "doctor" | "nurse", name: "Dr. XYZ" }
+   * Marks doctor or nurse initial assessment as completed.
+   */
+  markInitialAssessment = handle(async (req, res) => {
+    const Admission = require("../../models/Patient/admissionModel");
+    const { role, name = "" } = req.body;
+    if (!["doctor", "nurse"].includes(role))
+      return res.status(400).json({ success: false, message: 'role must be "doctor" or "nurse"' });
+
+    const admission = await Admission.findById(req.params.id);
+    if (!admission) return res.status(404).json({ success: false, message: "Admission not found" });
+
+    const now = new Date();
+    if (role === "doctor") {
+      admission.initialAssessment.doctorCompleted   = true;
+      admission.initialAssessment.doctorCompletedAt = now;
+      admission.initialAssessment.doctorName        = name;
+    } else {
+      admission.initialAssessment.nurseCompleted   = true;
+      admission.initialAssessment.nurseCompletedAt = now;
+      admission.initialAssessment.nurseName        = name;
+    }
+    await admission.save();
+    return res.json({ success: true, message: `${role} initial assessment marked complete`, data: admission.initialAssessment });
+  });
 }
 
 module.exports = new AdmissionController();

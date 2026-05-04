@@ -205,18 +205,23 @@ class OPDService {
 
   /* ── Nurse updates vitals ── */
   async updateVitals(visitNumber, vitalsData, nurseName) {
+    const { chiefComplaint, allergyHistory, ...pureVitals } = vitalsData;
+
     const update = {
-      vitals: vitalsData,
+      vitals: pureVitals,
       vitalsStatus: "Done",
       vitalsEnteredBy: nurseName || "Nurse",
       vitalsEnteredAt: new Date(),
       status: "In Progress",
     };
 
+    if (chiefComplaint)  update.chiefComplaint  = chiefComplaint;
+    if (allergyHistory)  update.allergyHistory  = allergyHistory;
+
     // Compute BMI
-    if (vitalsData.weight && vitalsData.height) {
-      const h = vitalsData.height / 100;
-      update.vitals.bmi = parseFloat((vitalsData.weight / (h * h)).toFixed(2));
+    if (pureVitals.weight && pureVitals.height) {
+      const h = pureVitals.height / 100;
+      update.vitals.bmi = parseFloat((pureVitals.weight / (h * h)).toFixed(2));
     }
 
     const updatedVisit = await OPD.findOneAndUpdate({ visitNumber }, update, { new: true });
@@ -255,6 +260,18 @@ class OPDService {
       assessedBy:            doctorName || "Doctor",
       assessedAt:            new Date(),
       status:                "Completed",
+      // HOPI — structured history
+      hopiOnset:              assessmentData.hopiOnset              || "",
+      hopiDurationValue:      assessmentData.hopiDurationValue      || "",
+      hopiDurationUnit:       assessmentData.hopiDurationUnit       || "",
+      hopiProgression:        assessmentData.hopiProgression        || "",
+      hopiCharacter:          assessmentData.hopiCharacter          || "",
+      hopiAssociatedSymptoms: assessmentData.hopiAssociatedSymptoms || [],
+      hopiAggravating:        assessmentData.hopiAggravating        || "",
+      hopiRelieving:          assessmentData.hopiRelieving          || "",
+      // Chronic illnesses
+      chronicConditions:      assessmentData.chronicConditions      || [],
+      chronicOthers:          assessmentData.chronicOthers          || "",
     };
 
     const updatedVisit = await OPD.findOneAndUpdate({ visitNumber }, update, { new: true });

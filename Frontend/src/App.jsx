@@ -4,6 +4,7 @@ import {
   Routes,
   Route,
   Navigate,
+  useLocation,
 } from "react-router-dom";
 import "./App.css";
 import Sidebar from "./Components/Sidebar";
@@ -11,11 +12,9 @@ import Registration from "./Components/Registration";
 import Header from "./Components/Header";
 import PatientsTable from "./Components/PatientsTable";
 import "bootstrap/dist/css/bootstrap.css";
-import Doctor from "./Components/Doctor";
 import Nurse from "./Components/Nurse";
 import Servicebtn from "./Components/Servicebtn";
 import OPDPrint from "./pages/OPD/OPDPrint";
-import DoctorPrePrint from "./pages/doctor/DoctorPrePrint";
 import ServiceAlldata from "./Components/ServiceAlldata";
 import DepartmentManagement from "../src/pages/Department/DepartmentManagement";
 
@@ -50,13 +49,13 @@ import Emergencylist from "./pages/emergency/EmergencyList";
 import EmergencyForm from "./pages/emergency/EmergencyForm";
 import EmergencyDetails from "./pages/emergency/EmergencyDetails";
 import EmergencyRegistrationPage from "./pages/emergency/EmergencyRegistrationPage";
+import EmergencyAssessmentPage from "./pages/emergency/EmergencyAssessmentPage";
 
 // Doctors
 import DoctorFormPage from "./pages/doctor/DoctorFormPage";
 import DoctorListPage from "./pages/doctor/DoctorListPage";
 import DoctorForm from "./Components/doctor/DoctorForm";
 
-import DoctorPrescription from "./Components/doctor/DoctorPreception";
 
 // TPA & Services
 import ServiceAdd from "./Components/Tpa/TPAServiceManagement";
@@ -80,12 +79,11 @@ import BillingIntelligencePage from "./pages/billing/BillingIntelligencePage";
 import BillingAuditTrailPage from "./pages/billing/BillingAuditTrailPage";
 import MainPage from "./pages/mainPage/MainPage";
 import NursingNotes from "./pages/nursing/NursingNotes";
-// import { PopupProvider } from "./Components/contextapi/ContextApi";
 import UpdateVitalSheet from "./Components/vital/UpdateVitalSheet";
 import VitalSheet from "./Components/vital/VitalSheet";
 import VitalsView from "./Components/vital/VitalsView";
 import NursingHandoverNotes from "./pages/nursing/NursingHandoverNotes";
-import { AuthProvider } from "./context/AuthContext";
+import { AuthProvider, useAuth } from "./context/AuthContext";
 
 // Clinical pages
 import OPDRegistrationPage from "./pages/registration/OPDRegistrationPage";
@@ -96,6 +94,7 @@ import PatientHistoryPage from "./pages/patient/PatientHistoryPage";
 import MARPage from "./pages/clinical/MARPage";
 import DischargeSummaryPage from "./pages/clinical/DischargeSummaryPage";
 import ConsentFormPage from "./pages/clinical/ConsentFormPage";
+import IPDInitialAssessmentPage from "./pages/clinical/IPDInitialAssessmentPage";
 import NurseInitialAssessmentPage from "./pages/nursing/NurseInitialAssessmentPage";
 import IPDAdmissionPage from "./pages/ipd/IPDAdmissionPage";
 import DoctorAssessmentPage from "./pages/doctor/DoctorAssessmentPage";
@@ -111,194 +110,218 @@ import DailyNursingAssessmentPage from "./pages/nursing/DailyNursingAssessmentPa
 import PatientEducationPage from "./pages/nursing/PatientEducationPage";
 import BillPrintPage from "./pages/billing/BillPrintPage";
 import HospitalSettingsPage from "./pages/admin/HospitalSettingsPage";
+import UserManagementPage from "./pages/admin/UserManagementPage";
+import LoginPage from "./pages/auth/LoginPage";
 import { HospitalSettingsProvider } from "./context/HospitalSettingsContext";
 
+
+/* ── Full-page loading spinner while session restores ── */
+function AppLoader() {
+  return (
+    <div style={{
+      display: "flex", flexDirection: "column", alignItems: "center",
+      justifyContent: "center", height: "100vh",
+      background: "linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #1e3a8a 100%)",
+    }}>
+      <div style={{
+        width: 56, height: 56, background: "#1e40af", borderRadius: 14,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        marginBottom: 20, boxShadow: "0 8px 32px rgba(30,64,175,.5)",
+      }}>
+        <span style={{ fontSize: 26, fontWeight: 900, color: "#fff" }}>S</span>
+      </div>
+      <i className="pi pi-spin pi-spinner" style={{ fontSize: 28, color: "#38bdf8", marginBottom: 14 }} />
+      <div style={{ fontSize: 13, color: "#64748b" }}>Loading SphereHealth HIS…</div>
+    </div>
+  );
+}
+
+/* ── Inner app — uses hooks that require Router context ── */
+function AppLayout({ collapsed, setCollapsed }) {
+  const { user, loading } = useAuth();
+  const location = useLocation();
+
+  /* Show spinner during initial session restore */
+  if (loading) return <AppLoader />;
+
+  const isLogin    = location.pathname === "/login";
+  const isBillPrint = location.pathname.startsWith("/bill-print/");
+
+  /* Redirect unauthenticated users to login */
+  if (!user && !isLogin) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  /* Bill print page — standalone, no chrome */
+  if (isBillPrint && user) {
+    return (
+      <Routes>
+        <Route path="/bill-print/:billId" element={<BillPrintPage />} />
+      </Routes>
+    );
+  }
+
+  /* Login page — no header / sidebar */
+  if (isLogin) {
+    return (
+      <Routes>
+        <Route path="/login" element={user ? <Navigate to="/mainpage" replace /> : <LoginPage />} />
+      </Routes>
+    );
+  }
+
+  /* ── Main app shell (authenticated) ── */
+  return (
+    <div>
+      <Header />
+      <Sidebar collapsed={collapsed} setCollapsed={setCollapsed} />
+      <div
+        className={`main-content ${collapsed ? "expanded" : ""}`}
+        style={{
+          marginTop: 52,
+          minHeight: "calc(100vh - 52px)",
+          background: "#f8fafc",
+        }}
+      >
+        <Routes>
+          {/* ── Dashboard ─────────────────────────────────────── */}
+          <Route path="/dashboard1" element={<Dashboard1 />} />
+          <Route path="/dash" element={<Dashboard1 />} />
+
+          {/* ── Patient Registration ──────────────────────────── */}
+          <Route path="/registration/:typedata" element={<Registration />} />
+          <Route path="/registration/:typedata/:id" element={<Registration />} />
+          <Route path="/allpatient" element={<PatientsTable />} />
+
+          {/* ── Doctors ──────────────────────────────────────── */}
+          <Route path="/doctors" element={<DoctorListPage />} />
+          <Route path="/doctors/new" element={<DoctorFormPage />} />
+          <Route path="/doctors/:doctorId/edit" element={<DoctorFormPage />} />
+
+          {/* ── Nursing ──────────────────────────────────────── */}
+          <Route path="/nursing-notes" element={<NursingNotes />} />
+          <Route path="/nursing-handover-notes" element={<NursingHandoverNotes />} />
+
+          {/* ── OPD ──────────────────────────────────────────── */}
+          <Route path="/opd/:UHID" element={<OPDPrint />} />
+          <Route path="/opd-visit" element={<OPList />} />
+          <Route path="/opd/new" element={<OPDForm />} />
+          <Route path="/opd/edit/:visitNumber" element={<OPDForm />} />
+          <Route path="/opd/:visitNumber" element={<OPDDetails />} />
+
+          {/* ── Emergency ─────────────────────────────────────── */}
+          <Route path="/emergency-assessment" element={<EmergencyAssessmentPage />} />
+          <Route path="/emergency-assessment/:uhid" element={<EmergencyAssessmentPage />} />
+          <Route path="/emergency" element={<Emergencylist />} />
+          <Route path="/emergency/register" element={<EmergencyRegistrationPage />} />
+          <Route path="/emergency/new" element={<EmergencyForm />} />
+          <Route path="/emergency/edit/:emergencyNumber" element={<EmergencyForm />} />
+          <Route path="/emergency/:emergencyNumber" element={<EmergencyDetails />} />
+
+          {/* ── Vitals ───────────────────────────────── */}
+          <Route path="/updateVitalSheet" element={<UpdateVitalSheet />} />
+          <Route path="/vitalSheet" element={<VitalSheet />} />
+          <Route path="/vitalsView" element={<VitalsView />} />
+
+          {/* ── Patients Module ───────────────────────────────── */}
+          <Route path="/patients" element={<PatientList />} />
+          <Route path="/patients/new" element={<PatientForm />} />
+          <Route path="/patients/edit/:id" element={<PatientForm />} />
+          <Route path="/patients/:id" element={<PatientDetails />} />
+
+          {/* ── Services & TPA ────────────────────────────────── */}
+          <Route path="/addservice" element={<ServiceAdd />} />
+          <Route path="/addtpa" element={<AddTpa />} />
+          <Route path="/ServiceAlldata" element={<ServiceAlldata />} />
+
+          {/* ── Department ────────────────────────────────────── */}
+          <Route path="/department" element={<DepartmentManagement />} />
+
+          {/* ── Bed Management ────────────────────────────────── */}
+          <Route path="/beds" element={<BedManagement />} />
+          <Route path="/bed-visual" element={<BedVisualLayout />} />
+          <Route path="/rooms" element={<RoomManagement />} />
+          <Route path="/roomcategory" element={<AddRoomCategory />} />
+          <Route path="/wards" element={<WardManagement />} />
+          <Route path="/buildings" element={<BuildingManagement />} />
+          <Route path="/floors" element={<FloorManagement />} />
+
+          {/* ── Hospital Charges ──────────────────────────────── */}
+          <Route path="/hospital-charges" element={<HospitalChargesList />} />
+          <Route path="/hospital-charges/create" element={<CreateHospitalCharges />} />
+          <Route path="/hospital-charges/edit/:id" element={<EditHospitalCharges />} />
+
+          {/* ── Old Billing (existing) ────────────────────────── */}
+          <Route path="/billing" element={<BillsList />} />
+          <Route path="/billing/create/:prescriptionId" element={<BillGeneration />} />
+          <Route path="/billing/view/:billId" element={<BillGeneration />} />
+          <Route path="/billing/edit/:billId" element={<BillGeneration />} />
+          <Route path="/bills" element={<Navigate to="/billing" replace />} />
+
+          {/* ── New Billing System ──────────────── */}
+          <Route path="/patient-billing" element={<PatientBilling />} />
+          <Route path="/patient-billing/:uhid" element={<PatientBilling />} />
+          <Route path="/service-master" element={<ServiceMasterManager />} />
+          <Route path="/chargeable-services" element={<ChargeableServices />} />
+
+          {/* ── AI Billing Intelligence ──────────────────────── */}
+          <Route path="/billing-intelligence" element={<BillingIntelligencePage />} />
+          <Route path="/billing-intelligence/:uhid" element={<BillingIntelligencePage />} />
+
+          {/* ── Billing Audit Trail ──────────────────────────── */}
+          <Route path="/billing-audit-trail" element={<BillingAuditTrailPage />} />
+          <Route path="/billing-audit-trail/:uhid" element={<BillingAuditTrailPage />} />
+
+          {/* ── Main / Default ───────────────────────────────── */}
+          <Route path="/" element={<Navigate to="/mainpage" />} />
+          <Route path="/mainpage" element={<MainPage />} />
+
+          {/* ── Clinical pages ── */}
+          <Route path="/opd-register" element={<OPDRegistrationPage />} />
+          <Route path="/opd-queue" element={<NurseOPDQueuePage />} />
+          <Route path="/nurse-patient-panel" element={<NursePatientPanel />} />
+          <Route path="/doctor-opd-panel" element={<DoctorOPDPanelPage />} />
+          <Route path="/patient-history" element={<PatientHistoryPage />} />
+          <Route path="/mar" element={<MARPage />} />
+          <Route path="/discharge-summary" element={<DischargeSummaryPage />} />
+          <Route path="/consent-forms" element={<ConsentFormPage />} />
+          <Route path="/nurse-initial-assessment" element={<NurseInitialAssessmentPage />} />
+          <Route path="/ipd-initial-assessment" element={<IPDInitialAssessmentPage />} />
+          <Route path="/ipd-admission" element={<IPDAdmissionPage />} />
+          <Route path="/doctor-assessment" element={<DoctorAssessmentPage />} />
+          <Route path="/opd-assessment" element={<OPDAssessmentPage />} />
+          <Route path="/doctor-patient-panel" element={<DoctorPatientPanel />} />
+          <Route path="/doctor-notes" element={<DoctorNotesPage />} />
+          <Route path="/nursing-care-plan" element={<NursingCarePlanPage />} />
+          <Route path="/fall-risk-assessment" element={<FallRiskAssessmentPage />} />
+          <Route path="/pressure-area-care" element={<PressureAreaCarePage />} />
+          <Route path="/pain-assessment" element={<PainAssessmentPage />} />
+          <Route path="/nutritional-assessment" element={<NutritionalAssessmentPage />} />
+          <Route path="/daily-nursing-assessment" element={<DailyNursingAssessmentPage />} />
+          <Route path="/patient-education" element={<PatientEducationPage />} />
+
+          {/* ── Admin ──────────────────────────────────────────── */}
+          <Route path="/hospital-settings" element={<HospitalSettingsPage />} />
+          <Route path="/admin/users" element={<UserManagementPage />} />
+
+          {/* ── Catch-all: redirect to dashboard ── */}
+          <Route path="*" element={<Navigate to="/mainpage" replace />} />
+        </Routes>
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
   const [collapsed, setCollapsed] = useState(false);
 
   return (
     <AuthProvider>
-    <HospitalSettingsProvider>
-    <div>
-      <Router>
-        <Header />
-
-        <Sidebar collapsed={collapsed} setCollapsed={setCollapsed} />
-        <div
-          className={`main-content ${collapsed ? "expanded" : ""}`}
-          style={{
-            marginTop: 52,
-            minHeight: "calc(100vh - 52px)",
-            background: "#f8fafc",
-          }}
-        >
-          <Routes>
-            {/* ── Dashboard ─────────────────────────────────────── */}
-            <Route path="/dashboard1" element={<Dashboard1 />} />
-            <Route path="/dash" element={<Dashboard1 />} />
-
-            {/* ── Patient Registration ──────────────────────────── */}
-            <Route path="/registration/:typedata" element={<Registration />} />
-
-            <Route
-              path="/registration/:typedata/:id"
-              element={<Registration />}
-            />
-            {/* <Route path="/registration" element={<Registration />} /> */}
-
-            <Route path="/allpatient" element={<PatientsTable />} />
-
-            {/* ── Doctor Prescription ──────────────────────────── */}
-            <Route
-              path="/doctorpre/:UHID/:TpaId?"
-              element={<DoctorPrescription />}
-            />
-            <Route path="/doctorpre/:UHID" element={<DoctorPrescription />} />
-            <Route path="/preceptionprint/:UHID" element={<DoctorPrePrint />} />
-
-            {/* ── Doctors ──────────────────────────────────────── */}
-            <Route path="/doctor/:UHID" element={<Doctor />} />
-            <Route path="/doctors" element={<DoctorListPage />} />
-            <Route path="/doctors/new" element={<DoctorFormPage />} />
-            <Route
-              path="/doctors/:doctorId/edit"
-              element={<DoctorFormPage />}
-            />
-
-              {/* ── Nursing ──────────────────────────────────────────── */} 
-            <Route path="/nursing-notes" element={<NursingNotes />} />
-             <Route path="/nursing-handover-notes" element={<NursingHandoverNotes />} />
-
-            {/* ── OPD ──────────────────────────────────────────── */}
-            <Route path="/opd/:UHID" element={<OPDPrint />} />
-            <Route path="/opd-visit" element={<OPList />} />
-            <Route path="/opd/new" element={<OPDForm />} />
-            <Route path="/opd/edit/:visitNumber" element={<OPDForm />} />
-            <Route path="/opd/:visitNumber" element={<OPDDetails />} />
-
-            {/* ── Emergency ─────────────────────────────────────── */}
-            <Route path="/emergency" element={<Emergencylist />} />
-            <Route path="/emergency/register" element={<EmergencyRegistrationPage />} />
-            <Route path="/emergency/new" element={<EmergencyForm />} />
-            <Route
-              path="/emergency/edit/:emergencyNumber"
-              element={<EmergencyForm />}
-            />
-            <Route
-              path="/emergency/:emergencyNumber"
-              element={<EmergencyDetails />}
-            />
-
-            {/* ── Vitals ───────────────────────────────── */}
-
-            <Route path="/updateVitalSheet" element={<UpdateVitalSheet />} />
-            <Route path="/vitalSheet" element={<VitalSheet />} />
-            <Route path="/vitalsView" element={<VitalsView />} />
-
-            {/* ── Patients Module ───────────────────────────────── */}
-            <Route path="/patients" element={<PatientList />} />
-            <Route path="/patients/new" element={<PatientForm />} />
-            <Route path="/patients/edit/:id" element={<PatientForm />} />
-            <Route path="/patients/:id" element={<PatientDetails />} />
-
-            {/* ── Services & TPA ────────────────────────────────── */}
-            <Route path="/addservice" element={<ServiceAdd />} />
-            <Route path="/addtpa" element={<AddTpa />} />
-            <Route path="/ServiceAlldata" element={<ServiceAlldata />} />
-
-            {/* ── Department ────────────────────────────────────── */}
-            <Route path="/department" element={<DepartmentManagement />} />
-
-            {/* ── Bed Management ────────────────────────────────── */}
-            <Route path="/beds" element={<BedManagement />} />
-            <Route path="/bed-visual" element={<BedVisualLayout />} />
-            <Route path="/rooms" element={<RoomManagement />} />
-            <Route path="/roomcategory" element={<AddRoomCategory />} />
-            <Route path="/wards" element={<WardManagement />} />
-            <Route path="/buildings" element={<BuildingManagement />} />
-            <Route path="/floors" element={<FloorManagement />} />
-
-            {/* ── Hospital Charges ──────────────────────────────── */}
-            <Route path="/hospital-charges" element={<HospitalChargesList />} />
-            <Route
-              path="/hospital-charges/create"
-              element={<CreateHospitalCharges />}
-            />
-            <Route
-              path="/hospital-charges/edit/:id"
-              element={<EditHospitalCharges />}
-            />
-
-            {/* ── Old Billing (existing) ────────────────────────── */}
-            <Route path="/billing" element={<BillsList />} />
-            <Route
-              path="/billing/create/:prescriptionId"
-              element={<BillGeneration />}
-            />
-            <Route path="/billing/view/:billId" element={<BillGeneration />} />
-            <Route path="/billing/edit/:billId" element={<BillGeneration />} />
-            <Route path="/bills" element={<Navigate to="/billing" replace />} />
-
-            {/* ── New Billing System (billing-v3) ──────────────── */}
-
-            {/* Patient Billing — UHID se bill open hoga */}
-            {/* /patient-billing          → blank, UHID search bar dikhega */}
-            {/* /patient-billing/:uhid    → direct UHID se bill load */}
-            <Route path="/patient-billing" element={<PatientBilling />} />
-            <Route path="/patient-billing/:uhid" element={<PatientBilling />} />
-
-            {/* Service Master — admin page, sabhi hospital services manage karo */}
-            <Route path="/service-master" element={<ServiceMasterManager />} />
-
-            {/* Chargeable Services — domain-wise service management (OPD/IPD/Emergency/DayCare) */}
-            <Route path="/chargeable-services" element={<ChargeableServices />} />
-
-            {/* ── AI Billing Intelligence ─────────────────────────── */}
-            <Route path="/billing-intelligence" element={<BillingIntelligencePage />} />
-            <Route path="/billing-intelligence/:uhid" element={<BillingIntelligencePage />} />
-
-            {/* ── Billing Audit Trail ──────────────────────────────── */}
-            <Route path="/billing-audit-trail" element={<BillingAuditTrailPage />} />
-            <Route path="/billing-audit-trail/:uhid" element={<BillingAuditTrailPage />} />
-            <Route path="/" element={<Navigate to="/mainpage" />} />
-            <Route path="/mainpage" element={<MainPage />} />
-
-            {/* ── Clinical pages ── */}
-            <Route path="/opd-register" element={<OPDRegistrationPage />} />
-            <Route path="/opd-queue" element={<NurseOPDQueuePage />} />
-            <Route path="/nurse-patient-panel" element={<NursePatientPanel />} />
-            <Route path="/doctor-opd-panel" element={<DoctorOPDPanelPage />} />
-            <Route path="/patient-history" element={<PatientHistoryPage />} />
-            <Route path="/mar" element={<MARPage />} />
-            <Route path="/discharge-summary" element={<DischargeSummaryPage />} />
-            <Route path="/consent-forms" element={<ConsentFormPage />} />
-            <Route path="/nurse-initial-assessment" element={<NurseInitialAssessmentPage />} />
-            <Route path="/ipd-admission" element={<IPDAdmissionPage />} />
-            <Route path="/doctor-assessment" element={<DoctorAssessmentPage />} />
-            <Route path="/opd-assessment" element={<DoctorNotesPage />} />
-            <Route path="/doctor-patient-panel" element={<DoctorPatientPanel />} />
-            <Route path="/doctor-notes" element={<DoctorNotesPage />} />
-            <Route path="/nursing-care-plan" element={<NursingCarePlanPage />} />
-            <Route path="/fall-risk-assessment" element={<FallRiskAssessmentPage />} />
-            <Route path="/pressure-area-care" element={<PressureAreaCarePage />} />
-            <Route path="/pain-assessment" element={<PainAssessmentPage />} />
-            <Route path="/nutritional-assessment" element={<NutritionalAssessmentPage />} />
-            <Route path="/daily-nursing-assessment" element={<DailyNursingAssessmentPage />} />
-            <Route path="/patient-education" element={<PatientEducationPage />} />
-            <Route path="/hospital-settings" element={<HospitalSettingsPage />} />
-
-            {/* ── Bill Print (standalone, covers sidebar with fixed overlay) ── */}
-            <Route path="/bill-print/:billId" element={<BillPrintPage />} />
-
-            {/* ── Default & Catch-all ───────────────────────────── */}
-            {/* <Route path="/" element={<Navigate to="/dashboard1" replace />} /> */}
-            {/* <Route path="*" element={<Navigate to="/dashboard1" replace />} /> */}
-          </Routes>
-        </div>
-      </Router>
-    </div>
-    </HospitalSettingsProvider>
+      <HospitalSettingsProvider>
+        <Router>
+          <AppLayout collapsed={collapsed} setCollapsed={setCollapsed} />
+        </Router>
+      </HospitalSettingsProvider>
     </AuthProvider>
   );
 }

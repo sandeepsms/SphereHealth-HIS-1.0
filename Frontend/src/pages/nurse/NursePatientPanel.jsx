@@ -1119,68 +1119,107 @@ export default function NursePatientPanel() {
               </div>
             </div>
 
-            {/* Tab Bar */}
-            <div style={{
-              display: "flex",
-              borderBottom: `2px solid ${C.rose100}`,
-              marginBottom: 20,
-              overflowX: "auto",
-              gap: 0,
-            }}>
-              {TABS.map(tab => {
-                const isActive = activeTab === tab.id;
-                return (
+            {/* ── Initial Assessment Gate (NABH COP.2) ── */}
+            {admission && !admission.initialAssessment?.nurseCompleted && (
+              <div style={{
+                background: "#fff7ed", border: "2px solid #fb923c",
+                borderRadius: 14, padding: "20px 24px", marginBottom: 20,
+                display: "flex", alignItems: "flex-start", gap: 16,
+              }}>
+                <span style={{ fontSize: 32, flexShrink: 0 }}>📋</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 800, fontSize: 16, color: "#9a3412", marginBottom: 4 }}>
+                    Nursing Initial Assessment Required (NABH COP.2)
+                  </div>
+                  <div style={{ fontSize: 13, color: "#c2410c", marginBottom: 14, lineHeight: 1.6 }}>
+                    You must complete the <strong>Nursing Initial Assessment</strong> before accessing this patient's nursing records.
+                    This is mandatory for all newly admitted IPD patients.
+                  </div>
                   <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id)}
+                    onClick={() => navigate(`/ipd-initial-assessment?uhid=${uhidDisplay}`)}
                     style={{
-                      padding: "12px 18px",
-                      fontSize: 13,
-                      fontWeight: isActive ? 700 : 500,
-                      color: isActive ? C.primary : C.muted,
-                      background: isActive ? C.primaryL : "transparent",
-                      border: "none",
-                      borderBottom: isActive ? `3px solid ${C.primary}` : "3px solid transparent",
-                      cursor: "pointer",
-                      whiteSpace: "nowrap",
-                      transition: "all 0.15s",
-                      borderRadius: "6px 6px 0 0",
-                      fontFamily: "'DM Sans', sans-serif",
+                      padding: "10px 22px", borderRadius: 9, border: "none",
+                      background: "#ea580c", color: "#fff", fontWeight: 700, fontSize: 13,
+                      cursor: "pointer", display: "flex", alignItems: "center", gap: 8,
                     }}
                   >
-                    {tab.label}
+                    <i className="pi pi-pencil" style={{ fontSize: 13 }} />
+                    Complete Nursing Initial Assessment
                   </button>
-                );
-              })}
-            </div>
+                </div>
+                <div style={{
+                  padding: "8px 14px", background: "#fed7aa", borderRadius: 8,
+                  fontSize: 11, fontWeight: 700, color: "#9a3412", whiteSpace: "nowrap",
+                }}>
+                  ⏳ PENDING
+                </div>
+              </div>
+            )}
 
-            {/* Tab Content */}
-            {activeTab === "overview" && (
-              <OverviewTab
-                patient={patient}
-                admission={admission}
-                nursingNotes={nursingNotes}
-                nursingCharges={nursingCharges}
-              />
-            )}
-            {activeTab === "vitals" && (
-              <VitalsTab nursingNotes={nursingNotes} />
-            )}
-            {activeTab === "nursing-notes" && (
-              <NursingNotesTab nursingNotes={nursingNotes} />
-            )}
-            {activeTab === "doctor-orders" && (
-              <DoctorOrdersTab doctorNotes={doctorNotes} />
-            )}
-            {activeTab === "charges" && (
-              <NursingChargesTab nursingCharges={nursingCharges} billing={billing} />
-            )}
-            {activeTab === "billing" && (
-              <PatientBillingTab billing={billing} />
-            )}
-            {activeTab === "audit" && (
-              <AuditTrailTab auditTrail={auditTrail} />
-            )}
+            {/* Tab Bar + Content — only shown after nurse initial assessment done */}
+            {(!admission || admission.initialAssessment?.nurseCompleted) && (<>
+              <div style={{
+                display: "flex",
+                borderBottom: `2px solid ${C.rose100}`,
+                marginBottom: 20,
+                overflowX: "auto",
+                gap: 0,
+              }}>
+                {TABS.map(tab => {
+                  const isActive = activeTab === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => setActiveTab(tab.id)}
+                      style={{
+                        padding: "12px 18px",
+                        fontSize: 13,
+                        fontWeight: isActive ? 700 : 500,
+                        color: isActive ? C.primary : C.muted,
+                        background: isActive ? C.primaryL : "transparent",
+                        border: "none",
+                        borderBottom: isActive ? `3px solid ${C.primary}` : "3px solid transparent",
+                        cursor: "pointer",
+                        whiteSpace: "nowrap",
+                        transition: "all 0.15s",
+                        borderRadius: "6px 6px 0 0",
+                        fontFamily: "'DM Sans', sans-serif",
+                      }}
+                    >
+                      {tab.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Tab Content */}
+              {activeTab === "overview" && (
+                <OverviewTab
+                  patient={patient}
+                  admission={admission}
+                  nursingNotes={nursingNotes}
+                  nursingCharges={nursingCharges}
+                />
+              )}
+              {activeTab === "vitals" && (
+                <VitalsTab nursingNotes={nursingNotes} />
+              )}
+              {activeTab === "nursing-notes" && (
+                <NursingNotesTab nursingNotes={nursingNotes} />
+              )}
+              {activeTab === "doctor-orders" && (
+                <DoctorOrdersTab doctorNotes={doctorNotes} />
+              )}
+              {activeTab === "charges" && (
+                <NursingChargesTab nursingCharges={nursingCharges} billing={billing} />
+              )}
+              {activeTab === "billing" && (
+                <PatientBillingTab billing={billing} />
+              )}
+              {activeTab === "audit" && (
+                <AuditTrailTab auditTrail={auditTrail} />
+              )}
+            </>)}
           </>
         )}
       </div>
