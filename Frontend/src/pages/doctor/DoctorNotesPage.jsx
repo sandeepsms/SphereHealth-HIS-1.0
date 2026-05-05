@@ -385,10 +385,15 @@ function DoctorNotesContent({ selectedPatient }) {
       shift, status,
       ...(status === "signed" && signature ? { signature, signedByName: doctorName, signedByReg: doctorRegNo } : {}),
       soap,
-      vitals: vitals.bp ? {
-        bp: { systolic: Number(vitals.bp.split("/")[0] || 0), diastolic: Number(vitals.bp.split("/")[1] || 0) },
-        pulse: Number(vitals.pulse), temp: Number(vitals.temp),
-        rr: Number(vitals.rr), spo2: Number(vitals.spo2),
+      vitals: Object.values(vitals).some(v => v) ? {
+        ...(vitals.bp ? { bp: { systolic: Number(vitals.bp.split("/")[0]||0), diastolic: Number(vitals.bp.split("/")[1]||0) } } : {}),
+        ...(vitals.pulse  ? { pulse:  Number(vitals.pulse)  } : {}),
+        ...(vitals.temp   ? { temp:   Number(vitals.temp)   } : {}),
+        ...(vitals.rr     ? { rr:     Number(vitals.rr)     } : {}),
+        ...(vitals.spo2   ? { spo2:   Number(vitals.spo2)   } : {}),
+        ...(vitals.bsl    ? { bsl:    Number(vitals.bsl)    } : {}),
+        ...(vitals.gcs    ? { gcs:    vitals.gcs            } : {}),
+        ...(vitals.urine  ? { urine:  Number(vitals.urine)  } : {}),
       } : undefined,
       provisionalDiagnosis: diag.provisional, finalDiagnosis: diag.final,
       investigations: invx ? invx.split(",").map(s => s.trim()).filter(Boolean) : [],
@@ -1123,18 +1128,23 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                   const fmtKey = k => NOTE_FIELD_LBL[k] || k.replace(/([A-Z])/g, " $1").trim();
 
                   /* Compute a rich summary line for collapsed state */
-                  const summaryParts = [];
-                  if (note.soap?.assessment) summaryParts.push(note.soap.assessment.slice(0, 60));
-                  else if (note.soap?.plan) summaryParts.push(note.soap.plan.slice(0, 60));
-                  else if (note.provisionalDiagnosis) summaryParts.push(note.provisionalDiagnosis.slice(0, 60));
-                  else if (note.noteDetails?.chiefComplaint) summaryParts.push(note.noteDetails.chiefComplaint.slice(0, 60));
-                  const summaryLine = summaryParts[0] || null;
+                  const summaryLine = (() => {
+                    if (note.provisionalDiagnosis) return note.provisionalDiagnosis.slice(0, 70);
+                    if (note.finalDiagnosis)       return note.finalDiagnosis.slice(0, 70);
+                    if (note.noteDetails?.provisionalDx) return note.noteDetails.provisionalDx.slice(0, 70);
+                    if (note.noteDetails?.chiefComplaint) return note.noteDetails.chiefComplaint.slice(0, 70);
+                    if (note.soap?.assessment) return note.soap.assessment.slice(0, 70);
+                    if (note.soap?.plan)       return note.soap.plan.slice(0, 70);
+                    if (note.noteDetails?.managementPlan) return note.noteDetails.managementPlan.slice(0, 70);
+                    return null;
+                  })();
 
                   return (
                     <div key={note._id || i}
-                      style={{ padding: "14px 20px", borderBottom: `1px solid ${C.border}`, borderLeft: `4px solid ${ns.dot}`, background: "white", transition: "background .15s" }}
-                      onMouseEnter={e => e.currentTarget.style.background = "#f8faff"}
-                      onMouseLeave={e => e.currentTarget.style.background = "white"}>
+                      style={{ padding: "14px 20px", borderBottom: `1px solid ${C.border}`, borderLeft: `4px solid ${ns.dot}`, background: "white", transition: "background .15s", cursor: "pointer" }}
+                      onMouseEnter={e => e.currentTarget.style.background = "#f0f7ff"}
+                      onMouseLeave={e => e.currentTarget.style.background = "white"}
+                      onClick={toggleExpand}>
 
                       {/* ── Note Header Row ── */}
                       <div style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
@@ -1300,13 +1310,13 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                           )}
                         </div>
 
-                        {/* ── Action buttons ── */}
-                        <div style={{ display:"flex", flexDirection:"column", gap:5, alignItems:"flex-end", flexShrink:0 }}>
-                          {/* Expand/Collapse */}
+                        {/* ── Action buttons — stop click so card-click doesn't double-fire ── */}
+                        <div onClick={e => e.stopPropagation()} style={{ display:"flex", flexDirection:"column", gap:5, alignItems:"flex-end", flexShrink:0 }}>
+                          {/* View / Close */}
                           <button onClick={toggleExpand}
-                            style={{ padding:"4px 10px", border:`1.5px solid ${isExpanded ? C.primary+"60" : C.border}`, borderRadius:6, background: isExpanded ? C.primaryL : "white", fontSize:11, fontWeight:600, cursor:"pointer", color: isExpanded ? C.primary : C.muted, display:"flex", alignItems:"center", gap:4, transition:"all .15s" }}>
-                            <i className={`pi ${isExpanded ? "pi-chevron-up" : "pi-chevron-down"}`} style={{ fontSize:9 }} />
-                            {isExpanded ? "Collapse" : "Expand"}
+                            style={{ padding:"5px 12px", border:`1.5px solid ${isExpanded ? C.primary+"60" : C.border}`, borderRadius:6, background: isExpanded ? C.primaryL : "white", fontSize:11, fontWeight:700, cursor:"pointer", color: isExpanded ? C.primary : C.muted, display:"flex", alignItems:"center", gap:5, transition:"all .15s", whiteSpace:"nowrap" }}>
+                            <i className={`pi ${isExpanded ? "pi-times" : "pi-eye"}`} style={{ fontSize:10 }} />
+                            {isExpanded ? "Close" : "View"}
                           </button>
                           {/* Print */}
                           <button onClick={() => printNote(note)}
