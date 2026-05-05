@@ -165,6 +165,8 @@ function DoctorNotesContent({ selectedPatient }) {
   const [ordersRefresh, setOrdersRefresh] = useState(0);
   const [expandedNotes, setExpandedNotes] = useState({});
   const [timelineRefresh, setTimelineRefresh] = useState(0);
+  const [filterDate,    setFilterDate]    = useState("");   // "" | "today" | "week" | "last7"
+  const [editingNote,   setEditingNote]   = useState(null); // draft note being edited
 
   /* ── Recently admitted patients panel ── */
   const [recentPatients,   setRecentPatients]   = useState([]);
@@ -420,17 +422,78 @@ function DoctorNotesContent({ selectedPatient }) {
 
     setSaving(true);
     try {
-      const res = await axios.post(API_ENDPOINTS.DOCTOR_NOTES, payload, { headers });
-      if (status === "signed" && res.data?._id) {
-        try { await axios.patch(`${API_ENDPOINTS.DOCTOR_NOTES}/${res.data._id}/sign`, {}, { headers }); } catch { /* already saved */ }
+      let savedId;
+      if (editingNote?._id) {
+        // ── Update existing draft ──
+        const res = await axios.put(`${API_ENDPOINTS.DOCTOR_NOTES}/${editingNote._id}`, payload, { headers });
+        savedId = editingNote._id;
+        toast.success("Draft updated ✓");
+      } else {
+        // ── Create new note ──
+        const res = await axios.post(API_ENDPOINTS.DOCTOR_NOTES, payload, { headers });
+        savedId = res.data?._id || res.data?.data?._id;
+        if (status === "signed" && savedId) {
+          try { await axios.patch(`${API_ENDPOINTS.DOCTOR_NOTES}/${savedId}/sign`, {}, { headers }); } catch { /* signed inline */ }
+        }
+        toast.success(status === "signed" ? "Note signed & submitted ✓" : "Draft saved");
       }
-      toast.success(status === "signed" ? "Note signed & submitted ✓" : "Draft saved");
       clearDraft();
+      setEditingNote(null);
       setActiveModal(null);
       await fetchNotes(ipdNo);
     } catch (err) {
       toast.error(err?.response?.data?.message || "Save failed");
     } finally { setSaving(false); }
+  };
+
+  /* ── Open a draft note for editing ── */
+  const openEditModal = (note) => {
+    setEditingNote(note);
+
+    // Restore basic form
+    if (note.soap) setSoap({ subjective: note.soap.subjective || "", objective: note.soap.objective || "", assessment: note.soap.assessment || "", plan: note.soap.plan || "" });
+    else setSoap({ subjective: "", objective: "", assessment: "", plan: "" });
+
+    // Restore vitals — saved format { bp:{systolic,diastolic}, pulse, … } → form strings
+    if (note.vitals) {
+      const v = note.vitals;
+      setVitals({
+        bp:    v.bp ? `${v.bp.systolic || ""}/${v.bp.diastolic || ""}` : "",
+        pulse: v.pulse != null ? String(v.pulse)  : "",
+        temp:  v.temp  != null ? String(v.temp)   : "",
+        rr:    v.rr    != null ? String(v.rr)     : "",
+        spo2:  v.spo2  != null ? String(v.spo2)   : "",
+        bsl:   v.bsl   != null ? String(v.bsl)    : "",
+        gcs:   v.gcs   != null ? String(v.gcs)    : "",
+        urine: v.urine != null ? String(v.urine)  : "",
+      });
+    } else { setVitals({ bp:"", pulse:"", temp:"", rr:"", spo2:"", bsl:"", gcs:"", urine:"" }); }
+
+    setDiag({
+      provisional: note.provisionalDiagnosis || "",
+      final:       note.finalDiagnosis       || "",
+      icd10:       note.noteDetails?.icd10   || "",
+      status:      note.noteDetails?.status  || "Stable",
+    });
+    setInvx((note.investigations || []).join(", "));
+    setOrders(note.orders || []);
+    setSelectedTags(note.tags || []);
+    setIsCritical(note.isCritical || false);
+    setShift(note.shift || getShift());
+
+    // Module-specific states
+    const nd = note.noteDetails || {};
+    if (note.noteType === "icu")          setIcu(p          => ({ ...p, ...nd }));
+    if (note.noteType === "procedure")    setProc(p         => ({ ...p, ...nd }));
+    if (note.noteType === "consultation") setConsult(p      => ({ ...p, ...nd }));
+    if (note.noteType === "preop")        setPreop(p        => ({ ...p, ...nd }));
+    if (note.noteType === "postop")       setPostop(p       => ({ ...p, ...nd }));
+    if (note.noteType === "death")        setDeath(p        => ({ ...p, ...nd }));
+    if (note.noteType === "amendment")    setAmendment(p    => ({ ...p, ...nd }));
+    if (note.noteType === "medication" && nd.medicationOrders?.length) setMedOrders(nd.medicationOrders);
+    if (note.noteType === "infusion"   && nd.infusionOrders?.length)   setInfOrders(nd.infusionOrders);
+
+    setActiveModal(note.noteType || "daily");
   };
 
   /* ── Sign existing draft note ── */
@@ -449,10 +512,34 @@ function DoctorNotesContent({ selectedPatient }) {
   };
 
   const today = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+
+  /* ── Date range helper ── */
+  const dateRangeStart = (() => {
+    if (!filterDate) return null;
+    const now = new Date();
+    if (filterDate === "today") {
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    }
+    if (filterDate === "week") {
+      const d = new Date(now);
+      d.setDate(d.getDate() - d.getDay()); // Sunday of current week
+      d.setHours(0, 0, 0, 0);
+      return d;
+    }
+    if (filterDate === "last7") {
+      const d = new Date(now);
+      d.setDate(d.getDate() - 6);
+      d.setHours(0, 0, 0, 0);
+      return d;
+    }
+    return null;
+  })();
+
   const filteredNotes = notes.filter(n => {
     const typeMatch  = filterType === "All" || n.noteType === filterType || (filterType === "daily" && !n.noteType);
     const shiftMatch = !filterShift || n.shift === filterShift;
-    return typeMatch && shiftMatch;
+    const dateMatch  = !dateRangeStart || new Date(n.createdAt || n.noteDate) >= dateRangeStart;
+    return typeMatch && shiftMatch && dateMatch;
   });
 
   const modDef = (id) => MODULES.find(m => m.id === id);
@@ -1024,6 +1111,32 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
               </div>
             </div>
 
+            {/* ── Date Range Sub-bar ── */}
+            <div style={{ padding: "8px 20px", borderBottom: `1px solid ${C.border}`, background: "#fafbfc", display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginRight: 4 }}>Date:</span>
+              {[
+                { id: "",       label: "All Time",   icon: "pi-calendar" },
+                { id: "today",  label: "Today",       icon: "pi-sun"      },
+                { id: "week",   label: "This Week",   icon: "pi-calendar" },
+                { id: "last7",  label: "Last 7 Days", icon: "pi-history"  },
+              ].map(d => {
+                const active = filterDate === d.id;
+                return (
+                  <button key={d.id} onClick={() => setFilterDate(d.id)}
+                    style={{ padding: "4px 12px", border: `1.5px solid ${active ? C.teal : C.border}`, borderRadius: 20, fontSize: 11, fontWeight: active ? 700 : 600, cursor: "pointer", background: active ? C.tealL : "white", color: active ? C.teal : C.muted, transition: "all .15s", display: "flex", alignItems: "center", gap: 5 }}>
+                    <i className={`pi ${d.icon}`} style={{ fontSize: 10 }} />
+                    {d.label}
+                  </button>
+                );
+              })}
+              {filterDate && (
+                <span style={{ marginLeft: "auto", fontSize: 11, color: C.teal, fontWeight: 600 }}>
+                  {filteredNotes.length} note{filteredNotes.length !== 1 ? "s" : ""} in range
+                  <button onClick={() => setFilterDate("")} style={{ marginLeft: 8, background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 11, fontWeight: 600, padding: 0 }}>✕ Clear</button>
+                </span>
+              )}
+            </div>
+
             {filteredNotes.length === 0 ? (
               <div style={{ textAlign: "center", padding: "56px 0", color: C.muted }}>
                 <i className="pi pi-inbox" style={{ fontSize: 32, display: "block", marginBottom: 12, color: "#cbd5e1" }} />
@@ -1323,6 +1436,13 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                             style={{ padding:"4px 10px", border:`1.5px solid ${C.border}`, borderRadius:6, background:"white", fontSize:11, fontWeight:600, cursor:"pointer", color:C.muted, display:"flex", alignItems:"center", gap:4 }}>
                             <i className="pi pi-print" style={{ fontSize:10 }} /> Print
                           </button>
+                          {/* Edit draft */}
+                          {!isSigned && (
+                            <button onClick={() => openEditModal(note)}
+                              style={{ padding:"4px 10px", border:`1.5px solid ${C.blueB}`, borderRadius:6, background:C.blueL, fontSize:11, fontWeight:700, cursor:"pointer", color:C.blue, display:"flex", alignItems:"center", gap:4 }}>
+                              <i className="pi pi-pencil" style={{ fontSize:10 }} /> Edit
+                            </button>
+                          )}
                           {/* Sign draft */}
                           {!isSigned && (
                             <button onClick={() => signNote(note._id)}
@@ -1344,7 +1464,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
       {/* ══════════════ MODAL ══════════════ */}
       {activeModal && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.6)", backdropFilter: "blur(4px)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
-          onClick={() => setActiveModal(null)}>
+          onClick={() => { setActiveModal(null); setEditingNote(null); }}>
           <div style={{ background: "white", borderRadius: 16, width: ["medication","infusion","initial"].includes(activeModal) ? 1060 : 740, maxWidth: "98vw", maxHeight: "94vh", overflowY: "auto", boxShadow: "0 24px 60px rgba(0,0,0,.28)" }}
             onClick={e => e.stopPropagation()}>
 
@@ -1355,13 +1475,20 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                   <i className={`pi ${modDef(activeModal)?.icon || "pi-file"}`} style={{ fontSize: 15, color: "white" }} />
                 </span>
                 <div>
-                  <div style={{ fontWeight: 700, fontSize: 15 }}>{modDef(activeModal)?.label}</div>
+                  <div style={{ fontWeight: 700, fontSize: 15, display: "flex", alignItems: "center", gap: 8 }}>
+                    {modDef(activeModal)?.label}
+                    {editingNote && (
+                      <span style={{ background: "rgba(255,255,255,.25)", borderRadius: 5, padding: "2px 8px", fontSize: 10, fontWeight: 700, letterSpacing: ".5px" }}>
+                        ✎ EDITING DRAFT
+                      </span>
+                    )}
+                  </div>
                   <div style={{ fontSize: 11, color: "rgba(255,255,255,.75)" }}>
                     {patient?.patientName || "—"} · IPD: {patient?.ipdNo || patient?.admissionNumber || "—"} · {doctorName}
                   </div>
                 </div>
               </div>
-              <button onClick={() => setActiveModal(null)}
+              <button onClick={() => { setActiveModal(null); setEditingNote(null); }}
                 style={{ background: "rgba(255,255,255,.2)", border: "none", color: "white", fontSize: 18, cursor: "pointer", width: 30, height: 30, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
             </div>
 
@@ -2172,10 +2299,11 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                 </div>
               </div>
               <div style={{ display: "flex", gap: 8 }}>
-                <button onClick={() => setActiveModal(null)} style={{ padding: "9px 20px", border: `1.5px solid ${C.border}`, borderRadius: 8, background: "white", fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, cursor: "pointer", color: C.muted }}>Cancel</button>
+                <button onClick={() => { setActiveModal(null); setEditingNote(null); }} style={{ padding: "9px 20px", border: `1.5px solid ${C.border}`, borderRadius: 8, background: "white", fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, cursor: "pointer", color: C.muted }}>Cancel</button>
                 <button onClick={() => saveNote("draft")} disabled={saving}
                   style={{ padding: "9px 20px", border: `1.5px solid ${C.amberB}`, borderRadius: 8, background: C.amberL, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer", color: C.amber, display: "flex", alignItems: "center", gap: 6 }}>
-                  <i className="pi pi-save" style={{ fontSize: 11 }} /> Save Draft
+                  <i className={`pi ${editingNote ? "pi-refresh" : "pi-save"}`} style={{ fontSize: 11 }} />
+                  {editingNote ? "Update Draft" : "Save Draft"}
                 </button>
                 <button onClick={() => { if (!signature) { setShowSetup(true); toast.info("Please set your signature first"); return; } saveNote("signed"); }} disabled={saving}
                   style={{ padding: "9px 28px", background: saving ? "#5eead4" : `linear-gradient(135deg, ${C.primary}, ${C.primaryMid})`, color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 7, boxShadow: `0 4px 12px ${C.primary}35` }}>
