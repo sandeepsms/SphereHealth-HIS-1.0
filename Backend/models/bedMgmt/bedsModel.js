@@ -100,4 +100,5 @@ BedSchema.pre("save", function (next) {
   next();
 });
 
-module.exports = mongoose.models.Beds || mongoose.model("Beds", BedSchema);
+// Named "Bed" — admissionModel and bedTransferModel both use ref: "Bed"
+module.exports = mongoose.models.Bed || mongoose.model("Bed", BedSchema);

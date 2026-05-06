@@ -248,7 +248,8 @@ class AdmissionService {
         $regex: filters.attendingDoctor,
         $options: "i",
       };
-    if (filters.UHID) query.UHID = { $regex: filters.UHID, $options: "i" };
+    const uhidFilter = filters.UHID || filters.uhid;
+    if (uhidFilter) query.UHID = { $regex: uhidFilter, $options: "i" };
     if (filters.patientName)
       query.patientName = { $regex: filters.patientName, $options: "i" };
 

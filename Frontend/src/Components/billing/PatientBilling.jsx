@@ -100,6 +100,12 @@ export default function PatientBilling() {
   // ── New bill dialog state ────────────────────────────────────
   const [newBillType, setNewBillType] = useState("OPD");
 
+  // ── AI Suggest state ─────────────────────────────────────────
+  const [showAISuggest, setShowAISuggest] = useState(false);
+  const [aiSuggestions, setAiSuggestions] = useState([]);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [addingIdx, setAddingIdx] = useState(null); // which suggestion is being added
+
   // ── Load services once ───────────────────────────────────────
   useEffect(() => {
     billing
@@ -244,6 +250,70 @@ export default function PatientBilling() {
         detail: e.message,
         life: 3000,
       });
+    }
+  };
+
+  // ── AI Suggest handler ───────────────────────────────────────
+  const handleAISuggest = async () => {
+    if (!activeBill) return;
+    setAiLoading(true);
+    setAiSuggestions([]);
+    setShowAISuggest(true);
+    try {
+      const suggestions = await billing.aiSuggestCharges(activeBill._id);
+      setAiSuggestions(suggestions || []);
+    } catch (e) {
+      toast.current?.show({
+        severity: "error",
+        summary: "AI Error",
+        detail: e.message,
+        life: 4000,
+      });
+      setShowAISuggest(false);
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const handleAddAISuggestion = async (suggestion, idx) => {
+    if (!activeBill) return;
+    setAddingIdx(idx);
+    try {
+      const updated = await billing.addService(activeBill._id, {
+        serviceId: suggestion.serviceId,
+        quantity: suggestion.suggestedQuantity,
+      });
+      setActiveBill(updated);
+      // Mark suggestion as added
+      setAiSuggestions((prev) =>
+        prev.map((s, i) => (i === idx ? { ...s, added: true } : s))
+      );
+      toast.current?.show({
+        severity: "success",
+        summary: "Added",
+        detail: suggestion.serviceName,
+        life: 2000,
+      });
+      refresh();
+    } catch (e) {
+      toast.current?.show({
+        severity: "error",
+        summary: "Error",
+        detail: e.message,
+        life: 3000,
+      });
+    } finally {
+      setAddingIdx(null);
+    }
+  };
+
+  const handleAddAllHigh = async () => {
+    const highConf = aiSuggestions.filter(
+      (s) => s.confidence === "HIGH" && !s.added
+    );
+    for (let i = 0; i < highConf.length; i++) {
+      const idx = aiSuggestions.indexOf(highConf[i]);
+      await handleAddAISuggestion(highConf[i], idx);
     }
   };
 
@@ -477,6 +547,21 @@ export default function PatientBilling() {
                         icon="pi pi-plus"
                         size="small"
                         onClick={() => setShowAddSvc(true)}
+                      />
+                    )}
+                    {isDraft && (
+                      <Button
+                        label="AI Suggest"
+                        icon="pi pi-sparkles"
+                        size="small"
+                        style={{
+                          background: "linear-gradient(135deg, #7C3AED, #4F46E5)",
+                          border: "none",
+                          fontWeight: 600,
+                        }}
+                        onClick={handleAISuggest}
+                        tooltip="Claude AI se missed charges suggest karwao"
+                        tooltipOptions={{ position: "bottom" }}
                       />
                     )}
                     {isDraft && activeBill.billItems?.length > 0 && (
@@ -1339,6 +1424,250 @@ export default function PatientBilling() {
             ))}
           </div>
         </div>
+      </Dialog>
+
+      {/* ════════════════════════════════════════
+          DIALOG: AI Charge Suggester
+      ════════════════════════════════════════ */}
+      <Dialog
+        visible={showAISuggest}
+        onHide={() => setShowAISuggest(false)}
+        style={{ width: "min(760px, 95vw)" }}
+        header={
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: "50%",
+                background: "linear-gradient(135deg, #7C3AED, #4F46E5)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <i className="pi pi-sparkles" style={{ color: "#fff", fontSize: 16 }} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 15, color: "#1F2937" }}>
+                AI Charge Suggester
+              </div>
+              <div style={{ fontSize: 11, color: "#6B7280" }}>
+                Claude AI — missed charges analysis
+              </div>
+            </div>
+          </div>
+        }
+      >
+        {/* Loading state */}
+        {aiLoading && (
+          <div style={{ textAlign: "center", padding: "40px 0" }}>
+            <div
+              style={{
+                width: 56,
+                height: 56,
+                borderRadius: "50%",
+                background: "linear-gradient(135deg, #7C3AED22, #4F46E522)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                margin: "0 auto 16px",
+              }}
+            >
+              <i
+                className="pi pi-spin pi-spinner"
+                style={{ fontSize: 28, color: "#7C3AED" }}
+              />
+            </div>
+            <div style={{ fontWeight: 600, color: "#374151", marginBottom: 4 }}>
+              Claude AI analyze kar raha hai...
+            </div>
+            <div style={{ fontSize: 12, color: "#9CA3AF" }}>
+              Bill items, visit type aur diagnosis check ho raha hai
+            </div>
+          </div>
+        )}
+
+        {/* Results */}
+        {!aiLoading && aiSuggestions.length > 0 && (
+          <div>
+            {/* Top action bar */}
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 14,
+                padding: "10px 14px",
+                background: "#F5F3FF",
+                borderRadius: 8,
+                border: "1px solid #DDD6FE",
+              }}
+            >
+              <div style={{ fontSize: 13, color: "#4B5563" }}>
+                <b style={{ color: "#7C3AED" }}>{aiSuggestions.length}</b>{" "}
+                suggestions mili —{" "}
+                <b style={{ color: "#10B981" }}>
+                  {aiSuggestions.filter((s) => s.confidence === "HIGH").length} HIGH
+                </b>{" "}
+                confidence
+              </div>
+              <Button
+                label="Add All HIGH Confidence"
+                icon="pi pi-check-circle"
+                size="small"
+                style={{
+                  background: "linear-gradient(135deg, #7C3AED, #4F46E5)",
+                  border: "none",
+                }}
+                onClick={handleAddAllHigh}
+                disabled={
+                  aiLoading ||
+                  aiSuggestions.filter((s) => s.confidence === "HIGH" && !s.added)
+                    .length === 0
+                }
+              />
+            </div>
+
+            {/* Suggestion cards */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {aiSuggestions.map((sug, idx) => {
+                const confColor =
+                  sug.confidence === "HIGH"
+                    ? { bg: "#F0FDF4", border: "#BBF7D0", text: "#16A34A" }
+                    : sug.confidence === "MEDIUM"
+                    ? { bg: "#FFFBEB", border: "#FDE68A", text: "#D97706" }
+                    : { bg: "#F9FAFB", border: "#E5E7EB", text: "#6B7280" };
+
+                return (
+                  <div
+                    key={idx}
+                    style={{
+                      border: `1px solid ${sug.added ? "#BBF7D0" : confColor.border}`,
+                      borderRadius: 8,
+                      padding: "12px 14px",
+                      background: sug.added ? "#F0FDF4" : confColor.bg,
+                      display: "flex",
+                      alignItems: "flex-start",
+                      gap: 12,
+                      opacity: sug.added ? 0.75 : 1,
+                    }}
+                  >
+                    {/* Confidence badge */}
+                    <div
+                      style={{
+                        minWidth: 52,
+                        padding: "3px 6px",
+                        borderRadius: 6,
+                        background: confColor.text,
+                        color: "#fff",
+                        fontSize: 10,
+                        fontWeight: 700,
+                        textAlign: "center",
+                        marginTop: 2,
+                      }}
+                    >
+                      {sug.confidence}
+                    </div>
+
+                    {/* Service info */}
+                    <div style={{ flex: 1 }}>
+                      <div
+                        style={{
+                          fontWeight: 600,
+                          fontSize: 13,
+                          color: "#1F2937",
+                          marginBottom: 2,
+                        }}
+                      >
+                        {sug.serviceName}
+                        <span
+                          style={{
+                            marginLeft: 8,
+                            fontSize: 11,
+                            fontFamily: "monospace",
+                            color: "#6B7280",
+                          }}
+                        >
+                          {sug.serviceCode}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 12, color: "#6B7280", marginBottom: 4 }}>
+                        {sug.reason}
+                      </div>
+                      <div style={{ display: "flex", gap: 12, fontSize: 12 }}>
+                        <span style={{ color: "#4B5563" }}>
+                          Qty:{" "}
+                          <b style={{ color: "#1F2937" }}>{sug.suggestedQuantity}</b>
+                        </span>
+                        <span style={{ color: "#4B5563" }}>
+                          Unit:{" "}
+                          <b style={{ color: "#059669" }}>
+                            ₹{sug.unitPrice?.toLocaleString("en-IN")}
+                          </b>
+                        </span>
+                        <span style={{ color: "#4B5563" }}>
+                          Total:{" "}
+                          <b style={{ color: "#4F46E5", fontSize: 13 }}>
+                            ₹{sug.estimatedTotal?.toLocaleString("en-IN")}
+                          </b>
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Add button */}
+                    {sug.added ? (
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 4,
+                          color: "#16A34A",
+                          fontWeight: 600,
+                          fontSize: 12,
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        <i className="pi pi-check-circle" />
+                        Added
+                      </div>
+                    ) : (
+                      <Button
+                        label="Add"
+                        icon="pi pi-plus"
+                        size="small"
+                        style={{
+                          background: "#4F46E5",
+                          border: "none",
+                          whiteSpace: "nowrap",
+                        }}
+                        loading={addingIdx === idx}
+                        disabled={addingIdx !== null}
+                        onClick={() => handleAddAISuggestion(sug, idx)}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Empty / no suggestions */}
+        {!aiLoading && aiSuggestions.length === 0 && (
+          <div style={{ textAlign: "center", padding: "40px 0", color: "#6B7280" }}>
+            <i
+              className="pi pi-check-circle"
+              style={{ fontSize: 40, color: "#10B981", display: "block", marginBottom: 12 }}
+            />
+            <div style={{ fontWeight: 600, color: "#374151", marginBottom: 4 }}>
+              Sab charges already add hain!
+            </div>
+            <div style={{ fontSize: 12 }}>
+              AI ko koi missed charge nahi mila is bill mein.
+            </div>
+          </div>
+        )}
       </Dialog>
     </div>
   );

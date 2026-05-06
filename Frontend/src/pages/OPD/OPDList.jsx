@@ -150,11 +150,6 @@ const OPDList = () => {
             style={{ width: "250px" }}
           />
         </span>
-        <Button
-          label="New OPD Visit"
-          icon="pi pi-plus"
-          onClick={() => navigate("/opd/new")}
-        />
       </div>
     </div>
   );

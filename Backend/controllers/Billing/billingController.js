@@ -8,6 +8,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 const billingService = require("../../services/Billing/billingService");
+const aiSuggestService = require("../../services/AI/aiSuggestService");
 
 // ── GET /api/billing/uhid/:UHID ───────────────────────────────
 exports.getBillsByUHID = async (req, res) => {
@@ -190,6 +191,17 @@ exports.checkDaycare = async (req, res) => {
     res.json({ success: true, data });
   } catch (e) {
     res.status(500).json({ success: false, message: e.message });
+  }
+};
+
+// ── POST /api/billing/:billId/ai-suggest ─────────────────────
+exports.aiSuggest = async (req, res) => {
+  try {
+    const suggestions = await aiSuggestService.suggestCharges(req.params.billId);
+    res.json({ success: true, data: suggestions });
+  } catch (e) {
+    const status = e.message === "Bill not found" ? 404 : 500;
+    res.status(status).json({ success: false, message: e.message });
   }
 };
 
