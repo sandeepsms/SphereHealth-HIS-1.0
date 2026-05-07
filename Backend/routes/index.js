@@ -46,6 +46,9 @@ const doctorOrderRoutes = require("./Doctor/doctorOrderRoutes");
 const nursingChargesRoutes = require("./nursing/nursingChargesRoutes");
 const hospitalSettingsRoutes = require("../routes/hospitalSettingsRoutes");
 
+// ── Bed Transfer Workflow ────────────────────────────────────
+const bedTransferRoutes = require("./Patient/bedTransferRoutes");
+
 // ── Phase 1: NABH Paperless Modules ──────────────────────────
 const dischargeSummaryRoutes = require("./Clinical/dischargeSummaryRoutes");
 const consentFormRoutes = require("./Clinical/consentFormRoutes");
@@ -80,6 +83,7 @@ router.use("/doctor-notes", doctorNotesRoutes);
 router.use("/doctor-orders", doctorOrderRoutes);
 
 router.use("/admissions", admissionRoutes);
+router.use("/bed-transfers", bedTransferRoutes);
 
 router.use("/prescriptions", doctorPrescriptionRoutes);
 

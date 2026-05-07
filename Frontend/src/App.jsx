@@ -113,6 +113,7 @@ import HospitalSettingsPage from "./pages/admin/HospitalSettingsPage";
 import UserManagementPage from "./pages/admin/UserManagementPage";
 import LoginPage from "./pages/auth/LoginPage";
 import { HospitalSettingsProvider } from "./context/HospitalSettingsContext";
+import HISAssistant from "./Components/ai/HISAssistant";
 
 
 /* ── Full-page loading spinner while session restores ── */
@@ -308,6 +309,9 @@ function AppLayout({ collapsed, setCollapsed }) {
           <Route path="*" element={<Navigate to="/mainpage" replace />} />
         </Routes>
       </div>
+
+      {/* ── SphereAI Floating Assistant ── */}
+      <HISAssistant />
     </div>
   );
 }

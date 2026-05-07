@@ -72,7 +72,7 @@ const NAV = [
     items: [
       { label: "IPD Admission",     icon: "pi-plus-circle",         path: "/ipd-admission",       nabh: true,  roles: [ADMIN, RX] },
       { label: "OPD Registration",  icon: "pi-user-plus",           path: "/opd-register",        nabh: true,  roles: [ADMIN, RX] },
-      { label: "ER Registration",   icon: "pi-bolt",                path: "/emergency/register",  nabh: true,  roles: [ADMIN, RX] },
+      { label: "ER Registration",   icon: "pi-bolt",                path: "/emergency/register",  nabh: true,  roles: [ADMIN, RX, DR, NR] },
       { label: "Patient Search",    icon: "pi-search",              path: "/allpatient",           roles: [ADMIN, RX, DR, NR, PH, LB, RL, AC, PT, DT, TPA] },
       { label: "Patient Records",   icon: "pi-id-card",             path: "/patients",             roles: [ADMIN, RX, DR, NR, AC, TPA] },
       { label: "Visit History",     icon: "pi-clock",               path: "/patient-history",      roles: [ADMIN, RX, DR] },
@@ -127,6 +127,7 @@ const NAV = [
     items: [
       { label: "Patient Panel",         icon: "pi-id-card",           path: "/doctor-patient-panel",  roles: [ADMIN, DR] },
       { label: "OPD Assessment",        icon: "pi-file-edit",         path: "/doctor-opd-panel",       roles: [ADMIN, DR], nabh: true },
+      { label: "IPD Assessment",        icon: "pi-file-edit",         path: "/doctor-assessment",      roles: [ADMIN, DR], nabh: true },
       { label: "Doctor Notes",          icon: "pi-book",              path: "/doctor-notes",           roles: [ADMIN, DR], nabh: true },
       { label: "Emergency Assessment",  icon: "pi-exclamation-circle",path: "/emergency-assessment",   roles: [ADMIN, DR], nabh: true },
       { label: "Discharge Summary",     icon: "pi-sign-out",          path: "/discharge-summary",      roles: [ADMIN, DR], nabh: true },
@@ -143,6 +144,23 @@ const NAV = [
       { label: "Nursing Notes",         icon: "pi-file-edit",  path: "/nursing-notes",           roles: [ADMIN, NR], nabh: true },
       { label: "Patient Panel",         icon: "pi-id-card",    path: "/nurse-patient-panel",     roles: [ADMIN, NR, WB] },
       { label: "OPD Queue",             icon: "pi-list",       path: "/opd-queue",               roles: [ADMIN, NR] },
+      { label: "Initial Assessment",    icon: "pi-clipboard",  path: "/nurse-initial-assessment",roles: [ADMIN, NR], nabh: true },
+      { label: "Daily Assessment",      icon: "pi-calendar",   path: "/daily-nursing-assessment",roles: [ADMIN, NR], nabh: true },
+      { label: "Care Plan",             icon: "pi-heart",      path: "/nursing-care-plan",       roles: [ADMIN, NR], nabh: true },
+      { label: "Fall Risk",             icon: "pi-exclamation-triangle", path: "/fall-risk-assessment", roles: [ADMIN, NR], nabh: true },
+      { label: "Pain Assessment",       icon: "pi-minus-circle", path: "/pain-assessment",       roles: [ADMIN, NR], nabh: true },
+    ],
+  },
+
+  /* ── Vitals ──────────────────────────────────────────── */
+  {
+    id: "vitals", label: "Vitals",
+    icon: "pi-chart-line", color: "#16a34a", light: "#f0fdf4",
+    roles: [ADMIN, NR, DR, PT],
+    items: [
+      { label: "Update Vitals",  icon: "pi-pencil",    path: "/updateVitalSheet",  roles: [ADMIN, NR, PT] },
+      { label: "Vital Sheet",    icon: "pi-table",     path: "/vitalSheet",        roles: [ADMIN, NR, DR] },
+      { label: "Vitals View",    icon: "pi-chart-bar", path: "/vitalsView",        roles: [ADMIN, NR, DR] },
     ],
   },
 
@@ -393,12 +411,11 @@ export default function Sidebar({ collapsed, setCollapsed }) {
   const W = collapsed ? 64 : 260;
 
   /* ── User initials ── */
-  const displayName = user?.fullName || user?.name || user?.email || "User";
-  const initials = displayName !== user?.email
-    ? displayName.split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase()
-    : displayName.slice(0, 2).toUpperCase();
+  const initials = user?.name
+    ? user.name.split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase()
+    : user?.email?.slice(0, 2).toUpperCase() || "?";
 
-  const userName = displayName;
+  const userName = user?.name || user?.email || "User";
 
   return (
     <div style={{

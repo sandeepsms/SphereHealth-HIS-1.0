@@ -69,9 +69,16 @@ export const API_ENDPOINTS = {
   // ── Doctor Orders ─────────────────────────────────────────────
   DOCTOR_ORDERS: `${API_BASE_URL}/doctor-orders`,
 
+  // ── Bed Transfer Workflow ──────────────────────────────────────
+  BED_TRANSFERS: `${API_BASE_URL}/bed-transfers`,
+
   // ── OPD Clinical Actions ──────────────────────────────────────
   OPD_ASSESSMENT: (visitNumber) => `${API_BASE_URL}/opd/${visitNumber}/assessment`,
   OPD_AUDIT_TRAIL: (visitNumber) => `${API_BASE_URL}/opd/${visitNumber}/audit-trail`,
+
+  // ── SphereAI Assistant ────────────────────────────────────────
+  AI_CHAT: `${API_BASE_URL}/ai/chat`,
+  VITAL_SHEET: `${API_BASE_URL}/vitalsheet`,
 };
 
 export default API_ENDPOINTS;

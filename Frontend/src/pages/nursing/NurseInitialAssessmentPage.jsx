@@ -400,15 +400,12 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
   // ── Save ─────────────────────────────────────────────────────
   const handleSave = async () => {
     if (!patInfo) { toast.warn("Please load a patient first"); return; }
+    if (!patInfo._id) { toast.warn("Admission ID missing — reload patient"); return; }
     setSaving(true);
     try {
       const token = localStorage.getItem("his_token");
       const payload = {
-        type: "Nurse Initial Assessment",
-        patientId: patInfo.patientId?._id || patInfo.patientId,
-        admissionId: patInfo._id,
-        UHID: patInfo.UHID || uhid,
-        admissionNumber: ipdNo,
+        UHID: patInfo.UHID || patInfo.patientId?.UHID || uhid,
         assessedAt,
         assessedBy: signoff.nurseName,
         nurseId: signoff.nurseId,
@@ -426,20 +423,18 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
         nurseSignature: signature || undefined,
       };
 
-      await axios.post(API_ENDPOINTS.NURSING_NOTES || `${API_ENDPOINTS.BASE}/nursing-notes`, payload, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      toast.success("Nursing Initial Assessment saved");
+      // ✅ Use dedicated endpoint — no NurseStaff ObjectId required
+      await axios.post(
+        `${API_ENDPOINTS.ADMISSIONS}/${patInfo._id}/nurse-assessment`,
+        payload,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      toast.success("✅ Nursing Initial Assessment saved successfully");
       clearDraft();
       setSaved(true);
     } catch (err) {
-      if (err.response?.status === 404 || err.response?.status === 405) {
-        toast.success("Assessment recorded (offline mode)");
-        clearDraft();
-        setSaved(true);
-      } else {
-        toast.error(err.response?.data?.message || "Failed to save assessment");
-      }
+      console.error("[NurseAssessment] Save error:", err.response?.data || err.message);
+      toast.error(err.response?.data?.message || "Failed to save assessment. Check console for details.");
     } finally {
       setSaving(false);
     }

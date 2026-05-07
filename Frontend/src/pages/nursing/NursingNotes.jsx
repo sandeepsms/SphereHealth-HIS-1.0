@@ -232,6 +232,18 @@ function NursingNotesContent({ selectedPatient }) {
   const [notes,      setNotes]      = useState([]);
   const [loading,    setLoading]    = useState(false);
   const [activeModal,setActiveModal]= useState(null);
+
+  /* ── Initial Assessment Gate (NABH COP.2) ──
+     Gate lifts when:
+       1. Admission document has initialAssessment.nurseCompleted === true, OR
+       2. Patient already has nurse notes (they've been documenting → assessment was done)
+     Condition 2 handles legacy data where nurseCompleted was never persisted due to
+     the Mongoose strict-mode bug that has now been fixed.
+  ── */
+  const nurseAssessmentDone =
+    patient?.initialAssessment?.nurseCompleted === true ||
+    notes.length > 0;
+  const gateActive = !!patient && !nurseAssessmentDone;
   const [filterType, setFilterType] = useState("All");
   const [filterShift,setFilterShift]= useState("");
   const [shift,      setShift]      = useState(getShift());
@@ -255,8 +267,8 @@ function NursingNotesContent({ selectedPatient }) {
   const [showReport, setShowReport] = useState(false);
 
   /* ── Module-specific form state ── */
-  const [vitals,    setVitals]    = useState({ bp: "", pulse: "", temp: "", spo2: "", rr: "", gcs: "", bsl: "", painScore: "", o2Flow: "", o2Device: "None", weight: "", position: "Supine" });
-  const [blood,     setBlood]     = useState({ product: "PRC (Packed RBC)", bagNo: "", crossMatchNo: "", volume: "350", groupVerified: true, secondNurse: "", startTime: "", status: "Transfusing", endTime: "", reactionType: "None", preBP: "", prePulse: "", preTemp: "", postBP: "", postPulse: "" });
+  const [vitals,    setVitals]    = useState({ bp_sys: "", bp_dia: "", pulse: "", temp: "", spo2: "", rr: "", gcs: "", bsl: "", painScore: "", o2Flow: "", o2Device: "None", weight: "", position: "Supine" });
+  const [blood,     setBlood]     = useState({ product: "PRC (Packed RBC)", bagNo: "", crossMatchNo: "", volume: "350", groupVerified: true, secondNurse: "", startTime: "", status: "Transfusing", endTime: "", reactionType: "None", preBP_sys: "", preBP_dia: "", prePulse: "", preTemp: "", postBP_sys: "", postBP_dia: "", postPulse: "" });
   const [iv,        setIV]        = useState({ fluid: "NS 0.9%", volume: "", rate: "", dropsPerMin: "", route: "IV Right Forearm", site: "Patent", cannulaDate: "", setChangeDate: "", additive: "" });
   const [intake,    setIntake]    = useState({ oral: "", ivFluids: "", bloodProducts: "", urineOutput: "", drainOutput: "", nasogastric: "", emesis: "", bloodLoss: "" });
   const [ivMedOrders,    setIvMedOrders]    = useState([]); // IV dilution volumes from Treatment Chart
@@ -336,7 +348,7 @@ function NursingNotesContent({ selectedPatient }) {
   /* ── New consolidated module state ── */
   const [dailyAssess, setDailyAssess] = useState({
     // Vitals snapshot
-    bp: "", pulse: "", temp: "", spo2: "", rr: "", bsl: "", gcs: "",
+    bp_sys: "", bp_dia: "", pulse: "", temp: "", spo2: "", rr: "", bsl: "", gcs: "",
     // System assessments
     neuroStatus: "Alert & Oriented", respiratoryStatus: "Clear bilaterally", cardiovascularStatus: "Regular rate & rhythm",
     giStatus: "Active bowel sounds", guStatus: "Urine output adequate", musculoskeletalStatus: "Moves all extremities", skinStatus: "Intact",
@@ -355,7 +367,7 @@ function NursingNotesContent({ selectedPatient }) {
     respiratory: "Normal", cardiovascular: "Normal", gastrointestinal: "Normal",
     genitourinary: "Normal", musculoskeletal: "Normal", neurological: "Normal",
     // Vitals at admission
-    bp: "", pulse: "", temp: "", spo2: "", rr: "", weight: "", height: "",
+    bp_sys: "", bp_dia: "", pulse: "", temp: "", spo2: "", rr: "", weight: "", height: "",
     // Braden (pressure ulcer risk)
     b1: "4", b2: "4", b3: "4", b4: "4", b5: "4", b6: "3",
     // Morse (fall risk)
@@ -527,13 +539,21 @@ function NursingNotesContent({ selectedPatient }) {
         } catch (_) {}
 
         if (!draftRestored) {
-          setVitals({ bp: "", pulse: "", temp: "", spo2: "", rr: "", gcs: "", bsl: "", painScore: "", o2Flow: "", o2Device: "None", weight: "", position: "Supine" });
+          setVitals({ bp_sys: "", bp_dia: "", pulse: "", temp: "", spo2: "", rr: "", gcs: "", bsl: "", painScore: "", o2Flow: "", o2Device: "None", weight: "", position: "Supine" });
           setMews({ rr: "", spo2: "", temp: "", sbp: "", hr: "", avpu: "A" });
         }
         setIvMedOrders([]); setIncludedMedIds(new Set());
-        await fetchNotes(ipd);
+        await fetchNotes(ipd, active);   // pass active so retroactive flag can run
         await loadTodayCharges(active._id);
         toast.success(`Loaded: ${active.patientName || active.patientId?.fullName || searchUHID}`);
+        // ── SphereAI: store active patient context ──
+        localStorage.setItem("sphereai_active_patient", JSON.stringify({
+          uhid: active.patientUHID || active.patientId?.UHID || searchUHID,
+          patientId: String(active.patientId?._id || active.patientId || ""),
+          ipdNo: ipd,
+          patientName: active.patientName || active.patientId?.fullName || searchUHID,
+          page: "nursing-notes"
+        }));
       } else {
         toast.warn("No active IPD admission found for UHID: " + searchUHID);
       }
@@ -543,29 +563,60 @@ function NursingNotesContent({ selectedPatient }) {
     finally { setLoading(false); }
   };
 
-  const fetchNotes = async (ipdNo) => {
+  const fetchNotes = async (ipdNo, admissionDoc) => {
     try {
       const { data } = await axios.get(`${API_ENDPOINTS.NURSE_NOTES}?ipdNo=${ipdNo}`);
       const arr = Array.isArray(data) ? data : data.data || [];
       setNotes(arr.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
+
+      /* ── Retroactive fix: if notes exist but nurseCompleted not flagged in DB,
+             persist the flag now so the gate never re-activates on reload.        ── */
+      const admDoc = admissionDoc || patient;
+      if (arr.length > 0 && admDoc?._id && !admDoc?.initialAssessment?.nurseCompleted) {
+        try {
+          const token = localStorage.getItem("his_token");
+          await axios.post(
+            `${API_ENDPOINTS.ADMISSIONS}/${admDoc._id}/nurse-assessment`,
+            {
+              UHID: admDoc.UHID || admDoc.uhid || "",
+              assessedAt: arr[arr.length - 1]?.createdAt || new Date().toISOString(),
+              assessedBy: arr[0]?.nurseName || "Nurse",
+              nurseId: arr[0]?.nurseEmployeeId || "",
+              designation: "Staff Nurse",
+              notes: "Auto-flagged: nurse notes already existed for this admission.",
+            },
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+          // Also update local patient state so gate lifts without waiting
+          setPatient(prev => prev ? ({
+            ...prev,
+            initialAssessment: { ...(prev.initialAssessment || {}), nurseCompleted: true },
+          }) : prev);
+        } catch (_) { /* silent — gate still lifts via notes.length > 0 */ }
+      }
     } catch { /* silent */ }
   };
 
   const openModal = (id) => {
+    /* Gate: block non-initial modules until nursing initial assessment is done */
+    if (gateActive && id !== "initial") {
+      toast.error("⛔ Nursing Initial Assessment must be completed first (NABH COP.2). Click 'Write Initial Assessment' to proceed.", { autoClose: 5000 });
+      return;
+    }
     setActiveModal(id);
     setNoteText(""); setIsCritical(false); setSelectedTags([]);
     // vitals persist across tab switches — they're updated live by IntegratedVitalsPanel
-    setBlood({ product: "PRC (Packed RBC)", bagNo: "", crossMatchNo: "", volume: "350", groupVerified: true, secondNurse: "", startTime: "", status: "Transfusing", endTime: "", reactionType: "None", preBP: "", prePulse: "", preTemp: "", postBP: "", postPulse: "" });
+    setBlood({ product: "PRC (Packed RBC)", bagNo: "", crossMatchNo: "", volume: "350", groupVerified: true, secondNurse: "", startTime: "", status: "Transfusing", endTime: "", reactionType: "None", preBP_sys: "", preBP_dia: "", prePulse: "", preTemp: "", postBP_sys: "", postBP_dia: "", postPulse: "" });
     setIV({ fluid: "NS 0.9%", volume: "", rate: "", dropsPerMin: "", route: "IV Right Forearm", site: "Patent", cannulaDate: "", setChangeDate: "", additive: "" });
     setIntake({ oral: "", ivFluids: "", bloodProducts: "", urineOutput: "", drainOutput: "", nasogastric: "", emesis: "", bloodLoss: "" });
     // When opening MEWS tab, seed from current vitals; otherwise reset
     if (id === "mews") {
-      const [sbp = ""] = (vitals.bp || "").split("/");
+      const sbp = vitals.bp_sys || "";
       setMews(p => ({ ...p, rr: vitals.rr || p.rr, spo2: vitals.spo2 || p.spo2, temp: vitals.temp || p.temp, sbp: sbp || p.sbp, hr: vitals.pulse || p.hr }));
     } else {
       setMews({ rr: "", spo2: "", temp: "", sbp: "", hr: "", avpu: "A" });
     }
-    setDailyAssess({ bp:"", pulse:"", temp:"", spo2:"", rr:"", bsl:"", gcs:"", neuroStatus:"Alert & Oriented", respiratoryStatus:"Clear bilaterally", cardiovascularStatus:"Regular rate & rhythm", giStatus:"Active bowel sounds", guStatus:"Urine output adequate", musculoskeletalStatus:"Moves all extremities", skinStatus:"Intact", intReposition:false, intOralCare:false, intPressureRelief:false, intRangeOfMotion:false, intFallPrecautions:false, intCallBell:false, intMedAdministered:false, intWoundCare:false, intIVCheck:false, intNGTCheck:false, intFoleyCheck:false, intOxygenCheck:false, intPatientEducation:false, intFamilyUpdate:false, intDoctorNotified:false, intDocumented:false });
+    setDailyAssess({ bp_sys:"", bp_dia:"", pulse:"", temp:"", spo2:"", rr:"", bsl:"", gcs:"", neuroStatus:"Alert & Oriented", respiratoryStatus:"Clear bilaterally", cardiovascularStatus:"Regular rate & rhythm", giStatus:"Active bowel sounds", guStatus:"Urine output adequate", musculoskeletalStatus:"Moves all extremities", skinStatus:"Intact", intReposition:false, intOralCare:false, intPressureRelief:false, intRangeOfMotion:false, intFallPrecautions:false, intCallBell:false, intMedAdministered:false, intWoundCare:false, intIVCheck:false, intNGTCheck:false, intFoleyCheck:false, intOxygenCheck:false, intPatientEducation:false, intFamilyUpdate:false, intDoctorNotified:false, intDocumented:false });
     setCarePlan({ problems: [{ id: Date.now(), statement:"", relatedTo:"", evidencedBy:"", priority:"High", goals:"", targetDate:"", interventions:"", evaluation:"", status:"Active" }] });
     setNutrition({ bmi:"", bmiLow:false, weightLoss:false, reducedIntake:false, seriouslyIll:false, nutritionScore:"0", diseaseScore:"0", ageScore:false, weight:"", height:"", idealBodyWeight:"", actualWeightPercent:"", midArmCirc:"", dietType:"Regular", consistency:"Normal", fluidRestriction:false, fluidLimit:"", appetite:"Good", swallowing:"Normal", feedingMode:"Oral", ngtPresent:false, caloriesToday:"", proteinToday:"", fluidToday:"", dietitianReferral:false, referralReason:"" });
     setEducation({ date: new Date().toISOString().split("T")[0], educator:"", topics:[], methods:[], language:"Hindi", understanding:"Good", barriers:[], response:"Positive", sessionNotes:"", nextSessionDate:"" });
@@ -576,17 +627,21 @@ function NursingNotesContent({ selectedPatient }) {
   const saveNote = async () => {
     if (!patient) { toast.warn("No patient loaded"); return; }
     const ipdNo = patient.ipdNo || patient.admissionNumber || patient._id;
+    // patient is an admission object — patientId is the actual Patient ref (may be populated)
+    const resolvedPatientId = patient.patientId?._id || patient.patientId || patient._id;
     let payload = {
-      patientId: patient._id || patient.patientId || undefined,
-      patientUHID: patient.uhid || patient.UHID || searchUHID,
-      patientName: patient.patientName || patient.patient?.name || "",
+      patientId: resolvedPatientId,
+      patientUHID: patient.patientUHID || patient.uhid || patient.UHID || searchUHID,
+      patientName: patient.patientName || patient.patientId?.fullName || patient.patient?.name || "",
+      UHID: patient.patientUHID || patient.UHID || searchUHID,
+      admissionNumber: ipdNo,
       ipdNo, shift, noteType: activeModal, isCriticalEvent: isCritical,
       remarks: noteText, tags: selectedTags, status: "submitted",
-      nurseName: user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim(),
+      nurseName: user?.fullName || user?.name || `${user?.firstName || ""} ${user?.lastName || ""}`.trim(),
       nurseEmployeeId: user?.employeeId || "",
       nurseId: user?._id || user?.id || undefined,
     };
-    if (activeModal === "vitals")   payload.vitals = { bp: { systolic: Number(vitals.bp.split("/")[0] || 0), diastolic: Number(vitals.bp.split("/")[1] || 0) }, pulse: Number(vitals.pulse), temp: Number(vitals.temp), spo2: Number(vitals.spo2), rr: Number(vitals.rr), gcs: vitals.gcs, bsl: Number(vitals.bsl) };
+    if (activeModal === "vitals")   payload.vitals = { bp: { systolic: Number(vitals.bp_sys || 0), diastolic: Number(vitals.bp_dia || 0) }, pulse: Number(vitals.pulse), temp: Number(vitals.temp), spo2: Number(vitals.spo2), rr: Number(vitals.rr), gcs: vitals.gcs, bsl: Number(vitals.bsl) };
     if (activeModal === "blood")    payload.bloodTransfusion = blood;
     if (activeModal === "iv")       payload.ivInfusion = iv;
     if (activeModal === "intake") {
@@ -614,6 +669,86 @@ function NursingNotesContent({ selectedPatient }) {
     setLoading(true);
     try {
       await axios.post(API_ENDPOINTS.NURSE_NOTES, payload);
+
+      /* ── When "Initial Assessment" is saved, also mark nurseCompleted
+             on the Admission document so the gate lifts immediately.     ── */
+      if (activeModal === "initial" && patient?._id) {
+        try {
+          const token = localStorage.getItem("his_token");
+          const signedByName = user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim();
+          await axios.post(
+            `${API_ENDPOINTS.ADMISSIONS}/${patient._id}/nurse-assessment`,
+            {
+              UHID: patient.UHID || patient.uhid || searchUHID,
+              assessedAt: new Date().toISOString(),
+              assessedBy: signedByName,
+              nurseId: user?._id || user?.id || "",
+              designation: "Staff Nurse",
+              notes: [initialAssess.chiefComplaint, initialAssess.historyOfIllness].filter(Boolean).join("; "),
+              vitals: {
+                bpSys: initialAssess.bp_sys, bpDia: initialAssess.bp_dia,
+                pulse: initialAssess.pulse, temp: initialAssess.temp,
+                spo2: initialAssess.spo2, rr: initialAssess.rr,
+                weight: initialAssess.weight, height: initialAssess.height,
+              },
+              systemAssessment: {
+                respiratory: initialAssess.respiratory,
+                cardiovascular: initialAssess.cardiovascular,
+                gastrointestinal: initialAssess.gastrointestinal,
+                genitourinary: initialAssess.genitourinary,
+                musculoskeletal: initialAssess.musculoskeletal,
+                neurological: initialAssess.neurological,
+                ivSite: initialAssess.ivSite, ivSize: initialAssess.ivType,
+                ivInsertedDate: initialAssess.ivDate, ivCondition: initialAssess.ivCondition,
+              },
+              psychosocial: {
+                anxietyLevel: initialAssess.anxiety,
+                cognitiveStatus: initialAssess.cognition,
+                languageBarrier: initialAssess.languageBarrier ? "Yes — Interpreter needed" : "No",
+              },
+              nutritionHydration: {
+                nutritionRisk: initialAssess.nutritionStatus,
+                swallowingDifficulty: initialAssess.swallowing,
+              },
+              riskAssessments: {
+                bradenScale: {
+                  sensoryPerception: initialAssess.b1, moisture: initialAssess.b2,
+                  activity: initialAssess.b3, mobility: initialAssess.b4,
+                  nutrition: initialAssess.b5, frictionShear: initialAssess.b6,
+                  totalScore: calcBraden(initialAssess),
+                  riskLevel: bradenBand(calcBraden(initialAssess)).label,
+                },
+                morseFallScale: {
+                  fallHistory: initialAssess.m1, secondaryDiagnosis: initialAssess.m2,
+                  ambulatoryAid: initialAssess.m3, ivAccess: initialAssess.m4,
+                  gaitBalance: initialAssess.m5, mentalStatus: initialAssess.m6,
+                  totalScore: calcMorse(initialAssess),
+                  riskLevel: morseBand(calcMorse(initialAssess)).label,
+                },
+              },
+              dischargePlanning: {
+                dischargePlan: initialAssess.dischargePlan,
+                caregiverAvailable: initialAssess.caregiverAvailable ? "Yes" : "No",
+                caregiverName: initialAssess.caregiverName,
+                specialNeeds: initialAssess.specialNeeds,
+              },
+              fullFormData: initialAssess, // store raw form data
+            },
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+        } catch (_) { /* silent — gate still lifts via state update below */ }
+
+        // ── Lift the gate in local state immediately (no need to reload patient) ──
+        setPatient(prev => ({
+          ...prev,
+          initialAssessment: {
+            ...(prev?.initialAssessment || {}),
+            nurseCompleted: true,
+            nurseCompletedAt: new Date().toISOString(),
+          },
+        }));
+      }
+
       clearDraft(); // clear auto-saved draft after successful save
       toast.success("Note saved");
       setActiveModal(null);
@@ -632,8 +767,67 @@ function NursingNotesContent({ selectedPatient }) {
   const today = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 
   /* ══════════════════════════════════════════════════════ */
+  /* ── SphereAI window event listener ─────────────────────────────── */
+  const _saveNoteRef = useRef(null);
+  useEffect(() => { _saveNoteRef.current = saveNote; }); // keep ref current
+
+  useEffect(() => {
+    const handler = async (e) => {
+      const { noteType, content, vitals: av, autoSave } = e.detail || {};
+      // Map AI note type → modal id (case-insensitive)
+      const typeMap = {
+        "vital signs note": "vitals", "vitals": "vitals", "vital": "vitals",
+        "initial assessment": "initial", "initial": "initial",
+        "nurse initial assessment": "initial", "nursing initial assessment": "initial",
+        "pain assessment": "pain", "pain": "pain",
+        "intake/output": "intake", "intake": "intake", "i/o": "intake",
+        "neuro assessment": "neuro", "neuro": "neuro", "neurological": "neuro",
+        "mews": "mews", "mews score": "mews",
+        "care plan": "careplan", "careplan": "careplan", "nursing care plan": "careplan",
+        "nutritional assessment": "nutrition", "nutrition": "nutrition",
+        "daily nursing assessment": "daily", "daily": "daily", "daily assessment": "daily",
+        "fall risk assessment": "fall", "fall": "fall", "fall risk": "fall",
+        "wound care": "wound", "wound": "wound",
+        "skin assessment": "skin", "skin": "skin",
+        "procedure note": "procedure", "procedure": "procedure",
+        "discharge note": "discharge", "discharge": "discharge",
+        "patient education": "education", "education": "education",
+        "blood transfusion": "blood", "blood": "blood",
+        "iv infusion": "iv", "iv": "iv",
+        "progress note": "general", "observation note": "general", "general": "general",
+      };
+      const modal = typeMap[(noteType || "").toLowerCase()] || "general";
+      // Pre-fill text
+      if (content) setNoteText(content);
+      // Pre-fill vitals if provided
+      if (av && Object.values(av).some(Boolean)) {
+        const [sys, dia] = (av.bp || "").split("/");
+        setVitals(prev => ({
+          ...prev,
+          ...(sys  && { bp_sys: sys.trim() }),
+          ...(dia  && { bp_dia: dia.trim() }),
+          ...(av.pulse       && { pulse: String(av.pulse) }),
+          ...(av.temperature && { temp: String(av.temperature) }),
+          ...(av.spo2        && { spo2: String(av.spo2) }),
+          ...(av.respirationRate && { rr: String(av.respirationRate) }),
+          ...(av.weight      && { weight: String(av.weight) }),
+        }));
+      }
+      // Open modal
+      setActiveModal(modal);
+      // Auto-save after React re-renders with new state
+      if (autoSave !== false) {
+        setTimeout(() => {
+          if (_saveNoteRef.current) _saveNoteRef.current();
+        }, 700);
+      }
+    };
+    window.addEventListener("sphereai:fill_nursing_note", handler);
+    return () => window.removeEventListener("sphereai:fill_nursing_note", handler);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
-    <div style={{ marginLeft: 260, padding: "24px 28px", minHeight: "100vh", background: C.bg, fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: C.text }}>
+    <div style={{ padding: "24px 28px", minHeight: "100vh", background: C.bg, fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: C.text }}>
 
       {/* ── Page Header ── */}
       <div style={{ background: `linear-gradient(135deg, ${C.primary} 0%, ${C.primaryMid} 100%)`, borderRadius: 16, padding: "20px 26px", marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "space-between", boxShadow: `0 8px 24px ${C.primary}30` }}>
@@ -691,82 +885,135 @@ function NursingNotesContent({ selectedPatient }) {
         </div>
       ) : (
         <>
-          {/* ── Patient Info Strip ── */}
-          <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: "16px 22px", marginBottom: 14, boxShadow: "0 1px 3px rgba(0,0,0,.04)" }}>
-            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
-              {/* Patient fields */}
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "12px 28px", flex: 1 }}>
-                {[
-                  { label: "Patient ID",  value: patient.uhid || patient.UHID || searchUHID },
-                  { label: "Name",        value: patient.patientName || patient.patient?.name || "\u2014" },
-                  { label: "Age / Sex",   value: `${patient.age || patient.patient?.age || "?"}Y / ${(patient.gender || patient.patient?.gender || "?")[0]?.toUpperCase()}` },
-                  { label: "Ward / Bed",  value: `${patient.wardName || "\u2014"} \u2014 Bed ${patient.bedNumber || "\u2014"}` },
-                  { label: "Admission",   value: patient.admissionDate ? new Date(patient.admissionDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "\u2014" },
-                  { label: "Diagnosis",   value: patient.diagnosis || patient.admittingDiagnosis || "\u2014" },
-                  { label: "Consultant",  value: patient.doctorName || patient.consultantName || "\u2014" },
-                ].map(f => (
-                  <div key={f.label}>
-                    <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".8px", color: C.muted, marginBottom: 2 }}>{f.label}</div>
-                    <div style={{ fontWeight: 600, color: C.text, fontSize: 12 }}>{f.value}</div>
-                  </div>
-                ))}
+          {/* ── Patient Banner ── */}
+          {(() => {
+            const patName    = patient.patientName || patient.patient?.name || '—';
+            const initials   = patName.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+            const age        = patient.age || patient.patient?.age || '?';
+            const gender     = (patient.gender || patient.patient?.gender || '?')[0]?.toUpperCase();
+            const uhidVal    = patient.uhid || patient.UHID || searchUHID;
+            const bedVal     = patient.bedNumber ? `Bed ${patient.bedNumber}` : '—';
+            const wardVal    = patient.wardName || '—';
+            const admDate    = patient.admissionDate
+              ? new Date(patient.admissionDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+              : '—';
+            const diagnosis  = patient.diagnosis || patient.admittingDiagnosis || '—';
+            const consultant = patient.doctorName || patient.consultantName || '—';
+            const admType    = patient.admissionType?.toUpperCase() || 'IPD';
+            const allergies  = (patient.allergies || patient.knownAllergies || []).filter(Boolean);
+            const dayStay    = patient.admissionDate
+              ? Math.floor((Date.now() - new Date(patient.admissionDate)) / (1000 * 60 * 60 * 24))
+              : null;
+            const admTypeColor = admType === 'EMERGENCY'
+              ? { bg: '#fef2f2', color: '#dc2626', border: '#fca5a5' }
+              : admType === 'DAY CARE'
+              ? { bg: '#eff6ff', color: '#1d4ed8', border: '#93c5fd' }
+              : { bg: '#f5f3ff', color: '#7c3aed', border: '#c4b5fd' };
+            return (
+              <div style={{ background: C.card, borderRadius: 16, marginBottom: 14, overflow: 'hidden', boxShadow: '0 2px 12px rgba(15,118,110,.08)', border: `1px solid ${C.border}` }}>
+                {/* Top gradient accent bar */}
+                <div style={{ height: 4, background: `linear-gradient(90deg, ${C.primary}, ${C.primaryMid}, #34d399)` }} />
+                <div style={{ padding: '18px 22px' }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
 
-                {/* Allergies */}
-                {(patient.allergies || patient.knownAllergies || []).filter(Boolean).length > 0 && (
-                  <div>
-                    <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".8px", color: C.muted, marginBottom: 2 }}>Allergies</div>
-                    <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                      {(patient.allergies || patient.knownAllergies || []).map(a => (
-                        <span key={a} style={{ background: C.redL, color: C.red, border: `1px solid #fca5a5`, padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", gap: 3 }}>
-                          <i className="pi pi-exclamation-triangle" style={{ fontSize: 9 }} /> {a}
-                        </span>
+                    {/* Left: avatar + core info */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 16, flex: 1, minWidth: 0 }}>
+                      {/* Avatar circle */}
+                      <div style={{ flexShrink: 0, width: 56, height: 56, borderRadius: 14, background: `linear-gradient(135deg, ${C.primary}, ${C.primaryMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: `0 4px 12px ${C.primary}35` }}>
+                        <span style={{ fontSize: 20, fontWeight: 900, color: 'white', letterSpacing: '-1px' }}>{initials}</span>
+                      </div>
+                      {/* Name + tags */}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 5 }}>
+                          <span style={{ fontSize: 17, fontWeight: 800, color: C.text }}>{patName}</span>
+                          <span style={{ padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700, background: admTypeColor.bg, color: admTypeColor.color, border: `1px solid ${admTypeColor.border}` }}>
+                            {admType}
+                          </span>
+                          {patient.bloodGroup && (
+                            <span style={{ padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700, background: C.redL, color: C.red, border: '1px solid #fca5a5', fontFamily: "'DM Mono',monospace" }}>
+                              🦸 {patient.bloodGroup}
+                            </span>
+                          )}
+                          {dayStay !== null && (
+                            <span style={{ padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700, background: '#f0fdf4', color: '#15803d', border: '1px solid #86efac' }}>
+                              Day {dayStay + 1}
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ display: 'flex', gap: '6px 20px', flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: 12, color: C.muted }}>
+                            <span style={{ fontWeight: 700, color: C.text }}>{age}Y / {gender}</span>
+                          </span>
+                          <span style={{ fontSize: 12, color: C.muted }}>
+                            ID: <span style={{ fontWeight: 700, color: C.primary, fontFamily: "'DM Mono',monospace" }}>{uhidVal}</span>
+                          </span>
+                          <span style={{ fontSize: 12, color: C.muted }}>
+                            🏥 <span style={{ fontWeight: 600, color: C.text }}>{wardVal}</span>
+                            {' · '}
+                            <span style={{ fontWeight: 600, color: C.text }}>{bedVal}</span>
+                          </span>
+                          <span style={{ fontSize: 12, color: C.muted }}>
+                            📅 <span style={{ fontWeight: 600, color: C.text }}>{admDate}</span>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Right: action buttons */}
+                    <div style={{ display: 'flex', gap: 6, flexShrink: 0, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                      {[
+                        { label: 'Care Plan',       icon: 'pi-clipboard',  action: () => navigate('/nursing-care-plan') },
+                        { label: 'Vitals Trend',    icon: 'pi-chart-bar',  action: () => navigate('/vitalsView') },
+                        { label: 'Print / PDF',     icon: 'pi-print',      action: () => setShowReport(true), accent: true },
+                        { label: 'IPD Assessment',  icon: 'pi-file-check', action: () => navigate(`/ipd-assessment/${uhidVal}`), accent: true },
+                        { label: 'Change Patient',  icon: 'pi-arrows-h',   action: () => { setPatient(null); setNotes([]); setSearchUHID(''); }, danger: true },
+                      ].map(b => (
+                        <button key={b.label} onClick={b.action} style={{
+                          padding: '7px 13px',
+                          border: `1.5px solid ${b.danger ? '#fca5a5' : b.accent ? `${C.primary}35` : C.border}`,
+                          borderRadius: 9,
+                          background: b.danger ? C.redL : b.accent ? C.primaryL : 'white',
+                          fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                          color: b.danger ? C.red : b.accent ? C.primary : C.text,
+                          display: 'flex', alignItems: 'center', gap: 5,
+                          transition: 'all .15s',
+                          boxShadow: b.accent ? `0 2px 8px ${C.primary}20` : 'none',
+                        }}
+                          onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = `0 4px 14px ${b.danger ? C.red : C.primary}25`; }}
+                          onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = b.accent ? `0 2px 8px ${C.primary}20` : 'none'; }}>
+                          <i className={`pi ${b.icon}`} style={{ fontSize: 11 }} /> {b.label}
+                        </button>
                       ))}
                     </div>
                   </div>
-                )}
 
-                {/* Blood group */}
-                {patient.bloodGroup && (
-                  <div>
-                    <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".8px", color: C.muted, marginBottom: 2 }}>Blood Group</div>
-                    <div style={{ fontWeight: 800, color: C.red, fontSize: 13, fontFamily: "'DM Mono', monospace" }}>{patient.bloodGroup}</div>
+                  {/* Bottom: diagnosis + consultant + allergies */}
+                  <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px dashed ${C.border}`, display: 'flex', gap: '8px 24px', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <i className="pi pi-stethoscope" style={{ fontSize: 11, color: C.muted }} />
+                      <span style={{ fontSize: 12, color: C.muted }}>Consultant:</span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{consultant}</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <i className="pi pi-tag" style={{ fontSize: 11, color: C.muted }} />
+                      <span style={{ fontSize: 12, color: C.muted }}>Diagnosis:</span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{diagnosis}</span>
+                    </div>
+                    {allergies.length > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: C.red, display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <i className="pi pi-exclamation-triangle" style={{ fontSize: 11 }} /> ALLERGY:
+                        </span>
+                        {allergies.map(a => (
+                          <span key={a} style={{ background: C.redL, color: C.red, border: '1px solid #fca5a5', padding: '2px 9px', borderRadius: 20, fontSize: 11, fontWeight: 700 }}>{a}</span>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                )}
-
-                {/* Admission type */}
-                <div>
-                  <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".8px", color: C.muted, marginBottom: 2 }}>Admission Type</div>
-                  <span style={{ background: C.purpleL, border: "1px solid #c4b5fd", color: C.purple, padding: "2px 10px", borderRadius: 5, fontSize: 11, fontWeight: 700 }}>
-                    {patient.admissionType?.toUpperCase() || "IPD"}
-                  </span>
                 </div>
               </div>
-
-              {/* Action buttons */}
-              <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "flex-start", flexWrap: "wrap", maxWidth: 280 }}>
-                <button onClick={() => navigate("/nursing-care-plan")}
-                  style={{ padding: "6px 12px", border: `1.5px solid ${C.border}`, borderRadius: 7, background: "white", fontSize: 11, fontWeight: 600, cursor: "pointer", color: C.text, display: "flex", alignItems: "center", gap: 5 }}>
-                  <i className="pi pi-clipboard" style={{ fontSize: 11 }} /> Care Plan
-                </button>
-                <button onClick={() => navigate("/vitalsView")}
-                  style={{ padding: "6px 12px", border: `1.5px solid ${C.border}`, borderRadius: 7, background: "white", fontSize: 11, fontWeight: 600, cursor: "pointer", color: C.text, display: "flex", alignItems: "center", gap: 5 }}>
-                  <i className="pi pi-chart-bar" style={{ fontSize: 11 }} /> Vitals Trend
-                </button>
-                <button onClick={() => setShowReport(true)}
-                  style={{ padding: "6px 12px", border: `1.5px solid ${C.primary}40`, borderRadius: 7, background: C.primaryL, fontSize: 11, fontWeight: 600, cursor: "pointer", color: C.primary, display: "flex", alignItems: "center", gap: 5 }}>
-                  <i className="pi pi-print" style={{ fontSize: 11 }} /> Print / PDF Report
-                </button>
-                <button onClick={() => navigate(`/ipd-assessment/${patient.uhid || patient.UHID || searchUHID}`)}
-                  style={{ padding: "6px 12px", border: `1.5px solid ${C.primary}30`, borderRadius: 7, background: C.primaryL, fontSize: 11, fontWeight: 600, cursor: "pointer", color: C.primary, display: "flex", alignItems: "center", gap: 5 }}>
-                  <i className="pi pi-file-check" style={{ fontSize: 11 }} /> IPD Assessment
-                </button>
-                <button onClick={() => { setPatient(null); setNotes([]); setSearchUHID(""); }}
-                  style={{ padding: "6px 12px", border: `1.5px solid ${C.border}`, borderRadius: 7, background: "white", fontSize: 11, fontWeight: 600, cursor: "pointer", color: C.muted, display: "flex", alignItems: "center", gap: 5 }}>
-                  <i className="pi pi-times" style={{ fontSize: 11 }} /> Change
-                </button>
-              </div>
-            </div>
-          </div>
+            );
+          })()}
 
           {/* ── Doctor's Active Orders (NurseOrdersPanel) ── */}
           <div style={{ marginBottom: 14 }}>
@@ -819,27 +1066,160 @@ function NursingNotesContent({ selectedPatient }) {
             </button>
           </div>
 
+          {/* ── Initial Assessment Gate Banner ── */}
+          {gateActive && (
+            <div style={{ background: "#fef2f2", border: "2px solid #fca5a5", borderRadius: 12, padding: "16px 20px", marginBottom: 14, display: "flex", alignItems: "center", gap: 14, boxShadow: "0 4px 16px rgba(220,38,38,.12)" }}>
+              <div style={{ width: 44, height: 44, borderRadius: 10, background: "#fee2e2", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <i className="pi pi-lock" style={{ fontSize: 20, color: "#dc2626" }} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 800, fontSize: 14, color: "#991b1b", display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ background: "#dc2626", color: "white", fontSize: 9, fontWeight: 900, padding: "2px 7px", borderRadius: 4, letterSpacing: ".5px" }}>MANDATORY</span>
+                  Nursing Initial Assessment not completed — NABH COP.2
+                </div>
+                <div style={{ fontSize: 12, color: "#b91c1c", marginTop: 4 }}>
+                  Nursing Initial Assessment must be completed before writing any other care notes (vitals, wound, MEWS, daily assessment, etc.) for this patient.
+                </div>
+              </div>
+              <button
+                onClick={() => openModal("initial")}
+                style={{ padding: "10px 22px", background: "#dc2626", color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", boxShadow: "0 4px 14px rgba(220,38,38,.35)", flexShrink: 0 }}>
+                <i className="pi pi-clipboard" style={{ marginRight: 6, fontSize: 13 }} />
+                Write Initial Assessment
+              </button>
+            </div>
+          )}
+          {!gateActive && nurseAssessmentDone && (
+            <div style={{ background: "#f0fdf4", border: "1.5px solid #bbf7d0", borderRadius: 10, padding: "9px 16px", marginBottom: 14, display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#15803d", fontWeight: 600 }}>
+              <i className="pi pi-check-circle" style={{ fontSize: 14 }} />
+              Nursing Initial Assessment completed — full documentation access unlocked
+            </div>
+          )}
+
           {/* ── Module Launcher ── */}
-          <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden", marginBottom: 14 }}>
-            <div style={{ padding: "10px 20px", borderBottom: `1px solid ${C.border}`, background: "#f8fafc", display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ width: 26, height: 26, borderRadius: 6, background: C.primary + "18", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <i className="pi pi-plus-circle" style={{ color: C.primary, fontSize: 12 }} />
-              </span>
-              <span style={{ fontWeight: 700, fontSize: 12, textTransform: "uppercase", letterSpacing: ".8px", color: C.muted }}>Add Care Note</span>
-            </div>
-            <div style={{ padding: "14px 18px", display: "flex", flexWrap: "wrap", gap: 8 }}>
-              {MODULES.map(m => (
-                <button key={m.id} onClick={() => openModal(m.id)}
-                  style={{ display: "flex", alignItems: "center", gap: 7, padding: "8px 14px", borderRadius: 9, border: `1.5px solid ${m.border}`, fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 600, cursor: "pointer", background: "white", color: m.color, transition: "all .2s", position: "relative" }}
-                  onMouseEnter={e => { e.currentTarget.style.background = m.bg; e.currentTarget.style.transform = "translateY(-1px)"; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = "white"; e.currentTarget.style.transform = "none"; }}>
-                  <i className={`pi ${m.icon}`} style={{ fontSize: 13 }} />
-                  {m.label}
-                  {m.dot && <span style={{ position: "absolute", top: -4, right: -4, width: 8, height: 8, background: C.red, borderRadius: "50%", border: "2px solid white" }} />}
-                </button>
-              ))}
-            </div>
-          </div>
+          {(() => {
+            const MOD_GROUPS = [
+              {
+                label: 'Assessment & Monitoring',
+                icon: 'pi-chart-line', color: '#1d4ed8', bg: '#dbeafe',
+                ids: ['vitals','neuro','pain','mews','fall','intake'],
+              },
+              {
+                label: 'Interventions',
+                icon: 'pi-plus-circle', color: '#0f766e', bg: '#ccfbf1',
+                ids: ['iv','blood','wound','skin','procedure'],
+              },
+              {
+                label: 'Documentation',
+                icon: 'pi-file-edit', color: '#7c3aed', bg: '#ede9fe',
+                ids: ['initial','daily','careplan','discharge','nutrition','education','general'],
+              },
+            ];
+            return (
+              <div style={{ background: C.card, borderRadius: 16, marginBottom: 14, overflow: 'hidden', border: `1.5px solid ${C.border}`, boxShadow: '0 2px 8px rgba(0,0,0,.04)' }}>
+                {/* Header */}
+                <div style={{ padding: '13px 22px', borderBottom: `1px solid ${C.border}`, background: 'linear-gradient(to right, #f0fdfa, #f8fafc)', display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ width: 34, height: 34, borderRadius: 10, background: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: `0 3px 8px ${C.primary}40` }}>
+                    <i className="pi pi-pen-to-square" style={{ fontSize: 14, color: 'white' }} />
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: 14, color: C.text }}>Add Care Note</div>
+                    <div style={{ fontSize: 11, color: C.muted }}>Select a module to document · {gateActive ? <span style={{color:'#dc2626',fontWeight:700}}>Complete Initial Assessment first</span> : <span style={{color:'#16a34a',fontWeight:600}}>All modules unlocked</span>}</div>
+                  </div>
+                </div>
+
+                {/* Module groups */}
+                <div style={{ padding: '16px 22px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+                  {MOD_GROUPS.map(group => (
+                    <div key={group.label}>
+                      {/* Group label */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
+                        <div style={{ width: 22, height: 22, borderRadius: 6, background: group.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <i className={`pi ${group.icon}`} style={{ fontSize: 11, color: group.color }} />
+                        </div>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: group.color, textTransform: 'uppercase', letterSpacing: '.7px' }}>{group.label}</span>
+                        <div style={{ flex: 1, height: 1, background: `${group.color}20` }} />
+                      </div>
+                      {/* Module tiles */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(118px, 1fr))', gap: 8 }}>
+                        {group.ids.map(id => {
+                          const m = MODULES.find(x => x.id === id);
+                          if (!m) return null;
+                          const locked = gateActive && m.id !== 'initial';
+                          const isInitial = m.id === 'initial';
+                          const isHighlight = isInitial && gateActive;
+                          return (
+                            <button key={m.id} onClick={() => !locked && openModal(m.id)}
+                              title={locked ? 'Complete Nursing Initial Assessment first' : m.label}
+                              style={{
+                                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                                gap: 8, padding: '14px 8px',
+                                border: `1.5px solid ${isHighlight ? '#fca5a5' : locked ? '#e2e8f0' : m.border}`,
+                                borderRadius: 12,
+                                background: isHighlight ? '#fff0f0' : locked ? '#f8fafc' : 'white',
+                                cursor: locked ? 'not-allowed' : 'pointer',
+                                opacity: locked && !isInitial ? 0.45 : 1,
+                                transition: 'all .18s',
+                                position: 'relative',
+                                boxShadow: locked ? 'none' : '0 1px 4px rgba(0,0,0,.04)',
+                              }}
+                              onMouseEnter={e => {
+                                if (!locked) {
+                                  e.currentTarget.style.background = isHighlight ? '#fecaca' : m.bg;
+                                  e.currentTarget.style.transform = 'translateY(-2px)';
+                                  e.currentTarget.style.boxShadow = `0 6px 16px ${m.color}20`;
+                                  e.currentTarget.style.borderColor = m.color;
+                                }
+                              }}
+                              onMouseLeave={e => {
+                                if (!locked) {
+                                  e.currentTarget.style.background = isHighlight ? '#fff0f0' : 'white';
+                                  e.currentTarget.style.transform = 'none';
+                                  e.currentTarget.style.boxShadow = '0 1px 4px rgba(0,0,0,.04)';
+                                  e.currentTarget.style.borderColor = isHighlight ? '#fca5a5' : m.border;
+                                }
+                              }}>
+                              {/* Icon bubble */}
+                              <div style={{
+                                width: 38, height: 38, borderRadius: 10,
+                                background: isHighlight ? '#fee2e2' : locked ? '#f1f5f9' : m.bg,
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                transition: 'all .18s',
+                              }}>
+                                <i className={`pi ${locked && !isInitial ? 'pi-lock' : m.icon}`}
+                                  style={{ fontSize: 15, color: isHighlight ? '#dc2626' : locked ? '#94a3b8' : m.color }} />
+                              </div>
+                              {/* Label */}
+                              <span style={{
+                                fontSize: 10.5, fontWeight: 700, textAlign: 'center', lineHeight: 1.3,
+                                color: isHighlight ? '#dc2626' : locked && !isInitial ? '#94a3b8' : m.color,
+                              }}>
+                                {m.label}
+                              </span>
+                              {/* Badges */}
+                              {isInitial && gateActive && (
+                                <span style={{ position: 'absolute', top: -6, right: -6, background: '#dc2626', color: 'white', fontSize: 8, fontWeight: 800, padding: '2px 5px', borderRadius: 6, letterSpacing: '.3px', border: '1.5px solid white' }}>
+                                  REQ
+                                </span>
+                              )}
+                              {isInitial && !gateActive && (
+                                <span style={{ position: 'absolute', top: -6, right: -6, background: '#16a34a', color: 'white', fontSize: 8, fontWeight: 800, padding: '2px 5px', borderRadius: 6, border: '1.5px solid white' }}>
+                                  ✓
+                                </span>
+                              )}
+                              {m.dot && !gateActive && (
+                                <span style={{ position: 'absolute', top: -4, right: -4, width: 9, height: 9, background: '#dc2626', borderRadius: '50%', border: '2px solid white' }} />
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* ── Equipment Used This Shift ── */}
           {(() => {
@@ -1044,52 +1424,75 @@ function NursingNotesContent({ selectedPatient }) {
           })()}
 
           {/* ── Notes Timeline ── */}
-          <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
+          <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 16, overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,.04)' }}>
             {/* Timeline header */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 20px", borderBottom: `1px solid ${C.border}`, background: "#f8fafc" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 14 }}>
-                <i className="pi pi-list" style={{ color: C.primary, fontSize: 14 }} />
-                Nursing Notes Timeline
-                <span style={{ background: C.primary, color: "white", padding: "2px 9px", borderRadius: 10, fontSize: 11, fontWeight: 700 }}>
-                  {filteredNotes.length}
-                </span>
-              </div>
-              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                {[
-                  { key: "All",      label: "All" },
-                  { key: "vitals",   label: "Vitals" },
-                  { key: "blood",    label: "Blood Tx" },
-                  { key: "iv",       label: "IV" },
-                  { key: "wound",    label: "Wound" },
-                  { key: "pain",     label: "Pain" },
-                  { key: "neuro",    label: "Neuro" },
-                  { key: "intake",   label: "I/O" },
-                  { key: "general",  label: "General" },
-                  { key: "mews",     label: "MEWS" },
-                ].map(f => (
-                  <button key={f.key} onClick={() => setFilterType(f.key)}
-                    style={{ padding: "4px 12px", border: `1.5px solid ${filterType === f.key ? C.primary : C.border}`, borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: "pointer", background: filterType === f.key ? C.primaryL : "white", color: filterType === f.key ? C.primary : C.muted, transition: "all .15s" }}>
-                    {f.label}
-                  </button>
-                ))}
-                <select value={filterShift} onChange={e => setFilterShift(e.target.value)}
-                  style={{ ...fld, maxWidth: 120, padding: "5px 10px", fontSize: 11 }}>
-                  <option value="">All Shifts</option>
-                  <option value="morning">Morning</option>
-                  <option value="afternoon">Afternoon</option>
-                  <option value="evening">Evening</option>
-                  <option value="night">Night</option>
-                </select>
+            <div style={{ background: 'linear-gradient(to right, #f0fdfa, #f8fafc)', borderBottom: `1px solid ${C.border}`, padding: '14px 22px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                {/* Title */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ width: 34, height: 34, borderRadius: 10, background: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: `0 3px 8px ${C.primary}40` }}>
+                    <i className="pi pi-list" style={{ fontSize: 14, color: 'white' }} />
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: 14, color: C.text }}>Nursing Notes Timeline</div>
+                    <div style={{ fontSize: 11, color: C.muted }}>{filteredNotes.length} {filteredNotes.length === 1 ? 'entry' : 'entries'} recorded</div>
+                  </div>
+                </div>
+                {/* Filters */}
+                <div style={{ display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' }}>
+                  {[
+                    { key: 'All',     label: 'All',       color: C.primary },
+                    { key: 'vitals',  label: '❤ Vitals',  color: '#1d4ed8' },
+                    { key: 'blood',   label: '🩸 Blood',   color: '#9f1239' },
+                    { key: 'iv',      label: '💉 IV',      color: C.teal    },
+                    { key: 'wound',   label: '🩹 Wound',   color: C.red     },
+                    { key: 'pain',    label: '⚡ Pain',    color: C.amber   },
+                    { key: 'neuro',   label: '🧠 Neuro',   color: C.purple  },
+                    { key: 'intake',  label: '📊 I/O',     color: C.accent  },
+                    { key: 'general', label: '📝 General', color: C.muted   },
+                    { key: 'mews',    label: '📈 MEWS',    color: '#92400e' },
+                  ].map(f => (
+                    <button key={f.key} onClick={() => setFilterType(f.key)} style={{
+                      padding: '4px 11px', borderRadius: 20, fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                      border: `1.5px solid ${filterType === f.key ? f.color : C.border}`,
+                      background: filterType === f.key ? f.color : 'white',
+                      color: filterType === f.key ? 'white' : C.muted,
+                      transition: 'all .15s',
+                    }}
+                      onMouseEnter={e => { if (filterType !== f.key) { e.currentTarget.style.borderColor = f.color; e.currentTarget.style.color = f.color; }}}
+                      onMouseLeave={e => { if (filterType !== f.key) { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.color = C.muted; }}}>
+                      {f.label}
+                    </button>
+                  ))}
+                  <select value={filterShift} onChange={e => setFilterShift(e.target.value)}
+                    style={{ padding: '5px 10px', border: `1.5px solid ${C.border}`, borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', background: 'white', color: C.muted, outline: 'none' }}>
+                    <option value="">All Shifts</option>
+                    <option value="morning">🌅 Morning</option>
+                    <option value="afternoon">☀️ Afternoon</option>
+                    <option value="evening">🌆 Evening</option>
+                    <option value="night">🌙 Night</option>
+                  </select>
+                </div>
               </div>
             </div>
 
             {/* Timeline entries */}
             {filteredNotes.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "56px 0", color: C.muted }}>
-                <i className="pi pi-inbox" style={{ fontSize: 32, display: "block", marginBottom: 12, color: "#cbd5e1" }} />
-                <div style={{ fontSize: 13, fontWeight: 600 }}>No nursing notes yet</div>
-                <button onClick={() => openModal("general")} style={{ marginTop: 10, background: "none", border: "none", color: C.primary, fontWeight: 700, cursor: "pointer", fontSize: 13 }}>
-                  <i className="pi pi-plus" style={{ marginRight: 5, fontSize: 11 }} />Add first note
+              <div style={{ padding: '56px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
+                <div style={{ width: 72, height: 72, borderRadius: 20, background: `linear-gradient(135deg, ${C.primaryL}, ${C.greenL})`, display: 'flex', alignItems: 'center', justifyContent: 'center', border: `2px dashed ${C.primary}40` }}>
+                  <i className="pi pi-file-edit" style={{ fontSize: 28, color: C.primary }} />
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: C.text, marginBottom: 4 }}>No nursing notes yet</div>
+                  <div style={{ fontSize: 12, color: C.muted }}>Start documenting by clicking any module above</div>
+                </div>
+                <button onClick={() => openModal('general')} style={{
+                  padding: '9px 22px', background: C.primary, color: 'white', border: 'none',
+                  borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', gap: 7,
+                  boxShadow: `0 4px 14px ${C.primary}40`,
+                }}>
+                  <i className="pi pi-plus" style={{ fontSize: 12 }} /> Add First Note
                 </button>
               </div>
             ) : (
@@ -1102,17 +1505,27 @@ function NursingNotesContent({ selectedPatient }) {
                   : "--:--";
                 return (
                   <div key={note._id || i}
-                    style={{ padding: "16px 20px", borderBottom: i < filteredNotes.length - 1 ? `1px solid ${C.border}` : "none", display: "grid", gridTemplateColumns: "76px 1fr auto", gap: 16, alignItems: "start", borderLeft: `4px solid ${ns.dot}` }}
-                    onMouseEnter={e => e.currentTarget.style.background = "#fafbff"}
-                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-
+                    style={{
+                      margin: '0 16px',
+                      padding: '16px 16px 16px 0',
+                      borderBottom: i < filteredNotes.length - 1 ? `1px solid ${C.border}` : 'none',
+                      display: 'grid', gridTemplateColumns: '80px 1fr auto', gap: 16, alignItems: 'start',
+                      borderLeft: `4px solid ${ns.dot}`, paddingLeft: 16,
+                      borderRadius: 0, transition: 'background .15s, border-radius .15s',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.background = `${ns.bg}50`; e.currentTarget.style.borderRadius = '12px'; e.currentTarget.style.margin = '2px 16px'; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderRadius = '0'; e.currentTarget.style.margin = '0 16px'; }}>
                     {/* Time column */}
-                    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-                      <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 11, fontWeight: 700, color: C.text }}>{timeStr}</span>
-                      <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 9, fontWeight: 700, letterSpacing: ".6px", ...ss }}>
-                        {(note.shift || "morning").charAt(0).toUpperCase() + (note.shift || "morning").slice(1)}
-                      </span>
-                      <span style={{ width: 12, height: 12, borderRadius: "50%", border: `2.5px solid ${ns.dot}`, background: "white", marginTop: 2, display: "block" }} />
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, paddingTop: 2 }}>
+                      {/* Time badge */}
+                      <div style={{ background: `${ns.bg}`, border: `1.5px solid ${ns.dot}30`, borderRadius: 8, padding: '5px 8px', textAlign: 'center', minWidth: 62 }}>
+                        <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 800, color: ns.color, lineHeight: 1 }}>{timeStr}</div>
+                        <div style={{ fontSize: 8, fontWeight: 700, color: ns.color + 'aa', textTransform: 'uppercase', letterSpacing: '.5px', marginTop: 3 }}>
+                          {(note.shift || 'morning').charAt(0).toUpperCase() + (note.shift || 'morning').slice(1)}
+                        </div>
+                      </div>
+                      {/* Timeline dot */}
+                      <div style={{ width: 10, height: 10, borderRadius: '50%', background: ns.dot, boxShadow: `0 0 0 3px ${ns.dot}30` }} />
                     </div>
 
                     {/* Body */}
@@ -1134,7 +1547,7 @@ function NursingNotesContent({ selectedPatient }) {
 
                       {/* Vitals structured data */}
                       {note.vitals && note.noteType === "vitals" && (
-                        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "8px 14px", background: C.grayL, borderRadius: 7, marginBottom: 8 }}>
+                        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "10px 16px", background: `linear-gradient(to right, ${ns.bg}60, white)`, borderRadius: 10, marginBottom: 8 }}>
                           {[
                             { label: "BP",    value: `${note.vitals.bp?.systolic || "\u2014"}/${note.vitals.bp?.diastolic || "\u2014"}`, abnormal: isAbnormal("bp_sys", note.vitals.bp?.systolic) },
                             { label: "PULSE", value: `${note.vitals.pulse || "\u2014"} /min`, abnormal: isAbnormal("pulse", note.vitals.pulse) },
@@ -1214,7 +1627,8 @@ function NursingNotesContent({ selectedPatient }) {
                           product:"Product", bagNo:"Bag No.", crossMatchNo:"X-Match No.",
                           volume:"Volume (mL)", groupVerified:"Group Verified", secondNurse:"2nd Nurse",
                           startTime:"Start", endTime:"End", reactionType:"Reaction",
-                          preBP:"Pre-BP", prePulse:"Pre-Pulse", postBP:"Post-BP", postPulse:"Post-Pulse",
+                          preBP:"Pre-BP", preBP_sys:"Pre-Sys BP", preBP_dia:"Pre-Dia BP",
+                          prePulse:"Pre-Pulse", postBP:"Post-BP", postBP_sys:"Post-Sys BP", postBP_dia:"Post-Dia BP", postPulse:"Post-Pulse",
                           fluid:"Fluid", rate:"Rate (mL/hr)", dropsPerMin:"gtts/min",
                           route:"Route", site:"Site", cannulaDate:"Cannula Date",
                           setChangeDate:"Set Change", additive:"Additive",
@@ -1413,7 +1827,7 @@ function NursingNotesContent({ selectedPatient }) {
                   nurseName={user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim()}
                   onVitalsChange={v => {
                     setVitals(v);
-                    const [sbp = ""] = (v.bp || "").split("/");
+                    const sbp = v.bp_sys || "";
                     setMews(p => ({ ...p, rr: v.rr || p.rr, spo2: v.spo2 || p.spo2, temp: v.temp || p.temp, sbp: sbp || p.sbp, hr: v.pulse || p.hr }));
                   }}
                 />
@@ -1634,8 +2048,9 @@ function NursingNotesContent({ selectedPatient }) {
                   {/* Pre-transfusion vitals */}
                   <div style={{ background:"#fff7ed", border:`1px solid #fed7aa`, borderRadius:8, padding:"10px 14px" }}>
                     <div style={{ fontSize:11, fontWeight:700, color:C.orange, textTransform:"uppercase", letterSpacing:".6px", marginBottom:8 }}>Pre-Transfusion Vitals *</div>
-                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
-                      <FL label="BP (mmHg)"><input style={fld} value={blood.preBP} placeholder="120/80" onChange={e => setBlood(p => ({ ...p, preBP: e.target.value }))} /></FL>
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:10 }}>
+                      <FL label="Systolic BP (mmHg)"><input type="number" style={fld} value={blood.preBP_sys} placeholder="120" onChange={e => setBlood(p => ({ ...p, preBP_sys: e.target.value }))} /></FL>
+                      <FL label="Diastolic BP (mmHg)"><input type="number" style={fld} value={blood.preBP_dia} placeholder="80" onChange={e => setBlood(p => ({ ...p, preBP_dia: e.target.value }))} /></FL>
                       <FL label="Pulse (/min)"><input type="number" style={fld} value={blood.prePulse} placeholder="80" onChange={e => setBlood(p => ({ ...p, prePulse: e.target.value }))} /></FL>
                       <FL label="Temp (°F)"><input type="number" style={fld} value={blood.preTemp} placeholder="98.6" onChange={e => setBlood(p => ({ ...p, preTemp: e.target.value }))} /></FL>
                     </div>
@@ -1644,8 +2059,9 @@ function NursingNotesContent({ selectedPatient }) {
                   {blood.status === "Completed" && (
                     <div style={{ background:C.greenL, border:`1px solid ${C.greenB}`, borderRadius:8, padding:"10px 14px" }}>
                       <div style={{ fontSize:11, fontWeight:700, color:C.green, textTransform:"uppercase", letterSpacing:".6px", marginBottom:8 }}>Post-Transfusion Vitals *</div>
-                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-                        <FL label="BP (mmHg)"><input style={fld} value={blood.postBP} placeholder="118/76" onChange={e => setBlood(p => ({ ...p, postBP: e.target.value }))} /></FL>
+                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+                        <FL label="Systolic BP (mmHg)"><input type="number" style={fld} value={blood.postBP_sys} placeholder="118" onChange={e => setBlood(p => ({ ...p, postBP_sys: e.target.value }))} /></FL>
+                        <FL label="Diastolic BP (mmHg)"><input type="number" style={fld} value={blood.postBP_dia} placeholder="76" onChange={e => setBlood(p => ({ ...p, postBP_dia: e.target.value }))} /></FL>
                         <FL label="Pulse (/min)"><input type="number" style={fld} value={blood.postPulse} placeholder="78" onChange={e => setBlood(p => ({ ...p, postPulse: e.target.value }))} /></FL>
                       </div>
                     </div>
@@ -2188,9 +2604,9 @@ function NursingNotesContent({ selectedPatient }) {
                     <div style={{ background:"#f8fafc", borderRadius:10, padding:"12px 14px", border:`1px solid ${C.border}` }}>
                       <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>Vitals Snapshot</div>
                       <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8 }}>
-                        {[{k:"bp",label:"BP (mmHg)",ph:"120/80"},{k:"pulse",label:"Pulse (/min)",ph:"80"},{k:"temp",label:"Temp (°F)",ph:"98.6"},{k:"spo2",label:"SpO₂ (%)",ph:"98"},{k:"rr",label:"RR (/min)",ph:"16"},{k:"bsl",label:"BSL (mg/dL)",ph:"110"},{k:"gcs",label:"GCS",ph:"15"}].map(f=>(
+                        {[{k:"bp_sys",label:"Systolic BP (mmHg)",ph:"120"},{k:"bp_dia",label:"Diastolic BP (mmHg)",ph:"80"},{k:"pulse",label:"Pulse (/min)",ph:"80"},{k:"temp",label:"Temp (°F)",ph:"98.6"},{k:"spo2",label:"SpO₂ (%)",ph:"98"},{k:"rr",label:"RR (/min)",ph:"16"},{k:"bsl",label:"BSL (mg/dL)",ph:"110"},{k:"gcs",label:"GCS",ph:"15"}].map(f=>(
                           <FL key={f.k} label={f.label}>
-                            <input style={fld} value={dailyAssess[f.k]} placeholder={f.ph} onChange={e=>setDailyAssess(p=>({...p,[f.k]:e.target.value}))} />
+                            <input type="number" style={f.k==="gcs"?fld:{...fld}} value={dailyAssess[f.k]} placeholder={f.ph} onChange={e=>setDailyAssess(p=>({...p,[f.k]:e.target.value}))} />
                           </FL>
                         ))}
                       </div>
@@ -2262,9 +2678,9 @@ function NursingNotesContent({ selectedPatient }) {
                     <div style={{ background:"#f8fafc", borderRadius:10, padding:"12px 14px", border:`1px solid ${C.border}` }}>
                       <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>Vitals on Admission</div>
                       <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8 }}>
-                        {[{k:"bp",l:"BP",ph:"120/80"},{k:"pulse",l:"Pulse",ph:"80"},{k:"temp",l:"Temp°F",ph:"98.6"},{k:"spo2",l:"SpO₂%",ph:"98"},{k:"rr",l:"RR/min",ph:"16"},{k:"weight",l:"Weight kg",ph:"60"},{k:"height",l:"Height cm",ph:"165"}].map(f=>(
+                        {[{k:"bp_sys",l:"Systolic BP (mmHg)",ph:"120"},{k:"bp_dia",l:"Diastolic BP (mmHg)",ph:"80"},{k:"pulse",l:"Pulse (/min)",ph:"80"},{k:"temp",l:"Temp (°F)",ph:"98.6"},{k:"spo2",l:"SpO₂ (%)",ph:"98"},{k:"rr",l:"RR/min",ph:"16"},{k:"weight",l:"Weight (kg)",ph:"60"},{k:"height",l:"Height (cm)",ph:"165"}].map(f=>(
                           <FL key={f.k} label={f.l}>
-                            <input style={fld} value={initialAssess[f.k]} placeholder={f.ph} onChange={e=>setInitialAssess(p=>({...p,[f.k]:e.target.value}))} />
+                            <input type="number" style={fld} value={initialAssess[f.k]} placeholder={f.ph} onChange={e=>setInitialAssess(p=>({...p,[f.k]:e.target.value}))} />
                           </FL>
                         ))}
                       </div>
