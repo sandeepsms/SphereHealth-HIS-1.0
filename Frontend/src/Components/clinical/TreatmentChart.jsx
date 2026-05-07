@@ -138,7 +138,6 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
   const [activeTab,   setActiveTab]   = useState("medications"); // "medications" | "infusions"
   const [actionModal, setActionModal] = useState(null);          // { order, type, doseIndex }
   const [saving,      setSaving]      = useState(false);
-  const [seedLoading, setSeedLoading] = useState(false);
   const autoTimer = useRef(null);
 
   /* ── Form state for action modals ── */
@@ -195,19 +194,6 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
     autoTimer.current = setInterval(() => fetchOrders(true), 30000);
     return () => clearInterval(autoTimer.current);
   }, [fetchOrders]);
-
-  /* ── Seed demo data ── */
-  const seedDemo = async () => {
-    if (!UHID) { toast.warn("Load a patient first"); return; }
-    setSeedLoading(true);
-    try {
-      await axios.post(`${API_ENDPOINTS.DOCTOR_ORDERS}/seed-demo`, { UHID, patientName: patientName || "Demo Patient", visitId, createdBy: "Dr. Demo" });
-      toast.success("Demo orders seeded — NABH test data loaded");
-      await fetchOrders();
-    } catch (err) {
-      toast.error(err?.response?.data?.message || "Seed failed");
-    } finally { setSeedLoading(false); }
-  };
 
   /* ── Open action modal ── */
   const openAction = (order, type, doseEntry = null) => {
@@ -479,6 +465,8 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
   // New Orders = Pending (not yet touched by nurse), sorted STAT first
   const newMedOrders = medOrders.filter(o => o.status === "Pending")
     .sort((a, b) => (a.priority === "STAT" ? -1 : b.priority === "STAT" ? 1 : 0));
+  const newInfOrders = infOrders.filter(o => o.status === "Pending")
+    .sort((a, b) => (a.priority === "STAT" ? -1 : b.priority === "STAT" ? 1 : 0));
 
   const timeNow = new Date().toTimeString().slice(0, 5); // "HH:MM"
 
@@ -694,7 +682,7 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                                     <div style={{ fontSize: 9, fontWeight: 700, color: overdue ? C.red : C.muted, fontFamily: "monospace" }}>{t}</div>
                                     <div
                                       onClick={() => nurseMode && !isStopped && openAction(order, "administer", rec || { scheduledTime: t })}
-                                      style={{ padding: "4px 8px", borderRadius: 6, border: `1.5px solid ${overdue && st === "pending" ? C.red : cfg.border}`, background: overdue && st === "pending" ? "#fef2f2" : cfg.bg, color: overdue && st === "pending" ? C.red : cfg.color, fontSize: 10, fontWeight: 700, cursor: nurseMode && !isStopped ? (st === "given" ? "not-allowed" : "pointer") : "default", textAlign: "center", minWidth: 64, transition: "all .15s" }}
+                                      style={{ padding: "4px 8px", borderRadius: 6, border: `1.5px solid ${rec?.adverseEvent ? C.red : overdue && st === "pending" ? C.red : cfg.border}`, background: rec?.adverseEvent ? "#fef2f2" : overdue && st === "pending" ? "#fef2f2" : cfg.bg, color: overdue && st === "pending" ? C.red : cfg.color, fontSize: 10, fontWeight: 700, cursor: nurseMode && !isStopped ? (st === "given" ? "not-allowed" : "pointer") : "default", textAlign: "center", minWidth: 64, transition: "all .15s" }}
                                       title={st === "given" ? `🔒 Given by ${rec?.givenBy || "Nurse"} — Doctor approval required to undo` : (rec?.notes || rec?.holdReason || rec?.delayReason || "")}
                                     >
                                       <div>{cfg.icon} {cfg.label}</div>
@@ -703,9 +691,20 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                                       {rec?.givenBy && <div style={{ fontSize: 8, color: cfg.color + "cc" }}>{rec.givenBy.split(" ").slice(-1)[0]}</div>}
                                       {rec?.verifiedBy && <div style={{ fontSize: 8, color: C.green }}>👥 {rec.verifiedBy.split(" ").slice(-1)[0]}</div>}
                                       {overdue && st === "pending" && <div style={{ fontSize: 8, fontWeight: 800, color: C.red }}>OVERDUE</div>}
+                                      {/* ADR flag */}
+                                      {rec?.adverseEvent && <div style={{ fontSize: 8, fontWeight: 800, color: C.red, marginTop: 1 }}>⚠ ADR</div>}
+                                      {/* PRN effectiveness */}
+                                      {rec?.prnEffect && (
+                                        <div style={{ fontSize: 8, fontWeight: 700, color: rec.prnEffect === "effective" ? C.green : rec.prnEffect === "partial" ? C.amber : C.red, marginTop: 1 }}>
+                                          {rec.prnEffect === "effective" ? "✓ Effective" : rec.prnEffect === "partial" ? "◑ Partial" : "✗ No effect"}
+                                        </div>
+                                      )}
                                     </div>
                                     {rec?.holdReason && <div style={{ fontSize: 8, color: C.blue, maxWidth: 72, textAlign: "center", lineHeight: 1.2 }}>{rec.holdReason.slice(0,30)}</div>}
                                     {rec?.delayedTo && <div style={{ fontSize: 8, color: C.orange }}>→ {rec.delayedTo}</div>}
+                                    {rec?.adverseEvent && (
+                                      <div style={{ fontSize: 8, color: C.red, maxWidth: 72, textAlign: "center", lineHeight: 1.2, fontWeight: 700 }}>ADR reported</div>
+                                    )}
                                   </div>
                                 );
                               })}
@@ -781,6 +780,37 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                {/* ── New/Pending Infusion Orders Banner ── */}
+                {newInfOrders.length > 0 && nurseMode && (
+                  <div style={{ border: `2px solid #fca5a5`, borderRadius: 10, overflow: "hidden" }}>
+                    <div style={{ padding: "8px 14px", background: "#fef2f2", display: "flex", alignItems: "center", gap: 10 }}>
+                      <span style={{ background: C.red, color: "white", borderRadius: 6, padding: "2px 10px", fontSize: 11, fontWeight: 800, letterSpacing: ".5px" }}>
+                        🔔 NEW INFUSION ORDERS — {newInfOrders.length}
+                      </span>
+                      <span style={{ fontSize: 11, color: C.red, fontWeight: 600 }}>
+                        Doctor has placed {newInfOrders.length} new infusion order{newInfOrders.length > 1 ? "s" : ""} not yet started.
+                      </span>
+                    </div>
+                    <div style={{ padding: "10px 14px", background: "#fff8f8", display: "flex", flexDirection: "column", gap: 6 }}>
+                      {newInfOrders.map(o => {
+                        const isSTAT = o.priority === "STAT";
+                        return (
+                          <div key={o._id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", border: `1.5px solid ${isSTAT ? C.red : "#fca5a5"}`, borderRadius: 8, background: isSTAT ? "#fef2f2" : "white" }}>
+                            {isSTAT && <span style={{ background: C.red, color: "white", fontSize: 9, fontWeight: 800, padding: "2px 7px", borderRadius: 4, flexShrink: 0 }}>STAT</span>}
+                            <span style={{ fontWeight: 700, fontSize: 12, flex: 1 }}>{o.orderDetails?.displayName || o.orderDetails?.medicineName}</span>
+                            <span style={{ fontSize: 11, color: C.muted }}>{o.orderDetails?.totalVolume && `${o.orderDetails.totalVolume}ml`} · {o.orderDetails?.rate && `${o.orderDetails.rate} ml/hr`}</span>
+                            <span style={{ fontSize: 10, color: C.muted }}>By: {o.orderedBy || "Doctor"}</span>
+                            <button
+                              onClick={() => openAction(o, "rate-change")}
+                              style={{ padding: "4px 12px", background: C.teal, color: "white", border: "none", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
+                              <i className="pi pi-play" style={{ fontSize: 9, marginRight: 4 }} />Start Infusion
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
                 {infOrders.map(order => {
                   const hamBadge = order.hamFlag || isHAM(order.orderDetails?.medicineName || "");
                   const isStopped = ["Stopped","Cancelled"].includes(order.status);
@@ -819,10 +849,22 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                           <span style={{ padding: "4px 12px", borderRadius: 20, fontSize: 11, fontWeight: 700, background: isStopped ? C.redL : isHeld ? C.blueL : C.greenL, color: isStopped ? C.red : isHeld ? C.blue : C.green, border: `1px solid ${isStopped ? C.redB : isHeld ? C.blueB : C.greenB}` }}>
                             {isStopped ? "⏹ Stopped" : isHeld ? "⏸ Held" : "▶ Running"}
                           </span>
+                          {/* Hold-until badge — shown when infusion is held with a scheduled resume time */}
+                          {isHeld && order.holdUntil && (
+                            <span style={{ padding: "3px 10px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: C.blueL, color: C.blue, border: `1px solid ${C.blueB}` }}>
+                              ⏱ Resume: {new Date(order.holdUntil).toLocaleString("en-IN",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"})}
+                            </span>
+                          )}
                           {/* Last check badge */}
-                          {minutesSinceCheck !== null && (
+                          {minutesSinceCheck !== null && !isStopped && (
                             <span style={{ padding: "3px 10px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: checkOverdue ? C.redL : C.amberL, color: checkOverdue ? C.red : C.amber, border: `1px solid ${checkOverdue ? C.redB : C.amberB}` }}>
                               {checkOverdue ? "⚠ " : ""}Last check: {minutesSinceCheck}m ago
+                            </span>
+                          )}
+                          {/* First-time monitoring prompt — no entries yet for a running infusion */}
+                          {minutesSinceCheck === null && !isStopped && !isHeld && (
+                            <span style={{ padding: "3px 10px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: C.amberL, color: C.amber, border: `1px solid ${C.amberB}` }}>
+                              ⚠ No monitoring entry yet
                             </span>
                           )}
                         </div>
@@ -846,6 +888,24 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                               </div>
                             ))}
                           </div>
+                        </div>
+                      )}
+
+                      {/* Overdue monitoring reminder banner */}
+                      {checkOverdue && !isStopped && !isHeld && nurseMode && (
+                        <div style={{ padding: "8px 16px", background: "#fef2f2", borderBottom: `1px solid ${C.redB}`, display: "flex", alignItems: "center", gap: 10 }}>
+                          <span style={{ background: C.red, color: "white", borderRadius: 5, padding: "2px 9px", fontSize: 10, fontWeight: 800, flexShrink: 0 }}>
+                            ⚠ MONITORING OVERDUE
+                          </span>
+                          <span style={{ fontSize: 11, color: C.red, fontWeight: 600 }}>
+                            {hamBadge
+                              ? `HAM infusion — monitoring required every 30 min. Last entry: ${minutesSinceCheck}m ago.`
+                              : `Standard IV — monitoring required every 60 min. Last entry: ${minutesSinceCheck}m ago.`}
+                          </span>
+                          <button onClick={() => openAction(order, "monitoring")}
+                            style={{ marginLeft: "auto", padding: "4px 12px", background: C.teal, color: "white", border: "none", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
+                            <i className="pi pi-chart-bar" style={{ fontSize: 9, marginRight: 4 }} />Add Entry Now
+                          </button>
                         </div>
                       )}
 
