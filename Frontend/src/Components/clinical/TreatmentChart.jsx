@@ -485,10 +485,14 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
 
   /* ── Helper: get today's admin record for a time ── */
   const getTodayRecord = (order, time) => {
-    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const todayStr = new Date().toDateString();
     return order.administrationRecord?.find(r => {
-      const sameDay = !r.scheduledDate || new Date(r.scheduledDate).toDateString() === today.toDateString();
-      return r.scheduledTime === time && sameDay;
+      if (r.scheduledTime !== time) return false;
+      // Primary: scheduledDate is today (set correctly by backend)
+      if (r.scheduledDate && new Date(r.scheduledDate).toDateString() === todayStr) return true;
+      // Fallback: givenAt is today — covers legacy/seeded records with stale scheduledDate
+      if (r.givenAt && new Date(r.givenAt).toDateString() === todayStr) return true;
+      return false;
     });
   };
 
@@ -712,7 +716,8 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                                   🕐 {timeAgo(order.createdAt || order.orderedAt)}
                                 </span>
                               )}
-                              {(() => {
+                              {/* Duration chip — only on active orders (Overrun not meaningful for Completed) */}
+                              {order.status !== "Completed" && (() => {
                                 const chip = getDurationChip(order);
                                 if (!chip) return null;
                                 return (
@@ -757,6 +762,11 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
 
                           {/* Dose cells */}
                           <td style={{ ...TD, minWidth: 460 }}>
+                            {order.status === "Completed" ? (
+                              <span style={{ fontSize: 11, fontWeight: 700, color: C.green, background: C.greenL, border: `1px solid ${C.greenB}`, borderRadius: 6, padding: "4px 10px", display: "inline-block" }}>
+                                ✅ Course completed — no new doses
+                              </span>
+                            ) : (
                             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                               {times.map(t => {
                                 const rec = getTodayRecord(order, t);
@@ -795,17 +805,21 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                                 );
                               })}
                             </div>
+                            )}
                           </td>
 
                           {/* Nurse actions */}
                           {nurseMode && (
                             <td style={{ ...TD }}>
-                              {!isStopped && (
+                              {!isStopped && order.status !== "Completed" && (
                                 <button
                                   onClick={() => openAction(order, "administer", order.administrationRecord?.find(r => r.status === "pending") || { scheduledTime: times[0] })}
                                   style={{ padding: "4px 10px", background: C.blue, color: "white", border: "none", borderRadius: 6, fontSize: 10, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}>
                                   <i className="pi pi-check" style={{ fontSize: 9 }} />Administer
                                 </button>
+                              )}
+                              {order.status === "Completed" && (
+                                <span style={{ fontSize: 10, fontWeight: 700, color: C.green }}>✅ Done</span>
                               )}
                             </td>
                           )}
