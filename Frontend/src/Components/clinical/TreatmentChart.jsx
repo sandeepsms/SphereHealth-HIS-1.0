@@ -498,12 +498,17 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
 
   /* ── Scheduled times for an order ── */
   const getScheduledTimes = (order) => {
+    // 1. Always prefer the frequency mapping — it is the source of truth
+    //    (administrationRecord only contains what was documented, not what is scheduled)
+    const freq = order.orderDetails?.frequency;
+    if (FREQ_TIMES[freq]) return FREQ_TIMES[freq];
+
+    // 2. Unknown / custom frequency → derive unique times from past records
     if (order.administrationRecord?.length) {
       const unique = [...new Set(order.administrationRecord.map(r => r.scheduledTime).filter(Boolean))];
       if (unique.length) return unique;
     }
-    const freq = order.orderDetails?.frequency;
-    return FREQ_TIMES[freq] || ["—"];
+    return ["—"];
   };
 
   /* ── Color for overdue ── */
