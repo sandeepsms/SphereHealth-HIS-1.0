@@ -231,12 +231,15 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
     setActionModal({ order, type, doseEntry });
     const now = new Date().toTimeString().slice(0, 5);
 
-    // Auto-detect STAT mode: no regular scheduled slot is currently in window
+    // Auto-detect STAT mode: no undocumented regular slot is currently in its 30-min window
+    // Must exclude slots already documented (given/hold/etc.) — those are not "open"
     const regularTimes = (FREQ_TIMES[order.orderDetails?.frequency] || []).filter(t => !t.startsWith("STAT:"));
+    const toMins = (s) => { const [h, m] = s.split(":").map(Number); return h * 60 + m; };
+    const SPECIAL_T = ["Immediate","As Needed","Continuous","Before Meals","After Meals","Once Weekly","—"];
     const anyWindowOpen = regularTimes.some(t => {
-      const toMins = (s) => { const [h, m] = s.split(":").map(Number); return h * 60 + m; };
-      const SPECIAL = ["Immediate","As Needed","Continuous","Before Meals","After Meals","Once Weekly","—"];
-      if (SPECIAL.includes(t)) return true;
+      const existing = getTodayRecord(order, t);
+      if (existing && existing.status !== "pending") return false; // slot already documented
+      if (SPECIAL_T.includes(t)) return true;
       return toMins(now) >= toMins(t) - 30;
     });
     const autoStat = type === "administer" && regularTimes.length > 0 && !anyWindowOpen;
@@ -1371,7 +1374,7 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                       { k: "drug",    label: `Right Drug — ${order.orderDetails?.medicineName}` },
                       { k: "dose",    label: `Right Dose — ${order.orderDetails?.dose}` },
                       { k: "route",   label: `Right Route — ${order.orderDetails?.route}` },
-                      { k: "time",    label: `Right Time — ${dose?.scheduledTime}` },
+                      { k: "time",    label: `Right Time — ${f.statMode ? `⚡ STAT at ${f.givenAt}` : (dose?.scheduledTime || "")}` },
                     ].map(right => (
                       <label key={right.k} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12, fontWeight: 600, color: f.fiveRights[right.k] ? C.green : C.text, padding: "5px 8px", borderRadius: 6, background: f.fiveRights[right.k] ? "#f0fdf4" : "white", border: `1px solid ${f.fiveRights[right.k] ? C.greenB : C.border}` }}>
                         <input type="checkbox" checked={f.fiveRights[right.k]} onChange={e => setAdminForm(p => ({ ...p, fiveRights: { ...p.fiveRights, [right.k]: e.target.checked } }))} style={{ accentColor: C.green, width: 14, height: 14 }} />
