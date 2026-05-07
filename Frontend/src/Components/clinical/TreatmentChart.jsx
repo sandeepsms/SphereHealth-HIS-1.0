@@ -98,6 +98,19 @@ const HOLD_INF_REASONS = [
   "Patient request",
   "Other",
 ];
+const STAT_REASONS = [
+  "Breakthrough pain / symptom not controlled by scheduled dose",
+  "Fever — patient above SOS threshold",
+  "Doctor verbal order — emergency administration",
+  "Pre-procedure / pre-op requirement",
+  "Missed dose — patient returned from procedure / theatre",
+  "Pharmacy delay — drug now available",
+  "Patient clinical deterioration — urgent dose required",
+  "Patient transfer — dose given before shifting",
+  "Other",
+];
+// Frequency → interval hours (for next-dose recalculation after STAT)
+const FREQ_INTERVALS = { "OD": 24, "BD": 12, "TDS": 8, "QID": 6, "Q4H": 4, "Q6H": 6, "Q8H": 8, "Q12H": 12 };
 
 /* ── Design tokens ── */
 const C = {
@@ -217,6 +230,17 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
     }
     setActionModal({ order, type, doseEntry });
     const now = new Date().toTimeString().slice(0, 5);
+
+    // Auto-detect STAT mode: no regular scheduled slot is currently in window
+    const regularTimes = (FREQ_TIMES[order.orderDetails?.frequency] || []).filter(t => !t.startsWith("STAT:"));
+    const anyWindowOpen = regularTimes.some(t => {
+      const toMins = (s) => { const [h, m] = s.split(":").map(Number); return h * 60 + m; };
+      const SPECIAL = ["Immediate","As Needed","Continuous","Before Meals","After Meals","Once Weekly","—"];
+      if (SPECIAL.includes(t)) return true;
+      return toMins(now) >= toMins(t) - 30;
+    });
+    const autoStat = type === "administer" && regularTimes.length > 0 && !anyWindowOpen;
+
     setAdminForm({
       status: "given", givenAt: now, doseGiven: order.orderDetails?.dose || "", routeUsed: order.orderDetails?.route || "", siteUsed: "", notes: "",
       verifiedBy: "", fiveRights: { patient: false, drug: false, dose: false, route: false, time: false },
@@ -224,6 +248,7 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
       delayedTo: "", delayReason: "", delayReasonCustom: "",
       prnEffect: "", prnReassessTime: "",
       adverseEvent: false, adverseDetails: "",
+      statMode: autoStat, statReason: "", statReasonCustom: "",
     });
     setRateForm({ newRate: order.currentRate || order.orderDetails?.rate || "", reason: "Doctor order", reasonDetail: "", verifiedBy: "", doctorInformed: false, doctorName: "" });
     setMonitorForm({ currentRate: order.currentRate || "", bp: "", pulse: "", spo2: "", urineOutput: "", volumeInfused: "", siteCondition: "", action: "No Change", remarks: "" });
@@ -234,7 +259,12 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
     if (!actionModal) return;
     const { order, doseEntry } = actionModal;
     const f = adminForm;
-    const sched = doseEntry?.scheduledTime || "";
+
+    // STAT or regular scheduled time
+    const isStatDose = f.statMode;
+    const statReason = f.statReason === "Other" ? f.statReasonCustom.trim() : f.statReason;
+    // STAT: use actual givenAt time as the scheduledTime token; Regular: use the slot time
+    const sched = isStatDose ? f.givenAt : (doseEntry?.scheduledTime || "");
 
     // 5 Rights validation for "given"
     if (f.status === "given") {
@@ -245,7 +275,13 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
     if (order.twoNurseRequired && f.status === "given" && !f.verifiedBy.trim()) {
       toast.error("High Alert Medication — second nurse verification required (Verified By field)"); return;
     }
+    // STAT reason mandatory
+    if (isStatDose && f.status === "given" && !statReason) {
+      toast.error("STAT reason is mandatory for NABH documentation"); return;
+    }
     if (!sched) { toast.error("Cannot determine scheduled time"); return; }
+
+    const nextDose = isStatDose ? calcNextStatDose(f.givenAt, order.orderDetails?.frequency) : undefined;
 
     setSaving(true);
     try {
@@ -268,6 +304,9 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
         prnReassessTime: f.prnReassessTime,
         adverseEvent: f.adverseEvent,
         adverseDetails: f.adverseDetails,
+        isStatDose: isStatDose || undefined,
+        statReason: statReason || undefined,
+        nextDoseAdjustedAt: nextDose || undefined,
       });
       const statusLabel = STATUS_CFG[f.status]?.label || f.status;
       toast.success(`${order.orderDetails?.medicineName || "Medication"} — ${statusLabel}`);
@@ -486,11 +525,22 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
   /* ── Helper: get today's admin record for a time ── */
   const getTodayRecord = (order, time) => {
     const todayStr = new Date().toDateString();
+
+    // STAT token → match by isStatDose + exact scheduledTime
+    if (time?.startsWith("STAT:")) {
+      const statTime = time.slice(5); // "HH:MM"
+      return order.administrationRecord?.find(r =>
+        r.isStatDose &&
+        r.scheduledTime === statTime &&
+        r.givenAt && new Date(r.givenAt).toDateString() === todayStr
+      );
+    }
+
+    // Regular slot — exclude STAT records
     return order.administrationRecord?.find(r => {
+      if (r.isStatDose) return false;
       if (r.scheduledTime !== time) return false;
-      // Primary: scheduledDate is today (set correctly by backend)
       if (r.scheduledDate && new Date(r.scheduledDate).toDateString() === todayStr) return true;
-      // Fallback: givenAt is today — covers legacy/seeded records with stale scheduledDate
       if (r.givenAt && new Date(r.givenAt).toDateString() === todayStr) return true;
       return false;
     });
@@ -498,32 +548,52 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
 
   /* ── Scheduled times for an order ── */
   const getScheduledTimes = (order) => {
-    // 1. Always prefer the frequency mapping — it is the source of truth
-    //    (administrationRecord only contains what was documented, not what is scheduled)
     const freq = order.orderDetails?.frequency;
-    if (FREQ_TIMES[freq]) return FREQ_TIMES[freq];
+    const regularTimes = FREQ_TIMES[freq] || null;
 
-    // 2. Unknown / custom frequency → derive unique times from past records
+    // Append any today's STAT doses as "STAT:<HH:MM>" tokens
+    const todayStr = new Date().toDateString();
+    const statTimes = (order.administrationRecord || [])
+      .filter(r => r.isStatDose && r.givenAt && new Date(r.givenAt).toDateString() === todayStr)
+      .map(r => `STAT:${r.scheduledTime || new Date(r.givenAt).toTimeString().slice(0, 5)}`);
+
+    if (regularTimes) return [...regularTimes, ...statTimes];
+
+    // Unknown / custom frequency → derive from non-STAT records
     if (order.administrationRecord?.length) {
-      const unique = [...new Set(order.administrationRecord.map(r => r.scheduledTime).filter(Boolean))];
-      if (unique.length) return unique;
+      const unique = [...new Set(
+        order.administrationRecord.filter(r => !r.isStatDose).map(r => r.scheduledTime).filter(Boolean)
+      )];
+      if (unique.length) return [...unique, ...statTimes];
     }
-    return ["—"];
+    return statTimes.length ? statTimes : ["—"];
   };
 
   /* ── Color for overdue ── */
   const isOverdue = (time) => {
-    if (!time || time === "Immediate" || time === "As Needed" || time === "Continuous") return false;
+    if (!time || time?.startsWith("STAT:")) return false;
+    if (time === "Immediate" || time === "As Needed" || time === "Continuous") return false;
     return time < timeNow;
   };
 
   /* ── Is the 30-min administration window open yet? ── */
-  // Returns true when current time is ≥ scheduledTime − 30 min (or time is special)
   const isWithinWindow = (time) => {
+    if (!time || time?.startsWith("STAT:")) return true; // STAT always in window
     const SPECIAL = ["Immediate","As Needed","Continuous","Before Meals","After Meals","Once Weekly","—"];
-    if (!time || SPECIAL.includes(time)) return true;
+    if (SPECIAL.includes(time)) return true;
     const toMins = (t) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
     return toMins(timeNow) >= toMins(time) - 30;
+  };
+
+  /* ── Next dose time after a STAT administration ── */
+  const calcNextStatDose = (givenAtHHMM, freq) => {
+    const interval = FREQ_INTERVALS[freq];
+    if (!interval || !givenAtHHMM) return null;
+    const [h, m] = givenAtHHMM.split(":").map(Number);
+    const totalMins = h * 60 + m + interval * 60;
+    const nh = Math.floor(totalMins / 60) % 24;
+    const nm = totalMins % 60;
+    return `${String(nh).padStart(2, "0")}:${String(nm).padStart(2, "0")}`;
   };
 
   /* ── "X min/hr/d ago" label ── */
@@ -783,13 +853,31 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                             ) : (<>
                             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                               {times.map(t => {
+                                const isStat   = t.startsWith("STAT:");
                                 const rec      = getTodayRecord(order, t);
                                 const st       = rec?.status || "pending";
                                 const cfg      = STATUS_CFG[st] || STATUS_CFG.pending;
                                 const overdue  = !rec?.givenAt && st === "pending" && isOverdue(t);
-                                // Dose is "upcoming" when no record yet, still pending, AND window not open
-                                const upcoming = !rec && st === "pending" && !isWithinWindow(t);
-                                const canClick = nurseMode && !isStopped && !upcoming && st !== "given";
+                                const upcoming = !isStat && !rec && st === "pending" && !isWithinWindow(t);
+                                const canClick = nurseMode && !isStopped && !upcoming && !isStat && st !== "given";
+
+                                // ── STAT dose cell ──
+                                if (isStat) {
+                                  return (
+                                    <div key={t} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+                                      <div style={{ fontSize: 9, fontWeight: 800, color: "#b45309", fontFamily: "monospace" }}>⚡ STAT</div>
+                                      <div style={{ padding: "4px 8px", borderRadius: 6, border: "2px solid #fde047", background: "#fefce8", color: "#78350f", fontSize: 10, fontWeight: 700, textAlign: "center", minWidth: 64 }}>
+                                        <div>✅ Given</div>
+                                        <div style={{ fontSize: 9, fontWeight: 600, marginTop: 1 }}>{rec?.scheduledTime || t.slice(5)}</div>
+                                        {rec?.givenBy && <div style={{ fontSize: 8, color: "#92400e" }}>{rec.givenBy.split(" ").slice(-1)[0]}</div>}
+                                        {rec?.statReason && <div style={{ fontSize: 7, color: "#78350f", marginTop: 1, maxWidth: 68, lineHeight: 1.2 }}>{rec.statReason.slice(0, 22)}{rec.statReason.length > 22 ? "…" : ""}</div>}
+                                        {rec?.nextDoseAdjustedAt && <div style={{ fontSize: 8, color: "#b45309", marginTop: 2, fontWeight: 700 }}>→ next: {rec.nextDoseAdjustedAt}</div>}
+                                      </div>
+                                    </div>
+                                  );
+                                }
+
+                                // ── Regular dose cell ──
                                 return (
                                   <div key={t} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
                                     <div style={{ fontSize: 9, fontWeight: 700, color: upcoming ? "#94a3b8" : overdue ? C.red : C.muted, fontFamily: "monospace" }}>{t}</div>
@@ -838,8 +926,9 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                                 );
                               })}
                             </div>
-                            {/* All today's doses administered → day-complete banner */}
-                            {times.length > 0 && times.every(t => getTodayRecord(order, t)?.status === "given") && (
+                            {/* All today's regular doses administered → day-complete banner */}
+                            {times.filter(t => !t.startsWith("STAT:")).length > 0 &&
+                             times.filter(t => !t.startsWith("STAT:")).every(t => getTodayRecord(order, t)?.status === "given") && (
                               <div style={{ marginTop: 6, fontSize: 11, fontWeight: 700, color: C.green, background: C.greenL, border: `1px solid ${C.greenB}`, borderRadius: 6, padding: "4px 10px", display: "inline-block" }}>
                                 ✅ Course completed — no new doses
                               </div>
@@ -1209,8 +1298,39 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
         const rights5Done = Object.values(f.fiveRights).every(Boolean);
         return (
           <ModalOverlay onClose={() => setActionModal(null)}>
-            <ModalHeader title={`Administer — ${order.orderDetails?.medicineName}`} sub={`${order.orderDetails?.dose} · ${order.orderDetails?.route} · ${dose?.scheduledTime}`} color={ham ? C.red : C.primary} icon="pi-check-circle" onClose={() => setActionModal(null)} />
+            <ModalHeader title={`Administer — ${order.orderDetails?.medicineName}`} sub={`${order.orderDetails?.dose} · ${order.orderDetails?.route} · ${f.statMode ? "⚡ STAT" : (dose?.scheduledTime || "")}`} color={f.statMode ? "#ca8a04" : ham ? C.red : C.primary} icon="pi-check-circle" onClose={() => setActionModal(null)} />
             <div style={{ padding: "18px 22px", display: "flex", flexDirection: "column", gap: 12 }}>
+
+              {/* ── STAT / Emergency toggle ── */}
+              <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", padding: "9px 14px", borderRadius: 9, background: f.statMode ? "#fefce8" : "#f8fafc", border: `2px solid ${f.statMode ? "#fde047" : C.border}`, transition: "all .15s" }}>
+                <input type="checkbox" checked={f.statMode} onChange={e => setAdminForm(p => ({ ...p, statMode: e.target.checked }))} style={{ accentColor: "#ca8a04", width: 15, height: 15 }} />
+                <span style={{ fontWeight: 800, fontSize: 12, color: f.statMode ? "#92400e" : C.muted }}>⚡ STAT / Emergency Dose — given outside the scheduled window</span>
+                {f.statMode && <span style={{ marginLeft: "auto", fontSize: 10, background: "#fde047", color: "#78350f", borderRadius: 4, padding: "1px 7px", fontWeight: 700 }}>STAT</span>}
+              </label>
+
+              {/* STAT details section */}
+              {f.statMode && (
+                <div style={{ background: "#fefce8", border: "1.5px solid #fde047", borderRadius: 10, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div style={{ fontWeight: 800, color: "#92400e", fontSize: 12 }}>⚡ STAT Dose Documentation — NABH mandatory</div>
+                  <FL label="STAT Reason *">
+                    <select style={{ ...sel, borderColor: "#fde047" }} value={f.statReason} onChange={e => setAdminForm(p => ({ ...p, statReason: e.target.value }))}>
+                      <option value="">— Select reason —</option>
+                      {STAT_REASONS.map(r => <option key={r}>{r}</option>)}
+                    </select>
+                  </FL>
+                  {f.statReason === "Other" && (
+                    <FL label="Specify reason">
+                      <input style={{ ...fld, borderColor: "#fde047" }} value={f.statReasonCustom} placeholder="Describe the clinical reason for STAT administration…" onChange={e => setAdminForm(p => ({ ...p, statReasonCustom: e.target.value }))} />
+                    </FL>
+                  )}
+                  {calcNextStatDose(f.givenAt, order.orderDetails?.frequency) && (
+                    <div style={{ fontSize: 11, color: "#78350f", background: "#fffbeb", borderRadius: 7, padding: "7px 11px", border: "1px solid #fde68a" }}>
+                      📅 Next dose adjusted to: <strong>{calcNextStatDose(f.givenAt, order.orderDetails?.frequency)}</strong>
+                      <span style={{ fontSize: 10, color: "#92400e", marginLeft: 6 }}>(based on {order.orderDetails?.frequency} interval from {f.givenAt})</span>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {ham && (
                 <div style={{ background: "#fef2f2", border: "2px solid #fca5a5", borderRadius: 10, padding: "10px 14px" }}>
