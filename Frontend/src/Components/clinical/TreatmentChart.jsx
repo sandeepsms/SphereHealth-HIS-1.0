@@ -517,6 +517,15 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
     return time < timeNow;
   };
 
+  /* ── Is the 30-min administration window open yet? ── */
+  // Returns true when current time is ≥ scheduledTime − 30 min (or time is special)
+  const isWithinWindow = (time) => {
+    const SPECIAL = ["Immediate","As Needed","Continuous","Before Meals","After Meals","Once Weekly","—"];
+    if (!time || SPECIAL.includes(time)) return true;
+    const toMins = (t) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
+    return toMins(timeNow) >= toMins(time) - 30;
+  };
+
   /* ── "X min/hr/d ago" label ── */
   const timeAgo = (date) => {
     if (!date) return "";
@@ -774,42 +783,67 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                             ) : (
                             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                               {times.map(t => {
-                                const rec = getTodayRecord(order, t);
-                                const st  = rec?.status || "pending";
-                                const cfg = STATUS_CFG[st] || STATUS_CFG.pending;
-                                const overdue = !rec?.givenAt && st === "pending" && isOverdue(t);
+                                const rec      = getTodayRecord(order, t);
+                                const st       = rec?.status || "pending";
+                                const cfg      = STATUS_CFG[st] || STATUS_CFG.pending;
+                                const overdue  = !rec?.givenAt && st === "pending" && isOverdue(t);
+                                // Dose is "upcoming" when no record yet, still pending, AND window not open
+                                const upcoming = !rec && st === "pending" && !isWithinWindow(t);
+                                const canClick = nurseMode && !isStopped && !upcoming && st !== "given";
                                 return (
                                   <div key={t} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-                                    <div style={{ fontSize: 9, fontWeight: 700, color: overdue ? C.red : C.muted, fontFamily: "monospace" }}>{t}</div>
+                                    <div style={{ fontSize: 9, fontWeight: 700, color: upcoming ? "#94a3b8" : overdue ? C.red : C.muted, fontFamily: "monospace" }}>{t}</div>
                                     <div
-                                      onClick={() => nurseMode && !isStopped && openAction(order, "administer", rec || { scheduledTime: t })}
-                                      style={{ padding: "4px 8px", borderRadius: 6, border: `1.5px solid ${rec?.adverseEvent ? C.red : overdue && st === "pending" ? C.red : cfg.border}`, background: rec?.adverseEvent ? "#fef2f2" : overdue && st === "pending" ? "#fef2f2" : cfg.bg, color: overdue && st === "pending" ? C.red : cfg.color, fontSize: 10, fontWeight: 700, cursor: nurseMode && !isStopped ? (st === "given" ? "not-allowed" : "pointer") : "default", textAlign: "center", minWidth: 64, transition: "all .15s" }}
-                                      title={st === "given" ? `🔒 Given by ${rec?.givenBy || "Nurse"} — Doctor approval required to undo` : (rec?.notes || rec?.holdReason || rec?.delayReason || "")}
+                                      onClick={() => canClick && openAction(order, "administer", rec || { scheduledTime: t })}
+                                      style={{
+                                        padding: "4px 8px", borderRadius: 6, textAlign: "center", minWidth: 64, transition: "all .15s",
+                                        border:      upcoming ? "1.5px dashed #cbd5e1" : `1.5px solid ${rec?.adverseEvent ? C.red : overdue ? C.red : cfg.border}`,
+                                        background:  upcoming ? "#f8fafc"              : rec?.adverseEvent ? "#fef2f2" : overdue ? "#fef2f2" : cfg.bg,
+                                        color:       upcoming ? "#94a3b8"              : overdue ? C.red : cfg.color,
+                                        fontSize: 10, fontWeight: 700,
+                                        cursor: canClick ? "pointer" : "not-allowed",
+                                        opacity: upcoming ? 0.55 : 1,
+                                        filter:  upcoming ? "blur(0.4px)" : "none",
+                                      }}
+                                      title={upcoming ? `Window opens 30 min before ${t}  — use Administer button for STAT/emergency` : st === "given" ? `🔒 Given by ${rec?.givenBy || "Nurse"} — Doctor approval required to undo` : (rec?.notes || rec?.holdReason || rec?.delayReason || "")}
                                     >
-                                      <div>{cfg.icon} {cfg.label}</div>
-                                      {st === "given" && <div style={{ fontSize: 8, color: C.green }}>🔒 Locked</div>}
-                                      {rec?.givenAt && <div style={{ fontSize: 9, fontWeight: 400, marginTop: 1 }}>{new Date(rec.givenAt).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}</div>}
-                                      {rec?.givenBy && <div style={{ fontSize: 8, color: cfg.color + "cc" }}>{rec.givenBy.split(" ").slice(-1)[0]}</div>}
-                                      {rec?.verifiedBy && <div style={{ fontSize: 8, color: C.green }}>👥 {rec.verifiedBy.split(" ").slice(-1)[0]}</div>}
-                                      {overdue && st === "pending" && <div style={{ fontSize: 8, fontWeight: 800, color: C.red }}>OVERDUE</div>}
-                                      {/* ADR flag */}
-                                      {rec?.adverseEvent && <div style={{ fontSize: 8, fontWeight: 800, color: C.red, marginTop: 1 }}>⚠ ADR</div>}
-                                      {/* PRN effectiveness */}
-                                      {rec?.prnEffect && (
-                                        <div style={{ fontSize: 8, fontWeight: 700, color: rec.prnEffect === "effective" ? C.green : rec.prnEffect === "partial" ? C.amber : C.red, marginTop: 1 }}>
-                                          {rec.prnEffect === "effective" ? "✓ Effective" : rec.prnEffect === "partial" ? "◑ Partial" : "✗ No effect"}
-                                        </div>
+                                      {upcoming ? (
+                                        <>
+                                          <div>🔒 Upcoming</div>
+                                          <div style={{ fontSize: 8, color: "#94a3b8", marginTop: 1 }}>from {(() => { const [h, m] = t.split(":").map(Number); const oh = Math.floor(((h * 60 + m) - 30) / 60); const om = ((h * 60 + m) - 30) % 60; return `${String(oh).padStart(2,"0")}:${String(om).padStart(2,"0")}`; })()}</div>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <div>{cfg.icon} {cfg.label}</div>
+                                          {st === "given" && <div style={{ fontSize: 8, color: C.green }}>🔒 Locked</div>}
+                                          {rec?.givenAt && <div style={{ fontSize: 9, fontWeight: 400, marginTop: 1 }}>{new Date(rec.givenAt).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}</div>}
+                                          {rec?.givenBy && <div style={{ fontSize: 8, color: cfg.color + "cc" }}>{rec.givenBy.split(" ").slice(-1)[0]}</div>}
+                                          {rec?.verifiedBy && <div style={{ fontSize: 8, color: C.green }}>👥 {rec.verifiedBy.split(" ").slice(-1)[0]}</div>}
+                                          {overdue && st === "pending" && <div style={{ fontSize: 8, fontWeight: 800, color: C.red }}>OVERDUE</div>}
+                                          {rec?.adverseEvent && <div style={{ fontSize: 8, fontWeight: 800, color: C.red, marginTop: 1 }}>⚠ ADR</div>}
+                                          {rec?.prnEffect && (
+                                            <div style={{ fontSize: 8, fontWeight: 700, color: rec.prnEffect === "effective" ? C.green : rec.prnEffect === "partial" ? C.amber : C.red, marginTop: 1 }}>
+                                              {rec.prnEffect === "effective" ? "✓ Effective" : rec.prnEffect === "partial" ? "◑ Partial" : "✗ No effect"}
+                                            </div>
+                                          )}
+                                        </>
                                       )}
                                     </div>
-                                    {rec?.holdReason && <div style={{ fontSize: 8, color: C.blue, maxWidth: 72, textAlign: "center", lineHeight: 1.2 }}>{rec.holdReason.slice(0,30)}</div>}
-                                    {rec?.delayedTo && <div style={{ fontSize: 8, color: C.orange }}>→ {rec.delayedTo}</div>}
-                                    {rec?.adverseEvent && (
+                                    {!upcoming && rec?.holdReason && <div style={{ fontSize: 8, color: C.blue, maxWidth: 72, textAlign: "center", lineHeight: 1.2 }}>{rec.holdReason.slice(0,30)}</div>}
+                                    {!upcoming && rec?.delayedTo && <div style={{ fontSize: 8, color: C.orange }}>→ {rec.delayedTo}</div>}
+                                    {!upcoming && rec?.adverseEvent && (
                                       <div style={{ fontSize: 8, color: C.red, maxWidth: 72, textAlign: "center", lineHeight: 1.2, fontWeight: 700 }}>ADR reported</div>
                                     )}
                                   </div>
                                 );
                               })}
                             </div>
+                            {/* All today's doses administered → day-complete banner */}
+                            {times.length > 0 && times.every(t => getTodayRecord(order, t)?.status === "given") && (
+                              <div style={{ marginTop: 6, fontSize: 11, fontWeight: 700, color: C.green, background: C.greenL, border: `1px solid ${C.greenB}`, borderRadius: 6, padding: "4px 10px", display: "inline-block" }}>
+                                ✅ Course completed — no new doses
+                              </div>
+                            )}
                             )}
                           </td>
 
