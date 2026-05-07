@@ -137,7 +137,8 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
   const [refreshing,  setRefreshing]  = useState(false);
   const [activeTab,   setActiveTab]   = useState("medications"); // "medications" | "infusions"
   const [actionModal, setActionModal] = useState(null);          // { order, type, doseIndex }
-  const [saving,      setSaving]      = useState(false);
+  const [saving,        setSaving]        = useState(false);
+  const [lastRefreshed, setLastRefreshed] = useState(null);
   const autoTimer = useRef(null);
 
   /* ── Form state for action modals ── */
@@ -184,7 +185,7 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
       const arr = Array.isArray(data) ? data : (data.data || []);
       setOrders(arr.filter(o => !["Cancelled"].includes(o.status)));
     } catch { /* silent */ }
-    finally { silent ? setRefreshing(false) : setLoading(false); }
+    finally { silent ? setRefreshing(false) : setLoading(false); setLastRefreshed(new Date()); }
   }, [UHID, visitId]);
 
   useEffect(() => { fetchOrders(); }, [fetchOrders, refreshTrigger]);
@@ -194,6 +195,18 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
     autoTimer.current = setInterval(() => fetchOrders(true), 30000);
     return () => clearInterval(autoTimer.current);
   }, [fetchOrders]);
+
+  /* Escape key closes any open modal */
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== "Escape") return;
+      setActionModal(null);
+      setDocModal(null);
+      setInfModal(null);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
 
   /* ── Open action modal ── */
   const openAction = (order, type, doseEntry = null) => {
@@ -495,6 +508,41 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
     return time < timeNow;
   };
 
+  /* ── "X min/hr/d ago" label ── */
+  const timeAgo = (date) => {
+    if (!date) return "";
+    const mins = Math.floor((Date.now() - new Date(date).getTime()) / 60000);
+    if (mins < 1)  return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24)  return `${hrs}h ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
+  };
+
+  /* ── Day N of total duration ── */
+  const getDurationChip = (order) => {
+    const raw = order.orderDetails?.duration || "";
+    const match = String(raw).match(/(\d+)/);
+    if (!match) return null;
+    const total = parseInt(match[1]);
+    const start = new Date(order.startedAt || order.createdAt || Date.now());
+    const dayN  = Math.floor((Date.now() - start.getTime()) / 86400000) + 1;
+    if (dayN < 1 || total < 1) return null;
+    const over   = dayN > total;
+    return { dayN: Math.min(dayN, total), total, over };
+  };
+
+  /* ── Overdue dose count across all active med orders (for tab badge) ── */
+  const overdueMedCount = medOrders
+    .filter(o => !["Stopped","Cancelled","Completed"].includes(o.status))
+    .reduce((acc, o) => {
+      const times = getScheduledTimes(o);
+      return acc + times.filter(t => {
+        const rec = getTodayRecord(o, t);
+        return (!rec || rec.status === "pending") && isOverdue(t);
+      }).length;
+    }, 0);
+
   /* ════════════════════════════════════════════════════
      RENDER
   ════════════════════════════════════════════════════ */
@@ -514,26 +562,47 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
           <span style={{ background: "rgba(255,255,255,.12)", border: "1px solid rgba(255,255,255,.2)", borderRadius: 5, padding: "2px 10px", fontSize: 10, fontWeight: 800, color: "#7dd3fc", letterSpacing: "1px" }}>NABH</span>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {lastRefreshed && (
+            <span style={{ fontSize: 10, color: "rgba(255,255,255,.5)", fontFamily: "monospace" }}>
+              {refreshing ? "Refreshing…" : `Updated ${timeAgo(lastRefreshed)}`}
+            </span>
+          )}
           {refreshing && <i className="pi pi-spin pi-spinner" style={{ fontSize: 13, color: "#7dd3fc" }} />}
           <button onClick={() => fetchOrders(true)} style={{ padding: "5px 12px", background: "rgba(255,255,255,.12)", border: "1px solid rgba(255,255,255,.25)", borderRadius: 6, color: "white", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
             <i className="pi pi-refresh" style={{ marginRight: 5, fontSize: 10 }} />Refresh
+          </button>
+          <button onClick={() => window.print()} style={{ padding: "5px 12px", background: "rgba(255,255,255,.12)", border: "1px solid rgba(255,255,255,.25)", borderRadius: 6, color: "white", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+            <i className="pi pi-print" style={{ marginRight: 5, fontSize: 10 }} />Print MAR
           </button>
         </div>
       </div>
 
       {/* ── Tabs ── */}
       <div style={{ display: "flex", borderBottom: `1px solid ${C.border}`, background: "#f8fafc" }}>
-        {[
-          { id: "medications", label: "Medication MAR", icon: "pi-tablet", count: medOrders.length, color: C.blue },
-          { id: "infusions",   label: "Infusion Orders & Monitoring", icon: "pi-plus-circle", count: infOrders.length, color: C.teal },
-        ].map(tab => (
-          <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-            style={{ padding: "11px 22px", border: "none", borderBottom: activeTab === tab.id ? `3px solid ${tab.color}` : "3px solid transparent", background: "none", fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: activeTab === tab.id ? 700 : 500, color: activeTab === tab.id ? tab.color : C.muted, cursor: "pointer", display: "flex", alignItems: "center", gap: 7, transition: "all .15s" }}>
-            <i className={`pi ${tab.icon}`} style={{ fontSize: 12 }} />
-            {tab.label}
-            <span style={{ background: activeTab === tab.id ? tab.color : "#e2e8f0", color: activeTab === tab.id ? "white" : C.muted, padding: "1px 7px", borderRadius: 8, fontSize: 10, fontWeight: 700 }}>{tab.count}</span>
-          </button>
-        ))}
+        {/* Medications tab */}
+        <button onClick={() => setActiveTab("medications")}
+          style={{ padding: "11px 22px", border: "none", borderBottom: activeTab === "medications" ? `3px solid ${C.blue}` : "3px solid transparent", background: "none", fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: activeTab === "medications" ? 700 : 500, color: activeTab === "medications" ? C.blue : C.muted, cursor: "pointer", display: "flex", alignItems: "center", gap: 7, transition: "all .15s" }}>
+          <i className="pi pi-tablet" style={{ fontSize: 12 }} />
+          Medication MAR
+          <span style={{ background: activeTab === "medications" ? C.blue : "#e2e8f0", color: activeTab === "medications" ? "white" : C.muted, padding: "1px 7px", borderRadius: 8, fontSize: 10, fontWeight: 700 }}>{medOrders.length}</span>
+          {overdueMedCount > 0 && (
+            <span style={{ background: C.red, color: "white", padding: "1px 7px", borderRadius: 8, fontSize: 10, fontWeight: 800 }} title={`${overdueMedCount} overdue dose${overdueMedCount > 1 ? "s" : ""}`}>
+              ⚠ {overdueMedCount}
+            </span>
+          )}
+        </button>
+        {/* Infusions tab */}
+        <button onClick={() => setActiveTab("infusions")}
+          style={{ padding: "11px 22px", border: "none", borderBottom: activeTab === "infusions" ? `3px solid ${C.teal}` : "3px solid transparent", background: "none", fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: activeTab === "infusions" ? 700 : 500, color: activeTab === "infusions" ? C.teal : C.muted, cursor: "pointer", display: "flex", alignItems: "center", gap: 7, transition: "all .15s" }}>
+          <i className="pi pi-plus-circle" style={{ fontSize: 12 }} />
+          Infusion Orders & Monitoring
+          <span style={{ background: activeTab === "infusions" ? C.teal : "#e2e8f0", color: activeTab === "infusions" ? "white" : C.muted, padding: "1px 7px", borderRadius: 8, fontSize: 10, fontWeight: 700 }}>{infOrders.length}</span>
+          {newInfOrders.length > 0 && (
+            <span style={{ background: C.amber, color: "white", padding: "1px 7px", borderRadius: 8, fontSize: 10, fontWeight: 800 }} title={`${newInfOrders.length} pending infusion order${newInfOrders.length > 1 ? "s" : ""}`}>
+              🔔 {newInfOrders.length}
+            </span>
+          )}
+        </button>
       </div>
 
       {/* ── NABH Legend ── */}
@@ -606,7 +675,7 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
               )}
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                  <thead>
+                  <thead style={{ position: "sticky", top: 0, zIndex: 3 }}>
                     <tr style={{ background: C.blueL }}>
                       <th style={TH}>Drug (Generic)</th>
                       <th style={TH}>Dose / Route</th>
@@ -636,6 +705,23 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                             )}
                             <div style={{ color: isStopped ? C.muted : C.text }}>{order.orderDetails?.medicineName || "—"}</div>
                             <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>{order.orderDetails?.notes}</div>
+                            {/* "Ordered X ago" + duration chip */}
+                            <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 4 }}>
+                              {(order.createdAt || order.orderedAt) && (
+                                <span style={{ fontSize: 9, color: C.muted, background: "#f1f5f9", border: `1px solid ${C.border}`, borderRadius: 3, padding: "1px 5px" }}>
+                                  🕐 {timeAgo(order.createdAt || order.orderedAt)}
+                                </span>
+                              )}
+                              {(() => {
+                                const chip = getDurationChip(order);
+                                if (!chip) return null;
+                                return (
+                                  <span style={{ fontSize: 9, fontWeight: 700, background: chip.over ? C.redL : C.amberL, color: chip.over ? C.red : C.amber, border: `1px solid ${chip.over ? C.redB : C.amberB}`, borderRadius: 3, padding: "1px 5px" }}>
+                                    Day {chip.dayN}/{chip.total}{chip.over ? " ⚠ Overrun" : ""}
+                                  </span>
+                                );
+                              })()}
+                            </div>
                           </td>
 
                           {/* Dose / Route */}
@@ -869,6 +955,32 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                           )}
                         </div>
                       </div>
+
+                      {/* Volume progress bar — shown when totalVolume is prescribed */}
+                      {(() => {
+                        const totalVol   = parseFloat(order.orderDetails?.totalVolume);
+                        const lastEntry  = order.infusionMonitoring?.slice(-1)[0];
+                        const infusedVol = parseFloat(lastEntry?.volumeInfused || 0);
+                        if (!totalVol || isStopped) return null;
+                        const pct = Math.min(100, Math.round((infusedVol / totalVol) * 100));
+                        const almostDone = pct >= 80;
+                        const barColor   = pct >= 100 ? C.green : almostDone ? C.amber : C.teal;
+                        return (
+                          <div style={{ padding: "6px 16px", background: "#f8fafc", borderBottom: `1px solid ${C.border}` }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                              <span style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>Volume Progress</span>
+                              <span style={{ fontSize: 11, fontWeight: 700, color: barColor }}>
+                                {infusedVol}ml / {totalVol}ml ({pct}%)
+                                {almostDone && pct < 100 && <span style={{ marginLeft: 6, color: C.amber }}> ⚠ Almost complete</span>}
+                                {pct >= 100 && <span style={{ marginLeft: 6, color: C.green }}> ✓ Course complete</span>}
+                              </span>
+                            </div>
+                            <div style={{ height: 6, background: "#e2e8f0", borderRadius: 4, overflow: "hidden" }}>
+                              <div style={{ height: "100%", width: `${pct}%`, background: barColor, borderRadius: 4, transition: "width .4s ease" }} />
+                            </div>
+                          </div>
+                        );
+                      })()}
 
                       {/* Rate change history */}
                       {order.rateChanges?.length > 0 && (
