@@ -780,7 +780,7 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                               <span style={{ fontSize: 11, fontWeight: 700, color: C.green, background: C.greenL, border: `1px solid ${C.greenB}`, borderRadius: 6, padding: "4px 10px", display: "inline-block" }}>
                                 ✅ Course completed — no new doses
                               </span>
-                            ) : (
+                            ) : (<>
                             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                               {times.map(t => {
                                 const rec      = getTodayRecord(order, t);
@@ -844,7 +844,7 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                                 ✅ Course completed — no new doses
                               </div>
                             )}
-                            )}
+                            </>)}
                           </td>
 
                           {/* Nurse actions */}
