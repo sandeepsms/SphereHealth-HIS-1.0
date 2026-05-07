@@ -73,6 +73,31 @@ const DELAY_REASONS   = ["Patient was away for procedure","IV access not availab
 const RATE_REASONS    = ["Clinical condition change","Doctor order","Haemodynamic instability — MAP dropped","Fluid overload","Renal impairment — rate reduced","Hypotension","Hypertension","Titration protocol","Patient complaint","Extravasation — site changed","Infusion almost complete","Pump malfunction","Other"];
 const SITE_CONDITIONS = ["Patent","Swollen (oedema)","Leaking","Phlebitis","Changed — new site","Infiltration"];
 const INF_ACTIONS     = ["No Change","Rate Increased","Rate Decreased","Infusion Stopped","Infusion Restarted","Site Changed","Doctor Informed","Pump Alarm Resolved"];
+const STOP_INF_REASONS = [
+  "Total volume infused — course complete",
+  "Doctor order — discontinue infusion",
+  "Adverse reaction observed",
+  "Extravasation / site infiltration",
+  "IV access lost — not being re-sited",
+  "Haemodynamic instability — doctor reviewing",
+  "Patient to procedure / theatre",
+  "Patient discharge",
+  "Drug unavailable",
+  "Patient request",
+  "Other",
+];
+const HOLD_INF_REASONS = [
+  "Patient NPO — pre-procedure",
+  "IV access lost — new site being prepared",
+  "Haemodynamic instability — doctor informed",
+  "Fluid overload — rate adjustment pending",
+  "Doctor order — hold temporarily",
+  "Patient to procedure — will restart after",
+  "Pump malfunction — maintenance called",
+  "Drug interaction concern",
+  "Patient request",
+  "Other",
+];
 
 /* ── Design tokens ── */
 const C = {
@@ -139,6 +164,13 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
     reason: "", reasonDetail: "", holdUntil: "",
     newDose: "", newRoute: "", newFrequency: "", newDuration: "", newRate: "", newNotes: "",
     subName: "", subDose: "", subRoute: "", subFreq: "", subDuration: "", subIndication: "", subNotes: "",
+  });
+
+  /* ── Infusion Stop / Hold modal (replaces window.prompt) ── */
+  const [infModal,  setInfModal]  = useState(null);   // { order, type: "stop"|"hold" }
+  const [infSaving, setInfSaving] = useState(false);
+  const [infForm,   setInfForm]   = useState({
+    reason: "", reasonCustom: "", holdUntil: "", notes: "",
   });
 
   /* ── Fetch ── */
@@ -294,28 +326,48 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
     } finally { setSaving(false); }
   };
 
-  /* ── Stop infusion ── */
-  const stopInfusion = async (order) => {
-    const reason = window.prompt("Stop reason (required for NABH):");
-    if (!reason?.trim()) { toast.warn("Stop reason required"); return; }
-    try {
-      await axios.patch(`${API_ENDPOINTS.DOCTOR_ORDERS}/${order._id}`, { status: "Stopped", stopReason: reason, infusionStopped: new Date().toISOString() });
-      toast.success("Infusion stopped & documented");
-      await fetchOrders(true);
-    } catch (err) {
-      toast.error("Failed to stop infusion");
-    }
+  /* ── Stop infusion — opens styled modal (replaces window.prompt) ── */
+  const stopInfusion = (order) => {
+    setInfModal({ order, type: "stop" });
+    setInfForm({ reason: "", reasonCustom: "", holdUntil: "", notes: "" });
   };
 
-  /* ── Hold infusion ── */
-  const holdInfusion = async (order) => {
-    const reason = window.prompt("Hold reason:");
-    if (!reason?.trim()) return;
+  /* ── Hold infusion — opens styled modal (replaces window.prompt) ── */
+  const holdInfusion = (order) => {
+    setInfModal({ order, type: "hold" });
+    setInfForm({ reason: "", reasonCustom: "", holdUntil: "", notes: "" });
+  };
+
+  /* ── Submit stop / hold infusion ── */
+  const submitInfAction = async () => {
+    if (!infModal) return;
+    const { order, type } = infModal;
+    const f = infForm;
+    const finalReason = f.reason === "Other" ? f.reasonCustom.trim() : f.reason;
+    if (!finalReason) { toast.error("Reason is required for NABH documentation"); return; }
+
+    setInfSaving(true);
     try {
-      await axios.patch(`${API_ENDPOINTS.DOCTOR_ORDERS}/${order._id}`, { status: "Held", nurseNotes: `Held: ${reason} — ${nurseName} @ ${new Date().toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}` });
-      toast.success("Infusion held");
+      if (type === "stop") {
+        await axios.patch(`${API_ENDPOINTS.DOCTOR_ORDERS}/${order._id}`, {
+          status: "Stopped",
+          stopReason: finalReason,
+          infusionStopped: new Date().toISOString(),
+          nurseNotes: f.notes || undefined,
+        });
+        toast.success("Infusion stopped & documented");
+      } else {
+        await axios.patch(`${API_ENDPOINTS.DOCTOR_ORDERS}/${order._id}`, {
+          status: "Held",
+          nurseNotes: `Held: ${finalReason}${f.holdUntil ? ` until ${f.holdUntil}` : ""} — ${nurseName} @ ${new Date().toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}${f.notes ? ` | ${f.notes}` : ""}`,
+        });
+        toast.success("Infusion held & documented");
+      }
+      setInfModal(null);
       await fetchOrders(true);
-    } catch (err) { toast.error("Failed"); }
+    } catch (err) {
+      toast.error(err?.response?.data?.message || "Action failed");
+    } finally { setInfSaving(false); }
   };
 
   /* ── Restart infusion ── */
@@ -478,11 +530,6 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
           <button onClick={() => fetchOrders(true)} style={{ padding: "5px 12px", background: "rgba(255,255,255,.12)", border: "1px solid rgba(255,255,255,.25)", borderRadius: 6, color: "white", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
             <i className="pi pi-refresh" style={{ marginRight: 5, fontSize: 10 }} />Refresh
           </button>
-          {UHID && (
-            <button onClick={seedDemo} disabled={seedLoading} style={{ padding: "5px 12px", background: "#fef3c7", border: "1px solid #fbbf24", borderRadius: 6, color: "#92400e", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
-              {seedLoading ? <i className="pi pi-spin pi-spinner" style={{ fontSize: 11 }} /> : "🧪 Load Demo Data"}
-            </button>
-          )}
         </div>
       </div>
 
@@ -672,7 +719,7 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                                 <button
                                   onClick={() => openAction(order, "administer", order.administrationRecord?.find(r => r.status === "pending") || { scheduledTime: times[0] })}
                                   style={{ padding: "4px 10px", background: C.blue, color: "white", border: "none", borderRadius: 6, fontSize: 10, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}>
-                                  <i className="pi pi-check" style={{ fontSize: 9 }} />Admin
+                                  <i className="pi pi-check" style={{ fontSize: 9 }} />Administer
                                 </button>
                               )}
                             </td>
@@ -1350,6 +1397,96 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
               </FL>
             </div>
             <ModalFooter onCancel={() => setDocModal(null)} onSave={() => submitDocAction("rate")} saving={docSaving} saveLabel="Apply Rate Change" />
+          </ModalOverlay>
+        );
+      })()}
+
+      {/* ── Stop / Hold Infusion Modal (replaces window.prompt) ── */}
+      {infModal && (() => {
+        const { order, type } = infModal;
+        const isStop = type === "stop";
+        const reasons = isStop ? STOP_INF_REASONS : HOLD_INF_REASONS;
+        const color   = isStop ? C.red : C.amber;
+        const colorL  = isStop ? C.redL : C.amberL;
+        const colorB  = isStop ? C.redB : C.amberB;
+        const icon    = isStop ? "pi-stop" : "pi-pause";
+        const titleTx = isStop ? "Stop & Document Infusion" : "Hold Infusion";
+        const saveLbl = isStop ? "Stop Infusion" : "Hold Infusion";
+        const f       = infForm;
+        return (
+          <ModalOverlay onClose={() => setInfModal(null)}>
+            <ModalHeader
+              title={titleTx}
+              sub={order.orderDetails?.displayName || order.orderDetails?.medicineName}
+              color={color} icon={icon} onClose={() => setInfModal(null)}
+            />
+            <div style={{ padding: "18px 22px", display: "flex", flexDirection: "column", gap: 12 }}>
+
+              {/* Warning banner */}
+              <div style={{ background: colorL, border: `1.5px solid ${colorB}`, borderRadius: 10, padding: "10px 14px", fontSize: 12, color, fontWeight: 700 }}>
+                {isStop
+                  ? "⚠ Stopping an infusion is a permanent action. Reason must be documented for NABH MOM.2 compliance."
+                  : "⏸ Infusion will be held. Document reason and expected resume time. Nursing staff will be notified."}
+              </div>
+
+              {/* Reason dropdown */}
+              <div>
+                <label style={lbl}>{isStop ? "Stop Reason *" : "Hold Reason *"}</label>
+                <select style={sel} value={f.reason} onChange={e => setInfForm(p => ({ ...p, reason: e.target.value, reasonCustom: "" }))}>
+                  <option value="">— Select reason —</option>
+                  {reasons.map(r => <option key={r}>{r}</option>)}
+                </select>
+              </div>
+
+              {/* Custom reason */}
+              {f.reason === "Other" && (
+                <div>
+                  <label style={lbl}>Specify Reason *</label>
+                  <input style={{ ...fld, borderColor: color }} value={f.reasonCustom}
+                    placeholder="Describe the reason…"
+                    onChange={e => setInfForm(p => ({ ...p, reasonCustom: e.target.value }))}
+                    autoFocus />
+                </div>
+              )}
+
+              {/* Hold until (only for hold) */}
+              {!isStop && (
+                <div>
+                  <label style={lbl}>Hold Until (expected resume time)</label>
+                  <input type="datetime-local" style={fld} value={f.holdUntil}
+                    onChange={e => setInfForm(p => ({ ...p, holdUntil: e.target.value }))} />
+                </div>
+              )}
+
+              {/* Notes */}
+              <div>
+                <label style={lbl}>Additional Notes / Clinical Observation</label>
+                <textarea style={ta} value={f.notes}
+                  placeholder={isStop
+                    ? "Volume infused, patient status at time of stopping, doctor informed…"
+                    : "Clinical details, doctor informed, restart plan…"}
+                  onChange={e => setInfForm(p => ({ ...p, notes: e.target.value }))} />
+              </div>
+
+              {/* Current rate info */}
+              <div style={{ background: "#f8fafc", border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 12px", display: "flex", gap: 16, alignItems: "center" }}>
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>Current Rate</div>
+                  <div style={{ fontFamily: "monospace", fontWeight: 800, fontSize: 14, color: C.teal }}>
+                    {order.currentRate || order.orderDetails?.rate || "—"} ml/hr
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>Documented By</div>
+                  <div style={{ fontWeight: 600, fontSize: 12, color: C.text }}>{nurseName}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>Time</div>
+                  <div style={{ fontFamily: "monospace", fontWeight: 600, fontSize: 12, color: C.text }}>{new Date().toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}</div>
+                </div>
+              </div>
+            </div>
+            <ModalFooter onCancel={() => setInfModal(null)} onSave={submitInfAction} saving={infSaving} saveLabel={saveLbl} />
           </ModalOverlay>
         );
       })()}
