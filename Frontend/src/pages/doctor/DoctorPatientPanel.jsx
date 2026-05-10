@@ -347,11 +347,33 @@ const dpFmtVal = v => {
   }
   return String(v);
 };
+/* Safe formatter — converts ANY noteDetails field value to a renderable string */
+const dpIAFmt = v => {
+  if (v === null || v === undefined || v === "") return "";
+  if (typeof v === "boolean") return v ? "Yes" : "No";
+  if (Array.isArray(v)) {
+    const items = v.filter(Boolean);
+    if (!items.length) return "";
+    return items.map(x =>
+      typeof x === "object"
+        ? (x.drug||x.name||x.instruction||x.type||x.statement||Object.values(x).filter(Boolean).join(" ")).trim()
+        : String(x)
+    ).filter(Boolean).join(", ");
+  }
+  if (typeof v === "object") {
+    if ("systolic" in v && "diastolic" in v) return `${v.systolic||"—"}/${v.diastolic||"—"}`;
+    return Object.entries(v).filter(([,x])=>x).map(([k2,x])=>`${k2}: ${x}`).join(" | ") || "";
+  }
+  return String(v);
+};
+
 function DpInitialDetails({nd, nc}) {
   return (
     <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:8}}>
       {DR_IA_SECTIONS_DP.map(sec=>{
-        const chips = sec.keys.map(k=>({label:DR_IA_LBL_DP[k]||k,value:nd[k]})).filter(c=>c.value);
+        const chips = sec.keys
+          .map(k=>({label:DR_IA_LBL_DP[k]||k, raw:nd[k], value:dpIAFmt(nd[k])}))
+          .filter(c=>c.value);   /* dpIAFmt always returns string; empty string = falsy = skipped */
         if (!chips.length) return null;
         return (
           <div key={sec.label} style={{padding:"7px 12px",background:"#f9fafb",borderRadius:7,border:`1px solid ${C.border}`}}>
@@ -360,7 +382,7 @@ function DpInitialDetails({nd, nc}) {
               {chips.map(c=>(
                 <div key={c.label} style={{display:"flex",flexDirection:"column",gap:1}}>
                   <span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.muted}}>{c.label}</span>
-                  <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:500,color:C.dark,maxWidth:240,wordBreak:"break-word"}}>{c.value}</span>
+                  <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:500,color:C.dark,maxWidth:260,wordBreak:"break-word"}}>{c.value}</span>
                 </div>
               ))}
             </div>
