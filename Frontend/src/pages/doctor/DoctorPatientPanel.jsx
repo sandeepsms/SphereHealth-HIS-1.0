@@ -1188,7 +1188,49 @@ function VitalTrendsTab({vitalSheet=[]}) {
 }
 
 /* ═══════════════════════════════════════════════════════ TAB: MEDICATIONS */
-function MedicationsTab({doctorNotes=[], doctorOrders=[]}) {
+function MedicationsTab({doctorNotes=[], doctorOrders=[], UHID="", onRefresh=()=>{}}) {
+  const [csSaving, setCsSaving] = useState(null);   // orderId being processed
+  const [rejectModal, setRejectModal] = useState(null);   // { order }
+  const [rejectReason, setRejectReason] = useState("");
+
+  // Pending telephonic countersign
+  const pendingTO = (doctorOrders||[]).filter(o =>
+    o.orderSource === "Telephonic" &&
+    o.telephonicData?.countersignStatus === "pending" &&
+    !["Cancelled","Stopped"].includes(o.status)
+  );
+
+  const handleCountersign = async (order) => {
+    setCsSaving(order._id);
+    try {
+      await axios.patch(`${BASE}/doctor-orders/${order._id}/countersign` .replace("/countersign",""), {
+        telephonicData: { ...order.telephonicData, countersignStatus: "countersigned", countersignedAt: new Date() },
+        auditLog: [...(order.auditLog||[]), { step:"Telephonic Order Countersigned", doneBy:"Doctor", doneAt: new Date(), notes:"Countersigned via Doctor Patient Panel" }],
+      });
+      onRefresh();
+    } catch { /* silent */ }
+    finally { setCsSaving(null); }
+  };
+
+  // Use the dedicated countersign endpoint
+  const countersign = async (order) => {
+    setCsSaving(order._id);
+    try {
+      await axios.post(`${BASE}/doctor-orders/${order._id}/countersign`, { type:"countersign", doneBy:"Doctor" });
+      onRefresh();
+    } catch { /* silent */ } finally { setCsSaving(null); }
+  };
+
+  const rejectTO = async () => {
+    if (!rejectModal) return;
+    setCsSaving(rejectModal._id);
+    try {
+      await axios.post(`${BASE}/doctor-orders/${rejectModal._id}/countersign`, { type:"reject", doneBy:"Doctor", rejectedReason: rejectReason || "Rejected by doctor" });
+      setRejectModal(null); setRejectReason("");
+      onRefresh();
+    } catch { /* silent */ } finally { setCsSaving(null); }
+  };
+
   // Collect all medication orders from doctor notes (noteDetails.medicationOrders)
   const medNotes = doctorNotes.filter(n=>n.noteDetails?.medicationOrders?.length>0||n.noteType==="medication");
   // Also collect from doctor orders collection
@@ -1206,7 +1248,7 @@ function MedicationsTab({doctorNotes=[], doctorOrders=[]}) {
     return !route.includes("iv")||true; // include all
   });
 
-  if (!allMeds.length && !ordMeds.length) return <Empty icon="💊" msg="No medication orders found"/>;
+  if (!allMeds.length && !ordMeds.length && !pendingTO.length) return <Empty icon="💊" msg="No medication orders found"/>;
 
   // Group by status
   const active  = allMeds.filter(m=>(m.status||"Active")==="Active");
@@ -1246,6 +1288,106 @@ function MedicationsTab({doctorNotes=[], doctorOrders=[]}) {
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
+
+      {/* ── Pending Telephonic Countersign Queue ── */}
+      {pendingTO.length>0 && (
+        <div style={{borderRadius:12,overflow:"hidden",border:"2px solid #fca5a5",boxShadow:"0 4px 16px rgba(220,38,38,.1)"}}>
+          <div style={{padding:"10px 16px",background:"linear-gradient(135deg,#dc2626,#ef4444)",display:"flex",alignItems:"center",gap:10}}>
+            <span style={{fontSize:18}}>📞</span>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:800,fontSize:13,color:"white"}}>Telephonic Orders — Pending Your Countersign ({pendingTO.length})</div>
+              <div style={{fontSize:10,color:"rgba(255,255,255,.8)"}}>NABH MOM.1 — countersign required within 24 hours of verbal order</div>
+            </div>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:0}}>
+            {pendingTO.map((o,i)=>{
+              const d = o.orderDetails||{};
+              const td = o.telephonicData||{};
+              const ham = o.hamFlag;
+              return (
+                <div key={o._id} style={{padding:"12px 16px",background:i%2===0?"#fef2f2":"#fff5f5",borderBottom:i<pendingTO.length-1?"1px solid #fecaca":"none",display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
+                  {/* Drug info */}
+                  <div style={{flex:"1 1 220px",minWidth:180}}>
+                    {ham && <span style={{background:"#fee2e2",color:C.red,borderRadius:4,padding:"1px 6px",fontSize:8,fontWeight:800,marginBottom:4,display:"inline-block"}}>🔴 HAM</span>}
+                    <div style={{fontWeight:700,fontSize:13,color:C.dark}}>{d.medicineName||"—"}</div>
+                    <div style={{fontSize:11,color:C.muted,marginTop:1}}>{d.dose} · {d.route} · {d.frequency}{d.duration?` · ${d.duration}`:""}</div>
+                  </div>
+                  {/* Called by */}
+                  <div style={{flex:"0 0 160px"}}>
+                    <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.muted}}>Called by</div>
+                    <div style={{fontWeight:700,fontSize:12,color:C.dark}}>Dr. {td.doctorName||"?"}</div>
+                    {td.doctorRegNo && <div style={{fontSize:10,color:C.muted}}>Reg: {td.doctorRegNo}</div>}
+                  </div>
+                  {/* Time + nurse */}
+                  <div style={{flex:"0 0 130px"}}>
+                    <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.muted}}>Call time</div>
+                    <div style={{fontWeight:600,fontSize:12,color:C.dark}}>{td.callTime||"—"}</div>
+                    <div style={{fontSize:10,color:C.muted}}>Read-back: {td.readBackBy||"—"}</div>
+                  </div>
+                  {/* Priority */}
+                  <div style={{flex:"0 0 80px",textAlign:"center"}}>
+                    <span style={{padding:"4px 10px",borderRadius:6,fontWeight:800,fontSize:11,background:o.priority==="STAT"?"#fef2f2":o.priority==="Urgent"?"#fffbeb":"#f1f5f9",color:o.priority==="STAT"?C.red:o.priority==="Urgent"?C.amber:C.muted}}>
+                      {o.priority==="STAT"?"⚡ STAT":o.priority==="Urgent"?"🔶 Urgent":"Routine"}
+                    </span>
+                  </div>
+                  {/* Actions */}
+                  <div style={{display:"flex",gap:7,flexShrink:0}}>
+                    <button
+                      disabled={csSaving===o._id}
+                      onClick={()=>countersign(o)}
+                      style={{padding:"7px 16px",background:C.green,color:"white",border:"none",borderRadius:7,fontWeight:700,fontSize:12,cursor:csSaving===o._id?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:5,opacity:csSaving===o._id?.6:1}}>
+                      {csSaving===o._id ? <i className="pi pi-spin pi-spinner" style={{fontSize:11}}/> : <i className="pi pi-check" style={{fontSize:11}}/>}
+                      Countersign
+                    </button>
+                    <button
+                      disabled={csSaving===o._id}
+                      onClick={()=>{setRejectModal(o);setRejectReason("");}}
+                      style={{padding:"7px 13px",background:C.redL,color:C.red,border:`1.5px solid ${C.redB}`,borderRadius:7,fontWeight:700,fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>
+                      <i className="pi pi-times" style={{fontSize:11}}/>
+                      Reject
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Reject modal */}
+      {rejectModal && (
+        <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,.6)",backdropFilter:"blur(4px)",zIndex:3000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={()=>setRejectModal(null)}>
+          <div style={{background:"white",borderRadius:14,width:480,maxWidth:"96vw",overflow:"hidden",boxShadow:"0 20px 50px rgba(0,0,0,.25)"}} onClick={e=>e.stopPropagation()}>
+            <div style={{padding:"12px 18px",background:"linear-gradient(135deg,#dc2626,#ef4444)",color:"white",fontWeight:800,fontSize:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span>✗ Reject Telephonic Order</span>
+              <button onClick={()=>setRejectModal(null)} style={{background:"rgba(255,255,255,.2)",border:"none",color:"white",cursor:"pointer",borderRadius:5,width:26,height:26}}>×</button>
+            </div>
+            <div style={{padding:"16px 18px",display:"flex",flexDirection:"column",gap:10}}>
+              <div style={{fontSize:13,color:C.dark}}>
+                Rejecting: <strong>{rejectModal.orderDetails?.medicineName}</strong> — called by Dr. {rejectModal.telephonicData?.doctorName}
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                <label style={{fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.muted}}>Reason for rejection</label>
+                <textarea
+                  style={{padding:"8px 10px",border:`1.5px solid ${C.border}`,borderRadius:7,fontFamily:"'DM Sans',sans-serif",fontSize:12,resize:"vertical",minHeight:68,outline:"none"}}
+                  placeholder="Order not applicable, patient status changed, wrong drug, etc."
+                  value={rejectReason}
+                  onChange={e=>setRejectReason(e.target.value)}
+                />
+              </div>
+            </div>
+            <div style={{padding:"10px 18px",borderTop:`1px solid ${C.border}`,display:"flex",justifyContent:"flex-end",gap:8,background:"#f8fafc"}}>
+              <button onClick={()=>setRejectModal(null)} style={{padding:"8px 18px",border:`1.5px solid ${C.border}`,borderRadius:7,background:"white",cursor:"pointer",fontWeight:600,fontSize:12,color:C.muted}}>Cancel</button>
+              <button onClick={rejectTO} disabled={csSaving===rejectModal?._id}
+                style={{padding:"8px 18px",background:C.red,color:"white",border:"none",borderRadius:7,fontWeight:700,fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
+                {csSaving===rejectModal?._id ? <i className="pi pi-spin pi-spinner" style={{fontSize:11}}/> : null}
+                Confirm Rejection
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <MedTable title={`💊 Active Medications (${active.length})`} meds={active} color={C.green}/>
       {stopped.length>0 && <MedTable title={`🚫 Stopped / Discontinued (${stopped.length})`} meds={stopped} color={C.red}/>}
       {other.length>0   && <MedTable title={`📋 Other Orders (${other.length})`}           meds={other}   color={C.amber}/>}
@@ -2249,7 +2391,7 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
               {activeTab==="clinical"   && <ClinicalNotesTab notes={doctorNotes}/>}
               {activeTab==="nursing"    && <NursingRecordsTab notes={nursingNotes}/>}
               {activeTab==="vitals"     && <VitalTrendsTab vitalSheet={vitalSheet}/>}
-              {activeTab==="meds"       && <MedicationsTab doctorNotes={doctorNotes} doctorOrders={doctorOrders}/>}
+              {activeTab==="meds"       && <MedicationsTab doctorNotes={doctorNotes} doctorOrders={doctorOrders} UHID={activeUhid} onRefresh={()=>{ axios.get(`${BASE}/doctor-orders?UHID=${activeUhid}`).then(r=>{ const l=Array.isArray(r.data)?r.data:(r.data?.data||[]); setDoctorOrders(l); }).catch(()=>{}); }}/>}
               {activeTab==="treatment"  && <TreatmentChartTab doctorOrders={doctorOrders} doctorNotes={doctorNotes}/>}
               {activeTab==="orders"     && <OrdersTab doctorNotes={doctorNotes}/>}
               {activeTab==="billing"    && <BillingTab billing={billing}/>}

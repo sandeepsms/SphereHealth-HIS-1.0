@@ -195,6 +195,16 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
     reason: "", reasonCustom: "", holdUntil: "", notes: "",
   });
 
+  /* ── Telephonic / Verbal Order entry ── */
+  const [telModal,  setTelModal]  = useState(false);
+  const [telSaving, setTelSaving] = useState(false);
+  const [telForm,   setTelForm]   = useState({
+    orderType: "Medication", medicineName: "", dose: "", route: "IV",
+    frequency: "STAT", duration: "", priority: "STAT",
+    doctorName: "", doctorRegNo: "", callTime: "",
+    readBackDone: false, notes: "",
+  });
+
   /* ── Fetch ── */
   const fetchOrders = useCallback(async (silent = false) => {
     if (!UHID) return;
@@ -561,6 +571,68 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
     });
   };
 
+  /* ── Submit Telephonic / Verbal Order ── */
+  const submitTelephonic = async () => {
+    const f = telForm;
+    if (!f.medicineName.trim()) { toast.error("Drug name is required"); return; }
+    if (!f.doctorName.trim())   { toast.error("Doctor name is required"); return; }
+    if (!f.callTime)            { toast.error("Call time is required"); return; }
+    if (!f.readBackDone)        { toast.error("Read-back confirmation is mandatory (NABH MOM.1)"); return; }
+
+    const today = new Date(); today.setHours(0,0,0,0);
+    const FREQ_TIMES_MAP = {
+      "OD":["08:00"],"BD":["08:00","20:00"],"TDS":["08:00","14:00","20:00"],
+      "QID":["06:00","12:00","18:00","00:00"],"Q8H":["06:00","14:00","22:00"],
+      "Q12H":["08:00","20:00"],"STAT":["Immediate"],"SOS":["As Needed"],
+      "HS":["22:00"],"Continuous":["Continuous"],
+    };
+    const times = FREQ_TIMES_MAP[f.frequency] || ["08:00"];
+    const hamFlag = isHAM(f.medicineName);
+
+    const payload = {
+      UHID, visitId, patientName,
+      orderType: f.orderType === "IV_Fluid" ? "IV_Fluid" : "Medication",
+      priority: f.priority,
+      orderSource: "Telephonic",
+      hamFlag, twoNurseRequired: hamFlag, highRisk: hamFlag,
+      orderDetails: {
+        medicineName: f.medicineName, dose: f.dose, route: f.route,
+        frequency: f.frequency, duration: f.duration, notes: f.notes,
+      },
+      orderedBy: f.doctorName,
+      orderedByRole: "Doctor",
+      orderedAt: new Date(),
+      telephonicData: {
+        doctorName: f.doctorName, doctorRegNo: f.doctorRegNo,
+        callTime: f.callTime, readBackDone: f.readBackDone,
+        readBackBy: nurseName, countersignStatus: "pending",
+      },
+      scheduledTimes: times,
+      administrationRecord: times
+        .filter(t => !["Immediate","As Needed","Continuous"].includes(t))
+        .map(t => ({ scheduledTime: t, scheduledDate: today, status: "pending" })),
+      auditLog: [{
+        step:   "Telephonic Order Entered by Nurse",
+        doneBy: nurseName,
+        doneAt: new Date(),
+        notes:  `Telephonic order from Dr. ${f.doctorName}${f.doctorRegNo ? ` (Reg: ${f.doctorRegNo})` : ""} at ${f.callTime}. Read-back done by ${nurseName}.`,
+      }],
+    };
+
+    setTelSaving(true);
+    try {
+      await axios.post(API_ENDPOINTS.DOCTOR_ORDERS, payload);
+      toast.success(`📞 Telephonic order for ${f.medicineName} saved — pending Dr. ${f.doctorName}'s countersign`);
+      setTelModal(false);
+      setTelForm({ orderType:"Medication", medicineName:"", dose:"", route:"IV", frequency:"STAT", duration:"", priority:"STAT", doctorName:"", doctorRegNo:"", callTime:"", readBackDone:false, notes:"" });
+      fetchOrders(true);
+    } catch (err) {
+      toast.error(err.response?.data?.message || "Failed to save telephonic order");
+    } finally {
+      setTelSaving(false);
+    }
+  };
+
   /* ── Scheduled times for an order ── */
   const getScheduledTimes = (order) => {
     const freq = order.orderDetails?.frequency;
@@ -690,6 +762,12 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
           <button onClick={() => window.print()} style={{ padding: "5px 12px", background: "rgba(255,255,255,.12)", border: "1px solid rgba(255,255,255,.25)", borderRadius: 6, color: "white", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
             <i className="pi pi-print" style={{ marginRight: 5, fontSize: 10 }} />Print MAR
           </button>
+          {nurseMode && (
+            <button onClick={() => { const now = new Date().toTimeString().slice(0,5); setTelForm(p=>({...p,callTime:now})); setTelModal(true); }}
+              style={{ padding:"5px 13px", background:"rgba(251,191,36,.18)", border:"1px solid rgba(251,191,36,.5)", borderRadius:6, color:"#fbbf24", fontSize:11, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", gap:5 }}>
+              📞 Telephonic Order
+            </button>
+          )}
         </div>
       </div>
 
@@ -833,6 +911,17 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                             {hamBadge && (
                               <div style={{ background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 4, padding: "2px 7px", fontSize: 9, fontWeight: 800, color: C.red, marginBottom: 4, display: "inline-block" }}>
                                 🔴 HAM {order.twoNurseRequired && "· 👥 2-Nurse"}
+                              </div>
+                            )}
+                            {order.orderSource === "Telephonic" && (
+                              <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:4, padding:"2px 7px", fontSize:9, fontWeight:800, color:"#92400e", marginBottom:4, display:"flex", alignItems:"center", gap:4 }}>
+                                📞 T.O. — Dr. {order.telephonicData?.doctorName || "?"}
+                                {order.telephonicData?.countersignStatus === "pending" && (
+                                  <span style={{ background:"#dc2626", color:"white", borderRadius:3, padding:"1px 5px", fontSize:8, fontWeight:900, marginLeft:4 }}>⚠ Pending Countersign</span>
+                                )}
+                                {order.telephonicData?.countersignStatus === "countersigned" && (
+                                  <span style={{ background:"#15803d", color:"white", borderRadius:3, padding:"1px 5px", fontSize:8, fontWeight:900, marginLeft:4 }}>✓ Countersigned</span>
+                                )}
                               </div>
                             )}
                             <div style={{ color: isStopped ? C.muted : C.text }}>{order.orderDetails?.medicineName || "—"}</div>
@@ -1920,6 +2009,103 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
           </ModalOverlay>
         );
       })()}
+
+      {/* ════════════════════ TELEPHONIC ORDER MODAL ════════════════════ */}
+      {telModal && (
+        <ModalOverlay onClose={() => setTelModal(false)}>
+          <ModalHeader
+            title="📞 Telephonic / Verbal Order"
+            sub="NABH MOM.1 — Nurse-entered order pending doctor countersign"
+            color="#92400e"
+            icon="pi-phone"
+            onClose={() => setTelModal(false)}
+          />
+          <div style={{ padding:"18px 20px", display:"flex", flexDirection:"column", gap:14 }}>
+
+            {/* NABH advisory */}
+            <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:8, padding:"10px 14px", fontSize:11, color:"#78350f", lineHeight:1.6 }}>
+              <strong>NABH MOM.1 requirement:</strong> Telephonic/verbal orders must be written down immediately, read back to the prescriber for confirmation, and countersigned by the doctor within 24 hours.
+            </div>
+
+            {/* Doctor who called */}
+            <div style={{ background:"#f0f9ff", border:"1px solid #bae6fd", borderRadius:8, padding:"12px 14px" }}>
+              <div style={{ fontSize:10, fontWeight:800, textTransform:"uppercase", letterSpacing:".6px", color:"#0369a1", marginBottom:8 }}>Doctor who gave telephonic order</div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+                <FL label="Doctor Name *">
+                  <input style={fld} value={telForm.doctorName} placeholder="Dr. full name" onChange={e=>setTelForm(p=>({...p,doctorName:e.target.value}))} />
+                </FL>
+                <FL label="Registration No">
+                  <input style={fld} value={telForm.doctorRegNo} placeholder="Reg / MCI no." onChange={e=>setTelForm(p=>({...p,doctorRegNo:e.target.value}))} />
+                </FL>
+                <FL label="Call Time *">
+                  <input type="time" style={fld} value={telForm.callTime} onChange={e=>setTelForm(p=>({...p,callTime:e.target.value}))} />
+                </FL>
+              </div>
+            </div>
+
+            {/* Drug details */}
+            <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr", gap:10 }}>
+              <FL label="Drug / Medicine Name *">
+                <input style={{...fld, fontWeight:700}} value={telForm.medicineName} placeholder="Generic name" onChange={e=>setTelForm(p=>({...p,medicineName:e.target.value}))} />
+              </FL>
+              <FL label="Dose">
+                <input style={fld} value={telForm.dose} placeholder="e.g. 40mg" onChange={e=>setTelForm(p=>({...p,dose:e.target.value}))} />
+              </FL>
+              <FL label="Route">
+                <select style={sel} value={telForm.route} onChange={e=>setTelForm(p=>({...p,route:e.target.value}))}>
+                  {["IV","IM","SC","PO","SL","Topical","Inhaled","Rectal","Intrathecal"].map(r=><option key={r}>{r}</option>)}
+                </select>
+              </FL>
+              <FL label="Frequency">
+                <select style={sel} value={telForm.frequency} onChange={e=>setTelForm(p=>({...p,frequency:e.target.value}))}>
+                  {["STAT","SOS","OD","BD","TDS","QID","Q4H","Q6H","Q8H","Q12H","HS","Continuous"].map(f=><option key={f}>{f}</option>)}
+                </select>
+              </FL>
+            </div>
+
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+              <FL label="Order Type">
+                <select style={sel} value={telForm.orderType} onChange={e=>setTelForm(p=>({...p,orderType:e.target.value}))}>
+                  <option value="Medication">Medication</option>
+                  <option value="IV_Fluid">IV Fluid / Infusion</option>
+                </select>
+              </FL>
+              <FL label="Priority">
+                <select style={{...sel, fontWeight:700, color: telForm.priority==="STAT"?C.red:telForm.priority==="Urgent"?C.amber:C.text}} value={telForm.priority} onChange={e=>setTelForm(p=>({...p,priority:e.target.value}))}>
+                  <option value="STAT">⚡ STAT</option>
+                  <option value="Urgent">🔶 Urgent</option>
+                  <option value="Routine">Routine</option>
+                </select>
+              </FL>
+              <FL label="Duration">
+                <input style={fld} value={telForm.duration} placeholder="e.g. 5 days / SOS" onChange={e=>setTelForm(p=>({...p,duration:e.target.value}))} />
+              </FL>
+            </div>
+
+            <FL label="Notes / Instructions">
+              <textarea style={{...ta, minHeight:42}} value={telForm.notes} placeholder="Dilution, infusion rate, any special instructions…" onChange={e=>setTelForm(p=>({...p,notes:e.target.value}))} />
+            </FL>
+
+            {/* Read-back confirmation — MANDATORY */}
+            <div
+              onClick={()=>setTelForm(p=>({...p,readBackDone:!p.readBackDone}))}
+              style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 16px", background: telForm.readBackDone?"#f0fdf4":"#fef2f2", border:`2px solid ${telForm.readBackDone?"#86efac":"#fca5a5"}`, borderRadius:8, cursor:"pointer", userSelect:"none" }}>
+              <div style={{ width:20, height:20, borderRadius:4, border:`2px solid ${telForm.readBackDone?"#15803d":"#dc2626"}`, background:telForm.readBackDone?"#15803d":"white", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                {telForm.readBackDone && <i className="pi pi-check" style={{ fontSize:11, color:"white" }}/>}
+              </div>
+              <div>
+                <div style={{ fontWeight:700, fontSize:13, color: telForm.readBackDone?"#15803d":"#dc2626" }}>
+                  {telForm.readBackDone ? "✓ Read-back confirmed" : "⚠ Read-back NOT confirmed (mandatory)"}
+                </div>
+                <div style={{ fontSize:11, color:"#64748b", marginTop:1 }}>I have read the order back to Dr. {telForm.doctorName||"the prescriber"} and confirmed it is correct — NABH MOM.1</div>
+              </div>
+            </div>
+
+          </div>
+          <ModalFooter onCancel={()=>setTelModal(false)} onSave={submitTelephonic} saving={telSaving} saveLabel="Save Telephonic Order" />
+        </ModalOverlay>
+      )}
+
     </div>
   );
 }

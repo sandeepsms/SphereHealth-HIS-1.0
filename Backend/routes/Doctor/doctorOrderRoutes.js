@@ -536,6 +536,58 @@ router.post("/seed-demo", async (req, res) => {
   }
 });
 
+/* ═══════════════════════════════════════════════════
+   DOCTOR — COUNTERSIGN TELEPHONIC ORDER (NABH MOM.1)
+═══════════════════════════════════════════════════ */
+/**
+ * POST /:id/countersign
+ * Body: { type: "countersign"|"reject", doneBy, notes?, rejectedReason? }
+ */
+router.post("/:id/countersign", async (req, res) => {
+  try {
+    const { type, doneBy, notes, rejectedReason } = req.body;
+    if (!type || !doneBy)
+      return res.status(400).json({ ok: false, message: "type and doneBy required" });
+    if (!["countersign", "reject"].includes(type))
+      return res.status(400).json({ ok: false, message: "type must be 'countersign' or 'reject'" });
+
+    const order = await DoctorOrder.findById(req.params.id);
+    if (!order) return res.status(404).json({ ok: false, message: "Not found" });
+    if (order.orderSource !== "Telephonic")
+      return res.status(400).json({ ok: false, message: "Order is not a telephonic order" });
+
+    if (!order.telephonicData) order.telephonicData = {};
+
+    if (type === "countersign") {
+      order.telephonicData.countersignStatus = "countersigned";
+      order.telephonicData.countersignedBy   = doneBy;
+      order.telephonicData.countersignedAt   = new Date();
+      order.telephonicData.countersignNotes  = notes || "";
+      order.auditLog.push({
+        step: "Telephonic Order Countersigned",
+        doneBy, doneAt: new Date(),
+        notes: `Countersigned by Dr. ${doneBy}${notes ? ` — ${notes}` : ""}`,
+      });
+    } else {
+      order.status                          = "Cancelled";
+      order.telephonicData.countersignStatus = "rejected";
+      order.telephonicData.rejectedBy        = doneBy;
+      order.telephonicData.rejectedAt        = new Date();
+      order.telephonicData.rejectedReason    = rejectedReason || "Rejected by doctor";
+      order.auditLog.push({
+        step: "Telephonic Order Rejected",
+        doneBy, doneAt: new Date(),
+        notes: `Rejected by Dr. ${doneBy}: ${rejectedReason || "No reason given"}`,
+      });
+    }
+
+    await order.save();
+    res.json({ ok: true, data: order });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message });
+  }
+});
+
 // DELETE /:id — cancel order
 router.delete("/:id", async (req, res) => {
   try {
