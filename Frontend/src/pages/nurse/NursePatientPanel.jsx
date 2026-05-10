@@ -759,10 +759,51 @@ function NoteModuleBody({note}) {
   return <>{blocks}</>;
 }
 
+/* ── Timeline note styles (matches NursingNotes.jsx) ── */
+const NOTE_STYLE_TL = {
+  vitals:    {bg:"#dbeafe", color:"#1e40af",  dot:"#3b82f6"},
+  blood:     {bg:"#fecaca", color:"#9f1239",  dot:"#dc2626"},
+  iv:        {bg:C.tealL,  color:C.teal,     dot:C.teal},
+  wound:     {bg:C.redL,   color:C.red,      dot:C.red},
+  pain:      {bg:C.amberL, color:"#92400e",  dot:C.amber},
+  procedure: {bg:C.purpleL,color:C.purple,   dot:C.purple},
+  neuro:     {bg:C.purpleL,color:C.purple,   dot:C.purple},
+  fall:      {bg:"#fff7ed",color:"#ea580c",  dot:"#ea580c"},
+  skin:      {bg:C.greenL, color:C.green,    dot:C.green},
+  intake:    {bg:C.blueL,  color:C.blue,     dot:C.blue},
+  general:   {bg:"#f9fafb",color:"#374151",  dot:"#9ca3af"},
+  discharge: {bg:C.greenL, color:C.green,    dot:C.green},
+  mews:      {bg:C.amberL, color:"#92400e",  dot:C.amber},
+  daily:     {bg:"#e0f2fe",color:"#0369a1",  dot:"#0ea5e9"},
+  initial:   {bg:"#fdf2f8",color:"#be185d",  dot:"#ec4899"},
+  careplan:  {bg:"#ecfdf5",color:"#065f46",  dot:"#10b981"},
+  nutrition: {bg:"#dcfce7",color:"#15803d",  dot:"#22c55e"},
+  education: {bg:"#f5f3ff",color:"#6d28d9",  dot:"#8b5cf6"},
+};
+const TL_MODULES = [
+  {id:"vitals",    label:"Vital Signs",                icon:"pi-heart"},
+  {id:"neuro",     label:"Neuro / GCS",                icon:"pi-eye"},
+  {id:"pain",      label:"Pain Assessment",             icon:"pi-exclamation-circle"},
+  {id:"intake",    label:"Intake / Output",             icon:"pi-sort-alt"},
+  {id:"iv",        label:"IV Infusion",                 icon:"pi-plus-circle"},
+  {id:"blood",     label:"Blood Transfusion",           icon:"pi-heart-fill"},
+  {id:"wound",     label:"Wound / Dressing",            icon:"pi-pencil"},
+  {id:"skin",      label:"Skin / Pressure Assessment",  icon:"pi-th-large"},
+  {id:"fall",      label:"Fall Risk (Morse)",           icon:"pi-exclamation-triangle"},
+  {id:"procedure", label:"Procedure / Intervention",    icon:"pi-cog"},
+  {id:"discharge", label:"Discharge / Handover (SBAR)", icon:"pi-sign-out"},
+  {id:"mews",      label:"MEWS Score",                  icon:"pi-chart-bar"},
+  {id:"general",   label:"General Observation",         icon:"pi-file"},
+  {id:"daily",     label:"Daily Assessment",            icon:"pi-calendar-plus"},
+  {id:"initial",   label:"Initial Assessment",          icon:"pi-clipboard"},
+  {id:"careplan",  label:"Care Plan",                   icon:"pi-heart-fill"},
+  {id:"nutrition", label:"Nutritional Assessment",      icon:"pi-apple"},
+  {id:"education", label:"Patient Education",           icon:"pi-book"},
+];
+const mewsBandTL = s => s<=1?{label:"Normal",color:C.green,bg:C.greenL}:s<=4?{label:"Increased Monitoring",color:C.amber,bg:C.amberL}:s<=6?{label:"Urgent Review",color:"#ea580c",bg:"#fff7ed"}:{label:"EMERGENCY",color:C.red,bg:C.redL};
+
 function NursingNotesTab({notes=[]}) {
-  const [expanded,  setExpanded]  = useState({});
-  const [filterType,setFilterType]= useState("All");
-  const toggle = id => setExpanded(p=>({...p,[id]:!p[id]}));
+  const [filterType, setFilterType] = useState("All");
 
   const sortedNotes = [...notes].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
   const types = ["All",...new Set(sortedNotes.map(n=>n.noteType||"general").filter(Boolean))];
@@ -770,9 +811,57 @@ function NursingNotesTab({notes=[]}) {
 
   if (!notes.length) return <Empty icon="📝" msg="No nursing notes recorded yet for this patient"/>;
 
+  /* ── field label map (matches NursingNotes.jsx) ── */
+  const FIELD_LBL = {
+    m1:"History of Falls",m2:"Secondary Dx",m3:"Ambul. Aid",m4:"IV / Heparin Lock",m5:"Gait / Transfer",m6:"Mental Status",
+    intBedRails:"Bed Rails ↑",intCallBell:"Call Bell",intNonSlip:"Non-Slip",intBedLowest:"Bed Lowest",intSupervision:"Supervision",intPatientEd:"Pt. Edu.",intFamilyEd:"Family Edu.",
+    gcse:"Eyes (E)",gcsv:"Verbal (V)",gcsm:"Motor (M)",scale:"Scale",score:"Score",location:"Location",character:"Character",onset:"Onset",frequency:"Frequency",duration:"Duration",
+    analgesicGiven:"Analgesic Given",analgesic:"Drug",analgesicRoute:"Route",painOnMovement:"Pain on Movement",reassessScore:"Reassess Score",reassessTime:"Reassess Time",
+    nonPharmacological:"Non-Pharm",aggravatingFactors:"Aggravating",pupils:"Pupils",pupilSizeL:"Pupil L (mm)",pupilSizeR:"Pupil R (mm)",lightReflex:"Light Reflex",
+    orientation:"Orientation",seizure:"Seizure",limbUL:"Upper-L",limbUR:"Upper-R",limbLL:"Lower-L",limbLR:"Lower-R",
+    product:"Product",bagNo:"Bag No.",crossMatchNo:"X-Match No.",volume:"Volume (mL)",groupVerified:"Group Verified",secondNurse:"2nd Nurse",
+    startTime:"Start",endTime:"End",reactionType:"Reaction",preBP_sys:"Pre-Sys BP",preBP_dia:"Pre-Dia BP",prePulse:"Pre-Pulse",postBP_sys:"Post-Sys BP",postBP_dia:"Post-Dia BP",postPulse:"Post-Pulse",
+    fluid:"Fluid",rate:"Rate (mL/hr)",dropsPerMin:"gtts/min",route:"Route",site:"Site",cannulaDate:"Cannula Date",setChangeDate:"Set Change",additive:"Additive",
+    oral:"Oral (mL)",ivFluids:"IV Fluids (mL)",urineOutput:"Urine (mL)",otherOutput:"Other Out (mL)",nasogastricOutput:"NGT Out (mL)",ivMedFluids:"IV Med (mL)",
+    type:"Type",length:"Length (cm)",width:"Width (cm)",depth:"Depth (cm)",exudateAmt:"Exudate Amt",exudateType:"Exudate Type",healingStage:"Healing Stage",
+    surroundingSkin:"Surrounding Skin",tunneling:"Tunneling",undermining:"Undermining",odour:"Odour",dressingUsed:"Dressing Used",painDuring:"Pain During",nextDressingDate:"Next Dressing",swabSent:"Swab Sent",
+    area:"Area",b1:"Sensory",b2:"Moisture",b3:"Activity",b4:"Mobility",b5:"Nutrition(Braden)",b6:"Friction/Shear",stage:"Pressure Stage",repositioned:"Repositioned",repositionFreq:"Freq.",
+    procedureName:"Procedure",indication:"Indication",laterality:"Laterality",time:"Time",consentObtained:"Consent",performedBy:"Performed By",designation:"Designation",assistant:"Assistant",
+    sterile:"Sterile",position:"Position",outcome:"Outcome",complications:"Complications",specimenSent:"Specimen Sent",specimenType:"Specimen Type",postProcVitals:"Post-Proc Vitals",followUp:"Follow-Up",
+    situation:"S – Situation",background:"B – Background",assessment:"A – Assessment",recommendation:"R – Recommendation",incomingNurse:"Incoming Nurse",patientStatus:"Patient Status",
+    educationGiven:"Edu. Given",educationTopics:"Topics",followUpDate:"Follow-Up Date",valuablesHandedOver:"Valuables",
+    neuroStatus:"Neuro",respiratoryStatus:"Respiratory",cardiovascularStatus:"CVS",giStatus:"GI",guStatus:"GU",musculoskeletalStatus:"MSK",skinStatus:"Skin",
+    intReposition:"Reposition",intOralCare:"Oral Care",intPressureRelief:"Pressure Relief",intRangeOfMotion:"ROM",intFallPrecautions:"Fall Precautions",intMedAdministered:"Meds Given",
+    intWoundCare:"Wound Care",intIVCheck:"IV Check",intNGTCheck:"NGT Check",intFoleyCheck:"Foley Check",intOxygenCheck:"O₂ Check",intPatientEducation:"Pt. Edu.",
+    intFamilyUpdate:"Family Update",intDoctorNotified:"Dr. Notified",intDocumented:"Documented",
+    dietType:"Diet",appetite:"Appetite",feedingMode:"Mode",swallowing:"Swallowing",ngtPresent:"NGT Present",caloriesToday:"Calories",proteinToday:"Protein",fluidToday:"Fluid",
+    dietitianReferral:"Dietitian Ref.",referralReason:"Ref. Reason",nutritionScore:"Nutrition Score",diseaseScore:"Disease Score",ageScore:"Age Score (>70yr)",weight:"Weight",height:"Height",
+    topics:"Topics",methods:"Methods",understanding:"Understanding",language:"Language",response:"Response",barriers:"Barriers",sessionNotes:"Session Notes",nextSessionDate:"Next Session",
+    bmiLow:"BMI Low",weightLoss:"Weight Loss",reducedIntake:"Reduced Intake",seriouslyIll:"Seriously Ill",midArmCirc:"Mid Arm Circ",consistency:"Consistency",dietitianRef:"Dietitian Ref.",
+    nrsTotal:"NRS Total",calories:"Calories",protein:"Protein",
+  };
+  const MOD_SECTION_LBL = {
+    painAssessment:"Pain Assessment",neuroAssessment:"Neuro / GCS",bloodTransfusion:"Blood Transfusion",ivInfusion:"IV Infusion",
+    intakeOutput:"Intake / Output",woundCare:"Wound / Dressing",skinAssessment:"Skin / Pressure (Braden)",fallRisk:"Fall Risk (Morse Scale)",
+    procedure:"Procedure / Intervention",discharge:"Discharge / Handover (SBAR)",dailyAssessment:"Daily Assessment",initialAssessment:"Initial Assessment",
+    carePlan:"Care Plan",nutritionalAssessment:"Nutritional Assessment (NRS-2002)",patientEducation:"Patient Education",
+  };
+  const fmtKey = k => FIELD_LBL[k] || k.replace(/([A-Z])/g," $1").replace(/^[Ii]nt /,"").trim();
+  const fmtVal = v => {
+    if (v===null||v===undefined||v===""||v===false) return null;
+    if (typeof v==="boolean") return "✓ Yes";
+    if (Array.isArray(v)) { if (!v.length) return null; return v.map(x=>typeof x==="object"?(x.statement||x.topic||x.name||JSON.stringify(x)):String(x)).join(", "); }
+    if (typeof v==="object") {
+      if ("systolic" in v && "diastolic" in v) return `${v.systolic||"—"}/${v.diastolic||"—"}`;
+      const inner = Object.entries(v).filter(([,x])=>x).map(([k2,v2])=>`${k2}:${v2}`).join(" | ");
+      return inner||null;
+    }
+    return String(v);
+  };
+
   return (
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
-      {/* Summary count */}
+      {/* Summary */}
       <div style={{display:"flex",gap:8,padding:"10px 14px",background:C.primaryL,borderRadius:10,border:`1px solid ${C.rose200}`,alignItems:"center",flexWrap:"wrap"}}>
         <span style={{fontSize:13,fontWeight:700,color:C.primaryD}}>📝 {notes.length} Nursing Notes</span>
         <span style={{fontSize:11,color:C.muted}}>across {types.length-1} categories</span>
@@ -781,12 +870,13 @@ function NursingNotesTab({notes=[]}) {
       {/* Filter chips */}
       <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
         {types.map(t=>{
-          const nc = NOTE_CFG[t]||{};
+          const ns = NOTE_STYLE_TL[t]||NOTE_STYLE_TL.general;
+          const mod = TL_MODULES.find(m=>m.id===t);
           return (
             <button key={t} onClick={()=>setFilterType(t)}
-              style={{padding:"4px 12px",borderRadius:20,border:`1.5px solid ${filterType===t?(nc.dot||C.primary):C.border}`,background:filterType===t?(nc.dot||C.primary):"white",color:filterType===t?"white":C.muted,cursor:"pointer",fontSize:11,fontWeight:600,display:"flex",alignItems:"center",gap:4}}>
-              {nc.icon&&t!=="All"?<span>{nc.icon}</span>:null}
-              {t==="All"?"All":nc.label||t}
+              style={{padding:"4px 12px",borderRadius:20,border:`1.5px solid ${filterType===t?ns.dot:C.border}`,background:filterType===t?ns.dot:"white",color:filterType===t?"white":C.muted,cursor:"pointer",fontSize:11,fontWeight:600,display:"flex",alignItems:"center",gap:4}}>
+              {t!=="All"&&mod&&<i className={`pi ${mod.icon}`} style={{fontSize:10}}/>}
+              {t==="All"?"All":(mod?.label||t)}
               {t!=="All"&&<span style={{fontSize:10,opacity:.8}}>({sortedNotes.filter(n=>(n.noteType||"general")===t).length})</span>}
             </button>
           );
@@ -794,58 +884,170 @@ function NursingNotesTab({notes=[]}) {
         <span style={{marginLeft:"auto",fontSize:11,color:C.muted}}>{filtered.length} shown</span>
       </div>
 
-      {/* Notes list */}
-      {filtered.map((note,i)=>{
-        const id    = note._id||i;
-        const open  = expanded[id];
-        const nt    = note.noteType||"general";
-        const nc    = NOTE_CFG[nt]||{icon:"📝",label:nt,color:C.primary,bg:C.primaryL,dot:C.rose200};
-        const md    = note.moduleData||{};
-        // Extract vitals from multiple sources
-        const vRaw  = md.vitals || {};
-        const daRaw = md.dailyAssessment||{};
-        const vData = {
-          bp: vRaw.bp || (daRaw.bp_sys&&daRaw.bp_dia?{systolic:daRaw.bp_sys,diastolic:daRaw.bp_dia}:null),
-          pulse: vRaw.pulse||daRaw.pulse, temp: vRaw.temp||daRaw.temp,
-          spo2: vRaw.spo2||daRaw.spo2, rr: vRaw.rr||daRaw.rr,
-          bsl: vRaw.bsl||daRaw.bsl, gcs: vRaw.gcs||daRaw.gcs,
-        };
-        const hasVitals = vData.bp||vData.pulse||vData.temp||vData.spo2;
-        const mews = md.mewsScore;
-        const mewsTotal = mews?.total;
+      {/* Timeline container */}
+      <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:16,overflow:"hidden",boxShadow:"0 2px 10px rgba(0,0,0,.04)"}}>
+        {/* Timeline header */}
+        <div style={{padding:"14px 18px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",background:C.primaryL}}>
+          <div style={{fontWeight:800,fontSize:14,color:C.primaryD}}>Nursing Notes Timeline</div>
+          <span style={{fontSize:11,color:C.muted}}>{filtered.length} entries</span>
+        </div>
 
-        return (
-          <div key={id} style={{background:C.card,border:`1px solid ${C.border}`,borderLeft:`4px solid ${nc.dot}`,borderRadius:12,overflow:"hidden",boxShadow:"0 1px 4px rgba(0,0,0,.04)"}}>
-            {/* ── Clickable header ── */}
-            <div onClick={()=>toggle(id)} style={{padding:"11px 16px",background:nc.bg,borderBottom:open?`1px solid ${C.border}`:"none",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,userSelect:"none"}}>
-              <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-                <span style={{fontSize:18}}>{nc.icon}</span>
-                <span style={{fontSize:12,fontWeight:800,color:nc.color}}>{nc.label||nt}</span>
-                <SBadge status={note.status}/>
-                {note.isCriticalEvent && <Badge color={C.red} bg={C.redL}>⚠ Critical</Badge>}
-                {note.shift && <Badge color={C.muted} bg="#f1f5f9">{note.shift} Shift</Badge>}
-                {note.tags?.length>0 && note.tags.slice(0,2).map(t=><Badge key={t} color={nc.color} bg="white">{t}</Badge>)}
-                {mewsTotal!=null && <Badge color={mewsTotal>=5?C.red:mewsTotal>=3?C.amber:C.green} bg="white">MEWS {mewsTotal}</Badge>}
-                {note.nurseName && <span style={{fontSize:11,color:nc.color,fontWeight:600}}>👩‍⚕️ {note.nurseName}</span>}
+        {filtered.map((note, i) => {
+          const ns  = NOTE_STYLE_TL[note.noteType] || NOTE_STYLE_TL.general;
+          const mod = TL_MODULES.find(m=>m.id===note.noteType);
+          const timeStr = note.createdAt
+            ? new Date(note.createdAt).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})
+            : "--:--";
+          const mData = note.moduleData||{};
+          const SKIP = new Set(note.noteType==="mews"?["mewsScore"]:note.noteType==="vitals"?["vitals"]:[]);
+
+          return (
+            <div key={note._id||i}
+              style={{
+                margin:"0 16px",padding:"16px 16px 16px 0",
+                borderBottom:i<filtered.length-1?`1px solid ${C.border}`:"none",
+                display:"grid",gridTemplateColumns:"80px 1fr auto",gap:16,alignItems:"start",
+                borderLeft:`4px solid ${ns.dot}`,paddingLeft:16,
+                transition:"background .15s,border-radius .15s",
+              }}
+              onMouseEnter={e=>{e.currentTarget.style.background=`${ns.bg}50`;e.currentTarget.style.borderRadius="12px";e.currentTarget.style.margin="2px 16px";}}
+              onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.borderRadius="0";e.currentTarget.style.margin="0 16px";}}>
+
+              {/* ── Time column ── */}
+              <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5,paddingTop:2}}>
+                <div style={{background:ns.bg,border:`1.5px solid ${ns.dot}30`,borderRadius:8,padding:"5px 8px",textAlign:"center",minWidth:62}}>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:13,fontWeight:800,color:ns.color,lineHeight:1}}>{timeStr}</div>
+                  <div style={{fontSize:8,fontWeight:700,color:ns.color+"aa",textTransform:"uppercase",letterSpacing:".5px",marginTop:3}}>
+                    {(note.shift||"morning").charAt(0).toUpperCase()+(note.shift||"morning").slice(1)}
+                  </div>
+                </div>
+                <div style={{width:10,height:10,borderRadius:"50%",background:ns.dot,boxShadow:`0 0 0 3px ${ns.dot}30`}}/>
               </div>
-              <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
-                <span style={{fontSize:11,color:C.muted}}>{fmtDT(note.createdAt||note.submittedAt)}</span>
-                <span style={{fontSize:14,color:nc.color,fontWeight:700,minWidth:16,textAlign:"center"}}>{open?"▲":"▼"}</span>
+
+              {/* ── Body ── */}
+              <div>
+                {/* Header row */}
+                <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:8,flexWrap:"wrap"}}>
+                  <span style={{padding:"3px 10px",borderRadius:5,fontSize:10,fontWeight:700,letterSpacing:".6px",background:ns.bg,color:ns.color,display:"flex",alignItems:"center",gap:5}}>
+                    {mod&&<i className={`pi ${mod.icon}`} style={{fontSize:10}}/>}
+                    {mod?.label||note.noteType?.toUpperCase()||"General"}
+                  </span>
+                  {note.isCriticalEvent && (
+                    <span style={{background:C.red,color:"white",padding:"2px 8px",borderRadius:4,fontSize:9,fontWeight:700,letterSpacing:".5px",display:"flex",alignItems:"center",gap:4}}>
+                      <i className="pi pi-exclamation-triangle" style={{fontSize:9}}/> CRITICAL EVENT
+                    </span>
+                  )}
+                  {note.nurseName && <span style={{fontSize:11,color:C.muted,fontWeight:500}}>{note.nurseName}</span>}
+                </div>
+
+                {/* Vitals structured data (vitals note type) */}
+                {note.vitals && note.noteType==="vitals" && (
+                  <div style={{display:"flex",gap:12,flexWrap:"wrap",padding:"10px 16px",background:`linear-gradient(to right, ${ns.bg}60, white)`,borderRadius:10,marginBottom:8}}>
+                    {[
+                      {label:"BP",     value:`${note.vitals.bp?.systolic||"—"}/${note.vitals.bp?.diastolic||"—"}`, abnormal:isAbn("bp_sys",note.vitals.bp?.systolic)},
+                      {label:"PULSE",  value:`${note.vitals.pulse||"—"} /min`, abnormal:isAbn("pulse",note.vitals.pulse)},
+                      {label:"TEMP",   value:note.vitals.temp?`${note.vitals.temp}°F`:"—", abnormal:isAbn("temp",note.vitals.temp)},
+                      {label:"SPO₂",  value:note.vitals.spo2?`${note.vitals.spo2}%`:"—", abnormal:isAbn("spo2",note.vitals.spo2)},
+                      {label:"RR",     value:note.vitals.rr?`${note.vitals.rr} /min`:"—"},
+                      {label:"GCS",    value:note.moduleData?.vitals?.gcs||note.vitals.gcs||"—"},
+                      {label:"BSL",    value:(note.moduleData?.vitals?.bsl||note.vitals.bsl)?`${note.moduleData?.vitals?.bsl||note.vitals.bsl} mg/dL`:"—", abnormal:isAbn("bsl",note.moduleData?.vitals?.bsl||note.vitals.bsl)},
+                    ].map(v=>(
+                      <div key={v.label} style={{display:"flex",flexDirection:"column",gap:1}}>
+                        <span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".6px",color:C.muted}}>{v.label}</span>
+                        <span style={{fontFamily:"'DM Mono',monospace",fontSize:12,fontWeight:v.abnormal?700:500,color:v.abnormal?C.red:C.text}}>{v.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* MEWS score band */}
+                {mData.mewsScore && note.noteType==="mews" && (()=>{
+                  const ms = mData.mewsScore;
+                  const band = mewsBandTL(ms.total||0);
+                  return (
+                    <div style={{display:"flex",gap:12,flexWrap:"wrap",padding:"8px 14px",background:band.bg,borderRadius:7,marginBottom:8,alignItems:"center",border:`1px solid ${band.color}20`}}>
+                      <div style={{display:"flex",flexDirection:"column",gap:1}}>
+                        <span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".6px",color:C.muted}}>MEWS TOTAL</span>
+                        <span style={{fontFamily:"'DM Mono',monospace",fontSize:20,fontWeight:900,color:band.color}}>{ms.total}</span>
+                      </div>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:12,fontWeight:800,color:band.color}}>{ms.band||band.label}</div>
+                      </div>
+                      {[{l:"RR",v:ms.rr},{l:"SpO₂",v:ms.spo2},{l:"Temp",v:ms.temp},{l:"SBP",v:ms.sbp},{l:"HR",v:ms.hr},{l:"AVPU",v:ms.avpu}].filter(x=>x.v).map(v=>(
+                        <div key={v.l} style={{display:"flex",flexDirection:"column",gap:1}}>
+                          <span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".6px",color:C.muted}}>{v.l}</span>
+                          <span style={{fontFamily:"'DM Mono',monospace",fontSize:12,fontWeight:500}}>{v.v}</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+
+                {/* Generic module data renderer */}
+                {note.moduleData && (()=>{
+                  const blocks = Object.entries(note.moduleData)
+                    .filter(([k])=>!SKIP.has(k))
+                    .map(([mk,mv])=>{
+                      if (!mv) return null;
+                      if (Array.isArray(mv)) {
+                        const items = mv.filter(Boolean);
+                        if (!items.length) return null;
+                        const summary = items.map((x,idx)=>typeof x==="object"?(x.statement||x.topic||x.name||`Item ${idx+1}`):String(x)).join(" | ");
+                        return {key:mk,label:MOD_SECTION_LBL[mk]||mk,chips:[{label:`${items.length} item(s)`,value:summary}]};
+                      }
+                      if (typeof mv!=="object") return null;
+                      const chips = Object.entries(mv).map(([k,v])=>({label:fmtKey(k),value:fmtVal(v)})).filter(c=>c.value!==null);
+                      if (!chips.length) return null;
+                      return {key:mk,label:MOD_SECTION_LBL[mk]||mk.replace(/([A-Z])/g," $1").trim(),chips};
+                    }).filter(Boolean);
+                  if (!blocks.length) return null;
+                  return (
+                    <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:8}}>
+                      {blocks.map(({key,label,chips})=>(
+                        <div key={key} style={{padding:"7px 12px",background:"#f9fafb",borderRadius:7,border:`1px solid ${C.border}`}}>
+                          <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:ns.color,marginBottom:5}}>{label}</div>
+                          <div style={{display:"flex",gap:"5px 14px",flexWrap:"wrap"}}>
+                            {chips.map(c=>(
+                              <div key={c.label} style={{display:"flex",flexDirection:"column",gap:1}}>
+                                <span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.muted}}>{c.label}</span>
+                                <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:500,color:C.text}}>{c.value}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+
+                {/* Remarks */}
+                {note.remarks && (
+                  <div style={{fontSize:12.5,color:C.text,lineHeight:1.6,marginBottom:8}}>{note.remarks}</div>
+                )}
+
+                {/* Tags */}
+                {note.tags?.length>0 && (
+                  <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                    {note.tags.map(t=>(
+                      <span key={t} style={{padding:"2px 8px",borderRadius:4,fontSize:10,fontWeight:600,background:"#f9fafb",color:C.muted,border:`1px solid ${C.border}`}}>{t}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* ── Actions ── */}
+              <div style={{display:"flex",flexDirection:"column",gap:5,alignItems:"flex-end"}}>
+                <button style={{padding:"4px 10px",border:`1.5px solid ${C.border}`,borderRadius:6,background:"white",fontSize:11,fontWeight:600,cursor:"pointer",color:C.muted,display:"flex",alignItems:"center",gap:4}}>
+                  <i className="pi pi-pencil" style={{fontSize:10}}/> Edit
+                </button>
+                <button style={{padding:"4px 10px",border:`1.5px solid ${C.border}`,borderRadius:6,background:"white",fontSize:11,fontWeight:600,cursor:"pointer",color:C.muted,display:"flex",alignItems:"center",gap:4}}>
+                  <i className="pi pi-print" style={{fontSize:10}}/> Print
+                </button>
               </div>
             </div>
-
-            {/* ── Vitals quick-strip (always visible) ── */}
-            {hasVitals && <VitalsStrip v={vData}/>}
-
-            {/* ── Expanded body ── */}
-            {open && (
-              <div style={{padding:"14px 16px",display:"flex",flexDirection:"column",gap:10}}>
-                <NoteModuleBody note={note}/>
-              </div>
-            )}
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 }
