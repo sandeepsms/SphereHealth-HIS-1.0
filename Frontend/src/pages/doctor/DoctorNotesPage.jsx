@@ -1162,229 +1162,377 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                 {/* ── Notes in this date group ── */}
                 {groupNotes.map((note, i) => {
                   const ns  = NOTE_STYLE[note.noteType] || NOTE_STYLE.daily;
-                  const ss  = SHIFT_STYLE[note.shift]   || SHIFT_STYLE.morning;
                   const mod = modDef(note.noteType);
-                  const timeStr = note.createdAt ? new Date(note.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "--:--";
-                  const isSigned = note.status === "signed";
+                  const timeStr   = note.createdAt ? new Date(note.createdAt).toLocaleTimeString("en-IN", { hour:"2-digit", minute:"2-digit" }) : "--:--";
+                  const isSigned  = note.status === "signed";
                   const isExpanded = !!expandedNotes[note._id];
                   const toggleExpand = () => setExpandedNotes(prev => ({ ...prev, [note._id]: !prev[note._id] }));
 
-                  /* ── noteDetails chip renderer (reused) ── */
+                  /* ── Field label dictionary ── */
                   const NOTE_FIELD_LBL = {
-                    admissionMode:"Admission Mode", chiefComplaint:"Chief Complaint",
-                    duration:"Duration", hpi:"HPI",
-                    pastMedical:"Past Medical Hx", pastSurgical:"Past Surgical Hx",
-                    familyHistory:"Family Hx", socialHistory:"Social Hx",
-                    currentMeds:"Current Meds", allergies:"Allergies",
-                    weight:"Weight (kg)", height:"Height (cm)",
-                    generalCondition:"Gen Condition", builtNutrition:"Built/Nutrition",
-                    pallor:"Pallor", icterus:"Icterus", cyanosis:"Cyanosis",
-                    clubbing:"Clubbing", lymphadenopathy:"Lymphadenopathy", oedema:"Oedema",
-                    resp:"Resp System", cvs:"CVS", abdomen:"Abdomen", cns:"CNS",
-                    provisionalDx:"Provisional Dx", differentialDx:"Differential Dx",
-                    finalDx:"Final Dx", icd10:"ICD-10",
+                    admissionMode:"Admission Mode", chiefComplaint:"Chief Complaint", duration:"Duration", hpi:"HPI",
+                    pastMedical:"Past Medical Hx", pastSurgical:"Past Surgical Hx", familyHistory:"Family Hx",
+                    socialHistory:"Social Hx", currentMeds:"Current Meds", allergies:"Allergies",
+                    bp_sys:"Systolic BP", bp_dia:"Diastolic BP", pulse:"Pulse (/min)", temp:"Temp (°F)",
+                    spo2:"SpO₂ (%)", rr:"RR (/min)", bsl:"BSL (mg/dL)", weight:"Weight (kg)", height:"Height (cm)",
+                    generalCondition:"Gen Condition", builtNutrition:"Built / Nutrition",
+                    pallor:"Pallor", icterus:"Icterus", cyanosis:"Cyanosis", clubbing:"Clubbing",
+                    lymphadenopathy:"Lymphadenopathy", oedema:"Oedema",
+                    resp:"Resp System", cvs:"CVS", abdomen:"Abdomen", cns:"CNS / Neuro",
+                    provisionalDx:"Provisional Dx", differentialDx:"Differential Dx", finalDx:"Final Dx", icd10:"ICD-10",
                     investigations:"Investigations", managementPlan:"Management Plan",
-                    ventMode:"Vent Mode", fio2:"FiO₂", peep:"PEEP",
-                    tv:"Tidal Vol", ventRR:"Vent RR", pip:"PIP", map:"MAP", cvp:"CVP",
-                    rassScore:"RASS Score", bpsScore:"BPS Score",
-                    dailyGoals:"Daily Goals", neuro:"Neuro", renal:"Renal",
-                    gi:"GI", haem:"Haem", infective:"Infective",
-                    sedation:"Sedation", vasopressors:"Vasopressors",
-                    vasopressorDetail:"Vasopressor Detail",
-                    procedureName:"Procedure", indication:"Indication",
+                    ventMode:"Vent Mode", fio2:"FiO₂ (%)", peep:"PEEP (cmH₂O)", tv:"Tidal Volume (mL)",
+                    ventRR:"Vent RR", pip:"PIP", map:"MAP (mmHg)", cvp:"CVP (mmHg)",
+                    rassScore:"RASS Score", bpsScore:"BPS Score", dailyGoals:"Daily Goals",
+                    neuro:"Neuro", renal:"Renal", gi:"GI", haem:"Haematology", infective:"Infective",
+                    sedation:"Sedation", vasopressors:"Vasopressors", vasopressorDetail:"Vasopressor Detail",
+                    procedureName:"Procedure", indication:"Indication", laterality:"Laterality",
                     surgeon:"Surgeon", assistant:"Assistant", anaesthesia:"Anaesthesia",
-                    position:"Position", consentObtained:"Consent",
+                    position:"Position", consentObtained:"Consent Obtained",
                     technique:"Technique", findings:"Findings",
                     complications:"Complications", bloodLoss:"Blood Loss",
-                    specimenSent:"Specimen Sent", specimenType:"Specimen",
-                    postInstructions:"Post Instructions",
-                    consultantName:"Consultant", speciality:"Speciality",
-                    consultantRegNo:"Reg No", referredBy:"Referred By",
-                    reason:"Reason", clinicalSummary:"Clinical Summary",
-                    impression:"Impression", recommendations:"Recommendations",
-                    followUp:"Follow-up",
-                    procedure:"Procedure", preopDiagnosis:"Pre-op Dx",
-                    asaGrade:"ASA Grade", plannedAnaesthesia:"Planned Anaesthesia",
-                    bloodGroup:"Blood Group", crossMatch:"Cross Match",
+                    specimenSent:"Specimen Sent", specimenType:"Specimen Type", postInstructions:"Post Instructions",
+                    consultantName:"Consultant", speciality:"Speciality", consultantRegNo:"Reg No",
+                    referredBy:"Referred By", reason:"Reason", clinicalSummary:"Clinical Summary",
+                    impression:"Impression", recommendations:"Recommendations", followUp:"Follow-Up",
+                    procedure:"Procedure", preopDiagnosis:"Pre-op Dx", asaGrade:"ASA Grade",
+                    plannedAnaesthesia:"Planned Anaesthesia", bloodGroup:"Blood Group", crossMatch:"Cross Match",
                     comorbidities:"Comorbidities", preopOrders:"Pre-op Orders",
-                    cbcReviewed:"CBC ✓", ptReviewed:"PT/APTT ✓",
-                    ecgReviewed:"ECG ✓", cxrReviewed:"CXR ✓",
-                    echoReviewed:"Echo ✓", lftsReviewed:"LFTs ✓",
-                    rftReviewed:"RFTs ✓",
-                    procedurePerformed:"Procedure Performed", operativeFindings:"Op Findings",
-                    startTime:"Start", endTime:"End", transfusion:"Transfusion",
+                    cbcReviewed:"CBC ✓", ptReviewed:"PT/APTT ✓", ecgReviewed:"ECG ✓", cxrReviewed:"CXR ✓",
+                    echoReviewed:"Echo ✓", lftsReviewed:"LFTs ✓", rftReviewed:"RFTs ✓",
+                    procedurePerformed:"Procedure Performed", operativeFindings:"Operative Findings",
+                    startTime:"Start Time", endTime:"End Time", transfusion:"Transfusion",
                     fluidsGiven:"Fluids Given", urineOutput:"Urine Output",
                     postopDiagnosis:"Post-op Dx", conditionLeavingOT:"Condition (OT)",
-                    recoveryInstructions:"Recovery Instr", postopOrders:"Post-op Orders",
-                    dateTime:"Date/Time", causeDeath1:"Cause 1",
-                    causeDeath2:"Cause 2", causeDeath3:"Cause 3",
-                    contributing:"Contributing", sequenceOfEvents:"Sequence",
-                    modeOfDeath:"Mode of Death", dnrInPlace:"DNR",
-                    familyInformed:"Family Informed", familyInformedBy:"Informed By",
-                    familyInformedTime:"Informed At", mlc:"MLC",
-                    pmAdvised:"PM Advised", certificateIssued:"Certificate Issued",
-                    originalNoteId:"Original Note", correction:"Correction",
-                    witness:"Witness",
+                    recoveryInstructions:"Recovery Instructions", postopOrders:"Post-op Orders",
+                    dateTime:"Date/Time", causeDeath1:"Immediate Cause", causeDeath2:"Antecedent Cause",
+                    causeDeath3:"Underlying Cause", contributing:"Contributing Conditions",
+                    sequenceOfEvents:"Sequence of Events", modeOfDeath:"Mode of Death",
+                    dnrInPlace:"DNR", familyInformed:"Family Informed", familyInformedBy:"Informed By",
+                    familyInformedTime:"Informed At", mlc:"MLC", pmAdvised:"PM Advised",
+                    certificateIssued:"Certificate Issued", originalNoteId:"Original Note",
+                    correction:"Correction", witness:"Witness",
                   };
+
+                  /* ── Long text fields → paragraph block instead of chip ── */
+                  const LONG_FIELDS = new Set([
+                    "hpi","managementPlan","pastMedical","pastSurgical","currentMeds",
+                    "resp","cvs","abdomen","cns","technique","findings","clinicalSummary",
+                    "impression","recommendations","dailyGoals","sequenceOfEvents",
+                    "postInstructions","recoveryInstructions","postopOrders","preopOrders",
+                    "comorbidities","correction","reason","operativeFindings",
+                  ]);
+
+                  /* ── Section maps per note type ── */
+                  const NOTE_SECTIONS = {
+                    initial: [
+                      { label:"Admission Details",          icon:"pi-id-card",           keys:["admissionMode","chiefComplaint","duration","hpi"] },
+                      { label:"Past History",               icon:"pi-history",            keys:["pastMedical","pastSurgical","currentMeds","allergies","familyHistory","socialHistory"] },
+                      { label:"Vitals on Admission",        icon:"pi-heart",              keys:["bp_sys","bp_dia","pulse","temp","spo2","rr","weight","height","bsl"] },
+                      { label:"General Examination",        icon:"pi-eye",                keys:["generalCondition","builtNutrition","pallor","icterus","cyanosis","clubbing","lymphadenopathy","oedema"] },
+                      { label:"System Examination",         icon:"pi-search",             keys:["resp","cvs","abdomen","cns"] },
+                      { label:"Diagnosis",                  icon:"pi-tag",                keys:["provisionalDx","differentialDx","finalDx","icd10"] },
+                      { label:"Investigations & Plan",      icon:"pi-list",               keys:["investigations","managementPlan"] },
+                    ],
+                    icu: [
+                      { label:"Ventilator Settings",        icon:"pi-sliders-h",          keys:["ventMode","fio2","peep","tv","ventRR","pip"] },
+                      { label:"Hemodynamics / Monitoring",  icon:"pi-chart-line",         keys:["map","cvp","rassScore","bpsScore"] },
+                      { label:"Sedation / Vasopressors",    icon:"pi-bolt",               keys:["sedation","vasopressors","vasopressorDetail"] },
+                      { label:"System Assessment",          icon:"pi-list",               keys:["neuro","cvs","resp","renal","gi","haem","infective"] },
+                      { label:"Daily Goals",                icon:"pi-check-square",       keys:["dailyGoals"] },
+                    ],
+                    procedure: [
+                      { label:"Procedure Details",          icon:"pi-wrench",             keys:["procedureName","indication","time","surgeon","assistant","anaesthesia","position","consentObtained","laterality"] },
+                      { label:"Technique & Findings",       icon:"pi-search",             keys:["technique","findings"] },
+                      { label:"Outcome",                    icon:"pi-check-circle",       keys:["complications","bloodLoss","specimenSent","specimenType","postInstructions"] },
+                    ],
+                    consultation: [
+                      { label:"Consultation",               icon:"pi-users",              keys:["consultantName","speciality","consultantRegNo","referredBy","reason"] },
+                      { label:"Clinical Summary & Findings",icon:"pi-file-edit",          keys:["clinicalSummary","investigations","findings"] },
+                      { label:"Impression & Recommendations",icon:"pi-check-circle",      keys:["impression","recommendations","followUp"] },
+                    ],
+                    preop: [
+                      { label:"Patient & Procedure",        icon:"pi-user",               keys:["procedure","indication","preopDiagnosis","asaGrade","plannedAnaesthesia","bloodGroup"] },
+                      { label:"Lab Reviews",                icon:"pi-check-square",       keys:["crossMatch","cbcReviewed","ptReviewed","ecgReviewed","cxrReviewed","echoReviewed","lftsReviewed","rftReviewed"] },
+                      { label:"Pre-op Plan",                icon:"pi-list",               keys:["comorbidities","currentMeds","allergies","consentObtained","surgeon","anaesthetist","preopOrders"] },
+                    ],
+                    postop: [
+                      { label:"Operative Details",          icon:"pi-wrench",             keys:["procedurePerformed","operativeFindings","anaesthesia","surgeon","anaesthetist","startTime","endTime"] },
+                      { label:"Fluids & Specimens",         icon:"pi-tint",               keys:["bloodLoss","transfusion","fluidsGiven","urineOutput","specimenSent","specimenType"] },
+                      { label:"Post-op Status",             icon:"pi-home",               keys:["postopDiagnosis","conditionLeavingOT","recoveryInstructions","postopOrders"] },
+                    ],
+                    death: [
+                      { label:"Cause of Death",             icon:"pi-exclamation-triangle",keys:["dateTime","causeDeath1","causeDeath2","causeDeath3","contributing"] },
+                      { label:"Clinical Sequence",          icon:"pi-file",               keys:["sequenceOfEvents","modeOfDeath"] },
+                      { label:"Administrative",             icon:"pi-clipboard",          keys:["dnrInPlace","familyInformed","familyInformedBy","familyInformedTime","mlc","pmAdvised","certificateIssued"] },
+                    ],
+                    amendment: [
+                      { label:"Amendment",                  icon:"pi-pencil",             keys:["originalNoteId","correction","reason","witness"] },
+                    ],
+                  };
+
+                  const fmtKey = k => NOTE_FIELD_LBL[k] || k.replace(/([A-Z])/g, " $1").trim();
                   const fmtVal = v => {
                     if (v === null || v === undefined || v === "" || v === false) return null;
                     if (typeof v === "boolean") return "✓ Yes";
                     if (Array.isArray(v)) {
                       if (!v.length) return null;
-                      return v.map(x => typeof x === "object" ? (x.drug || x.drugFluid || x.name || JSON.stringify(x)) : String(x)).join(", ").slice(0, 80);
+                      return v.map(x => typeof x === "object" ? (x.drug||x.drugFluid||x.name||JSON.stringify(x)) : String(x)).join(", ");
                     }
                     if (typeof v === "object") {
-                      if ("systolic" in v) return `${v.systolic || "—"}/${v.diastolic || "—"}`;
-                      return null;
+                      if ("systolic" in v) return `${v.systolic||"—"}/${v.diastolic||"—"}`;
+                      const inner = Object.entries(v).filter(([,x])=>x).map(([k2,v2])=>`${k2}: ${v2}`).join(" | ");
+                      return inner || null;
                     }
-                    const s = String(v);
-                    return s.length > 80 ? s.slice(0, 80) + "…" : s;
+                    return String(v);
                   };
-                  const fmtKey = k => NOTE_FIELD_LBL[k] || k.replace(/([A-Z])/g, " $1").trim();
 
-                  /* Compute a rich summary line for collapsed state */
                   const summaryLine = (() => {
-                    if (note.provisionalDiagnosis) return note.provisionalDiagnosis.slice(0, 70);
-                    if (note.finalDiagnosis)       return note.finalDiagnosis.slice(0, 70);
-                    if (note.noteDetails?.provisionalDx) return note.noteDetails.provisionalDx.slice(0, 70);
-                    if (note.noteDetails?.chiefComplaint) return note.noteDetails.chiefComplaint.slice(0, 70);
-                    if (note.soap?.assessment) return note.soap.assessment.slice(0, 70);
-                    if (note.soap?.plan)       return note.soap.plan.slice(0, 70);
-                    if (note.noteDetails?.managementPlan) return note.noteDetails.managementPlan.slice(0, 70);
+                    if (note.provisionalDiagnosis)          return note.provisionalDiagnosis.slice(0,70);
+                    if (note.finalDiagnosis)                return note.finalDiagnosis.slice(0,70);
+                    if (note.noteDetails?.provisionalDx)    return note.noteDetails.provisionalDx.slice(0,70);
+                    if (note.noteDetails?.chiefComplaint)   return note.noteDetails.chiefComplaint.slice(0,70);
+                    if (note.soap?.assessment)              return note.soap.assessment.slice(0,70);
+                    if (note.soap?.plan)                    return note.soap.plan.slice(0,70);
+                    if (note.noteDetails?.managementPlan)   return note.noteDetails.managementPlan.slice(0,70);
                     return null;
                   })();
 
                   return (
                     <div key={note._id || i}
-                      style={{ padding: "14px 20px", borderBottom: `1px solid ${C.border}`, borderLeft: `4px solid ${ns.dot}`, background: "white", transition: "background .15s", cursor: "pointer" }}
-                      onMouseEnter={e => e.currentTarget.style.background = "#f0f7ff"}
-                      onMouseLeave={e => e.currentTarget.style.background = "white"}
+                      style={{
+                        margin:"0 16px", padding:"16px 16px 16px 0",
+                        borderBottom: i < groupNotes.length-1 ? `1px solid ${C.border}` : "none",
+                        display:"grid", gridTemplateColumns:"82px 1fr auto", gap:16, alignItems:"start",
+                        borderLeft:`4px solid ${ns.dot}`, paddingLeft:16,
+                        transition:"background .15s, border-radius .15s", cursor:"pointer",
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.background=`${ns.bg}50`; e.currentTarget.style.borderRadius="12px"; e.currentTarget.style.margin="2px 16px"; }}
+                      onMouseLeave={e => { e.currentTarget.style.background="transparent"; e.currentTarget.style.borderRadius="0"; e.currentTarget.style.margin="0 16px"; }}
                       onClick={toggleExpand}>
 
-                      {/* ── Note Header Row ── */}
-                      <div style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
-                        {/* Time column */}
-                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, minWidth: 58, flexShrink: 0 }}>
-                          <span style={{ fontFamily: "monospace", fontSize: 12, fontWeight: 800, color: C.text }}>{timeStr}</span>
-                          <span style={{ padding: "2px 7px", borderRadius: 4, fontSize: 9, fontWeight: 700, letterSpacing: ".5px", ...ss }}>{(note.shift||"morning")[0].toUpperCase()+(note.shift||"morning").slice(1)}</span>
-                          <span style={{ width: 10, height: 10, borderRadius: "50%", border: `2px solid ${ns.dot}`, background: "white", marginTop: 1, display: "block" }} />
+                      {/* ── Time column ── */}
+                      <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:5, paddingTop:2 }}>
+                        <div style={{ background:ns.bg, border:`1.5px solid ${ns.dot}30`, borderRadius:8, padding:"5px 8px", textAlign:"center", minWidth:64 }}>
+                          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:800, color:ns.color, lineHeight:1 }}>{timeStr}</div>
+                          <div style={{ fontSize:8, fontWeight:700, color:ns.color+"aa", textTransform:"uppercase", letterSpacing:".5px", marginTop:3 }}>
+                            {(note.shift||"morning")[0].toUpperCase()+(note.shift||"morning").slice(1)}
+                          </div>
+                        </div>
+                        <div style={{ width:10, height:10, borderRadius:"50%", background:ns.dot, boxShadow:`0 0 0 3px ${ns.dot}30` }} />
+                      </div>
+
+                      {/* ── Body ── */}
+                      <div>
+                        {/* Badge row */}
+                        <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:6, flexWrap:"wrap" }}>
+                          <span style={{ padding:"3px 10px", borderRadius:5, fontSize:10, fontWeight:700, letterSpacing:".5px", background:ns.bg, color:ns.color, display:"flex", alignItems:"center", gap:5, flexShrink:0 }}>
+                            {mod && <i className={`pi ${mod.icon}`} style={{ fontSize:10 }} />}
+                            {mod?.label || "Daily Progress"}
+                          </span>
+                          <span style={{ padding:"2px 8px", borderRadius:4, fontSize:9, fontWeight:700, background:isSigned?C.greenL:C.amberL, color:isSigned?C.green:C.amber, border:`1px solid ${isSigned?C.greenB:C.amberB}` }}>
+                            {isSigned ? "✓ SIGNED" : "DRAFT"}
+                          </span>
+                          {note.isCritical && <span style={{ background:C.red, color:"white", padding:"2px 8px", borderRadius:4, fontSize:9, fontWeight:700 }}>⚠ CRITICAL</span>}
+                          {note.doctorName && <span style={{ fontSize:11, color:C.muted, marginLeft:2 }}>{note.doctorName}</span>}
+                          {note.doctorRegNo && <span style={{ fontSize:10, color:C.muted }}>Reg: {note.doctorRegNo}</span>}
+                          {!isExpanded && summaryLine && (
+                            <span style={{ fontSize:11, color:C.muted, fontStyle:"italic", marginLeft:4, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:280 }}>— {summaryLine}{summaryLine.length>=60?"…":""}</span>
+                          )}
                         </div>
 
-                        {/* Main content */}
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          {/* Badge row */}
-                          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5, flexWrap: "wrap" }}>
-                            <span style={{ padding: "3px 10px", borderRadius: 5, fontSize: 10, fontWeight: 700, letterSpacing: ".5px", background: ns.bg, color: ns.color, display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
-                              {mod && <i className={`pi ${mod.icon}`} style={{ fontSize: 10 }} />}
-                              {mod?.label || "Daily Progress"}
-                            </span>
-                            <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 9, fontWeight: 700, background: isSigned ? C.greenL : C.amberL, color: isSigned ? C.green : C.amber, border: `1px solid ${isSigned ? C.greenB : C.amberB}` }}>
-                              {isSigned ? "✓ SIGNED" : "DRAFT"}
-                            </span>
-                            {note.isCritical && <span style={{ background: C.red, color: "white", padding: "2px 8px", borderRadius: 4, fontSize: 9, fontWeight: 700 }}>⚠ CRITICAL</span>}
-                            {note.doctorName && <span style={{ fontSize: 11, color: C.muted, marginLeft: 2 }}>{note.doctorName}</span>}
-                            {note.doctorRegNo && <span style={{ fontSize: 10, color: C.muted }}>Reg: {note.doctorRegNo}</span>}
+                        {/* ── Expanded content ── */}
+                        {isExpanded && (
+                          <div onClick={e => e.stopPropagation()}>
 
-                            {/* Collapse summary line */}
-                            {!isExpanded && summaryLine && (
-                              <span style={{ fontSize: 11, color: C.muted, fontStyle: "italic", marginLeft: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 280 }}>— {summaryLine}{summaryLine.length >= 60 ? "…" : ""}</span>
-                            )}
-                          </div>
-
-                          {/* ── Expanded content ── */}
-                          {isExpanded && (
-                            <div>
-                              {/* SOAP Preview */}
-                              {note.soap && (
-                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 7, marginBottom: 7 }}>
-                                  {[{k:"subjective",l:"S",c:C.blue},{k:"objective",l:"O",c:C.teal},{k:"assessment",l:"A",c:C.amber},{k:"plan",l:"P",c:C.green}].map(s => note.soap[s.k] ? (
-                                    <div key={s.k} style={{ padding: "6px 10px", background: "#f8fafc", borderRadius: 6, borderLeft: `3px solid ${s.c}` }}>
-                                      <div style={{ fontSize: 9, fontWeight: 800, color: s.c, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 2 }}>{s.l} — {s.k}</div>
-                                      <div style={{ fontSize: 12, color: C.text, lineHeight: 1.5 }}>{note.soap[s.k].slice(0, 160)}{note.soap[s.k].length > 160 ? "…" : ""}</div>
+                            {/* SOAP */}
+                            {note.soap && (() => {
+                              const sf=[{k:"subjective",l:"S — Subjective",c:C.blue},{k:"objective",l:"O — Objective",c:C.teal},{k:"assessment",l:"A — Assessment",c:C.amber},{k:"plan",l:"P — Plan",c:C.green}].filter(s=>note.soap[s.k]);
+                              if (!sf.length) return null;
+                              return (
+                                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:7, marginBottom:10 }}>
+                                  {sf.map(s=>(
+                                    <div key={s.k} style={{ padding:"8px 12px", background:"#f8fafc", borderRadius:7, borderLeft:`3px solid ${s.c}` }}>
+                                      <div style={{ fontSize:9, fontWeight:800, color:s.c, textTransform:"uppercase", letterSpacing:".6px", marginBottom:3 }}>{s.l}</div>
+                                      <div style={{ fontSize:12, color:C.text, lineHeight:1.6 }}>{note.soap[s.k]}</div>
                                     </div>
-                                  ) : null)}
-                                </div>
-                              )}
-                              {/* Diagnosis */}
-                              {(note.provisionalDiagnosis || note.finalDiagnosis) && (
-                                <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 6 }}>
-                                  {note.provisionalDiagnosis && <span style={{ fontSize: 12, color: C.muted }}><b style={{ color: C.amber }}>Provisional:</b> {note.provisionalDiagnosis}</span>}
-                                  {note.finalDiagnosis && <span style={{ fontSize: 12, color: C.muted }}><b style={{ color: C.green }}>Final:</b> {note.finalDiagnosis}</span>}
-                                </div>
-                              )}
-                              {/* Investigations */}
-                              {note.investigations?.length > 0 && (
-                                <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 6 }}>
-                                  <span style={{ fontSize: 10, fontWeight: 700, color: C.muted }}>Inv:</span>
-                                  {note.investigations.map((inv, ii) => (
-                                    <span key={ii} style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600, background: C.purpleL, color: C.purple, border: `1px solid ${C.purpleB}` }}>{inv}</span>
                                   ))}
                                 </div>
-                              )}
-                              {/* Orders */}
-                              {note.orders?.length > 0 && (
-                                <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 5 }}>
-                                  <span style={{ fontSize: 10, fontWeight: 700, color: C.muted }}>Orders ({note.orders.length}):</span>
-                                  {note.orders.slice(0, 4).map((o, oi) => (
-                                    <span key={oi} style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600, background: C.blueL, color: C.blue, border: `1px solid ${C.blueB}` }}>{o.instruction?.slice(0, 36)}</span>
+                              );
+                            })()}
+
+                            {/* Top-level diagnosis */}
+                            {(note.provisionalDiagnosis||note.finalDiagnosis) && (
+                              <div style={{ display:"flex", gap:12, flexWrap:"wrap", marginBottom:8, padding:"6px 10px", background:"#fffbeb", borderRadius:6, border:"1px solid #fde68a" }}>
+                                {note.provisionalDiagnosis && <span style={{ fontSize:12, color:C.text }}><b style={{ color:C.amber }}>Provisional:</b> {note.provisionalDiagnosis}</span>}
+                                {note.finalDiagnosis && <span style={{ fontSize:12, color:C.text }}><b style={{ color:C.green }}>Final:</b> {note.finalDiagnosis}</span>}
+                              </div>
+                            )}
+
+                            {/* Investigations (array-type top-level) */}
+                            {note.investigations?.length > 0 && (
+                              <div style={{ display:"flex", gap:5, flexWrap:"wrap", marginBottom:8, alignItems:"center" }}>
+                                <span style={{ fontSize:10, fontWeight:700, color:C.muted }}>Investigations:</span>
+                                {note.investigations.map((inv,ii)=>(
+                                  <span key={ii} style={{ padding:"2px 8px", borderRadius:4, fontSize:10, fontWeight:600, background:C.purpleL, color:C.purple, border:`1px solid ${C.purpleB}` }}>{inv}</span>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Orders (top-level) */}
+                            {note.orders?.length > 0 && (
+                              <div style={{ display:"flex", gap:5, flexWrap:"wrap", marginBottom:8, alignItems:"center" }}>
+                                <span style={{ fontSize:10, fontWeight:700, color:C.muted }}>Orders ({note.orders.length}):</span>
+                                {note.orders.slice(0,4).map((o,oi)=>(
+                                  <span key={oi} style={{ padding:"2px 8px", borderRadius:4, fontSize:10, fontWeight:600, background:C.blueL, color:C.blue, border:`1px solid ${C.blueB}` }}>{o.instruction?.slice(0,36)}</span>
+                                ))}
+                                {note.orders.length>4 && <span style={{ fontSize:10, color:C.muted }}>+{note.orders.length-4} more</span>}
+                              </div>
+                            )}
+
+                            {/* Vitals strip */}
+                            {note.vitals && (() => {
+                              const v=note.vitals;
+                              const bpStr=v.bp?`${v.bp.systolic||"—"}/${v.bp.diastolic||"—"}`:null;
+                              const vf=[{l:"BP",v:bpStr},{l:"Pulse",v:v.pulse?`${v.pulse}/min`:null},{l:"Temp",v:v.temp?`${v.temp}°F`:null},{l:"SpO₂",v:v.spo2?`${v.spo2}%`:null},{l:"RR",v:v.rr?`${v.rr}/min`:null},{l:"BSL",v:v.bsl?`${v.bsl}mg/dL`:null},{l:"GCS",v:v.gcs?String(v.gcs):null},{l:"Urine",v:v.urine?`${v.urine}mL`:null}].filter(f=>f.v);
+                              if (!vf.length) return null;
+                              return (
+                                <div style={{ display:"flex", gap:"5px 14px", flexWrap:"wrap", padding:"8px 12px", background:"#eff6ff", borderRadius:7, border:"1px solid #bfdbfe", marginBottom:8 }}>
+                                  <span style={{ fontSize:9, fontWeight:800, textTransform:"uppercase", color:C.blue, alignSelf:"center", minWidth:44 }}>Vitals</span>
+                                  {vf.map(f=>(
+                                    <div key={f.l} style={{ display:"flex", flexDirection:"column", gap:1 }}>
+                                      <span style={{ fontSize:9, fontWeight:700, textTransform:"uppercase", letterSpacing:".5px", color:C.muted }}>{f.l}</span>
+                                      <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, fontWeight:600, color:C.text }}>{f.v}</span>
+                                    </div>
                                   ))}
-                                  {note.orders.length > 4 && <span style={{ fontSize: 10, color: C.muted }}>+{note.orders.length - 4} more</span>}
                                 </div>
-                              )}
-                              {/* Vitals chips */}
-                              {note.vitals && (() => {
-                                const v = note.vitals;
-                                const bpStr = v.bp ? `${v.bp.systolic||"—"}/${v.bp.diastolic||"—"}` : null;
-                                const vf = [
-                                  {l:"BP",v:bpStr},{l:"Pulse",v:v.pulse?`${v.pulse}/min`:null},{l:"Temp",v:v.temp?`${v.temp}°F`:null},
-                                  {l:"SpO₂",v:v.spo2?`${v.spo2}%`:null},{l:"RR",v:v.rr?`${v.rr}/min`:null},
-                                  {l:"BSL",v:v.bsl?`${v.bsl}mg/dL`:null},{l:"GCS",v:v.gcs?String(v.gcs):null},{l:"Urine",v:v.urine?`${v.urine}mL`:null},
-                                ].filter(f=>f.v);
-                                if (!vf.length) return null;
+                              );
+                            })()}
+
+                            {/* Tags */}
+                            {note.tags?.length > 0 && (
+                              <div style={{ display:"flex", gap:4, flexWrap:"wrap", marginBottom:8 }}>
+                                {note.tags.map(t=>(
+                                  <span key={t} style={{ padding:"2px 8px", borderRadius:4, fontSize:10, fontWeight:600, background:"#f0fdf4", color:"#15803d", border:"1px solid #bbf7d0" }}>{t}</span>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* ── noteDetails: SECTIONED renderer ── */}
+                            {note.noteDetails && (() => {
+                              const nd = note.noteDetails;
+                              if (typeof nd !== "object" || Array.isArray(nd)) return null;
+                              const medOrds = nd.medicationOrders;
+                              const infOrds = nd.infusionOrders;
+                              const SKIP_KEYS = new Set(["medicationOrders","infusionOrders"]);
+                              const sections = NOTE_SECTIONS[note.noteType];
+
+                              /* Reusable med/inf order rows */
+                              const medInfBlocks = (
+                                <>
+                                  {medOrds?.length > 0 && (
+                                    <div style={{ padding:"6px 12px", background:C.blueL, borderRadius:7, border:`1px solid ${C.blueB}` }}>
+                                      <div style={{ fontSize:9, fontWeight:800, textTransform:"uppercase", letterSpacing:".5px", color:C.blue, marginBottom:5 }}>MEDICATION ORDERS ({medOrds.length})</div>
+                                      <div style={{ display:"flex", gap:"4px 10px", flexWrap:"wrap" }}>
+                                        {medOrds.slice(0,5).map((m,mi)=>(
+                                          <span key={mi} style={{ padding:"2px 8px", borderRadius:4, fontSize:10, fontWeight:600, background:"white", color:C.blue, border:`1px solid ${C.blueB}` }}>
+                                            {m.drug||"—"}{m.dose?` ${m.dose}`:""}{m.route?` · ${m.route}`:""}{m.frequency?` · ${m.frequency}`:""}
+                                          </span>
+                                        ))}
+                                        {medOrds.length>5 && <span style={{ fontSize:10, color:C.muted }}>+{medOrds.length-5} more</span>}
+                                      </div>
+                                    </div>
+                                  )}
+                                  {infOrds?.length > 0 && (
+                                    <div style={{ padding:"6px 12px", background:C.tealL, borderRadius:7, border:`1px solid ${C.tealB}` }}>
+                                      <div style={{ fontSize:9, fontWeight:800, textTransform:"uppercase", letterSpacing:".5px", color:C.teal, marginBottom:5 }}>INFUSION ORDERS ({infOrds.length})</div>
+                                      <div style={{ display:"flex", gap:"4px 10px", flexWrap:"wrap" }}>
+                                        {infOrds.slice(0,5).map((inf,ii)=>(
+                                          <span key={ii} style={{ padding:"2px 8px", borderRadius:4, fontSize:10, fontWeight:600, background:"white", color:C.teal, border:`1px solid ${C.tealB}` }}>
+                                            {inf.drugFluid||inf.type||"—"}{inf.volume?` ${inf.volume}mL`:""}{inf.rate?` @ ${inf.rate}`:""}
+                                          </span>
+                                        ))}
+                                        {infOrds.length>5 && <span style={{ fontSize:10, color:C.muted }}>+{infOrds.length-5} more</span>}
+                                      </div>
+                                    </div>
+                                  )}
+                                </>
+                              );
+
+                              if (sections) {
+                                /* Known note type — render by defined section */
+                                const renderedSecs = sections.map(sec => {
+                                  const items = sec.keys
+                                    .filter(k => k in nd)
+                                    .map(k => ({ key:k, label:fmtKey(k), raw:nd[k], isLong:LONG_FIELDS.has(k) }))
+                                    .filter(item => {
+                                      const v=item.raw;
+                                      if (v===null||v===undefined||v===""||v===false) return false;
+                                      if (Array.isArray(v)&&!v.length) return false;
+                                      return true;
+                                    });
+                                  return items.length ? { ...sec, items } : null;
+                                }).filter(Boolean);
+
+                                if (!renderedSecs.length && !medOrds?.length && !infOrds?.length) return null;
                                 return (
-                                  <div style={{ display:"flex", gap:"5px 14px", flexWrap:"wrap", padding:"6px 10px", background:"#eff6ff", borderRadius:6, border:"1px solid #bfdbfe", marginTop:5, marginBottom:5 }}>
-                                    <span style={{ fontSize:9, fontWeight:800, textTransform:"uppercase", color:C.blue, alignSelf:"center", minWidth:44 }}>Vitals</span>
-                                    {vf.map(f => (
-                                      <div key={f.l} style={{ display:"flex", flexDirection:"column", gap:1 }}>
-                                        <span style={{ fontSize:9, fontWeight:700, textTransform:"uppercase", letterSpacing:".5px", color:C.muted }}>{f.l}</span>
-                                        <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, fontWeight:600, color:C.text }}>{f.v}</span>
+                                  <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                                    {renderedSecs.map(sec=>(
+                                      <div key={sec.label} style={{ borderRadius:8, border:`1px solid ${ns.dot}25`, overflow:"hidden" }}>
+                                        {/* Section header */}
+                                        <div style={{ padding:"6px 12px", background:ns.bg, borderBottom:`1px solid ${ns.dot}20`, display:"flex", alignItems:"center", gap:6 }}>
+                                          {sec.icon && <i className={`pi ${sec.icon}`} style={{ fontSize:10, color:ns.color }} />}
+                                          <span style={{ fontSize:9, fontWeight:800, textTransform:"uppercase", letterSpacing:".7px", color:ns.color }}>{sec.label}</span>
+                                        </div>
+                                        {/* Section body */}
+                                        <div style={{ padding:"8px 12px", background:"#fafbfc", display:"flex", flexDirection:"column", gap:7 }}>
+                                          {/* Long text as readable paragraphs */}
+                                          {sec.items.filter(item=>item.isLong).map(item=>(
+                                            <div key={item.key}>
+                                              <div style={{ fontSize:9, fontWeight:700, textTransform:"uppercase", letterSpacing:".5px", color:C.muted, marginBottom:3 }}>{item.label}</div>
+                                              <div style={{ fontSize:12, color:C.text, lineHeight:1.75, paddingLeft:2 }}>
+                                                {typeof item.raw==="string" ? item.raw : Array.isArray(item.raw) ? item.raw.join(", ") : fmtVal(item.raw)}
+                                              </div>
+                                            </div>
+                                          ))}
+                                          {/* Short chip fields */}
+                                          {sec.items.filter(item=>!item.isLong).length > 0 && (
+                                            <div style={{ display:"flex", gap:"5px 14px", flexWrap:"wrap" }}>
+                                              {sec.items.filter(item=>!item.isLong).map(item=>(
+                                                <div key={item.key} style={{ display:"flex", flexDirection:"column", gap:1 }}>
+                                                  <span style={{ fontSize:9, fontWeight:700, textTransform:"uppercase", letterSpacing:".5px", color:C.muted }}>{item.label}</span>
+                                                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, fontWeight:600, color:C.text }}>{fmtVal(item.raw)}</span>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
                                       </div>
                                     ))}
+                                    {medInfBlocks}
                                   </div>
                                 );
-                              })()}
-                              {/* Tags */}
-                              {note.tags?.length > 0 && (
-                                <div style={{ display:"flex", gap:4, flexWrap:"wrap", marginTop:4, marginBottom:4 }}>
-                                  {note.tags.map(t => (
-                                    <span key={t} style={{ padding:"2px 8px", borderRadius:4, fontSize:10, fontWeight:600, background:"#f0fdf4", color:"#15803d", border:"1px solid #bbf7d0" }}>{t}</span>
-                                  ))}
-                                </div>
-                              )}
-                              {/* noteDetails generic renderer */}
-                              {note.noteDetails && (() => {
-                                const nd = note.noteDetails;
-                                if (typeof nd !== "object" || Array.isArray(nd)) return null;
-                                const SKIP = new Set(["medicationOrders","infusionOrders"]);
-                                const medOrds = nd.medicationOrders;
-                                const infOrds = nd.infusionOrders;
-                                const chips = Object.entries(nd)
-                                  .filter(([k]) => !SKIP.has(k))
-                                  .map(([k, v]) => ({ label: fmtKey(k), value: fmtVal(v) }))
-                                  .filter(c => c.value !== null);
-                                if (!chips.length && !medOrds?.length && !infOrds?.length) return null;
-                                const nsColor = NOTE_STYLE[note.noteType]?.color || C.primary;
-                                const nsBg = NOTE_STYLE[note.noteType]?.bg || C.primaryL;
+                              } else {
+                                /* Unknown / daily note type — flat fallback */
+                                const allChips = Object.entries(nd)
+                                  .filter(([k])=>!SKIP_KEYS.has(k))
+                                  .map(([k,v])=>({ key:k, label:fmtKey(k), raw:v, value:fmtVal(v), isLong:LONG_FIELDS.has(k) }))
+                                  .filter(c=>c.value!==null);
+                                if (!allChips.length && !medOrds?.length && !infOrds?.length) return null;
                                 return (
-                                  <div style={{ marginTop:5, display:"flex", flexDirection:"column", gap:5 }}>
-                                    {chips.length > 0 && (
-                                      <div style={{ padding:"7px 10px", background:nsBg, borderRadius:6, border:`1px solid ${nsColor}30` }}>
-                                        <div style={{ fontSize:9, fontWeight:800, textTransform:"uppercase", letterSpacing:".5px", color:nsColor, marginBottom:5 }}>
-                                          {modDef(note.noteType)?.label || "Note Details"}
-                                        </div>
+                                  <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
+                                    {allChips.filter(c=>c.isLong).map(c=>(
+                                      <div key={c.key} style={{ padding:"6px 10px", background:ns.bg+"40", borderRadius:6, border:`1px solid ${ns.dot}20` }}>
+                                        <div style={{ fontSize:9, fontWeight:700, textTransform:"uppercase", color:C.muted, marginBottom:3 }}>{c.label}</div>
+                                        <div style={{ fontSize:12, color:C.text, lineHeight:1.7 }}>{c.raw||c.value}</div>
+                                      </div>
+                                    ))}
+                                    {allChips.filter(c=>!c.isLong).length > 0 && (
+                                      <div style={{ padding:"7px 10px", background:ns.bg, borderRadius:7, border:`1px solid ${ns.dot}20` }}>
+                                        <div style={{ fontSize:9, fontWeight:800, textTransform:"uppercase", letterSpacing:".5px", color:ns.color, marginBottom:5 }}>{mod?.label||"Note Details"}</div>
                                         <div style={{ display:"flex", gap:"5px 14px", flexWrap:"wrap" }}>
-                                          {chips.map(c => (
-                                            <div key={c.label} style={{ display:"flex", flexDirection:"column", gap:1 }}>
+                                          {allChips.filter(c=>!c.isLong).map(c=>(
+                                            <div key={c.key} style={{ display:"flex", flexDirection:"column", gap:1 }}>
                                               <span style={{ fontSize:9, fontWeight:700, textTransform:"uppercase", letterSpacing:".5px", color:C.muted }}>{c.label}</span>
                                               <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, fontWeight:500, color:C.text }}>{c.value}</span>
                                             </div>
@@ -1392,67 +1540,39 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                                         </div>
                                       </div>
                                     )}
-                                    {medOrds?.length > 0 && (
-                                      <div style={{ padding:"6px 10px", background:C.blueL, borderRadius:6, border:`1px solid ${C.blueB}` }}>
-                                        <div style={{ fontSize:9, fontWeight:800, textTransform:"uppercase", letterSpacing:".5px", color:C.blue, marginBottom:4 }}>MEDICATION ORDERS ({medOrds.length})</div>
-                                        <div style={{ display:"flex", gap:"4px 10px", flexWrap:"wrap" }}>
-                                          {medOrds.slice(0,5).map((m,mi) => (
-                                            <span key={mi} style={{ padding:"2px 7px", borderRadius:4, fontSize:10, fontWeight:600, background:"white", color:C.blue, border:`1px solid ${C.blueB}` }}>
-                                              {m.drug||"—"}{m.dose?` ${m.dose}`:""}{m.route?` · ${m.route}`:""}{m.frequency?` · ${m.frequency}`:""}
-                                            </span>
-                                          ))}
-                                          {medOrds.length > 5 && <span style={{ fontSize:10, color:C.muted }}>+{medOrds.length-5} more</span>}
-                                        </div>
-                                      </div>
-                                    )}
-                                    {infOrds?.length > 0 && (
-                                      <div style={{ padding:"6px 10px", background:C.tealL, borderRadius:6, border:`1px solid ${C.tealB}` }}>
-                                        <div style={{ fontSize:9, fontWeight:800, textTransform:"uppercase", letterSpacing:".5px", color:C.teal, marginBottom:4 }}>INFUSION ORDERS ({infOrds.length})</div>
-                                        <div style={{ display:"flex", gap:"4px 10px", flexWrap:"wrap" }}>
-                                          {infOrds.slice(0,5).map((inf,ii) => (
-                                            <span key={ii} style={{ padding:"2px 7px", borderRadius:4, fontSize:10, fontWeight:600, background:"white", color:C.teal, border:`1px solid ${C.tealB}` }}>
-                                              {inf.drugFluid||inf.type||"—"}{inf.volume?` ${inf.volume}mL`:""}{inf.rate?` @ ${inf.rate}`:""}
-                                            </span>
-                                          ))}
-                                          {infOrds.length > 5 && <span style={{ fontSize:10, color:C.muted }}>+{infOrds.length-5} more</span>}
-                                        </div>
-                                      </div>
-                                    )}
+                                    {medInfBlocks}
                                   </div>
                                 );
-                              })()}
-                            </div>
-                          )}
-                        </div>
+                              }
+                            })()}
 
-                        {/* ── Action buttons — stop click so card-click doesn't double-fire ── */}
-                        <div onClick={e => e.stopPropagation()} style={{ display:"flex", flexDirection:"column", gap:5, alignItems:"flex-end", flexShrink:0 }}>
-                          {/* View / Close */}
-                          <button onClick={toggleExpand}
-                            style={{ padding:"5px 12px", border:`1.5px solid ${isExpanded ? C.primary+"60" : C.border}`, borderRadius:6, background: isExpanded ? C.primaryL : "white", fontSize:11, fontWeight:700, cursor:"pointer", color: isExpanded ? C.primary : C.muted, display:"flex", alignItems:"center", gap:5, transition:"all .15s", whiteSpace:"nowrap" }}>
-                            <i className={`pi ${isExpanded ? "pi-times" : "pi-eye"}`} style={{ fontSize:10 }} />
-                            {isExpanded ? "Close" : "View"}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* ── Actions ── */}
+                      <div onClick={e => e.stopPropagation()} style={{ display:"flex", flexDirection:"column", gap:5, alignItems:"flex-end", flexShrink:0 }}>
+                        <button onClick={toggleExpand}
+                          style={{ padding:"5px 12px", border:`1.5px solid ${isExpanded?C.primary+"60":C.border}`, borderRadius:6, background:isExpanded?C.primaryL:"white", fontSize:11, fontWeight:700, cursor:"pointer", color:isExpanded?C.primary:C.muted, display:"flex", alignItems:"center", gap:5, transition:"all .15s", whiteSpace:"nowrap" }}>
+                          <i className={`pi ${isExpanded?"pi-times":"pi-eye"}`} style={{ fontSize:10 }} />
+                          {isExpanded ? "Close" : "View"}
+                        </button>
+                        <button onClick={() => printNote(note)}
+                          style={{ padding:"4px 10px", border:`1.5px solid ${C.border}`, borderRadius:6, background:"white", fontSize:11, fontWeight:600, cursor:"pointer", color:C.muted, display:"flex", alignItems:"center", gap:4 }}>
+                          <i className="pi pi-print" style={{ fontSize:10 }} /> Print
+                        </button>
+                        {!isSigned && (
+                          <button onClick={() => openEditModal(note)}
+                            style={{ padding:"4px 10px", border:`1.5px solid ${C.blueB}`, borderRadius:6, background:C.blueL, fontSize:11, fontWeight:700, cursor:"pointer", color:C.blue, display:"flex", alignItems:"center", gap:4 }}>
+                            <i className="pi pi-pencil" style={{ fontSize:10 }} /> Edit
                           </button>
-                          {/* Print */}
-                          <button onClick={() => printNote(note)}
-                            style={{ padding:"4px 10px", border:`1.5px solid ${C.border}`, borderRadius:6, background:"white", fontSize:11, fontWeight:600, cursor:"pointer", color:C.muted, display:"flex", alignItems:"center", gap:4 }}>
-                            <i className="pi pi-print" style={{ fontSize:10 }} /> Print
+                        )}
+                        {!isSigned && (
+                          <button onClick={() => signNote(note._id)}
+                            style={{ padding:"4px 10px", border:`1.5px solid ${C.greenB}`, borderRadius:6, background:C.greenL, fontSize:11, fontWeight:700, cursor:"pointer", color:C.green, display:"flex", alignItems:"center", gap:4 }}>
+                            <i className="pi pi-check" style={{ fontSize:10 }} /> Sign
                           </button>
-                          {/* Edit draft */}
-                          {!isSigned && (
-                            <button onClick={() => openEditModal(note)}
-                              style={{ padding:"4px 10px", border:`1.5px solid ${C.blueB}`, borderRadius:6, background:C.blueL, fontSize:11, fontWeight:700, cursor:"pointer", color:C.blue, display:"flex", alignItems:"center", gap:4 }}>
-                              <i className="pi pi-pencil" style={{ fontSize:10 }} /> Edit
-                            </button>
-                          )}
-                          {/* Sign draft */}
-                          {!isSigned && (
-                            <button onClick={() => signNote(note._id)}
-                              style={{ padding:"4px 10px", border:`1.5px solid ${C.greenB}`, borderRadius:6, background:C.greenL, fontSize:11, fontWeight:700, cursor:"pointer", color:C.green, display:"flex", alignItems:"center", gap:4 }}>
-                              <i className="pi pi-check" style={{ fontSize:10 }} /> Sign
-                            </button>
-                          )}
-                        </div>
+                        )}
                       </div>
                     </div>
                   );
