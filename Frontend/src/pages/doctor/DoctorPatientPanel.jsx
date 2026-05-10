@@ -24,14 +24,15 @@ const C = {
 };
 
 const TABS = [
-  { id:"overview",  label:"📋 Overview"        },
-  { id:"clinical",  label:"🩺 Clinical Notes"  },
-  { id:"nursing",   label:"📝 Nursing Records" },
-  { id:"vitals",    label:"📈 Vital Trends"    },
-  { id:"meds",      label:"💊 Medications"     },
-  { id:"orders",    label:"📋 Orders"          },
-  { id:"billing",   label:"💰 Billing"         },
-  { id:"emergency", label:"🚨 Emergency"       },
+  { id:"overview",   label:"📋 Overview"          },
+  { id:"clinical",   label:"🩺 Clinical Notes"    },
+  { id:"nursing",    label:"📝 Nursing Records"   },
+  { id:"vitals",     label:"📈 Vital Trends"      },
+  { id:"meds",       label:"💊 Medications"       },
+  { id:"treatment",  label:"💉 Treatment Chart"   },
+  { id:"orders",     label:"📋 Orders"            },
+  { id:"billing",    label:"💰 Billing"           },
+  { id:"emergency",  label:"🚨 Emergency"         },
 ];
 
 /* ── Formatters ─────────────────────────────────────────────────────────────── */
@@ -1182,58 +1183,362 @@ function MedicationsTab({doctorNotes=[], doctorOrders=[]}) {
   );
 }
 
-/* ═══════════════════════════════════════════════════════ TAB: ORDERS TIMELINE */
+/* ═══════════════════════════════════════════════════════ TAB: ORDERS (date-wise + audit trail) */
 function OrdersTab({doctorNotes=[]}) {
-  // Collect all orders from doctor notes
-  const allOrders = [];
+  const orderTypeIcon = t => t==="medication"?"💊":t==="iv_fluid"?"💧":t==="procedure"?"🔧":t==="diet"?"🍽️":"📋";
+  const statColor = s => s==="done"?C.green:s==="partial"?C.amber:s==="skipped"?C.muted:C.amber;
+
+  /* Build date→orders map */
+  const byDate = {};
   doctorNotes.forEach(note=>{
     (note.orders||[]).forEach(o=>{
-      allOrders.push({...o, noteDate:note.createdAt, doctorName:note.doctorName, noteType:note.noteType});
+      const dk = note.createdAt ? new Date(note.createdAt).toISOString().slice(0,10) : new Date().toISOString().slice(0,10);
+      if (!byDate[dk]) byDate[dk]=[];
+      byDate[dk].push({...o, noteDate:note.createdAt, doctorName:note.doctorName, noteType:note.noteType});
     });
   });
-  allOrders.sort((a,b)=>new Date(b.noteDate)-new Date(a.noteDate));
+
+  const dates = Object.keys(byDate).sort().reverse();
+  const today = new Date().toISOString().slice(0,10);
+  const allOrders = doctorNotes.flatMap(n=>(n.orders||[]).map(o=>({...o,noteDate:n.createdAt,doctorName:n.doctorName})));
+  const [selDate, setSelDate] = useState(dates[0]||today);
 
   if (!allOrders.length) return <Empty icon="📋" msg="No doctor orders found in notes"/>;
 
-  const pending = allOrders.filter(o=>!o.nurseStatus||o.nurseStatus==="pending");
-  const done    = allOrders.filter(o=>o.nurseStatus==="done"||o.nurseStatus==="partial");
-
-  const statColor = s => s==="done"?"#059669":s==="partial"?"#d97706":s==="skipped"?"#94a3b8":C.amber;
-
-  const OrderGroup = ({title,orders,color}) => orders.length===0?null:(
-    <Card title={title} titleColor={color}>
-      <div style={{display:"flex",flexDirection:"column",gap:8}}>
-        {orders.map((o,i)=>(
-          <div key={i} style={{display:"flex",gap:12,alignItems:"flex-start",padding:"10px 12px",background:"#f8fafc",borderRadius:8,border:`1px solid ${C.border}`}}>
-            <div style={{width:36,height:36,borderRadius:8,background:o.nurseStatus==="done"?C.greenL:C.amberL,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>
-              {o.type==="medication"?"💊":o.type==="iv_fluid"?"💧":o.type==="procedure"?"🔧":o.type==="diet"?"🍽️":"📋"}
-            </div>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:13,fontWeight:600,color:C.dark}}>{o.instruction||"—"}</div>
-              <div style={{display:"flex",gap:8,marginTop:4,flexWrap:"wrap"}}>
-                {o.dose      && <Badge color={C.teal}   bg={C.tealL}>{o.dose}</Badge>}
-                {o.route     && <Badge color={C.blue}   bg={C.blueL}>{o.route}</Badge>}
-                {o.frequency && <Badge color={C.muted}  bg="#f1f5f9">{o.frequency}</Badge>}
-                {o.duration  && <Badge color={C.muted}  bg="#f1f5f9">{o.duration}</Badge>}
-                {o.priority  && o.priority!=="ROUTINE" && <Badge color={C.red} bg={C.redL}>{o.priority}</Badge>}
-              </div>
-              {o.notes && <div style={{fontSize:11,color:C.muted,marginTop:4}}>{o.notes}</div>}
-            </div>
-            <div style={{textAlign:"right",flexShrink:0}}>
-              <div style={{fontSize:11,fontWeight:700,color:statColor(o.nurseStatus),marginBottom:4}}>{(o.nurseStatus||"PENDING").toUpperCase()}</div>
-              <div style={{fontSize:10,color:C.muted}}>{fmtDate(o.noteDate)}</div>
-              {o.doctorName && <div style={{fontSize:10,color:C.muted}}>Dr. {o.doctorName}</div>}
-            </div>
-          </div>
-        ))}
-      </div>
-    </Card>
-  );
+  const dateIdx      = dates.indexOf(selDate);
+  const ordersOnDate = byDate[selDate]||[];
+  const pending      = ordersOnDate.filter(o=>!o.nurseStatus||o.nurseStatus==="pending");
+  const done         = ordersOnDate.filter(o=>o.nurseStatus==="done"||o.nurseStatus==="partial");
+  const skipped      = ordersOnDate.filter(o=>o.nurseStatus==="skipped");
 
   return (
-    <div style={{display:"flex",flexDirection:"column",gap:16}}>
-      <OrderGroup title={`⏳ Pending Orders (${pending.length})`} orders={pending} color={C.amber}/>
-      <OrderGroup title={`✅ Completed Orders (${done.length})`}  orders={done}    color={C.green}/>
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+
+      {/* ── Date navigator ── */}
+      <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 18px",background:C.amberL,borderRadius:12,border:`1px solid ${C.amberB}`}}>
+        <button onClick={()=>setSelDate(dates[dateIdx+1])} disabled={dateIdx>=dates.length-1}
+          style={{padding:"6px 16px",borderRadius:8,border:`1.5px solid ${C.border}`,background:"white",cursor:dateIdx>=dates.length-1?"not-allowed":"pointer",fontSize:13,fontWeight:700,color:C.amber,opacity:dateIdx>=dates.length-1?0.35:1}}>
+          ◀ Prev
+        </button>
+        <div style={{flex:1,textAlign:"center"}}>
+          <div style={{fontWeight:800,fontSize:16,color:"#92400e"}}>
+            {selDate===today?"📅 Today — ":""}{new Date(selDate).toLocaleDateString("en-IN",{day:"2-digit",month:"long",year:"numeric"})}
+          </div>
+          <div style={{fontSize:11,color:C.muted,marginTop:2}}>
+            {ordersOnDate.length} order{ordersOnDate.length!==1?"s":""} · {pending.length} pending · {done.length} done{skipped.length?` · ${skipped.length} skipped`:""}
+          </div>
+        </div>
+        <button onClick={()=>setSelDate(dates[dateIdx-1])} disabled={dateIdx<=0}
+          style={{padding:"6px 16px",borderRadius:8,border:`1.5px solid ${C.border}`,background:"white",cursor:dateIdx<=0?"not-allowed":"pointer",fontSize:13,fontWeight:700,color:C.amber,opacity:dateIdx<=0?0.35:1}}>
+          Next ▶
+        </button>
+      </div>
+
+      {/* ── Date chips ── */}
+      {dates.length>1 && (
+        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+          {dates.map(d=>{
+            const cnt=(byDate[d]||[]).length;
+            const isSel=selDate===d;
+            return (
+              <button key={d} onClick={()=>setSelDate(d)}
+                style={{padding:"3px 12px",borderRadius:16,border:`1.5px solid ${isSel?C.amber:C.border}`,background:isSel?C.amber:"white",color:isSel?"white":C.muted,fontSize:10,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
+                {d===today?"Today":new Date(d).toLocaleDateString("en-IN",{day:"2-digit",month:"short"})}
+                <span style={{opacity:.8}}>({cnt})</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {ordersOnDate.length===0
+        ? <Empty icon="📋" msg="No orders recorded on this date"/>
+        : (
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          {/* Summary pills */}
+          <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+            {[
+              {label:"Total",   val:ordersOnDate.length, color:C.primary, bg:C.primaryL},
+              {label:"Pending", val:pending.length,       color:C.amber,   bg:C.amberL},
+              {label:"Done",    val:done.length,           color:C.green,   bg:C.greenL},
+              {label:"Skipped", val:skipped.length,        color:C.muted,   bg:"#f1f5f9"},
+            ].map(s=>(
+              <div key={s.label} style={{padding:"8px 16px",borderRadius:10,background:s.bg,border:`1px solid ${C.border}`,display:"flex",gap:8,alignItems:"center"}}>
+                <span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:s.color}}>{s.label}</span>
+                <span style={{fontSize:20,fontWeight:800,color:s.color}}>{s.val}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Orders list */}
+          <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:16,overflow:"hidden",boxShadow:"0 2px 10px rgba(0,0,0,.04)"}}>
+            <div style={{padding:"13px 18px",background:C.amberL,borderBottom:`1px solid ${C.border}`,fontWeight:800,fontSize:13,color:"#92400e"}}>
+              📋 Orders — {new Date(selDate).toLocaleDateString("en-IN",{day:"2-digit",month:"long",year:"numeric"})}
+            </div>
+            {ordersOnDate.map((o,i)=>(
+              <div key={i} style={{padding:"14px 18px",borderBottom:i<ordersOnDate.length-1?`1px solid ${C.border}`:"none",background:i%2?"#fafaf9":C.card}}>
+                <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+                  <div style={{width:38,height:38,borderRadius:9,background:o.nurseStatus==="done"?C.greenL:C.amberL,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>
+                    {orderTypeIcon(o.type)}
+                  </div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:700,color:C.dark,marginBottom:4}}>{o.instruction||"—"}</div>
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
+                      {o.dose      && <Badge color={C.teal}  bg={C.tealL}>{o.dose}</Badge>}
+                      {o.route     && <Badge color={C.blue}  bg={C.blueL}>{o.route}</Badge>}
+                      {o.frequency && <Badge color={C.muted} bg="#f1f5f9">{o.frequency}</Badge>}
+                      {o.duration  && <Badge color={C.muted} bg="#f1f5f9">{o.duration}</Badge>}
+                      {o.priority && o.priority!=="ROUTINE" && <Badge color={C.red} bg={C.redL}>{o.priority}</Badge>}
+                    </div>
+                    {o.notes && <div style={{fontSize:11,color:C.muted,marginBottom:8,fontStyle:"italic"}}>{o.notes}</div>}
+
+                    {/* ── Audit Trail ── */}
+                    <div style={{padding:"8px 12px",background:"#f8fafc",borderRadius:8,border:`1px solid ${C.border}`}}>
+                      <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.muted,marginBottom:7}}>🔍 Audit Trail</div>
+                      <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                        {/* Ordered event */}
+                        <div style={{display:"flex",gap:8,alignItems:"center",fontSize:11}}>
+                          <span style={{width:18,height:18,borderRadius:"50%",background:C.primaryM,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,flexShrink:0,color:C.primary}}>✏</span>
+                          <span style={{color:C.muted}}>Ordered by</span>
+                          <span style={{fontWeight:700,color:C.dark}}>{o.doctorName?`Dr. ${o.doctorName}`:"Doctor"}</span>
+                          <span style={{color:C.muted,marginLeft:4}}>{fmtDT(o.noteDate)}</span>
+                        </div>
+                        {/* Nurse execution event */}
+                        {o.nurseStatus ? (
+                          <div style={{display:"flex",gap:8,alignItems:"center",fontSize:11}}>
+                            <span style={{width:18,height:18,borderRadius:"50%",background:o.nurseStatus==="done"?C.greenL:C.amberL,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,flexShrink:0,color:o.nurseStatus==="done"?C.green:C.amber}}>
+                              {o.nurseStatus==="done"?"✓":"⏳"}
+                            </span>
+                            <span style={{color:C.muted}}>Nurse marked</span>
+                            <span style={{fontWeight:700,color:statColor(o.nurseStatus)}}>{o.nurseStatus.toUpperCase()}</span>
+                            {o.nurseExecutedAt&&<span style={{color:C.muted}}>at {fmtDT(o.nurseExecutedAt)}</span>}
+                            {o.nurseExecutedBy&&<span style={{fontWeight:600,color:C.dark}}>by {o.nurseExecutedBy}</span>}
+                          </div>
+                        ) : (
+                          <div style={{display:"flex",gap:8,alignItems:"center",fontSize:11}}>
+                            <span style={{width:18,height:18,borderRadius:"50%",background:C.amberL,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,flexShrink:0}}>⏳</span>
+                            <span style={{color:C.amber,fontWeight:600}}>Awaiting nurse action</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{textAlign:"right",flexShrink:0,minWidth:72}}>
+                    <div style={{fontSize:12,fontWeight:700,color:statColor(o.nurseStatus),marginBottom:3}}>{(o.nurseStatus||"PENDING").toUpperCase()}</div>
+                    {o.doctorName&&<div style={{fontSize:10,color:C.muted}}>Dr. {o.doctorName}</div>}
+                    {o.noteType&&<div style={{fontSize:10,color:C.muted}}>{o.noteType}</div>}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════ TAB: TREATMENT CHART (MAR) */
+function TreatmentChartTab({doctorOrders=[], doctorNotes=[]}) {
+  /* ── Collect medication/infusion orders from doctorOrders ── */
+  const medOrders = (doctorOrders||[]).map(o=>({
+    _id:      o._id,
+    drug:     o.orderDetails?.medicineName || o.orderDetails?.drugFluid || o.orderDetails?.name || "—",
+    dose:     o.orderDetails?.dose || o.orderDetails?.volume || "—",
+    route:    o.orderDetails?.route || "—",
+    freq:     o.orderDetails?.frequency || o.orderDetails?.rate || "—",
+    status:   o.status||"Active",
+    orderedAt:o.orderedAt||o.createdAt,
+    doctorName:o.doctorName||o.orderedBy||"",
+    admins:   o.administrationRecord||[],
+    source:   "order",
+  })).filter(o=>o.drug&&o.drug!=="—");
+
+  /* ── Also pull medication orders embedded in doctor notes ── */
+  const noteOrders = [];
+  (doctorNotes||[]).forEach(note=>{
+    const meds = note.noteDetails?.medicationOrders||[];
+    const infs = note.noteDetails?.infusionOrders||[];
+    [...meds,...infs].forEach((m,mi)=>{
+      const drugName=m.drug||m.drugFluid||m.medicineName||"";
+      if (!drugName) return;
+      noteOrders.push({
+        _id:`${note._id}_${mi}`,
+        drug:drugName,
+        dose:m.dose||m.volume||"—",
+        route:m.route||"—",
+        freq:m.frequency||m.rate||"—",
+        status:m.status||"Active",
+        orderedAt:note.createdAt,
+        doctorName:note.doctorName||"",
+        admins:[],
+        source:"note",
+      });
+    });
+  });
+
+  const allOrders = [...medOrders, ...noteOrders];
+
+  /* ── Build unique date list from ordered dates + admin dates ── */
+  const dateSet = new Set();
+  const today   = new Date().toISOString().slice(0,10);
+  dateSet.add(today);
+  allOrders.forEach(o=>{
+    if (o.orderedAt) dateSet.add(new Date(o.orderedAt).toISOString().slice(0,10));
+    o.admins.forEach(r=>{ if(r.givenAt) dateSet.add(new Date(r.givenAt).toISOString().slice(0,10)); });
+  });
+  const uniqueDates = [...dateSet].sort().reverse();
+
+  const [selDate, setSelDate] = useState(uniqueDates[0]||today);
+
+  if (!allOrders.length) return <Empty icon="💉" msg="No medication / infusion orders found. Orders created from doctor notes will appear here."/>;
+
+  const dateIdx = uniqueDates.indexOf(selDate);
+
+  /* Orders that were active on the selected date */
+  const ordersOnDate = allOrders.filter(o=>{
+    const start = o.orderedAt ? new Date(o.orderedAt).toISOString().slice(0,10) : today;
+    return start<=selDate;
+  });
+
+  const getAdmins = o => o.admins.filter(r=>r.givenAt && new Date(r.givenAt).toISOString().slice(0,10)===selDate);
+
+  const dateLabel = d => d===today?"Today":new Date(d).toLocaleDateString("en-IN",{day:"2-digit",month:"short"});
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+
+      {/* ── Date navigator ── */}
+      <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 18px",background:C.primaryL,borderRadius:12,border:`1px solid ${C.primaryM}`}}>
+        <button onClick={()=>setSelDate(uniqueDates[dateIdx+1])} disabled={dateIdx>=uniqueDates.length-1}
+          style={{padding:"6px 16px",borderRadius:8,border:`1.5px solid ${C.border}`,background:"white",cursor:dateIdx>=uniqueDates.length-1?"not-allowed":"pointer",fontSize:13,fontWeight:700,color:C.primary,opacity:dateIdx>=uniqueDates.length-1?0.35:1}}>
+          ◀ Prev
+        </button>
+        <div style={{flex:1,textAlign:"center"}}>
+          <div style={{fontWeight:800,fontSize:16,color:C.primaryD}}>
+            {selDate===today?"📅 Today — ":""}{new Date(selDate).toLocaleDateString("en-IN",{day:"2-digit",month:"long",year:"numeric"})}
+          </div>
+          <div style={{fontSize:11,color:C.muted,marginTop:2}}>
+            {dateIdx+1} of {uniqueDates.length} date{uniqueDates.length!==1?"s":""} · {ordersOnDate.length} active medication{ordersOnDate.length!==1?"s":""}
+          </div>
+        </div>
+        <button onClick={()=>setSelDate(uniqueDates[dateIdx-1])} disabled={dateIdx<=0}
+          style={{padding:"6px 16px",borderRadius:8,border:`1.5px solid ${C.border}`,background:"white",cursor:dateIdx<=0?"not-allowed":"pointer",fontSize:13,fontWeight:700,color:C.primary,opacity:dateIdx<=0?0.35:1}}>
+          Next ▶
+        </button>
+      </div>
+
+      {/* ── Date chips ── */}
+      {uniqueDates.length>1 && (
+        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+          {uniqueDates.slice(0,12).map(d=>{
+            const isSel=selDate===d;
+            return (
+              <button key={d} onClick={()=>setSelDate(d)}
+                style={{padding:"3px 12px",borderRadius:16,border:`1.5px solid ${isSel?C.primary:C.border}`,background:isSel?C.primary:"white",color:isSel?"white":C.muted,fontSize:10,fontWeight:600,cursor:"pointer"}}>
+                {dateLabel(d)}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── MAR table ── */}
+      <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:16,overflow:"hidden",boxShadow:"0 2px 10px rgba(0,0,0,.04)"}}>
+        <div style={{padding:"14px 18px",background:C.primaryL,borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontWeight:800,fontSize:14,color:C.primary}}>💉 Medication Administration Record</div>
+          <Badge color={C.primary} bg={C.primaryM}>{ordersOnDate.length} medications</Badge>
+        </div>
+
+        {ordersOnDate.length===0
+          ? <Empty icon="💊" msg="No medications were active on this date"/>
+          : (
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+              <thead>
+                <tr style={{background:C.primaryL}}>
+                  {["Drug / Fluid","Dose","Route","Frequency","Ordered By","Start Date",`Administrations (${dateLabel(selDate)})`,"Status"].map(h=>(
+                    <th key={h} style={{padding:"9px 12px",textAlign:"left",fontWeight:700,color:C.primaryD,borderBottom:`2px solid ${C.primaryM}`,whiteSpace:"nowrap",fontSize:10,textTransform:"uppercase",letterSpacing:".4px"}}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {ordersOnDate.map((o,i)=>{
+                  const admins = getAdmins(o);
+                  const isActive = (o.status||"Active")==="Active"||(o.status||"").toLowerCase()==="active";
+                  return (
+                    <tr key={o._id||i} style={{background:i%2?"#fafaf9":C.card,borderBottom:`1px solid ${C.border}`,verticalAlign:"top"}}>
+                      <td style={{padding:"10px 12px",fontWeight:700,color:C.dark,minWidth:140}}>{o.drug}</td>
+                      <td style={{padding:"10px 12px",whiteSpace:"nowrap"}}>{o.dose}</td>
+                      <td style={{padding:"10px 12px"}}><Badge color={C.teal} bg={C.tealL}>{o.route}</Badge></td>
+                      <td style={{padding:"10px 12px",whiteSpace:"nowrap"}}>{o.freq}</td>
+                      <td style={{padding:"10px 12px",color:C.muted,fontSize:11,whiteSpace:"nowrap"}}>{o.doctorName?`Dr. ${o.doctorName}`:"—"}</td>
+                      <td style={{padding:"10px 12px",color:C.muted,fontSize:11,whiteSpace:"nowrap"}}>{fmtDate(o.orderedAt)}</td>
+                      <td style={{padding:"10px 12px",minWidth:180}}>
+                        {admins.length===0 ? (
+                          <span style={{fontSize:10,padding:"2px 10px",borderRadius:4,background:isActive?C.amberL:"#f1f5f9",color:isActive?C.amber:C.muted,fontWeight:700}}>
+                            {isActive?"⏳ Pending":"—"}
+                          </span>
+                        ) : (
+                          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                            {admins.map((a,ai)=>{
+                              const sc = a.status==="given"?C.green:a.status==="missed"?C.red:a.status==="skipped"?C.muted:C.green;
+                              const bg = a.status==="given"?C.greenL:a.status==="missed"?C.redL:a.status==="skipped"?"#f1f5f9":C.greenL;
+                              const icon = a.status==="given"?"✓":a.status==="missed"?"✗":a.status==="skipped"?"↷":"✓";
+                              return (
+                                <div key={ai} style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                                  <span style={{padding:"1px 8px",borderRadius:4,background:bg,color:sc,fontWeight:700,fontSize:10,display:"flex",alignItems:"center",gap:4}}>
+                                    {icon} {(a.status||"given").charAt(0).toUpperCase()+(a.status||"given").slice(1)}
+                                  </span>
+                                  {a.givenAt && <span style={{fontSize:10,color:C.muted,fontFamily:"'DM Mono',monospace"}}>{new Date(a.givenAt).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}</span>}
+                                  {a.givenBy && <span style={{fontSize:10,color:C.dark,fontWeight:500}}>· {a.givenBy}</span>}
+                                  {a.notes   && <span style={{fontSize:10,color:C.muted,fontStyle:"italic"}}>{a.notes}</span>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </td>
+                      <td style={{padding:"10px 12px"}}><SBadge status={o.status||"Active"}/></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* ── Administration audit log ── */}
+      {ordersOnDate.some(o=>getAdmins(o).length>0) && (
+        <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:16,overflow:"hidden"}}>
+          <div style={{padding:"13px 18px",background:C.greenL,borderBottom:`1px solid ${C.border}`,fontWeight:800,fontSize:13,color:C.green}}>
+            ✅ Administration Audit Log — {new Date(selDate).toLocaleDateString("en-IN",{day:"2-digit",month:"long",year:"numeric"})}
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:0}}>
+            {ordersOnDate.flatMap(o=>getAdmins(o).map(a=>({...a,drug:o.drug,dose:o.dose,route:o.route}))).sort((a,b)=>new Date(a.givenAt)-new Date(b.givenAt)).map((a,i)=>{
+              const sc=a.status==="given"?C.green:a.status==="missed"?C.red:C.muted;
+              return (
+                <div key={i} style={{display:"flex",gap:12,alignItems:"center",padding:"10px 18px",borderBottom:`1px solid ${C.border}`,background:i%2?"#fafaf9":C.card}}>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:C.teal,fontWeight:700,minWidth:50}}>
+                    {a.givenAt?new Date(a.givenAt).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"}):"—"}
+                  </div>
+                  <div style={{width:8,height:8,borderRadius:"50%",background:sc,flexShrink:0}}/>
+                  <div style={{flex:1}}>
+                    <span style={{fontWeight:700,color:C.dark}}>{a.drug}</span>
+                    {a.dose&&a.dose!=="—"&&<span style={{fontSize:11,color:C.muted,marginLeft:6}}>{a.dose}</span>}
+                    {a.route&&a.route!=="—"&&<span style={{fontSize:10,marginLeft:4,padding:"1px 5px",borderRadius:3,background:C.tealL,color:C.teal,fontWeight:600}}>{a.route}</span>}
+                  </div>
+                  <span style={{fontSize:11,fontWeight:700,color:sc}}>{(a.status||"given").toUpperCase()}</span>
+                  <span style={{fontSize:11,color:C.muted}}>{a.givenBy||"—"}</span>
+                  {a.notes&&<span style={{fontSize:10,color:C.muted,fontStyle:"italic"}}>{a.notes}</span>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1390,7 +1695,7 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
       const admList = Array.isArray(admRes.data?.admissions)?admRes.data.admissions:Array.isArray(admRes.data)?admRes.data:[];
       const patList = Array.isArray(patRes.data?.data)?patRes.data.data:Array.isArray(patRes.data)?patRes.data:[];
       const adm = admList.find(a=>["active","admitted"].includes((a.status||"").toLowerCase()))||admList[0]||null;
-      const pat = patList[0]||null;
+      const pat = patList.find(p=>(p.UHID||p.uhid||"").toUpperCase()===u)||patList[0]||null;
       setAdmission(adm); setPatient(pat);
 
       if (!adm && !pat) { setError(`No patient found for UHID: ${u}`); return; }
@@ -1650,6 +1955,7 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
               {activeTab==="nursing"    && <NursingRecordsTab notes={nursingNotes}/>}
               {activeTab==="vitals"     && <VitalTrendsTab vitalSheet={vitalSheet}/>}
               {activeTab==="meds"       && <MedicationsTab doctorNotes={doctorNotes} doctorOrders={doctorOrders}/>}
+              {activeTab==="treatment"  && <TreatmentChartTab doctorOrders={doctorOrders} doctorNotes={doctorNotes}/>}
               {activeTab==="orders"     && <OrdersTab doctorNotes={doctorNotes}/>}
               {activeTab==="billing"    && <BillingTab billing={billing}/>}
               {activeTab==="emergency"  && <EmergencyTab emergency={emergency}/>}
