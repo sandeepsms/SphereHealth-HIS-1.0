@@ -1463,8 +1463,9 @@ function DoctorNotesTab({doctorNotes=[]}) {
                 {/* ── Actions ── */}
                 <div style={{display:"flex",flexDirection:"column",gap:5,alignItems:"flex-end"}}>
                   <div style={{fontSize:10,color:C.muted,textAlign:"right",marginBottom:4}}>{fmtDate(note.createdAt)}</div>
-                  <button style={{padding:"4px 10px",border:`1.5px solid ${C.border}`,borderRadius:6,background:"white",fontSize:11,fontWeight:600,cursor:"pointer",color:C.muted,display:"flex",alignItems:"center",gap:4}}>
-                    <i className="pi pi-pencil" style={{fontSize:10}}/> Edit
+                  <button onClick={e=>{e.stopPropagation();toggleNote(noteKey);}}
+                    style={{padding:"4px 10px",border:`1.5px solid ${isOpen?C.red+"60":ns.dot+"60"}`,borderRadius:6,background:isOpen?"#fff1f2":"white",fontSize:11,fontWeight:600,cursor:"pointer",color:isOpen?C.red:ns.color,display:"flex",alignItems:"center",gap:4}}>
+                    <i className={`pi ${isOpen?"pi-times":"pi-chevron-down"}`} style={{fontSize:10}}/>{isOpen?" Close":" Open"}
                   </button>
                   <button style={{padding:"4px 10px",border:`1.5px solid ${C.border}`,borderRadius:6,background:"white",fontSize:11,fontWeight:600,cursor:"pointer",color:C.muted,display:"flex",alignItems:"center",gap:4}}>
                     <i className="pi pi-print" style={{fontSize:10}}/> Print
