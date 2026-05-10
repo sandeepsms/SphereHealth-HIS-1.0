@@ -201,6 +201,8 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
   const [telForm,   setTelForm]   = useState({
     orderType: "Medication", medicineName: "", dose: "", route: "IV",
     frequency: "STAT", duration: "", priority: "STAT",
+    indication: "",
+    hamOverride: false,   // nurse can manually flag HAM if auto-detect misses it
     doctorName: "", doctorRegNo: "", callTime: "",
     readBackDone: false, notes: "",
   });
@@ -587,7 +589,7 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
       "HS":["22:00"],"Continuous":["Continuous"],
     };
     const times = FREQ_TIMES_MAP[f.frequency] || ["08:00"];
-    const hamFlag = isHAM(f.medicineName);
+    const hamFlag = isHAM(f.medicineName) || f.hamOverride;
 
     const payload = {
       UHID, visitId, patientName,
@@ -597,7 +599,9 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
       hamFlag, twoNurseRequired: hamFlag, highRisk: hamFlag,
       orderDetails: {
         medicineName: f.medicineName, dose: f.dose, route: f.route,
-        frequency: f.frequency, duration: f.duration, notes: f.notes,
+        frequency: f.frequency, duration: f.duration,
+        indication: f.indication,
+        notes: f.notes,
       },
       orderedBy: f.doctorName,
       orderedByRole: "Doctor",
@@ -624,7 +628,7 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
       await axios.post(API_ENDPOINTS.DOCTOR_ORDERS, payload);
       toast.success(`📞 Telephonic order for ${f.medicineName} saved — pending Dr. ${f.doctorName}'s countersign`);
       setTelModal(false);
-      setTelForm({ orderType:"Medication", medicineName:"", dose:"", route:"IV", frequency:"STAT", duration:"", priority:"STAT", doctorName:"", doctorRegNo:"", callTime:"", readBackDone:false, notes:"" });
+      setTelForm({ orderType:"Medication", medicineName:"", dose:"", route:"IV", frequency:"STAT", duration:"", priority:"STAT", indication:"", hamOverride:false, doctorName:"", doctorRegNo:"", callTime:"", readBackDone:false, notes:"" });
       fetchOrders(true);
     } catch (err) {
       toast.error(err.response?.data?.message || "Failed to save telephonic order");
@@ -2082,9 +2086,39 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
               </FL>
             </div>
 
+            <FL label="Indication / Clinical Reason">
+              <input style={fld} value={telForm.indication} placeholder="e.g. GI prophylaxis, breakthrough pain, fever SOS, post-op nausea…" onChange={e=>setTelForm(p=>({...p,indication:e.target.value}))} />
+            </FL>
+
             <FL label="Notes / Instructions">
               <textarea style={{...ta, minHeight:42}} value={telForm.notes} placeholder="Dilution, infusion rate, any special instructions…" onChange={e=>setTelForm(p=>({...p,notes:e.target.value}))} />
             </FL>
+
+            {/* HAM override */}
+            {(() => {
+              const autoHam = isHAM(telForm.medicineName);
+              return (
+                <div
+                  onClick={()=>{ if (!autoHam) setTelForm(p=>({...p,hamOverride:!p.hamOverride})); }}
+                  style={{ display:"flex", alignItems:"flex-start", gap:10, padding:"11px 14px", background: (autoHam||telForm.hamOverride)?"#fef2f2":"#f9fafb", border:`1.5px solid ${(autoHam||telForm.hamOverride)?"#fca5a5":C.border}`, borderRadius:8, cursor: autoHam?"default":"pointer", userSelect:"none" }}>
+                  <div style={{ width:20, height:20, borderRadius:4, border:`2px solid ${(autoHam||telForm.hamOverride)?"#dc2626":C.border}`, background:(autoHam||telForm.hamOverride)?"#dc2626":"white", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, marginTop:1 }}>
+                    {(autoHam||telForm.hamOverride) && <i className="pi pi-check" style={{ fontSize:11, color:"white" }}/>}
+                  </div>
+                  <div style={{flex:1}}>
+                    <div style={{ fontWeight:700, fontSize:12, color:(autoHam||telForm.hamOverride)?"#dc2626":C.muted, display:"flex", alignItems:"center", gap:7 }}>
+                      🔴 High Alert Medication (HAM)
+                      {autoHam && <span style={{ fontSize:9, background:"#dc2626", color:"white", borderRadius:3, padding:"1px 6px", fontWeight:800 }}>AUTO-DETECTED</span>}
+                      {!autoHam && <span style={{ fontSize:9, color:C.muted, fontWeight:500 }}>(tick if applicable — 2-nurse verification will be required)</span>}
+                    </div>
+                    <div style={{ fontSize:10, color:C.muted, marginTop:2, lineHeight:1.5 }}>
+                      {autoHam
+                        ? "This drug is on the NABH High Alert Medication list. Two-nurse verification will be mandatory before administration."
+                        : "Mark as HAM if the drug is a concentrated electrolyte, anticoagulant, vasoactive agent, opioid, or neuromuscular blocker not auto-detected above."}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Read-back confirmation — MANDATORY */}
             <div
