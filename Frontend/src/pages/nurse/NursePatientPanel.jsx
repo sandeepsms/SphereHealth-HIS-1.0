@@ -25,13 +25,14 @@ const C = {
 };
 
 const TABS = [
-  { id:"overview", label:"📋 Overview"       },
-  { id:"vitals",   label:"📈 Vital Trends"   },
-  { id:"nursing",  label:"📝 Nursing Notes"  },
-  { id:"orders",   label:"🩺 Doctor Orders"  },
-  { id:"meds",     label:"💊 Medications"    },
-  { id:"billing",  label:"💰 Billing"        },
-  { id:"emergency",label:"🚨 Emergency"      },
+  { id:"overview",  label:"📋 Overview"       },
+  { id:"vitals",    label:"📈 Vital Trends"   },
+  { id:"nursing",   label:"📝 Nursing Notes"  },
+  { id:"docnotes",  label:"🩺 Doctor Notes"   },
+  { id:"orders",    label:"📋 Doctor Orders"  },
+  { id:"meds",      label:"💊 Medications"    },
+  { id:"billing",   label:"💰 Billing"        },
+  { id:"emergency", label:"🚨 Emergency"      },
 ];
 
 /* ── Helpers ── */
@@ -1052,6 +1053,370 @@ function NursingNotesTab({notes=[]}) {
   );
 }
 
+/* ══════════════════════════════════════════════════ TAB: DOCTOR NOTES TIMELINE */
+const DR_NOTE_STYLE = {
+  initial:      {bg:"#fffbeb",  color:"#92400e",  dot:"#f59e0b"},
+  medication:   {bg:"#dbeafe",  color:"#1e40af",  dot:"#3b82f6"},
+  infusion:     {bg:"#f0fdfa",  color:"#0d9488",  dot:"#0d9488"},
+  daily:        {bg:"#dbeafe",  color:"#1e40af",  dot:"#1d4ed8"},
+  icu:          {bg:"#fef2f2",  color:"#dc2626",  dot:"#dc2626"},
+  procedure:    {bg:"#fff7ed",  color:"#ea580c",  dot:"#ea580c"},
+  consultation: {bg:"#f5f3ff",  color:"#7c3aed",  dot:"#7c3aed"},
+  preop:        {bg:"#f0fdfa",  color:"#0d9488",  dot:"#0d9488"},
+  postop:       {bg:"#dcfce7",  color:"#16a34a",  dot:"#16a34a"},
+  death:        {bg:"#f1f5f9",  color:"#1e293b",  dot:"#94a3b8"},
+  amendment:    {bg:"#fffbeb",  color:"#d97706",  dot:"#d97706"},
+};
+const DR_MODULES = [
+  {id:"initial",      label:"Initial Assessment",    icon:"pi-clipboard"},
+  {id:"medication",   label:"Medication Orders",     icon:"pi-tablet"},
+  {id:"infusion",     label:"Infusion Orders",       icon:"pi-plus-circle"},
+  {id:"daily",        label:"Daily Progress",        icon:"pi-file-edit"},
+  {id:"icu",          label:"ICU / Critical Care",   icon:"pi-heart"},
+  {id:"procedure",    label:"Procedure Note",        icon:"pi-cog"},
+  {id:"consultation", label:"Consultation",          icon:"pi-users"},
+  {id:"preop",        label:"Pre-operative",         icon:"pi-clock"},
+  {id:"postop",       label:"Post-operative",        icon:"pi-check-circle"},
+  {id:"death",        label:"Death Note",            icon:"pi-exclamation-triangle"},
+  {id:"amendment",    label:"Amendment",             icon:"pi-pencil"},
+];
+const DR_FIELD_LBL = {
+  subjective:"Subjective (S)",objective:"Objective (O)",assessment:"Assessment (A)",plan:"Plan (P)",
+  provisional:"Provisional Dx",final:"Final Dx",icd10:"ICD-10",status:"Clinical Status",
+  ventMode:"Vent Mode",fio2:"FiO₂ (%)",peep:"PEEP",tv:"Tidal Vol",ventRR:"Vent RR",pip:"PIP",
+  map:"MAP",cvp:"CVP",rassScore:"RASS Score",bpsScore:"BPS Score",dailyGoals:"Daily Goals",
+  neuro:"Neuro",cvs:"CVS",resp:"Resp",renal:"Renal",gi:"GI",haem:"Haem",infective:"Infective",
+  sedation:"Sedation",vasopressors:"Vasopressors",vasopressorDetail:"Vasopressor Detail",
+  procedureName:"Procedure",indication:"Indication",laterality:"Laterality",time:"Time",
+  surgeon:"Surgeon",assistant:"Assistant",anaesthesia:"Anaesthesia",position:"Position",
+  consentObtained:"Consent",technique:"Technique",findings:"Findings",complications:"Complications",
+  bloodLoss:"Blood Loss",specimenSent:"Specimen Sent",specimenType:"Specimen Type",
+  postInstructions:"Post Instructions",consultantName:"Consultant",speciality:"Speciality",
+  consultantRegNo:"Reg. No.",referredBy:"Referred By",reason:"Reason",
+  clinicalSummary:"Clinical Summary",impression:"Impression",recommendations:"Recommendations",
+  followUp:"Follow-Up",procedure:"Procedure",preopDiagnosis:"Pre-op Diagnosis",
+  asaGrade:"ASA Grade",plannedAnaesthesia:"Planned Anaesthesia",bloodGroup:"Blood Group",
+  crossMatch:"Cross Match",comorbidities:"Comorbidities",currentMeds:"Current Meds",
+  allergies:"Allergies",anaesthetist:"Anaesthetist",preopOrders:"Pre-op Orders",
+  procedurePerformed:"Procedure Performed",operativeFindings:"Operative Findings",
+  startTime:"Start",endTime:"End",transfusion:"Transfusion",fluidsGiven:"Fluids",
+  urineOutput:"Urine Output",postopDiagnosis:"Post-op Diagnosis",conditionLeavingOT:"Condition",
+  recoveryInstructions:"Recovery Instructions",postopOrders:"Post-op Orders",
+  dateTime:"Date/Time",causeDeath1:"Cause 1",causeDeath2:"Cause 2",causeDeath3:"Cause 3",
+  contributing:"Contributing",sequenceOfEvents:"Sequence of Events",modeOfDeath:"Mode of Death",
+  dnrInPlace:"DNR in Place",familyInformed:"Family Informed",familyInformedBy:"Informed By",
+  familyInformedTime:"Informed Time",mlc:"MLC",pmAdvised:"PM Advised",
+  certificateIssued:"Certificate Issued",originalNoteId:"Original Note ID",
+  correction:"Correction",witness:"Witness",
+};
+const drFmtKey = k => DR_FIELD_LBL[k] || k.replace(/([A-Z])/g," $1").trim();
+const drFmtVal = v => {
+  if (v===null||v===undefined||v===""||v===false) return null;
+  if (typeof v==="boolean") return "✓ Yes";
+  if (Array.isArray(v)) {
+    const items=v.filter(Boolean);
+    if (!items.length) return null;
+    return items.map(x=>typeof x==="object"?(x.drug||x.drugFluid||x.instruction||x.type||JSON.stringify(x)):String(x)).join(", ");
+  }
+  if (typeof v==="object") {
+    if ("systolic" in v && "diastolic" in v) return `${v.systolic||"—"}/${v.diastolic||"—"}`;
+    const inner=Object.entries(v).filter(([,x])=>x).map(([k2,v2])=>`${k2}:${v2}`).join(" | ");
+    return inner||null;
+  }
+  return String(v);
+};
+
+function DoctorNotesTab({doctorNotes=[]}) {
+  const [filterType, setFilterType] = useState("All");
+
+  const sortedNotes = [...doctorNotes].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
+  const types = ["All",...new Set(sortedNotes.map(n=>n.noteType||"daily").filter(Boolean))];
+  const filtered = filterType==="All"?sortedNotes:sortedNotes.filter(n=>(n.noteType||"daily")===filterType);
+
+  if (!doctorNotes.length) return <Empty icon="🩺" msg="No doctor notes recorded yet for this patient"/>;
+
+  const orderTypeIcon = t => t==="medication"?"💊":t==="iv_fluid"?"💧":t==="procedure"?"🔧":t==="diet"?"🍽️":"📋";
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      {/* Summary strip */}
+      <div style={{display:"flex",gap:8,padding:"10px 14px",background:C.purpleL,borderRadius:10,border:`1px solid ${C.purple}30`,alignItems:"center",flexWrap:"wrap"}}>
+        <span style={{fontSize:13,fontWeight:700,color:C.purple}}>🩺 {doctorNotes.length} Doctor Notes</span>
+        <span style={{fontSize:11,color:C.muted}}>across {types.length-1} categor{types.length-1===1?"y":"ies"}</span>
+      </div>
+
+      {/* Filter chips */}
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+        {types.map(t=>{
+          const ns=DR_NOTE_STYLE[t]||{bg:"#f9fafb",color:"#374151",dot:"#9ca3af"};
+          const mod=DR_MODULES.find(m=>m.id===t);
+          return (
+            <button key={t} onClick={()=>setFilterType(t)}
+              style={{padding:"4px 12px",borderRadius:20,border:`1.5px solid ${filterType===t?ns.dot:C.border}`,background:filterType===t?ns.dot:"white",color:filterType===t?"white":C.muted,cursor:"pointer",fontSize:11,fontWeight:600,display:"flex",alignItems:"center",gap:4}}>
+              {t!=="All"&&mod&&<i className={`pi ${mod.icon}`} style={{fontSize:10}}/>}
+              {t==="All"?"All":(mod?.label||t)}
+              {t!=="All"&&<span style={{fontSize:10,opacity:.8}}>({sortedNotes.filter(n=>(n.noteType||"daily")===t).length})</span>}
+            </button>
+          );
+        })}
+        <span style={{marginLeft:"auto",fontSize:11,color:C.muted}}>{filtered.length} shown</span>
+      </div>
+
+      {/* Timeline container */}
+      <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:16,overflow:"hidden",boxShadow:"0 2px 10px rgba(0,0,0,.04)"}}>
+        {/* Header */}
+        <div style={{padding:"14px 18px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",background:C.purpleL}}>
+          <div style={{fontWeight:800,fontSize:14,color:C.purple}}>Doctor Notes Timeline</div>
+          <span style={{fontSize:11,color:C.muted}}>{filtered.length} entries</span>
+        </div>
+
+        {filtered.map((note,i)=>{
+          const ns  = DR_NOTE_STYLE[note.noteType]||{bg:"#f9fafb",color:"#374151",dot:"#9ca3af"};
+          const mod = DR_MODULES.find(m=>m.id===note.noteType);
+          const timeStr = note.createdAt
+            ? new Date(note.createdAt).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})
+            : "--:--";
+          const soap = note.soap||{};
+          const vitals = note.vitals||null;
+          const nd = note.noteDetails||{};
+          const hasSoap = soap.subjective||soap.objective||soap.assessment||soap.plan;
+          const hasDiag = note.provisionalDiagnosis||note.finalDiagnosis;
+          const hasInvx = note.investigations?.length>0;
+          const hasOrders = note.orders?.length>0;
+          const medOrders = nd.medicationOrders||[];
+          const infOrders = nd.infusionOrders||[];
+
+          /* Generic noteDetails blocks (skip med/inf orders — rendered separately) */
+          const ndBlocks = Object.entries(nd)
+            .filter(([k])=>!["medicationOrders","infusionOrders"].includes(k))
+            .map(([mk,mv])=>{
+              if (!mv) return null;
+              if (Array.isArray(mv)) {
+                const items=mv.filter(Boolean);
+                if (!items.length) return null;
+                return {key:mk,label:DR_FIELD_LBL[mk]||mk,chips:[{label:`${items.length} item(s)`,value:items.map(x=>typeof x==="object"?(x.drug||x.drugFluid||x.procedureName||x.type||"Item"):String(x)).join(" | ")}]};
+              }
+              if (typeof mv!=="object") {
+                const val=drFmtVal(mv);
+                if (!val) return null;
+                return {key:mk,label:"",chips:[{label:DR_FIELD_LBL[mk]||drFmtKey(mk),value:val}]};
+              }
+              const chips=Object.entries(mv).map(([k,v])=>({label:drFmtKey(k),value:drFmtVal(v)})).filter(c=>c.value!==null);
+              if (!chips.length) return null;
+              return {key:mk,label:DR_FIELD_LBL[mk]||mk.replace(/([A-Z])/g," $1").trim(),chips};
+            }).filter(Boolean);
+
+          return (
+            <div key={note._id||i}
+              style={{
+                margin:"0 16px",padding:"16px 16px 16px 0",
+                borderBottom:i<filtered.length-1?`1px solid ${C.border}`:"none",
+                display:"grid",gridTemplateColumns:"80px 1fr auto",gap:16,alignItems:"start",
+                borderLeft:`4px solid ${ns.dot}`,paddingLeft:16,
+                transition:"background .15s,border-radius .15s",
+              }}
+              onMouseEnter={e=>{e.currentTarget.style.background=`${ns.bg}50`;e.currentTarget.style.borderRadius="12px";e.currentTarget.style.margin="2px 16px";}}
+              onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.borderRadius="0";e.currentTarget.style.margin="0 16px";}}>
+
+              {/* ── Time column ── */}
+              <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5,paddingTop:2}}>
+                <div style={{background:ns.bg,border:`1.5px solid ${ns.dot}30`,borderRadius:8,padding:"5px 8px",textAlign:"center",minWidth:62}}>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:13,fontWeight:800,color:ns.color,lineHeight:1}}>{timeStr}</div>
+                  <div style={{fontSize:8,fontWeight:700,color:ns.color+"aa",textTransform:"uppercase",letterSpacing:".5px",marginTop:3}}>
+                    {(note.shift||"morning").charAt(0).toUpperCase()+(note.shift||"morning").slice(1)}
+                  </div>
+                </div>
+                <div style={{width:10,height:10,borderRadius:"50%",background:ns.dot,boxShadow:`0 0 0 3px ${ns.dot}30`}}/>
+                <SBadge status={note.status}/>
+              </div>
+
+              {/* ── Body ── */}
+              <div>
+                {/* Header row */}
+                <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:8,flexWrap:"wrap"}}>
+                  <span style={{padding:"3px 10px",borderRadius:5,fontSize:10,fontWeight:700,letterSpacing:".6px",background:ns.bg,color:ns.color,display:"flex",alignItems:"center",gap:5}}>
+                    {mod&&<i className={`pi ${mod.icon}`} style={{fontSize:10}}/>}
+                    {mod?.label||note.noteType?.toUpperCase()||"Note"}
+                  </span>
+                  {note.isCritical && (
+                    <span style={{background:C.red,color:"white",padding:"2px 8px",borderRadius:4,fontSize:9,fontWeight:700,letterSpacing:".5px",display:"flex",alignItems:"center",gap:4}}>
+                      <i className="pi pi-exclamation-triangle" style={{fontSize:9}}/> CRITICAL EVENT
+                    </span>
+                  )}
+                  {note.doctorName && <span style={{fontSize:11,color:C.muted,fontWeight:500}}>Dr. {note.doctorName}</span>}
+                  {note.doctorRegNo && <span style={{fontSize:10,color:C.muted,opacity:.7}}>#{note.doctorRegNo}</span>}
+                </div>
+
+                {/* Vitals grid */}
+                {vitals && (
+                  <div style={{display:"flex",gap:12,flexWrap:"wrap",padding:"10px 16px",background:`linear-gradient(to right, ${ns.bg}60, white)`,borderRadius:10,marginBottom:8}}>
+                    {[
+                      {label:"BP",    value:`${vitals.bp?.systolic||"—"}/${vitals.bp?.diastolic||"—"}`},
+                      {label:"PULSE", value:`${vitals.pulse||"—"} /min`},
+                      {label:"TEMP",  value:vitals.temp?`${vitals.temp}°F`:"—"},
+                      {label:"SPO₂", value:vitals.spo2?`${vitals.spo2}%`:"—"},
+                      {label:"RR",    value:vitals.rr?`${vitals.rr} /min`:"—"},
+                      {label:"GCS",   value:vitals.gcs||"—"},
+                      {label:"BSL",   value:vitals.bsl?`${vitals.bsl} mg/dL`:"—"},
+                    ].map(v=>(
+                      <div key={v.label} style={{display:"flex",flexDirection:"column",gap:1}}>
+                        <span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".6px",color:C.muted}}>{v.label}</span>
+                        <span style={{fontFamily:"'DM Mono',monospace",fontSize:12,fontWeight:500,color:C.text}}>{v.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* SOAP note */}
+                {hasSoap && (
+                  <div style={{display:"flex",flexDirection:"column",gap:5,padding:"8px 12px",background:"#f9fafb",borderRadius:8,marginBottom:8,border:`1px solid ${C.border}`}}>
+                    <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:ns.color,marginBottom:3}}>SOAP Note</div>
+                    {[
+                      {k:"S",label:"Subjective", v:soap.subjective},
+                      {k:"O",label:"Objective",  v:soap.objective},
+                      {k:"A",label:"Assessment", v:soap.assessment},
+                      {k:"P",label:"Plan",       v:soap.plan},
+                    ].filter(x=>x.v).map(x=>(
+                      <div key={x.k} style={{display:"flex",gap:8,alignItems:"flex-start"}}>
+                        <span style={{minWidth:18,height:18,borderRadius:4,background:ns.dot+"22",color:ns.color,fontSize:10,fontWeight:900,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{x.k}</span>
+                        <span style={{fontSize:11.5,color:C.text,lineHeight:1.55}}>{x.v}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Diagnosis */}
+                {hasDiag && (
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:8}}>
+                    {note.provisionalDiagnosis && (
+                      <div style={{display:"flex",flexDirection:"column",gap:1,padding:"6px 10px",background:"#fefce8",borderRadius:6,border:"1px solid #fef08a"}}>
+                        <span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:"#854d0e"}}>Provisional Dx</span>
+                        <span style={{fontSize:11.5,fontWeight:600,color:"#713f12"}}>{note.provisionalDiagnosis}</span>
+                      </div>
+                    )}
+                    {note.finalDiagnosis && (
+                      <div style={{display:"flex",flexDirection:"column",gap:1,padding:"6px 10px",background:C.greenL,borderRadius:6,border:`1px solid ${C.green}30`}}>
+                        <span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.green}}>Final Dx</span>
+                        <span style={{fontSize:11.5,fontWeight:600,color:C.green}}>{note.finalDiagnosis}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Investigations */}
+                {hasInvx && (
+                  <div style={{marginBottom:8}}>
+                    <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.muted,marginBottom:4}}>Investigations Ordered</div>
+                    <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                      {note.investigations.map((inv,ii)=>(
+                        <span key={ii} style={{padding:"2px 8px",borderRadius:4,fontSize:10,fontWeight:600,background:C.blueL,color:C.blue,border:`1px solid ${C.blue}30`}}>{inv}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Inline orders */}
+                {hasOrders && (
+                  <div style={{marginBottom:8}}>
+                    <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.muted,marginBottom:4}}>Orders ({note.orders.length})</div>
+                    <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                      {note.orders.map((o,oi)=>(
+                        <div key={oi} style={{display:"flex",gap:8,alignItems:"center",padding:"5px 10px",background:"#f9fafb",borderRadius:6,border:`1px solid ${C.border}`}}>
+                          <span style={{fontSize:14}}>{orderTypeIcon(o.type)}</span>
+                          <span style={{fontSize:12,fontWeight:600,color:C.text,flex:1}}>{o.instruction||"—"}</span>
+                          {o.dose      &&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:C.tealL,color:C.teal,fontWeight:600}}>{o.dose}</span>}
+                          {o.route     &&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:C.blueL,color:C.blue,fontWeight:600}}>{o.route}</span>}
+                          {o.frequency &&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:"#f1f5f9",color:C.muted,fontWeight:600}}>{o.frequency}</span>}
+                          {(!o.nurseStatus||o.nurseStatus==="pending")&&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:C.amberL,color:C.amber,fontWeight:700}}>PENDING</span>}
+                          {o.nurseStatus==="done"&&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:C.greenL,color:C.green,fontWeight:700}}>DONE</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Medication Orders (from noteDetails) */}
+                {medOrders.length>0 && (
+                  <div style={{marginBottom:8}}>
+                    <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.blue,marginBottom:4}}>💊 Medication Orders ({medOrders.length})</div>
+                    <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                      {medOrders.filter(m=>m.drug).map((m,mi)=>(
+                        <div key={mi} style={{display:"flex",gap:6,alignItems:"center",padding:"5px 10px",background:C.blueL,borderRadius:6,border:`1px solid ${C.blue}20`}}>
+                          <span style={{fontSize:12,fontWeight:600,color:C.blue,flex:1}}>{m.drug}</span>
+                          {m.dose      &&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:"white",color:C.blue,fontWeight:600,border:`1px solid ${C.blue}30`}}>{m.dose}</span>}
+                          {m.route     &&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:"white",color:C.muted,fontWeight:600}}>{m.route}</span>}
+                          {m.frequency &&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:"white",color:C.muted,fontWeight:600}}>{m.frequency}</span>}
+                          <span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:m.status==="Active"?C.greenL:C.redL,color:m.status==="Active"?C.green:C.red,fontWeight:700}}>{m.status||"Active"}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Infusion Orders (from noteDetails) */}
+                {infOrders.length>0 && (
+                  <div style={{marginBottom:8}}>
+                    <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.teal,marginBottom:4}}>💧 Infusion Orders ({infOrders.length})</div>
+                    <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                      {infOrders.filter(m=>m.drugFluid||m.type).map((m,mi)=>(
+                        <div key={mi} style={{display:"flex",gap:6,alignItems:"center",padding:"5px 10px",background:C.tealL,borderRadius:6,border:`1px solid ${C.teal}20`}}>
+                          <span style={{fontSize:12,fontWeight:600,color:C.teal,flex:1}}>{m.drugFluid||m.type||"Fluid"}</span>
+                          {m.volume&&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:"white",color:C.teal,fontWeight:600}}>{m.volume} mL</span>}
+                          {m.rate  &&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:"white",color:C.muted,fontWeight:600}}>{m.rate} mL/hr</span>}
+                          <span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:m.status==="Active"?C.greenL:C.redL,color:m.status==="Active"?C.green:C.red,fontWeight:700}}>{m.status||"Active"}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Generic noteDetails renderer */}
+                {ndBlocks.length>0 && (
+                  <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:8}}>
+                    {ndBlocks.map(({key,label,chips})=>(
+                      <div key={key} style={{padding:"7px 12px",background:"#f9fafb",borderRadius:7,border:`1px solid ${C.border}`}}>
+                        {label&&<div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:ns.color,marginBottom:5}}>{label}</div>}
+                        <div style={{display:"flex",gap:"5px 14px",flexWrap:"wrap"}}>
+                          {chips.map(c=>(
+                            <div key={c.label} style={{display:"flex",flexDirection:"column",gap:1}}>
+                              {c.label&&<span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.muted}}>{c.label}</span>}
+                              <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:500,color:C.text}}>{c.value}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Tags */}
+                {note.tags?.length>0 && (
+                  <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                    {note.tags.map(t=>(
+                      <span key={t} style={{padding:"2px 8px",borderRadius:4,fontSize:10,fontWeight:600,background:"#f9fafb",color:C.muted,border:`1px solid ${C.border}`}}>{t}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* ── Actions ── */}
+              <div style={{display:"flex",flexDirection:"column",gap:5,alignItems:"flex-end"}}>
+                <div style={{fontSize:10,color:C.muted,textAlign:"right",marginBottom:4}}>{fmtDate(note.createdAt)}</div>
+                <button style={{padding:"4px 10px",border:`1.5px solid ${C.border}`,borderRadius:6,background:"white",fontSize:11,fontWeight:600,cursor:"pointer",color:C.muted,display:"flex",alignItems:"center",gap:4}}>
+                  <i className="pi pi-pencil" style={{fontSize:10}}/> Edit
+                </button>
+                <button style={{padding:"4px 10px",border:`1.5px solid ${C.border}`,borderRadius:6,background:"white",fontSize:11,fontWeight:600,cursor:"pointer",color:C.muted,display:"flex",alignItems:"center",gap:4}}>
+                  <i className="pi pi-print" style={{fontSize:10}}/> Print
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /* ══════════════════════════════════════════════════ TAB: DOCTOR ORDERS */
 function DoctorOrdersTab({doctorNotes=[]}) {
   // Extract all orders from all doctor notes
@@ -1572,6 +1937,7 @@ function NursePatientPanelContent({ selectedAdmission }) {
                     style={{padding:"12px 18px",fontSize:13,fontWeight:isActive?700:500,color:isActive?C.primary:C.muted,background:isActive?C.primaryL:"transparent",border:"none",borderBottom:isActive?`3px solid ${C.primary}`:"3px solid transparent",cursor:"pointer",whiteSpace:"nowrap",transition:"all .15s",borderRadius:"6px 6px 0 0",fontFamily:"inherit"}}>
                     {tab.label}
                     {tab.id==="nursing"   && nursingNotes.length>0 && <span style={{marginLeft:5,fontSize:10,background:C.rose200,color:C.primaryD,borderRadius:10,padding:"0 6px",fontWeight:700}}>{nursingNotes.length}</span>}
+                    {tab.id==="docnotes"  && doctorNotes.length>0 && <span style={{marginLeft:5,fontSize:10,background:C.purpleL,color:C.purple,borderRadius:10,padding:"0 6px",fontWeight:700}}>{doctorNotes.length}</span>}
                     {tab.id==="orders"    && (() => { const p=doctorNotes.flatMap(n=>n.orders||[]).filter(o=>!o.nurseStatus||o.nurseStatus==="pending").length; return p>0?<span style={{marginLeft:5,fontSize:10,background:C.amberL,color:C.amber,borderRadius:10,padding:"0 6px",fontWeight:700}}>{p}</span>:null; })()}
                     {tab.id==="emergency" && emergency.length>0 && <span style={{marginLeft:5,fontSize:10,background:C.redL,color:C.red,borderRadius:10,padding:"0 6px",fontWeight:700}}>{emergency.length}</span>}
                   </button>
@@ -1583,6 +1949,7 @@ function NursePatientPanelContent({ selectedAdmission }) {
             {activeTab==="overview"  && <OverviewTab patient={patient} admission={admission} nursingNotes={nursingNotes} billing={billing} doctorNotes={doctorNotes}/>}
             {activeTab==="vitals"    && <VitalTrendsTab vitalSheet={vitalSheet}/>}
             {activeTab==="nursing"   && <NursingNotesTab notes={nursingNotes}/>}
+            {activeTab==="docnotes"  && <DoctorNotesTab doctorNotes={doctorNotes}/>}
             {activeTab==="orders"    && <DoctorOrdersTab doctorNotes={doctorNotes}/>}
             {activeTab==="meds"      && <MedicationsTab doctorNotes={doctorNotes} doctorOrders={doctorOrders}/>}
             {activeTab==="billing"   && <BillingTab billing={billing}/>}
