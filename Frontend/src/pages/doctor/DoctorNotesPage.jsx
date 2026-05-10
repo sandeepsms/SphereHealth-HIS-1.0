@@ -2800,7 +2800,28 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
             </div>
             {/* Scrollable content */}
             <div style={{ flex: 1, overflowY: "auto", background: "#f0f2f5", padding: "20px 24px" }}>
-              <DoctorAssessmentContent selectedPatient={patient} />
+              <DoctorAssessmentContent
+                selectedPatient={patient}
+                onSaved={async () => {
+                  // Close the modal and reload patient so the gate drops immediately
+                  setShowAssessmentModal(false);
+                  if (patient) {
+                    const ipdNo = patient.ipdNo || patient.admissionNumber || patient._id;
+                    // Re-fetch fresh admission to get doctorCompleted=true
+                    const token = localStorage.getItem("his_token");
+                    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+                    try {
+                      const { data } = await (await import("axios")).default.get(
+                        `${API_ENDPOINTS.ADMISSIONS}/active?UHID=${encodeURIComponent(patient.UHID || patient.uhid || "")}`,
+                        { headers }
+                      );
+                      const arr = Array.isArray(data) ? data : data.data || [];
+                      if (arr[0]) setPatient(arr[0]);
+                    } catch { /* fallback: patch local state */ }
+                    await fetchNotes(ipdNo);
+                  }
+                }}
+              />
             </div>
           </div>
         </div>

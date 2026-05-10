@@ -110,7 +110,21 @@ function SectionCard({ title, children, open: initOpen = true }) {
   );
 }
 
-export function DoctorAssessmentContent({ selectedPatient }) {
+/* ── HAM keyword list (NABH High Alert Medications) ── */
+const HAM_KW = ["insulin","heparin","warfarin","potassium","kci","morphine","fentanyl","midazolam","vecuronium","atracurium","succinylcholine","suxamethonium","magnesium sulphate","magnesium sulfate","concentrated sodium","hypertonic","noradrenaline","norepinephrine","adrenaline","epinephrine","dopamine","dobutamine","amiodarone","digoxin","lithium","methotrexate","vincristine","concentrated electrolyte","neuromuscular blocking","oxytocin","vasopressin","tpa","alteplase","streptokinase"];
+const isHAM_IA = (name = "") => HAM_KW.some(k => name.toLowerCase().includes(k));
+
+const ROUTES_IA = ["Oral","IV","IM","SC","SL","Topical","Inhaled","Rectal","Nasal","Ophthalmic","IV Infusion"];
+const FREQ_LIST_IA = ["OD","BD","TDS","QID","STAT","PRN","Continuous","Q4H","Q6H","Q8H","Once Weekly","Before Meals","After Meals"];
+const FREQ_TIMES_IA = {
+  OD:["08:00"], BD:["08:00","20:00"], TDS:["06:00","14:00","22:00"],
+  QID:["06:00","12:00","18:00","22:00"], Q4H:["06:00","10:00","14:00","18:00","22:00","02:00"],
+  Q6H:["06:00","12:00","18:00","00:00"], Q8H:["06:00","14:00","22:00"],
+  STAT:["Immediate"], PRN:["As Needed"], Continuous:["Continuous Infusion"],
+  "Once Weekly":["Once Weekly"], "Before Meals":["Before Meals"], "After Meals":["After Meals"],
+};
+
+export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
   const { user } = useAuth();
   const location = useLocation();
   const [search,   setSearch]   = useState("");
@@ -155,8 +169,16 @@ export function DoctorAssessmentContent({ selectedPatient }) {
     // MLC / Restraints
     restraints: "No", restraintType: "", restraintComment: "",
   });
-  const [orders, setOrders] = useState([]);
+  const [orders, setOrders] = useState([]);  // legacy embedded orders (kept for note payload)
   const [newOrder, setNewOrder] = useState({ type: "medication", instruction: "", dose: "", route: "", frequency: "", duration: "", notes: "", priority: "ROUTINE" });
+
+  /* ── NEW: Treatment Chart Orders (DoctorOrders collection) ── */
+  const [treatmentOrders,  setTreatmentOrders]  = useState([]);
+  const [orderAddSaving,   setOrderAddSaving]   = useState(false);
+  const [medForm, setMedForm] = useState({ drug:"", dose:"", route:"Oral", frequency:"OD", priority:"Routine", hamOverride:false, indication:"" });
+  const [infForm, setInfForm] = useState({ drugFluid:"", volume:"", rate:"", dilution:"", priority:"Routine", hamOverride:false, startTime:"" });
+  const [showMedForm, setShowMedForm] = useState(false);
+  const [showInfForm, setShowInfForm] = useState(false);
 
   /* ── Auto-save draft ── */
   const draftKey = ipdNo ? `sphere_draft_doctor_ipd_${ipdNo}` : null;
@@ -238,9 +260,21 @@ export function DoctorAssessmentContent({ selectedPatient }) {
     } catch { /* silent */ }
   };
 
+  const fetchTreatmentOrders = async (uhid) => {
+    if (!uhid) return;
+    try {
+      const token = localStorage.getItem("his_token");
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const { data } = await axios.get(`${API_ENDPOINTS.DOCTOR_ORDERS}?UHID=${uhid}&limit=50`, { headers });
+      const arr = Array.isArray(data) ? data : (data.data || data.orders || []);
+      setTreatmentOrders(arr.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
+    } catch { /* silent */ }
+  };
+
   const loadAdmission = async (admission) => {
     setPatient(admission);
     const ipd = admission.ipdNo || admission.admissionNumber || admission._id;
+    const uhid = admission.UHID || admission.uhid;
     setIpdNo(ipd);
     // Check ownership
     const ownerId = admission.attendingDoctorId?._id || admission.attendingDoctorId;
@@ -248,6 +282,7 @@ export function DoctorAssessmentContent({ selectedPatient }) {
     setIsOwner(owned);
     await fetchNotes(ipd);
     await fetchOrders(ipd);
+    await fetchTreatmentOrders(uhid);
 
     // Restore draft if one exists for this patient
     const dKey = `sphere_draft_doctor_ipd_${ipd}`;
@@ -297,6 +332,72 @@ export function DoctorAssessmentContent({ selectedPatient }) {
     setNewOrder({ type: "medication", instruction: "", dose: "", route: "", frequency: "", duration: "", notes: "", priority: "ROUTINE" });
     setOrderModal(false);
     showToast("Order added", "ok");
+  };
+
+  /* ── Add Medication to Treatment Chart (DoctorOrders collection) ── */
+  const addMedicationOrder = async () => {
+    if (!medForm.drug.trim()) { showToast("Drug name is required", "warn"); return; }
+    if (!patient || !ipdNo) { showToast("Load a patient first", "warn"); return; }
+    setOrderAddSaving(true);
+    const token = localStorage.getItem("his_token");
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    const hamFlag = isHAM_IA(medForm.drug) || !!medForm.hamOverride;
+    const times = FREQ_TIMES_IA[medForm.frequency] || ["08:00"];
+    const today = new Date(); today.setHours(0,0,0,0);
+    const docName = form.doctorName || doctorDisplayName;
+    try {
+      await axios.post(API_ENDPOINTS.DOCTOR_ORDERS, {
+        UHID: patient.UHID || patient.uhid,
+        patientName: patient.patientName || "",
+        visitId: ipdNo, visitType: "IPD",
+        orderType: "Medication",
+        priority: medForm.priority,
+        hamFlag, twoNurseRequired: hamFlag, highRisk: hamFlag,
+        orderDetails: { medicineName: medForm.drug, dose: medForm.dose, route: medForm.route, frequency: medForm.frequency, indication: medForm.indication },
+        orderedBy: docName, orderedByRole: "Doctor", orderedAt: new Date(),
+        scheduledTimes: times,
+        administrationRecord: times
+          .filter(t => !["Immediate","As Needed","Continuous Infusion","Once Weekly","Before Meals","After Meals"].includes(t))
+          .map(t => ({ scheduledTime: t, scheduledDate: today, status: "pending" })),
+        auditLog: [{ step: "Order created — Initial Assessment", doneBy: docName, doneAt: new Date(), notes: medForm.indication || "" }],
+      }, { headers });
+      showToast(`✓ ${medForm.drug} added to Treatment Chart`, "ok");
+      setMedForm({ drug:"", dose:"", route:"Oral", frequency:"OD", priority:"Routine", hamOverride:false, indication:"" });
+      setShowMedForm(false);
+      await fetchTreatmentOrders(patient.UHID || patient.uhid);
+    } catch (err) { showToast(err?.response?.data?.message || "Failed to add order", "err"); }
+    finally { setOrderAddSaving(false); }
+  };
+
+  /* ── Add Infusion to Treatment Chart ── */
+  const addInfusionOrder = async () => {
+    if (!infForm.drugFluid.trim()) { showToast("Drug / fluid name is required", "warn"); return; }
+    if (!patient || !ipdNo) { showToast("Load a patient first", "warn"); return; }
+    setOrderAddSaving(true);
+    const token = localStorage.getItem("his_token");
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    const hamFlag = isHAM_IA(infForm.drugFluid) || !!infForm.hamOverride;
+    const docName = form.doctorName || doctorDisplayName;
+    try {
+      await axios.post(API_ENDPOINTS.DOCTOR_ORDERS, {
+        UHID: patient.UHID || patient.uhid,
+        patientName: patient.patientName || "",
+        visitId: ipdNo, visitType: "IPD",
+        orderType: "IV_Fluid",
+        priority: infForm.priority,
+        hamFlag, twoNurseRequired: hamFlag, highRisk: hamFlag,
+        orderDetails: { medicineName: infForm.drugFluid, displayName: infForm.drugFluid, dose: infForm.volume ? `${infForm.volume}ml` : "", route: "IV Infusion", frequency: "Continuous", rate: infForm.rate, totalVolume: infForm.volume, dilution: infForm.dilution, startTime: infForm.startTime },
+        orderedBy: docName, orderedByRole: "Doctor", orderedAt: new Date(),
+        currentRate: infForm.rate,
+        scheduledTimes: ["Continuous"],
+        auditLog: [{ step: "Infusion started — Initial Assessment", doneBy: docName, doneAt: new Date(), notes: `Rate: ${infForm.rate || "—"} ml/hr` }],
+      }, { headers });
+      showToast(`✓ ${infForm.drugFluid} infusion added to Treatment Chart`, "ok");
+      setInfForm({ drugFluid:"", volume:"", rate:"", dilution:"", priority:"Routine", hamOverride:false, startTime:"" });
+      setShowInfForm(false);
+      await fetchTreatmentOrders(patient.UHID || patient.uhid);
+    } catch (err) { showToast(err?.response?.data?.message || "Failed to add infusion", "err"); }
+    finally { setOrderAddSaving(false); }
   };
 
   const saveNote = async (status = "draft") => {
@@ -374,14 +475,31 @@ export function DoctorAssessmentContent({ selectedPatient }) {
         showToast("Note updated", "ok");
       } else {
         await axios.post(API_ENDPOINTS.DOCTOR_NOTES, payload, { headers });
-        showToast(status === "signed" ? "Note signed ✓" : "Draft saved", "ok");
+        showToast(status === "signed" ? "Note signed & submitted ✓" : "Draft saved ✓", "ok");
+
+        /* ── Mark admission initialAssessment.doctorCompleted = true ──────────
+           Critical: this unlocks the gate in DoctorNotesPage for all other note types.
+        ──────────────────────────────────────────────────────────────────────── */
+        if (patient?._id) {
+          try {
+            await axios.put(
+              `${API_ENDPOINTS.ADMISSIONS}/${patient._id}/initial-assessment`,
+              { role: "doctor", name: form.doctorName || doctorDisplayName },
+              { headers }
+            );
+          } catch { /* non-fatal — gate drops on next patient reload */ }
+        }
       }
-      clearDraft(); // clear localStorage draft on successful save
+      clearDraft();
       setOrders([]);
-      setForm({ doctorName: "", doctorRegNo: "", shift: "morning", soap: { subjective: "", objective: "", assessment: "", plan: "" }, vitals: { bp_sys: "", bp_dia: "", pulse: "", temp: "", rr: "", spo2: "", bsl: "", gcs: "", urine: "" }, provisionalDiagnosis: "", finalDiagnosis: "", investigations: "" });
+      setForm(p => ({ ...p, soap: { subjective:"",objective:"",assessment:"",plan:"" }, vitals: { bp_sys:"",bp_dia:"",pulse:"",temp:"",rr:"",spo2:"",bsl:"",gcs:"",urine:"" }, provisionalDiagnosis:"", finalDiagnosis:"", investigations:"" }));
       setEditingNote(null);
-      await fetchNotes(ipdNo); await fetchOrders(ipdNo);
-    } catch (err) { showToast(err?.response?.data?.message || "Save failed", "err"); }
+      await fetchNotes(ipdNo);
+      await fetchOrders(ipdNo);
+      await fetchTreatmentOrders(patient?.UHID || patient?.uhid);
+      // Notify parent (DoctorNotesPage) to refresh patient state and close modal
+      if (onSaved) onSaved();
+    } catch (err) { showToast(err?.response?.data?.message || "Save failed — check that all required fields are filled", "err"); }
     finally { setLoading(false); }
   };
 
@@ -897,74 +1015,185 @@ export function DoctorAssessmentContent({ selectedPatient }) {
                 </FG>
               </SectionCard>
 
-              {/* ── Order Type Buttons ── */}
-              <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 18, marginBottom: 14 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".8px", color: C.muted, marginBottom: 12 }}>Add Order</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                  {ORDER_TYPES.map(ot => (
-                    <button key={ot.key} onClick={() => { setNewOrder(p => ({ ...p, type: ot.key })); setOrderModal(true); }}
-                      style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 16px", borderRadius: 9, border: `1.5px solid ${ot.bg}`, fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, cursor: "pointer", background: "white", color: ot.color, transition: "all .2s" }}>
-                      {ot.label}
+              {/* ══ TREATMENT CHART ORDERS (connected to DoctorOrders collection) ══ */}
+              <div style={{ background: C.card, border: "1.5px solid #e0e7ef", borderRadius: 14, marginBottom: 14, overflow: "hidden", boxShadow: "0 2px 10px rgba(37,99,235,.05)" }}>
+                {/* Header */}
+                <div style={{ padding: "14px 20px", background: "#1e3a5f", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div style={{ color: "white", fontWeight: 700, fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>
+                    <span>💊</span> Treatment Chart Orders
+                    <span style={{ background: "rgba(255,255,255,.15)", color: "#bfdbfe", padding: "1px 9px", borderRadius: 12, fontSize: 10, fontWeight: 700 }}>
+                      NABH MOM.1 — Linked to MAR Sheet &amp; Nursing Notes
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={() => { setShowMedForm(p => !p); setShowInfForm(false); }}
+                      style={{ padding: "6px 16px", background: showMedForm ? "#3b82f6" : "rgba(255,255,255,.15)", color: "white", border: "1.5px solid rgba(255,255,255,.3)", borderRadius: 7, fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                      💊 Add Medication
                     </button>
-                  ))}
+                    <button onClick={() => { setShowInfForm(p => !p); setShowMedForm(false); }}
+                      style={{ padding: "6px 16px", background: showInfForm ? "#0d9488" : "rgba(255,255,255,.15)", color: "white", border: "1.5px solid rgba(255,255,255,.3)", borderRadius: 7, fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                      💧 Add Infusion
+                    </button>
+                  </div>
+                </div>
+
+                {/* Medication entry form */}
+                {showMedForm && (
+                  <div style={{ padding: "14px 20px", background: "#eff6ff", borderBottom: "1px solid #bfdbfe" }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#1d4ed8", textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>New Medication Order</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
+                      <FG label="Drug Name *">
+                        <input style={{ ...fld, fontWeight: 700, borderColor: isHAM_IA(medForm.drug) ? "#f59e0b" : C.border }} value={medForm.drug} onChange={e => setMedForm(p => ({ ...p, drug: e.target.value }))} placeholder="Generic drug name" />
+                        {isHAM_IA(medForm.drug) && <div style={{ fontSize: 10, color: "#92400e", marginTop: 2 }}>🔴 HIGH ALERT MEDICATION — auto-detected</div>}
+                      </FG>
+                      <FG label="Dose"><input style={fld} value={medForm.dose} onChange={e => setMedForm(p => ({ ...p, dose: e.target.value }))} placeholder="e.g. 500mg" /></FG>
+                      <FG label="Route">
+                        <select style={fld} value={medForm.route} onChange={e => setMedForm(p => ({ ...p, route: e.target.value }))}>
+                          {ROUTES_IA.map(r => <option key={r}>{r}</option>)}
+                        </select>
+                      </FG>
+                      <FG label="Frequency">
+                        <select style={fld} value={medForm.frequency} onChange={e => setMedForm(p => ({ ...p, frequency: e.target.value }))}>
+                          {FREQ_LIST_IA.map(f => <option key={f}>{f}</option>)}
+                        </select>
+                      </FG>
+                      <FG label="Priority">
+                        <select style={{ ...fld, color: medForm.priority==="STAT"?C.red:medForm.priority==="Urgent"?"#d97706":C.muted, fontWeight: 700 }} value={medForm.priority} onChange={e => setMedForm(p => ({ ...p, priority: e.target.value }))}>
+                          <option value="Routine">Routine</option>
+                          <option value="Urgent">🔶 Urgent</option>
+                          <option value="STAT">⚡ STAT</option>
+                        </select>
+                      </FG>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "2fr auto", gap: 8, alignItems: "flex-end" }}>
+                      <FG label="Indication / Reason">
+                        <input style={fld} value={medForm.indication} onChange={e => setMedForm(p => ({ ...p, indication: e.target.value }))} placeholder="e.g. GI prophylaxis, pain management…" />
+                      </FG>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        {!isHAM_IA(medForm.drug) && (
+                          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, color: "#92400e", cursor: "pointer" }}>
+                            <input type="checkbox" checked={!!medForm.hamOverride} onChange={e => setMedForm(p => ({ ...p, hamOverride: e.target.checked }))} style={{ accentColor: "#dc2626" }} /> Mark HAM
+                          </label>
+                        )}
+                        <button onClick={addMedicationOrder} disabled={orderAddSaving}
+                          style={{ padding: "9px 20px", background: orderAddSaving ? "#93c5fd" : "#2563eb", color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
+                          {orderAddSaving ? "Adding…" : "✓ Add to Chart"}
+                        </button>
+                      </div>
+                    </div>
+                    {medForm.frequency && <div style={{ marginTop: 6, fontSize: 10, color: "#1d4ed8", fontFamily: "monospace" }}>Admin times: {(FREQ_TIMES_IA[medForm.frequency] || []).join(" · ")}</div>}
+                  </div>
+                )}
+
+                {/* Infusion entry form */}
+                {showInfForm && (
+                  <div style={{ padding: "14px 20px", background: "#f0fdfa", borderBottom: "1px solid #99f6e4" }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#0d9488", textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>New Infusion / IV Fluid Order</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
+                      <FG label="Drug / Fluid *">
+                        <input style={{ ...fld, fontWeight: 700, borderColor: isHAM_IA(infForm.drugFluid) ? "#f59e0b" : C.border }} value={infForm.drugFluid} onChange={e => setInfForm(p => ({ ...p, drugFluid: e.target.value }))} placeholder="NS 0.9%, Noradrenaline, PRBC…" />
+                        {isHAM_IA(infForm.drugFluid) && <div style={{ fontSize: 10, color: "#92400e", marginTop: 2 }}>🔴 HIGH ALERT MEDICATION — auto-detected</div>}
+                      </FG>
+                      <FG label="Vol (ml)"><input type="number" style={fld} value={infForm.volume} onChange={e => setInfForm(p => ({ ...p, volume: e.target.value }))} placeholder="500" /></FG>
+                      <FG label="Rate (ml/hr)"><input type="number" style={fld} value={infForm.rate} onChange={e => setInfForm(p => ({ ...p, rate: e.target.value }))} placeholder="100" /></FG>
+                      <FG label="Dilution"><input style={fld} value={infForm.dilution} onChange={e => setInfForm(p => ({ ...p, dilution: e.target.value }))} placeholder="4mg in 50ml NS" /></FG>
+                      <FG label="Priority">
+                        <select style={{ ...fld, color: infForm.priority==="STAT"?C.red:infForm.priority==="Urgent"?"#d97706":C.muted, fontWeight: 700 }} value={infForm.priority} onChange={e => setInfForm(p => ({ ...p, priority: e.target.value }))}>
+                          <option value="Routine">Routine</option>
+                          <option value="Urgent">🔶 Urgent</option>
+                          <option value="STAT">⚡ STAT</option>
+                        </select>
+                      </FG>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "flex-end" }}>
+                      <FG label="Start Time"><input type="time" style={fld} value={infForm.startTime} onChange={e => setInfForm(p => ({ ...p, startTime: e.target.value }))} /></FG>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        {!isHAM_IA(infForm.drugFluid) && (
+                          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, color: "#92400e", cursor: "pointer" }}>
+                            <input type="checkbox" checked={!!infForm.hamOverride} onChange={e => setInfForm(p => ({ ...p, hamOverride: e.target.checked }))} style={{ accentColor: "#dc2626" }} /> Mark HAM
+                          </label>
+                        )}
+                        <button onClick={addInfusionOrder} disabled={orderAddSaving}
+                          style={{ padding: "9px 20px", background: orderAddSaving ? "#5eead4" : "#0d9488", color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
+                          {orderAddSaving ? "Adding…" : "✓ Add to Chart"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Orders table with audit trail */}
+                <div style={{ padding: 0 }}>
+                  {treatmentOrders.length === 0 ? (
+                    <div style={{ padding: "20px", textAlign: "center", color: C.muted, fontSize: 13 }}>
+                      No orders yet — add medications or infusions above to build the Treatment Chart
+                    </div>
+                  ) : (
+                    <div style={{ overflowX: "auto" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                        <thead>
+                          <tr style={{ background: "#f1f5f9" }}>
+                            {["TYPE","DRUG / FLUID","DOSE","ROUTE","FREQ","PRIORITY","HAM","STATUS","NURSE","ORDERED BY","ORDERED AT"].map(h => (
+                              <th key={h} style={{ padding: "8px 12px", borderBottom: "1px solid #e2e8f0", textAlign: "left", fontSize: 10, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: ".6px", whiteSpace: "nowrap" }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {treatmentOrders.map((o) => {
+                            const od = o.orderDetails || {};
+                            const isToday = (() => { const d = new Date(o.createdAt), t = new Date(); return d.getFullYear()===t.getFullYear()&&d.getMonth()===t.getMonth()&&d.getDate()===t.getDate(); })();
+                            const nurseCount = (o.administrationRecord||[]).filter(r => r.status==="given").length;
+                            const totalSlots = (o.administrationRecord||[]).length;
+                            return (
+                              <tr key={o._id} style={{ borderBottom: "1px solid #f1f5f9", background: o.hamFlag ? "#fff7ed" : o.priority==="STAT" ? "#fef2f2" : "white" }}>
+                                <td style={{ padding: "8px 12px" }}>
+                                  <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: o.orderType==="Medication"?"#dbeafe":o.orderType==="IV_Fluid"?"#ccfbf1":"#ede9fe", color: o.orderType==="Medication"?C.accent:o.orderType==="IV_Fluid"?C.teal:C.purple }}>
+                                    {o.orderType === "Medication" ? "Med" : o.orderType === "IV_Fluid" ? "Infusion" : o.orderType || "Other"}
+                                  </span>
+                                </td>
+                                <td style={{ padding: "8px 12px", fontWeight: 700, minWidth: 140 }}>
+                                  {od.medicineName || od.displayName || "—"}
+                                  {o.hamFlag && <span title="High Alert Medication" style={{ marginLeft: 5, fontSize: 12 }}>🔴</span>}
+                                </td>
+                                <td style={{ padding: "8px 12px", fontFamily: "monospace" }}>{od.dose || "—"}</td>
+                                <td style={{ padding: "8px 12px" }}>{od.route || "—"}</td>
+                                <td style={{ padding: "8px 12px" }}>{od.frequency || "—"}{od.rate ? ` @ ${od.rate}ml/hr` : ""}</td>
+                                <td style={{ padding: "8px 12px", fontWeight: 700, color: o.priority==="STAT"?C.red:o.priority==="Urgent"?"#d97706":C.muted }}>
+                                  {o.priority==="STAT"?"⚡ STAT":o.priority==="Urgent"?"🔶 Urgent":"Routine"}
+                                </td>
+                                <td style={{ padding: "8px 12px", textAlign: "center" }}>{o.hamFlag ? "🔴" : "—"}</td>
+                                <td style={{ padding: "8px 12px" }}>
+                                  <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: o.status==="Active"?"#dcfce7":o.status==="Cancelled"?"#fee2e2":"#fef9c3", color: o.status==="Active"?C.green:o.status==="Cancelled"?C.red:"#854d0e" }}>
+                                    {o.status || "Active"}
+                                  </span>
+                                </td>
+                                <td style={{ padding: "8px 12px" }}>
+                                  <div style={{ fontSize: 11 }}>
+                                    {totalSlots > 0 ? (
+                                      <span style={{ color: nurseCount===totalSlots?C.green:nurseCount>0?"#d97706":C.muted }}>
+                                        {nurseCount}/{totalSlots} given{isToday?" today":""}
+                                      </span>
+                                    ) : "—"}
+                                  </div>
+                                </td>
+                                <td style={{ padding: "8px 12px", fontSize: 11, color: C.muted, whiteSpace: "nowrap" }}>{o.orderedBy || "—"}</td>
+                                <td style={{ padding: "8px 12px", fontSize: 10, color: C.muted, whiteSpace: "nowrap", fontFamily: "monospace" }}>
+                                  {o.createdAt ? new Date(o.createdAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—"}
+                                  {(o.auditLog||[]).length > 0 && (
+                                    <div style={{ color: "#3b82f6", fontSize: 9, marginTop: 1 }}>
+                                      {o.auditLog.length} audit step{o.auditLog.length > 1 ? "s" : ""}
+                                    </div>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               </div>
-
-              {/* ── Orders on this note ── */}
-              {orders.length > 0 && (
-                <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, marginBottom: 14, overflow: "hidden" }}>
-                  <div style={{ padding: "12px 18px", background: C.grayL, fontWeight: 700, fontSize: 13, borderBottom: `1px solid ${C.border}` }}>
-                    Orders on this note ({orders.length})
-                  </div>
-                  <div style={{ overflowX: "auto" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                      <thead>
-                        <tr>{["#","TYPE","ORDER","DOSE / RATE","FREQ / DURATION","ROUTE","PRIORITY","STATUS","ORDERED BY",""].map(h => (
-                          <th key={h} style={{ background: C.slate, color: "#cbd5e1", padding: "10px 13px", textAlign: "left", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".8px", whiteSpace: "nowrap" }}>{h}</th>
-                        ))}</tr>
-                      </thead>
-                      <tbody>
-                        {orders.map((o, i) => {
-                          const ts = TYPE_STYLE[o.type] || TYPE_STYLE.other;
-                          const pc = PRIORITY_COLOR[o.priority] || PRIORITY_COLOR.ROUTINE;
-                          return (
-                            <tr key={o._id} style={{ borderBottom: `1px solid ${C.border}`, background: o.priority === "STAT" ? "#fff8f8" : "white" }}>
-                              <td style={{ padding: "10px 13px", fontFamily: "monospace", fontSize: 11, color: C.muted }}>{String(i+1).padStart(3,"0")}</td>
-                              <td style={{ padding: "10px 13px" }}>
-                                <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: ts.bg, color: ts.color }}>{ts.label}</span>
-                              </td>
-                              <td style={{ padding: "10px 13px", minWidth: 180 }}>
-                                <div style={{ fontWeight: 600, fontSize: 13 }}>{o.instruction}</div>
-                                {o.notes && <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{o.notes}</div>}
-                              </td>
-                              <td style={{ padding: "10px 13px", fontFamily: "monospace", fontSize: 12 }}>{o.dose || "—"}</td>
-                              <td style={{ padding: "10px 13px", fontSize: 12 }}>{[o.frequency, o.duration].filter(Boolean).join(" / ") || "—"}</td>
-                              <td style={{ padding: "10px 13px", fontSize: 12 }}>{o.route || "—"}</td>
-                              <td style={{ padding: "10px 13px" }}>
-                                <span style={{ color: pc.color, fontWeight: 800, fontSize: 11 }}>
-                                  {o.priority === "STAT" ? "⚡ " : o.priority === "URGENT" ? "▲ " : ""}{o.priority}
-                                </span>
-                              </td>
-                              <td style={{ padding: "10px 13px" }}>
-                                <span style={{ padding: "3px 9px", borderRadius: 4, fontSize: 9, fontWeight: 700, ...STATUS_STYLE.active }}>ACTIVE</span>
-                              </td>
-                              <td style={{ padding: "10px 13px", fontSize: 11, color: C.muted }}>{form.doctorName || "Dr. Admin"}</td>
-                              <td style={{ padding: "10px 13px" }}>
-                                <div style={{ display: "flex", gap: 3 }}>
-                                  {["—","‖","⊘","🖨"].map(a => (
-                                    <button key={a} onClick={() => a === "⊘" && setOrders(p => p.filter(x => x._id !== o._id))}
-                                      style={{ width: 26, height: 26, borderRadius: 5, border: `1.5px solid ${C.border}`, background: "white", cursor: "pointer", fontSize: 11, display: "flex", alignItems: "center", justifyContent: "center" }}>{a}</button>
-                                  ))}
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
 
               {/* Save buttons + Auto-save indicator + Signature */}
               {isOwner ? (

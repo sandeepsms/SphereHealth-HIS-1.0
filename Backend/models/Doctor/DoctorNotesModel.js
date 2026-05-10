@@ -55,8 +55,8 @@ const DoctorNotesSchema = new mongoose.Schema(
     patient: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Patient",
-      required: true,
       index: true,
+      // Not strictly required — ipdNo + patientUHID are the primary keys for IPD notes
     },
     patientName: { type: String },
     patientUHID: { type: String },
