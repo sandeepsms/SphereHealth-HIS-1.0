@@ -10,6 +10,7 @@ router.post("/", ctrl.createNote);
 router.get("/:id", ctrl.getNoteById);
 router.put("/:id", ctrl.updateNote);
 router.patch("/:id/sign", ctrl.signNote);
+router.patch("/:id/diagnosis", ctrl.updateDiagnosis);
 router.delete("/:id", ctrl.deleteNote);
 
 module.exports = router;

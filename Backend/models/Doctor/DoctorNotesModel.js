@@ -91,7 +91,10 @@ const DoctorNotesSchema = new mongoose.Schema(
     investigations: [{ type: String }],
     orders: [OrderSchema],
     provisionalDiagnosis: { type: String },
-    finalDiagnosis: { type: String },
+    workingDiagnosis:     { type: String },
+    finalDiagnosis:       { type: String },
+    icd10Code:            { type: String },
+    icd10Description:     { type: String },
 
     status: {
       type: String,

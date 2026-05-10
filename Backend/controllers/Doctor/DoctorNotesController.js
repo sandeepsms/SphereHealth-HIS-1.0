@@ -88,6 +88,12 @@ class DoctorNotesController {
     return res.json({ success: true, message: "Note signed", data: note });
   });
 
+  // PATCH /api/doctor-notes/:id/diagnosis
+  updateDiagnosis = handle(async (req, res) => {
+    const note = await doctorNotesService.updateDiagnosis(req.params.id, req.body);
+    return res.json({ success: true, message: "Diagnosis updated", data: note });
+  });
+
   // DELETE /api/doctor-notes/:id
   deleteNote = handle(async (req, res) => {
     const doctorUserId =

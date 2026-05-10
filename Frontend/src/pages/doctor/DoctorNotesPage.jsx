@@ -259,7 +259,9 @@ function DoctorNotesContent({ selectedPatient }) {
 
   const [soap,     setSoap]     = useState(initSoap());
   const [vitals,   setVitals]   = useState(initVitals());
-  const [diag,     setDiag]     = useState({ provisional: "", final: "", icd10: "", status: "Stable" });
+  const [diag,     setDiag]     = useState({ provisional: "", working: "", final: "", icd10Code: "", icd10Description: "", status: "Stable" });
+  const [diagSaving, setDiagSaving] = useState(false);
+  const [diagNoteId, setDiagNoteId] = useState(null); // most-recent note _id for diagnosis PATCH
   const [invx,     setInvx]     = useState("");  // comma-sep investigations ordered
   const [orders,   setOrders]   = useState([]);  // inline orders array
   const [orderRow, setOrderRow] = useState({ type: "medication", instruction: "", dose: "", route: "Oral", frequency: "TDS", duration: "3 days", notes: "", priority: "ROUTINE" });
@@ -347,7 +349,25 @@ function DoctorNotesContent({ selectedPatient }) {
     try {
       const { data } = await axios.get(`${API_ENDPOINTS.DOCTOR_NOTES}/ipd/${ipdNo}`);
       const arr = Array.isArray(data) ? data : data.data || [];
-      setNotes(arr.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
+      const sorted = arr.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      setNotes(sorted);
+      // Populate diag state from the most recent note that has any diagnosis data
+      const withDiag = sorted.find(n =>
+        n.provisionalDiagnosis || n.workingDiagnosis || n.finalDiagnosis || n.icd10Code
+      );
+      if (withDiag) {
+        setDiagNoteId(withDiag._id);
+        setDiag(prev => ({
+          ...prev,
+          provisional:    withDiag.provisionalDiagnosis  || prev.provisional,
+          working:        withDiag.workingDiagnosis       || prev.working,
+          final:          withDiag.finalDiagnosis         || prev.final,
+          icd10Code:      withDiag.icd10Code              || prev.icd10Code,
+          icd10Description: withDiag.icd10Description     || prev.icd10Description,
+        }));
+      } else if (sorted.length > 0) {
+        setDiagNoteId(sorted[0]._id);
+      }
     } catch { /* silent */ }
   };
 
@@ -410,7 +430,8 @@ function DoctorNotesContent({ selectedPatient }) {
         ...(vitals.gcs    ? { gcs:    vitals.gcs            } : {}),
         ...(vitals.urine  ? { urine:  Number(vitals.urine)  } : {}),
       } : undefined,
-      provisionalDiagnosis: diag.provisional, finalDiagnosis: diag.final,
+      provisionalDiagnosis: diag.provisional, workingDiagnosis: diag.working, finalDiagnosis: diag.final,
+      icd10Code: diag.icd10Code, icd10Description: diag.icd10Description,
       investigations: invx ? invx.split(",").map(s => s.trim()).filter(Boolean) : [],
       orders: orders.map(o => ({
         type: ["medication","iv_fluid","procedure","diet","other"].includes(o.type) ? o.type : "other",
@@ -620,6 +641,45 @@ function DoctorNotesContent({ selectedPatient }) {
     } catch (err) {
       toast.error(err?.response?.data?.message || "Sign failed");
     }
+  };
+
+  /* ── Save Diagnosis (standalone card) ── */
+  const saveDiagnosis = async () => {
+    if (!patient) return;
+    const ipdNo = patient.ipdNo || patient.admissionNumber || patient._id;
+    const token = localStorage.getItem("his_token");
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    const payload = {
+      provisionalDiagnosis: diag.provisional || "",
+      workingDiagnosis:     diag.working      || "",
+      finalDiagnosis:       diag.final        || "",
+      icd10Code:            diag.icd10Code    || "",
+      icd10Description:     diag.icd10Description || "",
+    };
+    try {
+      setDiagSaving(true);
+      if (diagNoteId) {
+        await axios.patch(`${API_ENDPOINTS.DOCTOR_NOTES}/${diagNoteId}/diagnosis`, payload, { headers });
+      } else {
+        // No note yet — create a minimal draft note to anchor the diagnosis
+        const res = await axios.post(API_ENDPOINTS.DOCTOR_NOTES, {
+          ...payload,
+          patient: patient.patientId?._id || patient.patient,
+          patientName: patient.patientName || patient.patientId?.fullName || "",
+          patientUHID: patient.UHID || patient.uhid || searchUHID,
+          ipdNo,
+          visitDate: new Date(),
+          shift, noteType: "daily",
+          doctorName: user?.personalInfo ? `${user.personalInfo.firstName} ${user.personalInfo.lastName}`.trim() : user?.name || "",
+        }, { headers });
+        const saved = res.data?.data || res.data;
+        if (saved?._id) setDiagNoteId(saved._id);
+      }
+      toast.success("Diagnosis updated ✓");
+      await fetchNotes(ipdNo);
+    } catch (err) {
+      toast.error(err?.response?.data?.message || "Failed to save diagnosis");
+    } finally { setDiagSaving(false); }
   };
 
   const today = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
@@ -1073,6 +1133,114 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
             <div style={{ background: "#f0fdf4", border: "1.5px solid #bbf7d0", borderRadius: 10, padding: "9px 16px", marginBottom: 14, display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#15803d", fontWeight: 600 }}>
               <i className="pi pi-check-circle" style={{ fontSize: 14 }} />
               Initial Assessment completed &amp; signed — full documentation access unlocked
+            </div>
+          )}
+
+          {/* ══ DIAGNOSIS PANEL ══════════════════════════════════════════════ */}
+          {patient && (
+            <div style={{ background: "white", border: "1.5px solid #e0e7ef", borderRadius: 14, padding: "18px 22px", marginBottom: 14, boxShadow: "0 2px 10px rgba(37,99,235,.06)" }}>
+              {/* Header */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ width: 34, height: 34, borderRadius: 9, background: "#dbeafe", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <i className="pi pi-bookmark" style={{ fontSize: 15, color: "#1d4ed8" }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: "#1e3a5f", letterSpacing: ".3px" }}>Patient Diagnosis</div>
+                    <div style={{ fontSize: 11, color: "#64748b", fontWeight: 500 }}>Provisional → Working → Final + ICD-10 coding</div>
+                  </div>
+                </div>
+                <button
+                  onClick={saveDiagnosis}
+                  disabled={diagSaving}
+                  style={{ padding: "8px 20px", background: diagSaving ? "#93c5fd" : "#2563eb", color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, cursor: diagSaving ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 6, boxShadow: diagSaving ? "none" : "0 3px 10px rgba(37,99,235,.28)" }}>
+                  {diagSaving
+                    ? <><i className="pi pi-spin pi-spinner" style={{ fontSize: 11 }} /> Saving…</>
+                    : <><i className="pi pi-check" style={{ fontSize: 11 }} /> Update Diagnosis</>}
+                </button>
+              </div>
+
+              {/* Diagnosis fields — 3-column for dx, 2-column for ICD */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+                {/* Provisional */}
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#f59e0b", flexShrink: 0 }} />
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "#92400e", textTransform: "uppercase", letterSpacing: ".6px" }}>Provisional Dx</span>
+                  </div>
+                  <input
+                    value={diag.provisional}
+                    onChange={e => setDiag(p => ({ ...p, provisional: e.target.value }))}
+                    placeholder="Suspected diagnosis on admission"
+                    style={{ width: "100%", border: "1.5px solid #fcd34d", borderRadius: 8, padding: "9px 12px", fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#1e293b", outline: "none", background: "#fffbeb", boxSizing: "border-box" }}
+                  />
+                </div>
+                {/* Working */}
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#3b82f6", flexShrink: 0 }} />
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "#1d4ed8", textTransform: "uppercase", letterSpacing: ".6px" }}>Working Dx</span>
+                  </div>
+                  <input
+                    value={diag.working}
+                    onChange={e => setDiag(p => ({ ...p, working: e.target.value }))}
+                    placeholder="Current evolving diagnosis"
+                    style={{ width: "100%", border: "1.5px solid #93c5fd", borderRadius: 8, padding: "9px 12px", fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#1e293b", outline: "none", background: "#eff6ff", boxSizing: "border-box" }}
+                  />
+                </div>
+                {/* Final */}
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#22c55e", flexShrink: 0 }} />
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "#166534", textTransform: "uppercase", letterSpacing: ".6px" }}>Final Dx</span>
+                  </div>
+                  <input
+                    value={diag.final}
+                    onChange={e => setDiag(p => ({ ...p, final: e.target.value }))}
+                    placeholder="Confirmed final diagnosis"
+                    style={{ width: "100%", border: "1.5px solid #86efac", borderRadius: 8, padding: "9px 12px", fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#1e293b", outline: "none", background: "#f0fdf4", boxSizing: "border-box" }}
+                  />
+                </div>
+              </div>
+
+              {/* ICD-10 row */}
+              <div style={{ display: "grid", gridTemplateColumns: "200px 1fr", gap: 12 }}>
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#8b5cf6", flexShrink: 0 }} />
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "#5b21b6", textTransform: "uppercase", letterSpacing: ".6px" }}>ICD-10 Code</span>
+                  </div>
+                  <input
+                    value={diag.icd10Code}
+                    onChange={e => setDiag(p => ({ ...p, icd10Code: e.target.value }))}
+                    placeholder="e.g. J18.9"
+                    style={{ width: "100%", border: "1.5px solid #c4b5fd", borderRadius: 8, padding: "9px 12px", fontFamily: "'DM Mono',monospace", fontSize: 13, fontWeight: 700, color: "#5b21b6", outline: "none", background: "#faf5ff", boxSizing: "border-box", letterSpacing: ".5px" }}
+                  />
+                </div>
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#8b5cf6", flexShrink: 0 }} />
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "#5b21b6", textTransform: "uppercase", letterSpacing: ".6px" }}>ICD-10 Description</span>
+                  </div>
+                  <input
+                    value={diag.icd10Description}
+                    onChange={e => setDiag(p => ({ ...p, icd10Description: e.target.value }))}
+                    placeholder="e.g. Unspecified pneumonia, Sepsis due to Staphylococcus aureus…"
+                    style={{ width: "100%", border: "1.5px solid #c4b5fd", borderRadius: 8, padding: "9px 12px", fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#1e293b", outline: "none", background: "#faf5ff", boxSizing: "border-box" }}
+                  />
+                </div>
+              </div>
+
+              {/* Status chips row */}
+              <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: ".5px" }}>Patient Status:</span>
+                {["Stable","Improving","Unchanged","Deteriorating","Critical","Ready for Discharge"].map(s => (
+                  <button key={s} onClick={() => setDiag(p => ({ ...p, status: s }))}
+                    style={{ padding: "4px 13px", borderRadius: 20, border: `1.5px solid ${diag.status === s ? "#2563eb" : "#e2e8f0"}`, background: diag.status === s ? "#2563eb" : "white", color: diag.status === s ? "white" : "#64748b", fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, cursor: "pointer", transition: "all .15s" }}>
+                    {s}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
@@ -2172,8 +2340,10 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                   {/* Diagnosis */}
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 }}>
                     <FL label="Provisional Diagnosis"><input style={fld} value={diag.provisional} placeholder="Working diagnosis" onChange={e => setDiag(p => ({ ...p, provisional: e.target.value }))} /></FL>
+                    <FL label="Working Diagnosis"><input style={fld} value={diag.working} placeholder="Current working diagnosis" onChange={e => setDiag(p => ({ ...p, working: e.target.value }))} /></FL>
                     <FL label="Final Diagnosis"><input style={fld} value={diag.final} placeholder="Confirmed diagnosis" onChange={e => setDiag(p => ({ ...p, final: e.target.value }))} /></FL>
-                    <FL label="ICD-10 Code"><input style={fld} value={diag.icd10} placeholder="e.g. J18.9" onChange={e => setDiag(p => ({ ...p, icd10: e.target.value }))} /></FL>
+                    <FL label="ICD-10 Code"><input style={fld} value={diag.icd10Code} placeholder="e.g. J18.9" onChange={e => setDiag(p => ({ ...p, icd10Code: e.target.value }))} /></FL>
+                    <FL label="ICD-10 Description"><input style={fld} value={diag.icd10Description} placeholder="e.g. Unspecified pneumonia" onChange={e => setDiag(p => ({ ...p, icd10Description: e.target.value }))} /></FL>
                     <FL label="Patient Status">
                       <select style={sel} value={diag.status} onChange={e => setDiag(p => ({ ...p, status: e.target.value }))}>
                         {["Stable","Improving","Unchanged","Deteriorating","Critical","Ready for Discharge"].map(o=><option key={o}>{o}</option>)}

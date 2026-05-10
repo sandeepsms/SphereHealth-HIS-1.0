@@ -224,7 +224,10 @@ const updateDoctorNote = async (id, data, doctorUserId) => {
     "investigations",
     "orders",
     "provisionalDiagnosis",
+    "workingDiagnosis",
     "finalDiagnosis",
+    "icd10Code",
+    "icd10Description",
     "shift",
   ];
   allowed.forEach((f) => {
@@ -232,6 +235,26 @@ const updateDoctorNote = async (id, data, doctorUserId) => {
   });
   note.updatedBy = doctorUserId;
   await note.save();
+  return note;
+};
+
+// ─────────────────────────────────────────────────────────────
+// Update diagnosis fields only (works on signed notes too — NABH amendment)
+// ─────────────────────────────────────────────────────────────
+const updateDiagnosis = async (id, data) => {
+  const diagFields = ["provisionalDiagnosis", "workingDiagnosis", "finalDiagnosis", "icd10Code", "icd10Description"];
+  const update = {};
+  diagFields.forEach(f => { if (data[f] !== undefined) update[f] = data[f]; });
+  const note = await DoctorNotes.findByIdAndUpdate(
+    id,
+    { $set: update },
+    { new: true }
+  );
+  if (!note) {
+    const error = new Error("Note not found");
+    error.statusCode = 404;
+    throw error;
+  }
   return note;
 };
 
@@ -267,5 +290,6 @@ module.exports = {
   getNotesByIPD,
   getNoteById,
   updateDoctorNote,
+  updateDiagnosis,
   deleteDoctorNote,
 };

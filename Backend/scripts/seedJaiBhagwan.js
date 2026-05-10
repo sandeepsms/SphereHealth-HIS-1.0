@@ -158,6 +158,9 @@ async function run() {
   console.log(`   initialAssessment.nurseCompleted:  ${admission.initialAssessment.nurseCompleted}`);
 
   // ── 6. SEED AGE TREATMENT CHART ORDERS ──────────────────────────────────────
+  // Skipped — doctor will fill via Initial Assessment to test the full flow.
+  console.log("\n💊 Skipping pre-seeded orders — doctor will fill via Initial Assessment.");
+  if (false) {
   console.log("\n💊 Seeding Acute Gastroenteritis treatment orders...");
 
   const today = new Date(now); today.setHours(0, 0, 0, 0);
@@ -316,6 +319,7 @@ async function run() {
 
   const created = await DoctorOrder.insertMany(orders, { ordered: false });
   console.log(`✅ Created ${created.length} treatment orders for Acute Gastroenteritis`);
+  } // end if(false)
 
   // ── 7. SUMMARY ──────────────────────────────────────────────────────────────
   console.log("\n══════════════════════════════════════════════════════");
