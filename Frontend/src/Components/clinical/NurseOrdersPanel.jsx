@@ -289,11 +289,18 @@ function MedOrderCard({ order, inProgress }) {
   );
 }
 
+// ── Date helpers ──────────────────────────────────────────────────────────────
+function fmtNavDate(d) {
+  if (d.toDateString() === new Date().toDateString()) return "📅 Today";
+  return d.toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short", year: "numeric" });
+}
+
 // ── Main panel ────────────────────────────────────────────────────────────────
 export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest, refreshTrigger }) {
   const [orders,      setOrders]      = useState([]);
   const [loading,     setLoading]     = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
+  const [ordersDate,  setOrdersDate]  = useState(new Date());   // date navigator
   const [nurseName,   setNurseName]   = useState(() => {
     try {
       const u = JSON.parse(localStorage.getItem("his_user") || "{}");
@@ -302,11 +309,14 @@ export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest, refr
   });
   const intervalRef = useRef(null);
 
+  const isOrdersToday = ordersDate.toDateString() === new Date().toDateString();
+
   const fetchOrders = useCallback(async () => {
     if (!UHID) return;
     setLoading(true);
     try {
-      const params = new URLSearchParams({ UHID, status: "Pending,Acknowledged,InProgress,Completed" });
+      // Fetch ALL statuses so historical date views also see Cancelled/Stopped
+      const params = new URLSearchParams({ UHID });
       if (visitId) params.append("visitId", visitId);
       const { data } = await axios.get(`${API_ENDPOINTS.DOCTOR_ORDERS}?${params}`);
       setOrders(data.data || []);
@@ -326,6 +336,14 @@ export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest, refr
     if (refreshTrigger > 0) fetchOrders();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshTrigger]);
+
+  // Date navigation
+  const prevDay = () => { const d = new Date(ordersDate); d.setDate(d.getDate() - 1); setOrdersDate(d); };
+  const nextDay = () => {
+    if (isOrdersToday) return;
+    const d = new Date(ordersDate); d.setDate(d.getDate() + 1);
+    if (d <= new Date()) setOrdersDate(d);
+  };
 
   // Nurse completes a step
   const handleStepDone = async (orderId, step, totalSteps) => {
@@ -347,12 +365,19 @@ export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest, refr
     }
   };
 
-  // Group orders into 3 buckets
-  const newOrders    = orders.filter(o => o.status === "Pending").sort((a,b) => a.priority === "STAT" ? -1 : b.priority === "STAT" ? 1 : 0);
-  const inProgress   = orders.filter(o => ["InProgress","OnHold","Acknowledged"].includes(o.status));
-  const completed    = orders.filter(o => o.status === "Completed");
-  const cancelled    = orders.filter(o => o.status === "Cancelled");
-  const pending      = newOrders.length;
+  // Always filter by the selected date (orderedAt) — today and history both consistent
+  const ordersDateStr = ordersDate.toDateString();
+  const displayOrders = orders.filter(o => {
+    const d = new Date(o.orderedAt || o.createdAt);
+    return d.toDateString() === ordersDateStr;
+  });
+
+  // Group orders into buckets
+  const newOrders  = displayOrders.filter(o => o.status === "Pending").sort((a,b) => a.priority === "STAT" ? -1 : b.priority === "STAT" ? 1 : 0);
+  const inProgress = displayOrders.filter(o => ["InProgress","OnHold","Acknowledged"].includes(o.status));
+  const completed  = displayOrders.filter(o => o.status === "Completed");
+  const cancelled  = displayOrders.filter(o => ["Cancelled","Stopped"].includes(o.status));
+  const pending    = newOrders.length;
 
   return (
     <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, marginBottom: 20, overflow: "hidden", boxShadow: "0 1px 8px rgba(0,0,0,.06)", fontFamily: "'DM Sans',sans-serif" }}>
@@ -362,13 +387,13 @@ export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest, refr
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <i className="pi pi-list" style={{ fontSize: 14, color: C.nurse }} />
           <span style={{ fontWeight: 800, fontSize: 13, color: C.nurse }}>Doctor Orders</span>
-          {pending > 0 && (
+          {pending > 0 && isOrdersToday && (
             <span style={{ background: C.danger, color: "#fff", fontSize: 10, fontWeight: 800, padding: "2px 9px", borderRadius: 20, animation: "npulse 1.5s infinite" }}>
               {pending} New
             </span>
           )}
-          {orders.length > 0 && (
-            <span style={{ fontSize: 11, color: C.muted }}>{orders.length} total · {completed.length} done</span>
+          {displayOrders.length > 0 && (
+            <span style={{ fontSize: 11, color: C.muted }}>{displayOrders.length} order{displayOrders.length !== 1 ? "s" : ""} · {completed.length} done</span>
           )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -379,6 +404,34 @@ export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest, refr
             Refresh
           </button>
         </div>
+      </div>
+
+      {/* ── Date Navigator ── */}
+      <div style={{ padding: "9px 18px", borderBottom: `1px solid ${C.border}`, background: "#fafbfe", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <button onClick={prevDay}
+          style={{ border: `1px solid ${C.border}`, background: "#fff", borderRadius: 7, padding: "4px 12px", cursor: "pointer", fontSize: 12, color: C.muted, fontWeight: 600 }}>
+          ← Prev
+        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 12, fontWeight: 800, color: isOrdersToday ? C.purple : C.dark }}>
+            {fmtNavDate(ordersDate)}
+            {!isOrdersToday && (
+              <span style={{ fontWeight: 400, fontSize: 11, color: C.muted }}>
+                {" — "}{ordersDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
+              </span>
+            )}
+          </span>
+          {!isOrdersToday && (
+            <button onClick={() => setOrdersDate(new Date())}
+              style={{ border: `1px solid ${C.purple}40`, background: `${C.purple}0d`, borderRadius: 5, padding: "3px 9px", cursor: "pointer", fontSize: 10, color: C.purple, fontWeight: 700 }}>
+              Today
+            </button>
+          )}
+        </div>
+        <button onClick={nextDay} disabled={isOrdersToday}
+          style={{ border: `1px solid ${C.border}`, background: isOrdersToday ? "#f1f5f9" : "#fff", borderRadius: 7, padding: "4px 12px", cursor: isOrdersToday ? "not-allowed" : "pointer", fontSize: 12, color: isOrdersToday ? "#cbd5e1" : C.muted, fontWeight: 600 }}>
+          Next →
+        </button>
       </div>
 
       {/* ── Nurse name bar ── */}
@@ -407,10 +460,23 @@ export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest, refr
           <div style={{ textAlign: "center", padding: "20px 0", color: C.muted }}>
             <i className="pi pi-spin pi-spinner" style={{ fontSize: 22 }} />
           </div>
-        ) : orders.length === 0 ? (
-          <div style={{ textAlign: "center", padding: "20px 0", color: C.muted, fontSize: 13 }}>
-            <i className="pi pi-check-circle" style={{ fontSize: 28, display: "block", marginBottom: 8, color: C.success }} />
-            No active orders — Doctor has not placed any orders yet.
+        ) : displayOrders.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "28px 0", color: C.muted, fontSize: 13 }}>
+            <i className="pi pi-calendar" style={{ fontSize: 30, display: "block", marginBottom: 10, color: "#cbd5e1" }} />
+            <div style={{ fontWeight: 700, fontSize: 14, color: C.dark, marginBottom: 4 }}>
+              {isOrdersToday ? "No orders yet" : "No orders on this date"}
+            </div>
+            <div style={{ fontSize: 11, color: C.muted }}>
+              {isOrdersToday
+                ? "Doctor has not placed any orders yet."
+                : `No orders were placed on ${ordersDate.toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" })}`}
+            </div>
+            {!isOrdersToday && (
+              <button onClick={() => setOrdersDate(new Date())}
+                style={{ marginTop: 12, border: `1px solid ${C.purple}40`, background: `${C.purple}0d`, borderRadius: 6, padding: "5px 14px", cursor: "pointer", fontSize: 11, color: C.purple, fontWeight: 700 }}>
+                View Today's Orders
+              </button>
+            )}
           </div>
         ) : (
           <>
@@ -456,11 +522,23 @@ export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest, refr
 
             {/* ── COMPLETED ── */}
             {completed.length > 0 && (
-              <div>
+              <div style={{ marginBottom: cancelled.length > 0 ? 16 : 0 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: C.success, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 8 }}>
                   ✅ Completed ({completed.length})
                 </div>
                 {completed.map(order => (
+                  <OrderCard key={order._id} order={order} nurseName={nurseName} onStepDone={handleStepDone} onConsentRequest={onConsentRequest} />
+                ))}
+              </div>
+            )}
+
+            {/* ── CANCELLED / STOPPED (historical) ── */}
+            {cancelled.length > 0 && (
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.danger, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 8 }}>
+                  🚫 Cancelled / Stopped ({cancelled.length})
+                </div>
+                {cancelled.map(order => (
                   <OrderCard key={order._id} order={order} nurseName={nurseName} onStepDone={handleStepDone} onConsentRequest={onConsentRequest} />
                 ))}
               </div>

@@ -154,6 +154,15 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
   const [lastRefreshed, setLastRefreshed] = useState(null);
   const autoTimer = useRef(null);
 
+  /* ── MAR date navigator ── */
+  const [marDate, setMarDate] = useState(() => new Date());
+  const todayMidnight = new Date(); todayMidnight.setHours(0,0,0,0);
+  const isMarToday = marDate.toDateString() === new Date().toDateString();
+  const marDateStr = marDate.toDateString();
+  const prevMarDay = () => setMarDate(d => { const n = new Date(d); n.setDate(n.getDate()-1); return n; });
+  const nextMarDay = () => setMarDate(d => { const n = new Date(d); n.setDate(n.getDate()+1); return n; });
+  const canGoNext  = !isMarToday; // cannot go past today
+
   /* ── Form state for action modals ── */
   const [adminForm, setAdminForm] = useState({
     status: "given", givenAt: "", doseGiven: "", routeUsed: "", siteUsed: "", notes: "",
@@ -525,26 +534,29 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
 
   const timeNow = new Date().toTimeString().slice(0, 5); // "HH:MM"
 
-  /* ── Helper: get today's admin record for a time ── */
+  /* ── Helper: get the admin record for a time on marDate ── */
   const getTodayRecord = (order, time) => {
-    const todayStr = new Date().toDateString();
-
-    // STAT token → match by isStatDose + exact scheduledTime
+    // STAT token → match by scheduledTime; accept isStatDose flag OR non-standard time
     if (time?.startsWith("STAT:")) {
       const statTime = time.slice(5); // "HH:MM"
-      return order.administrationRecord?.find(r =>
-        r.isStatDose &&
-        r.scheduledTime === statTime &&
-        r.givenAt && new Date(r.givenAt).toDateString() === todayStr
-      );
+      const freq = order.orderDetails?.frequency;
+      const standardSlots = new Set(FREQ_TIMES[freq] || []);
+      return order.administrationRecord?.find(r => {
+        if (r.scheduledTime !== statTime) return false;
+        if (!r.givenAt || new Date(r.givenAt).toDateString() !== marDateStr) return false;
+        return r.isStatDose || !standardSlots.has(r.scheduledTime);
+      });
     }
 
-    // Regular slot — exclude STAT records
+    // Regular slot — exclude STAT records and non-standard-time records
+    const freq = order.orderDetails?.frequency;
+    const standardSlots = new Set(FREQ_TIMES[freq] || []);
     return order.administrationRecord?.find(r => {
       if (r.isStatDose) return false;
+      if (r.scheduledTime && !standardSlots.has(r.scheduledTime)) return false;
       if (r.scheduledTime !== time) return false;
-      if (r.scheduledDate && new Date(r.scheduledDate).toDateString() === todayStr) return true;
-      if (r.givenAt && new Date(r.givenAt).toDateString() === todayStr) return true;
+      if (r.scheduledDate && new Date(r.scheduledDate).toDateString() === marDateStr) return true;
+      if (r.givenAt && new Date(r.givenAt).toDateString() === marDateStr) return true;
       return false;
     });
   };
@@ -553,27 +565,39 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
   const getScheduledTimes = (order) => {
     const freq = order.orderDetails?.frequency;
     const regularTimes = FREQ_TIMES[freq] || null;
+    const standardSlots = new Set(regularTimes || []);
 
-    // Append any today's STAT doses as "STAT:<HH:MM>" tokens
-    const todayStr = new Date().toDateString();
-    const statTimes = (order.administrationRecord || [])
-      .filter(r => r.isStatDose && r.givenAt && new Date(r.givenAt).toDateString() === todayStr)
-      .map(r => `STAT:${r.scheduledTime || new Date(r.givenAt).toTimeString().slice(0, 5)}`);
+    // Collect STAT doses for marDate: either flagged isStatDose OR a scheduledTime
+    // not in the standard slot set (handles records saved before backend model update).
+    const statEntries = (order.administrationRecord || []).filter(r => {
+      if (!r.givenAt || new Date(r.givenAt).toDateString() !== marDateStr) return false;
+      return r.isStatDose || !standardSlots.has(r.scheduledTime);
+    });
+    // Deduplicate by scheduledTime
+    const seenStatTimes = new Map();
+    statEntries.forEach(r => {
+      const key = r.scheduledTime || new Date(r.givenAt).toTimeString().slice(0, 5);
+      if (!seenStatTimes.has(key)) seenStatTimes.set(key, r);
+    });
+    const statTimes = [...seenStatTimes.keys()].map(k => `STAT:${k}`);
 
     if (regularTimes) return [...regularTimes, ...statTimes];
 
     // Unknown / custom frequency → derive from non-STAT records
     if (order.administrationRecord?.length) {
       const unique = [...new Set(
-        order.administrationRecord.filter(r => !r.isStatDose).map(r => r.scheduledTime).filter(Boolean)
+        order.administrationRecord
+          .filter(r => !r.isStatDose && standardSlots.has(r.scheduledTime))
+          .map(r => r.scheduledTime).filter(Boolean)
       )];
       if (unique.length) return [...unique, ...statTimes];
     }
     return statTimes.length ? statTimes : ["—"];
   };
 
-  /* ── Color for overdue ── */
+  /* ── Color for overdue (only meaningful for today) ── */
   const isOverdue = (time) => {
+    if (!isMarToday) return false; // Past/future dates: no overdue highlight
     if (!time || time?.startsWith("STAT:")) return false;
     if (time === "Immediate" || time === "As Needed" || time === "Continuous") return false;
     return time < timeNow;
@@ -584,6 +608,7 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
     if (!time || time?.startsWith("STAT:")) return true; // STAT always in window
     const SPECIAL = ["Immediate","As Needed","Continuous","Before Meals","After Meals","Once Weekly","—"];
     if (SPECIAL.includes(time)) return true;
+    if (!isMarToday) return true; // Past date: all slots are "open" (history view)
     const toMins = (t) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
     return toMins(timeNow) >= toMins(time) - 30;
   };
@@ -694,6 +719,22 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
             </span>
           )}
         </button>
+      </div>
+
+      {/* ── MAR Date Navigator ── */}
+      <div style={{ padding: "8px 16px", background: isMarToday ? "#f0fdf4" : "#fefce8", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px" }}>📅 Viewing MAR for:</span>
+        <button onClick={prevMarDay} style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${C.border}`, background: "white", cursor: "pointer", fontSize: 12, fontWeight: 700, color: C.blue }}>← Prev</button>
+        <span style={{ fontWeight: 800, fontSize: 13, color: isMarToday ? C.green : C.amber, background: isMarToday ? C.greenL : C.amberL, border: `1.5px solid ${isMarToday ? C.greenB : C.amberB}`, borderRadius: 7, padding: "3px 12px" }}>
+          {isMarToday ? "📅 Today — " : ""}{marDate.toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short", year: "numeric" })}
+        </span>
+        <button onClick={nextMarDay} disabled={!canGoNext} style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${C.border}`, background: canGoNext ? "white" : "#f1f5f9", cursor: canGoNext ? "pointer" : "not-allowed", fontSize: 12, fontWeight: 700, color: canGoNext ? C.blue : C.muted, opacity: canGoNext ? 1 : 0.5 }}>Next →</button>
+        {!isMarToday && (
+          <button onClick={() => setMarDate(new Date())} style={{ padding: "4px 12px", borderRadius: 6, border: `1.5px solid ${C.green}`, background: C.greenL, cursor: "pointer", fontSize: 12, fontWeight: 700, color: C.green }}>↩ Go to Today</button>
+        )}
+        {!isMarToday && (
+          <span style={{ fontSize: 10, color: C.amber, fontWeight: 600, marginLeft: 4 }}>📖 History view — administration actions disabled</span>
+        )}
       </div>
 
       {/* ── NABH Legend ── */}
@@ -849,11 +890,7 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
 
                           {/* Dose cells */}
                           <td style={{ ...TD, minWidth: 460 }}>
-                            {order.status === "Completed" ? (
-                              <span style={{ fontSize: 11, fontWeight: 700, color: C.green, background: C.greenL, border: `1px solid ${C.greenB}`, borderRadius: 6, padding: "4px 10px", display: "inline-block" }}>
-                                ✅ Course completed — no new doses
-                              </span>
-                            ) : (<>
+                            {false ? null : (<>
                             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                               {times.map(t => {
                                 const isStat   = t.startsWith("STAT:");
@@ -862,7 +899,7 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                                 const cfg      = STATUS_CFG[st] || STATUS_CFG.pending;
                                 const overdue  = !rec?.givenAt && st === "pending" && isOverdue(t);
                                 const upcoming = !isStat && !rec && st === "pending" && !isWithinWindow(t);
-                                const canClick = nurseMode && !isStopped && !upcoming && !isStat && st !== "given";
+                                const canClick = nurseMode && !isStopped && !upcoming && !isStat && st !== "given" && isMarToday;
 
                                 // ── STAT dose cell ──
                                 if (isStat) {
@@ -942,14 +979,14 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                           {/* Nurse actions */}
                           {nurseMode && (
                             <td style={{ ...TD }}>
-                              {!isStopped && order.status !== "Completed" && (
+                              {!isStopped && isMarToday && (
                                 <button
                                   onClick={() => openAction(order, "administer", order.administrationRecord?.find(r => r.status === "pending") || { scheduledTime: times[0] })}
                                   style={{ padding: "4px 10px", background: C.blue, color: "white", border: "none", borderRadius: 6, fontSize: 10, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}>
                                   <i className="pi pi-check" style={{ fontSize: 9 }} />Administer
                                 </button>
                               )}
-                              {order.status === "Completed" && (
+                              {order.status === "Completed" && !isMarToday && (
                                 <span style={{ fontSize: 10, fontWeight: 700, color: C.green }}>✅ Done</span>
                               )}
                             </td>

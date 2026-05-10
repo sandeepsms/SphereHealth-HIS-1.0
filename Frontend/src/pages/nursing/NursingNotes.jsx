@@ -240,10 +240,8 @@ function NursingNotesContent({ selectedPatient }) {
      Condition 2 handles legacy data where nurseCompleted was never persisted due to
      the Mongoose strict-mode bug that has now been fixed.
   ── */
-  const nurseAssessmentDone =
-    patient?.initialAssessment?.nurseCompleted === true ||
-    notes.length > 0;
-  const gateActive = !!patient && !nurseAssessmentDone;
+  const nurseAssessmentDone = true;   // gate removed — all modules always accessible
+  const gateActive = false;           // NABH COP.2 gate disabled
   const [filterType, setFilterType] = useState("All");
   const [filterShift,setFilterShift]= useState("");
   const [shift,      setShift]      = useState(getShift());
@@ -565,7 +563,7 @@ function NursingNotesContent({ selectedPatient }) {
 
   const fetchNotes = async (ipdNo, admissionDoc) => {
     try {
-      const { data } = await axios.get(`${API_ENDPOINTS.NURSE_NOTES}?ipdNo=${ipdNo}`);
+      const { data } = await axios.get(`${API_ENDPOINTS.NURSING_NOTES}/ipd/${encodeURIComponent(ipdNo)}`);
       const arr = Array.isArray(data) ? data : data.data || [];
       setNotes(arr.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
 
@@ -1089,10 +1087,29 @@ function NursingNotesContent({ selectedPatient }) {
               </button>
             </div>
           )}
-          {!gateActive && nurseAssessmentDone && (
-            <div style={{ background: "#f0fdf4", border: "1.5px solid #bbf7d0", borderRadius: 10, padding: "9px 16px", marginBottom: 14, display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#15803d", fontWeight: 600 }}>
-              <i className="pi pi-check-circle" style={{ fontSize: 14 }} />
-              Nursing Initial Assessment completed — full documentation access unlocked
+          {/* gate banners removed */}
+
+          {/* ── Nursing Notes Quick-View Banner (click → jump to timeline) ── */}
+          {patient && (
+            <div
+              onClick={() => document.getElementById('nursing-notes-timeline')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+              style={{ marginBottom: 14, background: notes.length > 0 ? C.primaryL : "#f8fafc", border: `1.5px solid ${notes.length > 0 ? C.primary + "40" : C.border}`, borderRadius: 10, padding: "10px 16px", display: "flex", alignItems: "center", gap: 12, cursor: "pointer", transition: "background .15s" }}
+            >
+              <div style={{ width: 34, height: 34, borderRadius: 9, background: notes.length > 0 ? C.primary : "#e2e8f0", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <i className="pi pi-list" style={{ fontSize: 14, color: notes.length > 0 ? "white" : C.muted }} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: 13, color: notes.length > 0 ? C.primary : C.muted }}>
+                  {notes.length > 0 ? `📋 ${notes.length} Nursing Notes recorded` : "📋 No nursing notes yet"}
+                </div>
+                {notes.length > 0 && (
+                  <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
+                    Last: <strong>{notes[0]?.noteType || "note"}</strong> by {notes[0]?.nurseName || "nurse"} · {notes[0]?.shift || ""} shift
+                    {notes[0]?.createdAt ? " · " + new Date(notes[0].createdAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : ""}
+                  </div>
+                )}
+              </div>
+              {notes.length > 0 && <span style={{ fontSize: 11, color: C.primary, fontWeight: 700, flexShrink: 0 }}>View all ↓</span>}
             </div>
           )}
 
@@ -1424,7 +1441,7 @@ function NursingNotesContent({ selectedPatient }) {
           })()}
 
           {/* ── Notes Timeline ── */}
-          <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 16, overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,.04)' }}>
+          <div id="nursing-notes-timeline" style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 16, overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,.04)' }}>
             {/* Timeline header */}
             <div style={{ background: 'linear-gradient(to right, #f0fdfa, #f8fafc)', borderBottom: `1px solid ${C.border}`, padding: '14px 22px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
