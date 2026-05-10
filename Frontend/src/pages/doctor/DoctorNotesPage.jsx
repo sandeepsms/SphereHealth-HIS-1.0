@@ -450,6 +450,30 @@ function DoctorNotesContent({ selectedPatient }) {
         }
         toast.success(status === "signed" ? "Note signed & submitted ✓" : "Draft saved");
 
+        /* ── Mark admission initialAssessment.doctorCompleted = true ──────────
+           Runs whenever the initial assessment note is saved (draft or signed).
+           This unlocks all other note types for this patient.
+        ──────────────────────────────────────────────────────────────────────── */
+        if (activeModal === "initial" && patient?._id) {
+          try {
+            const markRes = await axios.put(
+              `${API_ENDPOINTS.ADMISSIONS}/${patient._id}/initial-assessment`,
+              { role: "doctor", name: doctorName },
+              { headers }
+            );
+            // Update local patient state so the gate drops immediately (no reload needed)
+            setPatient(prev => prev ? {
+              ...prev,
+              initialAssessment: {
+                ...(prev.initialAssessment || {}),
+                doctorCompleted:   true,
+                doctorCompletedAt: new Date().toISOString(),
+                doctorName,
+              }
+            } : prev);
+          } catch { /* non-fatal — gate will drop on next patient reload */ }
+        }
+
         /* ── Auto-create DoctorOrder (Treatment Chart / MAR) entries ─────────
            Runs for initial assessment, standalone medication, and infusion notes.
            Only on NEW note creation (not on draft edits) to avoid duplicates.
