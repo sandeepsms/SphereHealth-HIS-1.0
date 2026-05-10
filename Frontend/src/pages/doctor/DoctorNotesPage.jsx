@@ -61,8 +61,23 @@ const FREQ_TIMES = {
 };
 const FREQ_LIST = Object.keys(FREQ_TIMES);
 
-const emptyMedRow  = () => ({ id: Date.now() + Math.random(), datetime: new Date().toISOString().slice(0,16), drug:"", dose:"", route:"PO", frequency:"OD", indication:"", status:"Active", stopReason:"" });
-const emptyInfRow  = () => ({ id: Date.now() + Math.random(), datetime: new Date().toISOString().slice(0,16), type:"Fluid", drugFluid:"", dilution:"", volume:"", rate:"", titrationGoal:"", startTime:"", status:"Active", stopReason:"" });
+const emptyMedRow  = () => ({ id: Date.now() + Math.random(), datetime: new Date().toISOString().slice(0,16), drug:"", dose:"", route:"PO", frequency:"OD", priority:"Routine", hamOverride:false, indication:"", status:"Active", stopReason:"" });
+const emptyInfRow  = () => ({ id: Date.now() + Math.random(), datetime: new Date().toISOString().slice(0,16), type:"Fluid", drugFluid:"", dilution:"", volume:"", rate:"", titrationGoal:"", startTime:"", priority:"Routine", hamOverride:false, status:"Active", stopReason:"" });
+
+/* ── NABH HAM auto-detection (for IA medication / infusion builder) ── */
+const HAM_KW_IA = [
+  "insulin","heparin","enoxaparin","fondaparinux","warfarin","acenocoumarol","digoxin","amiodarone",
+  "kcl","potassium chloride","magnesium sulphate","mgso4","calcium chloride","nacl 3%","hypertonic saline",
+  "dextrose 25%","dextrose 50%","d50","d25",
+  "morphine","fentanyl","pethidine","tramadol iv","oxycodone",
+  "noradrenaline","norepinephrine","adrenaline","epinephrine",
+  "dopamine","dobutamine","vasopressin","milrinone","levosimendan",
+  "suxamethonium","succinylcholine","vecuronium","rocuronium","atracurium",
+  "streptokinase","alteplase","tenecteplase","methotrexate","cyclophosphamide","cisplatin","vincristine",
+  "oxytocin","nitroprusside","ketamine","propofol","midazolam iv","phenytoin iv",
+  "vancomycin iv","gentamicin iv","amikacin iv",
+];
+const isHAM_IA = (name = "") => HAM_KW_IA.some(k => (name || "").toLowerCase().includes(k));
 
 /* ── NABH Note Modules ── */
 const MODULES = [
@@ -434,6 +449,79 @@ function DoctorNotesContent({ selectedPatient }) {
           try { await axios.patch(`${API_ENDPOINTS.DOCTOR_NOTES}/${savedId}/sign`, {}, { headers }); } catch { /* signed inline */ }
         }
         toast.success(status === "signed" ? "Note signed & submitted ✓" : "Draft saved");
+
+        /* ── Auto-create DoctorOrder (Treatment Chart / MAR) entries ─────────
+           Runs for initial assessment, standalone medication, and infusion notes.
+           Only on NEW note creation (not on draft edits) to avoid duplicates.
+        ──────────────────────────────────────────────────────────────────────── */
+        if (["initial","medication","infusion"].includes(activeModal)) {
+          const UHID_val  = patient?.UHID || patient?.uhid || searchUHID;
+          const visitId_val = patient?.ipdNo || patient?.admissionNumber || patient?._id || "";
+          const patName   = patient?.patientName || patient?.patientId?.fullName || "";
+          const today     = new Date(); today.setHours(0,0,0,0);
+
+          const orderPromises = [];
+
+          // Medication orders
+          if (["initial","medication"].includes(activeModal)) {
+            medOrders.filter(m => m.drug?.trim() && m.status === "Active").forEach(m => {
+              const hamFlag = isHAM_IA(m.drug) || !!m.hamOverride;
+              const times   = FREQ_TIMES[m.frequency] || ["08:00"];
+              orderPromises.push(
+                axios.post(API_ENDPOINTS.DOCTOR_ORDERS, {
+                  UHID: UHID_val, patientName: patName, visitId: visitId_val, visitType: "IPD",
+                  orderType: "Medication",
+                  priority: m.priority || "Routine",
+                  hamFlag, twoNurseRequired: hamFlag, highRisk: hamFlag,
+                  orderDetails: {
+                    medicineName: m.drug, dose: m.dose, route: m.route,
+                    frequency: m.frequency, indication: m.indication,
+                    notes: m.stopReason || "",
+                  },
+                  orderedBy: doctorName, orderedByRole: "Doctor", orderedAt: new Date(),
+                  scheduledTimes: times,
+                  administrationRecord: times
+                    .filter(t => !["Immediate","As Needed","Continuous Infusion","Once Weekly","Before Meals","After Meals"].includes(t))
+                    .map(t => ({ scheduledTime: t, scheduledDate: today, status: "pending" })),
+                  auditLog: [{ step: "Order created (IA / Medication sheet)", doneBy: doctorName, doneAt: new Date(), notes: m.indication || "" }],
+                }, { headers }).catch(() => {})
+              );
+            });
+          }
+
+          // Infusion orders
+          if (["initial","infusion"].includes(activeModal)) {
+            infOrders.filter(inf => inf.drugFluid?.trim() && inf.status === "Active").forEach(inf => {
+              const hamFlag = isHAM_IA(inf.drugFluid) || !!inf.hamOverride;
+              orderPromises.push(
+                axios.post(API_ENDPOINTS.DOCTOR_ORDERS, {
+                  UHID: UHID_val, patientName: patName, visitId: visitId_val, visitType: "IPD",
+                  orderType: "IV_Fluid",
+                  priority: inf.priority || "Routine",
+                  hamFlag, twoNurseRequired: hamFlag, highRisk: hamFlag,
+                  orderDetails: {
+                    medicineName: inf.drugFluid, displayName: inf.drugFluid,
+                    dose: inf.volume ? `${inf.volume}ml` : "",
+                    route: "IV Infusion",
+                    frequency: "Continuous",
+                    rate: inf.rate, totalVolume: inf.volume,
+                    dilution: inf.dilution, titrationGoal: inf.titrationGoal,
+                    startTime: inf.startTime,
+                  },
+                  orderedBy: doctorName, orderedByRole: "Doctor", orderedAt: new Date(),
+                  currentRate: inf.rate,
+                  scheduledTimes: ["Continuous"],
+                  auditLog: [{ step: "Infusion started (IA / Infusion sheet)", doneBy: doctorName, doneAt: new Date(), notes: `Rate: ${inf.rate || "—"} ml/hr` }],
+                }, { headers }).catch(() => {})
+              );
+            });
+          }
+
+          if (orderPromises.length) {
+            await Promise.all(orderPromises);
+            toast.info(`💉 ${orderPromises.length} order(s) added to Treatment Chart (MAR)`);
+          }
+        }
       }
       clearDraft();
       setEditingNote(null);
@@ -1746,16 +1834,19 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
                               <thead>
                                 <tr style={{ background: "#dbeafe" }}>
-                                  {["Date/Time","Drug *","Dose *","Route","Frequency","Times (Auto)","Indication","Status","Stop Reason",""].map(h => (
+                                  {["Date/Time","Drug *","Dose *","Route","Freq","Times (Auto)","Priority","HAM","Indication","Status","Stop Reason",""].map(h => (
                                     <th key={h} style={{ padding: "6px 8px", border: "1px solid #93c5fd", fontWeight: 700, color: C.blue, textAlign: "left", whiteSpace: "nowrap", fontSize: 10 }}>{h}</th>
                                   ))}
                                 </tr>
                               </thead>
                               <tbody>
-                                {medOrders.map(row => (
-                                  <tr key={row.id} style={{ background: row.status === "Stopped" ? "#fef2f2" : "white" }}>
+                                {medOrders.map(row => {
+                                  const autoHam = isHAM_IA(row.drug);
+                                  const hamActive = autoHam || row.hamOverride;
+                                  return (
+                                  <tr key={row.id} style={{ background: row.status === "Stopped" ? "#fef2f2" : hamActive ? "#fff7ed" : "white" }}>
                                     <td style={{ border: "1px solid #bfdbfe", padding: "4px" }}><input type="datetime-local" style={{ ...fld, fontSize: 10, padding: "4px 6px" }} value={row.datetime} onChange={e => updateMed(row.id, "datetime", e.target.value)} /></td>
-                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 120 }}><input style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.drug} placeholder="Drug name" onChange={e => updateMed(row.id, "drug", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 130 }}><input style={{ ...fld, fontSize: 11, padding: "4px 6px", fontWeight: 700 }} value={row.drug} placeholder="Drug name (generic)" onChange={e => updateMed(row.id, "drug", e.target.value)} /></td>
                                     <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 80 }}><input style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.dose} placeholder="e.g. 500mg" onChange={e => updateMed(row.id, "dose", e.target.value)} /></td>
                                     <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 100 }}>
                                       <select style={{ ...sel, fontSize: 11, padding: "4px 6px" }} value={row.route} onChange={e => updateMed(row.id, "route", e.target.value)}>
@@ -1767,10 +1858,25 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                                         {FREQ_LIST.map(f => <option key={f}>{f}</option>)}
                                       </select>
                                     </td>
-                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 120, fontFamily: "monospace", fontSize: 10, color: C.blue, fontWeight: 700 }}>
+                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 110, fontFamily: "monospace", fontSize: 10, color: C.blue, fontWeight: 700 }}>
                                       {(FREQ_TIMES[row.frequency] || []).join(" · ")}
                                     </td>
-                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 100 }}><input style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.indication} placeholder="Indication" onChange={e => updateMed(row.id, "indication", e.target.value)} /></td>
+                                    {/* Priority */}
+                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 85 }}>
+                                      <select style={{ ...sel, fontSize: 10, padding: "3px 5px", fontWeight: 700, color: row.priority==="STAT"?C.red:row.priority==="Urgent"?C.amber:C.muted }} value={row.priority||"Routine"} onChange={e => updateMed(row.id, "priority", e.target.value)}>
+                                        <option value="Routine">Routine</option>
+                                        <option value="Urgent">🔶 Urgent</option>
+                                        <option value="STAT">⚡ STAT</option>
+                                      </select>
+                                    </td>
+                                    {/* HAM */}
+                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", textAlign: "center", minWidth: 52 }}>
+                                      {autoHam
+                                        ? <span title="Auto-detected High Alert Medication" style={{ fontSize: 14 }}>🔴</span>
+                                        : <input type="checkbox" title="Mark as High Alert Medication (HAM)" checked={!!row.hamOverride} onChange={e => updateMed(row.id, "hamOverride", e.target.checked)}
+                                            style={{ width: 14, height: 14, cursor: "pointer", accentColor: C.red }} />}
+                                    </td>
+                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 110 }}><input style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.indication} placeholder="e.g. GI prophylaxis" onChange={e => updateMed(row.id, "indication", e.target.value)} /></td>
                                     <td style={{ border: "1px solid #bfdbfe", padding: "4px" }}>
                                       <select style={{ ...sel, fontSize: 11, padding: "4px 6px", color: row.status === "Stopped" ? C.red : C.green, fontWeight: 700 }} value={row.status} onChange={e => updateMed(row.id, "status", e.target.value)}>
                                         <option value="Active">Active</option>
@@ -1784,7 +1890,8 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                                       <button onClick={() => removeMed(row.id)} style={{ width: 22, height: 22, borderRadius: 4, border: "1px solid #fca5a5", background: "#fef2f2", color: C.red, cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
                                     </td>
                                   </tr>
-                                ))}
+                                  );
+                                })}
                               </tbody>
                             </table>
                           </div>
@@ -1811,26 +1918,44 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
                               <thead>
                                 <tr style={{ background: "#ccfbf1" }}>
-                                  {["Date/Time","Type","Drug / Fluid *","Dilution","Vol (ml)","Rate (ml/hr)","Titration Goal","Start Time","Status","Stop Reason",""].map(h => (
+                                  {["Date/Time","Type","Drug / Fluid *","Dilution","Vol (ml)","Rate (ml/hr)","Titration Goal","Start","Priority","HAM","Status","Stop Reason",""].map(h => (
                                     <th key={h} style={{ padding: "6px 8px", border: "1px solid #99f6e4", fontWeight: 700, color: C.teal, textAlign: "left", whiteSpace: "nowrap", fontSize: 10 }}>{h}</th>
                                   ))}
                                 </tr>
                               </thead>
                               <tbody>
-                                {infOrders.map(row => (
-                                  <tr key={row.id} style={{ background: row.status === "Stopped" ? "#fef2f2" : "white" }}>
+                                {infOrders.map(row => {
+                                  const autoHam = isHAM_IA(row.drugFluid);
+                                  const hamActive = autoHam || row.hamOverride;
+                                  return (
+                                  <tr key={row.id} style={{ background: row.status === "Stopped" ? "#fef2f2" : hamActive ? "#fff7ed" : "white" }}>
                                     <td style={{ border: "1px solid #a7f3d0", padding: "4px" }}><input type="datetime-local" style={{ ...fld, fontSize: 10, padding: "4px 6px" }} value={row.datetime} onChange={e => updateInf(row.id, "datetime", e.target.value)} /></td>
                                     <td style={{ border: "1px solid #a7f3d0", padding: "4px" }}>
                                       <select style={{ ...sel, fontSize: 11, padding: "4px 6px" }} value={row.type} onChange={e => updateInf(row.id, "type", e.target.value)}>
                                         {["Fluid","Drug Infusion","Blood","Blood Product","TPN"].map(t => <option key={t}>{t}</option>)}
                                       </select>
                                     </td>
-                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 130 }}><input style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.drugFluid} placeholder="NS 0.9% / Noradrenaline / PRBC" onChange={e => updateInf(row.id, "drugFluid", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 140 }}><input style={{ ...fld, fontSize: 11, padding: "4px 6px", fontWeight: 700 }} value={row.drugFluid} placeholder="NS 0.9% / Noradrenaline / PRBC" onChange={e => updateInf(row.id, "drugFluid", e.target.value)} /></td>
                                     <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 110 }}><input style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.dilution} placeholder="e.g. 4mg in 50ml NS" onChange={e => updateInf(row.id, "dilution", e.target.value)} /></td>
                                     <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 70 }}><input type="number" style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.volume} placeholder="500" onChange={e => updateInf(row.id, "volume", e.target.value)} /></td>
                                     <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 80 }}><input type="number" style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.rate} placeholder="100" onChange={e => updateInf(row.id, "rate", e.target.value)} /></td>
                                     <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 120 }}><input style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.titrationGoal} placeholder="MAP > 65 / Hb > 8" onChange={e => updateInf(row.id, "titrationGoal", e.target.value)} /></td>
                                     <td style={{ border: "1px solid #a7f3d0", padding: "4px" }}><input type="time" style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.startTime} onChange={e => updateInf(row.id, "startTime", e.target.value)} /></td>
+                                    {/* Priority */}
+                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 85 }}>
+                                      <select style={{ ...sel, fontSize: 10, padding: "3px 5px", fontWeight: 700, color: row.priority==="STAT"?C.red:row.priority==="Urgent"?C.amber:C.muted }} value={row.priority||"Routine"} onChange={e => updateInf(row.id, "priority", e.target.value)}>
+                                        <option value="Routine">Routine</option>
+                                        <option value="Urgent">🔶 Urgent</option>
+                                        <option value="STAT">⚡ STAT</option>
+                                      </select>
+                                    </td>
+                                    {/* HAM */}
+                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", textAlign: "center", minWidth: 52 }}>
+                                      {autoHam
+                                        ? <span title="Auto-detected High Alert Medication" style={{ fontSize: 14 }}>🔴</span>
+                                        : <input type="checkbox" title="Mark as High Alert Medication (HAM)" checked={!!row.hamOverride} onChange={e => updateInf(row.id, "hamOverride", e.target.checked)}
+                                            style={{ width: 14, height: 14, cursor: "pointer", accentColor: C.red }} />}
+                                    </td>
                                     <td style={{ border: "1px solid #a7f3d0", padding: "4px" }}>
                                       <select style={{ ...sel, fontSize: 11, padding: "4px 6px", color: row.status === "Stopped" ? C.red : C.teal, fontWeight: 700 }} value={row.status} onChange={e => updateInf(row.id, "status", e.target.value)}>
                                         <option value="Active">Active</option>
@@ -1844,7 +1969,8 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                                       <button onClick={() => removeInf(row.id)} style={{ width: 22, height: 22, borderRadius: 4, border: "1px solid #fca5a5", background: "#fef2f2", color: C.red, cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
                                     </td>
                                   </tr>
-                                ))}
+                                  );
+                                })}
                               </tbody>
                             </table>
                           </div>
