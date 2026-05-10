@@ -2347,29 +2347,6 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
             </div>
           </div>
 
-          {/* Assessment gate banner */}
-          {admission && !admission.initialAssessment?.doctorCompleted && (
-            <div style={{margin:"10px 28px 0",padding:"14px 20px",background:"#fef2f2",border:"2px solid #fca5a5",borderRadius:12,display:"flex",alignItems:"center",gap:14,boxShadow:"0 4px 16px rgba(220,38,38,.1)"}}>
-              <div style={{width:42,height:42,borderRadius:10,background:"#fee2e2",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:20}}>🔒</div>
-              <div style={{flex:1}}>
-                <div style={{fontWeight:800,fontSize:14,color:"#991b1b",display:"flex",alignItems:"center",gap:8}}>
-                  <span style={{background:"#dc2626",color:"white",fontSize:9,fontWeight:900,padding:"2px 7px",borderRadius:4,letterSpacing:".5px"}}>MANDATORY</span>
-                  Initial Assessment not recorded — NABH COP.2
-                </div>
-                <div style={{fontSize:12,color:"#b91c1c",marginTop:3}}>Doctor's Initial Assessment must be completed before writing daily notes, ICU notes, or any other documentation for this patient.</div>
-              </div>
-              <button onClick={()=>navigate(`/doctor-notes?uhid=${activeUhid}`)}
-                style={{padding:"9px 20px",borderRadius:8,border:"none",background:"#dc2626",color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer",flexShrink:0,boxShadow:"0 4px 12px rgba(220,38,38,.3)"}}>
-                Write Now
-              </button>
-            </div>
-          )}
-          {admission && admission.initialAssessment?.doctorCompleted && (
-            <div style={{margin:"10px 28px 0",padding:"10px 18px",background:"#f0fdf4",border:"1.5px solid #bbf7d0",borderRadius:10,display:"flex",alignItems:"center",gap:8,fontSize:13,color:"#15803d",fontWeight:600}}>
-              ✅ Initial Assessment completed — full documentation unlocked
-            </div>
-          )}
-
           {/* Tab bar */}
           <div style={{margin:"16px 28px 0",background:C.card,border:`1px solid ${C.border}`,borderRadius:14,overflow:"hidden",boxShadow:"0 2px 8px rgba(0,0,0,.05)"}}>
             <div style={{display:"flex",overflowX:"auto",borderBottom:`2px solid ${C.border}`,background:"#fafaf9"}}>
