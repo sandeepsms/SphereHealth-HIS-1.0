@@ -1349,7 +1349,9 @@ function NursePatientPanelContent({ selectedAdmission }) {
       const admList = Array.isArray(admRes.data?.admissions)?admRes.data.admissions:Array.isArray(admRes.data)?admRes.data:[];
       const patList = Array.isArray(patRes.data?.data)?patRes.data.data:Array.isArray(patRes.data)?patRes.data:[];
       const adm = admList.find(a=>["active","admitted"].includes((a.status||"").toLowerCase()))||admList[0]||null;
-      const pat = patList[0]||null;
+      // Only accept a patient whose UHID matches the searched UHID
+      // (the /patients?UHID= endpoint may return unfiltered results)
+      const pat = patList.find(p=>(p.UHID||p.uhid||"").toUpperCase()===u)||null;
       setAdmission(adm); setPatient(pat);
 
       if (!adm && !pat) { setError(`No patient found for UHID: ${u}`); return; }
