@@ -1363,18 +1363,25 @@ function OrdersTab({doctorNotes=[]}) {
 
 /* ═══════════════════════════════════════════════════════ TAB: TREATMENT CHART (MAR) */
 function TreatmentChartTab({doctorOrders=[], doctorNotes=[]}) {
-  /* ── Collect medication/infusion orders from doctorOrders ── */
+  /* ── Collect medication/infusion orders from doctorOrders (full model fields) ── */
   const medOrders = (doctorOrders||[]).map(o=>({
-    _id:      o._id,
-    drug:     o.orderDetails?.medicineName || o.orderDetails?.drugFluid || o.orderDetails?.name || "—",
-    dose:     o.orderDetails?.dose || o.orderDetails?.volume || "—",
-    route:    o.orderDetails?.route || "—",
-    freq:     o.orderDetails?.frequency || o.orderDetails?.rate || "—",
-    status:   o.status||"Active",
-    orderedAt:o.orderedAt||o.createdAt,
-    doctorName:o.doctorName||o.orderedBy||"",
-    admins:   o.administrationRecord||[],
-    source:   "order",
+    _id:             o._id,
+    drug:            o.orderDetails?.medicineName || o.orderDetails?.drugFluid || o.orderDetails?.name || "—",
+    dose:            o.orderDetails?.dose || o.orderDetails?.volume || "—",
+    route:           o.orderDetails?.route || "—",
+    freq:            o.orderDetails?.frequency || o.orderDetails?.rate || "—",
+    status:          o.status||"Active",
+    orderedAt:       o.orderedAt||o.createdAt,
+    doctorName:      o.doctorName||o.orderedBy||"",
+    admins:          o.administrationRecord||[],
+    auditLog:        o.auditLog||[],
+    priority:        o.priority||"Routine",
+    hamFlag:         !!o.hamFlag,
+    twoNurseRequired:!!o.twoNurseRequired,
+    highRisk:        !!o.highRisk,
+    rateChanges:     o.rateChanges||[],
+    orderType:       o.orderType||"",
+    source:          "order",
   })).filter(o=>o.drug&&o.drug!=="—");
 
   /* ── Also pull medication orders embedded in doctor notes ── */
@@ -1395,6 +1402,13 @@ function TreatmentChartTab({doctorOrders=[], doctorNotes=[]}) {
         orderedAt:note.createdAt,
         doctorName:note.doctorName||"",
         admins:[],
+        auditLog:[],
+        priority:"Routine",
+        hamFlag:false,
+        twoNurseRequired:false,
+        highRisk:false,
+        rateChanges:[],
+        orderType:"",
         source:"note",
       });
     });
@@ -1412,21 +1426,27 @@ function TreatmentChartTab({doctorOrders=[], doctorNotes=[]}) {
   });
   const uniqueDates = [...dateSet].sort().reverse();
 
-  const [selDate, setSelDate] = useState(uniqueDates[0]||today);
+  const [selDate,       setSelDate]       = useState(uniqueDates[0]||today);
+  const [expandedOrders,setExpandedOrders]= useState({});
 
   if (!allOrders.length) return <Empty icon="💉" msg="No medication / infusion orders found. Orders created from doctor notes will appear here."/>;
 
-  const dateIdx = uniqueDates.indexOf(selDate);
-
-  /* Orders that were active on the selected date */
-  const ordersOnDate = allOrders.filter(o=>{
+  const dateIdx     = uniqueDates.indexOf(selDate);
+  const ordersOnDate= allOrders.filter(o=>{
     const start = o.orderedAt ? new Date(o.orderedAt).toISOString().slice(0,10) : today;
     return start<=selDate;
   });
-
   const getAdmins = o => o.admins.filter(r=>r.givenAt && new Date(r.givenAt).toISOString().slice(0,10)===selDate);
-
   const dateLabel = d => d===today?"Today":new Date(d).toLocaleDateString("en-IN",{day:"2-digit",month:"short"});
+
+  /* Priority badge style helper */
+  const priBadge = p => {
+    if (p==="STAT")   return {label:"🔴 STAT",   color:"#dc2626",bg:"#fee2e2",border:"#fca5a5"};
+    if (p==="Urgent") return {label:"🟡 URGENT", color:"#d97706",bg:"#fef3c7",border:"#fcd34d"};
+    return                   {label:"ROUTINE",   color:C.muted,  bg:"#f1f5f9",border:C.border};
+  };
+
+  const toggleOrder = id => setExpandedOrders(prev=>({...prev,[id]:!prev[id]}));
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
@@ -1480,50 +1500,193 @@ function TreatmentChartTab({doctorOrders=[], doctorNotes=[]}) {
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
               <thead>
                 <tr style={{background:C.primaryL}}>
-                  {["Drug / Fluid","Dose","Route","Frequency","Ordered By","Start Date",`Administrations (${dateLabel(selDate)})`,"Status"].map(h=>(
+                  {["Priority / Flags","Drug / Fluid","Dose","Route","Freq","Ordered By",`Administrations (${dateLabel(selDate)})`,"Status","Trail"].map(h=>(
                     <th key={h} style={{padding:"9px 12px",textAlign:"left",fontWeight:700,color:C.primaryD,borderBottom:`2px solid ${C.primaryM}`,whiteSpace:"nowrap",fontSize:10,textTransform:"uppercase",letterSpacing:".4px"}}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {ordersOnDate.map((o,i)=>{
-                  const admins = getAdmins(o);
+                  const admins   = getAdmins(o);
                   const isActive = (o.status||"Active")==="Active"||(o.status||"").toLowerCase()==="active";
+                  const pb       = priBadge(o.priority);
+                  const rowKey   = o._id||i;
+                  const expanded = !!expandedOrders[rowKey];
+                  const hasTrail = o.auditLog.length>0 || admins.length>0 || o.rateChanges.length>0;
                   return (
-                    <tr key={o._id||i} style={{background:i%2?"#fafaf9":C.card,borderBottom:`1px solid ${C.border}`,verticalAlign:"top"}}>
-                      <td style={{padding:"10px 12px",fontWeight:700,color:C.dark,minWidth:140}}>{o.drug}</td>
-                      <td style={{padding:"10px 12px",whiteSpace:"nowrap"}}>{o.dose}</td>
-                      <td style={{padding:"10px 12px"}}><Badge color={C.teal} bg={C.tealL}>{o.route}</Badge></td>
-                      <td style={{padding:"10px 12px",whiteSpace:"nowrap"}}>{o.freq}</td>
-                      <td style={{padding:"10px 12px",color:C.muted,fontSize:11,whiteSpace:"nowrap"}}>{o.doctorName?`Dr. ${o.doctorName}`:"—"}</td>
-                      <td style={{padding:"10px 12px",color:C.muted,fontSize:11,whiteSpace:"nowrap"}}>{fmtDate(o.orderedAt)}</td>
-                      <td style={{padding:"10px 12px",minWidth:180}}>
-                        {admins.length===0 ? (
-                          <span style={{fontSize:10,padding:"2px 10px",borderRadius:4,background:isActive?C.amberL:"#f1f5f9",color:isActive?C.amber:C.muted,fontWeight:700}}>
-                            {isActive?"⏳ Pending":"—"}
-                          </span>
-                        ) : (
-                          <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                            {admins.map((a,ai)=>{
-                              const sc = a.status==="given"?C.green:a.status==="missed"?C.red:a.status==="skipped"?C.muted:C.green;
-                              const bg = a.status==="given"?C.greenL:a.status==="missed"?C.redL:a.status==="skipped"?"#f1f5f9":C.greenL;
-                              const icon = a.status==="given"?"✓":a.status==="missed"?"✗":a.status==="skipped"?"↷":"✓";
-                              return (
-                                <div key={ai} style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
-                                  <span style={{padding:"1px 8px",borderRadius:4,background:bg,color:sc,fontWeight:700,fontSize:10,display:"flex",alignItems:"center",gap:4}}>
-                                    {icon} {(a.status||"given").charAt(0).toUpperCase()+(a.status||"given").slice(1)}
-                                  </span>
-                                  {a.givenAt && <span style={{fontSize:10,color:C.muted,fontFamily:"'DM Mono',monospace"}}>{new Date(a.givenAt).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}</span>}
-                                  {a.givenBy && <span style={{fontSize:10,color:C.dark,fontWeight:500}}>· {a.givenBy}</span>}
-                                  {a.notes   && <span style={{fontSize:10,color:C.muted,fontStyle:"italic"}}>{a.notes}</span>}
-                                </div>
-                              );
-                            })}
+                    <React.Fragment key={rowKey}>
+                      <tr style={{background:i%2?"#fafaf9":C.card,borderBottom:expanded?`2px solid ${C.primaryM}`:`1px solid ${C.border}`,verticalAlign:"top"}}>
+
+                        {/* Priority + HAM flags */}
+                        <td style={{padding:"10px 12px",minWidth:110}}>
+                          <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                            <span style={{padding:"2px 8px",borderRadius:5,background:pb.bg,color:pb.color,fontWeight:800,fontSize:10,border:`1px solid ${pb.border}`,display:"inline-block",whiteSpace:"nowrap"}}>{pb.label}</span>
+                            {o.hamFlag          && <span style={{padding:"1px 6px",borderRadius:4,background:"#fef3c7",color:"#b45309",fontWeight:700,fontSize:9,border:"1px solid #fcd34d",whiteSpace:"nowrap"}}>⚠ HAM</span>}
+                            {o.highRisk         && <span style={{padding:"1px 6px",borderRadius:4,background:"#fee2e2",color:"#dc2626",fontWeight:700,fontSize:9,border:"1px solid #fca5a5",whiteSpace:"nowrap"}}>🚨 HIGH RISK</span>}
+                            {o.twoNurseRequired && <span style={{padding:"1px 6px",borderRadius:4,background:"#ede9fe",color:"#7c3aed",fontWeight:700,fontSize:9,border:"1px solid #c4b5fd",whiteSpace:"nowrap"}}>👥 2-NURSE</span>}
                           </div>
-                        )}
-                      </td>
-                      <td style={{padding:"10px 12px"}}><SBadge status={o.status||"Active"}/></td>
-                    </tr>
+                        </td>
+
+                        {/* Drug */}
+                        <td style={{padding:"10px 12px",fontWeight:700,color:C.dark,minWidth:140}}>{o.drug}</td>
+                        {/* Dose */}
+                        <td style={{padding:"10px 12px",whiteSpace:"nowrap"}}>{o.dose}</td>
+                        {/* Route */}
+                        <td style={{padding:"10px 12px"}}><Badge color={C.teal} bg={C.tealL}>{o.route}</Badge></td>
+                        {/* Freq */}
+                        <td style={{padding:"10px 12px",whiteSpace:"nowrap"}}>{o.freq}</td>
+                        {/* Ordered by */}
+                        <td style={{padding:"10px 12px",color:C.muted,fontSize:11,whiteSpace:"nowrap"}}>{o.doctorName?`Dr. ${o.doctorName}`:"—"}</td>
+
+                        {/* Administrations cell */}
+                        <td style={{padding:"10px 12px",minWidth:210}}>
+                          {admins.length===0 ? (
+                            <span style={{fontSize:10,padding:"2px 10px",borderRadius:4,background:isActive?C.amberL:"#f1f5f9",color:isActive?C.amber:C.muted,fontWeight:700}}>
+                              {isActive?"⏳ Pending":"—"}
+                            </span>
+                          ) : (
+                            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                              {admins.map((a,ai)=>{
+                                const sc   = a.status==="given"?C.green:a.status==="missed"?C.red:a.status==="skipped"?C.muted:C.green;
+                                const bg   = a.status==="given"?C.greenL:a.status==="missed"?C.redL:a.status==="skipped"?"#f1f5f9":C.greenL;
+                                const icon = a.status==="given"?"✓":a.status==="missed"?"✗":a.status==="skipped"?"↷":"✓";
+                                return (
+                                  <div key={ai} style={{display:"flex",flexDirection:"column",gap:2}}>
+                                    {/* Primary line */}
+                                    <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
+                                      <span style={{padding:"1px 8px",borderRadius:4,background:bg,color:sc,fontWeight:700,fontSize:10}}>{icon} {(a.status||"given").toUpperCase()}</span>
+                                      {a.givenAt && <span style={{fontSize:10,color:C.teal,fontFamily:"'DM Mono',monospace",fontWeight:700}}>{new Date(a.givenAt).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}</span>}
+                                      {a.givenBy && <span style={{fontSize:10,color:C.dark,fontWeight:600}}>· {a.givenBy}</span>}
+                                      {o.priority==="STAT" && <span style={{fontSize:9,padding:"1px 5px",borderRadius:3,background:"#fee2e2",color:"#dc2626",fontWeight:800,border:"1px solid #fca5a5"}}>STAT</span>}
+                                    </div>
+                                    {/* Quick sub-detail */}
+                                    {(a.doseGiven||a.routeUsed||a.siteUsed) && (
+                                      <div style={{fontSize:9,color:C.muted,paddingLeft:4}}>
+                                        {[a.doseGiven&&`Dose: ${a.doseGiven}`,a.routeUsed&&`Route: ${a.routeUsed}`,a.siteUsed&&`Site: ${a.siteUsed}`].filter(Boolean).join(" · ")}
+                                      </div>
+                                    )}
+                                    {a.verifiedBy    && <div style={{fontSize:9,color:"#7c3aed",paddingLeft:4,fontWeight:600}}>✓₂ Verified: {a.verifiedBy}</div>}
+                                    {a.adverseEvent  && <div style={{fontSize:9,color:"#dc2626",paddingLeft:4,fontWeight:700}}>⚠ Adverse: {a.adverseDetails||"reported"}</div>}
+                                    {a.holdReason    && <div style={{fontSize:9,color:"#d97706",paddingLeft:4}}>🔒 Hold: {a.holdReason}</div>}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </td>
+
+                        {/* Status */}
+                        <td style={{padding:"10px 12px"}}><SBadge status={o.status||"Active"}/></td>
+
+                        {/* Expand trail button */}
+                        <td style={{padding:"10px 12px",textAlign:"center"}}>
+                          {hasTrail && (
+                            <button onClick={()=>toggleOrder(rowKey)}
+                              style={{padding:"4px 10px",borderRadius:8,border:`1.5px solid ${C.primary}`,background:expanded?C.primary:"white",color:expanded?"white":C.primary,fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+                              {expanded?"▲ Hide":"🔍 Trail"}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+
+                      {/* ── Expanded audit trail ── */}
+                      {expanded && (
+                        <tr style={{background:"#f8faff"}}>
+                          <td colSpan={9} style={{padding:"14px 20px 18px 20px",borderBottom:`2px solid ${C.primaryM}`}}>
+                            <div style={{display:"flex",flexDirection:"column",gap:14}}>
+
+                              {/* NABH Audit Log steps */}
+                              {o.auditLog.length>0 && (
+                                <div>
+                                  <div style={{fontWeight:700,fontSize:11,color:C.primaryD,marginBottom:6,textTransform:"uppercase",letterSpacing:".5px"}}>📋 NABH Workflow Audit Steps</div>
+                                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                                    {o.auditLog.map((s,si)=>(
+                                      <div key={si} style={{display:"flex",gap:10,alignItems:"flex-start",padding:"6px 12px",background:"white",borderRadius:7,border:`1px solid ${C.border}`}}>
+                                        <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:C.teal,fontWeight:700,minWidth:110,flexShrink:0}}>
+                                          {s.doneAt?new Date(s.doneAt).toLocaleString("en-IN",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}):"—"}
+                                        </div>
+                                        <div style={{width:7,height:7,borderRadius:"50%",background:C.primary,flexShrink:0,marginTop:3}}/>
+                                        <div style={{flex:1}}>
+                                          <span style={{fontWeight:700,color:C.dark,fontSize:11}}>{s.step||"Step"}</span>
+                                          {s.doneBy && <span style={{fontSize:10,color:C.muted,marginLeft:6}}>by {s.doneBy}</span>}
+                                          {s.notes  && <div style={{fontSize:10,color:C.muted,fontStyle:"italic",marginTop:2}}>{s.notes}</div>}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Full administration detail cards for selected date */}
+                              {admins.length>0 && (
+                                <div>
+                                  <div style={{fontWeight:700,fontSize:11,color:C.primaryD,marginBottom:6,textTransform:"uppercase",letterSpacing:".5px"}}>
+                                    💊 Administration Details — {dateLabel(selDate)}
+                                    {o.priority!=="Routine" && (
+                                      <span style={{marginLeft:8,padding:"2px 8px",borderRadius:5,background:priBadge(o.priority).bg,color:priBadge(o.priority).color,fontWeight:800,fontSize:10,border:`1px solid ${priBadge(o.priority).border}`}}>{priBadge(o.priority).label}</span>
+                                    )}
+                                  </div>
+                                  {admins.map((a,ai)=>{
+                                    const sc=a.status==="given"?C.green:a.status==="missed"?C.red:C.amber;
+                                    return (
+                                      <div key={ai} style={{background:"white",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 14px",marginBottom:6}}>
+                                        {/* Header row */}
+                                        <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:6,flexWrap:"wrap"}}>
+                                          <span style={{fontWeight:800,fontSize:11,color:sc}}>{(a.status||"given").toUpperCase()}</span>
+                                          {a.givenAt && <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:C.teal,fontWeight:700}}>{new Date(a.givenAt).toLocaleString("en-IN",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"})}</span>}
+                                          {a.givenBy && <span style={{fontSize:11,color:C.dark,fontWeight:600}}>by {a.givenBy}</span>}
+                                          {o.priority==="STAT"   && <span style={{padding:"2px 8px",borderRadius:5,background:"#fee2e2",color:"#dc2626",fontWeight:800,fontSize:10,border:"1px solid #fca5a5"}}>🔴 STAT</span>}
+                                          {o.priority==="Urgent" && <span style={{padding:"2px 8px",borderRadius:5,background:"#fef3c7",color:"#d97706",fontWeight:800,fontSize:10,border:"1px solid #fcd34d"}}>🟡 URGENT</span>}
+                                        </div>
+                                        {/* Detail grid */}
+                                        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(190px,1fr))",gap:"4px 16px",fontSize:10,color:C.dark}}>
+                                          {a.scheduledTime && <span><b style={{color:C.muted}}>Scheduled:</b> {new Date(a.scheduledTime).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}</span>}
+                                          {a.doseGiven     && <span><b style={{color:C.muted}}>Dose Given:</b> {a.doseGiven}</span>}
+                                          {a.routeUsed     && <span><b style={{color:C.muted}}>Route Used:</b> {a.routeUsed}</span>}
+                                          {a.siteUsed      && <span><b style={{color:C.muted}}>Site Used:</b> {a.siteUsed}</span>}
+                                          {a.verifiedBy    && (
+                                            <span style={{color:"#7c3aed",fontWeight:600}}>
+                                              <b>2nd Nurse Verified:</b> {a.verifiedBy}
+                                              {a.verifiedAt?` @ ${new Date(a.verifiedAt).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}`:""} ✓
+                                            </span>
+                                          )}
+                                          {a.fiveRightsChecked && <span style={{color:C.green,fontWeight:600}}>✓ 5 Rights Checked</span>}
+                                          {a.prnEffect   && <span><b style={{color:C.muted}}>PRN Effect:</b> {a.prnEffect}</span>}
+                                          {a.delayReason && <span><b style={{color:C.muted}}>Delay Reason:</b> {a.delayReason}</span>}
+                                          {a.holdReason  && <span style={{color:"#d97706",fontWeight:600,gridColumn:"1/-1"}}><b>Hold Reason:</b> {a.holdReason} {a.holdUntil?`(until ${new Date(a.holdUntil).toLocaleString("en-IN",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"})})`:""}</span>}
+                                          {a.notes       && <span style={{gridColumn:"1/-1"}}><b style={{color:C.muted}}>Notes:</b> {a.notes}</span>}
+                                          {a.adverseEvent && <span style={{color:"#dc2626",fontWeight:700,gridColumn:"1/-1"}}>⚠ Adverse Event: {a.adverseDetails||"reported"}</span>}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+
+                              {/* Infusion rate changes */}
+                              {o.rateChanges.length>0 && (
+                                <div>
+                                  <div style={{fontWeight:700,fontSize:11,color:C.primaryD,marginBottom:6,textTransform:"uppercase",letterSpacing:".5px"}}>🔄 Infusion Rate Changes</div>
+                                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                                    {o.rateChanges.map((rc,ri)=>(
+                                      <div key={ri} style={{display:"flex",gap:10,alignItems:"center",padding:"5px 12px",background:"white",borderRadius:7,border:`1px solid ${C.border}`,fontSize:10}}>
+                                        <span style={{fontFamily:"'DM Mono',monospace",color:C.teal,fontWeight:700,minWidth:110,flexShrink:0}}>
+                                          {rc.changedAt?new Date(rc.changedAt).toLocaleString("en-IN",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}):"—"}
+                                        </span>
+                                        <span>{rc.oldRate||"—"} → <b>{rc.newRate||"—"}</b></span>
+                                        {rc.changedBy && <span style={{color:C.muted}}>by {rc.changedBy}</span>}
+                                        {rc.reason    && <span style={{color:C.muted,fontStyle:"italic"}}>{rc.reason}</span>}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
                   );
                 })}
               </tbody>
@@ -1532,32 +1695,56 @@ function TreatmentChartTab({doctorOrders=[], doctorNotes=[]}) {
         )}
       </div>
 
-      {/* ── Administration audit log ── */}
+      {/* ── Full administration audit log (day summary, time-sorted) ── */}
       {ordersOnDate.some(o=>getAdmins(o).length>0) && (
         <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:16,overflow:"hidden"}}>
           <div style={{padding:"13px 18px",background:C.greenL,borderBottom:`1px solid ${C.border}`,fontWeight:800,fontSize:13,color:C.green}}>
-            ✅ Administration Audit Log — {new Date(selDate).toLocaleDateString("en-IN",{day:"2-digit",month:"long",year:"numeric"})}
+            ✅ Full Administration Audit Log — {new Date(selDate).toLocaleDateString("en-IN",{day:"2-digit",month:"long",year:"numeric"})}
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:0}}>
-            {ordersOnDate.flatMap(o=>getAdmins(o).map(a=>({...a,drug:o.drug,dose:o.dose,route:o.route}))).sort((a,b)=>new Date(a.givenAt)-new Date(b.givenAt)).map((a,i)=>{
-              const sc=a.status==="given"?C.green:a.status==="missed"?C.red:C.muted;
-              return (
-                <div key={i} style={{display:"flex",gap:12,alignItems:"center",padding:"10px 18px",borderBottom:`1px solid ${C.border}`,background:i%2?"#fafaf9":C.card}}>
-                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:C.teal,fontWeight:700,minWidth:50}}>
-                    {a.givenAt?new Date(a.givenAt).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"}):"—"}
+            {ordersOnDate
+              .flatMap(o=>getAdmins(o).map(a=>({...a,drug:o.drug,dose:o.dose,route:o.route,priority:o.priority,hamFlag:o.hamFlag,highRisk:o.highRisk})))
+              .sort((a,b)=>new Date(a.givenAt)-new Date(b.givenAt))
+              .map((a,i)=>{
+                const sc=a.status==="given"?C.green:a.status==="missed"?C.red:C.muted;
+                return (
+                  <div key={i} style={{padding:"10px 18px",borderBottom:`1px solid ${C.border}`,background:i%2?"#fafaf9":C.card}}>
+                    {/* Primary line */}
+                    <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:C.teal,fontWeight:700,minWidth:50}}>
+                        {a.givenAt?new Date(a.givenAt).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"}):"—"}
+                      </div>
+                      <div style={{width:8,height:8,borderRadius:"50%",background:sc,flexShrink:0}}/>
+                      <div style={{flex:1}}>
+                        <span style={{fontWeight:700,color:C.dark}}>{a.drug}</span>
+                        {a.dose&&a.dose!=="—"&&<span style={{fontSize:11,color:C.muted,marginLeft:6}}>{a.dose}</span>}
+                        {a.route&&a.route!=="—"&&<span style={{fontSize:10,marginLeft:4,padding:"1px 5px",borderRadius:3,background:C.tealL,color:C.teal,fontWeight:600}}>{a.route}</span>}
+                      </div>
+                      {/* Priority badge — always show for STAT/Urgent */}
+                      {a.priority==="STAT"   && <span style={{padding:"2px 8px",borderRadius:5,background:"#fee2e2",color:"#dc2626",fontWeight:800,fontSize:10,border:"1px solid #fca5a5"}}>🔴 STAT</span>}
+                      {a.priority==="Urgent" && <span style={{padding:"2px 8px",borderRadius:5,background:"#fef3c7",color:"#d97706",fontWeight:800,fontSize:10,border:"1px solid #fcd34d"}}>🟡 URGENT</span>}
+                      {a.hamFlag  && <span style={{padding:"1px 6px",borderRadius:4,background:"#fef3c7",color:"#b45309",fontWeight:700,fontSize:9,border:"1px solid #fcd34d"}}>⚠ HAM</span>}
+                      {a.highRisk && <span style={{padding:"1px 6px",borderRadius:4,background:"#fee2e2",color:"#dc2626",fontWeight:700,fontSize:9,border:"1px solid #fca5a5"}}>🚨 HIGH</span>}
+                      <span style={{fontSize:11,fontWeight:700,color:sc}}>{(a.status||"given").toUpperCase()}</span>
+                      <span style={{fontSize:11,color:C.dark,fontWeight:500}}>{a.givenBy||"—"}</span>
+                    </div>
+                    {/* Sub-detail line */}
+                    {(a.verifiedBy||a.doseGiven||a.routeUsed||a.siteUsed||a.fiveRightsChecked||a.adverseEvent||a.holdReason||a.notes||a.prnEffect) && (
+                      <div style={{display:"flex",gap:12,flexWrap:"wrap",marginTop:5,paddingLeft:82,fontSize:10,color:C.muted}}>
+                        {a.doseGiven         && <span>Dose: <b style={{color:C.dark}}>{a.doseGiven}</b></span>}
+                        {a.routeUsed         && <span>Route: <b style={{color:C.dark}}>{a.routeUsed}</b></span>}
+                        {a.siteUsed          && <span>Site: <b style={{color:C.dark}}>{a.siteUsed}</b></span>}
+                        {a.verifiedBy        && <span style={{color:"#7c3aed",fontWeight:600}}>✓₂ Verified: {a.verifiedBy}</span>}
+                        {a.fiveRightsChecked && <span style={{color:C.green,fontWeight:600}}>✓ 5 Rights</span>}
+                        {a.prnEffect         && <span>PRN: {a.prnEffect}</span>}
+                        {a.notes             && <span style={{fontStyle:"italic"}}>{a.notes}</span>}
+                        {a.holdReason        && <span style={{color:"#d97706",fontWeight:600}}>Hold: {a.holdReason}</span>}
+                        {a.adverseEvent      && <span style={{color:"#dc2626",fontWeight:700}}>⚠ Adverse: {a.adverseDetails||"reported"}</span>}
+                      </div>
+                    )}
                   </div>
-                  <div style={{width:8,height:8,borderRadius:"50%",background:sc,flexShrink:0}}/>
-                  <div style={{flex:1}}>
-                    <span style={{fontWeight:700,color:C.dark}}>{a.drug}</span>
-                    {a.dose&&a.dose!=="—"&&<span style={{fontSize:11,color:C.muted,marginLeft:6}}>{a.dose}</span>}
-                    {a.route&&a.route!=="—"&&<span style={{fontSize:10,marginLeft:4,padding:"1px 5px",borderRadius:3,background:C.tealL,color:C.teal,fontWeight:600}}>{a.route}</span>}
-                  </div>
-                  <span style={{fontSize:11,fontWeight:700,color:sc}}>{(a.status||"given").toUpperCase()}</span>
-                  <span style={{fontSize:11,color:C.muted}}>{a.givenBy||"—"}</span>
-                  {a.notes&&<span style={{fontSize:10,color:C.muted,fontStyle:"italic"}}>{a.notes}</span>}
-                </div>
-              );
-            })}
+                );
+              })}
           </div>
         </div>
       )}
