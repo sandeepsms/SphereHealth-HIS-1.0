@@ -1126,8 +1126,55 @@ const drFmtVal = v => {
   return String(v);
 };
 
+/* Initial Assessment grouped sections */
+const DR_IA_SECTIONS = [
+  {label:"Admission Details",    keys:["admissionMode","chiefComplaint","duration","hpi"]},
+  {label:"Past History",         keys:["pastMedical","pastSurgical","familyHistory","socialHistory","currentMeds","allergies"]},
+  {label:"Vitals on Admission",  keys:["bp_sys","bp_dia","pulse","temp","spo2","rr","weight","height","bsl"]},
+  {label:"Examination",          keys:["generalCondition","builtNutrition","pallor","icterus","cyanosis","clubbing","lymphadenopathy","oedema"]},
+  {label:"System Examination",   keys:["resp","cvs","abdomen","cns"]},
+  {label:"Diagnosis",            keys:["provisionalDx","differentialDx","finalDx","icd10"]},
+  {label:"Management",           keys:["investigations","managementPlan"]},
+];
+const DR_IA_LBL = {
+  admissionMode:"Admission Mode",chiefComplaint:"Chief Complaint",duration:"Duration",hpi:"HPI",
+  pastMedical:"Past Medical Hx",pastSurgical:"Past Surgical Hx",familyHistory:"Family History",
+  socialHistory:"Social History",currentMeds:"Current Meds",allergies:"Allergies",
+  bp_sys:"Systolic BP",bp_dia:"Diastolic BP",pulse:"Pulse",temp:"Temp (°F)",
+  spo2:"SpO₂",rr:"Resp Rate",weight:"Weight (kg)",height:"Height (cm)",bsl:"BSL (mg/dL)",
+  generalCondition:"General Condition",builtNutrition:"Built/Nutrition",pallor:"Pallor",
+  icterus:"Icterus",cyanosis:"Cyanosis",clubbing:"Clubbing",lymphadenopathy:"Lymphadenopathy",
+  oedema:"Oedema",resp:"Respiratory",cvs:"CVS",abdomen:"Abdomen",cns:"CNS",
+  provisionalDx:"Provisional Dx",differentialDx:"Differential Dx",finalDx:"Final Dx",icd10:"ICD-10",
+  investigations:"Investigations Planned",managementPlan:"Management Plan",
+};
+function DrInitialDetails({nd, ns}) {
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:8}}>
+      {DR_IA_SECTIONS.map(sec=>{
+        const chips = sec.keys.map(k=>({label:DR_IA_LBL[k]||k,value:nd[k]})).filter(c=>c.value);
+        if (!chips.length) return null;
+        return (
+          <div key={sec.label} style={{padding:"7px 12px",background:"#f9fafb",borderRadius:7,border:`1px solid ${C.border}`}}>
+            <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:ns.color,marginBottom:5}}>{sec.label}</div>
+            <div style={{display:"flex",gap:"5px 14px",flexWrap:"wrap"}}>
+              {chips.map(c=>(
+                <div key={c.label} style={{display:"flex",flexDirection:"column",gap:1}}>
+                  <span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.muted}}>{c.label}</span>
+                  <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:500,color:C.text,maxWidth:240,wordBreak:"break-word"}}>{c.value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      }).filter(Boolean)}
+    </div>
+  );
+}
+
 function DoctorNotesTab({doctorNotes=[]}) {
   const [filterType, setFilterType] = useState("All");
+  const [collapsed, setCollapsed]   = useState({}); // empty = all open by default
 
   const sortedNotes = [...doctorNotes].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
   const types = ["All",...new Set(sortedNotes.map(n=>n.noteType||"daily").filter(Boolean))];
@@ -1136,6 +1183,7 @@ function DoctorNotesTab({doctorNotes=[]}) {
   if (!doctorNotes.length) return <Empty icon="🩺" msg="No doctor notes recorded yet for this patient"/>;
 
   const orderTypeIcon = t => t==="medication"?"💊":t==="iv_fluid"?"💧":t==="procedure"?"🔧":t==="diet"?"🍽️":"📋";
+  const toggleNote = key => setCollapsed(p=>({...p,[key]:!p[key]}));
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
@@ -1171,6 +1219,8 @@ function DoctorNotesTab({doctorNotes=[]}) {
         </div>
 
         {filtered.map((note,i)=>{
+          const noteKey = note._id||i;
+          const isOpen  = !collapsed[noteKey]; // empty map = all open by default
           const ns  = DR_NOTE_STYLE[note.noteType]||{bg:"#f9fafb",color:"#374151",dot:"#9ca3af"};
           const mod = DR_MODULES.find(m=>m.id===note.noteType);
           const timeStr = note.createdAt
@@ -1185,9 +1235,10 @@ function DoctorNotesTab({doctorNotes=[]}) {
           const hasOrders = note.orders?.length>0;
           const medOrders = nd.medicationOrders||[];
           const infOrders = nd.infusionOrders||[];
+          const isInitial = note.noteType==="initial";
 
-          /* Generic noteDetails blocks (skip med/inf orders — rendered separately) */
-          const ndBlocks = Object.entries(nd)
+          /* Generic noteDetails blocks for non-initial types */
+          const ndBlocks = isInitial ? [] : Object.entries(nd)
             .filter(([k])=>!["medicationOrders","infusionOrders"].includes(k))
             .map(([mk,mv])=>{
               if (!mv) return null;
@@ -1207,208 +1258,220 @@ function DoctorNotesTab({doctorNotes=[]}) {
             }).filter(Boolean);
 
           return (
-            <div key={note._id||i}
+            <div key={noteKey}
               style={{
-                margin:"0 16px",padding:"16px 16px 16px 0",
+                margin:"0 16px",padding:"0",
                 borderBottom:i<filtered.length-1?`1px solid ${C.border}`:"none",
-                display:"grid",gridTemplateColumns:"80px 1fr auto",gap:16,alignItems:"start",
-                borderLeft:`4px solid ${ns.dot}`,paddingLeft:16,
-                transition:"background .15s,border-radius .15s",
-              }}
-              onMouseEnter={e=>{e.currentTarget.style.background=`${ns.bg}50`;e.currentTarget.style.borderRadius="12px";e.currentTarget.style.margin="2px 16px";}}
-              onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.borderRadius="0";e.currentTarget.style.margin="0 16px";}}>
+                borderLeft:`4px solid ${ns.dot}`,
+                transition:"background .15s",
+              }}>
 
-              {/* ── Time column ── */}
-              <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5,paddingTop:2}}>
-                <div style={{background:ns.bg,border:`1.5px solid ${ns.dot}30`,borderRadius:8,padding:"5px 8px",textAlign:"center",minWidth:62}}>
-                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:13,fontWeight:800,color:ns.color,lineHeight:1}}>{timeStr}</div>
-                  <div style={{fontSize:8,fontWeight:700,color:ns.color+"aa",textTransform:"uppercase",letterSpacing:".5px",marginTop:3}}>
-                    {(note.shift||"morning").charAt(0).toUpperCase()+(note.shift||"morning").slice(1)}
+              {/* ── 3-col grid row ── */}
+              <div style={{display:"grid",gridTemplateColumns:"80px 1fr auto",gap:16,alignItems:"start",padding:"16px 16px 0 16px"}}>
+
+                {/* ── Time column ── */}
+                <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5,paddingTop:2}}>
+                  <div style={{background:ns.bg,border:`1.5px solid ${ns.dot}30`,borderRadius:8,padding:"5px 8px",textAlign:"center",minWidth:62}}>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:13,fontWeight:800,color:ns.color,lineHeight:1}}>{timeStr}</div>
+                    <div style={{fontSize:8,fontWeight:700,color:ns.color+"aa",textTransform:"uppercase",letterSpacing:".5px",marginTop:3}}>
+                      {(note.shift||"morning").charAt(0).toUpperCase()+(note.shift||"morning").slice(1)}
+                    </div>
                   </div>
+                  <div style={{width:10,height:10,borderRadius:"50%",background:ns.dot,boxShadow:`0 0 0 3px ${ns.dot}30`}}/>
+                  <SBadge status={note.status}/>
                 </div>
-                <div style={{width:10,height:10,borderRadius:"50%",background:ns.dot,boxShadow:`0 0 0 3px ${ns.dot}30`}}/>
-                <SBadge status={note.status}/>
-              </div>
 
-              {/* ── Body ── */}
-              <div>
-                {/* Header row */}
-                <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:8,flexWrap:"wrap"}}>
-                  <span style={{padding:"3px 10px",borderRadius:5,fontSize:10,fontWeight:700,letterSpacing:".6px",background:ns.bg,color:ns.color,display:"flex",alignItems:"center",gap:5}}>
-                    {mod&&<i className={`pi ${mod.icon}`} style={{fontSize:10}}/>}
-                    {mod?.label||note.noteType?.toUpperCase()||"Note"}
-                  </span>
-                  {note.isCritical && (
-                    <span style={{background:C.red,color:"white",padding:"2px 8px",borderRadius:4,fontSize:9,fontWeight:700,letterSpacing:".5px",display:"flex",alignItems:"center",gap:4}}>
-                      <i className="pi pi-exclamation-triangle" style={{fontSize:9}}/> CRITICAL EVENT
+                {/* ── Body ── */}
+                <div>
+                  {/* Clickable header row — always visible */}
+                  <div onClick={()=>toggleNote(noteKey)}
+                    style={{display:"flex",alignItems:"center",gap:7,marginBottom:isOpen?8:0,flexWrap:"wrap",cursor:"pointer",userSelect:"none"}}>
+                    <span style={{padding:"3px 10px",borderRadius:5,fontSize:10,fontWeight:700,letterSpacing:".6px",background:ns.bg,color:ns.color,display:"flex",alignItems:"center",gap:5}}>
+                      {mod&&<i className={`pi ${mod.icon}`} style={{fontSize:10}}/>}
+                      {mod?.label||note.noteType?.toUpperCase()||"Note"}
                     </span>
-                  )}
-                  {note.doctorName && <span style={{fontSize:11,color:C.muted,fontWeight:500}}>Dr. {note.doctorName}</span>}
-                  {note.doctorRegNo && <span style={{fontSize:10,color:C.muted,opacity:.7}}>#{note.doctorRegNo}</span>}
-                </div>
-
-                {/* Vitals grid */}
-                {vitals && (
-                  <div style={{display:"flex",gap:12,flexWrap:"wrap",padding:"10px 16px",background:`linear-gradient(to right, ${ns.bg}60, white)`,borderRadius:10,marginBottom:8}}>
-                    {[
-                      {label:"BP",    value:`${vitals.bp?.systolic||"—"}/${vitals.bp?.diastolic||"—"}`},
-                      {label:"PULSE", value:`${vitals.pulse||"—"} /min`},
-                      {label:"TEMP",  value:vitals.temp?`${vitals.temp}°F`:"—"},
-                      {label:"SPO₂", value:vitals.spo2?`${vitals.spo2}%`:"—"},
-                      {label:"RR",    value:vitals.rr?`${vitals.rr} /min`:"—"},
-                      {label:"GCS",   value:vitals.gcs||"—"},
-                      {label:"BSL",   value:vitals.bsl?`${vitals.bsl} mg/dL`:"—"},
-                    ].map(v=>(
-                      <div key={v.label} style={{display:"flex",flexDirection:"column",gap:1}}>
-                        <span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".6px",color:C.muted}}>{v.label}</span>
-                        <span style={{fontFamily:"'DM Mono',monospace",fontSize:12,fontWeight:500,color:C.text}}>{v.value}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* SOAP note */}
-                {hasSoap && (
-                  <div style={{display:"flex",flexDirection:"column",gap:5,padding:"8px 12px",background:"#f9fafb",borderRadius:8,marginBottom:8,border:`1px solid ${C.border}`}}>
-                    <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:ns.color,marginBottom:3}}>SOAP Note</div>
-                    {[
-                      {k:"S",label:"Subjective", v:soap.subjective},
-                      {k:"O",label:"Objective",  v:soap.objective},
-                      {k:"A",label:"Assessment", v:soap.assessment},
-                      {k:"P",label:"Plan",       v:soap.plan},
-                    ].filter(x=>x.v).map(x=>(
-                      <div key={x.k} style={{display:"flex",gap:8,alignItems:"flex-start"}}>
-                        <span style={{minWidth:18,height:18,borderRadius:4,background:ns.dot+"22",color:ns.color,fontSize:10,fontWeight:900,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{x.k}</span>
-                        <span style={{fontSize:11.5,color:C.text,lineHeight:1.55}}>{x.v}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Diagnosis */}
-                {hasDiag && (
-                  <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:8}}>
-                    {note.provisionalDiagnosis && (
-                      <div style={{display:"flex",flexDirection:"column",gap:1,padding:"6px 10px",background:"#fefce8",borderRadius:6,border:"1px solid #fef08a"}}>
-                        <span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:"#854d0e"}}>Provisional Dx</span>
-                        <span style={{fontSize:11.5,fontWeight:600,color:"#713f12"}}>{note.provisionalDiagnosis}</span>
-                      </div>
+                    {note.isCritical && (
+                      <span style={{background:C.red,color:"white",padding:"2px 8px",borderRadius:4,fontSize:9,fontWeight:700,letterSpacing:".5px",display:"flex",alignItems:"center",gap:4}}>
+                        <i className="pi pi-exclamation-triangle" style={{fontSize:9}}/> CRITICAL EVENT
+                      </span>
                     )}
-                    {note.finalDiagnosis && (
-                      <div style={{display:"flex",flexDirection:"column",gap:1,padding:"6px 10px",background:C.greenL,borderRadius:6,border:`1px solid ${C.green}30`}}>
-                        <span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.green}}>Final Dx</span>
-                        <span style={{fontSize:11.5,fontWeight:600,color:C.green}}>{note.finalDiagnosis}</span>
-                      </div>
-                    )}
+                    {note.doctorName && <span style={{fontSize:11,color:C.muted,fontWeight:500}}>Dr. {note.doctorName}</span>}
+                    {note.doctorRegNo && <span style={{fontSize:10,color:C.muted,opacity:.7}}>#{note.doctorRegNo}</span>}
+                    <span style={{marginLeft:"auto",fontSize:11,color:ns.color,fontWeight:700,lineHeight:1}}>{isOpen?"▼":"▲"}</span>
                   </div>
-                )}
 
-                {/* Investigations */}
-                {hasInvx && (
-                  <div style={{marginBottom:8}}>
-                    <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.muted,marginBottom:4}}>Investigations Ordered</div>
-                    <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                      {note.investigations.map((inv,ii)=>(
-                        <span key={ii} style={{padding:"2px 8px",borderRadius:4,fontSize:10,fontWeight:600,background:C.blueL,color:C.blue,border:`1px solid ${C.blue}30`}}>{inv}</span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Inline orders */}
-                {hasOrders && (
-                  <div style={{marginBottom:8}}>
-                    <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.muted,marginBottom:4}}>Orders ({note.orders.length})</div>
-                    <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                      {note.orders.map((o,oi)=>(
-                        <div key={oi} style={{display:"flex",gap:8,alignItems:"center",padding:"5px 10px",background:"#f9fafb",borderRadius:6,border:`1px solid ${C.border}`}}>
-                          <span style={{fontSize:14}}>{orderTypeIcon(o.type)}</span>
-                          <span style={{fontSize:12,fontWeight:600,color:C.text,flex:1}}>{o.instruction||"—"}</span>
-                          {o.dose      &&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:C.tealL,color:C.teal,fontWeight:600}}>{o.dose}</span>}
-                          {o.route     &&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:C.blueL,color:C.blue,fontWeight:600}}>{o.route}</span>}
-                          {o.frequency &&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:"#f1f5f9",color:C.muted,fontWeight:600}}>{o.frequency}</span>}
-                          {(!o.nurseStatus||o.nurseStatus==="pending")&&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:C.amberL,color:C.amber,fontWeight:700}}>PENDING</span>}
-                          {o.nurseStatus==="done"&&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:C.greenL,color:C.green,fontWeight:700}}>DONE</span>}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Medication Orders (from noteDetails) */}
-                {medOrders.length>0 && (
-                  <div style={{marginBottom:8}}>
-                    <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.blue,marginBottom:4}}>💊 Medication Orders ({medOrders.length})</div>
-                    <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                      {medOrders.filter(m=>m.drug).map((m,mi)=>(
-                        <div key={mi} style={{display:"flex",gap:6,alignItems:"center",padding:"5px 10px",background:C.blueL,borderRadius:6,border:`1px solid ${C.blue}20`}}>
-                          <span style={{fontSize:12,fontWeight:600,color:C.blue,flex:1}}>{m.drug}</span>
-                          {m.dose      &&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:"white",color:C.blue,fontWeight:600,border:`1px solid ${C.blue}30`}}>{m.dose}</span>}
-                          {m.route     &&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:"white",color:C.muted,fontWeight:600}}>{m.route}</span>}
-                          {m.frequency &&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:"white",color:C.muted,fontWeight:600}}>{m.frequency}</span>}
-                          <span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:m.status==="Active"?C.greenL:C.redL,color:m.status==="Active"?C.green:C.red,fontWeight:700}}>{m.status||"Active"}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Infusion Orders (from noteDetails) */}
-                {infOrders.length>0 && (
-                  <div style={{marginBottom:8}}>
-                    <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.teal,marginBottom:4}}>💧 Infusion Orders ({infOrders.length})</div>
-                    <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                      {infOrders.filter(m=>m.drugFluid||m.type).map((m,mi)=>(
-                        <div key={mi} style={{display:"flex",gap:6,alignItems:"center",padding:"5px 10px",background:C.tealL,borderRadius:6,border:`1px solid ${C.teal}20`}}>
-                          <span style={{fontSize:12,fontWeight:600,color:C.teal,flex:1}}>{m.drugFluid||m.type||"Fluid"}</span>
-                          {m.volume&&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:"white",color:C.teal,fontWeight:600}}>{m.volume} mL</span>}
-                          {m.rate  &&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:"white",color:C.muted,fontWeight:600}}>{m.rate} mL/hr</span>}
-                          <span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:m.status==="Active"?C.greenL:C.redL,color:m.status==="Active"?C.green:C.red,fontWeight:700}}>{m.status||"Active"}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Generic noteDetails renderer */}
-                {ndBlocks.length>0 && (
-                  <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:8}}>
-                    {ndBlocks.map(({key,label,chips})=>(
-                      <div key={key} style={{padding:"7px 12px",background:"#f9fafb",borderRadius:7,border:`1px solid ${C.border}`}}>
-                        {label&&<div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:ns.color,marginBottom:5}}>{label}</div>}
-                        <div style={{display:"flex",gap:"5px 14px",flexWrap:"wrap"}}>
-                          {chips.map(c=>(
-                            <div key={c.label} style={{display:"flex",flexDirection:"column",gap:1}}>
-                              {c.label&&<span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.muted}}>{c.label}</span>}
-                              <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:500,color:C.text}}>{c.value}</span>
+                  {/* Collapsible content */}
+                  {isOpen && (
+                    <div>
+                      {/* Vitals grid */}
+                      {vitals && (
+                        <div style={{display:"flex",gap:12,flexWrap:"wrap",padding:"10px 16px",background:`linear-gradient(to right, ${ns.bg}60, white)`,borderRadius:10,marginBottom:8}}>
+                          {[
+                            {label:"BP",    value:`${vitals.bp?.systolic||"—"}/${vitals.bp?.diastolic||"—"}`},
+                            {label:"PULSE", value:`${vitals.pulse||"—"} /min`},
+                            {label:"TEMP",  value:vitals.temp?`${vitals.temp}°F`:"—"},
+                            {label:"SPO₂", value:vitals.spo2?`${vitals.spo2}%`:"—"},
+                            {label:"RR",    value:vitals.rr?`${vitals.rr} /min`:"—"},
+                            {label:"GCS",   value:vitals.gcs||"—"},
+                            {label:"BSL",   value:vitals.bsl?`${vitals.bsl} mg/dL`:"—"},
+                          ].map(v=>(
+                            <div key={v.label} style={{display:"flex",flexDirection:"column",gap:1}}>
+                              <span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".6px",color:C.muted}}>{v.label}</span>
+                              <span style={{fontFamily:"'DM Mono',monospace",fontSize:12,fontWeight:500,color:C.text}}>{v.value}</span>
                             </div>
                           ))}
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                      )}
 
-                {/* Tags */}
-                {note.tags?.length>0 && (
-                  <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                    {note.tags.map(t=>(
-                      <span key={t} style={{padding:"2px 8px",borderRadius:4,fontSize:10,fontWeight:600,background:"#f9fafb",color:C.muted,border:`1px solid ${C.border}`}}>{t}</span>
-                    ))}
-                  </div>
-                )}
-              </div>
+                      {/* SOAP note */}
+                      {hasSoap && (
+                        <div style={{display:"flex",flexDirection:"column",gap:5,padding:"8px 12px",background:"#f9fafb",borderRadius:8,marginBottom:8,border:`1px solid ${C.border}`}}>
+                          <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:ns.color,marginBottom:3}}>SOAP Note</div>
+                          {[
+                            {k:"S",v:soap.subjective},
+                            {k:"O",v:soap.objective},
+                            {k:"A",v:soap.assessment},
+                            {k:"P",v:soap.plan},
+                          ].filter(x=>x.v).map(x=>(
+                            <div key={x.k} style={{display:"flex",gap:8,alignItems:"flex-start"}}>
+                              <span style={{minWidth:18,height:18,borderRadius:4,background:ns.dot+"22",color:ns.color,fontSize:10,fontWeight:900,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{x.k}</span>
+                              <span style={{fontSize:11.5,color:C.text,lineHeight:1.55}}>{x.v}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
 
-              {/* ── Actions ── */}
-              <div style={{display:"flex",flexDirection:"column",gap:5,alignItems:"flex-end"}}>
-                <div style={{fontSize:10,color:C.muted,textAlign:"right",marginBottom:4}}>{fmtDate(note.createdAt)}</div>
-                <button style={{padding:"4px 10px",border:`1.5px solid ${C.border}`,borderRadius:6,background:"white",fontSize:11,fontWeight:600,cursor:"pointer",color:C.muted,display:"flex",alignItems:"center",gap:4}}>
-                  <i className="pi pi-pencil" style={{fontSize:10}}/> Edit
-                </button>
-                <button style={{padding:"4px 10px",border:`1.5px solid ${C.border}`,borderRadius:6,background:"white",fontSize:11,fontWeight:600,cursor:"pointer",color:C.muted,display:"flex",alignItems:"center",gap:4}}>
-                  <i className="pi pi-print" style={{fontSize:10}}/> Print
-                </button>
+                      {/* Diagnosis */}
+                      {hasDiag && (
+                        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:8}}>
+                          {note.provisionalDiagnosis && (
+                            <div style={{display:"flex",flexDirection:"column",gap:1,padding:"6px 10px",background:"#fefce8",borderRadius:6,border:"1px solid #fef08a"}}>
+                              <span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:"#854d0e"}}>Provisional Dx</span>
+                              <span style={{fontSize:11.5,fontWeight:600,color:"#713f12"}}>{note.provisionalDiagnosis}</span>
+                            </div>
+                          )}
+                          {note.finalDiagnosis && (
+                            <div style={{display:"flex",flexDirection:"column",gap:1,padding:"6px 10px",background:C.greenL,borderRadius:6,border:`1px solid ${C.green}30`}}>
+                              <span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.green}}>Final Dx</span>
+                              <span style={{fontSize:11.5,fontWeight:600,color:C.green}}>{note.finalDiagnosis}</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Investigations */}
+                      {hasInvx && (
+                        <div style={{marginBottom:8}}>
+                          <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.muted,marginBottom:4}}>Investigations Ordered</div>
+                          <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                            {note.investigations.map((inv,ii)=>(
+                              <span key={ii} style={{padding:"2px 8px",borderRadius:4,fontSize:10,fontWeight:600,background:C.blueL,color:C.blue,border:`1px solid ${C.blue}30`}}>{inv}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Inline orders */}
+                      {hasOrders && (
+                        <div style={{marginBottom:8}}>
+                          <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.muted,marginBottom:4}}>Orders ({note.orders.length})</div>
+                          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                            {note.orders.map((o,oi)=>(
+                              <div key={oi} style={{display:"flex",gap:8,alignItems:"center",padding:"5px 10px",background:"#f9fafb",borderRadius:6,border:`1px solid ${C.border}`}}>
+                                <span style={{fontSize:14}}>{orderTypeIcon(o.type)}</span>
+                                <span style={{fontSize:12,fontWeight:600,color:C.text,flex:1}}>{o.instruction||"—"}</span>
+                                {o.dose      &&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:C.tealL,color:C.teal,fontWeight:600}}>{o.dose}</span>}
+                                {o.route     &&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:C.blueL,color:C.blue,fontWeight:600}}>{o.route}</span>}
+                                {o.frequency &&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:"#f1f5f9",color:C.muted,fontWeight:600}}>{o.frequency}</span>}
+                                {(!o.nurseStatus||o.nurseStatus==="pending")&&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:C.amberL,color:C.amber,fontWeight:700}}>PENDING</span>}
+                                {o.nurseStatus==="done"&&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:C.greenL,color:C.green,fontWeight:700}}>DONE</span>}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Medication Orders (from noteDetails) */}
+                      {medOrders.length>0 && (
+                        <div style={{marginBottom:8}}>
+                          <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.blue,marginBottom:4}}>💊 Medication Orders ({medOrders.length})</div>
+                          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                            {medOrders.filter(m=>m.drug).map((m,mi)=>(
+                              <div key={mi} style={{display:"flex",gap:6,alignItems:"center",padding:"5px 10px",background:C.blueL,borderRadius:6,border:`1px solid ${C.blue}20`}}>
+                                <span style={{fontSize:12,fontWeight:600,color:C.blue,flex:1}}>{m.drug}</span>
+                                {m.dose      &&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:"white",color:C.blue,fontWeight:600,border:`1px solid ${C.blue}30`}}>{m.dose}</span>}
+                                {m.route     &&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:"white",color:C.muted,fontWeight:600}}>{m.route}</span>}
+                                {m.frequency &&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:"white",color:C.muted,fontWeight:600}}>{m.frequency}</span>}
+                                <span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:m.status==="Active"?C.greenL:C.redL,color:m.status==="Active"?C.green:C.red,fontWeight:700}}>{m.status||"Active"}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Infusion Orders (from noteDetails) */}
+                      {infOrders.length>0 && (
+                        <div style={{marginBottom:8}}>
+                          <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.teal,marginBottom:4}}>💧 Infusion Orders ({infOrders.length})</div>
+                          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                            {infOrders.filter(m=>m.drugFluid||m.type).map((m,mi)=>(
+                              <div key={mi} style={{display:"flex",gap:6,alignItems:"center",padding:"5px 10px",background:C.tealL,borderRadius:6,border:`1px solid ${C.teal}20`}}>
+                                <span style={{fontSize:12,fontWeight:600,color:C.teal,flex:1}}>{m.drugFluid||m.type||"Fluid"}</span>
+                                {m.volume&&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:"white",color:C.teal,fontWeight:600}}>{m.volume} mL</span>}
+                                {m.rate  &&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:"white",color:C.muted,fontWeight:600}}>{m.rate} mL/hr</span>}
+                                <span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:m.status==="Active"?C.greenL:C.redL,color:m.status==="Active"?C.green:C.red,fontWeight:700}}>{m.status||"Active"}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Initial Assessment special renderer */}
+                      {isInitial && Object.keys(nd).length>0 && <DrInitialDetails nd={nd} ns={ns}/>}
+
+                      {/* Generic noteDetails renderer (non-initial) */}
+                      {!isInitial && ndBlocks.length>0 && (
+                        <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:8}}>
+                          {ndBlocks.map(({key,label,chips})=>(
+                            <div key={key} style={{padding:"7px 12px",background:"#f9fafb",borderRadius:7,border:`1px solid ${C.border}`}}>
+                              {label&&<div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:ns.color,marginBottom:5}}>{label}</div>}
+                              <div style={{display:"flex",gap:"5px 14px",flexWrap:"wrap"}}>
+                                {chips.map(c=>(
+                                  <div key={c.label} style={{display:"flex",flexDirection:"column",gap:1}}>
+                                    {c.label&&<span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.muted}}>{c.label}</span>}
+                                    <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:500,color:C.text}}>{c.value}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Tags */}
+                      {note.tags?.length>0 && (
+                        <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:8}}>
+                          {note.tags.map(t=>(
+                            <span key={t} style={{padding:"2px 8px",borderRadius:4,fontSize:10,fontWeight:600,background:"#f9fafb",color:C.muted,border:`1px solid ${C.border}`}}>{t}</span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Actions ── */}
+                <div style={{display:"flex",flexDirection:"column",gap:5,alignItems:"flex-end"}}>
+                  <div style={{fontSize:10,color:C.muted,textAlign:"right",marginBottom:4}}>{fmtDate(note.createdAt)}</div>
+                  <button style={{padding:"4px 10px",border:`1.5px solid ${C.border}`,borderRadius:6,background:"white",fontSize:11,fontWeight:600,cursor:"pointer",color:C.muted,display:"flex",alignItems:"center",gap:4}}>
+                    <i className="pi pi-pencil" style={{fontSize:10}}/> Edit
+                  </button>
+                  <button style={{padding:"4px 10px",border:`1.5px solid ${C.border}`,borderRadius:6,background:"white",fontSize:11,fontWeight:600,cursor:"pointer",color:C.muted,display:"flex",alignItems:"center",gap:4}}>
+                    <i className="pi pi-print" style={{fontSize:10}}/> Print
+                  </button>
+                </div>
               </div>
+              <div style={{height:isOpen?16:12}}/>
             </div>
           );
         })}
