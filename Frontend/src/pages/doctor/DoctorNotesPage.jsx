@@ -175,15 +175,13 @@ function DoctorNotesContent({ selectedPatient }) {
   const [recentSearch,     setRecentSearch]     = useState("");
   const [patientListTab,   setPatientListTab]   = useState("primary");  // "primary" | "consulting"
 
-  /* ── Assessment gate ── */
-  const assessmentDone = notes.some(n => n.noteType === "initial" && n.status === "signed");
-  const isNewAdmission = patient ? (() => {
-    const admDate = patient.admissionDate || patient.createdAt;
-    if (!admDate) return false;
-    const hours = (Date.now() - new Date(admDate).getTime()) / 3600000;
-    return hours < 48; // < 48hrs = new admission requiring initial assessment
-  })() : false;
-  const gateActive = isNewAdmission && !assessmentDone;
+  /* ── Assessment gate ──
+       Uses the admission's initialAssessment.doctorCompleted flag.
+       Until the doctor signs the initial assessment, all other note
+       types are locked. The "initial" module tile is always accessible.
+  ── */
+  const assessmentDone = patient?.initialAssessment?.doctorCompleted === true;
+  const gateActive = !!patient && !assessmentDone;
 
   /* ── NABH Medication Order Sheet state ── */
   const [medOrders,  setMedOrders]  = useState([emptyMedRow()]);
@@ -197,7 +195,7 @@ function DoctorNotesContent({ selectedPatient }) {
     // Past history
     pastMedical:"", pastSurgical:"", familyHistory:"", socialHistory:"", currentMeds:"", allergies:"NKDA",
     // Vitals on admission
-    bp:"", pulse:"", temp:"", spo2:"", rr:"", weight:"", height:"", bsl:"",
+    bp_sys:"", bp_dia:"", pulse:"", temp:"", spo2:"", rr:"", weight:"", height:"", bsl:"",
     // Examination
     generalCondition:"Conscious & Oriented", builtNutrition:"Average", pallor:"Absent", icterus:"Absent", cyanosis:"Absent", clubbing:"Absent", lymphadenopathy:"Absent", oedema:"Absent",
     // Systems
@@ -242,7 +240,7 @@ function DoctorNotesContent({ selectedPatient }) {
 
   /* ── Module form state ── */
   const initSoap = () => ({ subjective: "", objective: "", assessment: "", plan: "" });
-  const initVitals = () => ({ bp: "", pulse: "", temp: "", spo2: "", rr: "", bsl: "", gcs: "", urine: "" });
+  const initVitals = () => ({ bp_sys: "", bp_dia: "", pulse: "", temp: "", spo2: "", rr: "", bsl: "", gcs: "", urine: "" });
 
   const [soap,     setSoap]     = useState(initSoap());
   const [vitals,   setVitals]   = useState(initVitals());
@@ -388,7 +386,7 @@ function DoctorNotesContent({ selectedPatient }) {
       ...(status === "signed" && signature ? { signature, signedByName: doctorName, signedByReg: doctorRegNo } : {}),
       soap,
       vitals: Object.values(vitals).some(v => v) ? {
-        ...(vitals.bp ? { bp: { systolic: Number(vitals.bp.split("/")[0]||0), diastolic: Number(vitals.bp.split("/")[1]||0) } } : {}),
+        ...((vitals.bp_sys || vitals.bp_dia) ? { bp: { systolic: Number(vitals.bp_sys||0), diastolic: Number(vitals.bp_dia||0) } } : {}),
         ...(vitals.pulse  ? { pulse:  Number(vitals.pulse)  } : {}),
         ...(vitals.temp   ? { temp:   Number(vitals.temp)   } : {}),
         ...(vitals.rr     ? { rr:     Number(vitals.rr)     } : {}),
@@ -458,7 +456,8 @@ function DoctorNotesContent({ selectedPatient }) {
     if (note.vitals) {
       const v = note.vitals;
       setVitals({
-        bp:    v.bp ? `${v.bp.systolic || ""}/${v.bp.diastolic || ""}` : "",
+        bp_sys: v.bp?.systolic != null ? String(v.bp.systolic) : "",
+        bp_dia: v.bp?.diastolic != null ? String(v.bp.diastolic) : "",
         pulse: v.pulse != null ? String(v.pulse)  : "",
         temp:  v.temp  != null ? String(v.temp)   : "",
         rr:    v.rr    != null ? String(v.rr)     : "",
@@ -467,7 +466,7 @@ function DoctorNotesContent({ selectedPatient }) {
         gcs:   v.gcs   != null ? String(v.gcs)    : "",
         urine: v.urine != null ? String(v.urine)  : "",
       });
-    } else { setVitals({ bp:"", pulse:"", temp:"", rr:"", spo2:"", bsl:"", gcs:"", urine:"" }); }
+    } else { setVitals({ bp_sys:"", bp_dia:"", pulse:"", temp:"", rr:"", spo2:"", bsl:"", gcs:"", urine:"" }); }
 
     setDiag({
       provisional: note.provisionalDiagnosis || "",
@@ -935,23 +934,26 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
             </div>
           </div>
 
-          {/* ── Assessment Gate Banner ── */}
+          {/* ── Assessment Gate Banner (HARD BLOCK) ── */}
           {gateActive && (
-            <div style={{ background: "#fffbeb", border: "2px solid #fbbf24", borderRadius: 12, padding: "14px 20px", marginBottom: 14, display: "flex", alignItems: "center", gap: 14 }}>
-              <div style={{ width: 40, height: 40, borderRadius: 10, background: "#fef3c7", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <i className="pi pi-exclamation-triangle" style={{ fontSize: 18, color: "#d97706" }} />
+            <div style={{ background: "#fef2f2", border: "2px solid #fca5a5", borderRadius: 12, padding: "16px 20px", marginBottom: 14, display: "flex", alignItems: "center", gap: 14, boxShadow: "0 4px 16px rgba(220,38,38,.12)" }}>
+              <div style={{ width: 44, height: 44, borderRadius: 10, background: "#fee2e2", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <i className="pi pi-lock" style={{ fontSize: 20, color: "#dc2626" }} />
               </div>
               <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 800, fontSize: 14, color: "#92400e" }}>Initial Assessment Required — NABH COP.1</div>
-                <div style={{ fontSize: 12, color: "#a16207", marginTop: 3 }}>
-                  This patient was admitted within 48 hours. Doctor's Initial Assessment must be completed and signed before adding other clinical notes, medication orders, or infusion orders.
+                <div style={{ fontWeight: 800, fontSize: 14, color: "#991b1b", display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ background: "#dc2626", color: "white", fontSize: 9, fontWeight: 900, padding: "2px 7px", borderRadius: 4, letterSpacing: ".5px" }}>MANDATORY</span>
+                  Initial Assessment not completed — NABH COP.1
+                </div>
+                <div style={{ fontSize: 12, color: "#b91c1c", marginTop: 4 }}>
+                  Doctor's Initial Assessment must be completed and signed before writing daily notes, medication orders, ICU notes, or any other clinical documentation for this patient.
                 </div>
               </div>
               <button
                 onClick={() => setShowAssessmentModal(true)}
-                style={{ padding: "9px 20px", background: "#d97706", color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", boxShadow: "0 4px 12px #d9770630" }}>
-                <i className="pi pi-clipboard" style={{ marginRight: 6, fontSize: 12 }} />
-                Do Initial Assessment
+                style={{ padding: "10px 22px", background: "#dc2626", color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", boxShadow: "0 4px 14px rgba(220,38,38,.35)", flexShrink: 0 }}>
+                <i className="pi pi-clipboard" style={{ marginRight: 6, fontSize: 13 }} />
+                Write Initial Assessment
               </button>
             </div>
           )}
@@ -1494,8 +1496,12 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
 
             <div style={{ padding: "20px 22px" }}>
 
-              {/* ══ PLACEHOLDER — initial assessment now opens via DoctorAssessmentContent modal ══ */}
-              {activeModal === "initial" && (
+              {/* ══ Initial Medical Assessment ══ */}
+              {activeModal === "initial" && (() => {
+                /* alias state so the form can use `ia.field` and `set(key, val)` */
+                const ia  = initAssess;
+                const set = (k, v) => setInitAssess(p => ({ ...p, [k]: v }));
+                return (
                 <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                     <div style={{ background: "#fffbeb", border: "1.5px solid #fbbf24", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#92400e", fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
                       <i className="pi pi-clipboard" style={{ fontSize: 13 }} /> Initial Medical Assessment — NABH COP.1 · Must be signed within 24 hours of admission
@@ -1546,8 +1552,8 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     <div style={{ background: "#f8fafc", borderRadius: 10, padding: "12px 14px", border: `1px solid ${C.border}` }}>
                       <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Vitals on Admission</div>
                       <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8 }}>
-                        {[{k:"bp",l:"BP (mmHg)",ph:"120/80"},{k:"pulse",l:"Pulse (/min)",ph:"80"},{k:"temp",l:"Temp (°F)",ph:"98.6"},{k:"spo2",l:"SpO₂ (%)",ph:"98"},{k:"rr",l:"RR (/min)",ph:"16"},{k:"weight",l:"Weight (kg)",ph:"60"},{k:"height",l:"Height (cm)",ph:"165"},{k:"bsl",l:"BSL (mg/dL)",ph:"100"}].map(f => (
-                          <FL key={f.k} label={f.l}><input style={fld} value={ia[f.k]} placeholder={f.ph} onChange={e => set(f.k, e.target.value)} /></FL>
+                        {[{k:"bp_sys",l:"Systolic BP (mmHg)",ph:"120"},{k:"bp_dia",l:"Diastolic BP (mmHg)",ph:"80"},{k:"pulse",l:"Pulse (/min)",ph:"80"},{k:"temp",l:"Temp (°F)",ph:"98.6"},{k:"spo2",l:"SpO₂ (%)",ph:"98"},{k:"rr",l:"RR (/min)",ph:"16"},{k:"weight",l:"Weight (kg)",ph:"60"},{k:"height",l:"Height (cm)",ph:"165"},{k:"bsl",l:"BSL (mg/dL)",ph:"100"}].map(f => (
+                          <FL key={f.k} label={f.l}><input type="number" style={fld} value={ia[f.k]} placeholder={f.ph} onChange={e => set(f.k, e.target.value)} /></FL>
                         ))}
                       </div>
                     </div>
@@ -1726,7 +1732,8 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                       );
                     })()}
                   </div>
-              )}
+                );
+              })()}
 
               {/* ══ MEDICATION ORDERS SHEET (standalone) ══ */}
               {activeModal === "medication" && (() => {
@@ -1870,9 +1877,9 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                   <div style={{ background: "#f8fafc", border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px" }}>
                     <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Objective Vitals (NABH COP.2)</div>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8 }}>
-                      {[{k:"bp",l:"BP (mmHg)",p:"120/80"},{k:"pulse",l:"Pulse (/min)",p:"80"},{k:"temp",l:"Temp (°F)",p:"98.6"},{k:"spo2",l:"SpO₂ (%)",p:"98"},{k:"rr",l:"RR (/min)",p:"16"},{k:"bsl",l:"BSL (mg/dL)",p:"110"},{k:"gcs",l:"GCS",p:"E4V5M6"},{k:"urine",l:"Urine (mL/hr)",p:"50"}].map(v => (
+                      {[{k:"bp_sys",l:"Systolic BP (mmHg)",p:"120"},{k:"bp_dia",l:"Diastolic BP (mmHg)",p:"80"},{k:"pulse",l:"Pulse (/min)",p:"80"},{k:"temp",l:"Temp (°F)",p:"98.6"},{k:"spo2",l:"SpO₂ (%)",p:"98"},{k:"rr",l:"RR (/min)",p:"16"},{k:"bsl",l:"BSL (mg/dL)",p:"110"},{k:"gcs",l:"GCS",p:"E4V5M6"},{k:"urine",l:"Urine (mL/hr)",p:"50"}].map(v => (
                         <FL key={v.k} label={v.l}>
-                          <input style={{ ...fld, fontSize: 12 }} value={vitals[v.k]} placeholder={v.p} onChange={e => setVitals(p => ({ ...p, [v.k]: e.target.value }))} />
+                          <input type={v.k==="gcs"?"text":"number"} style={{ ...fld, fontSize: 12 }} value={vitals[v.k]} placeholder={v.p} onChange={e => setVitals(p => ({ ...p, [v.k]: e.target.value }))} />
                         </FL>
                       ))}
                     </div>
