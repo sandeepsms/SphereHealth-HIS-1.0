@@ -309,7 +309,60 @@ const DR_FIELD_LBL_DP = {
   causeDeath1:"Cause 1",causeDeath2:"Cause 2",causeDeath3:"Cause 3",
   contributing:"Contributing",sequenceOfEvents:"Sequence",modeOfDeath:"Mode of Death",
   dnrInPlace:"DNR",familyInformed:"Family Informed",correction:"Correction",witness:"Witness",
+  familyInformedBy:"Informed By",familyInformedTime:"Informed At",mlc:"MLC",pmAdvised:"PM Advised",
+  certificateIssued:"Certificate Issued",originalNoteId:"Original Note",
+  consultantRegNo:"Reg No",cbcReviewed:"CBC ✓",ptReviewed:"PT/APTT ✓",ecgReviewed:"ECG ✓",
+  cxrReviewed:"CXR ✓",echoReviewed:"Echo ✓",lftsReviewed:"LFTs ✓",rftReviewed:"RFTs ✓",
+  procedure:"Procedure",preopDiagnosis:"Pre-op Dx",postopDiagnosis:"Post-op Dx",
+  dateTime:"Date/Time",
 };
+
+/* Section maps per non-initial note type */
+const DR_NOTE_SECTIONS_DP = {
+  icu: [
+    {label:"Ventilator Settings",         icon:"pi-sliders-h",        keys:["ventMode","fio2","peep","tv","ventRR","pip"]},
+    {label:"Hemodynamics / Monitoring",   icon:"pi-chart-line",       keys:["map","cvp","rassScore","bpsScore"]},
+    {label:"Sedation / Vasopressors",     icon:"pi-bolt",             keys:["sedation","vasopressors","vasopressorDetail"]},
+    {label:"System Assessment",           icon:"pi-list",             keys:["neuro","cvs","resp","renal","gi","haem","infective"]},
+    {label:"Daily Goals",                 icon:"pi-check-square",     keys:["dailyGoals"]},
+  ],
+  procedure: [
+    {label:"Procedure Details",           icon:"pi-wrench",           keys:["procedureName","indication","time","laterality","surgeon","assistant","anaesthesia","position","consentObtained"]},
+    {label:"Technique & Findings",        icon:"pi-search",           keys:["technique","findings"]},
+    {label:"Outcome",                     icon:"pi-check-circle",     keys:["complications","bloodLoss","specimenSent","specimenType","postInstructions"]},
+  ],
+  consultation: [
+    {label:"Consultation",                icon:"pi-users",            keys:["consultantName","speciality","consultantRegNo","referredBy","reason"]},
+    {label:"Clinical Summary & Findings", icon:"pi-file-edit",        keys:["clinicalSummary","investigations","findings"]},
+    {label:"Impression & Recommendations",icon:"pi-check-circle",     keys:["impression","recommendations","followUp"]},
+  ],
+  preop: [
+    {label:"Patient & Procedure",         icon:"pi-user",             keys:["procedure","indication","preopDiagnosis","asaGrade","plannedAnaesthesia","bloodGroup"]},
+    {label:"Lab Reviews",                 icon:"pi-check-square",     keys:["crossMatch","cbcReviewed","ptReviewed","ecgReviewed","cxrReviewed","echoReviewed","lftsReviewed","rftReviewed"]},
+    {label:"Pre-op Plan",                 icon:"pi-list",             keys:["comorbidities","currentMeds","allergies","consentObtained","surgeon","anaesthetist","preopOrders"]},
+  ],
+  postop: [
+    {label:"Operative Details",           icon:"pi-wrench",           keys:["procedurePerformed","operativeFindings","anaesthesia","surgeon","anaesthetist","startTime","endTime"]},
+    {label:"Fluids & Specimens",          icon:"pi-tint",             keys:["bloodLoss","transfusion","fluidsGiven","urineOutput","specimenSent","specimenType"]},
+    {label:"Post-op Status",              icon:"pi-home",             keys:["postopDiagnosis","conditionLeavingOT","recoveryInstructions","postopOrders"]},
+  ],
+  death: [
+    {label:"Cause of Death",              icon:"pi-exclamation-triangle", keys:["dateTime","causeDeath1","causeDeath2","causeDeath3","contributing"]},
+    {label:"Clinical Sequence",           icon:"pi-file",             keys:["sequenceOfEvents","modeOfDeath"]},
+    {label:"Administrative",              icon:"pi-clipboard",        keys:["dnrInPlace","familyInformed","familyInformedBy","familyInformedTime","mlc","pmAdvised","certificateIssued"]},
+  ],
+  amendment: [
+    {label:"Amendment",                   icon:"pi-pencil",           keys:["originalNoteId","correction","reason","witness"]},
+  ],
+};
+
+/* Long-text fields rendered as paragraphs, not chips */
+const DR_LONG_FIELDS_DP = new Set([
+  "dailyGoals","technique","findings","clinicalSummary","impression","recommendations",
+  "sequenceOfEvents","postInstructions","recoveryInstructions","postopOrders","preopOrders",
+  "comorbidities","correction","reason","operativeFindings","vasopressorDetail",
+]);
+
 const DR_IA_SECTIONS_DP = [
   {label:"Admission Details",    keys:["admissionMode","chiefComplaint","duration","hpi"]},
   {label:"Past History",         keys:["pastMedical","pastSurgical","familyHistory","socialHistory","currentMeds","allergies"]},
@@ -458,25 +511,12 @@ function ClinicalNotesTab({notes=[]}) {
           const infOrds = nd.infusionOrders||[];
           const isInitial = note.noteType==="initial";
 
-          /* Generic noteDetails blocks (non-initial) */
-          const ndBlocks = isInitial ? [] : Object.entries(nd)
-            .filter(([k])=>!["medicationOrders","infusionOrders"].includes(k))
-            .map(([mk,mv])=>{
-              if (!mv) return null;
-              if (Array.isArray(mv)) {
-                const items=mv.filter(Boolean);
-                if (!items.length) return null;
-                return {key:mk,label:DR_FIELD_LBL_DP[mk]||mk,chips:[{label:`${items.length} item(s)`,value:items.map(x=>typeof x==="object"?(x.drug||x.drugFluid||x.procedureName||x.type||"Item"):String(x)).join(" | ")}]};
-              }
-              if (typeof mv!=="object") {
-                const val=dpFmtVal(mv);
-                if (!val) return null;
-                return {key:mk,label:"",chips:[{label:DR_FIELD_LBL_DP[mk]||dpFmtKey(mk),value:val}]};
-              }
-              const chips=Object.entries(mv).map(([k,v2])=>({label:dpFmtKey(k),value:dpFmtVal(v2)})).filter(c=>c.value!==null);
-              if (!chips.length) return null;
-              return {key:mk,label:DR_FIELD_LBL_DP[mk]||mk.replace(/([A-Z])/g," $1").trim(),chips};
-            }).filter(Boolean);
+          /* Section-based noteDetails (non-initial) */
+          const noteSections = isInitial ? [] : (DR_NOTE_SECTIONS_DP[note.noteType] || []);
+          const coveredKeys  = new Set(noteSections.flatMap(s => s.keys));
+          const uncoveredPairs = isInitial ? [] : Object.entries(nd)
+            .filter(([k]) => !["medicationOrders","infusionOrders"].includes(k) && !coveredKeys.has(k))
+            .filter(([,v]) => { const s = dpIAFmt(v); return s && s.length > 0; });
 
           return (
             <div key={noteKey}
@@ -650,22 +690,68 @@ function ClinicalNotesTab({notes=[]}) {
                       {/* Initial Assessment special renderer */}
                       {isInitial && Object.keys(nd).length>0 && <DpInitialDetails nd={nd} nc={nc}/>}
 
-                      {/* Generic noteDetails renderer (non-initial) */}
-                      {!isInitial && ndBlocks.length>0 && (
-                        <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:8}}>
-                          {ndBlocks.map(({key,label,chips})=>(
-                            <div key={key} style={{padding:"7px 12px",background:"#f9fafb",borderRadius:7,border:`1px solid ${C.border}`}}>
-                              {label&&<div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:nc.color,marginBottom:5}}>{label}</div>}
-                              <div style={{display:"flex",gap:"5px 14px",flexWrap:"wrap"}}>
-                                {chips.map(c=>(
-                                  <div key={c.label} style={{display:"flex",flexDirection:"column",gap:1}}>
-                                    {c.label&&<span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.muted}}>{c.label}</span>}
-                                    <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:500,color:C.dark}}>{c.value}</span>
+                      {/* Section-based noteDetails renderer (non-initial) */}
+                      {!isInitial && (noteSections.length>0 || uncoveredPairs.length>0) && (
+                        <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:8}}>
+                          {noteSections.map(sec=>{
+                            const pairs = sec.keys
+                              .map(k=>({k, lbl:DR_FIELD_LBL_DP[k]||dpFmtKey(k), val:dpIAFmt(nd[k])}))
+                              .filter(p=>p.val);
+                            if (!pairs.length) return null;
+                            const longPairs  = pairs.filter(p=> DR_LONG_FIELDS_DP.has(p.k));
+                            const shortPairs = pairs.filter(p=>!DR_LONG_FIELDS_DP.has(p.k));
+                            return (
+                              <div key={sec.label} style={{borderRadius:8,overflow:"hidden",border:`1px solid ${nc.dot}30`}}>
+                                <div style={{padding:"5px 12px",background:`${nc.dot}18`,display:"flex",alignItems:"center",gap:7}}>
+                                  <i className={`pi ${sec.icon}`} style={{fontSize:10,color:nc.color}}/>
+                                  <span style={{fontSize:9,fontWeight:800,textTransform:"uppercase",letterSpacing:".7px",color:nc.color}}>{sec.label}</span>
+                                </div>
+                                <div style={{padding:"8px 12px",background:"#fafafa"}}>
+                                  {longPairs.map(p=>(
+                                    <div key={p.k} style={{marginBottom:6}}>
+                                      <span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.muted,display:"block",marginBottom:2}}>{p.lbl}</span>
+                                      <span style={{fontSize:11.5,color:C.text,lineHeight:1.75,wordBreak:"break-word",display:"block"}}>{p.val}</span>
+                                    </div>
+                                  ))}
+                                  {shortPairs.length>0 && (
+                                    <div style={{display:"flex",gap:"5px 16px",flexWrap:"wrap"}}>
+                                      {shortPairs.map(p=>(
+                                        <div key={p.k} style={{display:"flex",flexDirection:"column",gap:1,minWidth:80}}>
+                                          <span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.muted}}>{p.lbl}</span>
+                                          <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:600,color:C.dark}}>{p.val}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          }).filter(Boolean)}
+
+                          {/* Uncovered / extra fields fallback */}
+                          {uncoveredPairs.length>0 && (
+                            <div style={{borderRadius:8,overflow:"hidden",border:`1px solid ${C.border}`}}>
+                              <div style={{padding:"5px 12px",background:C.primaryL}}>
+                                <span style={{fontSize:9,fontWeight:800,textTransform:"uppercase",letterSpacing:".7px",color:C.primary}}>Additional Details</span>
+                              </div>
+                              <div style={{padding:"8px 12px",background:"#fafafa"}}>
+                                {uncoveredPairs.filter(([k])=> DR_LONG_FIELDS_DP.has(k)).map(([k,v])=>(
+                                  <div key={k} style={{marginBottom:6}}>
+                                    <span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.muted,display:"block",marginBottom:2}}>{DR_FIELD_LBL_DP[k]||dpFmtKey(k)}</span>
+                                    <span style={{fontSize:11.5,color:C.text,lineHeight:1.75,wordBreak:"break-word",display:"block"}}>{dpIAFmt(v)}</span>
                                   </div>
                                 ))}
+                                <div style={{display:"flex",gap:"5px 16px",flexWrap:"wrap"}}>
+                                  {uncoveredPairs.filter(([k])=>!DR_LONG_FIELDS_DP.has(k)).map(([k,v])=>(
+                                    <div key={k} style={{display:"flex",flexDirection:"column",gap:1,minWidth:80}}>
+                                      <span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.muted}}>{DR_FIELD_LBL_DP[k]||dpFmtKey(k)}</span>
+                                      <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:600,color:C.dark}}>{dpIAFmt(v)}</span>
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
                             </div>
-                          ))}
+                          )}
                         </div>
                       )}
 
