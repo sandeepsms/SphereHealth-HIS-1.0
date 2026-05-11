@@ -280,6 +280,14 @@ function NursingNotesContent({ selectedPatient }) {
   const [procedure, setProcedure] = useState({ procedureName: "", indication: "", site: "", laterality: "N/A", time: "", consentObtained: true, performedBy: "", designation: "Staff Nurse", assistant: "", sterile: true, position: "Supine", outcome: "Tolerated Well", complications: "None", specimenSent: false, specimenType: "", postProcVitals: "", followUp: "" });
   const [discharge, setDischarge] = useState({ type: "Shift Handover", situation: "", background: "", assessment: "", recommendation: "", incomingNurse: "", patientStatus: "Stable", educationGiven: false, educationTopics: "", followUpDate: "", valuablesHandedOver: false });
   const [mews,      setMews]      = useState({ rr: "", spo2: "", temp: "", sbp: "", hr: "", avpu: "A" });
+  const [generalObs, setGeneralObs] = useState({
+    consciousness: "Conscious", orientation: "Oriented ×3", cooperation: "Cooperative",
+    mood: "Calm", activityLevel: "Ambulatory", sleepQuality: "Good", appetite: "Good",
+    comfort: "Comfortable", oxygenNeeded: false, catheterPresent: false, ngPresent: false,
+    ivAccess: false, restraintUsed: false, callBellInReach: true, railsUp: true,
+    bowelSounds: "Normal", urineOutput: "Adequate", skin: "Intact",
+    observations: "",
+  });
 
   /* ── Fetch IV dilution orders when I/O tab opens ── */
   useEffect(() => {
@@ -565,7 +573,9 @@ function NursingNotesContent({ selectedPatient }) {
     try {
       const { data } = await axios.get(`${API_ENDPOINTS.NURSING_NOTES}/ipd/${encodeURIComponent(ipdNo)}`);
       const arr = Array.isArray(data) ? data : data.data || [];
-      setNotes(arr.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
+      // Map noteData → moduleData so timeline renderer can access structured module fields
+      const mapped = arr.map(n => ({ ...n, moduleData: n.noteData || {} }));
+      setNotes(mapped.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
 
       /* ── Retroactive fix: if notes exist but nurseCompleted not flagged in DB,
              persist the flag now so the gate never re-activates on reload.        ── */
@@ -618,6 +628,7 @@ function NursingNotesContent({ selectedPatient }) {
     setCarePlan({ problems: [{ id: Date.now(), statement:"", relatedTo:"", evidencedBy:"", priority:"High", goals:"", targetDate:"", interventions:"", evaluation:"", status:"Active" }] });
     setNutrition({ bmi:"", bmiLow:false, weightLoss:false, reducedIntake:false, seriouslyIll:false, nutritionScore:"0", diseaseScore:"0", ageScore:false, weight:"", height:"", idealBodyWeight:"", actualWeightPercent:"", midArmCirc:"", dietType:"Regular", consistency:"Normal", fluidRestriction:false, fluidLimit:"", appetite:"Good", swallowing:"Normal", feedingMode:"Oral", ngtPresent:false, caloriesToday:"", proteinToday:"", fluidToday:"", dietitianReferral:false, referralReason:"" });
     setEducation({ date: new Date().toISOString().split("T")[0], educator:"", topics:[], methods:[], language:"Hindi", understanding:"Good", barriers:[], response:"Positive", sessionNotes:"", nextSessionDate:"" });
+    setGeneralObs({ consciousness:"Conscious", orientation:"Oriented ×3", cooperation:"Cooperative", mood:"Calm", activityLevel:"Ambulatory", sleepQuality:"Good", appetite:"Good", comfort:"Comfortable", oxygenNeeded:false, catheterPresent:false, ngPresent:false, ivAccess:false, restraintUsed:false, callBellInReach:true, railsUp:true, bowelSounds:"Normal", urineOutput:"Adequate", skin:"Intact", observations:"" });
   };
 
   const toggleTag = (t) => setSelectedTags(ts => ts.includes(t) ? ts.filter(x => x !== t) : [...ts, t]);
@@ -639,7 +650,7 @@ function NursingNotesContent({ selectedPatient }) {
       nurseEmployeeId: user?.employeeId || "",
       nurseId: user?._id || user?.id || undefined,
     };
-    if (activeModal === "vitals")   payload.vitals = { bp: { systolic: Number(vitals.bp_sys || 0), diastolic: Number(vitals.bp_dia || 0) }, pulse: Number(vitals.pulse), temp: Number(vitals.temp), spo2: Number(vitals.spo2), rr: Number(vitals.rr), gcs: vitals.gcs, bsl: Number(vitals.bsl) };
+    if (activeModal === "vitals")   payload.vitals = { bp: { systolic: Number(vitals.bp_sys || 0), diastolic: Number(vitals.bp_dia || 0) }, pulse: Number(vitals.pulse), temp: Number(vitals.temp), spo2: Number(vitals.spo2), rr: Number(vitals.rr), gcs: vitals.gcs || "", bsl: vitals.bsl ? Number(vitals.bsl) : undefined, o2Flow: vitals.o2Flow ? Number(vitals.o2Flow) : undefined, o2Device: vitals.o2Device || undefined, weight: vitals.weight ? Number(vitals.weight) : undefined, position: vitals.position || undefined };
     if (activeModal === "blood")    payload.bloodTransfusion = blood;
     if (activeModal === "iv")       payload.ivInfusion = iv;
     if (activeModal === "intake") {
@@ -647,13 +658,14 @@ function NursingNotesContent({ selectedPatient }) {
       payload.intakeOutput = { oral: Number(intake.oral), ivFluids: Number(intake.ivFluids) + _autoMedVol, ivMedFluids: _autoMedVol, urineOutput: Number(intake.urineOutput), nasogastricOutput: Number(intake.nasogastric), otherOutput: Number(intake.drainOutput) };
     }
     if (activeModal === "neuro")    payload.neuroAssessment = neuro;
-    if (activeModal === "pain")     payload.painAssessment = pain;
+    if (activeModal === "pain")     payload.painModule = pain;  // avoid BASE_FIELDS collision (painAssessment is String field)
     if (activeModal === "wound")    payload.woundCare = wound;
     if (activeModal === "skin")     payload.skinAssessment = skin;
     if (activeModal === "fall")     payload.fallRisk = fallRisk;
     if (activeModal === "procedure") payload.procedure = procedure;
     if (activeModal === "discharge") payload.discharge = discharge;
     if (activeModal === "mews")      payload.mewsScore = { ...mews, total: calcMEWS(mews), band: mewsBand(calcMEWS(mews)).label };
+    if (activeModal === "general")   payload.generalObservation = generalObs;
     if (activeModal === "daily")     payload.dailyAssessment = dailyAssess;
     if (activeModal === "initial")   payload.initialAssessment = initialAssess;
     if (activeModal === "careplan")  payload.carePlan = carePlan;
@@ -1615,7 +1627,7 @@ function NursingNotesContent({ selectedPatient }) {
                           note.noteType === "vitals" ? ["vitals"]    : []
                         );
                         const MOD_SECTION_LBL = {
-                          painAssessment:"Pain Assessment", neuroAssessment:"Neuro / GCS",
+                          painAssessment:"Pain Assessment", painModule:"Pain Assessment", neuroAssessment:"Neuro / GCS",
                           bloodTransfusion:"Blood Transfusion", ivInfusion:"IV Infusion",
                           intakeOutput:"Intake / Output", woundCare:"Wound / Dressing",
                           skinAssessment:"Skin / Pressure (Braden)", fallRisk:"Fall Risk (Morse Scale)",
@@ -1623,6 +1635,7 @@ function NursingNotesContent({ selectedPatient }) {
                           dailyAssessment:"Daily Assessment", initialAssessment:"Initial Assessment",
                           carePlan:"Care Plan", nutritionalAssessment:"Nutritional Assessment (NRS-2002)",
                           patientEducation:"Patient Education",
+                          generalObservation:"General Observation",
                         };
                         const FIELD_LBL = {
                           m1:"History of Falls", m2:"Secondary Dx", m3:"Ambul. Aid",
@@ -1693,6 +1706,13 @@ function NursingNotesContent({ selectedPatient }) {
                           topics:"Topics", methods:"Methods", understanding:"Understanding",
                           language:"Language", response:"Response", barriers:"Barriers",
                           sessionNotes:"Session Notes", nextSessionDate:"Next Session",
+                          consciousness:"Consciousness", orientation:"Orientation",
+                          cooperation:"Cooperation", mood:"Mood", activityLevel:"Activity",
+                          sleepQuality:"Sleep", comfort:"Comfort", bowelSounds:"Bowel Sounds",
+                          urineOutput:"Urine Output", skin:"Skin", observations:"Observations",
+                          oxygenNeeded:"Oxygen", catheterPresent:"Catheter", ngPresent:"NGT",
+                          ivAccess:"IV Access", restraintUsed:"Restraint", callBellInReach:"Call Bell",
+                          railsUp:"Bed Rails",
                         };
                         const fmtKey = k => FIELD_LBL[k] || k.replace(/([A-Z])/g," $1").replace(/^[Ii]nt /,"").trim();
                         const fmtVal = v => {
@@ -2574,8 +2594,102 @@ function NursingNotesContent({ selectedPatient }) {
                 );
               })()}
 
-              {/* ── General Observation (default free text only) ── */}
-              {activeModal === "general" && null}
+              {/* ── General Observation ── */}
+              {activeModal === "general" && (
+                <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+                  {/* Row 1 — Clinical status */}
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+                    <FL label="Consciousness">
+                      <select style={sel} value={generalObs.consciousness} onChange={e=>setGeneralObs(p=>({...p,consciousness:e.target.value}))}>
+                        {["Conscious","Drowsy","Stuporous","Unconscious","Sedated","Confused"].map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                    <FL label="Orientation">
+                      <select style={sel} value={generalObs.orientation} onChange={e=>setGeneralObs(p=>({...p,orientation:e.target.value}))}>
+                        {["Oriented ×3","Oriented to person only","Disoriented","Not assessable"].map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                    <FL label="Co-operation">
+                      <select style={sel} value={generalObs.cooperation} onChange={e=>setGeneralObs(p=>({...p,cooperation:e.target.value}))}>
+                        {["Cooperative","Uncooperative","Partially cooperative","Anxious","Agitated"].map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                  </div>
+                  {/* Row 2 — General wellbeing */}
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:10 }}>
+                    <FL label="Mood / Affect">
+                      <select style={sel} value={generalObs.mood} onChange={e=>setGeneralObs(p=>({...p,mood:e.target.value}))}>
+                        {["Calm","Anxious","Depressed","Irritable","Euphoric","Flat"].map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                    <FL label="Activity Level">
+                      <select style={sel} value={generalObs.activityLevel} onChange={e=>setGeneralObs(p=>({...p,activityLevel:e.target.value}))}>
+                        {["Ambulatory","Ambulatory with assistance","Chair rest","Bed rest","Bed-bound"].map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                    <FL label="Sleep Quality">
+                      <select style={sel} value={generalObs.sleepQuality} onChange={e=>setGeneralObs(p=>({...p,sleepQuality:e.target.value}))}>
+                        {["Good","Disturbed","Poor","Unable to sleep"].map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                    <FL label="Appetite">
+                      <select style={sel} value={generalObs.appetite} onChange={e=>setGeneralObs(p=>({...p,appetite:e.target.value}))}>
+                        {["Good","Fair","Poor","Nil by mouth","NGT feeding"].map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                  </div>
+                  {/* Row 3 — Physical findings */}
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+                    <FL label="Comfort Level">
+                      <select style={sel} value={generalObs.comfort} onChange={e=>setGeneralObs(p=>({...p,comfort:e.target.value}))}>
+                        {["Comfortable","Mild discomfort","Moderate distress","Severe distress"].map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                    <FL label="Bowel Sounds">
+                      <select style={sel} value={generalObs.bowelSounds} onChange={e=>setGeneralObs(p=>({...p,bowelSounds:e.target.value}))}>
+                        {["Normal","Hyperactive","Hypoactive","Absent"].map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                    <FL label="Urine Output">
+                      <select style={sel} value={generalObs.urineOutput} onChange={e=>setGeneralObs(p=>({...p,urineOutput:e.target.value}))}>
+                        {["Adequate","Reduced","Oliguric","Anuric","Catheterised — draining","Incontinent"].map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                  </div>
+                  <FL label="Skin Condition">
+                    <select style={sel} value={generalObs.skin} onChange={e=>setGeneralObs(p=>({...p,skin:e.target.value}))}>
+                      {["Intact","Pallor","Jaundice","Cyanosis","Oedema","Rash / Urticaria","Wound present","Pressure injury present"].map(o=><option key={o}>{o}</option>)}
+                    </select>
+                  </FL>
+                  {/* Row 4 — Devices & Safety checkboxes */}
+                  <div style={{ background:"#f8fafc", border:`1px solid ${C.border}`, borderRadius:10, padding:"12px 14px" }}>
+                    <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>Devices In Situ & Safety Checks</div>
+                    <div style={{ display:"flex", flexWrap:"wrap", gap:"10px 24px" }}>
+                      {[
+                        {k:"oxygenNeeded",   l:"Oxygen in use"},
+                        {k:"catheterPresent",l:"Urinary catheter"},
+                        {k:"ngPresent",      l:"NGT in situ"},
+                        {k:"ivAccess",       l:"IV access patent"},
+                        {k:"restraintUsed",  l:"Restraint used"},
+                        {k:"callBellInReach",l:"Call bell in reach"},
+                        {k:"railsUp",        l:"Bed rails raised"},
+                      ].map(({k,l})=>(
+                        <label key={k} style={{ display:"flex", alignItems:"center", gap:7, cursor:"pointer", fontWeight:600, fontSize:13, color:C.text }}>
+                          <input type="checkbox" checked={!!generalObs[k]} onChange={e=>setGeneralObs(p=>({...p,[k]:e.target.checked}))}
+                            style={{ accentColor:C.primary, width:15, height:15 }} />
+                          {l}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  {/* Free-text observations */}
+                  <FL label="Observations / Remarks">
+                    <textarea style={{ ...ta, minHeight:90 }} value={generalObs.observations}
+                      placeholder="General observations, patient response, any changes noted…"
+                      onChange={e=>setGeneralObs(p=>({...p,observations:e.target.value}))} />
+                  </FL>
+                </div>
+              )}
 
               {/* ── Daily Assessment (NABH NS.4) ── */}
               {activeModal === "daily" && (() => {
