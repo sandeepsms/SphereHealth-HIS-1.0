@@ -115,4 +115,7 @@ router.use("/nursing-charges", nursingChargesRoutes);
 router.use("/hospital-settings", hospitalSettingsRoutes);
 router.use("/vitalsheet", vitalSheetRoutes);
 
+// Live presence (who's serving whom)
+router.use("/presence", require("./Presence/presenceRoutes"));
+
 module.exports = router;

@@ -18,6 +18,8 @@ import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
+import { useReceptionistPresence } from "../../hooks/useReceptionistPresence";
+import { useAuth } from "../../context/AuthContext";
 import "./ReceptionDashboard.css";
 
 const STATUS_LABEL = {
@@ -43,21 +45,29 @@ const fmtDateLong = (d) => new Date(d).toLocaleDateString("en-IN", { weekday: "l
 
 export default function ReceptionDashboard() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const myUserId = user?._id || user?.id;
   const [date,       setDate]       = useState(today());
   const [collection, setCollection] = useState(null);
   const [queues,     setQueues]     = useState([]);
+  const [presence,   setPresence]   = useState([]);
   const [loading,    setLoading]    = useState(true);
+
+  // Broadcast our own presence (so the other receptionist can see us)
+  useReceptionistPresence({ type: "idle", action: "viewing-dashboard" });
 
   /* ─── Load data ─── */
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const [colRes, qRes] = await Promise.allSettled([
+      const [colRes, qRes, pRes] = await Promise.allSettled([
         axios.get(`${API_ENDPOINTS.BASE}/billing/collection-summary`, { params: { date } }),
         axios.get(`${API_ENDPOINTS.BASE}/doctors/dashboard/queues`),
+        axios.get(`${API_ENDPOINTS.BASE}/presence/active`),
       ]);
       if (colRes.status === "fulfilled") setCollection(colRes.value.data);
       if (qRes.status === "fulfilled")   setQueues(qRes.value.data?.data || []);
+      if (pRes.status === "fulfilled")   setPresence(pRes.value.data?.data || []);
     } catch (e) { /* silent */ }
     finally { setLoading(false); }
   }, [date]);
@@ -137,6 +147,33 @@ export default function ReceptionDashboard() {
           </button>
         </div>
       </div>
+
+      {/* ── Live Receptionist Presence strip ── */}
+      {isToday && presence.length > 0 && (
+        <div className="rd-presence-strip">
+          <i className="pi pi-users" style={{ color:"#0891b2", fontSize:14 }} />
+          <span style={{ fontSize:11, fontWeight:700, color:"#64748b", textTransform:"uppercase", letterSpacing:".5px" }}>
+            Active Right Now ({presence.length})
+          </span>
+          {presence.map(p => {
+            const secondsAgo = Math.floor((Date.now() - new Date(p.lastHeartbeatAt)) / 1000);
+            const isMe = String(p.userId) === String(myUserId || "");
+            return (
+              <div key={p.userId} className={`rd-presence-chip ${isMe ? "rd-presence-chip--me" : ""}`}>
+                <span className="rd-presence-dot" />
+                <span className="rd-presence-name">{p.userName}{isMe ? " (you)" : ""}</span>
+                <span className="rd-presence-doing">
+                  {p.action === "registering" && p.currentResource?.label ? `registering ${p.currentResource.label}` :
+                   p.action === "editing"     && p.currentResource?.label ? `editing ${p.currentResource.label}` :
+                   p.action === "viewing-dashboard" ? "on dashboard" :
+                   p.action || "idle"}
+                </span>
+                <span className="rd-presence-ago">{secondsAgo < 60 ? `${secondsAgo}s ago` : `${Math.floor(secondsAgo/60)}m ago`}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* ── Stat tiles ── */}
       <div className="rd-stats" style={{ marginBottom: 14 }}>

@@ -30,7 +30,9 @@ import opdService from "../../Services/patient/opdService";
 import emergencyService from "../../Services/patient/emergencyService";
 import { serviceMasterService } from "../../Services/Servicemasterservice/serviceMasterService";
 import BedSelectionPanel from "../../Components/bed/BedSelectionPanel";
+import WhatsAppButton from "../../Components/whatsapp/WhatsAppButton";
 import { useAuth } from "../../context/AuthContext";
+import { useReceptionistPresence } from "../../hooks/useReceptionistPresence";
 
 /* ─── Constants ─────────────────────────────────────────────── */
 const VISIT_TYPES = [
@@ -180,6 +182,15 @@ export default function ReceptionConsole() {
 
   /* ── Today's stats ── */
   const [stats, setStats] = useState({ opd: 0, ipd: 0, dc: 0, er: 0, svc: 0, beds: "—" });
+
+  /* ─── Live presence — broadcasts heartbeat so the other receptionist
+         can see what we're working on (Phase 4 coordination) ─── */
+  useReceptionistPresence({
+    type:   patient._id ? "patient" : "idle",
+    id:     patient._id || null,
+    label:  patient.fullName || "New patient",
+    action: isExisting ? "editing" : (patient.fullName ? "registering" : "idle"),
+  });
 
   /* ─── Bootstrap reference data ─── */
   useEffect(() => {
@@ -721,6 +732,27 @@ export default function ReceptionConsole() {
                 title="Back to Reception Dashboard">
           <i className="pi pi-arrow-left" /> Dashboard
         </button>
+        {patient.contactNumber && patient.fullName && (
+          <WhatsAppButton
+            phone={patient.contactNumber}
+            patientName={patient.fullName}
+            context={{
+              doctorName: doctors.find(d => d.value === (opd.doctor || ipd.admittingDoctor || dayCare.doctor || er.attendingDoctor))?.label || "",
+              date: opd.appointmentDate || todayDate(),
+              time: opd.appointmentTime || nowTime(),
+              tokenNumber: null,
+              bedNumber: bedData.bedNumber,
+              wardName: bedData.wardId ? `Ward ${bedData.wardId}` : "",
+              admittingDoctor: doctors.find(d => d.value === ipd.admittingDoctor)?.label || "",
+            }}
+            defaultTemplate={
+              visitType === "OPD"     ? "appointment_confirmation" :
+              visitType === "IPD"     ? "ipd_admission_intimation" :
+              visitType === "Services"? "lab_report_ready" :
+              "appointment_confirmation"
+            }
+          />
+        )}
         <button className="rc-new-btn" onClick={newPatient}>
           <i className="pi pi-plus" /> New Patient
         </button>
