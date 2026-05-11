@@ -11,95 +11,73 @@ const TreatmentChart = require("../../models/Doctor/treatmentChartModel");
    Create / Submit nurse note
 ───────────────────────────────────────────────────────────── */
 const createNurseNote = async (data, nurseUserId) => {
+  // ── Known base fields (stored in dedicated schema columns) ──
+  const BASE_FIELDS = new Set([
+    "patientId","patientUHID","patientName","UHID","admissionNumber",
+    "ipdNo","noteDate","shift","doctorId","generalCondition","vitals",
+    "painScore","painAssessment","ivLine","intakeOutput","ordersExecuted",
+    "nursingCare","remarks","status","noteType","tags","isCriticalEvent",
+    "signature","signedByName","nurseName","nurseEmployeeId","nurseId",
+    "nurseDesignation","nurseStaffId",
+  ]);
+
   const {
-    patientId, patientUHID, patientName: pName,
-    ipdNo, noteDate, shift, doctorId,
+    patientId, ipdNo, noteDate, shift, doctorId,
     generalCondition, vitals, painScore, painAssessment,
-    ivLine, intakeOutput, ordersExecuted, nursingCare,
-    remarks, status,
-    // Extended fields from NursingNotesPage
+    ivLine, intakeOutput, ordersExecuted, nursingCare, remarks, status,
     noteType, tags, isCriticalEvent, signature, signedByName,
-    nurseEmployeeId,
-    nurseSignature,
-    // module-specific payloads
-    ...rest
   } = data;
 
-  // ── Nurse: resolve from User model (app uses User, not old NurseStaff) ──
-  let nurseObjectId = null;
-  let nurseName = data.nurseName || "";
-  let nurseStaffId = nurseEmployeeId || "";
-  let nurseDesignation = "";
-  try {
-    const User = require("../../models/User/userModel");
-    const userDoc = await User.findById(nurseUserId).lean();
-    if (userDoc) {
-      nurseObjectId = userDoc._id;
-      nurseName = userDoc.fullName || `${userDoc.firstName || ""} ${userDoc.lastName || ""}`.trim() || nurseName;
-      nurseStaffId = userDoc.employeeId || nurseEmployeeId || "";
-      nurseDesignation = userDoc.designation || "";
+  // Collect every extra key (module-specific payloads) into noteData
+  // This preserves ALL data regardless of note type — checkboxes, dropdowns,
+  // selected tabs, text inputs — nothing is lost.
+  const noteData = {};
+  for (const [key, val] of Object.entries(data)) {
+    if (!BASE_FIELDS.has(key) && val !== undefined && val !== null) {
+      noteData[key] = val;
     }
-  } catch (_) { /* use data from frontend */ }
+  }
 
-  // ── Patient: accept reference if provided, don't block if not ──
-  let patRef = patientId || undefined;
-  let resolvedPatientName = pName || "";
-  let resolvedPatientUHID = patientUHID || "";
-  if (patRef) {
-    try {
-      const pat = await Patient.findById(patRef).lean();
-      if (pat) {
-        resolvedPatientName = pat.fullName || pName || "";
-        resolvedPatientUHID = pat.UHID || patientUHID || "";
-      }
-    } catch (_) {}
+  // ── Patient — resolve ObjectId from UHID or patientId ──
+  let patient = null;
+  const mongoose = require("mongoose");
+  // Extract the actual patient ObjectId (patientId might be a populated object)
+  const resolvedPatientId = patientId?._id || patientId;
+  if (resolvedPatientId && mongoose.isValidObjectId(String(resolvedPatientId))) {
+    patient = await Patient.findById(resolvedPatientId).catch(() => null);
+  }
+  // Fallback: find by UHID
+  if (!patient && (data.patientUHID || data.UHID)) {
+    patient = await Patient.findOne({ UHID: (data.patientUHID || data.UHID) }).catch(() => null);
+  }
+
+  // ── Nurse — try NurseStaff lookup but don't fail if not found ──
+  let nurse = null;
+  if (nurseUserId && mongoose.isValidObjectId(String(nurseUserId))) {
+    nurse = await NurseStaff.findById(nurseUserId).catch(() => null);
+  }
+  // Fallback: find by staffId
+  if (!nurse && data.nurseEmployeeId) {
+    nurse = await NurseStaff.findOne({ staffId: data.nurseEmployeeId }).catch(() => null);
   }
 
   const noteStatus = status || "submitted";
 
-  // Capture ALL 15 module-specific payloads into moduleData (Mixed field)
-  // so nothing is ever lost — every clinical module is fully preserved
-  const MODULE_KEYS = [
-    "vitals",              // vitals module (full BP/pulse/temp/spo2/gcs/bsl etc.)
-    "neuroAssessment",     // neuro/GCS module
-    "bloodTransfusion",    // blood transfusion module
-    "ivInfusion",          // IV infusion module
-    "intakeOutput",        // intake/output module (full object)
-    "painAssessment",      // pain module (object — different from model's string field)
-    "woundCare",           // wound/dressing module
-    "skinAssessment",      // skin/pressure assessment module
-    "fallRisk",            // Morse fall scale module
-    "procedure",           // procedure/intervention module
-    "discharge",           // discharge/handover module
-    "mewsScore",           // MEWS score module
-    "dailyAssessment",     // daily assessment module
-    "initialAssessment",   // initial assessment module
-    "carePlan",            // care plan module
-    "nutritionalAssessment", // nutrition module
-    "patientEducation",    // patient education module
-  ];
-  const moduleData = {};
-  MODULE_KEYS.forEach(k => { if (data[k] !== undefined) moduleData[k] = data[k]; });
-
   const note = await NurseNotes.create({
-    patient: patRef || undefined,
-    patientName: resolvedPatientName,
-    patientUHID: resolvedPatientUHID,
-    ipdNo: ipdNo || resolvedPatientUHID || "N/A",
+    patient: patient?._id || resolvedPatientId || undefined,
+    patientName: data.patientName || patient?.fullName || "",
+    patientUHID: data.patientUHID || data.UHID || patient?.UHID || "",
+    ipdNo: ipdNo || data.admissionNumber || data.patientUHID || data.UHID || "",
     noteDate: noteDate || new Date(),
-    shift: shift || "morning",
-    nurse: nurseObjectId || undefined,
-    nurseName,
-    nurseEmployeeId: nurseStaffId,
-    nurseStaffId,
-    nurseDesignation,
-    nurseSignature: nurseSignature || undefined,
-    noteType,
-    tags: tags || [],
-    isCriticalEvent: isCriticalEvent || false,
-    signature: signature || undefined,
-    signedByName: signedByName || nurseName || undefined,
-    doctor: doctorId || undefined,
+    shift: shift || "general",
+    nurse: nurse?._id || undefined,
+    nurseName: data.nurseName || nurse?.personalInfo?.fullName || nurse?.nurseName || "",
+    nurseStaffId: nurse?.staffId || "",
+    nurseEmployeeId: data.nurseEmployeeId || "",
+    nurseDesignation: data.nurseDesignation || nurse?.professional?.designation || "",
+    doctor: doctorId || patient?.doctor || null,
+    department: patient?.department || null,
+    noteType: noteType || "general",
     generalCondition: generalCondition || {},
     vitals: vitals || {},
     painScore: painScore || 0,
@@ -108,15 +86,19 @@ const createNurseNote = async (data, nurseUserId) => {
     intakeOutput: intakeOutput || {},
     ordersExecuted: ordersExecuted || [],
     nursingCare: nursingCare || {},
+    noteData: Object.keys(noteData).length ? noteData : undefined,
+    tags: tags || [],
+    isCriticalEvent: isCriticalEvent || false,
+    signature: signature || undefined,
+    signedByName: signedByName || "",
     remarks: remarks || "",
-    moduleData: Object.keys(moduleData).length ? moduleData : undefined,
     status: noteStatus,
     submittedAt: noteStatus === "submitted" ? new Date() : undefined,
-    createdBy: nurseObjectId || undefined,
+    createdBy: nurse?._id || undefined,
   });
 
   // Update TreatmentChart executions
-  if (note.status === "submitted" && ordersExecuted?.length && nurseObjectId) {
+  if (note.status === "submitted" && ordersExecuted?.length && nurse) {
     for (const exec of ordersExecuted) {
       if (!exec.orderId) continue;
       try {
@@ -130,7 +112,10 @@ const createNurseNote = async (data, nurseUserId) => {
             shift: note.shift,
             nurseNoteId: note._id,
           },
-          { _id: nurseObjectId, name: nurseName },
+          {
+            _id: nurse._id,
+            name: nurse.personalInfo?.fullName || nurse.nurseName,
+          },
         );
       } catch (e) {
         console.error("TreatmentChart recordNurseExecution error:", e.message);
@@ -138,7 +123,12 @@ const createNurseNote = async (data, nurseUserId) => {
     }
   }
 
-  return NurseNotes.findById(note._id).lean();
+  return NurseNotes.findById(note._id)
+    .populate("patient", "fullName UHID age gender")
+    .populate("nurse", "personalInfo.fullName staffId professional.designation")
+    .populate("doctor", "personalInfo.fullName doctorId")
+    .populate("department", "departmentName")
+    .lean();
 };
 
 /* ─────────────────────────────────────────────────────────────
@@ -241,7 +231,7 @@ const updateNurseNote = async (id, data, nurseUserId) => {
     e.statusCode = 400;
     throw e;
   }
-  if (note.nurse && nurseUserId && note.nurse.toString() !== nurseUserId.toString()) {
+  if (note.nurse.toString() !== nurseUserId.toString()) {
     const e = new Error("Not authorised");
     e.statusCode = 403;
     throw e;
@@ -277,18 +267,12 @@ const confirmSingleOrder = async (data, nurseUserId) => {
     throw e;
   }
 
-  // Resolve nurse from User model (app uses User, not old NurseStaff)
-  let nurseDoc = null;
-  let nurseName = "";
-  let nurseId = nurseUserId;
-  try {
-    const User = require("../../models/User/userModel");
-    nurseDoc = await User.findById(nurseUserId).lean();
-    if (nurseDoc) {
-      nurseName = nurseDoc.fullName || `${nurseDoc.firstName || ""} ${nurseDoc.lastName || ""}`.trim();
-      nurseId = nurseDoc._id;
-    }
-  } catch (_) {}
+  const nurse = await NurseStaff.findById(nurseUserId);
+  if (!nurse) {
+    const e = new Error("Nurse not found");
+    e.statusCode = 404;
+    throw e;
+  }
 
   const result = await DoctorNotes.updateOne(
     {
@@ -298,7 +282,7 @@ const confirmSingleOrder = async (data, nurseUserId) => {
     {
       $set: {
         "orders.$.nurseStatus": status || "done",
-        "orders.$.nurseConfirmedBy": nurseId,
+        "orders.$.nurseConfirmedBy": nurse._id,
         "orders.$.nurseConfirmedAt": new Date(),
         "orders.$.nurseRemarks": remarks || "",
       },
@@ -311,26 +295,150 @@ const confirmSingleOrder = async (data, nurseUserId) => {
   }
 
   const doctorNote = await DoctorNotes.findById(doctorNoteId).lean();
-  if (doctorNote && nurseId) {
-    try {
-      await TreatmentChart.recordNurseExecution(
-        doctorNote.ipdNo,
-        {
-          orderId,
-          status: status || "done",
-          remarks: remarks || "",
-          executedAt: new Date(),
-          shift: shift || "morning",
-        },
-        { _id: nurseId, name: nurseName },
-      );
-    } catch (_) {}
+  if (doctorNote) {
+    await TreatmentChart.recordNurseExecution(
+      doctorNote.ipdNo,
+      {
+        orderId,
+        status: status || "done",
+        remarks: remarks || "",
+        executedAt: new Date(),
+        shift: shift || "morning",
+      },
+      { _id: nurse._id, name: nurse.personalInfo?.fullName },
+    );
+
+    // ── Auto-log diluent volume to Input chart ──
+    // If the doctor specified a dilution (e.g. 100ml NS), add it to ivFluids
+    // in the current shift's I/O record whenever nurse marks the order as done.
+    const confirmedOrder = doctorNote.orders?.find(
+      (o) => o._id?.toString() === orderId
+    );
+    if ((status === "done" || !status) && confirmedOrder?.dilutionVolume) {
+      try {
+        await _autoLogDilutionIO({
+          ipdNo:          doctorNote.ipdNo,
+          UHID:           doctorNote.patientUHID,
+          patientName:    doctorNote.patientName,
+          shift:          shift || "morning",
+          dilutionVolume: confirmedOrder.dilutionVolume,
+          dilutionFluid:  confirmedOrder.dilutionFluid || "NS",
+          medicineName:   confirmedOrder.instruction || "medication",
+          orderId:        confirmedOrder._id,
+          nurseName:      nurse.personalInfo?.fullName || "",
+        });
+      } catch (ioErr) {
+        console.error("Auto I/O dilution log error:", ioErr.message);
+      }
+    }
   }
 
   return {
-    confirmedBy: nurseName,
+    confirmedBy: nurse.personalInfo?.fullName,
     status: status || "done",
   };
+};
+
+/* ─────────────────────────────────────────────────────────────
+   Auto-log diluent volume to I/O chart (internal helper)
+   Upserts today's NurseNote for the given ipdNo+shift and:
+     • increments intakeOutput.ivFluids by dilutionVolume
+     • pushes one record into intakeOutput.ivFluidEntries
+───────────────────────────────────────────────────────────── */
+async function _autoLogDilutionIO({
+  ipdNo, UHID, patientName, shift,
+  dilutionVolume, dilutionFluid, medicineName, orderId, nurseName,
+}) {
+  const today    = new Date(); today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today.getTime() + 86_400_000);
+  const entry = {
+    time:      new Date(),
+    volume:    dilutionVolume,
+    fluid:     dilutionFluid,
+    via:       medicineName,
+    auto:      true,
+    orderId,
+    enteredBy: nurseName,
+  };
+  await NurseNotes.findOneAndUpdate(
+    { ipdNo, shift, noteDate: { $gte: today, $lt: tomorrow } },
+    {
+      $inc:  { "intakeOutput.ivFluids": dilutionVolume },
+      $push: { "intakeOutput.ivFluidEntries": entry },
+      $setOnInsert: {
+        ipdNo,
+        patientUHID: UHID || "",
+        patientName: patientName || "",
+        noteDate:    new Date(),
+        noteType:    "general",
+        status:      "draft",
+        shift,
+      },
+    },
+    { upsert: true, new: true }
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Add one monitoring log entry to an existing blood-transfusion note
+   (submitted notes are intentionally updatable here — monitoring
+    continues after the note is first saved)
+───────────────────────────────────────────────────────────── */
+const addBloodMonitoringEntry = async (noteId, entry) => {
+  const note = await NurseNotes.findById(noteId);
+  if (!note) {
+    const e = new Error("Note not found");
+    e.statusCode = 404;
+    throw e;
+  }
+  if (note.noteType !== "blood") {
+    const e = new Error("Note is not a blood-transfusion note");
+    e.statusCode = 400;
+    throw e;
+  }
+
+  // noteData is Mixed — create new object refs so Mongoose detects the change
+  const bt = { ...(note.noteData?.bloodTransfusion || {}) };
+  bt.monitoringLogs = [
+    ...(Array.isArray(bt.monitoringLogs) ? bt.monitoringLogs : []),
+    { ...entry, savedAt: new Date() },
+  ];
+  note.noteData = { ...(note.noteData || {}), bloodTransfusion: bt };
+  note.markModified("noteData");
+  await note.save();
+  return note;
+};
+
+/* ─────────────────────────────────────────────────────────────
+   Update blood-transfusion status (Completed / Stopped / Held / Reaction)
+   + record end-time and post-transfusion vitals
+───────────────────────────────────────────────────────────── */
+const updateBloodTransfusionStatus = async (noteId, { status, endTime, reactionType, postVitals }) => {
+  const note = await NurseNotes.findById(noteId);
+  if (!note) {
+    const e = new Error("Note not found");
+    e.statusCode = 404;
+    throw e;
+  }
+  if (note.noteType !== "blood") {
+    const e = new Error("Note is not a blood-transfusion note");
+    e.statusCode = 400;
+    throw e;
+  }
+
+  const bt = { ...(note.noteData?.bloodTransfusion || {}) };
+  if (status)                    bt.status      = status;
+  if (endTime)                   bt.endTime     = endTime;
+  if (reactionType !== undefined) bt.reactionType = reactionType;
+  if (postVitals && typeof postVitals === "object") {
+    // postBP_sys, postBP_dia, postPulse, postTemp, postSpO2
+    Object.assign(bt, postVitals);
+  }
+
+  note.noteData = { ...(note.noteData || {}), bloodTransfusion: bt };
+  note.markModified("noteData");
+  await note.save();
+  return note;
 };
 
 /* ─────────────────────────────────────────────────────────────
@@ -348,7 +456,7 @@ const deleteNurseNote = async (id, nurseUserId) => {
     e.statusCode = 400;
     throw e;
   }
-  if (note.nurse && nurseUserId && note.nurse.toString() !== nurseUserId.toString()) {
+  if (note.nurse.toString() !== nurseUserId.toString()) {
     const e = new Error("Not authorised");
     e.statusCode = 403;
     throw e;
@@ -376,5 +484,7 @@ module.exports = {
   getNoteById,
   updateNurseNote,
   confirmSingleOrder,
+  addBloodMonitoringEntry,
+  updateBloodTransfusionStatus,
   deleteNurseNote,
 };
