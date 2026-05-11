@@ -64,17 +64,20 @@ const NAV = [
     path: "/mainpage", single: true, roles: ALL,
   },
 
-  /* ── Patient Registration (Reception) ───────────────── */
+  /* ── Reception (NABH front-desk workflow) ───────────── */
   {
-    id: "registration", label: "Patient Registration",
-    icon: "pi-user-plus", color: "#0891b2", light: "#ecfeff",
+    id: "registration", label: "Reception",
+    icon: "pi-desktop", color: "#0891b2", light: "#ecfeff",
     nabh: true, roles: [ADMIN, RX, DR, NR],
     items: [
-      { label: "Reception Dashboard", icon: "pi-chart-line",        path: "/reception",            nabh: true,  badge: "NEW", roles: [ADMIN, RX, DR, NR] },
-      { label: "New Registration",    icon: "pi-user-plus",         path: "/reception/register",   nabh: true,                roles: [ADMIN, RX, DR, NR] },
-      { label: "Patient Search",    icon: "pi-search",              path: "/allpatient",           roles: [ADMIN, RX, DR, NR, PH, LB, RL, AC, PT, DT, TPA] },
-      { label: "Patient Records",   icon: "pi-id-card",             path: "/patients",             roles: [ADMIN, RX, DR, NR, AC, TPA] },
-      { label: "Visit History",     icon: "pi-clock",               path: "/patient-history",      roles: [ADMIN, RX, DR] },
+      { label: "Dashboard",           icon: "pi-chart-line",        path: "/reception",            nabh: true,  badge: "LIVE",  roles: [ADMIN, RX, DR, NR] },
+      { label: "New Registration",    icon: "pi-user-plus",         path: "/reception/register",   nabh: true,                  roles: [ADMIN, RX, DR, NR] },
+      { label: "Patient Search",      icon: "pi-search",            path: "/allpatient",                                       roles: [ADMIN, RX, DR, NR, AC, TPA] },
+      { label: "Visit History",       icon: "pi-clock",             path: "/patient-history",                                  roles: [ADMIN, RX, DR] },
+      { label: "Appointments",        icon: "pi-calendar-plus",     path: "/appointments",         nabh: true,  badge: "NEW",   roles: [ADMIN, RX, DR, NR] },
+      { label: "Discharge Queue",     icon: "pi-sign-out",          path: "/discharge-queue",      nabh: true,  badge: "NEW",   roles: [ADMIN, RX] },
+      { label: "TPA / Insurance",     icon: "pi-shield",            path: "/tpa-cases",            nabh: true,  badge: "NEW",   roles: [ADMIN, RX, TPA, AC] },
+      { label: "Visitor Passes",      icon: "pi-id-card",           path: "/visitor-passes",       nabh: true,  badge: "NEW",   roles: [ADMIN, RX] },
     ],
   },
 
@@ -85,35 +88,21 @@ const NAV = [
     roles: [ADMIN, RX, DR, NR],
     items: [
       { label: "OPD Queue",          icon: "pi-list",      path: "/opd-queue",         roles: [ADMIN, RX, DR, NR] },
-      { label: "OPD Visits",         icon: "pi-calendar",  path: "/opd-visit",         roles: [ADMIN, RX, DR] },
       { label: "Doctor OPD Panel",   icon: "pi-desktop",   path: "/doctor-opd-panel",  roles: [ADMIN, DR] },
       { label: "Emergency Cases",    icon: "pi-bolt",      path: "/emergency",         roles: [ADMIN, RX, DR, NR] },
     ],
   },
 
-  /* ── Service Billing (Reception) ───────────────────── */
-  {
-    id: "service-billing", label: "Service Billing",
-    icon: "pi-dollar", color: "#0891b2", light: "#ecfeff",
-    roles: [ADMIN, RX, AC],
-    items: [
-      { label: "Patient Bill",         icon: "pi-user",     path: "/patient-billing",       roles: [ADMIN, RX, AC] },
-      { label: "Chargeable Services",  icon: "pi-dollar",   path: "/chargeable-services",   roles: [ADMIN, RX, AC] },
-      { label: "Bills List",           icon: "pi-file",     path: "/billing",               roles: [ADMIN, RX, AC] },
-      { label: "Service Master",       icon: "pi-cog",      path: "/service-master",        roles: [ADMIN, RX] },
-    ],
-  },
-
-  /* ── Bed Management (Reception view) ───────────────── */
+  /* ── Bed Management ─────────────────────────────────── */
   {
     id: "beds", label: "Bed Management",
     icon: "pi-table", color: "#475569", light: "#f8fafc",
     roles: [ADMIN, RX, NR, WB],
     items: [
       { label: "Bed Visual Layout",  icon: "pi-eye",       path: "/bed-visual",   roles: [ADMIN, RX, NR, WB] },
-      { label: "Manage Beds",        icon: "pi-list",      path: "/beds",         roles: [ADMIN, RX, NR] },
-      { label: "Wards",              icon: "pi-home",      path: "/wards",        roles: [ADMIN, RX, NR] },
-      { label: "Rooms",              icon: "pi-box",       path: "/rooms",        roles: [ADMIN, RX] },
+      { label: "Manage Beds",        icon: "pi-list",      path: "/beds",         roles: [ADMIN, NR] },
+      { label: "Wards",              icon: "pi-home",      path: "/wards",        roles: [ADMIN, NR] },
+      { label: "Rooms",              icon: "pi-box",       path: "/rooms",        roles: [ADMIN] },
       { label: "Room Category",      icon: "pi-th-large",  path: "/roomcategory", roles: [ADMIN] },
     ],
   },
@@ -185,16 +174,16 @@ const NAV = [
     ],
   },
 
-  /* ── Billing & Finance (Accountant / Admin) ─────────── */
+  /* ── Billing & Finance ──────────────────────────────── */
   {
-    id: "billing", label: "Billing & Finance",
+    id: "billing", label: "Billing",
     icon: "pi-receipt", color: "#d97706", light: "#fffbeb",
     roles: [ADMIN, AC, TPA, RX],
     items: [
       { label: "Patient Bill",          icon: "pi-user",    path: "/patient-billing",       roles: [ADMIN, AC, RX] },
-      { label: "Billing Intelligence",  icon: "pi-bolt",    path: "/billing-intelligence",  badge: "AI",  roles: [ADMIN, AC] },
-      { label: "Billing Audit Trail",   icon: "pi-list",    path: "/billing-audit-trail",   badge: "NEW", roles: [ADMIN, AC] },
       { label: "Bills List",            icon: "pi-file",    path: "/billing",               roles: [ADMIN, AC, RX] },
+      { label: "Billing Intelligence",  icon: "pi-bolt",    path: "/billing-intelligence",  badge: "AI",  roles: [ADMIN, AC] },
+      { label: "Billing Audit Trail",   icon: "pi-list",    path: "/billing-audit-trail",                 roles: [ADMIN, AC] },
       { label: "TPA Services",          icon: "pi-briefcase", path: "/addservice",          roles: [ADMIN, TPA, AC] },
       { label: "Chargeable Services",   icon: "pi-dollar",  path: "/chargeable-services",   roles: [ADMIN, AC] },
       { label: "Service Master",        icon: "pi-cog",     path: "/service-master",        roles: [ADMIN] },

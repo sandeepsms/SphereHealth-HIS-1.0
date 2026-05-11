@@ -116,6 +116,10 @@ router.use("/hospital-settings", hospitalSettingsRoutes);
 router.use("/vitalsheet", vitalSheetRoutes);
 
 // Live presence (who's serving whom)
-router.use("/presence", require("./Presence/presenceRoutes"));
+router.use("/presence",         require("./Presence/presenceRoutes"));
+// NABH visitor management
+router.use("/visitor-passes",   require("./VisitorPass/visitorPassRoutes"));
+// Appointment booking (OPD slot system)
+router.use("/appointments",     require("./Appointment/appointmentRoutes"));
 
 module.exports = router;

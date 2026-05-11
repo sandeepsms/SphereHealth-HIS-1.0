@@ -426,6 +426,93 @@ class AdmissionController {
     await admission.save();
     return res.json({ success: true, message: `${role} initial assessment marked complete`, data: admission.initialAssessment });
   });
+
+  /* ═══════════════════════════════════════════════════════════
+     DISCHARGE CLEARANCE WORKFLOW  (Receptionist)
+     Stages: NotRequested → DoctorApproved → BillCleared
+              → GatePassIssued → Completed
+  ═══════════════════════════════════════════════════════════ */
+
+  // GET /api/admissions/discharge-queue
+  // Returns active admissions where doctor has approved discharge
+  // but reception hasn't completed gate-pass yet.
+  getDischargeQueue = handle(async (req, res) => {
+    const Admission = require("../../models/Patient/admissionModel");
+    const list = await Admission.find({
+      status: { $in: ["Active", "Discharged"] },
+      "dischargeWorkflow.stage": { $in: ["DoctorApproved", "BillCleared", "GatePassIssued", "Completed"] },
+    })
+      .populate("patientId",  "fullName UHID dateOfBirth age gender")
+      .populate("doctor",     "personalInfo")
+      .populate("department", "departmentName")
+      .sort({ "dischargeWorkflow.doctorApprovedAt": -1 })
+      .lean();
+    return res.json({ success: true, count: list.length, data: list });
+  });
+
+  // POST /api/admissions/:id/doctor-approve-discharge
+  // Called by Doctor after writing discharge summary.
+  // Body: { doctorName, finalBillAmount? }
+  doctorApproveDischarge = handle(async (req, res) => {
+    const Admission = require("../../models/Patient/admissionModel");
+    const adm = await Admission.findById(req.params.id);
+    if (!adm) return res.status(404).json({ success: false, message: "Admission not found" });
+    if (!adm.dischargeWorkflow) adm.dischargeWorkflow = {};
+    adm.dischargeWorkflow.stage              = "DoctorApproved";
+    adm.dischargeWorkflow.doctorApprovedAt   = new Date();
+    adm.dischargeWorkflow.doctorApprovedBy   = req.body.doctorName || "Doctor";
+    if (req.body.finalBillAmount !== undefined)
+      adm.dischargeWorkflow.finalBillAmount = Number(req.body.finalBillAmount) || 0;
+    adm.markModified("dischargeWorkflow");
+    await adm.save();
+    return res.json({ success: true, data: adm.dischargeWorkflow });
+  });
+
+  // POST /api/admissions/:id/clear-final-bill
+  // Receptionist clears the final bill (after payment collected).
+  clearFinalBill = handle(async (req, res) => {
+    const Admission = require("../../models/Patient/admissionModel");
+    const adm = await Admission.findById(req.params.id);
+    if (!adm) return res.status(404).json({ success: false, message: "Admission not found" });
+    if (!adm.dischargeWorkflow) adm.dischargeWorkflow = {};
+    if (adm.dischargeWorkflow.stage === "NotRequested") {
+      return res.status(400).json({ success: false, message: "Doctor has not yet approved discharge" });
+    }
+    adm.dischargeWorkflow.stage           = "BillCleared";
+    adm.dischargeWorkflow.billClearedAt   = new Date();
+    adm.dischargeWorkflow.billClearedBy   = req.body.clearedBy || "Receptionist";
+    if (req.body.finalBillNumber) adm.dischargeWorkflow.finalBillNumber = req.body.finalBillNumber;
+    if (req.body.finalBillAmount !== undefined)
+      adm.dischargeWorkflow.finalBillAmount = Number(req.body.finalBillAmount) || 0;
+    adm.markModified("dischargeWorkflow");
+    await adm.save();
+    return res.json({ success: true, data: adm.dischargeWorkflow });
+  });
+
+  // POST /api/admissions/:id/issue-gate-pass
+  // Final step — receptionist hands gate pass + marks discharge complete.
+  issueGatePass = handle(async (req, res) => {
+    const Admission = require("../../models/Patient/admissionModel");
+    const adm = await Admission.findById(req.params.id);
+    if (!adm) return res.status(404).json({ success: false, message: "Admission not found" });
+    if (!adm.dischargeWorkflow) adm.dischargeWorkflow = {};
+    if (adm.dischargeWorkflow.stage !== "BillCleared" && adm.dischargeWorkflow.stage !== "GatePassIssued") {
+      return res.status(400).json({ success: false, message: "Final bill must be cleared before issuing gate pass" });
+    }
+    // Generate gate-pass number: GP-YYYYMMDD-XXXX
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    const seq = await Admission.countDocuments({ "dischargeWorkflow.gatePassNumber": { $regex: `^GP-${dateStr}-` } });
+    const passNumber = `GP-${dateStr}-${String(seq + 1).padStart(4, "0")}`;
+    adm.dischargeWorkflow.stage             = "Completed";
+    adm.dischargeWorkflow.gatePassNumber    = passNumber;
+    adm.dischargeWorkflow.gatePassIssuedAt  = new Date();
+    adm.dischargeWorkflow.gatePassIssuedBy  = req.body.issuedBy || "Receptionist";
+    adm.status                              = "Discharged";
+    adm.actualDischargeDate                 = new Date();
+    adm.markModified("dischargeWorkflow");
+    await adm.save();
+    return res.json({ success: true, data: adm.dischargeWorkflow });
+  });
 }
 
 module.exports = new AdmissionController();

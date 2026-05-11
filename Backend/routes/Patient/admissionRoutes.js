@@ -6,6 +6,12 @@ const { authenticate, authorize } = require("../../middleware/auth");
 // ── Statistics ───────────────────────────────────────────────
 router.get("/statistics", ctrl.getAdmissionStatistics);
 
+// ── NABH discharge clearance workflow ─────────────────────────
+router.get("/discharge-queue",                    ctrl.getDischargeQueue);
+router.post("/:id/doctor-approve-discharge",      ctrl.doctorApproveDischarge);
+router.post("/:id/clear-final-bill",              ctrl.clearFinalBill);
+router.post("/:id/issue-gate-pass",               ctrl.issueGatePass);
+
 // ── Lists ────────────────────────────────────────────────────
 router.get("/active", ctrl.getActiveAdmissions);
 router.get("/today", ctrl.getTodayAdmissions);

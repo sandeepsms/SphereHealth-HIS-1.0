@@ -147,7 +147,7 @@ const AdmissionSchema = new mongoose.Schema(
     totalCost: { type: Number, default: 0 },
     advancePaid: { type: Number, default: 0 },
 
-    // ── Discharge ────────────────────────────────────────────
+    // ── Discharge workflow (NABH COP.20) ─────────────────────
     actualDischargeDate: Date,
     dischargeNotes: String,
     dischargeSummary: String,
@@ -156,6 +156,20 @@ const AdmissionSchema = new mongoose.Schema(
       enum: ["Stable", "Improved", "Critical", "LAMA", null],
       default: null },
     followUpInstructions: String,
+    // Receptionist-controlled clearance flow
+    dischargeWorkflow: {
+      // doctor → bill clearance → gate pass → discharged
+      stage: { type: String, enum: ["NotRequested", "DoctorApproved", "BillCleared", "GatePassIssued", "Completed"], default: "NotRequested" },
+      doctorApprovedAt:    Date,
+      doctorApprovedBy:    String,
+      billClearedAt:       Date,
+      billClearedBy:       String,
+      finalBillNumber:     String,
+      finalBillAmount:     { type: Number, default: 0 },
+      gatePassNumber:      String,
+      gatePassIssuedAt:    Date,
+      gatePassIssuedBy:    String,
+    },
 
     // ── Cancel ───────────────────────────────────────────────
     cancelReason: String,

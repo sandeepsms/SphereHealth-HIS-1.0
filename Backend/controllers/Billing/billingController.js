@@ -309,6 +309,74 @@ exports.confirmTriggerBill = async (req, res, next) => {
 };
 
 /* ─────────────────────────────────────────────────────────────
+   TPA CASES WORKFLOW
+   List patients with TPA/Insurance + manage pre-auth / approval flow
+───────────────────────────────────────────────────────────── */
+// GET /api/billing/tpa-cases?status=...
+exports.getTPACases = async (req, res, next) => {
+  try {
+    const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+    const filter = {
+      paymentType: { $in: ["TPA", "CORPORATE"] },
+    };
+    if (req.query.status) filter.tpaClaimStatus = req.query.status;
+    if (req.query.q) {
+      const q = new RegExp(req.query.q, "i");
+      filter.$or = [{ patientName: q }, { UHID: q }, { billNumber: q }, { tpaClaimNumber: q }];
+    }
+    const list = await PatientBill.find(filter)
+      .populate("tpa", "tpaName tpaCode")
+      .sort({ updatedAt: -1 })
+      .limit(500)
+      .lean();
+    res.json({ success: true, count: list.length, data: list });
+  } catch (e) { next(e); }
+};
+
+// POST /api/billing/:billId/tpa-preauth-submit
+//   Body: { claimNumber, requestedAmount, submittedBy, notes }
+exports.tpaPreAuthSubmit = async (req, res, next) => {
+  try {
+    const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+    const bill = await PatientBill.findById(req.params.billId);
+    if (!bill) return res.status(404).json({ success: false, message: "Bill not found" });
+    bill.tpaClaimNumber  = req.body.claimNumber || bill.tpaClaimNumber || "";
+    bill.tpaClaimStatus  = "SUBMITTED";
+    bill.tpaPayableAmount = Number(req.body.requestedAmount) || bill.tpaPayableAmount || 0;
+    bill.markModified("tpaClaimStatus");
+    await bill.save();
+    res.json({ success: true, data: bill });
+  } catch (e) { next(e); }
+};
+
+// POST /api/billing/:billId/tpa-approve
+//   Body: { approvedAmount, validUntil, approvedBy, notes }
+exports.tpaApprove = async (req, res, next) => {
+  try {
+    const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+    const bill = await PatientBill.findById(req.params.billId);
+    if (!bill) return res.status(404).json({ success: false, message: "Bill not found" });
+    bill.tpaClaimStatus  = "APPROVED";
+    bill.tpaApprovedAmount = Number(req.body.approvedAmount) || bill.tpaPayableAmount || 0;
+    await bill.save();
+    res.json({ success: true, data: bill });
+  } catch (e) { next(e); }
+};
+
+// POST /api/billing/:billId/tpa-deny  Body: { reason }
+exports.tpaDeny = async (req, res, next) => {
+  try {
+    const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+    const bill = await PatientBill.findById(req.params.billId);
+    if (!bill) return res.status(404).json({ success: false, message: "Bill not found" });
+    bill.tpaClaimStatus = "DENIED";
+    bill.tpaApprovedAmount = 0;
+    await bill.save();
+    res.json({ success: true, data: bill });
+  } catch (e) { next(e); }
+};
+
+/* ─────────────────────────────────────────────────────────────
    COLLECTION DASHBOARD
    GET /api/billing/collection-summary?date=YYYY-MM-DD
    Returns aggregated totals for the day:

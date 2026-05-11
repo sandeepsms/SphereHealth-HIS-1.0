@@ -1,5 +1,6 @@
-const router   = require("express").Router();
+const router      = require("express").Router();
 const DoctorOrder = require("../../models/Doctor/DoctorOrderModel");
+const NurseNotes  = require("../../models/Nurse/NurseNotesModel");
 
 /* ─────────────────────────────────────────────────────
    NABH High Alert Medication detection (shared util)
@@ -177,6 +178,7 @@ router.post("/:id/administer", async (req, res) => {
       verifiedBy, fiveRightsChecked,
       holdReason, holdUntil, delayedTo, delayReason,
       prnEffect, prnReassessTime, adverseEvent, adverseDetails,
+      isStatDose, statReason, nextDoseAdjustedAt,
     } = req.body;
 
     if (!scheduledTime || !givenBy || !status)
@@ -190,8 +192,18 @@ router.post("/:id/administer", async (req, res) => {
     if (status === "given" && !fiveRightsChecked)
       return res.status(422).json({ ok: false, message: "5 Rights must be confirmed before marking as given (fiveRightsChecked: true)" });
 
+    // STAT dose: reason mandatory for audit trail
+    if (isStatDose && status === "given" && !statReason)
+      return res.status(422).json({ ok: false, message: "STAT dose requires a reason for NABH documentation (statReason)" });
+
+    // Normalise today's date window (midnight → next midnight UTC)
+    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+    const todayEnd   = new Date(todayStart.getTime() + 86400000);
+
     const entry = {
-      scheduledTime, status,
+      scheduledTime,
+      scheduledDate: req.body.scheduledDate ? new Date(req.body.scheduledDate) : todayStart,
+      status,
       givenAt:   givenAt ? new Date(givenAt) : (status === "given" ? new Date() : undefined),
       givenBy,   doseGiven, routeUsed, siteUsed, notes,
       verifiedBy, verifiedAt: verifiedBy ? new Date() : undefined,
@@ -199,22 +211,46 @@ router.post("/:id/administer", async (req, res) => {
       holdReason, holdUntil, delayedTo, delayReason,
       prnEffect, prnReassessTime,
       adverseEvent: adverseEvent || false, adverseDetails,
+      isStatDose:  isStatDose  || false,
+      statReason:  statReason  || undefined,
+      nextDoseAdjustedAt: nextDoseAdjustedAt || undefined,
     };
 
-    // Find existing pending entry for this time and update, else push new
-    const existing = order.administrationRecord.find(r => r.scheduledTime === scheduledTime);
-    if (existing) {
-      Object.assign(existing, entry);
-    } else {
+    if (isStatDose) {
+      // STAT doses are always NEW records — never overwrite a scheduled slot
       order.administrationRecord.push(entry);
+    } else {
+      // Regular: find existing entry for this scheduledTime AND today
+      const existing = order.administrationRecord.find(r => {
+        if (r.isStatDose) return false; // never overwrite a STAT record as a regular slot
+        if (r.scheduledTime !== scheduledTime) return false;
+        if (!r.scheduledDate) return false;
+        const d = new Date(r.scheduledDate);
+        return d >= todayStart && d < todayEnd;
+      });
+      if (existing) Object.assign(existing, entry);
+      else order.administrationRecord.push(entry);
     }
 
     // Update order-level status
     if (status === "hold") order.status = "OnHold";
     if (status === "given") {
-      const allDone = order.administrationRecord.every(r => ["given","skipped","refused"].includes(r.status));
-      if (allDone && order.orderDetails?.frequency !== "Continuous") order.status = "Completed";
+      // For status: count only non-STAT regular records (STAT doses are extras, not part of the course)
+      const regularDone = order.administrationRecord
+        .filter(r => !r.isStatDose)
+        .every(r => ["given","skipped","refused"].includes(r.status));
+      if (regularDone && order.orderDetails?.frequency !== "Continuous") order.status = "Completed";
       else order.status = "InProgress";
+    }
+
+    // STAT audit log
+    if (isStatDose && status === "given") {
+      order.auditLog.push({
+        step: "STAT Dose Administered",
+        doneBy: givenBy,
+        doneAt: new Date(),
+        notes: `STAT reason: ${statReason}${nextDoseAdjustedAt ? ` | Next dose adjusted to ${nextDoseAdjustedAt}` : ""}`,
+      });
     }
 
     // Log adverse event
@@ -223,6 +259,49 @@ router.post("/:id/administer", async (req, res) => {
     }
 
     await order.save();
+
+    // ── Auto-log diluent volume to Input chart ──────────────────
+    // If the doctor specified a dilution (dilutionVolume + dilutionFluid),
+    // add that volume to the shift's ivFluids total automatically.
+    if (status === "given" && order.orderDetails?.dilutionVolume) {
+      try {
+        const hr = new Date().getHours();
+        const autoShift = hr < 14 ? "morning" : hr < 20 ? "evening" : "night";
+        const today    = new Date(); today.setHours(0, 0, 0, 0);
+        const tomorrow = new Date(today.getTime() + 86_400_000);
+        await NurseNotes.findOneAndUpdate(
+          { ipdNo: order.visitId, shift: autoShift, noteDate: { $gte: today, $lt: tomorrow } },
+          {
+            $inc:  { "intakeOutput.ivFluids": order.orderDetails.dilutionVolume },
+            $push: {
+              "intakeOutput.ivFluidEntries": {
+                time:      new Date(),
+                volume:    order.orderDetails.dilutionVolume,
+                fluid:     order.orderDetails.dilutionFluid || "NS",
+                via:       order.orderDetails.medicineName || order.orderDetails.displayName || "",
+                auto:      true,
+                orderId:   order._id,
+                enteredBy: givenBy,
+              },
+            },
+            $setOnInsert: {
+              ipdNo:       order.visitId,
+              patientUHID: order.UHID,
+              patientName: order.patientName || "",
+              noteDate:    new Date(),
+              noteType:    "general",
+              status:      "draft",
+              shift:       autoShift,
+            },
+          },
+          { upsert: true, new: true }
+        );
+      } catch (ioErr) {
+        console.error("Auto I/O dilution log error:", ioErr.message);
+      }
+    }
+    // ───────────────────────────────────────────────────────────
+
     res.json({ ok: true, data: order });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message });
@@ -533,58 +612,6 @@ router.post("/seed-demo", async (req, res) => {
     res.status(201).json({ ok: true, message: `${created.length} demo orders created`, data: created });
   } catch (err) {
     res.status(500).json({ ok: false, message: err.message });
-  }
-});
-
-/* ═══════════════════════════════════════════════════
-   DOCTOR — COUNTERSIGN TELEPHONIC ORDER (NABH MOM.1)
-═══════════════════════════════════════════════════ */
-/**
- * POST /:id/countersign
- * Body: { type: "countersign"|"reject", doneBy, notes?, rejectedReason? }
- */
-router.post("/:id/countersign", async (req, res) => {
-  try {
-    const { type, doneBy, notes, rejectedReason } = req.body;
-    if (!type || !doneBy)
-      return res.status(400).json({ ok: false, message: "type and doneBy required" });
-    if (!["countersign", "reject"].includes(type))
-      return res.status(400).json({ ok: false, message: "type must be 'countersign' or 'reject'" });
-
-    const order = await DoctorOrder.findById(req.params.id);
-    if (!order) return res.status(404).json({ ok: false, message: "Not found" });
-    if (order.orderSource !== "Telephonic")
-      return res.status(400).json({ ok: false, message: "Order is not a telephonic order" });
-
-    if (!order.telephonicData) order.telephonicData = {};
-
-    if (type === "countersign") {
-      order.telephonicData.countersignStatus = "countersigned";
-      order.telephonicData.countersignedBy   = doneBy;
-      order.telephonicData.countersignedAt   = new Date();
-      order.telephonicData.countersignNotes  = notes || "";
-      order.auditLog.push({
-        step: "Telephonic Order Countersigned",
-        doneBy, doneAt: new Date(),
-        notes: `Countersigned by Dr. ${doneBy}${notes ? ` — ${notes}` : ""}`,
-      });
-    } else {
-      order.status                          = "Cancelled";
-      order.telephonicData.countersignStatus = "rejected";
-      order.telephonicData.rejectedBy        = doneBy;
-      order.telephonicData.rejectedAt        = new Date();
-      order.telephonicData.rejectedReason    = rejectedReason || "Rejected by doctor";
-      order.auditLog.push({
-        step: "Telephonic Order Rejected",
-        doneBy, doneAt: new Date(),
-        notes: `Rejected by Dr. ${doneBy}: ${rejectedReason || "No reason given"}`,
-      });
-    }
-
-    await order.save();
-    res.json({ ok: true, data: order });
-  } catch (err) {
-    res.status(400).json({ ok: false, message: err.message });
   }
 });
 

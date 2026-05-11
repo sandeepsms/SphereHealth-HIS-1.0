@@ -100,6 +100,10 @@ const PatientEducationPage = lazy(() => import("./pages/nursing/PatientEducation
 // ── Reception Console (single-window registration) ──
 const ReceptionConsole = lazy(() => import("./pages/reception/ReceptionConsole"));
 const ReceptionDashboard = lazy(() => import("./pages/reception/ReceptionDashboard"));
+const DischargeQueue   = lazy(() => import("./pages/reception/DischargeQueue"));
+const VisitorPasses    = lazy(() => import("./pages/reception/VisitorPasses"));
+const TPACases         = lazy(() => import("./pages/reception/TPACases"));
+const Appointments     = lazy(() => import("./pages/reception/Appointments"));
 
 // Clinical pages
 const NurseOPDQueuePage = lazy(() => import("./pages/nurse/NurseOPDQueuePage"));
@@ -301,6 +305,10 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/reception" element={<ReceptionDashboard />} />
             <Route path="/reception/register" element={<ReceptionConsole />} />
             <Route path="/reception-console" element={<ReceptionConsole />} />
+            <Route path="/discharge-queue" element={<DischargeQueue />} />
+            <Route path="/visitor-passes" element={<VisitorPasses />} />
+            <Route path="/tpa-cases" element={<TPACases />} />
+            <Route path="/appointments" element={<Appointments />} />
             {/* Legacy routes redirect to the new console */}
             <Route path="/ipd-admission" element={<Navigate to="/reception" replace />} />
             <Route path="/opd-register" element={<Navigate to="/reception" replace />} />
