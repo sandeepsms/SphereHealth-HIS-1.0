@@ -5,6 +5,7 @@ const ctrl = require("../../controllers/Billing/billingController");
 
 // ── Static / non-ID routes first ─────────────────────────────
 router.get("/summary", ctrl.getSummary); // GET  /api/billing/summary
+router.get("/collection-summary", ctrl.getCollectionSummary); // GET /api/billing/collection-summary?date=YYYY-MM-DD
 router.get("/uhid/:UHID", ctrl.getBillsByUHID); // GET  /api/billing/uhid/UH00000001
 router.get("/price/:serviceId", ctrl.getServicePrice); // GET  /api/billing/price/:id?tariffType=TPA&tpaId=xxx
 router.get("/daycare-check/:admissionId", ctrl.checkDaycare); // GET  /api/billing/daycare-check/:admissionId

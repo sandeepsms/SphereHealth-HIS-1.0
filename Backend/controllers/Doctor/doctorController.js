@@ -286,3 +286,102 @@ exports.getDoctorStats = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+/* ─────────────────────────────────────────────────────────────
+   DOCTOR AVAILABILITY — set / get / increment-now-serving
+───────────────────────────────────────────────────────────── */
+
+const Doctor = require("../../models/Doctor/doctorModel");
+const OPDRegistration = require("../../models/Patient/OPDModels");
+
+// PATCH /api/doctors/:doctorId/availability
+// Body: { status: "Available"|"InConsultation"|"OnBreak"|"OnLeave"|"Offline", note: "..." }
+exports.setAvailability = async (req, res) => {
+  try {
+    const { status, note } = req.body;
+    const valid = ["Available", "InConsultation", "OnBreak", "OnLeave", "Offline"];
+    if (status && !valid.includes(status)) {
+      return res.status(400).json({ success: false, message: "Invalid status" });
+    }
+    const doctor = await Doctor.findById(req.params.doctorId);
+    if (!doctor) return res.status(404).json({ success: false, message: "Doctor not found" });
+    if (!doctor.availability) doctor.availability = {};
+    if (status !== undefined) doctor.availability.status = status;
+    if (note   !== undefined) doctor.availability.note   = note;
+    doctor.availability.updatedAt = new Date();
+    await doctor.save();
+    res.json({ success: true, data: doctor.availability });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
+// POST /api/doctors/:doctorId/serve-next
+// Increment currentlyServing token (called when doctor clicks "Next patient")
+exports.serveNextToken = async (req, res) => {
+  try {
+    const doctor = await Doctor.findById(req.params.doctorId);
+    if (!doctor) return res.status(404).json({ success: false, message: "Doctor not found" });
+    if (!doctor.availability) doctor.availability = {};
+    doctor.availability.currentlyServing = (doctor.availability.currentlyServing || 0) + 1;
+    doctor.availability.status = "InConsultation";
+    doctor.availability.updatedAt = new Date();
+    await doctor.save();
+    res.json({ success: true, data: doctor.availability });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
+/* ─────────────────────────────────────────────────────────────
+   RECEPTION DASHBOARD — live doctor strip
+   Returns each active doctor with their queue stats for today.
+───────────────────────────────────────────────────────────── */
+// GET /api/doctors/dashboard/queues
+exports.getDashboardQueues = async (req, res) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(today.getDate() + 1);
+
+    const doctors = await Doctor.find({ isActive: true })
+      .populate("department", "departmentName departmentCode")
+      .lean();
+
+    // Aggregate today's tokens per doctor
+    const Mongoose = require("mongoose");
+    const tokenCounts = await OPDRegistration.aggregate([
+      { $match: { visitDate: { $gte: today, $lt: tomorrow }, doctorId: { $exists: true, $ne: null } } },
+      { $group: {
+          _id: "$doctorId",
+          totalTokens: { $sum: 1 },
+          maxToken:    { $max: "$tokenNumber" },
+      } },
+    ]);
+    const byDoctor = {};
+    tokenCounts.forEach(t => { byDoctor[String(t._id)] = t; });
+
+    const rows = doctors.map(d => {
+      const stats = byDoctor[String(d._id)] || { totalTokens: 0, maxToken: 0 };
+      const serving = d.availability?.currentlyServing || 0;
+      const waiting = Math.max(stats.totalTokens - serving, 0);
+      return {
+        _id:               d._id,
+        doctorId:          d.doctorId,
+        fullName:          d.personalInfo?.fullName,
+        specialization:    d.professional?.specialization,
+        department:        d.department?.departmentName,
+        availability:      d.availability || { status: "Offline", note: "", currentlyServing: 0 },
+        todayTokensIssued: stats.totalTokens,
+        currentlyServing:  serving,
+        waiting,
+        nextToken:         stats.maxToken + 1,
+      };
+    });
+
+    res.json({ success: true, date: today.toISOString().slice(0, 10), data: rows });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+};

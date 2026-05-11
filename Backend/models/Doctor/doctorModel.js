@@ -88,6 +88,18 @@ const DoctorSchema = new mongoose.Schema(
       emergency: { type: Number, default: 0 },
     },
 
+    /* ── Live availability (manually set by the doctor) ── */
+    availability: {
+      status: {
+        type: String,
+        enum: ["Available", "InConsultation", "OnBreak", "OnLeave", "Offline"],
+        default: "Offline",
+      },
+      note: { type: String, default: "" },         // e.g. "Back by 2 PM"
+      currentlyServing: { type: Number, default: 0 }, // current OPD token #
+      updatedAt: { type: Date, default: Date.now },
+    },
+
     isActive: { type: Boolean, default: true },
   },
   { timestamps: true }

@@ -185,15 +185,21 @@ OPDSchema.pre("save", async function (next) {
       this.visitNumber = `OPD-${year}-${String(count + 1).padStart(6, "0")}`;
     }
 
-    // Daily token number
+    // Daily token number — PER DOCTOR per day.
+    // e.g. Dr. Sandeep: token 1, 2, 3, 4...
+    //      Dr. Sharma : token 1, 2, 3...
     if (!this.tokenNumber) {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const tomorrow = new Date(today);
       tomorrow.setDate(today.getDate() + 1);
+      const filter = {
+        visitDate: { $gte: today, $lt: tomorrow },
+      };
+      if (this.doctorId) filter.doctorId = this.doctorId;
       const todayCount = await mongoose
         .model("OPDRegistration")
-        .countDocuments({ visitDate: { $gte: today, $lt: tomorrow } });
+        .countDocuments(filter);
       this.tokenNumber = todayCount + 1;
     }
   }

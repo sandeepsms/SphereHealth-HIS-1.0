@@ -13,7 +13,12 @@ router.get(
 );
 router.get("/experience", doctorController.getDoctorsByExperience);
 
+// ── Dashboard / availability ──────────────────────────────────
+router.get("/dashboard/queues", doctorController.getDashboardQueues);
+
 router.get("/:doctorId", doctorController.getDoctorById);
+router.patch("/:doctorId/availability", doctorController.setAvailability);
+router.post("/:doctorId/serve-next",   doctorController.serveNextToken);
 router.put("/:doctorId", doctorController.updateDoctor);
 router.delete("/:doctorId", doctorController.deleteDoctor);
 router.put(

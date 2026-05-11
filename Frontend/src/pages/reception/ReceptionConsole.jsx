@@ -468,8 +468,9 @@ export default function ReceptionConsole() {
       }
 
       // ── Step 2: Create the visit/admission/bill based on type ──
+      let tokenNumber = null; // captured for receipt print
       if (visitType === "OPD") {
-        await opdService.createOPDVisit({
+        const opdResp = await opdService.createOPDVisit({
           patientId,
           UHID: patientUHID,
           patientName: patient.fullName,
@@ -482,6 +483,8 @@ export default function ReceptionConsole() {
           hasAppointment: opd.hasAppointment,
           createdBy: user?._id,
         });
+        const createdVisit = opdResp?.data?.data || opdResp?.data || opdResp;
+        tokenNumber = createdVisit?.tokenNumber || null;
         toast.success("OPD visit registered successfully");
 
       } else if (visitType === "IPD" || visitType === "Daycare" || visitType === "Emergency") {
@@ -568,6 +571,7 @@ export default function ReceptionConsole() {
         deptLabel: departments.find(d => d.value === (opd.department || ipd.department || dayCare.department))?.label,
         docLabel: doctors.find(d => d.value === (opd.doctor || ipd.admittingDoctor || dayCare.doctor || er.attendingDoctor))?.label,
         receiptTotal,
+        tokenNumber,  // OPD token (null for non-OPD)
       });
 
       // Reset for next patient + clear the auto-saved snapshot
@@ -712,6 +716,11 @@ export default function ReceptionConsole() {
           <div className="rc-stat rc-stat--er"><span className="rc-stat-label">ER</span><span className="rc-stat-value">{stats.er}</span></div>
         </div>
 
+        <button className="rc-new-btn" onClick={() => navigate("/reception")}
+                style={{ background: "linear-gradient(135deg, #1e293b, #0f172a)" }}
+                title="Back to Reception Dashboard">
+          <i className="pi pi-arrow-left" /> Dashboard
+        </button>
         <button className="rc-new-btn" onClick={newPatient}>
           <i className="pi pi-plus" /> New Patient
         </button>
@@ -1373,7 +1382,7 @@ export default function ReceptionConsole() {
 
 
 /* ═══════════════════════ PRINT RECEIPT ═══════════════════════ */
-function printReceipt({ patient, visitType, opd, ipd, dayCare, er, services, bedData, deptLabel, docLabel, receiptTotal }) {
+function printReceipt({ patient, visitType, opd, ipd, dayCare, er, services, bedData, deptLabel, docLabel, receiptTotal, tokenNumber }) {
   const now = new Date();
   const fmt = (d) => d ? new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
   const color = ({ OPD: "#0891b2", IPD: "#7c3aed", Daycare: "#d97706", Emergency: "#dc2626", Services: "#059669" })[visitType] || "#0891b2";
@@ -1447,6 +1456,17 @@ function printReceipt({ patient, visitType, opd, ipd, dayCare, er, services, bed
         <div class="badge">${visitType.toUpperCase()}</div>
       </div>
       <div class="body">
+        ${visitType === "OPD" && tokenNumber ? `
+        <div style="margin: 0 0 20px; padding: 18px 14px; border: 3px dashed ${color}; border-radius: 12px; text-align: center; background: ${color}08;">
+          <div style="font-size: 10px; font-weight: 800; color: #64748b; letter-spacing: 2px; text-transform: uppercase;">YOUR TOKEN NUMBER</div>
+          <div style="font-size: 48px; font-weight: 900; color: ${color}; font-family: 'DM Mono', monospace; line-height: 1.1; margin: 4px 0;">${tokenNumber}</div>
+          <div style="font-size: 12px; font-weight: 700; color: #0f172a;">${docLabel || "Doctor"}</div>
+          <div style="font-size: 11px; color: #64748b; margin-top: 2px;">Date: ${opd.appointmentDate || ""} &nbsp; Time: ${opd.appointmentTime || ""}</div>
+          <div style="margin-top: 8px; padding: 6px 10px; background: white; border-radius: 6px; display: inline-block; font-size: 10px; color: #64748b;">
+            Please arrive 15 min before your appointment.<br>
+            Show this token at the reception when your number is called.
+          </div>
+        </div>` : ""}
         <div class="sec">
           <div class="sec-title">Patient Information</div>
           <table>

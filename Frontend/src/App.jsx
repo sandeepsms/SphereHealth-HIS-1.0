@@ -99,6 +99,7 @@ const PatientEducationPage = lazy(() => import("./pages/nursing/PatientEducation
 
 // ── Reception Console (single-window registration) ──
 const ReceptionConsole = lazy(() => import("./pages/reception/ReceptionConsole"));
+const ReceptionDashboard = lazy(() => import("./pages/reception/ReceptionDashboard"));
 
 // Clinical pages
 const NurseOPDQueuePage = lazy(() => import("./pages/nurse/NurseOPDQueuePage"));
@@ -297,7 +298,8 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/mainpage" element={<MainPage />} />
 
             {/* ── Reception Console (single-window registration) ── */}
-            <Route path="/reception" element={<ReceptionConsole />} />
+            <Route path="/reception" element={<ReceptionDashboard />} />
+            <Route path="/reception/register" element={<ReceptionConsole />} />
             <Route path="/reception-console" element={<ReceptionConsole />} />
             {/* Legacy routes redirect to the new console */}
             <Route path="/ipd-admission" element={<Navigate to="/reception" replace />} />
