@@ -9,6 +9,7 @@ import { useDigitalSignature } from "../../hooks/useDigitalSignature";
 import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
 import SignaturePad from "../../Components/signature/SignaturePad";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
+import PatientHeaderCard from "../../Components/clinical/PatientHeaderCard";
 import NurseOrdersPanel from "../../Components/clinical/NurseOrdersPanel";
 import TreatmentChart from "../../Components/clinical/TreatmentChart";
 import FingerprintConsentModal from "../../Components/clinical/FingerprintConsentModal";
@@ -881,167 +882,28 @@ function NursingNotesContent({ selectedPatient }) {
         </div>
       </div>
 
-      {/* ── Patient Search ── */}
+      {/* ── Patient header (shared component — no inline styles) ── */}
       {!patient ? (
-        <div style={{ maxWidth: 560, margin: "0 auto", paddingTop: 8 }}>
-          <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 14, padding: "28px 28px", boxShadow: "0 4px 24px rgba(0,0,0,.06)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-              <div style={{ width: 36, height: 36, borderRadius: 9, background: C.primaryL, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <i className="pi pi-user-plus" style={{ fontSize: 16, color: C.primary }} />
-              </div>
-              <div>
-                <div style={{ fontWeight: 700, fontSize: 15, color: C.slate }}>Load Patient</div>
-                <div style={{ color: C.muted, fontSize: 12 }}>Enter UHID or Admission No to begin</div>
-              </div>
-            </div>
-            <div style={{ height: 1, background: C.border, margin: "16px 0" }} />
-            <form onSubmit={loadPatient} style={{ display: "flex", gap: 10 }}>
-              <input
-                value={searchUHID}
-                onChange={e => setSearchUHID(e.target.value.toUpperCase())}
-                placeholder="UHID / Admission No..."
-                style={{ ...fld, flex: 1 }}
-                autoFocus
-              />
-              <button type="submit" disabled={loading}
-                style={{ padding: "9px 22px", background: C.primary, color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 7, boxShadow: `0 4px 12px ${C.primary}30` }}>
-                {loading ? <i className="pi pi-spin pi-spinner" style={{ fontSize: 13 }} /> : <i className="pi pi-search" style={{ fontSize: 12 }} />}
-                Load Patient
-              </button>
-            </form>
-          </div>
-        </div>
+        <PatientHeaderCard
+          patient={null}
+          searchUHID={searchUHID}
+          onSearchChange={setSearchUHID}
+          onLoad={loadPatient}
+          loading={loading}
+        />
       ) : (
         <>
-          {/* ── Patient Banner ── */}
-          {(() => {
-            const patName    = patient.patientName || patient.patient?.name || '—';
-            const initials   = patName.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
-            const age        = patient.age || patient.patient?.age || '?';
-            const gender     = (patient.gender || patient.patient?.gender || '?')[0]?.toUpperCase();
-            const uhidVal    = patient.uhid || patient.UHID || searchUHID;
-            const bedVal     = patient.bedNumber ? `Bed ${patient.bedNumber}` : '—';
-            const wardVal    = patient.wardName || '—';
-            const admDate    = patient.admissionDate
-              ? new Date(patient.admissionDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
-              : '—';
-            const diagnosis  = patient.diagnosis || patient.admittingDiagnosis || '—';
-            const consultant = patient.doctorName || patient.consultantName || '—';
-            const admType    = patient.admissionType?.toUpperCase() || 'IPD';
-            const allergies  = (patient.allergies || patient.knownAllergies || []).filter(Boolean);
-            const dayStay    = patient.admissionDate
-              ? Math.floor((Date.now() - new Date(patient.admissionDate)) / (1000 * 60 * 60 * 24))
-              : null;
-            const admTypeColor = admType === 'EMERGENCY'
-              ? { bg: '#fef2f2', color: '#dc2626', border: '#fca5a5' }
-              : admType === 'DAY CARE'
-              ? { bg: '#eff6ff', color: '#1d4ed8', border: '#93c5fd' }
-              : { bg: '#f5f3ff', color: '#7c3aed', border: '#c4b5fd' };
-            return (
-              <div style={{ background: C.card, borderRadius: 16, marginBottom: 14, overflow: 'hidden', boxShadow: '0 2px 12px rgba(15,118,110,.08)', border: `1px solid ${C.border}` }}>
-                {/* Top gradient accent bar */}
-                <div style={{ height: 4, background: `linear-gradient(90deg, ${C.primary}, ${C.primaryMid}, #34d399)` }} />
-                <div style={{ padding: '18px 22px' }}>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
-
-                    {/* Left: avatar + core info */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 16, flex: 1, minWidth: 0 }}>
-                      {/* Avatar circle */}
-                      <div style={{ flexShrink: 0, width: 56, height: 56, borderRadius: 14, background: `linear-gradient(135deg, ${C.primary}, ${C.primaryMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: `0 4px 12px ${C.primary}35` }}>
-                        <span style={{ fontSize: 20, fontWeight: 900, color: 'white', letterSpacing: '-1px' }}>{initials}</span>
-                      </div>
-                      {/* Name + tags */}
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 5 }}>
-                          <span style={{ fontSize: 17, fontWeight: 800, color: C.text }}>{patName}</span>
-                          <span style={{ padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700, background: admTypeColor.bg, color: admTypeColor.color, border: `1px solid ${admTypeColor.border}` }}>
-                            {admType}
-                          </span>
-                          {patient.bloodGroup && (
-                            <span style={{ padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700, background: C.redL, color: C.red, border: '1px solid #fca5a5', fontFamily: "'DM Mono',monospace" }}>
-                              🦸 {patient.bloodGroup}
-                            </span>
-                          )}
-                          {dayStay !== null && (
-                            <span style={{ padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700, background: '#f0fdf4', color: '#15803d', border: '1px solid #86efac' }}>
-                              Day {dayStay + 1}
-                            </span>
-                          )}
-                        </div>
-                        <div style={{ display: 'flex', gap: '6px 20px', flexWrap: 'wrap' }}>
-                          <span style={{ fontSize: 12, color: C.muted }}>
-                            <span style={{ fontWeight: 700, color: C.text }}>{age}Y / {gender}</span>
-                          </span>
-                          <span style={{ fontSize: 12, color: C.muted }}>
-                            ID: <span style={{ fontWeight: 700, color: C.primary, fontFamily: "'DM Mono',monospace" }}>{uhidVal}</span>
-                          </span>
-                          <span style={{ fontSize: 12, color: C.muted }}>
-                            🏥 <span style={{ fontWeight: 600, color: C.text }}>{wardVal}</span>
-                            {' · '}
-                            <span style={{ fontWeight: 600, color: C.text }}>{bedVal}</span>
-                          </span>
-                          <span style={{ fontSize: 12, color: C.muted }}>
-                            📅 <span style={{ fontWeight: 600, color: C.text }}>{admDate}</span>
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Right: action buttons */}
-                    <div style={{ display: 'flex', gap: 6, flexShrink: 0, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-                      {[
-                        { label: 'Care Plan',       icon: 'pi-clipboard',  action: () => navigate('/nursing-care-plan') },
-                        { label: 'Vitals Trend',    icon: 'pi-chart-bar',  action: () => navigate('/vitalsView') },
-                        { label: 'Print / PDF',     icon: 'pi-print',      action: () => setShowReport(true), accent: true },
-                        { label: 'IPD Assessment',  icon: 'pi-file-check', action: () => navigate(`/ipd-assessment/${uhidVal}`), accent: true },
-                        { label: 'Change Patient',  icon: 'pi-arrows-h',   action: () => { setPatient(null); setNotes([]); setSearchUHID(''); }, danger: true },
-                      ].map(b => (
-                        <button key={b.label} onClick={b.action} style={{
-                          padding: '7px 13px',
-                          border: `1.5px solid ${b.danger ? '#fca5a5' : b.accent ? `${C.primary}35` : C.border}`,
-                          borderRadius: 9,
-                          background: b.danger ? C.redL : b.accent ? C.primaryL : 'white',
-                          fontSize: 11, fontWeight: 700, cursor: 'pointer',
-                          color: b.danger ? C.red : b.accent ? C.primary : C.text,
-                          display: 'flex', alignItems: 'center', gap: 5,
-                          transition: 'all .15s',
-                          boxShadow: b.accent ? `0 2px 8px ${C.primary}20` : 'none',
-                        }}
-                          onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = `0 4px 14px ${b.danger ? C.red : C.primary}25`; }}
-                          onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = b.accent ? `0 2px 8px ${C.primary}20` : 'none'; }}>
-                          <i className={`pi ${b.icon}`} style={{ fontSize: 11 }} /> {b.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Bottom: diagnosis + consultant + allergies */}
-                  <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px dashed ${C.border}`, display: 'flex', gap: '8px 24px', flexWrap: 'wrap', alignItems: 'center' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <i className="pi pi-stethoscope" style={{ fontSize: 11, color: C.muted }} />
-                      <span style={{ fontSize: 12, color: C.muted }}>Consultant:</span>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{consultant}</span>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <i className="pi pi-tag" style={{ fontSize: 11, color: C.muted }} />
-                      <span style={{ fontSize: 12, color: C.muted }}>Diagnosis:</span>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{diagnosis}</span>
-                    </div>
-                    {allergies.length > 0 && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                        <span style={{ fontSize: 11, fontWeight: 700, color: C.red, display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <i className="pi pi-exclamation-triangle" style={{ fontSize: 11 }} /> ALLERGY:
-                        </span>
-                        {allergies.map(a => (
-                          <span key={a} style={{ background: C.redL, color: C.red, border: '1px solid #fca5a5', padding: '2px 9px', borderRadius: 20, fontSize: 11, fontWeight: 700 }}>{a}</span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
+          <PatientHeaderCard
+            patient={patient}
+            searchUHID={searchUHID}
+            actions={[
+              { label: "Care Plan",      icon: "pi-clipboard",  onClick: () => navigate("/nursing-care-plan") },
+              { label: "Vitals Trend",   icon: "pi-chart-bar",  onClick: () => navigate("/vitalsView") },
+              { label: "Print / PDF",    icon: "pi-print",      onClick: () => setShowReport(true), variant: "accent" },
+              { label: "IPD Assessment", icon: "pi-file-check", onClick: () => navigate(`/ipd-assessment/${patient.uhid || patient.UHID || searchUHID}`), variant: "accent" },
+            ]}
+            onChangePatient={() => { setPatient(null); setNotes([]); setSearchUHID(""); }}
+          />
 
           {/* ── Doctor's Active Orders (NurseOrdersPanel) ── */}
           <div style={{ marginBottom: 14 }}>

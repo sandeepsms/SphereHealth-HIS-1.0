@@ -5,6 +5,7 @@ import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
+import PatientHeaderCard from "../../Components/clinical/PatientHeaderCard";
 import { DoctorAssessmentContent } from "./DoctorAssessmentPage";
 import DoctorOrdersPanel from "../../Components/doctor/DoctorOrdersPanel";
 import TreatmentChart from "../../Components/clinical/TreatmentChart";
@@ -1035,76 +1036,24 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
         </div>
       </div>
 
-      {/* ── Patient Search (fallback manual) ── */}
+      {/* ── Patient header (shared component — identical to Nursing) ── */}
       {!patient ? (
-        <div style={{ maxWidth: 560, margin: "0 auto", paddingTop: 4 }}>
-          <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 14, padding: "24px 28px", boxShadow: "0 4px 24px rgba(0,0,0,.06)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-              <div style={{ width: 36, height: 36, borderRadius: 9, background: C.primaryL, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <i className="pi pi-user-plus" style={{ fontSize: 16, color: C.primary }} />
-              </div>
-              <div>
-                <div style={{ fontWeight: 700, fontSize: 15, color: C.slate }}>Load Patient</div>
-                <div style={{ color: C.muted, fontSize: 12 }}>Select from above or enter UHID manually</div>
-              </div>
-            </div>
-            <div style={{ height: 1, background: C.border, margin: "16px 0" }} />
-            <form onSubmit={loadPatient} style={{ display: "flex", gap: 10 }}>
-              <input value={searchUHID} onChange={e => setSearchUHID(e.target.value.toUpperCase())} placeholder="UHID / Admission No..."
-                style={{ ...fld, flex: 1 }} autoFocus />
-              <button type="submit" disabled={loading}
-                style={{ padding: "9px 22px", background: C.primary, color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 7, boxShadow: `0 4px 12px ${C.primary}30` }}>
-                {loading ? <i className="pi pi-spin pi-spinner" style={{ fontSize: 13 }} /> : <i className="pi pi-search" style={{ fontSize: 12 }} />}
-                Load Patient
-              </button>
-            </form>
-          </div>
-        </div>
+        <PatientHeaderCard
+          patient={null}
+          searchUHID={searchUHID}
+          onSearchChange={setSearchUHID}
+          onLoad={loadPatient}
+          loading={loading}
+          loadSubtitle="Select from above or enter UHID manually"
+        />
       ) : (
         <>
-          {/* ── Patient Info Strip ── */}
-          <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: "14px 22px", marginBottom: 14, boxShadow: "0 1px 3px rgba(0,0,0,.04)" }}>
-            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "10px 24px", flex: 1 }}>
-                {[
-                  { label: "UHID",      value: patient.UHID || patient.uhid || searchUHID },
-                  { label: "Name",      value: patient.patientName || patient.patientId?.fullName || "—" },
-                  { label: "Age/Sex",   value: `${patient.age || "?"}Y / ${(patient.gender || "?")[0]?.toUpperCase()}` },
-                  { label: "Ward/Bed",  value: `${patient.wardName || "—"} · Bed ${patient.bedNumber || "—"}` },
-                  { label: "Admission", value: patient.admissionDate ? new Date(patient.admissionDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—" },
-                  { label: "Diagnosis", value: patient.diagnosis || patient.admittingDiagnosis || "—" },
-                  { label: "Consultant",value: patient.doctorName || patient.consultantName || "—" },
-                ].map(f => (
-                  <div key={f.label}>
-                    <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".8px", color: C.muted, marginBottom: 2 }}>{f.label}</div>
-                    <div style={{ fontWeight: 600, color: C.text, fontSize: 12 }}>{f.value}</div>
-                  </div>
-                ))}
-                {patient.bloodGroup && (
-                  <div>
-                    <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".8px", color: C.muted, marginBottom: 2 }}>Blood Group</div>
-                    <div style={{ fontWeight: 800, color: C.red, fontSize: 13, fontFamily: "monospace" }}>{patient.bloodGroup}</div>
-                  </div>
-                )}
-                {(patient.allergies || patient.knownAllergies || []).filter(Boolean).length > 0 && (
-                  <div>
-                    <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".8px", color: C.muted, marginBottom: 2 }}>Allergies</div>
-                    <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                      {(patient.allergies || patient.knownAllergies || []).map(a => (
-                        <span key={a} style={{ background: C.redL, color: C.red, border: "1px solid #fca5a5", padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700 }}>⚠ {a}</span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-              <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "flex-start", flexWrap: "wrap", maxWidth: 260 }}>
-                <button onClick={() => { setPatient(null); setNotes([]); setSearchUHID(""); }}
-                  style={{ padding: "6px 12px", border: `1.5px solid ${C.border}`, borderRadius: 7, background: "white", fontSize: 11, fontWeight: 600, cursor: "pointer", color: C.muted, display: "flex", alignItems: "center", gap: 5 }}>
-                  <i className="pi pi-times" style={{ fontSize: 10 }} /> Change
-                </button>
-              </div>
-            </div>
-          </div>
+          <PatientHeaderCard
+            patient={patient}
+            searchUHID={searchUHID}
+            diagnosis={diag}
+            onChangePatient={() => { setPatient(null); setNotes([]); setSearchUHID(""); }}
+          />
 
           {/* ── Assessment Gate Banner (HARD BLOCK) ── */}
           {gateActive && (
