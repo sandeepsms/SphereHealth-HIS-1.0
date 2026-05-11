@@ -33,10 +33,11 @@ const C = {
   indigo: "#4f46e5",
 };
 
-const fld = { padding: "9px 12px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: C.text, outline: "none", background: "white", width: "100%", boxSizing: "border-box" };
-const sel = { ...fld, cursor: "pointer" };
-const ta  = { ...fld, resize: "vertical", minHeight: 78 };
-const lbl = { display: "block", fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 5 };
+/* Form primitives moved to clinical-forms.css — use:
+   .his-field    (input)     .his-select (select)
+   .his-textarea (textarea)  .his-label  (label)
+   .his-field-group (label+input wrapper)
+*/
 
 /* ── NABH Medication Routes & Frequencies (from Medication Order Sheet) ── */
 const ROUTES = [
@@ -158,9 +159,9 @@ function SBARBox({ letter, title, color, value, onChange, placeholder }) {
     <div style={{ marginBottom: 10 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
         <span style={{ width: 24, height: 24, borderRadius: 6, background: color + "25", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 13, color }}>{letter}</span>
-        <label style={{ ...lbl, marginBottom: 0, color }}>{title}</label>
+        <label className="his-label" style={{ marginBottom: 0, color }}>{title}</label>
       </div>
-      <textarea style={{ ...ta, minHeight: 64, borderColor: color + "40" }} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} />
+      <textarea className="his-textarea" style={{ minHeight: 64, borderColor: color + "40" }} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} />
     </div>
   );
 }
@@ -942,7 +943,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
           </div>
           <input value={recentSearch} onChange={e => setRecentSearch(e.target.value.toUpperCase())}
             placeholder="Search name / UHID…"
-            style={{ ...fld, maxWidth: 200, padding: "5px 10px", fontSize: 11 }} />
+            className="his-field" style={{ maxWidth: 200, padding: "5px 10px", fontSize: 11 }} />
         </div>
 
         <div style={{ padding: "10px 14px", display: "flex", gap: 8, overflowX: "auto", alignItems: "stretch", minHeight: 80 }}>
@@ -1331,7 +1332,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     </button>
                   );
                 })}
-                <select value={filterShift} onChange={e => setFilterShift(e.target.value)} style={{ ...fld, maxWidth: 120, padding: "5px 10px", fontSize: 11 }}>
+                <select value={filterShift} onChange={e => setFilterShift(e.target.value)} className="his-field" style={{ maxWidth: 120, padding: "5px 10px", fontSize: 11 }}>
                   <option value="">All Shifts</option>
                   <option value="morning">Morning</option>
                   <option value="afternoon">Afternoon</option>
@@ -1878,7 +1879,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                       </div>
                       <div style={{ marginTop: 10 }}>
                         <FL label="History of Present Illness *">
-                          <textarea style={{ ...ta, minHeight: 72 }} value={ia.hpi} placeholder="Detailed history of the presenting complaint, onset, progression, associated symptoms, relevant negatives…" onChange={e => set("hpi", e.target.value)} />
+                          <textarea className="his-textarea" style={{ minHeight: 72 }} value={ia.hpi} placeholder="Detailed history of the presenting complaint, onset, progression, associated symptoms, relevant negatives…" onChange={e => set("hpi", e.target.value)} />
                         </FL>
                       </div>
                     </div>
@@ -1887,11 +1888,11 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     <div style={{ background: "#f8fafc", borderRadius: 10, padding: "12px 14px", border: `1px solid ${C.border}` }}>
                       <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Past History</div>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                        <FL label="Past Medical History"><textarea style={{ ...ta, minHeight: 48 }} value={ia.pastMedical} placeholder="HTN, DM, CAD, COPD, CKD, prior hospitalizations…" onChange={e => set("pastMedical", e.target.value)} /></FL>
-                        <FL label="Past Surgical History"><textarea style={{ ...ta, minHeight: 48 }} value={ia.pastSurgical} placeholder="Previous operations, procedures, implants…" onChange={e => set("pastSurgical", e.target.value)} /></FL>
-                        <FL label="Current Medications"><textarea style={{ ...ta, minHeight: 48 }} value={ia.currentMeds} placeholder="List all current medications with doses…" onChange={e => set("currentMeds", e.target.value)} /></FL>
+                        <FL label="Past Medical History"><textarea className="his-textarea" style={{ minHeight: 48 }} value={ia.pastMedical} placeholder="HTN, DM, CAD, COPD, CKD, prior hospitalizations…" onChange={e => set("pastMedical", e.target.value)} /></FL>
+                        <FL label="Past Surgical History"><textarea className="his-textarea" style={{ minHeight: 48 }} value={ia.pastSurgical} placeholder="Previous operations, procedures, implants…" onChange={e => set("pastSurgical", e.target.value)} /></FL>
+                        <FL label="Current Medications"><textarea className="his-textarea" style={{ minHeight: 48 }} value={ia.currentMeds} placeholder="List all current medications with doses…" onChange={e => set("currentMeds", e.target.value)} /></FL>
                         <FL label="Allergies *">
-                          <input style={{ ...fld, borderColor: ia.allergies && ia.allergies !== "NKDA" ? C.red : "#e2e8f0" }} value={ia.allergies} placeholder="NKDA or list allergens + reactions" onChange={e => set("allergies", e.target.value)} />
+                          <input className="his-field" style={{ borderColor: ia.allergies && ia.allergies !== "NKDA" ? C.red : "#e2e8f0" }} value={ia.allergies} placeholder="NKDA or list allergens + reactions" onChange={e => set("allergies", e.target.value)} />
                           {ia.allergies && ia.allergies !== "NKDA" && (
                             <div style={{ fontSize: 10, color: C.red, fontWeight: 700, marginTop: 3 }}>⚠ Allergy documented — verify before prescribing</div>
                           )}
@@ -1926,17 +1927,17 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                           {k:"oedema",l:"Oedema",opts:["Absent","Pedal (pitting)","Pedal (non-pitting)","Sacral","Generalised"]},
                         ].map(f => (
                           <FL key={f.k} label={f.l}>
-                            <select style={{ ...sel, fontSize: 11 }} value={ia[f.k]} onChange={e => set(f.k, e.target.value)}>
+                            <select className="his-select" style={{ fontSize: 11 }} value={ia[f.k]} onChange={e => set(f.k, e.target.value)}>
                               {f.opts.map(o => <option key={o}>{o}</option>)}
                             </select>
                           </FL>
                         ))}
                       </div>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                        <FL label="Respiratory System"><textarea style={{ ...ta, minHeight: 48 }} value={ia.resp} placeholder="Breath sounds, added sounds, air entry…" onChange={e => set("resp", e.target.value)} /></FL>
-                        <FL label="Cardiovascular System"><textarea style={{ ...ta, minHeight: 48 }} value={ia.cvs} placeholder="S1 S2, murmurs, JVP, peripheral pulses…" onChange={e => set("cvs", e.target.value)} /></FL>
-                        <FL label="Abdomen"><textarea style={{ ...ta, minHeight: 48 }} value={ia.abdomen} placeholder="Inspection, palpation, percussion, auscultation…" onChange={e => set("abdomen", e.target.value)} /></FL>
-                        <FL label="CNS / Neurological"><textarea style={{ ...ta, minHeight: 48 }} value={ia.cns} placeholder="Consciousness, GCS, cranial nerves, motor, sensory…" onChange={e => set("cns", e.target.value)} /></FL>
+                        <FL label="Respiratory System"><textarea className="his-textarea" style={{ minHeight: 48 }} value={ia.resp} placeholder="Breath sounds, added sounds, air entry…" onChange={e => set("resp", e.target.value)} /></FL>
+                        <FL label="Cardiovascular System"><textarea className="his-textarea" style={{ minHeight: 48 }} value={ia.cvs} placeholder="S1 S2, murmurs, JVP, peripheral pulses…" onChange={e => set("cvs", e.target.value)} /></FL>
+                        <FL label="Abdomen"><textarea className="his-textarea" style={{ minHeight: 48 }} value={ia.abdomen} placeholder="Inspection, palpation, percussion, auscultation…" onChange={e => set("abdomen", e.target.value)} /></FL>
+                        <FL label="CNS / Neurological"><textarea className="his-textarea" style={{ minHeight: 48 }} value={ia.cns} placeholder="Consciousness, GCS, cranial nerves, motor, sensory…" onChange={e => set("cns", e.target.value)} /></FL>
                       </div>
                     </div>
 
@@ -1955,8 +1956,8 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     <div style={{ background: "#f8fafc", borderRadius: 10, padding: "12px 14px", border: `1px solid ${C.border}` }}>
                       <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Investigations & Management Plan</div>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                        <FL label="Investigations Ordered"><textarea style={{ ...ta, minHeight: 60 }} value={ia.investigations} placeholder="CBC, CMP, CXR, ECG, Echo, CT, MRI, cultures…" onChange={e => set("investigations", e.target.value)} /></FL>
-                        <FL label="Management Plan *"><textarea style={{ ...ta, minHeight: 60 }} value={ia.managementPlan} placeholder="Treatment goals, monitoring plan, nursing orders, diet, activity, DVT prophylaxis, targets…" onChange={e => set("managementPlan", e.target.value)} /></FL>
+                        <FL label="Investigations Ordered"><textarea className="his-textarea" style={{ minHeight: 60 }} value={ia.investigations} placeholder="CBC, CMP, CXR, ECG, Echo, CT, MRI, cultures…" onChange={e => set("investigations", e.target.value)} /></FL>
+                        <FL label="Management Plan *"><textarea className="his-textarea" style={{ minHeight: 60 }} value={ia.managementPlan} placeholder="Treatment goals, monitoring plan, nursing orders, diet, activity, DVT prophylaxis, targets…" onChange={e => set("managementPlan", e.target.value)} /></FL>
                       </div>
                     </div>
 
@@ -1990,16 +1991,16 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                                   const hamActive = autoHam || row.hamOverride;
                                   return (
                                   <tr key={row.id} style={{ background: row.status === "Stopped" ? "#fef2f2" : hamActive ? "#fff7ed" : "white" }}>
-                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px" }}><input type="datetime-local" style={{ ...fld, fontSize: 10, padding: "4px 6px" }} value={row.datetime} onChange={e => updateMed(row.id, "datetime", e.target.value)} /></td>
-                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 130 }}><input style={{ ...fld, fontSize: 11, padding: "4px 6px", fontWeight: 700 }} value={row.drug} placeholder="Drug name (generic)" onChange={e => updateMed(row.id, "drug", e.target.value)} /></td>
-                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 80 }}><input style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.dose} placeholder="e.g. 500mg" onChange={e => updateMed(row.id, "dose", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px" }}><input type="datetime-local" className="his-field" style={{ fontSize: 10, padding: "4px 6px" }} value={row.datetime} onChange={e => updateMed(row.id, "datetime", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 130 }}><input className="his-field" style={{ fontSize: 11, padding: "4px 6px", fontWeight: 700 }} value={row.drug} placeholder="Drug name (generic)" onChange={e => updateMed(row.id, "drug", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 80 }}><input className="his-field" style={{ fontSize: 11, padding: "4px 6px" }} value={row.dose} placeholder="e.g. 500mg" onChange={e => updateMed(row.id, "dose", e.target.value)} /></td>
                                     <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 100 }}>
-                                      <select style={{ ...sel, fontSize: 11, padding: "4px 6px" }} value={row.route} onChange={e => updateMed(row.id, "route", e.target.value)}>
+                                      <select className="his-select" style={{ fontSize: 11, padding: "4px 6px" }} value={row.route} onChange={e => updateMed(row.id, "route", e.target.value)}>
                                         {ROUTES.map(r => <option key={r}>{r}</option>)}
                                       </select>
                                     </td>
                                     <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 90 }}>
-                                      <select style={{ ...sel, fontSize: 11, padding: "4px 6px" }} value={row.frequency} onChange={e => updateMed(row.id, "frequency", e.target.value)}>
+                                      <select className="his-select" style={{ fontSize: 11, padding: "4px 6px" }} value={row.frequency} onChange={e => updateMed(row.id, "frequency", e.target.value)}>
                                         {FREQ_LIST.map(f => <option key={f}>{f}</option>)}
                                       </select>
                                     </td>
@@ -2008,7 +2009,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                                     </td>
                                     {/* Priority */}
                                     <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 85 }}>
-                                      <select style={{ ...sel, fontSize: 10, padding: "3px 5px", fontWeight: 700, color: row.priority==="STAT"?C.red:row.priority==="Urgent"?C.amber:C.muted }} value={row.priority||"Routine"} onChange={e => updateMed(row.id, "priority", e.target.value)}>
+                                      <select className="his-select" style={{ fontSize: 10, padding: "3px 5px", fontWeight: 700, color: row.priority==="STAT"?C.red:row.priority==="Urgent"?C.amber:C.muted }} value={row.priority||"Routine"} onChange={e => updateMed(row.id, "priority", e.target.value)}>
                                         <option value="Routine">Routine</option>
                                         <option value="Urgent">🔶 Urgent</option>
                                         <option value="STAT">⚡ STAT</option>
@@ -2021,15 +2022,15 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                                         : <input type="checkbox" title="Mark as High Alert Medication (HAM)" checked={!!row.hamOverride} onChange={e => updateMed(row.id, "hamOverride", e.target.checked)}
                                             style={{ width: 14, height: 14, cursor: "pointer", accentColor: C.red }} />}
                                     </td>
-                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 110 }}><input style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.indication} placeholder="e.g. GI prophylaxis" onChange={e => updateMed(row.id, "indication", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 110 }}><input className="his-field" style={{ fontSize: 11, padding: "4px 6px" }} value={row.indication} placeholder="e.g. GI prophylaxis" onChange={e => updateMed(row.id, "indication", e.target.value)} /></td>
                                     <td style={{ border: "1px solid #bfdbfe", padding: "4px" }}>
-                                      <select style={{ ...sel, fontSize: 11, padding: "4px 6px", color: row.status === "Stopped" ? C.red : C.green, fontWeight: 700 }} value={row.status} onChange={e => updateMed(row.id, "status", e.target.value)}>
+                                      <select className="his-select" style={{ fontSize: 11, padding: "4px 6px", color: row.status === "Stopped" ? C.red : C.green, fontWeight: 700 }} value={row.status} onChange={e => updateMed(row.id, "status", e.target.value)}>
                                         <option value="Active">Active</option>
                                         <option value="Stopped">Stopped</option>
                                       </select>
                                     </td>
                                     <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 100 }}>
-                                      <input style={{ ...fld, fontSize: 11, padding: "4px 6px", borderColor: row.status === "Stopped" && !row.stopReason ? C.red : "#e2e8f0" }} value={row.stopReason} placeholder={row.status === "Stopped" ? "Required!" : "—"} onChange={e => updateMed(row.id, "stopReason", e.target.value)} />
+                                      <input className="his-field" style={{ fontSize: 11, padding: "4px 6px", borderColor: row.status === "Stopped" && !row.stopReason ? C.red : "#e2e8f0" }} value={row.stopReason} placeholder={row.status === "Stopped" ? "Required!" : "—"} onChange={e => updateMed(row.id, "stopReason", e.target.value)} />
                                     </td>
                                     <td style={{ border: "1px solid #bfdbfe", padding: "4px" }}>
                                       <button onClick={() => removeMed(row.id)} style={{ width: 22, height: 22, borderRadius: 4, border: "1px solid #fca5a5", background: "#fef2f2", color: C.red, cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
@@ -2074,21 +2075,21 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                                   const hamActive = autoHam || row.hamOverride;
                                   return (
                                   <tr key={row.id} style={{ background: row.status === "Stopped" ? "#fef2f2" : hamActive ? "#fff7ed" : "white" }}>
-                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px" }}><input type="datetime-local" style={{ ...fld, fontSize: 10, padding: "4px 6px" }} value={row.datetime} onChange={e => updateInf(row.id, "datetime", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px" }}><input type="datetime-local" className="his-field" style={{ fontSize: 10, padding: "4px 6px" }} value={row.datetime} onChange={e => updateInf(row.id, "datetime", e.target.value)} /></td>
                                     <td style={{ border: "1px solid #a7f3d0", padding: "4px" }}>
-                                      <select style={{ ...sel, fontSize: 11, padding: "4px 6px" }} value={row.type} onChange={e => updateInf(row.id, "type", e.target.value)}>
+                                      <select className="his-select" style={{ fontSize: 11, padding: "4px 6px" }} value={row.type} onChange={e => updateInf(row.id, "type", e.target.value)}>
                                         {["Fluid","Drug Infusion","Blood","Blood Product","TPN"].map(t => <option key={t}>{t}</option>)}
                                       </select>
                                     </td>
-                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 140 }}><input style={{ ...fld, fontSize: 11, padding: "4px 6px", fontWeight: 700 }} value={row.drugFluid} placeholder="NS 0.9% / Noradrenaline / PRBC" onChange={e => updateInf(row.id, "drugFluid", e.target.value)} /></td>
-                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 110 }}><input style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.dilution} placeholder="e.g. 4mg in 50ml NS" onChange={e => updateInf(row.id, "dilution", e.target.value)} /></td>
-                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 70 }}><input type="number" style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.volume} placeholder="500" onChange={e => updateInf(row.id, "volume", e.target.value)} /></td>
-                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 80 }}><input type="number" style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.rate} placeholder="100" onChange={e => updateInf(row.id, "rate", e.target.value)} /></td>
-                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 120 }}><input style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.titrationGoal} placeholder="MAP > 65 / Hb > 8" onChange={e => updateInf(row.id, "titrationGoal", e.target.value)} /></td>
-                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px" }}><input type="time" style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.startTime} onChange={e => updateInf(row.id, "startTime", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 140 }}><input className="his-field" style={{ fontSize: 11, padding: "4px 6px", fontWeight: 700 }} value={row.drugFluid} placeholder="NS 0.9% / Noradrenaline / PRBC" onChange={e => updateInf(row.id, "drugFluid", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 110 }}><input className="his-field" style={{ fontSize: 11, padding: "4px 6px" }} value={row.dilution} placeholder="e.g. 4mg in 50ml NS" onChange={e => updateInf(row.id, "dilution", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 70 }}><input type="number" className="his-field" style={{ fontSize: 11, padding: "4px 6px" }} value={row.volume} placeholder="500" onChange={e => updateInf(row.id, "volume", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 80 }}><input type="number" className="his-field" style={{ fontSize: 11, padding: "4px 6px" }} value={row.rate} placeholder="100" onChange={e => updateInf(row.id, "rate", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 120 }}><input className="his-field" style={{ fontSize: 11, padding: "4px 6px" }} value={row.titrationGoal} placeholder="MAP > 65 / Hb > 8" onChange={e => updateInf(row.id, "titrationGoal", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px" }}><input type="time" className="his-field" style={{ fontSize: 11, padding: "4px 6px" }} value={row.startTime} onChange={e => updateInf(row.id, "startTime", e.target.value)} /></td>
                                     {/* Priority */}
                                     <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 85 }}>
-                                      <select style={{ ...sel, fontSize: 10, padding: "3px 5px", fontWeight: 700, color: row.priority==="STAT"?C.red:row.priority==="Urgent"?C.amber:C.muted }} value={row.priority||"Routine"} onChange={e => updateInf(row.id, "priority", e.target.value)}>
+                                      <select className="his-select" style={{ fontSize: 10, padding: "3px 5px", fontWeight: 700, color: row.priority==="STAT"?C.red:row.priority==="Urgent"?C.amber:C.muted }} value={row.priority||"Routine"} onChange={e => updateInf(row.id, "priority", e.target.value)}>
                                         <option value="Routine">Routine</option>
                                         <option value="Urgent">🔶 Urgent</option>
                                         <option value="STAT">⚡ STAT</option>
@@ -2102,13 +2103,13 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                                             style={{ width: 14, height: 14, cursor: "pointer", accentColor: C.red }} />}
                                     </td>
                                     <td style={{ border: "1px solid #a7f3d0", padding: "4px" }}>
-                                      <select style={{ ...sel, fontSize: 11, padding: "4px 6px", color: row.status === "Stopped" ? C.red : C.teal, fontWeight: 700 }} value={row.status} onChange={e => updateInf(row.id, "status", e.target.value)}>
+                                      <select className="his-select" style={{ fontSize: 11, padding: "4px 6px", color: row.status === "Stopped" ? C.red : C.teal, fontWeight: 700 }} value={row.status} onChange={e => updateInf(row.id, "status", e.target.value)}>
                                         <option value="Active">Active</option>
                                         <option value="Stopped">Stopped</option>
                                       </select>
                                     </td>
                                     <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 100 }}>
-                                      <input style={{ ...fld, fontSize: 11, padding: "4px 6px", borderColor: row.status === "Stopped" && !row.stopReason ? C.red : "#e2e8f0" }} value={row.stopReason} placeholder={row.status === "Stopped" ? "Required!" : "—"} onChange={e => updateInf(row.id, "stopReason", e.target.value)} />
+                                      <input className="his-field" style={{ fontSize: 11, padding: "4px 6px", borderColor: row.status === "Stopped" && !row.stopReason ? C.red : "#e2e8f0" }} value={row.stopReason} placeholder={row.status === "Stopped" ? "Required!" : "—"} onChange={e => updateInf(row.id, "stopReason", e.target.value)} />
                                     </td>
                                     <td style={{ border: "1px solid #a7f3d0", padding: "4px" }}>
                                       <button onClick={() => removeInf(row.id)} style={{ width: 22, height: 22, borderRadius: 4, border: "1px solid #fca5a5", background: "#fef2f2", color: C.red, cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
@@ -2154,16 +2155,16 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                         <tbody>
                           {medOrders.map((row, idx) => (
                             <tr key={row.id} style={{ background: row.status === "Stopped" ? "#fff1f2" : idx % 2 === 0 ? "white" : "#fafcff" }}>
-                              <td style={{ border: `1px solid ${C.blueB}`, padding: "5px" }}><input type="datetime-local" style={{ ...fld, fontSize: 11, padding: "5px 7px" }} value={row.datetime} onChange={e => updateMed(row.id, "datetime", e.target.value)} /></td>
-                              <td style={{ border: `1px solid ${C.blueB}`, padding: "5px", minWidth: 130 }}><input style={{ ...fld, fontSize: 12, padding: "5px 7px", fontWeight: 600 }} value={row.drug} placeholder="Drug name" onChange={e => updateMed(row.id, "drug", e.target.value)} /></td>
-                              <td style={{ border: `1px solid ${C.blueB}`, padding: "5px", minWidth: 90 }}><input style={{ ...fld, fontSize: 12, padding: "5px 7px" }} value={row.dose} placeholder="500mg" onChange={e => updateMed(row.id, "dose", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.blueB}`, padding: "5px" }}><input type="datetime-local" className="his-field" style={{ fontSize: 11, padding: "5px 7px" }} value={row.datetime} onChange={e => updateMed(row.id, "datetime", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.blueB}`, padding: "5px", minWidth: 130 }}><input className="his-field" style={{ fontSize: 12, padding: "5px 7px", fontWeight: 600 }} value={row.drug} placeholder="Drug name" onChange={e => updateMed(row.id, "drug", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.blueB}`, padding: "5px", minWidth: 90 }}><input className="his-field" style={{ fontSize: 12, padding: "5px 7px" }} value={row.dose} placeholder="500mg" onChange={e => updateMed(row.id, "dose", e.target.value)} /></td>
                               <td style={{ border: `1px solid ${C.blueB}`, padding: "5px", minWidth: 110 }}>
-                                <select style={{ ...sel, fontSize: 11, padding: "5px 7px" }} value={row.route} onChange={e => updateMed(row.id, "route", e.target.value)}>
+                                <select className="his-select" style={{ fontSize: 11, padding: "5px 7px" }} value={row.route} onChange={e => updateMed(row.id, "route", e.target.value)}>
                                   {ROUTES.map(r => <option key={r}>{r}</option>)}
                                 </select>
                               </td>
                               <td style={{ border: `1px solid ${C.blueB}`, padding: "5px", minWidth: 100 }}>
-                                <select style={{ ...sel, fontSize: 12, padding: "5px 7px", fontWeight: 700 }} value={row.frequency} onChange={e => updateMed(row.id, "frequency", e.target.value)}>
+                                <select className="his-select" style={{ fontSize: 12, padding: "5px 7px", fontWeight: 700 }} value={row.frequency} onChange={e => updateMed(row.id, "frequency", e.target.value)}>
                                   {FREQ_LIST.map(f => <option key={f}>{f}</option>)}
                                 </select>
                               </td>
@@ -2172,15 +2173,15 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                                   {(FREQ_TIMES[row.frequency] || []).join(" · ")}
                                 </div>
                               </td>
-                              <td style={{ border: `1px solid ${C.blueB}`, padding: "5px", minWidth: 110 }}><input style={{ ...fld, fontSize: 11, padding: "5px 7px" }} value={row.indication} placeholder="Indication" onChange={e => updateMed(row.id, "indication", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.blueB}`, padding: "5px", minWidth: 110 }}><input className="his-field" style={{ fontSize: 11, padding: "5px 7px" }} value={row.indication} placeholder="Indication" onChange={e => updateMed(row.id, "indication", e.target.value)} /></td>
                               <td style={{ border: `1px solid ${C.blueB}`, padding: "5px" }}>
-                                <select style={{ ...sel, fontSize: 12, padding: "5px 7px", color: row.status === "Stopped" ? C.red : C.green, fontWeight: 700 }} value={row.status} onChange={e => updateMed(row.id, "status", e.target.value)}>
+                                <select className="his-select" style={{ fontSize: 12, padding: "5px 7px", color: row.status === "Stopped" ? C.red : C.green, fontWeight: 700 }} value={row.status} onChange={e => updateMed(row.id, "status", e.target.value)}>
                                   <option value="Active">Active</option>
                                   <option value="Stopped">Stopped</option>
                                 </select>
                               </td>
                               <td style={{ border: `1px solid ${C.blueB}`, padding: "5px", minWidth: 120 }}>
-                                <input style={{ ...fld, fontSize: 11, padding: "5px 7px", borderColor: row.status === "Stopped" && !row.stopReason ? C.red : "#e2e8f0", background: row.status === "Stopped" && !row.stopReason ? "#fef2f2" : "white" }} value={row.stopReason} placeholder={row.status === "Stopped" ? "Required ⚠" : "—"} onChange={e => updateMed(row.id, "stopReason", e.target.value)} />
+                                <input className="his-field" style={{ fontSize: 11, padding: "5px 7px", borderColor: row.status === "Stopped" && !row.stopReason ? C.red : "#e2e8f0", background: row.status === "Stopped" && !row.stopReason ? "#fef2f2" : "white" }} value={row.stopReason} placeholder={row.status === "Stopped" ? "Required ⚠" : "—"} onChange={e => updateMed(row.id, "stopReason", e.target.value)} />
                               </td>
                               <td style={{ border: `1px solid ${C.blueB}`, padding: "5px" }}>
                                 <button onClick={() => removeMed(row.id)} title="Remove row" style={{ width: 24, height: 24, borderRadius: 5, border: "1px solid #fca5a5", background: "#fef2f2", color: C.red, cursor: "pointer", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700 }}>×</button>
@@ -2225,26 +2226,26 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                         <tbody>
                           {infOrders.map((row, idx) => (
                             <tr key={row.id} style={{ background: row.status === "Stopped" ? "#fff1f2" : idx % 2 === 0 ? "white" : "#f0fdfa" }}>
-                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px" }}><input type="datetime-local" style={{ ...fld, fontSize: 11, padding: "5px 7px" }} value={row.datetime} onChange={e => updateInf(row.id, "datetime", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px" }}><input type="datetime-local" className="his-field" style={{ fontSize: 11, padding: "5px 7px" }} value={row.datetime} onChange={e => updateInf(row.id, "datetime", e.target.value)} /></td>
                               <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 110 }}>
-                                <select style={{ ...sel, fontSize: 11, padding: "5px 7px" }} value={row.type} onChange={e => updateInf(row.id, "type", e.target.value)}>
+                                <select className="his-select" style={{ fontSize: 11, padding: "5px 7px" }} value={row.type} onChange={e => updateInf(row.id, "type", e.target.value)}>
                                   {["Fluid","Drug Infusion","Blood","Blood Product","TPN"].map(t => <option key={t}>{t}</option>)}
                                 </select>
                               </td>
-                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 140 }}><input style={{ ...fld, fontSize: 12, padding: "5px 7px", fontWeight: 600 }} value={row.drugFluid} placeholder="NS 0.9% / Noradrenaline / PRBC" onChange={e => updateInf(row.id, "drugFluid", e.target.value)} /></td>
-                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 120 }}><input style={{ ...fld, fontSize: 11, padding: "5px 7px" }} value={row.dilution} placeholder="e.g. 2mg in 50ml NS" onChange={e => updateInf(row.id, "dilution", e.target.value)} /></td>
-                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 75 }}><input type="number" style={{ ...fld, fontSize: 12, padding: "5px 7px" }} value={row.volume} placeholder="500" onChange={e => updateInf(row.id, "volume", e.target.value)} /></td>
-                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 90 }}><input type="number" style={{ ...fld, fontSize: 12, padding: "5px 7px" }} value={row.rate} placeholder="100" onChange={e => updateInf(row.id, "rate", e.target.value)} /></td>
-                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 140 }}><input style={{ ...fld, fontSize: 11, padding: "5px 7px" }} value={row.titrationGoal} placeholder="MAP > 65 / Hb > 8" onChange={e => updateInf(row.id, "titrationGoal", e.target.value)} /></td>
-                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px" }}><input type="time" style={{ ...fld, fontSize: 11, padding: "5px 7px" }} value={row.startTime} onChange={e => updateInf(row.id, "startTime", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 140 }}><input className="his-field" style={{ fontSize: 12, padding: "5px 7px", fontWeight: 600 }} value={row.drugFluid} placeholder="NS 0.9% / Noradrenaline / PRBC" onChange={e => updateInf(row.id, "drugFluid", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 120 }}><input className="his-field" style={{ fontSize: 11, padding: "5px 7px" }} value={row.dilution} placeholder="e.g. 2mg in 50ml NS" onChange={e => updateInf(row.id, "dilution", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 75 }}><input type="number" className="his-field" style={{ fontSize: 12, padding: "5px 7px" }} value={row.volume} placeholder="500" onChange={e => updateInf(row.id, "volume", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 90 }}><input type="number" className="his-field" style={{ fontSize: 12, padding: "5px 7px" }} value={row.rate} placeholder="100" onChange={e => updateInf(row.id, "rate", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 140 }}><input className="his-field" style={{ fontSize: 11, padding: "5px 7px" }} value={row.titrationGoal} placeholder="MAP > 65 / Hb > 8" onChange={e => updateInf(row.id, "titrationGoal", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px" }}><input type="time" className="his-field" style={{ fontSize: 11, padding: "5px 7px" }} value={row.startTime} onChange={e => updateInf(row.id, "startTime", e.target.value)} /></td>
                               <td style={{ border: `1px solid ${C.tealB}`, padding: "5px" }}>
-                                <select style={{ ...sel, fontSize: 12, padding: "5px 7px", color: row.status === "Stopped" ? C.red : C.teal, fontWeight: 700 }} value={row.status} onChange={e => updateInf(row.id, "status", e.target.value)}>
+                                <select className="his-select" style={{ fontSize: 12, padding: "5px 7px", color: row.status === "Stopped" ? C.red : C.teal, fontWeight: 700 }} value={row.status} onChange={e => updateInf(row.id, "status", e.target.value)}>
                                   <option value="Active">Active</option>
                                   <option value="Stopped">Stopped</option>
                                 </select>
                               </td>
                               <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 120 }}>
-                                <input style={{ ...fld, fontSize: 11, padding: "5px 7px", borderColor: row.status === "Stopped" && !row.stopReason ? C.red : "#e2e8f0", background: row.status === "Stopped" && !row.stopReason ? "#fef2f2" : "white" }} value={row.stopReason} placeholder={row.status === "Stopped" ? "Required ⚠" : "—"} onChange={e => updateInf(row.id, "stopReason", e.target.value)} />
+                                <input className="his-field" style={{ fontSize: 11, padding: "5px 7px", borderColor: row.status === "Stopped" && !row.stopReason ? C.red : "#e2e8f0", background: row.status === "Stopped" && !row.stopReason ? "#fef2f2" : "white" }} value={row.stopReason} placeholder={row.status === "Stopped" ? "Required ⚠" : "—"} onChange={e => updateInf(row.id, "stopReason", e.target.value)} />
                               </td>
                               <td style={{ border: `1px solid ${C.tealB}`, padding: "5px" }}>
                                 <button onClick={() => removeInf(row.id)} title="Remove row" style={{ width: 24, height: 24, borderRadius: 5, border: "1px solid #fca5a5", background: "#fef2f2", color: C.red, cursor: "pointer", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700 }}>×</button>
@@ -2270,7 +2271,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8 }}>
                       {[{k:"bp_sys",l:"Systolic BP (mmHg)",p:"120"},{k:"bp_dia",l:"Diastolic BP (mmHg)",p:"80"},{k:"pulse",l:"Pulse (/min)",p:"80"},{k:"temp",l:"Temp (°F)",p:"98.6"},{k:"spo2",l:"SpO₂ (%)",p:"98"},{k:"rr",l:"RR (/min)",p:"16"},{k:"bsl",l:"BSL (mg/dL)",p:"110"},{k:"gcs",l:"GCS",p:"E4V5M6"},{k:"urine",l:"Urine (mL/hr)",p:"50"}].map(v => (
                         <FL key={v.k} label={v.l}>
-                          <input type={v.k==="gcs"?"text":"number"} style={{ ...fld, fontSize: 12 }} value={vitals[v.k]} placeholder={v.p} onChange={e => setVitals(p => ({ ...p, [v.k]: e.target.value }))} />
+                          <input type={v.k==="gcs"?"text":"number"} className="his-field" style={{ fontSize: 12 }} value={vitals[v.k]} placeholder={v.p} onChange={e => setVitals(p => ({ ...p, [v.k]: e.target.value }))} />
                         </FL>
                       ))}
                     </div>
@@ -2285,9 +2286,9 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     <div key={s.k}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
                         <span style={{ width: 22, height: 22, borderRadius: 5, background: s.c + "20", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 12, color: s.c }}>{s.k[0].toUpperCase()}</span>
-                        <label style={{ ...lbl, marginBottom: 0, color: s.c }}>{s.l}</label>
+                        <label className="his-label" style={{ marginBottom: 0, color: s.c }}>{s.l}</label>
                       </div>
-                      <textarea style={{ ...ta, minHeight: 72, borderColor: s.c + "40" }} value={soap[s.k]} placeholder={s.ph} onChange={e => setSoap(p => ({ ...p, [s.k]: e.target.value }))} />
+                      <textarea className="his-textarea" style={{ minHeight: 72, borderColor: s.c + "40" }} value={soap[s.k]} placeholder={s.ph} onChange={e => setSoap(p => ({ ...p, [s.k]: e.target.value }))} />
                     </div>
                   ))}
                   {/* Diagnosis */}
@@ -2319,20 +2320,20 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                       <div style={{ background: "white", border: `1px solid ${C.blueB}`, borderRadius: 8, padding: "10px 12px", marginBottom: 10 }}>
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr 1fr 1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
                           <FL label="Type">
-                            <select style={{ ...sel, fontSize: 12 }} value={orderRow.type} onChange={e => setOrderRow(p => ({ ...p, type: e.target.value }))}>
+                            <select className="his-select" style={{ fontSize: 12 }} value={orderRow.type} onChange={e => setOrderRow(p => ({ ...p, type: e.target.value }))}>
                               {["medication","iv_fluid","procedure","investigation","diet","nursing","other"].map(o=><option key={o} value={o}>{o}</option>)}
                             </select>
                           </FL>
-                          <FL label="Instruction *"><input style={{ ...fld, fontSize: 12 }} value={orderRow.instruction} placeholder="Drug name & dose / order detail" onChange={e => setOrderRow(p => ({ ...p, instruction: e.target.value }))} /></FL>
+                          <FL label="Instruction *"><input className="his-field" style={{ fontSize: 12 }} value={orderRow.instruction} placeholder="Drug name & dose / order detail" onChange={e => setOrderRow(p => ({ ...p, instruction: e.target.value }))} /></FL>
                           <FL label="Route">
-                            <select style={{ ...sel, fontSize: 12 }} value={orderRow.route} onChange={e => setOrderRow(p => ({ ...p, route: e.target.value }))}>
+                            <select className="his-select" style={{ fontSize: 12 }} value={orderRow.route} onChange={e => setOrderRow(p => ({ ...p, route: e.target.value }))}>
                               {["IV","IM","Oral","SC","SL","Topical","Inhalation",""].map(o=><option key={o}>{o||"—"}</option>)}
                             </select>
                           </FL>
-                          <FL label="Frequency"><input style={{ ...fld, fontSize: 12 }} value={orderRow.frequency} placeholder="OD/BD/TDS" onChange={e => setOrderRow(p => ({ ...p, frequency: e.target.value }))} /></FL>
-                          <FL label="Duration"><input style={{ ...fld, fontSize: 12 }} value={orderRow.duration} placeholder="3 days" onChange={e => setOrderRow(p => ({ ...p, duration: e.target.value }))} /></FL>
+                          <FL label="Frequency"><input className="his-field" style={{ fontSize: 12 }} value={orderRow.frequency} placeholder="OD/BD/TDS" onChange={e => setOrderRow(p => ({ ...p, frequency: e.target.value }))} /></FL>
+                          <FL label="Duration"><input className="his-field" style={{ fontSize: 12 }} value={orderRow.duration} placeholder="3 days" onChange={e => setOrderRow(p => ({ ...p, duration: e.target.value }))} /></FL>
                           <FL label="Priority">
-                            <select style={{ ...sel, fontSize: 12, borderColor: orderRow.priority==="STAT"?C.red:orderRow.priority==="URGENT"?C.amber:"#e2e8f0" }} value={orderRow.priority} onChange={e => setOrderRow(p => ({ ...p, priority: e.target.value }))}>
+                            <select className="his-select" style={{ fontSize: 12, borderColor: orderRow.priority==="STAT"?C.red:orderRow.priority==="URGENT"?C.amber:"#e2e8f0" }} value={orderRow.priority} onChange={e => setOrderRow(p => ({ ...p, priority: e.target.value }))}>
                               {["ROUTINE","URGENT","STAT"].map(o=><option key={o}>{o}</option>)}
                             </select>
                           </FL>
@@ -2384,7 +2385,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                   {/* Sedation */}
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
                     <FL label="RASS Score (-5 to +4)">
-                      <select style={{ ...sel, borderColor: Number(icu.rassScore)>1?C.red:Number(icu.rassScore)<-3?C.amber:"#e2e8f0" }} value={icu.rassScore} onChange={e=>setIcu(p=>({...p,rassScore:e.target.value}))}>
+                      <select className="his-select" style={{ borderColor: Number(icu.rassScore)>1?C.red:Number(icu.rassScore)<-3?C.amber:"#e2e8f0" }} value={icu.rassScore} onChange={e=>setIcu(p=>({...p,rassScore:e.target.value}))}>
                         {[{v:"+4",l:"+4 Combative"},{v:"+3",l:"+3 Very Agitated"},{v:"+2",l:"+2 Agitated"},{v:"+1",l:"+1 Restless"},{v:"0",l:"0 Alert & Calm"},{v:"-1",l:"-1 Drowsy"},{v:"-2",l:"-2 Light Sedation"},{v:"-3",l:"-3 Mod Sedation"},{v:"-4",l:"-4 Deep Sedation"},{v:"-5",l:"-5 Unarousable"}].map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
                       </select>
                     </FL>
@@ -2407,12 +2408,12 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                   {/* SOAP + Daily Goals */}
                   {[{k:"subjective",l:"S — Subjective",c:C.blue,ph:"Family update, nursing observations, any complaints noted…"},{k:"objective",l:"O — Objective",c:C.teal,ph:"Exam findings, lines, tubes, wound…"},{k:"assessment",l:"A — Assessment",c:C.amber,ph:"Overall ICU status, organ function assessment…"},{k:"plan",l:"P — Plan",c:C.green,ph:"Orders, changes, weaning plan, family plan…"}].map(s=>(
                     <div key={s.k}>
-                      <label style={{ ...lbl, color: s.c }}>{s.l}</label>
-                      <textarea style={{ ...ta, minHeight: 60, borderColor: s.c + "40" }} value={soap[s.k]} placeholder={s.ph} onChange={e=>setSoap(p=>({...p,[s.k]:e.target.value}))} />
+                      <label className="his-label" style={{ color: s.c }}>{s.l}</label>
+                      <textarea className="his-textarea" style={{ minHeight: 60, borderColor: s.c + "40" }} value={soap[s.k]} placeholder={s.ph} onChange={e=>setSoap(p=>({...p,[s.k]:e.target.value}))} />
                     </div>
                   ))}
                   <FL label="Daily Goals / Targets">
-                    <textarea style={{ ...ta, minHeight: 60, borderColor: `${C.green}40` }} value={icu.dailyGoals} placeholder="Target SpO₂ >95%, MAP >65, urine >0.5ml/kg/hr, pain BPS <6, sedation RASS 0 to -2…" onChange={e=>setIcu(p=>({...p,dailyGoals:e.target.value}))} />
+                    <textarea className="his-textarea" style={{ minHeight: 60, borderColor: `${C.green}40` }} value={icu.dailyGoals} placeholder="Target SpO₂ >95%, MAP >65, urine >0.5ml/kg/hr, pain BPS <6, sedation RASS 0 to -2…" onChange={e=>setIcu(p=>({...p,dailyGoals:e.target.value}))} />
                   </FL>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                     <FL label="Provisional Diagnosis"><input className="his-field" value={diag.provisional} placeholder="e.g. Septic shock — ARDS" onChange={e=>setDiag(p=>({...p,provisional:e.target.value}))} /></FL>
@@ -2450,11 +2451,11 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     </FL>
                     <FL label="Blood Loss"><input className="his-field" value={proc.bloodLoss} placeholder="Minimal / mL" onChange={e=>setProc(p=>({...p,bloodLoss:e.target.value}))} /></FL>
                   </div>
-                  <FL label="Technique / Description *"><textarea style={{ ...ta, minHeight: 80 }} value={proc.technique} placeholder="Step-by-step description of technique used, sterile field maintained…" onChange={e=>setProc(p=>({...p,technique:e.target.value}))} /></FL>
+                  <FL label="Technique / Description *"><textarea className="his-textarea" style={{ minHeight: 80 }} value={proc.technique} placeholder="Step-by-step description of technique used, sterile field maintained…" onChange={e=>setProc(p=>({...p,technique:e.target.value}))} /></FL>
                   <FL label="Intraoperative Findings"><textarea className="his-textarea" value={proc.findings} placeholder="What was found during the procedure…" onChange={e=>setProc(p=>({...p,findings:e.target.value}))} /></FL>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                     <FL label="Complications">
-                      <select style={{ ...sel, borderColor: proc.complications!=="None"?C.red:"#e2e8f0" }} value={proc.complications} onChange={e=>setProc(p=>({...p,complications:e.target.value}))}>
+                      <select className="his-select" style={{ borderColor: proc.complications!=="None"?C.red:"#e2e8f0" }} value={proc.complications} onChange={e=>setProc(p=>({...p,complications:e.target.value}))}>
                         {["None","Bleeding","Haematoma","Pneumothorax","Infection","Failed Procedure","Vasovagal","Other"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
@@ -2488,7 +2489,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                   <FL label="Investigations Shared"><input className="his-field" value={consult.investigations} placeholder="ECG, Echo, Troponin, CBC…" onChange={e=>setConsult(p=>({...p,investigations:e.target.value}))} /></FL>
                   <FL label="Consultant's Findings"><textarea className="his-textarea" value={consult.findings} placeholder="Examination findings noted by consultant…" onChange={e=>setConsult(p=>({...p,findings:e.target.value}))} /></FL>
                   <FL label="Impression / Diagnosis"><input className="his-field" value={consult.impression} placeholder="Consultant's diagnostic impression" onChange={e=>setConsult(p=>({...p,impression:e.target.value}))} /></FL>
-                  <FL label="Recommendations *"><textarea style={{ ...ta, minHeight: 80 }} value={consult.recommendations} placeholder="Specific management recommendations from consultant…" onChange={e=>setConsult(p=>({...p,recommendations:e.target.value}))} /></FL>
+                  <FL label="Recommendations *"><textarea className="his-textarea" style={{ minHeight: 80 }} value={consult.recommendations} placeholder="Specific management recommendations from consultant…" onChange={e=>setConsult(p=>({...p,recommendations:e.target.value}))} /></FL>
                   <FL label="Follow-up Plan"><input className="his-field" value={consult.followUp} placeholder="Review in 48hrs / on discharge / as needed" onChange={e=>setConsult(p=>({...p,followUp:e.target.value}))} /></FL>
                 </div>
               )}
@@ -2571,7 +2572,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     <FL label="Fluids Given (mL)"><input type="number" className="his-field" value={postop.fluidsGiven} placeholder="2000" onChange={e=>setPostop(p=>({...p,fluidsGiven:e.target.value}))} /></FL>
                     <FL label="Urine Output (mL)"><input type="number" className="his-field" value={postop.urineOutput} placeholder="400" onChange={e=>setPostop(p=>({...p,urineOutput:e.target.value}))} /></FL>
                     <FL label="Condition Leaving OT">
-                      <select style={{ ...sel, borderColor: postop.conditionLeavingOT==="Critical"?C.red:"#e2e8f0" }} value={postop.conditionLeavingOT} onChange={e=>setPostop(p=>({...p,conditionLeavingOT:e.target.value}))}>
+                      <select className="his-select" style={{ borderColor: postop.conditionLeavingOT==="Critical"?C.red:"#e2e8f0" }} value={postop.conditionLeavingOT} onChange={e=>setPostop(p=>({...p,conditionLeavingOT:e.target.value}))}>
                         {["Stable","Satisfactory","Critical","On Ventilator","Extubated in OT"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
@@ -2611,7 +2612,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                       <FL label="II — Other Contributing Conditions"><input className="his-field" value={death.contributing} placeholder="e.g. Chronic kidney disease, anaemia" onChange={e=>setDeath(p=>({...p,contributing:e.target.value}))} /></FL>
                     </div>
                   </div>
-                  <FL label="Brief Sequence of Events *"><textarea style={{ ...ta, minHeight: 80 }} value={death.sequenceOfEvents} placeholder="Timeline of clinical events leading to death…" onChange={e=>setDeath(p=>({...p,sequenceOfEvents:e.target.value}))} /></FL>
+                  <FL label="Brief Sequence of Events *"><textarea className="his-textarea" style={{ minHeight: 80 }} value={death.sequenceOfEvents} placeholder="Timeline of clinical events leading to death…" onChange={e=>setDeath(p=>({...p,sequenceOfEvents:e.target.value}))} /></FL>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                     <FL label="Family Informed By *"><input className="his-field" value={death.familyInformedBy} placeholder="Doctor/nurse name" onChange={e=>setDeath(p=>({...p,familyInformedBy:e.target.value}))} /></FL>
                     <FL label="Time Family Informed"><input type="time" className="his-field" value={death.familyInformedTime} onChange={e=>setDeath(p=>({...p,familyInformedTime:e.target.value}))} /></FL>
@@ -2651,7 +2652,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                       {["Typographical Error","Clinical Correction","Missing Information","Wrong Medication","Wrong Dose","Clarification Required","Other"].map(o=><option key={o}>{o}</option>)}
                     </select>
                   </FL>
-                  <FL label="Amendment / Correction *"><textarea style={{ ...ta, minHeight: 100 }} value={amendment.correction} placeholder="State the correction clearly. Note: original signed content is preserved in the record. This amendment is added as an addendum with date, time, and signature." onChange={e=>setAmendment(p=>({...p,correction:e.target.value}))} /></FL>
+                  <FL label="Amendment / Correction *"><textarea className="his-textarea" style={{ minHeight: 100 }} value={amendment.correction} placeholder="State the correction clearly. Note: original signed content is preserved in the record. This amendment is added as an addendum with date, time, and signature." onChange={e=>setAmendment(p=>({...p,correction:e.target.value}))} /></FL>
                   <FL label="Witnessed By *"><input className="his-field" value={amendment.witness} placeholder="Name of witnessing doctor/nurse" onChange={e=>setAmendment(p=>({...p,witness:e.target.value}))} /></FL>
                   <div style={{ background: "#fffbeb", border: `1px solid ${C.amberB}`, borderRadius: 7, padding: "10px 14px", fontSize: 12, color: "#92400e" }}>
                     <b>NABH Requirement:</b> This amendment will be signed with your credentials, time-stamped, and appended to the original note. The original remains unaltered in the system audit trail.
