@@ -100,10 +100,16 @@ const PatientEducationPage = lazy(() => import("./pages/nursing/PatientEducation
 // ── Reception Console (single-window registration) ──
 const ReceptionConsole = lazy(() => import("./pages/reception/ReceptionConsole"));
 const ReceptionDashboard = lazy(() => import("./pages/reception/ReceptionDashboard"));
-const DischargeQueue   = lazy(() => import("./pages/reception/DischargeQueue"));
-const VisitorPasses    = lazy(() => import("./pages/reception/VisitorPasses"));
-const TPACases         = lazy(() => import("./pages/reception/TPACases"));
-const Appointments     = lazy(() => import("./pages/reception/Appointments"));
+const DischargeQueue        = lazy(() => import("./pages/reception/DischargeQueue"));
+const VisitorPasses         = lazy(() => import("./pages/reception/VisitorPasses"));
+const TPACases              = lazy(() => import("./pages/reception/TPACases"));
+const Appointments          = lazy(() => import("./pages/reception/Appointments"));
+const ReceptionPatientSearch  = lazy(() => import("./pages/reception/ReceptionPatientSearch"));
+const ReceptionVisitHistory   = lazy(() => import("./pages/reception/ReceptionVisitHistory"));
+const ReceptionOPDQueue       = lazy(() => import("./pages/reception/ReceptionOPDQueue"));
+const ReceptionEmergencyCases = lazy(() => import("./pages/reception/ReceptionEmergencyCases"));
+const ReceptionBedView        = lazy(() => import("./pages/reception/ReceptionBedView"));
+const ReceptionBilling        = lazy(() => import("./pages/reception/ReceptionBilling"));
 
 // Clinical pages
 const NurseOPDQueuePage = lazy(() => import("./pages/nurse/NurseOPDQueuePage"));
@@ -324,6 +330,15 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/visitor-passes" element={<VisitorPasses />} />
             <Route path="/tpa-cases" element={<TPACases />} />
             <Route path="/appointments" element={<Appointments />} />
+            {/* Receptionist-flavored versions of shared modules */}
+            <Route path="/patient-search" element={<ReceptionPatientSearch />} />
+            <Route path="/visit-history" element={<ReceptionVisitHistory />} />
+            <Route path="/visit-history/:uhid" element={<ReceptionVisitHistory />} />
+            <Route path="/reception-opd-queue" element={<ReceptionOPDQueue />} />
+            <Route path="/reception-emergency" element={<ReceptionEmergencyCases />} />
+            <Route path="/reception-beds" element={<ReceptionBedView />} />
+            <Route path="/reception-billing" element={<ReceptionBilling />} />
+            <Route path="/reception-billing/:uhid" element={<ReceptionBilling />} />
             {/* Legacy routes redirect to the new console */}
             <Route path="/ipd-admission" element={<Navigate to="/reception" replace />} />
             <Route path="/opd-register" element={<Navigate to="/reception" replace />} />

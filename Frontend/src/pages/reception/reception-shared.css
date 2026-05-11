@@ -345,3 +345,308 @@
   color: #fff;
   border-color: #0891b2;
 }
+
+/* ════════════════════════════════════════════════════════════
+   Extended rx components — KPI strip, mini-cards, bed grid,
+   timeline, payment chip, triage chips
+   ════════════════════════════════════════════════════════════ */
+
+/* KPI strip — small stat cards across the top */
+.rx-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.rx-kpi {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 12px 14px;
+  position: relative;
+  overflow: hidden;
+}
+.rx-kpi-label {
+  font-size: 11px;
+  color: #64748b;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}
+.rx-kpi-value {
+  font-size: 22px;
+  font-weight: 900;
+  color: #0f172a;
+  font-family: 'DM Mono', monospace;
+  margin-top: 4px;
+  line-height: 1.1;
+}
+.rx-kpi-sub { font-size: 10px; color: #94a3b8; margin-top: 2px; }
+.rx-kpi--accent::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 4px;
+  background: linear-gradient(180deg, #0891b2, #06b6d4);
+}
+
+/* Mini grid card — used in patient search results */
+.rx-mini-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: all .15s ease;
+}
+.rx-mini-card:hover { border-color: #06b6d4; box-shadow: 0 4px 12px rgba(8,145,178,.12); transform: translateY(-1px); }
+.rx-mini-avatar {
+  width: 38px; height: 38px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #0891b2, #06b6d4);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 800;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.rx-mini-card.is-female .rx-mini-avatar { background: linear-gradient(135deg, #be185d, #ec4899); }
+.rx-mini-info { flex: 1; min-width: 0; }
+.rx-mini-name {
+  font-size: 14px;
+  font-weight: 800;
+  color: #0f172a;
+  display: flex; align-items: center; gap: 8px;
+}
+.rx-mini-meta {
+  font-size: 11px;
+  color: #64748b;
+  margin-top: 2px;
+  display: flex; gap: 10px; flex-wrap: wrap;
+}
+.rx-mini-meta strong { color: #0f172a; font-weight: 700; }
+
+/* Triage chips for emergency */
+.rx-triage {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 16px;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  border: 1px solid transparent;
+}
+.rx-triage--critical    { background: #fef2f2; color: #991b1b; border-color: #fca5a5; }
+.rx-triage--emergency   { background: #fff7ed; color: #c2410c; border-color: #fdba74; }
+.rx-triage--urgent      { background: #fefce8; color: #a16207; border-color: #fde047; }
+.rx-triage--semiurgent  { background: #ecfeff; color: #0e7490; border-color: #67e8f9; }
+.rx-triage--nonurgent   { background: #f0fdf4; color: #15803d; border-color: #86efac; }
+
+/* Bed grid — visual occupancy view */
+.rx-ward-block {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+.rx-ward-head {
+  background: linear-gradient(135deg, #0f172a, #1e293b);
+  color: #fff;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 800;
+}
+.rx-ward-head .rx-ward-count {
+  margin-left: auto;
+  display: flex; gap: 8px;
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+}
+.rx-ward-count span { padding: 2px 8px; border-radius: 12px; }
+.rx-bed-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+  padding: 12px;
+}
+.rx-bed {
+  border: 1.5px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fff;
+  cursor: pointer;
+  transition: all .15s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 78px;
+}
+.rx-bed-num {
+  font-family: 'DM Mono', monospace;
+  font-size: 13px;
+  font-weight: 800;
+  color: #0f172a;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.rx-bed-status-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+}
+.rx-bed-name {
+  font-size: 11px;
+  font-weight: 700;
+  color: #1e293b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rx-bed-sub { font-size: 10px; color: #64748b; }
+.rx-bed--available { background: #f0fdf4; border-color: #86efac; }
+.rx-bed--available .rx-bed-status-dot { background: #22c55e; }
+.rx-bed--occupied  { background: #fef2f2; border-color: #fca5a5; }
+.rx-bed--occupied .rx-bed-status-dot  { background: #ef4444; }
+.rx-bed--maintenance { background: #fffbeb; border-color: #fcd34d; }
+.rx-bed--maintenance .rx-bed-status-dot { background: #f59e0b; }
+.rx-bed--reserved { background: #eff6ff; border-color: #93c5fd; }
+.rx-bed--reserved .rx-bed-status-dot { background: #3b82f6; }
+.rx-bed--blocked { background: #f3f4f6; border-color: #cbd5e1; }
+.rx-bed--blocked .rx-bed-status-dot { background: #9ca3af; }
+.rx-bed:hover { transform: translateY(-1px); box-shadow: 0 4px 10px rgba(0,0,0,.08); }
+
+/* Bill list rows */
+.rx-bill-row {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+}
+.rx-bill-num {
+  font-family: 'DM Mono', monospace;
+  font-size: 13px;
+  font-weight: 800;
+  color: #0e7490;
+}
+.rx-bill-amounts {
+  display: flex; gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+  font-size: 11px;
+  color: #64748b;
+}
+.rx-bill-amounts strong { color: #0f172a; }
+.rx-bill-amounts .due { color: #b91c1c; font-weight: 800; }
+.rx-bill-amounts .paid { color: #15803d; font-weight: 800; }
+
+/* Timeline (visit history) */
+.rx-timeline {
+  position: relative;
+  padding-left: 22px;
+  margin-top: 6px;
+}
+.rx-timeline::before {
+  content: "";
+  position: absolute;
+  left: 7px; top: 4px; bottom: 4px;
+  width: 2px;
+  background: linear-gradient(180deg, #06b6d4, #e2e8f0);
+}
+.rx-tl-item {
+  position: relative;
+  padding: 10px 14px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  margin-bottom: 10px;
+}
+.rx-tl-item::before {
+  content: "";
+  position: absolute;
+  left: -22px; top: 14px;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: #06b6d4;
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 2px #06b6d4;
+}
+.rx-tl-item--opd::before       { background: #0891b2; box-shadow: 0 0 0 2px #0891b2; }
+.rx-tl-item--ipd::before       { background: #7c3aed; box-shadow: 0 0 0 2px #7c3aed; }
+.rx-tl-item--emergency::before { background: #dc2626; box-shadow: 0 0 0 2px #dc2626; }
+.rx-tl-item--bill::before      { background: #d97706; box-shadow: 0 0 0 2px #d97706; }
+.rx-tl-head {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 13px;
+  font-weight: 800;
+  color: #0f172a;
+}
+.rx-tl-date { font-family: 'DM Mono', monospace; font-size: 11px; color: #64748b; font-weight: 600; }
+.rx-tl-meta {
+  font-size: 11px;
+  color: #64748b;
+  margin-top: 4px;
+  display: flex; gap: 12px; flex-wrap: wrap;
+}
+.rx-tl-meta strong { color: #0f172a; }
+.rx-tl-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}
+.rx-tl-type--opd       { background: #ecfeff; color: #0e7490; }
+.rx-tl-type--ipd       { background: #f5f3ff; color: #6d28d9; }
+.rx-tl-type--emergency { background: #fef2f2; color: #b91c1c; }
+
+/* Toolbar row inside the page */
+.rx-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.rx-toolbar select,
+.rx-toolbar input[type="date"],
+.rx-toolbar input[type="text"] {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  padding: 7px 10px;
+  font-family: inherit;
+  font-size: 12px;
+  color: #0f172a;
+  outline: none;
+}
+.rx-toolbar select:focus,
+.rx-toolbar input:focus { border-color: #06b6d4; }
+
+.rx-page-info {
+  background: #eff6ff;
+  border: 1px solid #93c5fd;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 12px;
+  color: #1d4ed8;
+  margin-bottom: 12px;
+}
+
