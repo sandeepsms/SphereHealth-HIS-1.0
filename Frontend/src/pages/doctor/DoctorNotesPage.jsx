@@ -2700,15 +2700,17 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                 </div>
               </div>
               <div style={{ display: "flex", gap: 8 }}>
-                <button onClick={() => { setActiveModal(null); setEditingNote(null); }} style={{ padding: "9px 20px", border: `1.5px solid ${C.border}`, borderRadius: 8, background: "white", fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, cursor: "pointer", color: C.muted }}>Cancel</button>
-                <button onClick={() => saveNote("draft")} disabled={saving}
-                  style={{ padding: "9px 20px", border: `1.5px solid ${C.amberB}`, borderRadius: 8, background: C.amberL, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer", color: C.amber, display: "flex", alignItems: "center", gap: 6 }}>
-                  <i className={`pi ${editingNote ? "pi-refresh" : "pi-save"}`} style={{ fontSize: 11 }} />
+                <button onClick={() => { setActiveModal(null); setEditingNote(null); }} className="his-btn--ghost">
+                  Cancel
+                </button>
+                <button onClick={() => saveNote("draft")} disabled={saving} className="his-btn--ghost"
+                  style={{ background: C.amberL, color: C.amber, borderColor: C.amberB }}>
+                  <i className={`pi ${editingNote ? "pi-refresh" : "pi-save"}`} />
                   {editingNote ? "Update Draft" : "Save Draft"}
                 </button>
-                <button onClick={() => { if (!signature) { setShowSetup(true); toast.info("Please set your signature first"); return; } saveNote("signed"); }} disabled={saving}
-                  style={{ padding: "9px 28px", background: saving ? "#5eead4" : `linear-gradient(135deg, ${C.primary}, ${C.primaryMid})`, color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 7, boxShadow: `0 4px 12px ${C.primary}35` }}>
-                  <i className={`pi ${saving ? "pi-spin pi-spinner" : "pi-check-circle"}`} style={{ fontSize: 12 }} />
+                <button onClick={() => { if (!signature) { setShowSetup(true); toast.info("Please set your signature first"); return; } saveNote("signed"); }} disabled={saving} className="his-btn"
+                  style={{ background: saving ? "#5eead4" : `linear-gradient(135deg, ${C.primary}, ${C.primaryMid})` }}>
+                  <i className={`pi ${saving ? "pi-spin pi-spinner" : "pi-check-circle"}`} />
                   {saving ? "Saving…" : "Sign & Submit"}
                 </button>
               </div>

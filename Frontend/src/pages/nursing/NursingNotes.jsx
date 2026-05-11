@@ -3524,13 +3524,12 @@ function NursingNotesContent({ selectedPatient }) {
                 </span>
               </div>
               <div style={{ display: "flex", gap: 8 }}>
-                <button onClick={() => setActiveModal(null)}
-                  style={{ padding: "9px 20px", border: `1.5px solid ${C.border}`, borderRadius: 8, background: "white", fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, cursor: "pointer", color: C.muted }}>
+                <button onClick={() => setActiveModal(null)} className="his-btn--ghost">
                   Cancel
                 </button>
-                <button onClick={saveNote} disabled={loading}
-                  style={{ padding: "9px 28px", background: loading ? "#5eead4" : `linear-gradient(135deg, ${C.primary}, ${C.primaryMid})`, color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 7, boxShadow: `0 4px 12px ${C.primary}35` }}>
-                  <i className={`pi ${loading ? "pi-spin pi-spinner" : "pi-check"}`} style={{ fontSize: 12 }} />
+                <button onClick={saveNote} disabled={loading} className="his-btn"
+                  style={{ background: loading ? "#5eead4" : `linear-gradient(135deg, ${C.primary}, ${C.primaryMid})` }}>
+                  <i className={`pi ${loading ? "pi-spin pi-spinner" : "pi-check"}`} />
                   {loading ? "Saving\u2026" : "Sign & Submit"}
                 </button>
               </div>
