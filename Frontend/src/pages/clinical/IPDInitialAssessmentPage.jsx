@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import "../../Components/clinical/clinical-forms.css";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
@@ -23,13 +24,6 @@ const C = {
   pink: "#db2777",
   slate: "#1e293b",
 };
-
-const fld = {
-  padding: "8px 11px", border: `1.5px solid ${C.border}`, borderRadius: 8,
-  fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: C.text,
-  outline: "none", background: "white", width: "100%", boxSizing: "border-box",
-};
-const ta = { ...fld, resize: "vertical", minHeight: 72 };
 
 /* ── Section card ── */
 function Section({ title, icon, color = C.accent, badge, children, defaultOpen = true }) {
@@ -667,7 +661,7 @@ function IPDInitialAssessmentContent({ selectedPatient }) {
         <input value={uhid} onChange={e => setUhid(e.target.value.toUpperCase())}
           onKeyDown={e => e.key === "Enter" && loadPatient(uhid)}
           placeholder="Type UHID and press Enter…"
-          style={{ ...fld, maxWidth: 260 }} />
+          className="his-field" style={{ maxWidth: 260 }} />
         <button onClick={() => loadPatient(uhid)} disabled={loadingPt}
           style={{ padding: "8px 18px", border: "none", borderRadius: 8, background: C.accent,
             color: "white", cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600 }}>
@@ -734,21 +728,21 @@ function IPDInitialAssessmentContent({ selectedPatient }) {
           {/* ── Admission Details ── */}
           <Section title="Admission Details" icon="pi-calendar-plus" color={C.teal}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 14 }}>
-              <Field label="Admit Date"><input type="date" value={admitDate} onChange={e => setAdmitDate(e.target.value)} style={fld} /></Field>
-              <Field label="Admit Time"><input type="time" value={admitTime} onChange={e => setAdmitTime(e.target.value)} style={fld} /></Field>
-              <Field label="IPD Number"><input value={ipdNo} onChange={e => setIpdNo(e.target.value)} placeholder="IPD-XXXX" style={fld} /></Field>
+              <Field label="Admit Date"><input type="date" value={admitDate} onChange={e => setAdmitDate(e.target.value)} className="his-field" /></Field>
+              <Field label="Admit Time"><input type="time" value={admitTime} onChange={e => setAdmitTime(e.target.value)} className="his-field" /></Field>
+              <Field label="IPD Number"><input value={ipdNo} onChange={e => setIpdNo(e.target.value)} placeholder="IPD-XXXX" className="his-field" /></Field>
               <Field label="Mode of Admission">
-                <select value={modeOfAdmit} onChange={e => setModeOfAdmit(e.target.value)} style={fld}>
+                <select value={modeOfAdmit} onChange={e => setModeOfAdmit(e.target.value)} className="his-field">
                   {["OPD Referral", "Emergency", "Referred from other hospital", "Direct admission", "Day Care", "Other"].map(m => <option key={m}>{m}</option>)}
                 </select>
               </Field>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
-              <Field label="Admitting Nurse"><input value={nurseName} onChange={e => setNurseName(e.target.value)} placeholder="Nurse name" style={fld} /></Field>
-              <Field label="Ward"><input value={ward} onChange={e => setWard(e.target.value)} placeholder="Ward name" style={fld} /></Field>
-              <Field label="Bed No."><input value={bedNo} onChange={e => setBedNo(e.target.value)} placeholder="Bed number" style={fld} /></Field>
+              <Field label="Admitting Nurse"><input value={nurseName} onChange={e => setNurseName(e.target.value)} placeholder="Nurse name" className="his-field" /></Field>
+              <Field label="Ward"><input value={ward} onChange={e => setWard(e.target.value)} placeholder="Ward name" className="his-field" /></Field>
+              <Field label="Bed No."><input value={bedNo} onChange={e => setBedNo(e.target.value)} placeholder="Bed number" className="his-field" /></Field>
               <Field label="Consciousness">
-                <select value={consciousnessLevel} onChange={e => setConsciousnessLevel(e.target.value)} style={fld}>
+                <select value={consciousnessLevel} onChange={e => setConsciousnessLevel(e.target.value)} className="his-field">
                   {["Alert", "Drowsy", "Confused", "Unconscious", "Sedated"].map(m => <option key={m}>{m}</option>)}
                 </select>
               </Field>
@@ -756,11 +750,11 @@ function IPDInitialAssessmentContent({ selectedPatient }) {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
               <Field label="Chief Complaint / Reason for Admission" required>
                 <textarea value={chiefComplaint} onChange={e => setChiefComplaint(e.target.value)}
-                  placeholder="Patient's presenting complaint…" style={{ ...ta, minHeight: 60 }} />
+                  placeholder="Patient's presenting complaint…" className="his-textarea" style={{ minHeight: 60 }} />
               </Field>
               <Field label="Known Allergies">
                 <textarea value={allergy} onChange={e => setAllergy(e.target.value)}
-                  placeholder="Drug / food allergies — None if none" style={{ ...ta, minHeight: 60 }} />
+                  placeholder="Drug / food allergies — None if none" className="his-textarea" style={{ minHeight: 60 }} />
               </Field>
             </div>
           </Section>
@@ -777,7 +771,7 @@ function IPDInitialAssessmentContent({ selectedPatient }) {
                 <div key={key} style={{ background: C.bg, border: `1.5px solid ${C.border}`, borderRadius: 9, padding: "10px 12px" }}>
                   <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".7px", color: C.muted, marginBottom: 5 }}>{label}</div>
                   <input value={vitals[key]} onChange={e => setV(key)(e.target.value)}
-                    style={{ ...fld, textAlign: "center", fontFamily: "'DM Mono', monospace", fontSize: 16, fontWeight: 700, padding: "4px 8px" }} />
+                    className="his-field" style={{ textAlign: "center", fontFamily: "'DM Mono', monospace", fontSize: 16, fontWeight: 700, padding: "4px 8px" }} />
                   <div style={{ fontSize: 9, color: C.muted, textAlign: "center", marginTop: 3 }}>{unit}</div>
                 </div>
               ))}
@@ -792,7 +786,7 @@ function IPDInitialAssessmentContent({ selectedPatient }) {
                 <div key={key} style={{ background: C.bg, border: `1.5px solid ${C.border}`, borderRadius: 9, padding: "10px 12px" }}>
                   <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".7px", color: C.muted, marginBottom: 5 }}>{label}</div>
                   <input value={vitals[key]} onChange={e => setV(key)(e.target.value)}
-                    style={{ ...fld, textAlign: "center", fontFamily: "'DM Mono', monospace", fontSize: 16, fontWeight: 700, padding: "4px 8px" }} />
+                    className="his-field" style={{ textAlign: "center", fontFamily: "'DM Mono', monospace", fontSize: 16, fontWeight: 700, padding: "4px 8px" }} />
                   <div style={{ fontSize: 9, color: C.muted, textAlign: "center", marginTop: 3 }}>{unit}</div>
                 </div>
               ))}
@@ -811,15 +805,15 @@ function IPDInitialAssessmentContent({ selectedPatient }) {
               <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr 2fr", gap: 12 }}>
                 <Field label="Pain Score (0–10)">
                   <input type="number" min="0" max="10" value={painScore}
-                    onChange={e => setPainScore(e.target.value)} style={fld} />
+                    onChange={e => setPainScore(e.target.value)} className="his-field" />
                 </Field>
                 <Field label="Location">
                   <input value={painLocation} onChange={e => setPainLocation(e.target.value)}
-                    placeholder="e.g. Lower abdomen, chest…" style={fld} />
+                    placeholder="e.g. Lower abdomen, chest…" className="his-field" />
                 </Field>
                 <Field label="Character">
                   <input value={painCharacter} onChange={e => setPainCharacter(e.target.value)}
-                    placeholder="Burning, stabbing, dull, colicky…" style={fld} />
+                    placeholder="Burning, stabbing, dull, colicky…" className="his-field" />
                 </Field>
               </div>
             )}
@@ -844,7 +838,7 @@ function IPDInitialAssessmentContent({ selectedPatient }) {
                 {!skinIntact && (
                   <textarea value={skinNotes} onChange={e => setSkinNotes(e.target.value)}
                     placeholder="Location and description of wounds, rashes, pressure areas…"
-                    style={{ ...ta, minHeight: 60 }} />
+                    className="his-textarea" style={{ minHeight: 60 }} />
                 )}
               </div>
               <div>
@@ -1033,16 +1027,16 @@ function IPDInitialAssessmentContent({ selectedPatient }) {
               <Field label="Identified Nursing Problems">
                 <textarea value={nursingProblems} onChange={e => setNursingProblems(e.target.value)}
                   placeholder="1. Risk for falls related to...\n2. Impaired skin integrity related to..."
-                  style={{ ...ta, minHeight: 80 }} />
+                  className="his-textarea" style={{ minHeight: 80 }} />
               </Field>
               <Grid2>
                 <Field label="Short-term Goals">
                   <textarea value={nursingGoals} onChange={e => setNursingGoals(e.target.value)}
-                    placeholder="Patient will... within 24 hours" style={{ ...ta, minHeight: 64 }} />
+                    placeholder="Patient will... within 24 hours" className="his-textarea" style={{ minHeight: 64 }} />
                 </Field>
                 <Field label="Additional Nursing Notes">
                   <textarea value={nursingNotes} onChange={e => setNursingNotes(e.target.value)}
-                    placeholder="Any other relevant observations or instructions…" style={{ ...ta, minHeight: 64 }} />
+                    placeholder="Any other relevant observations or instructions…" className="his-textarea" style={{ minHeight: 64 }} />
                 </Field>
               </Grid2>
             </div>
@@ -1086,13 +1080,13 @@ function IPDInitialAssessmentContent({ selectedPatient }) {
           <Section title="Doctor & Admission Info" icon="pi-id-card" color={C.accent}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
               <Field label="Doctor Name" required>
-                <input value={doctorName} onChange={e => setDoctorName(e.target.value)} placeholder="Dr. Full Name" style={fld} />
+                <input value={doctorName} onChange={e => setDoctorName(e.target.value)} placeholder="Dr. Full Name" className="his-field" />
               </Field>
               <Field label="Registration No.">
-                <input value={regNo} onChange={e => setRegNo(e.target.value)} placeholder="MCI / State reg. no." style={fld} />
+                <input value={regNo} onChange={e => setRegNo(e.target.value)} placeholder="MCI / State reg. no." className="his-field" />
               </Field>
               <Field label="Assessment Date/Time">
-                <input type="datetime-local" defaultValue={new Date().toISOString().slice(0,16)} style={fld} />
+                <input type="datetime-local" defaultValue={new Date().toISOString().slice(0,16)} className="his-field" />
               </Field>
             </div>
           </Section>
@@ -1103,29 +1097,29 @@ function IPDInitialAssessmentContent({ selectedPatient }) {
               <Field label="History of Present Illness / Chief Complaint *">
                 <textarea value={hopi} onChange={e => setHopi(e.target.value)}
                   placeholder="Onset, duration, character, progression, associated symptoms, relieving/aggravating factors…"
-                  style={{ ...ta, minHeight: 100 }} />
+                  className="his-textarea" style={{ minHeight: 100 }} />
               </Field>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12 }}>
                 <Field label="Past Medical History">
                   <textarea value={pmh} onChange={e => setPmh(e.target.value)}
-                    placeholder="DM, HTN, CAD…" style={{ ...ta, minHeight: 64 }} />
+                    placeholder="DM, HTN, CAD…" className="his-textarea" style={{ minHeight: 64 }} />
                 </Field>
                 <Field label="Past Surgical History">
                   <textarea value={psh} onChange={e => setPsh(e.target.value)}
-                    placeholder="Previous surgeries…" style={{ ...ta, minHeight: 64 }} />
+                    placeholder="Previous surgeries…" className="his-textarea" style={{ minHeight: 64 }} />
                 </Field>
                 <Field label="Family History">
                   <textarea value={famHx} onChange={e => setFamHx(e.target.value)}
-                    placeholder="Hereditary conditions…" style={{ ...ta, minHeight: 64 }} />
+                    placeholder="Hereditary conditions…" className="his-textarea" style={{ minHeight: 64 }} />
                 </Field>
                 <Field label="Social / Personal History">
                   <textarea value={socHx} onChange={e => setSocHx(e.target.value)}
-                    placeholder="Smoking, alcohol, occupation…" style={{ ...ta, minHeight: 64 }} />
+                    placeholder="Smoking, alcohol, occupation…" className="his-textarea" style={{ minHeight: 64 }} />
                 </Field>
               </div>
               <Field label="Known Allergies">
                 <input value={docAllergy} onChange={e => setDocAllergy(e.target.value)}
-                  placeholder="Drug / food allergies — None if none" style={fld} />
+                  placeholder="Drug / food allergies — None if none" className="his-field" />
               </Field>
             </div>
           </Section>
@@ -1136,24 +1130,24 @@ function IPDInitialAssessmentContent({ selectedPatient }) {
               <Field label="General Examination">
                 <textarea value={genExam} onChange={e => setGenExam(e.target.value)}
                   placeholder="Built, nourishment, pallor, icterus, cyanosis, clubbing, lymphadenopathy, edema…"
-                  style={{ ...ta, minHeight: 72 }} />
+                  className="his-textarea" style={{ minHeight: 72 }} />
               </Field>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <Field label="CVS">
                   <textarea value={cvs} onChange={e => setCvs(e.target.value)}
-                    placeholder="S1 S2, murmurs, JVP, peripheral pulses…" style={ta} />
+                    placeholder="S1 S2, murmurs, JVP, peripheral pulses…" className="his-textarea" />
                 </Field>
                 <Field label="Respiratory System">
                   <textarea value={rs} onChange={e => setRs(e.target.value)}
-                    placeholder="Air entry, breath sounds, percussion…" style={ta} />
+                    placeholder="Air entry, breath sounds, percussion…" className="his-textarea" />
                 </Field>
                 <Field label="Abdomen">
                   <textarea value={abdomen} onChange={e => setAbdomen(e.target.value)}
-                    placeholder="Soft/distended, tenderness, organomegaly, bowel sounds…" style={ta} />
+                    placeholder="Soft/distended, tenderness, organomegaly, bowel sounds…" className="his-textarea" />
                 </Field>
                 <Field label="CNS">
                   <textarea value={cns} onChange={e => setCns(e.target.value)}
-                    placeholder="Orientation, cranial nerves, motor, sensory, reflexes…" style={ta} />
+                    placeholder="Orientation, cranial nerves, motor, sensory, reflexes…" className="his-textarea" />
                 </Field>
               </div>
             </div>
@@ -1165,16 +1159,16 @@ function IPDInitialAssessmentContent({ selectedPatient }) {
               <Field label="Provisional Diagnosis *">
                 <textarea value={provDx} onChange={e => setProvDx(e.target.value)}
                   placeholder="Clinical impression based on history and examination…"
-                  style={{ ...ta, minHeight: 64 }} />
+                  className="his-textarea" style={{ minHeight: 64 }} />
               </Field>
               <Grid2>
                 <Field label="Final / Confirmed Diagnosis">
                   <textarea value={finalDx} onChange={e => setFinalDx(e.target.value)}
-                    placeholder="Confirmed after investigations…" style={{ ...ta, minHeight: 56 }} />
+                    placeholder="Confirmed after investigations…" className="his-textarea" style={{ minHeight: 56 }} />
                 </Field>
                 <Field label="ICD-10 Code">
                   <input value={icd10} onChange={e => setIcd10(e.target.value)}
-                    placeholder="e.g. J18.9, K35.9…" style={fld} />
+                    placeholder="e.g. J18.9, K35.9…" className="his-field" />
                 </Field>
               </Grid2>
             </div>
@@ -1185,7 +1179,7 @@ function IPDInitialAssessmentContent({ selectedPatient }) {
             <Field label="Tests / Investigations">
               <textarea value={investigations} onChange={e => setInvestigations(e.target.value)}
                 placeholder="CBC, LFT, RFT, Blood sugar, ECG, X-Ray Chest, USG Abdomen, Cultures…"
-                style={{ ...ta, minHeight: 80 }} />
+                className="his-textarea" style={{ minHeight: 80 }} />
             </Field>
           </Section>
 
@@ -1194,7 +1188,7 @@ function IPDInitialAssessmentContent({ selectedPatient }) {
             <Field label="Treatment Plan / Management">
               <textarea value={treatmentPlan} onChange={e => setTreatmentPlan(e.target.value)}
                 placeholder="Conservative / surgical plan, monitoring required, nursing orders, special instructions…"
-                style={{ ...ta, minHeight: 80 }} />
+                className="his-textarea" style={{ minHeight: 80 }} />
             </Field>
           </Section>
 
@@ -1218,31 +1212,31 @@ function IPDInitialAssessmentContent({ selectedPatient }) {
                       <td style={{ padding: "8px 10px", fontSize: 12, fontWeight: 700, color: C.muted }}>{idx + 1}</td>
                       <td style={{ padding: "6px 6px", minWidth: 180 }}>
                         <input value={row.drug} onChange={e => setRxRows(r => r.map(x => x.id === row.id ? { ...x, drug: e.target.value } : x))}
-                          placeholder="Drug name…" style={{ ...fld, padding: "6px 8px" }} />
+                          placeholder="Drug name…" className="his-field" style={{ padding: "6px 8px" }} />
                       </td>
                       <td style={{ padding: "6px 6px", minWidth: 80 }}>
                         <input value={row.dose} onChange={e => setRxRows(r => r.map(x => x.id === row.id ? { ...x, dose: e.target.value } : x))}
-                          placeholder="500mg" style={{ ...fld, padding: "6px 8px" }} />
+                          placeholder="500mg" className="his-field" style={{ padding: "6px 8px" }} />
                       </td>
                       <td style={{ padding: "6px 6px", minWidth: 90 }}>
                         <select value={row.route} onChange={e => setRxRows(r => r.map(x => x.id === row.id ? { ...x, route: e.target.value } : x))}
-                          style={{ ...fld, padding: "6px 8px" }}>
+                          className="his-field" style={{ padding: "6px 8px" }}>
                           {ROUTES.map(r => <option key={r}>{r}</option>)}
                         </select>
                       </td>
                       <td style={{ padding: "6px 6px", minWidth: 90 }}>
                         <select value={row.frequency} onChange={e => setRxRows(r => r.map(x => x.id === row.id ? { ...x, frequency: e.target.value } : x))}
-                          style={{ ...fld, padding: "6px 8px" }}>
+                          className="his-field" style={{ padding: "6px 8px" }}>
                           {FREQS.map(f => <option key={f}>{f}</option>)}
                         </select>
                       </td>
                       <td style={{ padding: "6px 6px", minWidth: 90 }}>
                         <input value={row.duration} onChange={e => setRxRows(r => r.map(x => x.id === row.id ? { ...x, duration: e.target.value } : x))}
-                          placeholder="5 days" style={{ ...fld, padding: "6px 8px" }} />
+                          placeholder="5 days" className="his-field" style={{ padding: "6px 8px" }} />
                       </td>
                       <td style={{ padding: "6px 6px", minWidth: 140 }}>
                         <input value={row.instructions} onChange={e => setRxRows(r => r.map(x => x.id === row.id ? { ...x, instructions: e.target.value } : x))}
-                          placeholder="After food, SOS…" style={{ ...fld, padding: "6px 8px" }} />
+                          placeholder="After food, SOS…" className="his-field" style={{ padding: "6px 8px" }} />
                       </td>
                       <td style={{ padding: "6px 6px" }}>
                         <button onClick={() => setRxRows(r => r.filter(x => x.id !== row.id))}
@@ -1268,15 +1262,15 @@ function IPDInitialAssessmentContent({ selectedPatient }) {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
               <Field label="Diet Advice">
                 <textarea value={dietAdvice} onChange={e => setDietAdvice(e.target.value)}
-                  placeholder="Normal diet / diabetic diet / liquid diet / NPO…" style={ta} />
+                  placeholder="Normal diet / diabetic diet / liquid diet / NPO…" className="his-textarea" />
               </Field>
               <Field label="Activity Advice">
                 <textarea value={activityAdvice} onChange={e => setActivityAdvice(e.target.value)}
-                  placeholder="Bed rest / restricted / ambulate with assistance…" style={ta} />
+                  placeholder="Bed rest / restricted / ambulate with assistance…" className="his-textarea" />
               </Field>
               <Field label="Follow-up / Additional Instructions">
                 <textarea value={followupNotes} onChange={e => setFollowupNotes(e.target.value)}
-                  placeholder="Monitoring frequency, review labs, escalation criteria…" style={ta} />
+                  placeholder="Monitoring frequency, review labs, escalation criteria…" className="his-textarea" />
               </Field>
             </div>
           </Section>

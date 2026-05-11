@@ -23,16 +23,6 @@ const C = {
   teal: "#0d9488",
 };
 
-const fld = {
-  padding: "9px 12px", border: `1.5px solid ${C.border}`, borderRadius: 8,
-  fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: C.text,
-  outline: "none", background: "white", width: "100%", boxSizing: "border-box",
-};
-const lbl = {
-  display: "block", fontSize: 11, fontWeight: 700, color: C.muted,
-  textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 5,
-};
-
 // ─── Service type metadata ─────────────────────────────────────────────────────
 const SERVICE_TYPE_META = {
   nursing:      { label: "Nursing",       icon: "pi-heart",             color: C.teal,   bg: C.primaryL  },
@@ -532,7 +522,7 @@ export default function BillingIntelligencePage() {
               value={searchVal}
               onChange={e => setSearchVal(e.target.value.toUpperCase())}
               placeholder="Enter UHID or Admission No…"
-              style={{ ...fld, flex: 1, fontSize: 14 }}
+              className="his-field" style={{ flex: 1, fontSize: 14 }}
               autoFocus
             />
             <button type="submit" disabled={loadingPt} style={{
@@ -610,12 +600,12 @@ export default function BillingIntelligencePage() {
               >
                 {/* Diagnosis input */}
                 <div style={{ marginBottom: 14 }}>
-                  <label style={lbl}>Diagnosis / Reason for Admission <span style={{ color: C.muted, textTransform: "none", fontWeight: 400 }}>(AI reads this)</span></label>
+                  <label className="his-label">Diagnosis / Reason for Admission <span style={{ color: C.muted, textTransform: "none", fontWeight: 400 }}>(AI reads this)</span></label>
                   <input
                     value={diagnosis}
                     onChange={e => setDiagnosis(e.target.value)}
                     placeholder="e.g. Type 2 Diabetes Mellitus with poor glycemic control, Hypertension…"
-                    style={{ ...fld, fontStyle: diagnosis ? "normal" : "italic" }}
+                    className="his-field" style={{ fontStyle: diagnosis ? "normal" : "italic" }}
                   />
                 </div>
 

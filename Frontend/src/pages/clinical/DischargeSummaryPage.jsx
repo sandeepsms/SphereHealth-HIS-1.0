@@ -14,6 +14,7 @@ import { useAutoSave } from "../../hooks/useAutoSave";
 import { useDigitalSignature } from "../../hooks/useDigitalSignature";
 import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
 import SignaturePad from "../../Components/signature/SignaturePad";
+import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 
 const API = `${API_ENDPOINTS.BASE}/discharge-summary`;
 
@@ -305,14 +306,6 @@ const C = {
   text: "#1a1d23", muted: "#6b7280",
   green: "#16a34a", red: "#dc2626", amber: "#d97706", blue: "#1e40af",
 };
-const fld = {
-  padding: "8px 11px", border: `1.5px solid ${C.border}`, borderRadius: 8,
-  fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: C.text,
-  outline: "none", background: "white", width: "100%", boxSizing: "border-box",
-};
-const ta = { ...fld, resize: "vertical", minHeight: 76 };
-const sel = { ...fld };
-
 function F({ label, required, children, hint }) {
   return (
     <div>
@@ -377,16 +370,16 @@ function DeptCard({ dept, selected, onSelect }) {
 function MedRow({ med, idx, color, onChange, onRemove }) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1.5fr auto", gap: 6, marginBottom: 7, alignItems: "center" }}>
-      <input style={fld} value={med.drug} onChange={e => onChange(idx, "drug", e.target.value)} placeholder="Drug name" />
-      <input style={fld} value={med.dose} onChange={e => onChange(idx, "dose", e.target.value)} placeholder="Dose" />
-      <select style={sel} value={med.route} onChange={e => onChange(idx, "route", e.target.value)}>
+      <input className="his-field" value={med.drug} onChange={e => onChange(idx, "drug", e.target.value)} placeholder="Drug name" />
+      <input className="his-field" value={med.dose} onChange={e => onChange(idx, "dose", e.target.value)} placeholder="Dose" />
+      <select className="his-select" value={med.route} onChange={e => onChange(idx, "route", e.target.value)}>
         {["Oral","IV","IM","SC","SL","Topical","Inhaled","PR","Nasal"].map(r => <option key={r}>{r}</option>)}
       </select>
-      <select style={sel} value={med.frequency} onChange={e => onChange(idx, "frequency", e.target.value)}>
+      <select className="his-select" value={med.frequency} onChange={e => onChange(idx, "frequency", e.target.value)}>
         {["OD","BD","TDS","QID","SOS","HS","Q4H","Q6H","Q8H","Weekly","Ad lib"].map(f => <option key={f}>{f}</option>)}
       </select>
-      <input style={fld} value={med.duration} onChange={e => onChange(idx, "duration", e.target.value)} placeholder="Duration" />
-      <input style={fld} value={med.instructions} onChange={e => onChange(idx, "instructions", e.target.value)} placeholder="Instructions" />
+      <input className="his-field" value={med.duration} onChange={e => onChange(idx, "duration", e.target.value)} placeholder="Duration" />
+      <input className="his-field" value={med.instructions} onChange={e => onChange(idx, "instructions", e.target.value)} placeholder="Instructions" />
       <button onClick={() => onRemove(idx)} style={{ width: 28, height: 28, borderRadius: 6, border: "none", background: "#fef2f2", color: C.red, cursor: "pointer" }}>
         <i className="pi pi-times" style={{ fontSize: 11 }} />
       </button>
@@ -398,10 +391,10 @@ function MedRow({ med, idx, color, onChange, onRemove }) {
 function InvRow({ inv, idx, color, onChange, onRemove }) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "2fr 1.5fr 1fr 1fr auto", gap: 6, marginBottom: 7, alignItems: "center" }}>
-      <input style={fld} value={inv.name} onChange={e => onChange(idx, "name", e.target.value)} placeholder="Investigation name" />
-      <input style={fld} value={inv.result} onChange={e => onChange(idx, "result", e.target.value)} placeholder="Result / Finding" />
-      <input style={fld} value={inv.unit} onChange={e => onChange(idx, "unit", e.target.value)} placeholder="Unit" />
-      <select style={sel} value={inv.status} onChange={e => onChange(idx, "status", e.target.value)}>
+      <input className="his-field" value={inv.name} onChange={e => onChange(idx, "name", e.target.value)} placeholder="Investigation name" />
+      <input className="his-field" value={inv.result} onChange={e => onChange(idx, "result", e.target.value)} placeholder="Result / Finding" />
+      <input className="his-field" value={inv.unit} onChange={e => onChange(idx, "unit", e.target.value)} placeholder="Unit" />
+      <select className="his-select" value={inv.status} onChange={e => onChange(idx, "status", e.target.value)}>
         <option value="">Status</option>
         {["Normal","Abnormal","Critical","Borderline","Pending"].map(s => <option key={s}>{s}</option>)}
       </select>
@@ -416,11 +409,11 @@ function InvRow({ inv, idx, color, onChange, onRemove }) {
 function ProcRow({ proc, idx, onChange, onRemove }) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1.5fr 2fr 1.5fr auto", gap: 6, marginBottom: 7, alignItems: "center" }}>
-      <input style={fld} value={proc.name} onChange={e => onChange(idx, "name", e.target.value)} placeholder="Procedure name" />
-      <input style={fld} type="date" value={proc.date} onChange={e => onChange(idx, "date", e.target.value)} />
-      <input style={fld} value={proc.surgeon} onChange={e => onChange(idx, "surgeon", e.target.value)} placeholder="Surgeon / Operator" />
-      <input style={fld} value={proc.findings} onChange={e => onChange(idx, "findings", e.target.value)} placeholder="Key findings" />
-      <input style={fld} value={proc.complications} onChange={e => onChange(idx, "complications", e.target.value)} placeholder="Complications" />
+      <input className="his-field" value={proc.name} onChange={e => onChange(idx, "name", e.target.value)} placeholder="Procedure name" />
+      <input className="his-field" type="date" value={proc.date} onChange={e => onChange(idx, "date", e.target.value)} />
+      <input className="his-field" value={proc.surgeon} onChange={e => onChange(idx, "surgeon", e.target.value)} placeholder="Surgeon / Operator" />
+      <input className="his-field" value={proc.findings} onChange={e => onChange(idx, "findings", e.target.value)} placeholder="Key findings" />
+      <input className="his-field" value={proc.complications} onChange={e => onChange(idx, "complications", e.target.value)} placeholder="Complications" />
       <button onClick={() => onRemove(idx)} style={{ width: 28, height: 28, borderRadius: 6, border: "none", background: "#fef2f2", color: C.red, cursor: "pointer" }}>
         <i className="pi pi-times" style={{ fontSize: 11 }} />
       </button>
@@ -635,7 +628,7 @@ function PrintModal({ data, dept, onClose }) {
 /* ══════════════════════════════════════
    MAIN PAGE
 ══════════════════════════════════════ */
-export default function DischargeSummaryPage() {
+function DischargeSummaryPageContent({ selectedPatient }) {
   const { user } = useAuth();
   const [view, setView] = useState("catalogue"); // catalogue | form
   const [selectedDept, setSelectedDept] = useState(null);
@@ -695,6 +688,28 @@ export default function DischargeSummaryPage() {
     }));
     setView("form");
   };
+
+  // Auto-fill when patient selected from AdmittedPatientPanel
+  useEffect(() => {
+    if (!selectedPatient) return;
+    const found = selectedPatient;
+    setUhid(found.UHID || "");
+    setPatInfo(found);
+    const admDate = found.admissionDate ? new Date(found.admissionDate) : null;
+    const stayDays = admDate ? Math.ceil((new Date() - admDate) / 86400000) : "";
+    setForm(p => ({
+      ...p,
+      UHID: found.UHID || "",
+      patientName: found.patientName || found.patientId?.fullName || "",
+      ipdNo: found.admissionNumber || "",
+      admissionDate: admDate ? admDate.toLocaleDateString("en-IN") : "",
+      stayDays,
+      department: found.department || p.department,
+      doctorName: found.attendingDoctor || p.doctorName,
+      contactNumber: found.contactNumber || "",
+    }));
+    toast.success(`Patient loaded: ${found.patientName || found.UHID}`);
+  }, [selectedPatient?._id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const searchPatient = async () => {
     if (!uhid.trim()) return;
@@ -833,7 +848,7 @@ export default function DischargeSummaryPage() {
         <i className="pi pi-search" style={{ color: C.muted, fontSize: 14 }} />
         <input value={uhid} onChange={e => setUhid(e.target.value)}
           onKeyDown={e => e.key === "Enter" && searchPatient()}
-          style={{ ...fld, flex: 1, minWidth: 220 }} placeholder="Enter UHID / Admission No. to load patient…" />
+          className="his-field" style={{ flex: 1, minWidth: 220 }} placeholder="Enter UHID / Admission No. to load patient…" />
         <button onClick={searchPatient} disabled={searching} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: searching ? C.muted : C.blue, color: "white", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
           {searching ? "Searching…" : "Load Patient"}
         </button>
@@ -879,36 +894,36 @@ export default function DischargeSummaryPage() {
             <G4>
               <F label="UHID" required>
                 <div style={{ display: "flex", gap: 6 }}>
-                  <input style={{ ...fld, flex: 1 }} value={form.UHID} onChange={upd("UHID")} />
+                  <input className="his-field" style={{ flex: 1 }} value={form.UHID} onChange={upd("UHID")} />
                   <button onClick={searchPatient} style={{ padding: "8px 10px", borderRadius: 7, border: "none", background: color, color: "white", cursor: "pointer" }}>
                     <i className="pi pi-search" />
                   </button>
                 </div>
               </F>
-              <F label="Patient Name" required><input style={fld} value={form.patientName} onChange={upd("patientName")} /></F>
-              <F label="Age"><input style={fld} value={form.age} onChange={upd("age")} placeholder="e.g. 45 years" /></F>
+              <F label="Patient Name" required><input className="his-field" value={form.patientName} onChange={upd("patientName")} /></F>
+              <F label="Age"><input className="his-field" value={form.age} onChange={upd("age")} placeholder="e.g. 45 years" /></F>
               <F label="Gender">
-                <select style={sel} value={form.gender} onChange={upd("gender")}>
+                <select className="his-select" value={form.gender} onChange={upd("gender")}>
                   <option value="">Select</option>
                   {["Male","Female","Other"].map(g => <option key={g}>{g}</option>)}
                 </select>
               </F>
-              <F label="Contact Number"><input style={fld} value={form.contactNumber} onChange={upd("contactNumber")} /></F>
-              <F label="IPD Number"><input style={fld} value={form.ipdNo} onChange={upd("ipdNo")} /></F>
-              <F label="Admission Date"><input style={fld} type="date" value={form.admissionDate} onChange={upd("admissionDate")} /></F>
-              <F label="Discharge Date"><input style={fld} type="date" value={form.dischargeDate} onChange={upd("dischargeDate")} /></F>
-              <F label="Duration of Stay"><input style={{ ...fld, background: "#f8fafc", fontWeight: 700 }} value={form.stayDays ? `${form.stayDays} days` : ""} readOnly /></F>
-              <F label="Consultant / Doctor" required><input style={fld} value={form.doctorName} onChange={upd("doctorName")} /></F>
-              <F label="Reg. No."><input style={fld} value={form.doctorRegNo} onChange={upd("doctorRegNo")} /></F>
+              <F label="Contact Number"><input className="his-field" value={form.contactNumber} onChange={upd("contactNumber")} /></F>
+              <F label="IPD Number"><input className="his-field" value={form.ipdNo} onChange={upd("ipdNo")} /></F>
+              <F label="Admission Date"><input className="his-field" type="date" value={form.admissionDate} onChange={upd("admissionDate")} /></F>
+              <F label="Discharge Date"><input className="his-field" type="date" value={form.dischargeDate} onChange={upd("dischargeDate")} /></F>
+              <F label="Duration of Stay"><input className="his-field" style={{ background: "#f8fafc", fontWeight: 700 }} value={form.stayDays ? `${form.stayDays} days` : ""} readOnly /></F>
+              <F label="Consultant / Doctor" required><input className="his-field" value={form.doctorName} onChange={upd("doctorName")} /></F>
+              <F label="Reg. No."><input className="his-field" value={form.doctorRegNo} onChange={upd("doctorRegNo")} /></F>
               <F label="Condition on Discharge">
-                <select style={sel} value={form.conditionOnDischarge} onChange={upd("conditionOnDischarge")}>
+                <select className="his-select" value={form.conditionOnDischarge} onChange={upd("conditionOnDischarge")}>
                   {["Stable","Improved","Critical","LAMA","Expired","Transferred"].map(c => <option key={c}>{c}</option>)}
                 </select>
               </F>
             </G4>
             <div style={{ marginTop: 12 }}>
               <F label="Co-consultants">
-                <input style={fld} value={form.consultants} onChange={upd("consultants")} placeholder="e.g. Dr. Sharma (Cardiology), Dr. Gupta (Nephrology)" />
+                <input className="his-field" value={form.consultants} onChange={upd("consultants")} placeholder="e.g. Dr. Sharma (Cardiology), Dr. Gupta (Nephrology)" />
               </F>
             </div>
           </Section>
@@ -917,18 +932,18 @@ export default function DischargeSummaryPage() {
           <Section title="Diagnosis" icon="pi-file-check" color={color} nabh>
             <G2>
               <F label="Admitting / Provisional Diagnosis" required>
-                <textarea style={ta} value={form.admittingDiagnosis} onChange={upd("admittingDiagnosis")}
+                <textarea className="his-textarea" value={form.admittingDiagnosis} onChange={upd("admittingDiagnosis")}
                   placeholder={selectedDept.template.admissionReasonPrompt} />
               </F>
               <F label="Final Diagnosis (Discharge)" required>
-                <textarea style={ta} value={form.finalDiagnosis} onChange={upd("finalDiagnosis")}
+                <textarea className="his-textarea" value={form.finalDiagnosis} onChange={upd("finalDiagnosis")}
                   placeholder={selectedDept.template.dischargeDiagnosisPrompt} />
               </F>
             </G2>
             <G2 gap={12}>
-              <F label="ICD-10 Code"><input style={fld} value={form.icdCode} onChange={upd("icdCode")} placeholder="e.g. J18.0, I21.1" /></F>
+              <F label="ICD-10 Code"><input className="his-field" value={form.icdCode} onChange={upd("icdCode")} placeholder="e.g. J18.0, I21.1" /></F>
               <F label="Co-morbidities / Background History">
-                <input style={fld} value={form.comorbidities} onChange={upd("comorbidities")} placeholder="e.g. T2DM, HTN, CKD Stage 3" />
+                <input className="his-field" value={form.comorbidities} onChange={upd("comorbidities")} placeholder="e.g. T2DM, HTN, CKD Stage 3" />
               </F>
             </G2>
           </Section>
@@ -936,18 +951,18 @@ export default function DischargeSummaryPage() {
           {/* History & Course */}
           <Section title="Clinical Summary" icon="pi-book" color={color} nabh>
             <F label="History of Presenting Illness">
-              <textarea style={{ ...ta, minHeight: 90 }} value={form.historyOfPresentIllness} onChange={upd("historyOfPresentIllness")}
+              <textarea className="his-textarea" style={{ minHeight: 90 }} value={form.historyOfPresentIllness} onChange={upd("historyOfPresentIllness")}
                 placeholder={selectedDept.template.admissionReasonPrompt} />
             </F>
             <div style={{ marginTop: 12 }}>
               <F label="Hospital Course & Treatment" required>
-                <textarea style={{ ...ta, minHeight: 110 }} value={form.courseInHospital} onChange={upd("courseInHospital")}
+                <textarea className="his-textarea" style={{ minHeight: 110 }} value={form.courseInHospital} onChange={upd("courseInHospital")}
                   placeholder={selectedDept.template.coursePrompt} />
               </F>
             </div>
             <div style={{ marginTop: 12 }}>
               <F label="Significant Clinical Findings">
-                <textarea style={ta} value={form.significantFindings} onChange={upd("significantFindings")}
+                <textarea className="his-textarea" value={form.significantFindings} onChange={upd("significantFindings")}
                   placeholder="Vitals at discharge, notable examination findings…" />
               </F>
             </div>
@@ -958,22 +973,22 @@ export default function DischargeSummaryPage() {
             <Section title="Operative Details" icon="pi-wrench" color={color}>
               <G3>
                 <F label="Procedure Performed">
-                  <input style={fld} value={form.operativeProcedure} onChange={upd("operativeProcedure")} placeholder="e.g. Laparoscopic Appendicectomy" />
+                  <input className="his-field" value={form.operativeProcedure} onChange={upd("operativeProcedure")} placeholder="e.g. Laparoscopic Appendicectomy" />
                 </F>
                 <F label="Type of Anaesthesia">
-                  <select style={sel} value={form.anaesthesiaType} onChange={upd("anaesthesiaType")}>
+                  <select className="his-select" value={form.anaesthesiaType} onChange={upd("anaesthesiaType")}>
                     <option value="">Select</option>
                     {["General Anaesthesia","Spinal Anaesthesia","Epidural","Local Anaesthesia","MAC/Sedation"].map(a => <option key={a}>{a}</option>)}
                   </select>
                 </F>
                 <F label="Operative Findings">
-                  <input style={fld} value={form.operativeFindings} onChange={upd("operativeFindings")} placeholder="Key intraoperative findings" />
+                  <input className="his-field" value={form.operativeFindings} onChange={upd("operativeFindings")} placeholder="Key intraoperative findings" />
                 </F>
               </G3>
               {selectedDept.key === "ORTHOPAEDICS" && (
                 <div style={{ marginTop: 10 }}>
                   <F label="Implant / Hardware Details">
-                    <input style={fld} value={form.implantDetails} onChange={upd("implantDetails")} placeholder="e.g. Titanium IM nail 10x380mm, DHS 135° — Lot No. XYZ123" />
+                    <input className="his-field" value={form.implantDetails} onChange={upd("implantDetails")} placeholder="e.g. Titanium IM nail 10x380mm, DHS 135° — Lot No. XYZ123" />
                   </F>
                 </div>
               )}
@@ -984,16 +999,16 @@ export default function DischargeSummaryPage() {
             <Section title="Obstetric / Neonatal Details" icon="pi-heart-fill" color={color}>
               <G3>
                 <F label="Mode of Delivery">
-                  <select style={sel} value={form.deliveryType} onChange={upd("deliveryType")}>
+                  <select className="his-select" value={form.deliveryType} onChange={upd("deliveryType")}>
                     <option value="">Select</option>
                     {["Normal Vaginal Delivery","LSCS","Forceps Delivery","Vacuum Delivery","Pre-term","IUFD"].map(d => <option key={d}>{d}</option>)}
                   </select>
                 </F>
                 <F label="Baby Details">
-                  <input style={fld} value={form.babyDetails} onChange={upd("babyDetails")} placeholder="e.g. Live male, 3.1 kg, APGAR 9/10, full term" />
+                  <input className="his-field" value={form.babyDetails} onChange={upd("babyDetails")} placeholder="e.g. Live male, 3.1 kg, APGAR 9/10, full term" />
                 </F>
                 <F label="Neonatal Notes">
-                  <input style={fld} value={form.neonatalNotes} onChange={upd("neonatalNotes")} placeholder="NICU admission, jaundice, feeding…" />
+                  <input className="his-field" value={form.neonatalNotes} onChange={upd("neonatalNotes")} placeholder="NICU admission, jaundice, feeding…" />
                 </F>
               </G3>
             </Section>
@@ -1003,10 +1018,10 @@ export default function DischargeSummaryPage() {
             <Section title="Growth & Immunisation" icon="pi-chart-bar" color={color}>
               <G3>
                 <F label="Weight / Height / Head Circumference">
-                  <input style={fld} value={form.growthPercentile} onChange={upd("growthPercentile")} placeholder="e.g. Wt 15kg (50th %ile), Ht 95cm" />
+                  <input className="his-field" value={form.growthPercentile} onChange={upd("growthPercentile")} placeholder="e.g. Wt 15kg (50th %ile), Ht 95cm" />
                 </F>
                 <F label="Immunisation Given During Admission">
-                  <input style={fld} value={form.immunisationGiven} onChange={upd("immunisationGiven")} placeholder="e.g. OPV dose 2, Vitamin A" />
+                  <input className="his-field" value={form.immunisationGiven} onChange={upd("immunisationGiven")} placeholder="e.g. OPV dose 2, Vitamin A" />
                 </F>
               </G3>
             </Section>
@@ -1016,10 +1031,10 @@ export default function DischargeSummaryPage() {
             <Section title="Cardiac Investigations" icon="pi-chart-line" color={color}>
               <G3>
                 <F label="Echocardiogram EF (%)">
-                  <input style={fld} value={form.echoEF} onChange={upd("echoEF")} placeholder="e.g. 45%" />
+                  <input className="his-field" value={form.echoEF} onChange={upd("echoEF")} placeholder="e.g. 45%" />
                 </F>
                 <F label="ECG on Discharge">
-                  <input style={fld} value={form.ecgOnDischarge} onChange={upd("ecgOnDischarge")} placeholder="e.g. Sinus rhythm, no ST changes" />
+                  <input className="his-field" value={form.ecgOnDischarge} onChange={upd("ecgOnDischarge")} placeholder="e.g. Sinus rhythm, no ST changes" />
                 </F>
               </G3>
             </Section>
@@ -1029,10 +1044,10 @@ export default function DischargeSummaryPage() {
             <Section title="Neurological Status" icon="pi-bolt" color={color}>
               <G3>
                 <F label="Stroke Type / EEG Findings">
-                  <input style={fld} value={form.strokeType} onChange={upd("strokeType")} placeholder="e.g. Ischaemic Stroke, MCA territory" />
+                  <input className="his-field" value={form.strokeType} onChange={upd("strokeType")} placeholder="e.g. Ischaemic Stroke, MCA territory" />
                 </F>
                 <F label="NIHSS / GCS on Discharge">
-                  <input style={fld} value={form.nihssOnDischarge} onChange={upd("nihssOnDischarge")} placeholder="e.g. NIHSS 4, GCS 14" />
+                  <input className="his-field" value={form.nihssOnDischarge} onChange={upd("nihssOnDischarge")} placeholder="e.g. NIHSS 4, GCS 14" />
                 </F>
               </G3>
             </Section>
@@ -1042,10 +1057,10 @@ export default function DischargeSummaryPage() {
             <Section title="Oncology Details" icon="pi-filter" color={color}>
               <G3>
                 <F label="Tumour / Disease Stage">
-                  <input style={fld} value={form.tumorStage} onChange={upd("tumorStage")} placeholder="e.g. Stage IIIA, cT3N1M0" />
+                  <input className="his-field" value={form.tumorStage} onChange={upd("tumorStage")} placeholder="e.g. Stage IIIA, cT3N1M0" />
                 </F>
                 <F label="Next Chemo / OPD Date">
-                  <input style={fld} type="date" value={form.nextChemoDate} onChange={upd("nextChemoDate")} />
+                  <input className="his-field" type="date" value={form.nextChemoDate} onChange={upd("nextChemoDate")} />
                 </F>
               </G3>
             </Section>
@@ -1102,18 +1117,18 @@ export default function DischargeSummaryPage() {
           <Section title="Discharge Advice" icon="pi-info-circle" color={color} nabh>
             <G2>
               <F label="Diet Advice">
-                <textarea style={ta} value={form.dietAdvice} onChange={upd("dietAdvice")} />
+                <textarea className="his-textarea" value={form.dietAdvice} onChange={upd("dietAdvice")} />
               </F>
               <F label="Activity / Exercise Advice">
-                <textarea style={ta} value={form.activityAdvice} onChange={upd("activityAdvice")} />
+                <textarea className="his-textarea" value={form.activityAdvice} onChange={upd("activityAdvice")} />
               </F>
               {(selectedDept.key === "SURGERY" || selectedDept.key === "GYNAECOLOGY" || selectedDept.key === "ORTHOPAEDICS") && (
                 <F label="Wound Care Instructions">
-                  <textarea style={ta} value={form.woundCare} onChange={upd("woundCare")} placeholder="Dressing frequency, signs of infection to watch…" />
+                  <textarea className="his-textarea" value={form.woundCare} onChange={upd("woundCare")} placeholder="Dressing frequency, signs of infection to watch…" />
                 </F>
               )}
               <F label="Special Instructions">
-                <textarea style={ta} value={form.specialInstructions} onChange={upd("specialInstructions")}
+                <textarea className="his-textarea" value={form.specialInstructions} onChange={upd("specialInstructions")}
                   placeholder={selectedDept.template.specialInstructionsPrompt} />
               </F>
             </G2>
@@ -1133,13 +1148,13 @@ export default function DischargeSummaryPage() {
                   ))}
                 </div>
               </F>
-              <F label="Follow-up Date"><input style={fld} type="date" value={form.followUpDate} onChange={upd("followUpDate")} /></F>
-              <F label="Follow-up Doctor"><input style={fld} value={form.followUpDoctor} onChange={upd("followUpDoctor")} /></F>
-              <F label="Department / OPD"><input style={fld} value={form.followUpDepartment} onChange={upd("followUpDepartment")} /></F>
+              <F label="Follow-up Date"><input className="his-field" type="date" value={form.followUpDate} onChange={upd("followUpDate")} /></F>
+              <F label="Follow-up Doctor"><input className="his-field" value={form.followUpDoctor} onChange={upd("followUpDoctor")} /></F>
+              <F label="Department / OPD"><input className="his-field" value={form.followUpDepartment} onChange={upd("followUpDepartment")} /></F>
             </G4>
             <div style={{ marginTop: 12 }}>
               <F label="Follow-up Instructions">
-                <input style={fld} value={form.followUpInstructions} onChange={upd("followUpInstructions")}
+                <input className="his-field" value={form.followUpInstructions} onChange={upd("followUpInstructions")}
                   placeholder="e.g. Fasting blood sugar on follow-up. Bring all reports." />
               </F>
             </div>
@@ -1152,7 +1167,7 @@ export default function DischargeSummaryPage() {
               NABH requirement: Patients must be informed of warning signs that require immediate emergency care.
             </div>
             <F label="When to Return to Emergency">
-              <textarea style={{ ...ta, minHeight: 90 }} value={form.emergencyWarnings} onChange={upd("emergencyWarnings")} />
+              <textarea className="his-textarea" style={{ minHeight: 90 }} value={form.emergencyWarnings} onChange={upd("emergencyWarnings")} />
             </F>
           </Section>
 
@@ -1184,5 +1199,14 @@ export default function DischargeSummaryPage() {
         />
       )}
     </div>
+  );
+}
+
+export default function DischargeSummaryPage() {
+  const [sel, setSel] = useState(null);
+  return (
+    <ClinicalLayout onPatientSelect={setSel} selectedId={sel?._id} pageType="discharge">
+      <DischargeSummaryPageContent selectedPatient={sel} />
+    </ClinicalLayout>
   );
 }

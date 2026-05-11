@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import "../clinical/clinical-forms.css";
 import { tpaService } from "../../Services/tpa/tpaService";
 import { Card } from "primereact/card";
 import { DataTable } from "primereact/datatable";
@@ -60,13 +61,6 @@ const BLANK_PRICE = {
   price: 0,
   discount: 0,
   tpaApprovedLimit: null,
-};
-
-const lbl = {
-  fontWeight: 600,
-  fontSize: 12,
-  display: "block",
-  marginBottom: 4,
 };
 
 export default function InvestigationMaster() {
@@ -532,7 +526,7 @@ export default function InvestigationMaster() {
           style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}
         >
           <div style={{ gridColumn: "span 2" }}>
-            <label style={lbl}>Investigation Name *</label>
+            <label className="his-label">Investigation Name *</label>
             <InputText
               value={form.investigationName}
               onChange={(e) =>
@@ -544,7 +538,7 @@ export default function InvestigationMaster() {
           </div>
 
           <div>
-            <label style={lbl}>Short Name</label>
+            <label className="his-label">Short Name</label>
             <InputText
               value={form.shortName}
               onChange={(e) => setForm({ ...form, shortName: e.target.value })}
@@ -554,7 +548,7 @@ export default function InvestigationMaster() {
           </div>
 
           <div>
-            <label style={lbl}>Category *</label>
+            <label className="his-label">Category *</label>
             <Dropdown
               value={form.category}
               options={CATEGORIES}
@@ -564,7 +558,7 @@ export default function InvestigationMaster() {
           </div>
 
           <div>
-            <label style={lbl}>Sub Category</label>
+            <label className="his-label">Sub Category</label>
             <InputText
               value={form.subCategory}
               onChange={(e) =>
@@ -576,7 +570,7 @@ export default function InvestigationMaster() {
           </div>
 
           <div>
-            <label style={lbl}>Performed At *</label>
+            <label className="his-label">Performed At *</label>
             <Dropdown
               value={form.performedAt}
               options={PERFORMED_AT_OPTIONS}
@@ -586,7 +580,7 @@ export default function InvestigationMaster() {
           </div>
 
           <div>
-            <label style={lbl}>Sample Type</label>
+            <label className="his-label">Sample Type</label>
             <InputText
               value={form.sampleType}
               onChange={(e) => setForm({ ...form, sampleType: e.target.value })}
@@ -596,7 +590,7 @@ export default function InvestigationMaster() {
           </div>
 
           <div>
-            <label style={lbl}>Default Price (₹) — CASH *</label>
+            <label className="his-label">Default Price (₹) — CASH *</label>
             <InputNumber
               value={form.defaultPrice}
               onValueChange={(e) => setForm({ ...form, defaultPrice: e.value })}
@@ -611,7 +605,7 @@ export default function InvestigationMaster() {
           </div>
 
           <div>
-            <label style={lbl}>TAT (hours)</label>
+            <label className="his-label">TAT (hours)</label>
             <InputNumber
               value={form.tatHours}
               onValueChange={(e) => setForm({ ...form, tatHours: e.value })}
@@ -661,7 +655,7 @@ export default function InvestigationMaster() {
 
           {form.isTaxable && (
             <div>
-              <label style={lbl}>Tax %</label>
+              <label className="his-label">Tax %</label>
               <InputNumber
                 value={form.taxPercentage}
                 onValueChange={(e) =>
@@ -778,7 +772,7 @@ export default function InvestigationMaster() {
               </div>
 
               <div>
-                <label style={lbl}>Tariff Type *</label>
+                <label className="his-label">Tariff Type *</label>
                 <Dropdown
                   value={priceForm.tariffType}
                   options={[
@@ -798,7 +792,7 @@ export default function InvestigationMaster() {
 
               {priceForm.tariffType === "TPA" && (
                 <div>
-                  <label style={lbl}>Select TPA *</label>
+                  <label className="his-label">Select TPA *</label>
                   <Dropdown
                     value={priceForm.tpaId}
                     options={tpaList}
@@ -813,7 +807,7 @@ export default function InvestigationMaster() {
               )}
 
               <div>
-                <label style={lbl}>Override Price (₹) *</label>
+                <label className="his-label">Override Price (₹) *</label>
                 <InputNumber
                   value={priceForm.price}
                   onValueChange={(e) =>
@@ -827,7 +821,7 @@ export default function InvestigationMaster() {
               </div>
 
               <div>
-                <label style={lbl}>Discount (%)</label>
+                <label className="his-label">Discount (%)</label>
                 <InputNumber
                   value={priceForm.discount}
                   onValueChange={(e) =>
@@ -842,7 +836,7 @@ export default function InvestigationMaster() {
 
               {priceForm.tariffType === "TPA" && (
                 <div>
-                  <label style={lbl}>TPA Approved Limit (₹)</label>
+                  <label className="his-label">TPA Approved Limit (₹)</label>
                   <InputNumber
                     value={priceForm.tpaApprovedLimit}
                     onValueChange={(e) =>

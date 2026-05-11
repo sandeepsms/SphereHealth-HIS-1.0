@@ -23,26 +23,6 @@ const C = {
   orange:"#ea580c", orangeL:"#fff7ed",
   teal:  "#0d9488",
 };
-const fld = { padding:"9px 12px", border:`1.5px solid ${C.border}`, borderRadius:8, fontFamily:"'DM Sans',sans-serif", fontSize:13, color:C.text, outline:"none", background:"white", width:"100%", boxSizing:"border-box" };
-const sel = { ...fld, cursor:"pointer" };
-const lbl = { display:"block", fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:4 };
-
-// ─── Source type metadata ──────────────────────────────────────────────────────
-const SOURCE_META = {
-  NurseNote:          { icon:"pi-heart",              color:C.teal,   bg:C.primaryL,  label:"Nurse Note"        },
-  DoctorNote:         { icon:"pi-file-edit",          color:C.blue,   bg:C.blueL,     label:"Doctor Note"       },
-  DoctorAssessment:   { icon:"pi-user-plus",          color:C.blue,   bg:C.blueL,     label:"Doctor Assessment" },
-  DoctorVisit:        { icon:"pi-user",               color:C.indigo, bg:C.indigoL,   label:"Doctor Visit"      },
-  MAR:                { icon:"pi-plus-circle",        color:C.green,  bg:C.greenL,    label:"Medication (MAR)"  },
-  InvestigationOrder: { icon:"pi-desktop",            color:C.purple, bg:C.purpleL,   label:"Investigation"     },
-  Equipment:          { icon:"pi-bolt",               color:C.orange, bg:C.orangeL,   label:"Equipment"         },
-  CarePlan:           { icon:"pi-clipboard",          color:C.amber,  bg:C.amberL,    label:"Care Plan"         },
-  Discharge:          { icon:"pi-sign-out",           color:C.red,    bg:C.redL,      label:"Discharge"         },
-  Procedure:          { icon:"pi-cog",                color:C.orange, bg:C.orangeL,   label:"Procedure"         },
-  AutoCharge:         { icon:"pi-sync",               color:C.muted,  bg:"#f1f5f9",   label:"Auto-Charge"       },
-  Manual:             { icon:"pi-pencil",             color:C.slate,  bg:"#f1f5f9",   label:"Manual"            },
-};
-
 // ─── Status metadata ──────────────────────────────────────────────────────────
 const STATUS_META = {
   pending:     { color:C.amber,   bg:C.amberL,  border:C.amberB,  icon:"pi-clock",         label:"Pending"     },
@@ -476,7 +456,7 @@ export default function BillingAuditTrailPage() {
               value={searchVal}
               onChange={e => setSearchVal(e.target.value.toUpperCase())}
               placeholder="Enter UHID to load audit trail…"
-              style={{ ...fld, flex:1 }}
+              className="his-field" style={{ flex:1 }}
               autoFocus
             />
             <button type="submit" disabled={loadingPt} style={{
@@ -538,15 +518,15 @@ export default function BillingAuditTrailPage() {
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
               placeholder="Search service, doctor, nurse…"
-              style={{ ...fld, maxWidth:260 }}
+              className="his-field" style={{ maxWidth:260 }}
             />
-            <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ ...sel, maxWidth:160 }}>
+            <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="his-select" style={{ maxWidth:160 }}>
               <option value="all">All Statuses</option>
               {Object.entries(STATUS_META).map(([k,v]) => (
                 <option key={k} value={k}>{v.label}</option>
               ))}
             </select>
-            <select value={filterSource} onChange={e => setFilterSource(e.target.value)} style={{ ...sel, maxWidth:200 }}>
+            <select value={filterSource} onChange={e => setFilterSource(e.target.value)} className="his-select" style={{ maxWidth:200 }}>
               <option value="all">All Sources</option>
               {uniqueSources.map(s => (
                 <option key={s} value={s}>{SOURCE_META[s]?.label || s}</option>

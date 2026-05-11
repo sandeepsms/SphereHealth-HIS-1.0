@@ -43,22 +43,6 @@ const C = {
 
 const FF = "'DM Sans', sans-serif";
 
-const fld = {
-  padding: "8px 11px",
-  border: `1.5px solid ${C.border}`,
-  borderRadius: 8,
-  fontFamily: FF,
-  fontSize: 13,
-  color: C.text,
-  outline: "none",
-  background: "white",
-  width: "100%",
-  boxSizing: "border-box",
-  transition: "border-color .15s",
-};
-const ta = { ...fld, resize: "vertical", minHeight: 72 };
-const sel = { ...fld, cursor: "pointer", appearance: "auto" };
-
 const G2 = ({ children, gap = 14 }) => (
   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap }}>{children}</div>
 );
@@ -626,7 +610,7 @@ export default function EmergencyRegistrationPage() {
                   onKeyDown={e => e.key === "Enter" && doSearch()}
                   placeholder="UHID, name, phone…"
                   disabled={unknownPatient}
-                  style={{ ...fld, flex: 1, background: unknownPatient ? "#f8fafc" : "#fff" }}
+                  className="his-field" style={{ flex: 1, background: unknownPatient ? "#f8fafc" : "#fff" }}
                 />
                 <button onClick={doSearch} disabled={searching || unknownPatient || searchQ.trim().length < 2} style={{
                   background: C.blue, color: "#fff", border: "none", borderRadius: 8,
@@ -714,30 +698,30 @@ export default function EmergencyRegistrationPage() {
           <G2 gap={14}>
             <div style={{ display: "grid", gridTemplateColumns: "100px 1fr", gap: 10 }}>
               <F label="Title">
-                <select value={pt.title} onChange={e => setPt(p => ({ ...p, title: e.target.value }))} style={sel}>
+                <select value={pt.title} onChange={e => setPt(p => ({ ...p, title: e.target.value }))} className="his-select">
                   {TITLE_OPTS.map(t => <option key={t}>{t}</option>)}
                 </select>
               </F>
               <F label="Full Name" required hint={unknownPatient ? "Use 'Unknown Patient' or descriptive name" : ""}>
                 <input value={pt.fullName} onChange={e => setPt(p => ({ ...p, fullName: e.target.value }))}
                   placeholder={unknownPatient ? "Unknown Patient / Unknown Male-001" : "Patient's full name"}
-                  style={fld} />
+                  className="his-field" />
               </F>
             </div>
             <G3 gap={10}>
               <F label="Gender">
-                <select value={pt.gender} onChange={e => setPt(p => ({ ...p, gender: e.target.value }))} style={sel}>
+                <select value={pt.gender} onChange={e => setPt(p => ({ ...p, gender: e.target.value }))} className="his-select">
                   <option value="">Unknown</option>
                   {GENDER_OPTS.map(g => <option key={g}>{g}</option>)}
                 </select>
               </F>
               <F label="Approx. Age (yrs)" hint={pt.dateOfBirth ? `Calc: ${calcAge(pt.dateOfBirth)} yrs` : ""}>
                 <input value={pt.age} onChange={e => setPt(p => ({ ...p, age: e.target.value }))}
-                  placeholder="Age in years" type="number" min="0" max="150" style={fld} />
+                  placeholder="Age in years" type="number" min="0" max="150" className="his-field" />
               </F>
               <F label="Date of Birth">
                 <input type="date" value={pt.dateOfBirth} max={todayISO()}
-                  onChange={e => setPt(p => ({ ...p, dateOfBirth: e.target.value }))} style={fld} />
+                  onChange={e => setPt(p => ({ ...p, dateOfBirth: e.target.value }))} className="his-field" />
               </F>
             </G3>
           </G2>
@@ -745,10 +729,10 @@ export default function EmergencyRegistrationPage() {
             <G3>
               <F label="Contact Number">
                 <input value={pt.contactNumber} onChange={e => setPt(p => ({ ...p, contactNumber: e.target.value }))}
-                  placeholder={unknownPatient ? "—" : "10-digit mobile"} style={fld} />
+                  placeholder={unknownPatient ? "—" : "10-digit mobile"} className="his-field" />
               </F>
               <F label="Blood Group">
-                <select value={pt.bloodGroup} onChange={e => setPt(p => ({ ...p, bloodGroup: e.target.value }))} style={sel}>
+                <select value={pt.bloodGroup} onChange={e => setPt(p => ({ ...p, bloodGroup: e.target.value }))} className="his-select">
                   <option value="">Unknown</option>
                   {BLOOD_OPTS.map(b => <option key={b}>{b}</option>)}
                 </select>
@@ -756,7 +740,7 @@ export default function EmergencyRegistrationPage() {
               <F label="Known Allergies / NKDA">
                 <input value={pt.nkda ? "NKDA" : pt.knownAllergies}
                   onChange={e => setPt(p => ({ ...p, knownAllergies: e.target.value, nkda: false }))}
-                  placeholder="NKDA or list allergies" style={fld} />
+                  placeholder="NKDA or list allergies" className="his-field" />
               </F>
             </G3>
           </div>
@@ -766,28 +750,28 @@ export default function EmergencyRegistrationPage() {
         <Section title="Arrival & Referral Details" icon="pi-car" color={C.slate} nabh badge="NABH EM.1" defaultOpen>
           <G3>
             <F label="Mode of Arrival" required>
-              <select value={arrival.arrivalMode} onChange={e => setArrival(a => ({ ...a, arrivalMode: e.target.value }))} style={sel}>
+              <select value={arrival.arrivalMode} onChange={e => setArrival(a => ({ ...a, arrivalMode: e.target.value }))} className="his-select">
                 {ARRIVAL_MODE.map(m => <option key={m}>{m}</option>)}
               </select>
             </F>
             <F label="Date & Time of Arrival" required hint="Critical for NABH EM.1 compliance">
               <input type="datetime-local" value={arrival.arrivalDateTime}
-                onChange={e => setArrival(a => ({ ...a, arrivalDateTime: e.target.value }))} style={fld} />
+                onChange={e => setArrival(a => ({ ...a, arrivalDateTime: e.target.value }))} className="his-field" />
             </F>
             <F label="Brought By">
               <input value={arrival.broughtBy} onChange={e => setArrival(a => ({ ...a, broughtBy: e.target.value }))}
-                placeholder="Name of person / relative" style={fld} />
+                placeholder="Name of person / relative" className="his-field" />
             </F>
           </G3>
           <div style={{ marginTop: 12 }}>
             <G2>
               <F label="Referred From (if referred)" hint="Hospital / clinic name">
                 <input value={arrival.referredFrom} onChange={e => setArrival(a => ({ ...a, referredFrom: e.target.value }))}
-                  placeholder="Referring hospital / doctor" style={fld} />
+                  placeholder="Referring hospital / doctor" className="his-field" />
               </F>
               <F label="Ambulance Number">
                 <input value={arrival.ambulanceNumber} onChange={e => setArrival(a => ({ ...a, ambulanceNumber: e.target.value }))}
-                  placeholder="Vehicle / call number" style={fld} />
+                  placeholder="Vehicle / call number" className="his-field" />
               </F>
             </G2>
           </div>
@@ -805,38 +789,38 @@ export default function EmergencyRegistrationPage() {
           <G4>
             <F label="Blood Pressure (mmHg)" required hint="Systolic/Diastolic">
               <input value={vitals.bloodPressure} onChange={e => setVitals(v => ({ ...v, bloodPressure: e.target.value }))}
-                placeholder="e.g. 120/80" style={fld} />
+                placeholder="e.g. 120/80" className="his-field" />
             </F>
             <F label="Pulse (bpm)" required>
               <input value={vitals.pulse} onChange={e => setVitals(v => ({ ...v, pulse: e.target.value }))}
-                placeholder="e.g. 72" type="number" min="0" style={fld} />
+                placeholder="e.g. 72" type="number" min="0" className="his-field" />
             </F>
             <F label="Respiratory Rate (/min)">
               <input value={vitals.respiratoryRate} onChange={e => setVitals(v => ({ ...v, respiratoryRate: e.target.value }))}
-                placeholder="e.g. 18" type="number" style={fld} />
+                placeholder="e.g. 18" type="number" className="his-field" />
             </F>
             <F label="SpO₂ (%)">
               <input value={vitals.oxygenSaturation} onChange={e => setVitals(v => ({ ...v, oxygenSaturation: e.target.value }))}
-                placeholder="e.g. 98" type="number" min="0" max="100" style={fld} />
+                placeholder="e.g. 98" type="number" min="0" max="100" className="his-field" />
             </F>
           </G4>
           <div style={{ marginTop: 12 }}>
             <G4>
               <F label="Temperature (°F)">
                 <input value={vitals.temperature} onChange={e => setVitals(v => ({ ...v, temperature: e.target.value }))}
-                  placeholder="e.g. 98.6" type="number" style={fld} />
+                  placeholder="e.g. 98.6" type="number" className="his-field" />
               </F>
               <F label="Pain Score (0-10)">
                 <input value={vitals.painScore} onChange={e => setVitals(v => ({ ...v, painScore: e.target.value }))}
-                  placeholder="0 = No pain, 10 = Worst" type="number" min="0" max="10" style={fld} />
+                  placeholder="0 = No pain, 10 = Worst" type="number" min="0" max="10" className="his-field" />
               </F>
               <F label="GCS (Glasgow Coma Scale)" hint="3-15">
                 <input value={vitals.glasgowComaScale} onChange={e => setVitals(v => ({ ...v, glasgowComaScale: e.target.value }))}
-                  placeholder="e.g. 15 (Normal)" type="number" min="3" max="15" style={fld} />
+                  placeholder="e.g. 15 (Normal)" type="number" min="3" max="15" className="his-field" />
               </F>
               <F label="Blood Glucose (mg/dL)">
                 <input value={vitals.bloodGlucose} onChange={e => setVitals(v => ({ ...v, bloodGlucose: e.target.value }))}
-                  placeholder="RBS / GRBS" type="number" style={fld} />
+                  placeholder="RBS / GRBS" type="number" className="his-field" />
               </F>
             </G4>
           </div>
@@ -844,11 +828,11 @@ export default function EmergencyRegistrationPage() {
             <G2>
               <F label="Weight (kg)">
                 <input value={vitals.weight} onChange={e => setVitals(v => ({ ...v, weight: e.target.value }))}
-                  placeholder="Patient weight" type="number" style={fld} />
+                  placeholder="Patient weight" type="number" className="his-field" />
               </F>
               <F label="Height (cm)">
                 <input value={vitals.height} onChange={e => setVitals(v => ({ ...v, height: e.target.value }))}
-                  placeholder="Patient height" type="number" style={fld} />
+                  placeholder="Patient height" type="number" className="his-field" />
               </F>
             </G2>
           </div>
@@ -860,12 +844,12 @@ export default function EmergencyRegistrationPage() {
             <F label="Presenting Complaints" required hint="Chief reason for ER visit">
               <textarea value={clinical.presentingComplaints}
                 onChange={e => setClinical(c => ({ ...c, presentingComplaints: e.target.value }))}
-                placeholder="Main complaints in patient's or attendant's words…" rows={3} style={ta} />
+                placeholder="Main complaints in patient's or attendant's words…" rows={3} className="his-textarea" />
             </F>
             <F label="Duration of Symptoms">
               <input value={clinical.complaintDuration}
                 onChange={e => setClinical(c => ({ ...c, complaintDuration: e.target.value }))}
-                placeholder="e.g. 2 hours, since morning, 3 days" style={fld} />
+                placeholder="e.g. 2 hours, since morning, 3 days" className="his-field" />
             </F>
           </G2>
           <div style={{ marginTop: 12 }}>
@@ -873,12 +857,12 @@ export default function EmergencyRegistrationPage() {
               <F label="History of Present Illness">
                 <textarea value={clinical.historyOfPresentIllness}
                   onChange={e => setClinical(c => ({ ...c, historyOfPresentIllness: e.target.value }))}
-                  placeholder="Onset, nature, progression, associated symptoms…" rows={3} style={ta} />
+                  placeholder="Onset, nature, progression, associated symptoms…" rows={3} className="his-textarea" />
               </F>
               <F label="Past Medical / Surgical History">
                 <textarea value={clinical.pastMedicalHistory}
                   onChange={e => setClinical(c => ({ ...c, pastMedicalHistory: e.target.value }))}
-                  placeholder="Co-morbidities, previous surgeries, hospitalizations…" rows={3} style={ta} />
+                  placeholder="Co-morbidities, previous surgeries, hospitalizations…" rows={3} className="his-textarea" />
               </F>
             </G2>
           </div>
@@ -887,12 +871,12 @@ export default function EmergencyRegistrationPage() {
               <F label="Current Medications">
                 <textarea value={clinical.currentMedications}
                   onChange={e => setClinical(c => ({ ...c, currentMedications: e.target.value }))}
-                  placeholder="List all medications patient is taking…" rows={2} style={ta} />
+                  placeholder="List all medications patient is taking…" rows={2} className="his-textarea" />
               </F>
               <F label="Provisional Diagnosis">
                 <textarea value={clinical.provisionalDiagnosis}
                   onChange={e => setClinical(c => ({ ...c, provisionalDiagnosis: e.target.value }))}
-                  placeholder="Working diagnosis at time of registration…" rows={2} style={ta} />
+                  placeholder="Working diagnosis at time of registration…" rows={2} className="his-textarea" />
               </F>
             </G2>
           </div>
@@ -923,36 +907,36 @@ export default function EmergencyRegistrationPage() {
             <div>
               <G2>
                 <F label="MLC Type / Nature of Injury" required>
-                  <select value={mlc.mlcType} onChange={e => setMlc(m => ({ ...m, mlcType: e.target.value }))} style={sel}>
+                  <select value={mlc.mlcType} onChange={e => setMlc(m => ({ ...m, mlcType: e.target.value }))} className="his-select">
                     <option value="">Select type…</option>
                     {MLC_TYPES.map(t => <option key={t}>{t}</option>)}
                   </select>
                 </F>
                 <F label="MLC Report Date & Time" required hint="Time of reporting to police">
                   <input type="datetime-local" value={mlc.mlcReportTime}
-                    onChange={e => setMlc(m => ({ ...m, mlcReportTime: e.target.value }))} style={fld} />
+                    onChange={e => setMlc(m => ({ ...m, mlcReportTime: e.target.value }))} className="his-field" />
                 </F>
               </G2>
               <div style={{ marginTop: 12 }}>
                 <G3>
                   <F label="Police Station Name">
                     <input value={mlc.policeStation} onChange={e => setMlc(m => ({ ...m, policeStation: e.target.value }))}
-                      placeholder="Name of police station" style={fld} />
+                      placeholder="Name of police station" className="his-field" />
                   </F>
                   <F label="Reporting Officer Name">
                     <input value={mlc.policeName} onChange={e => setMlc(m => ({ ...m, policeName: e.target.value }))}
-                      placeholder="Officer name" style={fld} />
+                      placeholder="Officer name" className="his-field" />
                   </F>
                   <F label="Police Contact Number">
                     <input value={mlc.policeContactNumber} onChange={e => setMlc(m => ({ ...m, policeContactNumber: e.target.value }))}
-                      placeholder="Phone number" style={fld} />
+                      placeholder="Phone number" className="his-field" />
                   </F>
                 </G3>
               </div>
               <div style={{ marginTop: 12 }}>
                 <F label="MLC Notes / Observations" hint="Document visible injuries, patient's statement, circumstances">
                   <textarea value={mlc.mlcNotes} onChange={e => setMlc(m => ({ ...m, mlcNotes: e.target.value }))}
-                    placeholder="Describe injuries, patient's statement if conscious, circumstances of incident…" rows={3} style={ta} />
+                    placeholder="Describe injuries, patient's statement if conscious, circumstances of incident…" rows={3} className="his-textarea" />
                 </F>
               </div>
             </div>
@@ -967,25 +951,25 @@ export default function EmergencyRegistrationPage() {
                 onChange={e => {
                   const doc = consultants.find(d => d.id === e.target.value);
                   setMgmt(m => ({ ...m, consultantId: e.target.value, consultantIncharge: doc?.name || "" }));
-                }} style={sel}>
+                }} className="his-select">
                 <option value="">Select consultant…</option>
                 {consultants.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
               </select>
             </F>
             <F label="Disposition" required>
-              <select value={mgmt.disposition} onChange={e => setMgmt(m => ({ ...m, disposition: e.target.value }))} style={sel}>
+              <select value={mgmt.disposition} onChange={e => setMgmt(m => ({ ...m, disposition: e.target.value }))} className="his-select">
                 {DISPOSITION_OPTS.map(d => <option key={d}>{d}</option>)}
               </select>
             </F>
             <F label="Disposition Notes">
               <input value={mgmt.dispositionNotes} onChange={e => setMgmt(m => ({ ...m, dispositionNotes: e.target.value }))}
-                placeholder="Details, ward/bed, transfer info…" style={fld} />
+                placeholder="Details, ward/bed, transfer info…" className="his-field" />
             </F>
           </G3>
           <div style={{ marginTop: 12 }}>
             <F label="Initial Nursing Notes">
               <textarea value={mgmt.nursingNotes} onChange={e => setMgmt(m => ({ ...m, nursingNotes: e.target.value }))}
-                placeholder="Initial nursing assessment, interventions done, patient response…" rows={3} style={ta} />
+                placeholder="Initial nursing assessment, interventions done, patient response…" rows={3} className="his-textarea" />
             </F>
           </div>
         </Section>

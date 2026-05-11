@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import "../../Components/clinical/clinical-forms.css";
 import { useParams, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
@@ -9,6 +10,7 @@ import { useDigitalSignature } from "../../hooks/useDigitalSignature";
 import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
 import SignaturePad from "../../Components/signature/SignaturePad";
 import SignatureStamp from "../../Components/signature/SignatureStamp";
+import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 
 /* ── Design tokens ── */
 const C = {
@@ -23,13 +25,6 @@ const C = {
   pink: "#db2777",
   slate: "#1e293b",
 };
-
-const fld = {
-  padding: "8px 11px", border: `1.5px solid ${C.border}`, borderRadius: 8,
-  fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: C.text,
-  outline: "none", background: "white", width: "100%", boxSizing: "border-box",
-};
-const ta = { ...fld, resize: "vertical", minHeight: 80 };
 
 /* ── Triage levels ── */
 const TRIAGE_LEVELS = [
@@ -108,7 +103,7 @@ function VitalBox({ label, value, unit, onChange, critical }) {
       <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".7px",
         color: critical ? C.red : C.muted }}>{label}</div>
       <input value={value} onChange={e => onChange(e.target.value)}
-        style={{ ...fld, textAlign: "center", fontFamily: "'DM Mono', monospace",
+        className="his-field" style={{ textAlign: "center", fontFamily: "'DM Mono', monospace",
           fontSize: 16, fontWeight: 700, padding: "4px 8px", borderColor: critical ? C.red : C.border }} />
       {unit && <div style={{ fontSize: 9, color: C.muted, textAlign: "center" }}>{unit}</div>}
     </div>
@@ -116,7 +111,7 @@ function VitalBox({ label, value, unit, onChange, critical }) {
 }
 
 /* ══════════════════════════════════════════════════════════ */
-export default function EmergencyAssessmentPage() {
+function EmergencyAssessmentPageContent({ selectedPatient }) {
   const { uhid: uhidParam } = useParams();
   const navigate  = useNavigate();
   const { user }  = useAuth();
@@ -202,6 +197,12 @@ export default function EmergencyAssessmentPage() {
   const { signature, showSetup, setShowSetup, saveSignature } = useDigitalSignature();
 
   useEffect(() => { if (uhidParam) loadPatient(uhidParam); }, [uhidParam]);
+
+  // Auto-load when patient selected from AdmittedPatientPanel
+  useEffect(() => {
+    if (!selectedPatient) return;
+    loadPatient(selectedPatient.UHID || "");
+  }, [selectedPatient?._id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadPatient = async (id) => {
     if (!id?.trim()) return;
@@ -351,7 +352,7 @@ export default function EmergencyAssessmentPage() {
         <input value={uhid} onChange={e => setUhid(e.target.value.toUpperCase())}
           onKeyDown={e => e.key === "Enter" && loadPatient(uhid)}
           placeholder="Type UHID and press Enter…"
-          style={{ ...fld, maxWidth: 260 }} />
+          className="his-field" style={{ maxWidth: 260 }} />
         <button onClick={() => loadPatient(uhid)} disabled={loadingPt}
           style={{ padding: "8px 18px", border: "none", borderRadius: 8, background: C.red,
             color: "white", cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600 }}>
@@ -423,10 +424,10 @@ export default function EmergencyAssessmentPage() {
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 14, marginBottom: 14, alignItems: "end" }}>
             <Field label="Triage Time">
-              <input type="time" value={triageTime} onChange={e => setTriageTime(e.target.value)} style={fld} />
+              <input type="time" value={triageTime} onChange={e => setTriageTime(e.target.value)} className="his-field" />
             </Field>
             <Field label="Arrival Mode">
-              <select value={arrivalMode} onChange={e => setArrivalMode(e.target.value)} style={fld}>
+              <select value={arrivalMode} onChange={e => setArrivalMode(e.target.value)} className="his-field">
                 {["Walk-in", "Ambulance", "Referred", "Police", "Self", "Other"].map(m => (
                   <option key={m}>{m}</option>
                 ))}
@@ -434,7 +435,7 @@ export default function EmergencyAssessmentPage() {
             </Field>
             <Field label="Complaint Duration">
               <input value={complaintDuration} onChange={e => setComplaintDuration(e.target.value)}
-                placeholder="e.g. 2 hours, since morning" style={fld} />
+                placeholder="e.g. 2 hours, since morning" className="his-field" />
             </Field>
             <div style={{ display: "flex", alignItems: "center", gap: 8, paddingBottom: 2 }}>
               <input type="checkbox" id="mlc" checked={isMLC} onChange={e => setIsMLC(e.target.checked)}
@@ -446,19 +447,19 @@ export default function EmergencyAssessmentPage() {
           {isMLC && (
             <Field label="MLC Number">
               <input value={mlcNumber} onChange={e => setMlcNumber(e.target.value)}
-                placeholder="Medico-Legal Case number" style={{ ...fld, maxWidth: 320 }} />
+                placeholder="Medico-Legal Case number" className="his-field" style={{ maxWidth: 320 }} />
             </Field>
           )}
 
           <Field label="Chief Complaint / Presenting Complaint *">
             <textarea value={chiefComplaint} onChange={e => setChiefComplaint(e.target.value)}
               placeholder="Patient's presenting complaint in their own words — onset, character, severity…"
-              style={{ ...ta, marginTop: 8 }} />
+              className="his-textarea" style={{ marginTop: 8 }} />
           </Field>
 
           <Field label="Known Allergies">
             <input value={allergy} onChange={e => setAllergy(e.target.value)}
-              placeholder="Drug / food allergies — None if none" style={{ ...fld, marginTop: 8 }} />
+              placeholder="Drug / food allergies — None if none" className="his-field" style={{ marginTop: 8 }} />
           </Field>
         </Section>
 
@@ -513,11 +514,11 @@ export default function EmergencyAssessmentPage() {
                     </label>
                     <Field label="Intervention">
                       <input value={abcde.A.intervention} onChange={e => setA("A", "intervention", e.target.value)}
-                        placeholder="None / O₂ mask / NPA / OPA / Intubated…" style={fld} />
+                        placeholder="None / O₂ mask / NPA / OPA / Intubated…" className="his-field" />
                     </Field>
                     <Field label="Notes">
                       <input value={abcde.A.notes} onChange={e => setA("A", "notes", e.target.value)}
-                        placeholder="Stridor, secretions, swelling…" style={fld} />
+                        placeholder="Stridor, secretions, swelling…" className="his-field" />
                     </Field>
                   </div>
                 )}
@@ -525,38 +526,38 @@ export default function EmergencyAssessmentPage() {
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 14 }}>
                     <Field label="Rate (/min)">
                       <input value={abcde.B.rate} onChange={e => setA("B", "rate", e.target.value)}
-                        placeholder="—" style={fld} />
+                        placeholder="—" className="his-field" />
                     </Field>
                     <Field label="Effort">
-                      <select value={abcde.B.effort} onChange={e => setA("B", "effort", e.target.value)} style={fld}>
+                      <select value={abcde.B.effort} onChange={e => setA("B", "effort", e.target.value)} className="his-field">
                         {["Normal", "Mild distress", "Moderate distress", "Severe distress", "Not breathing"].map(o => <option key={o}>{o}</option>)}
                       </select>
                     </Field>
                     <Field label="Breath Sounds">
                       <input value={abcde.B.sounds} onChange={e => setA("B", "sounds", e.target.value)}
-                        placeholder="Clear / wheeze / creps…" style={fld} />
+                        placeholder="Clear / wheeze / creps…" className="his-field" />
                     </Field>
                     <Field label="Notes">
                       <input value={abcde.B.notes} onChange={e => setA("B", "notes", e.target.value)}
-                        placeholder="O₂ therapy, SpO₂…" style={fld} />
+                        placeholder="O₂ therapy, SpO₂…" className="his-field" />
                     </Field>
                   </div>
                 )}
                 {item.key === "C" && (
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
                     <Field label="Rhythm">
-                      <select value={abcde.C.rhythm} onChange={e => setA("C", "rhythm", e.target.value)} style={fld}>
+                      <select value={abcde.C.rhythm} onChange={e => setA("C", "rhythm", e.target.value)} className="his-field">
                         {["Regular", "Irregular", "Tachycardic", "Bradycardic", "No pulse — CPR"].map(o => <option key={o}>{o}</option>)}
                       </select>
                     </Field>
                     <Field label="Peripheral Perfusion">
-                      <select value={abcde.C.perfusion} onChange={e => setA("C", "perfusion", e.target.value)} style={fld}>
+                      <select value={abcde.C.perfusion} onChange={e => setA("C", "perfusion", e.target.value)} className="his-field">
                         {["Warm", "Cold peripheries", "Capillary refill >2s", "Mottled", "Shocked"].map(o => <option key={o}>{o}</option>)}
                       </select>
                     </Field>
                     <Field label="Notes">
                       <input value={abcde.C.notes} onChange={e => setA("C", "notes", e.target.value)}
-                        placeholder="IV access, bleeding, fluid…" style={fld} />
+                        placeholder="IV access, bleeding, fluid…" className="his-field" />
                     </Field>
                   </div>
                 )}
@@ -564,33 +565,33 @@ export default function EmergencyAssessmentPage() {
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 14 }}>
                     <Field label="GCS">
                       <input value={abcde.D.gcs} onChange={e => setA("D", "gcs", e.target.value)}
-                        placeholder="E_V_M_  /15" style={fld} />
+                        placeholder="E_V_M_  /15" className="his-field" />
                     </Field>
                     <Field label="Pupils">
-                      <select value={abcde.D.pupils} onChange={e => setA("D", "pupils", e.target.value)} style={fld}>
+                      <select value={abcde.D.pupils} onChange={e => setA("D", "pupils", e.target.value)} className="his-field">
                         {["Equal & Reactive", "Unequal", "Fixed & Dilated", "Pinpoint", "Sluggish"].map(o => <option key={o}>{o}</option>)}
                       </select>
                     </Field>
                     <Field label="Posture / Power">
-                      <select value={abcde.D.posture} onChange={e => setA("D", "posture", e.target.value)} style={fld}>
+                      <select value={abcde.D.posture} onChange={e => setA("D", "posture", e.target.value)} className="his-field">
                         {["Normal", "Flaccid", "Decorticate", "Decerebrate", "Focal deficit"].map(o => <option key={o}>{o}</option>)}
                       </select>
                     </Field>
                     <Field label="Notes">
                       <input value={abcde.D.notes} onChange={e => setA("D", "notes", e.target.value)}
-                        placeholder="BGL, seizure, history…" style={fld} />
+                        placeholder="BGL, seizure, history…" className="his-field" />
                     </Field>
                   </div>
                 )}
                 {item.key === "E" && (
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto auto 1fr", gap: 14, alignItems: "start" }}>
                     <Field label="Thermal Status">
-                      <select value={abcde.E.temp} onChange={e => setA("E", "temp", e.target.value)} style={fld}>
+                      <select value={abcde.E.temp} onChange={e => setA("E", "temp", e.target.value)} className="his-field">
                         {["Normothermic", "Febrile", "Hypothermic", "Hyperpyrexia"].map(o => <option key={o}>{o}</option>)}
                       </select>
                     </Field>
                     <Field label="Skin">
-                      <select value={abcde.E.skin} onChange={e => setA("E", "skin", e.target.value)} style={fld}>
+                      <select value={abcde.E.skin} onChange={e => setA("E", "skin", e.target.value)} className="his-field">
                         {["Normal", "Pale", "Jaundiced", "Cyanotic", "Diaphoretic", "Dry"].map(o => <option key={o}>{o}</option>)}
                       </select>
                     </Field>
@@ -608,7 +609,7 @@ export default function EmergencyAssessmentPage() {
                     </label>
                     <Field label="Notes">
                       <input value={abcde.E.notes} onChange={e => setA("E", "notes", e.target.value)}
-                        placeholder="Injuries, burns, exposures…" style={fld} />
+                        placeholder="Injuries, burns, exposures…" className="his-field" />
                     </Field>
                   </div>
                 )}
@@ -702,25 +703,25 @@ export default function EmergencyAssessmentPage() {
               <div style={{ fontWeight: 700, fontSize: 12, color: "#0369a1", marginBottom: 10 }}>🫁 Respiratory System (RS)</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <Field label="Breath Sounds">
-                  <select style={fld} value={rs.breathSounds} onChange={e => srs("breathSounds", e.target.value)}>
+                  <select className="his-field" value={rs.breathSounds} onChange={e => srs("breathSounds", e.target.value)}>
                     <option value="">Select…</option>
                     {["Clear","Vesicular","Bronchial","Diminished","Absent"].map(o => <option key={o}>{o}</option>)}
                   </select>
                 </Field>
                 <Field label="Added Sounds">
-                  <select style={fld} value={rs.addedSounds} onChange={e => srs("addedSounds", e.target.value)}>
+                  <select className="his-field" value={rs.addedSounds} onChange={e => srs("addedSounds", e.target.value)}>
                     <option value="">None</option>
                     {["Crepitations","Rhonchi","Wheeze","Pleural Rub","Stridor"].map(o => <option key={o}>{o}</option>)}
                   </select>
                 </Field>
                 <Field label="Percussion Note">
-                  <select style={fld} value={rs.percussionNote} onChange={e => srs("percussionNote", e.target.value)}>
+                  <select className="his-field" value={rs.percussionNote} onChange={e => srs("percussionNote", e.target.value)}>
                     <option value="">Select…</option>
                     {["Resonant","Dull","Stony Dull","Hyper-resonant","Tympanic"].map(o => <option key={o}>{o}</option>)}
                   </select>
                 </Field>
                 <Field label="Trachea Position">
-                  <select style={fld} value={rs.tracheaPosition} onChange={e => srs("tracheaPosition", e.target.value)}>
+                  <select className="his-field" value={rs.tracheaPosition} onChange={e => srs("tracheaPosition", e.target.value)}>
                     <option value="">Select…</option>
                     {["Central","Shifted to Right","Shifted to Left"].map(o => <option key={o}>{o}</option>)}
                   </select>
@@ -733,22 +734,22 @@ export default function EmergencyAssessmentPage() {
               <div style={{ fontWeight: 700, fontSize: 12, color: C.red, marginBottom: 10 }}>❤️ Cardiovascular System (CVS)</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <Field label="Heart Rhythm">
-                  <select style={fld} value={cvs.heartRhythm} onChange={e => scvs("heartRhythm", e.target.value)}>
+                  <select className="his-field" value={cvs.heartRhythm} onChange={e => scvs("heartRhythm", e.target.value)}>
                     <option value="">Select…</option>
                     {["Regular","Irregularly Irregular","Regularly Irregular"].map(o => <option key={o}>{o}</option>)}
                   </select>
                 </Field>
                 <Field label="Heart Sounds">
-                  <select style={fld} value={cvs.heartSounds} onChange={e => scvs("heartSounds", e.target.value)}>
+                  <select className="his-field" value={cvs.heartSounds} onChange={e => scvs("heartSounds", e.target.value)}>
                     <option value="">Select…</option>
                     {["S1 S2 Normal","S1 S2 + S3","S1 S2 + S4","Muffled","Prosthetic Valve"].map(o => <option key={o}>{o}</option>)}
                   </select>
                 </Field>
                 <Field label="Murmur">
-                  <input style={fld} value={cvs.murmur} onChange={e => scvs("murmur", e.target.value)} placeholder="Timing, grade, location…" />
+                  <input className="his-field" value={cvs.murmur} onChange={e => scvs("murmur", e.target.value)} placeholder="Timing, grade, location…" />
                 </Field>
                 <Field label="JVP">
-                  <select style={fld} value={cvs.jvp} onChange={e => scvs("jvp", e.target.value)}>
+                  <select className="his-field" value={cvs.jvp} onChange={e => scvs("jvp", e.target.value)}>
                     <option value="">Select…</option>
                     {["Normal","Raised","Not Visible"].map(o => <option key={o}>{o}</option>)}
                   </select>
@@ -761,7 +762,7 @@ export default function EmergencyAssessmentPage() {
               <div style={{ fontWeight: 700, fontSize: 12, color: C.amber, marginBottom: 10 }}>🫃 Abdomen</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <Field label="Tenderness">
-                  <input style={fld} value={abdomen.tenderness} onChange={e => sabd("tenderness", e.target.value)} placeholder="Location of tenderness…" />
+                  <input className="his-field" value={abdomen.tenderness} onChange={e => sabd("tenderness", e.target.value)} placeholder="Location of tenderness…" />
                 </Field>
                 <Field label="Organomegaly">
                   <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px" }}>
@@ -781,13 +782,13 @@ export default function EmergencyAssessmentPage() {
                   </div>
                 </Field>
                 <Field label="Bowel Sounds">
-                  <select style={fld} value={abdomen.bowelSounds} onChange={e => sabd("bowelSounds", e.target.value)}>
+                  <select className="his-field" value={abdomen.bowelSounds} onChange={e => sabd("bowelSounds", e.target.value)}>
                     <option value="">Select…</option>
                     {["Normal","Increased","Decreased","Absent"].map(o => <option key={o}>{o}</option>)}
                   </select>
                 </Field>
                 <Field label="Ascites">
-                  <select style={fld} value={abdomen.ascites} onChange={e => sabd("ascites", e.target.value)}>
+                  <select className="his-field" value={abdomen.ascites} onChange={e => sabd("ascites", e.target.value)}>
                     <option value="">Select…</option>
                     {["Absent","Mild","Moderate","Gross"].map(o => <option key={o}>{o}</option>)}
                   </select>
@@ -800,30 +801,30 @@ export default function EmergencyAssessmentPage() {
               <div style={{ fontWeight: 700, fontSize: 12, color: C.purple, marginBottom: 10 }}>🧠 CNS / Neuro</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <Field label="Motor System">
-                  <select style={fld} value={cns.motorSystem} onChange={e => scns("motorSystem", e.target.value)}>
+                  <select className="his-field" value={cns.motorSystem} onChange={e => scns("motorSystem", e.target.value)}>
                     <option value="">Select…</option>
                     {["Normal","Hemiparesis","Hemiplegia","Paraparesis","Paraplegia","Quadriparesis","Quadriplegia","Focal Deficit"].map(o => <option key={o}>{o}</option>)}
                   </select>
                 </Field>
                 {cns.motorSystem && cns.motorSystem !== "Normal" && (
                   <Field label="Affected Side">
-                    <select style={fld} value={cns.motorSide} onChange={e => scns("motorSide", e.target.value)}>
+                    <select className="his-field" value={cns.motorSide} onChange={e => scns("motorSide", e.target.value)}>
                       <option value="">Select…</option>
                       {["Right","Left","Bilateral"].map(o => <option key={o}>{o}</option>)}
                     </select>
                   </Field>
                 )}
                 <Field label="Tone">
-                  <select style={fld} value={cns.tone} onChange={e => scns("tone", e.target.value)}>
+                  <select className="his-field" value={cns.tone} onChange={e => scns("tone", e.target.value)}>
                     <option value="">Select…</option>
                     {["Normal","Hypertonia","Hypotonia","Flaccid"].map(o => <option key={o}>{o}</option>)}
                   </select>
                 </Field>
                 <Field label="Reflexes (DTR/Plantar)">
-                  <input style={fld} value={cns.reflexes} onChange={e => scns("reflexes", e.target.value)} placeholder="e.g. DTR+2, Plantar flexor…" />
+                  <input className="his-field" value={cns.reflexes} onChange={e => scns("reflexes", e.target.value)} placeholder="e.g. DTR+2, Plantar flexor…" />
                 </Field>
                 <Field label="Speech">
-                  <select style={fld} value={cns.speech} onChange={e => scns("speech", e.target.value)}>
+                  <select className="his-field" value={cns.speech} onChange={e => scns("speech", e.target.value)}>
                     <option value="">Select…</option>
                     {["Normal","Slurred","Aphasia","Dysarthria","Non-verbal"].map(o => <option key={o}>{o}</option>)}
                   </select>
@@ -840,18 +841,18 @@ export default function EmergencyAssessmentPage() {
               <Field label="Past Medical History">
                 <textarea value={pmh} onChange={e => setPmh(e.target.value)}
                   placeholder="Diabetes, HTN, cardiac conditions, previous surgeries…"
-                  style={{ ...ta, minHeight: 72 }} />
+                  className="his-textarea" style={{ minHeight: 72 }} />
               </Field>
               <Field label="General Examination Notes">
                 <textarea value={exam} onChange={e => setExam(e.target.value)}
                   placeholder="Conscious, oriented, systemic exam findings…"
-                  style={{ ...ta, minHeight: 72 }} />
+                  className="his-textarea" style={{ minHeight: 72 }} />
               </Field>
             </Grid2>
             <Field label="Provisional / Working Diagnosis *">
               <textarea value={provDx} onChange={e => setProvDx(e.target.value)}
                 placeholder="Clinical impression based on triage, vitals, and ABCDE findings…"
-                style={{ ...ta, minHeight: 64 }} />
+                className="his-textarea" style={{ minHeight: 64 }} />
             </Field>
           </div>
         </Section>
@@ -876,31 +877,31 @@ export default function EmergencyAssessmentPage() {
                     <td style={{ padding: "8px 10px", fontSize: 12, fontWeight: 700, color: C.muted }}>{idx + 1}</td>
                     <td style={{ padding: "6px 6px", minWidth: 110 }}>
                       <select value={ord.type} onChange={e => updateOrder(ord.id, "type", e.target.value)}
-                        style={{ ...fld, padding: "6px 8px" }}>
+                        className="his-field" style={{ padding: "6px 8px" }}>
                         {ORDER_TYPES.map(t => <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1).replace("_", " ")}</option>)}
                       </select>
                     </td>
                     <td style={{ padding: "6px 6px", minWidth: 180 }}>
                       <input value={ord.detail} onChange={e => updateOrder(ord.id, "detail", e.target.value)}
-                        placeholder="Drug / test / procedure name…" style={{ ...fld, padding: "6px 8px" }} />
+                        placeholder="Drug / test / procedure name…" className="his-field" style={{ padding: "6px 8px" }} />
                     </td>
                     <td style={{ padding: "6px 6px", minWidth: 100 }}>
                       <input value={ord.dose} onChange={e => updateOrder(ord.id, "dose", e.target.value)}
-                        placeholder="500mg / 1L" style={{ ...fld, padding: "6px 8px" }} />
+                        placeholder="500mg / 1L" className="his-field" style={{ padding: "6px 8px" }} />
                     </td>
                     <td style={{ padding: "6px 6px", minWidth: 80 }}>
                       <select value={ord.route} onChange={e => updateOrder(ord.id, "route", e.target.value)}
-                        style={{ ...fld, padding: "6px 8px" }}>
+                        className="his-field" style={{ padding: "6px 8px" }}>
                         {ROUTES.map(r => <option key={r}>{r}</option>)}
                       </select>
                     </td>
                     <td style={{ padding: "6px 6px", minWidth: 90 }}>
                       <input value={ord.freq} onChange={e => updateOrder(ord.id, "freq", e.target.value)}
-                        placeholder="STAT / 8hrly" style={{ ...fld, padding: "6px 8px" }} />
+                        placeholder="STAT / 8hrly" className="his-field" style={{ padding: "6px 8px" }} />
                     </td>
                     <td style={{ padding: "6px 6px", minWidth: 90 }}>
                       <select value={ord.priority} onChange={e => updateOrder(ord.id, "priority", e.target.value)}
-                        style={{ ...fld, padding: "6px 8px",
+                        className="his-field" style={{ padding: "6px 8px",
                           color: ord.priority === "STAT" ? "#9f1239" : ord.priority === "URGENT" ? C.red : C.muted,
                           fontWeight: 700 }}>
                         {PRIORITIES.map(p => <option key={p}>{p}</option>)}
@@ -929,7 +930,7 @@ export default function EmergencyAssessmentPage() {
         <Section title="Disposition" icon="pi-directions" color={C.green}>
           <Grid2>
             <Field label="Disposition Decision">
-              <select value={disposition} onChange={e => setDisposition(e.target.value)} style={fld}>
+              <select value={disposition} onChange={e => setDisposition(e.target.value)} className="his-field">
                 <option value="">— Select —</option>
                 {["Admit to IPD", "Admit to ICU", "Admit to HDU", "Transfer to higher centre",
                   "Discharge with advice", "LAMA", "Referred out", "Deceased"].map(d => (
@@ -939,7 +940,7 @@ export default function EmergencyAssessmentPage() {
             </Field>
             <Field label="Disposition Notes">
               <input value={dispNotes} onChange={e => setDispNotes(e.target.value)}
-                placeholder="Ward, bed, special instructions…" style={fld} />
+                placeholder="Ward, bed, special instructions…" className="his-field" />
             </Field>
           </Grid2>
         </Section>
@@ -1009,5 +1010,14 @@ export default function EmergencyAssessmentPage() {
 
       </>)}
     </div>
+  );
+}
+
+export default function EmergencyAssessmentPage() {
+  const [sel, setSel] = useState(null);
+  return (
+    <ClinicalLayout onPatientSelect={setSel} selectedId={sel?._id} pageType="emergency-assessment">
+      <EmergencyAssessmentPageContent selectedPatient={sel} />
+    </ClinicalLayout>
   );
 }

@@ -31,22 +31,6 @@ const C = {
 };
 
 /* ── Shared field style ── */
-const fld = {
-  padding: "8px 11px",
-  border: `1.5px solid ${C.border}`,
-  borderRadius: 8,
-  fontFamily: "'DM Sans', sans-serif",
-  fontSize: 13,
-  color: C.text,
-  outline: "none",
-  background: "white",
-  width: "100%",
-  boxSizing: "border-box",
-  transition: "border-color .15s",
-};
-const ta = { ...fld, resize: "vertical", minHeight: 72 };
-const sel = { ...fld, cursor: "pointer" };
-
 /* ── Grid helpers ── */
 const G2 = ({ children, gap = 14 }) => (
   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap }}>{children}</div>
@@ -645,9 +629,7 @@ function StepIdentity({ data, upd }) {
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <input placeholder="Search UHID / Name / Mobile..." style={{
-            ...fld, width: 260, borderColor: C.blue + "40",
-          }} />
+          <input placeholder="Search UHID / Name / Mobile..." className="his-field" style={{ width: 260, borderColor: C.blue + "40", }} />
           <button style={{
             padding: "7px 16px", background: C.blue, color: "white",
             border: "none", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600,
@@ -658,18 +640,18 @@ function StepIdentity({ data, upd }) {
       <Section title="Patient Identification" icon="pi-id-card" color={C.blue} nabh defaultOpen>
         <G4>
           <F label="Title" required>
-            <select style={sel} value={data.title} onChange={upd("title")}>
+            <select className="his-select" value={data.title} onChange={upd("title")}>
               {["Mr", "Mrs", "Ms", "Dr", "Master", "Baby", "Baby of"].map(t => <option key={t}>{t}</option>)}
             </select>
           </F>
           <F label="First Name" required>
-            <input style={fld} value={data.firstName} onChange={upd("firstName")} placeholder="First name" />
+            <input className="his-field" value={data.firstName} onChange={upd("firstName")} placeholder="First name" />
           </F>
           <F label="Middle Name">
-            <input style={fld} value={data.middleName} onChange={upd("middleName")} placeholder="Middle name" />
+            <input className="his-field" value={data.middleName} onChange={upd("middleName")} placeholder="Middle name" />
           </F>
           <F label="Last Name" required>
-            <input style={fld} value={data.lastName} onChange={upd("lastName")} placeholder="Last name" />
+            <input className="his-field" value={data.lastName} onChange={upd("lastName")} placeholder="Last name" />
           </F>
         </G4>
 
@@ -677,23 +659,23 @@ function StepIdentity({ data, upd }) {
 
         <G4>
           <F label="Gender" required>
-            <select style={sel} value={data.gender} onChange={upd("gender")}>
+            <select className="his-select" value={data.gender} onChange={upd("gender")}>
               {["Male", "Female", "Other", "Unknown"].map(g => <option key={g}>{g}</option>)}
             </select>
           </F>
           <F label="Date of Birth">
-            <input type="date" style={fld} value={data.dob} onChange={upd("dob")} />
+            <input type="date" className="his-field" value={data.dob} onChange={upd("dob")} />
           </F>
           <F label="Age" required>
             <div style={{ display: "flex", gap: 6 }}>
-              <input style={{ ...fld, width: "60%" }} value={data.age} onChange={upd("age")} placeholder="e.g. 45" type="number" />
-              <select style={{ ...sel, width: "40%" }} value={data.ageUnit} onChange={upd("ageUnit")}>
+              <input className="his-field" style={{ width: "60%" }} value={data.age} onChange={upd("age")} placeholder="e.g. 45" type="number" />
+              <select className="his-select" style={{ width: "40%" }} value={data.ageUnit} onChange={upd("ageUnit")}>
                 {["Years", "Months", "Days"].map(u => <option key={u}>{u}</option>)}
               </select>
             </div>
           </F>
           <F label="Marital Status">
-            <select style={sel} value={data.maritalStatus} onChange={upd("maritalStatus")}>
+            <select className="his-select" value={data.maritalStatus} onChange={upd("maritalStatus")}>
               {["Single", "Married", "Widowed", "Divorced", "Separated", "Unknown"].map(s => <option key={s}>{s}</option>)}
             </select>
           </F>
@@ -703,22 +685,22 @@ function StepIdentity({ data, upd }) {
 
         <G4>
           <F label="Blood Group">
-            <select style={sel} value={data.bloodGroup} onChange={upd("bloodGroup")}>
+            <select className="his-select" value={data.bloodGroup} onChange={upd("bloodGroup")}>
               <option value="">Select</option>
               {["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "Unknown"].map(b => <option key={b}>{b}</option>)}
             </select>
           </F>
           <F label="Religion">
-            <select style={sel} value={data.religion} onChange={upd("religion")}>
+            <select className="his-select" value={data.religion} onChange={upd("religion")}>
               <option value="">Select</option>
               {["Hindu", "Muslim", "Christian", "Sikh", "Jain", "Buddhist", "Other"].map(r => <option key={r}>{r}</option>)}
             </select>
           </F>
           <F label="Occupation">
-            <input style={fld} value={data.occupation} onChange={upd("occupation")} placeholder="Occupation" />
+            <input className="his-field" value={data.occupation} onChange={upd("occupation")} placeholder="Occupation" />
           </F>
           <F label="Preferred Language">
-            <select style={sel} value={data.language} onChange={upd("language")}>
+            <select className="his-select" value={data.language} onChange={upd("language")}>
               {["Hindi", "English", "Marathi", "Bengali", "Tamil", "Telugu", "Gujarati", "Kannada", "Other"].map(l => <option key={l}>{l}</option>)}
             </select>
           </F>
@@ -728,52 +710,52 @@ function StepIdentity({ data, upd }) {
       <Section title="Contact & Address" icon="pi-map-marker" color={C.teal} nabh>
         <G3>
           <F label="Primary Contact" required>
-            <input style={fld} value={data.contactNumber} onChange={upd("contactNumber")}
+            <input className="his-field" value={data.contactNumber} onChange={upd("contactNumber")}
               placeholder="+91 XXXXX XXXXX" type="tel" />
           </F>
           <F label="Alternate Contact">
-            <input style={fld} value={data.altContact} onChange={upd("altContact")}
+            <input className="his-field" value={data.altContact} onChange={upd("altContact")}
               placeholder="+91 XXXXX XXXXX" type="tel" />
           </F>
           <F label="Email Address">
-            <input style={fld} value={data.email} onChange={upd("email")}
+            <input className="his-field" value={data.email} onChange={upd("email")}
               placeholder="patient@email.com" type="email" />
           </F>
         </G3>
         <div style={{ height: 12 }} />
         <F label="Complete Address" required span={3}>
-          <textarea style={ta} value={data.address} onChange={upd("address")}
+          <textarea className="his-textarea" value={data.address} onChange={upd("address")}
             placeholder="House No., Street, Locality..." />
         </F>
         <div style={{ height: 10 }} />
         <G4>
-          <F label="City"><input style={fld} value={data.city} onChange={upd("city")} placeholder="City" /></F>
-          <F label="District"><input style={fld} value={data.district} onChange={upd("district")} placeholder="District" /></F>
+          <F label="City"><input className="his-field" value={data.city} onChange={upd("city")} placeholder="City" /></F>
+          <F label="District"><input className="his-field" value={data.district} onChange={upd("district")} placeholder="District" /></F>
           <F label="State">
-            <select style={sel} value={data.state} onChange={upd("state")}>
+            <select className="his-select" value={data.state} onChange={upd("state")}>
               <option value="">Select State</option>
               {["Maharashtra", "Delhi", "Karnataka", "Tamil Nadu", "Uttar Pradesh", "Gujarat",
                 "Rajasthan", "West Bengal", "Madhya Pradesh", "Andhra Pradesh", "Other"].map(s =>
                 <option key={s}>{s}</option>)}
             </select>
           </F>
-          <F label="Pincode"><input style={fld} value={data.pincode} onChange={upd("pincode")} placeholder="400001" /></F>
+          <F label="Pincode"><input className="his-field" value={data.pincode} onChange={upd("pincode")} placeholder="400001" /></F>
         </G4>
       </Section>
 
       <Section title="Identification Document" icon="pi-verified" color={C.green} nabh>
         <G3>
           <F label="ID Proof Type" required>
-            <select style={sel} value={data.idType} onChange={upd("idType")}>
+            <select className="his-select" value={data.idType} onChange={upd("idType")}>
               {["Aadhar Card", "PAN Card", "Passport", "Voter ID", "Driving Licence",
                 "Ration Card", "ABHA Card", "Other"].map(t => <option key={t}>{t}</option>)}
             </select>
           </F>
           <F label="ID Number" required>
-            <input style={fld} value={data.idNumber} onChange={upd("idNumber")} placeholder="Enter ID number" />
+            <input className="his-field" value={data.idNumber} onChange={upd("idNumber")} placeholder="Enter ID number" />
           </F>
           <F label="ABHA ID (Ayushman Bharat)">
-            <input style={fld} placeholder="14-digit ABHA number" />
+            <input className="his-field" placeholder="14-digit ABHA number" />
           </F>
         </G3>
       </Section>
@@ -790,19 +772,19 @@ function StepAdmission({ data, upd }) {
       <Section title="Admission Information" icon="pi-calendar-plus" color={C.accent} nabh defaultOpen>
         <G4>
           <F label="Admission Date" required>
-            <input type="date" style={fld} value={data.admissionDate} onChange={upd("admissionDate")} />
+            <input type="date" className="his-field" value={data.admissionDate} onChange={upd("admissionDate")} />
           </F>
           <F label="Admission Time" required>
-            <input type="time" style={fld} value={data.admissionTime} onChange={upd("admissionTime")} />
+            <input type="time" className="his-field" value={data.admissionTime} onChange={upd("admissionTime")} />
           </F>
           <F label="Admission Type" required>
-            <select style={sel} value={data.admissionType} onChange={upd("admissionType")}>
+            <select className="his-select" value={data.admissionType} onChange={upd("admissionType")}>
               {["Planned", "Emergency", "Transfer – Internal", "Transfer – External", "Day Care", "LAMA Re-admission"].map(t =>
                 <option key={t}>{t}</option>)}
             </select>
           </F>
           <F label="Source of Admission" required>
-            <select style={sel} value={data.sourceOfAdmission} onChange={upd("sourceOfAdmission")}>
+            <select className="his-select" value={data.sourceOfAdmission} onChange={upd("sourceOfAdmission")}>
               {["OPD Referral", "Emergency", "Direct Admission", "Inter-Hospital Transfer",
                 "ICU Step-Down", "Daycare to IPD", "Walk-In"].map(s => <option key={s}>{s}</option>)}
             </select>
@@ -813,7 +795,7 @@ function StepAdmission({ data, upd }) {
 
         <G3>
           <F label="Department / Speciality" required>
-            <select style={sel} value={selectedDeptId} onChange={e => {
+            <select className="his-select" value={selectedDeptId} onChange={e => {
               const deptId = e.target.value;
               const dept = departments.find(d => d._id === deptId);
               setSelectedDeptId(deptId);
@@ -825,7 +807,7 @@ function StepAdmission({ data, upd }) {
             </select>
           </F>
           <F label="Attending Doctor" required hint={doctorsLoading ? "Loading doctors..." : selectedDeptId && doctors.length === 0 ? "No doctors in this department" : ""}>
-            <select style={sel} value={selectedDoctorUserId} onChange={e => {
+            <select className="his-select" value={selectedDoctorUserId} onChange={e => {
               const uid = e.target.value;
               const doc = doctors.find(d => d._id === uid);
               const docName = doc ? (doc.fullName || `${doc.firstName || ""} ${doc.lastName || ""}`.trim()) : "";
@@ -842,7 +824,7 @@ function StepAdmission({ data, upd }) {
             </select>
           </F>
           <F label="Referring Doctor">
-            <input style={fld} value={data.referringDoctor} onChange={upd("referringDoctor")}
+            <input className="his-field" value={data.referringDoctor} onChange={upd("referringDoctor")}
               placeholder="Dr. Name (Referring)" />
           </F>
         </G3>
@@ -851,7 +833,7 @@ function StepAdmission({ data, upd }) {
       <Section title="Bed Allocation" icon="pi-table" color={C.teal} nabh>
         <G3>
           <F label="Ward" required>
-            <select style={sel} value={data.ward} onChange={upd("ward")}>
+            <select className="his-select" value={data.ward} onChange={upd("ward")}>
               <option value="">Select Ward</option>
               {["General Ward – Male", "General Ward – Female", "ICU", "CCU",
                 "Semi-Private", "Private", "Paediatric Ward", "Maternity Ward",
@@ -859,10 +841,10 @@ function StepAdmission({ data, upd }) {
             </select>
           </F>
           <F label="Room Number">
-            <input style={fld} value={data.room} onChange={upd("room")} placeholder="e.g. 201" />
+            <input className="his-field" value={data.room} onChange={upd("room")} placeholder="e.g. 201" />
           </F>
           <F label="Bed Number" required>
-            <input style={fld} value={data.bed} onChange={upd("bed")} placeholder="e.g. B-04" />
+            <input className="his-field" value={data.bed} onChange={upd("bed")} placeholder="e.g. B-04" />
           </F>
         </G3>
 
@@ -899,28 +881,28 @@ function StepAdmission({ data, upd }) {
       <Section title="Clinical Reason for Admission" icon="pi-file-edit" color={C.blue} nabh>
         <G2>
           <F label="Chief Complaint / Presenting Illness" required>
-            <textarea style={ta} value={data.chiefComplaint} onChange={upd("chiefComplaint")}
+            <textarea className="his-textarea" value={data.chiefComplaint} onChange={upd("chiefComplaint")}
               placeholder="Describe the main complaint and duration..." />
           </F>
           <F label="Provisional Diagnosis" required>
-            <textarea style={ta} value={data.provisionalDiagnosis} onChange={upd("provisionalDiagnosis")}
+            <textarea className="his-textarea" value={data.provisionalDiagnosis} onChange={upd("provisionalDiagnosis")}
               placeholder="Provisional diagnosis at time of admission..." />
           </F>
         </G2>
         <div style={{ height: 12 }} />
         <G3>
           <F label="ICD-10 Code">
-            <input style={fld} value={data.icd10Code} onChange={upd("icd10Code")} placeholder="e.g. J18.0" />
+            <input className="his-field" value={data.icd10Code} onChange={upd("icd10Code")} placeholder="e.g. J18.0" />
           </F>
           <F label="Expected Length of Stay">
             <div style={{ display: "flex", gap: 6 }}>
-              <input style={{ ...fld, width: "60%" }} value={data.expectedLOS} onChange={upd("expectedLOS")}
+              <input className="his-field" style={{ width: "60%" }} value={data.expectedLOS} onChange={upd("expectedLOS")}
                 type="number" placeholder="e.g. 5" />
-              <span style={{ ...fld, width: "40%", background: "#f8fafc", color: C.muted, textAlign: "center" }}>Days</span>
+              <span className="his-field" style={{ width: "40%", background: "#f8fafc", color: C.muted, textAlign: "center" }}>Days</span>
             </div>
           </F>
           <F label="Special Instructions">
-            <input style={fld} value={data.specialInstructions} onChange={upd("specialInstructions")}
+            <input className="his-field" value={data.specialInstructions} onChange={upd("specialInstructions")}
               placeholder="Any special notes..." />
           </F>
         </G3>
@@ -984,10 +966,10 @@ function StepVitals({ data, setData, calcBMI, upd }) {
             Blood Pressure (mmHg)
           </label>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <input style={{ ...fld, width: 100 }} value={data.bpSys} onChange={upd("bpSys")}
+            <input className="his-field" style={{ width: 100 }} value={data.bpSys} onChange={upd("bpSys")}
               placeholder="Sys" type="number" />
             <span style={{ fontSize: 18, color: C.muted, fontWeight: 700 }}>/</span>
-            <input style={{ ...fld, width: 100 }} value={data.bpDia} onChange={upd("bpDia")}
+            <input className="his-field" style={{ width: 100 }} value={data.bpDia} onChange={upd("bpDia")}
               placeholder="Dia" type="number" />
             <span style={{ fontSize: 12, color: C.muted }}>mmHg</span>
             {data.bpSys && data.bpDia && (
@@ -1002,27 +984,27 @@ function StepVitals({ data, setData, calcBMI, upd }) {
         <G4>
           <F label="Pulse Rate" hint="beats/min">
             <div style={{ display: "flex", gap: 6 }}>
-              <input style={fld} value={data.pulse} onChange={upd("pulse")} placeholder="72" type="number" />
+              <input className="his-field" value={data.pulse} onChange={upd("pulse")} placeholder="72" type="number" />
               {data.pulse && <StatusBadge label={parseInt(data.pulse) > 100 ? "Tachycardia" : parseInt(data.pulse) < 60 ? "Bradycardia" : "Normal"}
                 color={parseInt(data.pulse) > 100 || parseInt(data.pulse) < 60 ? C.amber : C.green} />}
             </div>
           </F>
           <F label="Temperature" hint="°F">
             <div style={{ display: "flex", gap: 6 }}>
-              <input style={fld} value={data.temp} onChange={upd("temp")} placeholder="98.6" type="number" step="0.1" />
+              <input className="his-field" value={data.temp} onChange={upd("temp")} placeholder="98.6" type="number" step="0.1" />
               {data.temp && <StatusBadge label={parseFloat(data.temp) > 99.5 ? "Fever" : "Normal"}
                 color={parseFloat(data.temp) > 99.5 ? C.red : C.green} />}
             </div>
           </F>
           <F label="SpO₂" hint="% oxygen saturation">
             <div style={{ display: "flex", gap: 6 }}>
-              <input style={fld} value={data.spo2} onChange={upd("spo2")} placeholder="98" type="number" />
+              <input className="his-field" value={data.spo2} onChange={upd("spo2")} placeholder="98" type="number" />
               {data.spo2 && <StatusBadge label={parseInt(data.spo2) < 94 ? "Low" : "Normal"}
                 color={parseInt(data.spo2) < 94 ? C.red : C.green} />}
             </div>
           </F>
           <F label="Respiratory Rate" hint="breaths/min">
-            <input style={fld} value={data.rr} onChange={upd("rr")} placeholder="16" type="number" />
+            <input className="his-field" value={data.rr} onChange={upd("rr")} placeholder="16" type="number" />
           </F>
         </G4>
 
@@ -1030,21 +1012,19 @@ function StepVitals({ data, setData, calcBMI, upd }) {
 
         <G4>
           <F label="Weight (kg)">
-            <input style={fld} value={data.weight} onChange={handleVital("weight")} placeholder="65.0" type="number" step="0.1" />
+            <input className="his-field" value={data.weight} onChange={handleVital("weight")} placeholder="65.0" type="number" step="0.1" />
           </F>
           <F label="Height (cm)">
-            <input style={fld} value={data.height} onChange={handleVital("height")} placeholder="170" type="number" />
+            <input className="his-field" value={data.height} onChange={handleVital("height")} placeholder="170" type="number" />
           </F>
           <F label="BMI">
-            <div style={{
-              ...fld, background: "#f8fafc", display: "flex", alignItems: "center", gap: 8,
-            }}>
+            <div className="his-field" style={{ background: "#f8fafc", display: "flex", alignItems: "center", gap: 8, }}>
               <span style={{ fontWeight: 700, color: bmiColor() }}>{data.bmi || "—"}</span>
               {data.bmi && <span style={{ fontSize: 10, color: bmiColor(), fontWeight: 600 }}>{bmiLabel()}</span>}
             </div>
           </F>
           <F label="GCS Score" hint="3–15">
-            <input style={fld} value={data.gcs} onChange={upd("gcs")} placeholder="15" type="number" min="3" max="15" />
+            <input className="his-field" value={data.gcs} onChange={upd("gcs")} placeholder="15" type="number" min="3" max="15" />
           </F>
         </G4>
 
@@ -1052,7 +1032,7 @@ function StepVitals({ data, setData, calcBMI, upd }) {
 
         <G3>
           <F label="Consciousness Level" required>
-            <select style={sel} value={data.consciousnessLevel} onChange={upd("consciousnessLevel")}>
+            <select className="his-select" value={data.consciousnessLevel} onChange={upd("consciousnessLevel")}>
               {["Alert", "Verbal Response", "Pain Response", "Unresponsive", "Sedated", "Confused"].map(c =>
                 <option key={c}>{c}</option>)}
             </select>
@@ -1073,7 +1053,7 @@ function StepVitals({ data, setData, calcBMI, upd }) {
             </div>
           </F>
           <F label="Pupil Reaction">
-            <select style={sel} value={data.pupilReaction} onChange={upd("pupilReaction")}>
+            <select className="his-select" value={data.pupilReaction} onChange={upd("pupilReaction")}>
               {["Equal & Reacting", "Unequal", "Non-Reacting", "Sluggish", "Not Assessed"].map(p =>
                 <option key={p}>{p}</option>)}
             </select>
@@ -1118,7 +1098,7 @@ function StepAllergies({ data, setData, upd }) {
                   onChange={toggle(item.key)} color={item.color} />
                 {data[item.key] && (
                   <div style={{ marginTop: 10 }}>
-                    <textarea style={{ ...ta, borderColor: item.color + "40", minHeight: 56 }}
+                    <textarea className="his-textarea" style={{ borderColor: item.color + "40", minHeight: 56 }}
                       value={data[item.detailKey]}
                       onChange={upd(item.detailKey)}
                       placeholder={item.placeholder} />
@@ -1139,7 +1119,7 @@ function StepAllergies({ data, setData, upd }) {
             </G2>
 
             <F label="Other Allergies / Additional Notes">
-              <textarea style={ta} value={data.allergyNotes} onChange={upd("allergyNotes")}
+              <textarea className="his-textarea" value={data.allergyNotes} onChange={upd("allergyNotes")}
                 placeholder="Any other allergies or relevant notes..." />
             </F>
           </div>
@@ -1188,7 +1168,7 @@ function StepPayment({ data, upd }) {
             <div style={{ fontWeight: 700, fontSize: 12, color: C.teal, marginBottom: 12 }}>TPA / Insurance Details</div>
             <G3>
               <F label="TPA / Insurance Company" required>
-                <select style={sel} value={data.tpaName} onChange={upd("tpaName")}>
+                <select className="his-select" value={data.tpaName} onChange={upd("tpaName")}>
                   <option value="">Select TPA</option>
                   {["Star Health", "HDFC ERGO", "United India", "National Insurance",
                     "New India Assurance", "Oriental Insurance", "Bajaj Allianz",
@@ -1197,16 +1177,16 @@ function StepPayment({ data, upd }) {
                 </select>
               </F>
               <F label="Policy Number" required>
-                <input style={fld} value={data.policyNumber} onChange={upd("policyNumber")} placeholder="Policy number" />
+                <input className="his-field" value={data.policyNumber} onChange={upd("policyNumber")} placeholder="Policy number" />
               </F>
               <F label="Policy Holder Name">
-                <input style={fld} value={data.policyHolder} onChange={upd("policyHolder")} placeholder="Name on policy" />
+                <input className="his-field" value={data.policyHolder} onChange={upd("policyHolder")} placeholder="Name on policy" />
               </F>
               <F label="Sum Insured (₹)">
-                <input style={fld} value={data.sumInsured} onChange={upd("sumInsured")} placeholder="500000" type="number" />
+                <input className="his-field" value={data.sumInsured} onChange={upd("sumInsured")} placeholder="500000" type="number" />
               </F>
               <F label="Co-Pay (%)" hint="Patient bears this % of bill">
-                <input style={fld} value={data.coPayPercent} onChange={upd("coPayPercent")} placeholder="0" type="number" />
+                <input className="his-field" value={data.coPayPercent} onChange={upd("coPayPercent")} placeholder="0" type="number" />
               </F>
             </G3>
           </div>
@@ -1217,10 +1197,10 @@ function StepPayment({ data, upd }) {
             <div style={{ fontWeight: 700, fontSize: 12, color: C.green, marginBottom: 12 }}>Corporate / CGHS Details</div>
             <G3>
               <F label="Company / Organisation" required>
-                <input style={fld} value={data.corporateName} onChange={upd("corporateName")} placeholder="Company name" />
+                <input className="his-field" value={data.corporateName} onChange={upd("corporateName")} placeholder="Company name" />
               </F>
               <F label="Employee ID" required>
-                <input style={fld} value={data.employeeId} onChange={upd("employeeId")} placeholder="EMP12345" />
+                <input className="his-field" value={data.employeeId} onChange={upd("employeeId")} placeholder="EMP12345" />
               </F>
             </G3>
           </div>
@@ -1231,7 +1211,7 @@ function StepPayment({ data, upd }) {
             <div style={{ fontWeight: 700, fontSize: 12, color: C.blue, marginBottom: 12 }}>Government Scheme Details</div>
             <G3>
               <F label="Scheme Name" required>
-                <select style={sel} value={data.govtSchemeName} onChange={upd("govtSchemeName")}>
+                <select className="his-select" value={data.govtSchemeName} onChange={upd("govtSchemeName")}>
                   <option value="">Select Scheme</option>
                   {["Ayushman Bharat PM-JAY", "CGHS", "ECHS", "Mahatma Phule Jan Arogya",
                     "Mukhyamantri Samagra Swasthya Bima", "ESI", "State Government Scheme", "Other"].map(s =>
@@ -1239,7 +1219,7 @@ function StepPayment({ data, upd }) {
                 </select>
               </F>
               <F label="Scheme Beneficiary ID" required>
-                <input style={fld} value={data.govtSchemeId} onChange={upd("govtSchemeId")} placeholder="Beneficiary ID" />
+                <input className="his-field" value={data.govtSchemeId} onChange={upd("govtSchemeId")} placeholder="Beneficiary ID" />
               </F>
             </G3>
           </div>
@@ -1248,15 +1228,15 @@ function StepPayment({ data, upd }) {
         <div style={{ height: 14 }} />
         <G3>
           <F label="Estimated Treatment Cost (₹)">
-            <input style={fld} value={data.estimatedCost} onChange={upd("estimatedCost")}
+            <input className="his-field" value={data.estimatedCost} onChange={upd("estimatedCost")}
               placeholder="Estimated amount" type="number" />
           </F>
           <F label="Advance Collected (₹)">
-            <input style={fld} value={data.advancePaid} onChange={upd("advancePaid")}
+            <input className="his-field" value={data.advancePaid} onChange={upd("advancePaid")}
               placeholder="Amount received" type="number" />
           </F>
           <F label="Receipt / Transaction Ref">
-            <input style={fld} placeholder="Receipt number" />
+            <input className="his-field" placeholder="Receipt number" />
           </F>
         </G3>
       </Section>
@@ -1295,10 +1275,10 @@ function StepMLC({ data, setData, upd }) {
             <div style={{ marginTop: 14 }}>
               <G3>
                 <F label="MLC Number" required>
-                  <input style={fld} value={data.mlcNumber} onChange={upd("mlcNumber")} placeholder="MLC/2025/XXXX" />
+                  <input className="his-field" value={data.mlcNumber} onChange={upd("mlcNumber")} placeholder="MLC/2025/XXXX" />
                 </F>
                 <F label="MLC Reason" required>
-                  <select style={sel} value={data.mlcReason} onChange={upd("mlcReason")}>
+                  <select className="his-select" value={data.mlcReason} onChange={upd("mlcReason")}>
                     <option value="">Select Reason</option>
                     {["Road Traffic Accident", "Assault / Violence", "Burns", "Poisoning",
                       "Alleged Rape / Sexual Assault", "Suicide Attempt", "Industrial Accident",
@@ -1307,21 +1287,21 @@ function StepMLC({ data, setData, upd }) {
                   </select>
                 </F>
                 <F label="FIR Number">
-                  <input style={fld} value={data.firNumber} onChange={upd("firNumber")} placeholder="FIR number if available" />
+                  <input className="his-field" value={data.firNumber} onChange={upd("firNumber")} placeholder="FIR number if available" />
                 </F>
               </G3>
               <div style={{ height: 12 }} />
               <G2>
                 <F label="Police Station">
-                  <input style={fld} value={data.policeStation} onChange={upd("policeStation")} placeholder="Police station name" />
+                  <input className="his-field" value={data.policeStation} onChange={upd("policeStation")} placeholder="Police station name" />
                 </F>
                 <F label="Police Officer Name / Badge">
-                  <input style={fld} value={data.policeOfficer} onChange={upd("policeOfficer")} placeholder="Officer name / badge no." />
+                  <input className="his-field" value={data.policeOfficer} onChange={upd("policeOfficer")} placeholder="Officer name / badge no." />
                 </F>
               </G2>
               <div style={{ height: 12 }} />
               <F label="MLC Notes / Circumstances">
-                <textarea style={ta} value={data.mlcNotes} onChange={upd("mlcNotes")}
+                <textarea className="his-textarea" value={data.mlcNotes} onChange={upd("mlcNotes")}
                   placeholder="Describe circumstances of the medico-legal case..." />
               </F>
             </div>
@@ -1360,17 +1340,17 @@ function StepAttendant({ data, setData, upd }) {
 
         <G3>
           <F label="Attendant Full Name" required>
-            <input style={fld} value={data.name} onChange={upd("name")} placeholder="Full name" />
+            <input className="his-field" value={data.name} onChange={upd("name")} placeholder="Full name" />
           </F>
           <F label="Relationship to Patient" required>
-            <select style={sel} value={data.relationship} onChange={upd("relationship")}>
+            <select className="his-select" value={data.relationship} onChange={upd("relationship")}>
               <option value="">Select</option>
               {["Spouse", "Father", "Mother", "Son", "Daughter", "Brother", "Sister",
                 "Friend", "Legal Guardian", "Employer", "Other"].map(r => <option key={r}>{r}</option>)}
             </select>
           </F>
           <F label="Contact Number" required>
-            <input style={fld} value={data.contactNumber} onChange={upd("contactNumber")}
+            <input className="his-field" value={data.contactNumber} onChange={upd("contactNumber")}
               placeholder="+91 XXXXX XXXXX" type="tel" />
           </F>
         </G3>
@@ -1378,7 +1358,7 @@ function StepAttendant({ data, setData, upd }) {
         <div style={{ height: 12 }} />
 
         <F label="Attendant Address">
-          <textarea style={{ ...ta, minHeight: 56 }} value={data.address} onChange={upd("address")}
+          <textarea className="his-textarea" style={{ minHeight: 56 }} value={data.address} onChange={upd("address")}
             placeholder="Address if different from patient..." />
         </F>
 
@@ -1386,13 +1366,13 @@ function StepAttendant({ data, setData, upd }) {
 
         <G3>
           <F label="ID Proof Type">
-            <select style={sel} value={data.idType} onChange={upd("idType")}>
+            <select className="his-select" value={data.idType} onChange={upd("idType")}>
               {["Aadhar Card", "PAN Card", "Passport", "Voter ID", "Driving Licence", "Other"].map(t =>
                 <option key={t}>{t}</option>)}
             </select>
           </F>
           <F label="ID Number">
-            <input style={fld} value={data.idNumber} onChange={upd("idNumber")} placeholder="ID number" />
+            <input className="his-field" value={data.idNumber} onChange={upd("idNumber")} placeholder="ID number" />
           </F>
           <F label="Legal Guardian Status">
             <div style={{ marginTop: 6 }}>
@@ -1428,7 +1408,7 @@ function StepOrders({ data, setData, upd }) {
       <Section title="Diet Orders" icon="pi-apple" color={C.green} nabh defaultOpen>
         <G2>
           <F label="Diet Type" required>
-            <select style={sel} value={data.diet} onChange={upd("diet")}>
+            <select className="his-select" value={data.diet} onChange={upd("diet")}>
               {["Normal Hospital Diet", "Soft Diet", "Liquid Diet", "Clear Liquid", "NPO (Nothing by Mouth)",
                 "Diabetic Diet", "Low Sodium", "Low Fat", "High Protein", "Renal Diet",
                 "Cardiac Diet", "Tube Feeding", "TPN (Total Parenteral Nutrition)", "Other"].map(d =>
@@ -1436,7 +1416,7 @@ function StepOrders({ data, setData, upd }) {
             </select>
           </F>
           <F label="Diet Notes / Special Instructions">
-            <textarea style={{ ...ta, minHeight: 56 }} value={data.dietNotes} onChange={upd("dietNotes")}
+            <textarea className="his-textarea" style={{ minHeight: 56 }} value={data.dietNotes} onChange={upd("dietNotes")}
               placeholder="Specific dietary instructions, preferences, restrictions..." />
           </F>
         </G2>
@@ -1445,7 +1425,7 @@ function StepOrders({ data, setData, upd }) {
       <Section title="Activity & Mobility Orders" icon="pi-walking" color={C.blue} nabh>
         <G2>
           <F label="Activity Level" required>
-            <select style={sel} value={data.activity} onChange={upd("activity")}>
+            <select className="his-select" value={data.activity} onChange={upd("activity")}>
               {["Bed Rest", "Bed Rest with Bathroom Privileges", "Chair Rest",
                 "Ambulate with Assistance", "Ambulate Independently",
                 "No Restrictions", "Physical Therapy Required"].map(a =>
@@ -1453,7 +1433,7 @@ function StepOrders({ data, setData, upd }) {
             </select>
           </F>
           <F label="Activity Notes">
-            <textarea style={{ ...ta, minHeight: 56 }} value={data.activityNotes} onChange={upd("activityNotes")}
+            <textarea className="his-textarea" style={{ minHeight: 56 }} value={data.activityNotes} onChange={upd("activityNotes")}
               placeholder="Additional activity instructions..." />
           </F>
         </G2>
@@ -1462,7 +1442,7 @@ function StepOrders({ data, setData, upd }) {
       <Section title="Isolation Precautions" icon="pi-lock" color={C.amber} nabh>
         <G3>
           <F label="Isolation Type">
-            <select style={sel} value={data.isolation} onChange={upd("isolation")}>
+            <select className="his-select" value={data.isolation} onChange={upd("isolation")}>
               {["None", "Standard Precautions", "Contact Precautions", "Droplet Precautions",
                 "Airborne Precautions", "Reverse / Protective Isolation", "Strict Isolation"].map(i =>
                 <option key={i}>{i}</option>)}
@@ -1470,7 +1450,7 @@ function StepOrders({ data, setData, upd }) {
           </F>
           {data.isolation !== "None" && (
             <F label="Reason for Isolation">
-              <input style={fld} value={data.isolationReason} onChange={upd("isolationReason")}
+              <input className="his-field" value={data.isolationReason} onChange={upd("isolationReason")}
                 placeholder="Reason / diagnosis requiring isolation" />
             </F>
           )}
@@ -1480,12 +1460,12 @@ function StepOrders({ data, setData, upd }) {
       <Section title="Risk Assessment" icon="pi-exclamation-circle" color={C.red} nabh>
         <G3>
           <F label="Fall Risk Assessment">
-            <select style={sel} value={data.fallRisk} onChange={upd("fallRisk")}>
+            <select className="his-select" value={data.fallRisk} onChange={upd("fallRisk")}>
               {["Low", "Medium", "High"].map(r => <option key={r}>{r}</option>)}
             </select>
           </F>
           <F label="Pressure Ulcer Risk (Braden)">
-            <select style={sel} value={data.pressureUlcerRisk} onChange={upd("pressureUlcerRisk")}>
+            <select className="his-select" value={data.pressureUlcerRisk} onChange={upd("pressureUlcerRisk")}>
               {["Low (19–23)", "Mild Risk (15–18)", "Moderate Risk (13–14)",
                 "High Risk (10–12)", "Severe Risk (≤9)"].map(r => <option key={r}>{r}</option>)}
             </select>
@@ -1579,19 +1559,19 @@ function StepConsents({ data, setData, upd }) {
       <Section title="Witness Details" icon="pi-user-edit" color={C.teal}>
         <G2>
           <F label="Witness Name">
-            <input style={fld} value={data.witnessName} onChange={upd("witnessName")} placeholder="Witness full name" />
+            <input className="his-field" value={data.witnessName} onChange={upd("witnessName")} placeholder="Witness full name" />
           </F>
           <F label="Witness Relationship">
-            <input style={fld} value={data.witnessRelation} onChange={upd("witnessRelation")} placeholder="e.g. Nurse, Staff" />
+            <input className="his-field" value={data.witnessRelation} onChange={upd("witnessRelation")} placeholder="e.g. Nurse, Staff" />
           </F>
         </G2>
         <div style={{ height: 12 }} />
         <G2>
           <F label="General Consent Date">
-            <input type="date" style={fld} value={data.generalConsentDate} onChange={upd("generalConsentDate")} />
+            <input type="date" className="his-field" value={data.generalConsentDate} onChange={upd("generalConsentDate")} />
           </F>
           <F label="Consent Obtained By">
-            <input style={fld} value={data.generalConsentBy} onChange={upd("generalConsentBy")} placeholder="Staff name / ID" />
+            <input className="his-field" value={data.generalConsentBy} onChange={upd("generalConsentBy")} placeholder="Staff name / ID" />
           </F>
         </G2>
       </Section>
@@ -1609,10 +1589,10 @@ function StepNursing({ data, setData, upd }) {
       <Section title="Nursing Admission Assessment" icon="pi-pencil" color="#db2777" nabh defaultOpen>
         <G3>
           <F label="Admitting Nurse Name" required>
-            <input style={fld} value={data.nurseName} onChange={upd("nurseName")} placeholder="Nurse name" />
+            <input className="his-field" value={data.nurseName} onChange={upd("nurseName")} placeholder="Nurse name" />
           </F>
           <F label="Nurse Employee ID">
-            <input style={fld} value={data.nurseId} onChange={upd("nurseId")} placeholder="EMP ID" />
+            <input className="his-field" value={data.nurseId} onChange={upd("nurseId")} placeholder="EMP ID" />
           </F>
         </G3>
 
@@ -1635,7 +1615,7 @@ function StepNursing({ data, setData, upd }) {
               }}>
                 <CheckRow label={item.label} checked={data[item.key]} onChange={toggle(item.key)} color="#db2777" />
                 {item.detailKey && data[item.key] && (
-                  <input style={{ ...fld, marginTop: 8 }} value={data[item.detailKey]}
+                  <input className="his-field" style={{ marginTop: 8 }} value={data[item.detailKey]}
                     onChange={upd(item.detailKey)} placeholder={item.placeholder} />
                 )}
               </div>
@@ -1654,14 +1634,14 @@ function StepNursing({ data, setData, upd }) {
                 onChange={v => setData(p => ({ ...p, skinIntact: v }))}
               />
               {!data.skinIntact && (
-                <textarea style={{ ...ta, marginTop: 8, minHeight: 56 }}
+                <textarea className="his-textarea" style={{ marginTop: 8, minHeight: 56 }}
                   value={data.skinNotes} onChange={upd("skinNotes")}
                   placeholder="Describe skin condition, wounds, pressure injuries..." />
               )}
             </div>
           </F>
           <F label="Patient Belongings / Valuables">
-            <textarea style={{ ...ta, minHeight: 56 }} value={data.personalBelongings} onChange={upd("personalBelongings")}
+            <textarea className="his-textarea" style={{ minHeight: 56 }} value={data.personalBelongings} onChange={upd("personalBelongings")}
               placeholder="List items: e.g. mobile phone, jewellery, spectacles, wallet..." />
           </F>
         </G2>
@@ -1676,7 +1656,7 @@ function StepNursing({ data, setData, upd }) {
 
         <div style={{ height: 12 }} />
         <F label="Nursing Admission Note" required>
-          <textarea style={{ ...ta, minHeight: 100 }} value={data.nursingAdmissionNote} onChange={upd("nursingAdmissionNote")}
+          <textarea className="his-textarea" style={{ minHeight: 100 }} value={data.nursingAdmissionNote} onChange={upd("nursingAdmissionNote")}
             placeholder="Brief nursing admission note — condition on arrival, significant observations, immediate care given..." />
         </F>
       </Section>

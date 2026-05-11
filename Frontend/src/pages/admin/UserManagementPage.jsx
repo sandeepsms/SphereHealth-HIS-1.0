@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import "../../Components/clinical/clinical-forms.css";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 import { toast } from "react-toastify";
@@ -14,12 +15,6 @@ const C = {
   teal: "#0d9488", tealL: "#f0fdfa",
   purple: "#7c3aed", purpleL: "#f5f3ff",
   slate: "#1e293b",
-};
-
-const fld = {
-  padding: "8px 11px", border: `1.5px solid ${C.border}`, borderRadius: 8,
-  fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: C.text,
-  outline: "none", background: "white", width: "100%", boxSizing: "border-box",
 };
 
 const ROLES = [
@@ -274,10 +269,10 @@ export default function UserManagementPage() {
               transform: "translateY(-50%)", fontSize: 13, color: C.muted }} />
             <input value={search} onChange={e => setSearch(e.target.value)}
               placeholder="Search by name, email, employee ID…"
-              style={{ ...fld, paddingLeft: 32 }} />
+              className="his-field" style={{ paddingLeft: 32 }} />
           </div>
           <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)}
-            style={{ ...fld, maxWidth: 180 }}>
+            className="his-field" style={{ maxWidth: 180 }}>
             <option value="All">All Roles</option>
             {ROLES.map(r => <option key={r}>{r}</option>)}
           </select>
@@ -421,35 +416,35 @@ export default function UserManagementPage() {
         >
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
             <Field label="First Name" required>
-              <input value={form.firstName} onChange={setF("firstName")} placeholder="First name" style={fld} />
+              <input value={form.firstName} onChange={setF("firstName")} placeholder="First name" className="his-field" />
             </Field>
             <Field label="Last Name">
-              <input value={form.lastName} onChange={setF("lastName")} placeholder="Last name" style={fld} />
+              <input value={form.lastName} onChange={setF("lastName")} placeholder="Last name" className="his-field" />
             </Field>
             <Field label="Email" required>
               <input type="email" value={form.email} onChange={setF("email")}
-                placeholder="staff@hospital.com" style={fld} />
+                placeholder="staff@hospital.com" className="his-field" />
             </Field>
             <Field label="Phone" required>
-              <input value={form.phone} onChange={setF("phone")} placeholder="10-digit mobile" style={fld} />
+              <input value={form.phone} onChange={setF("phone")} placeholder="10-digit mobile" className="his-field" />
             </Field>
             <Field label="Employee ID">
               <input value={form.employeeId} onChange={setF("employeeId")}
-                placeholder="e.g. EMP001 (auto if blank)" style={fld} />
+                placeholder="e.g. EMP001 (auto if blank)" className="his-field" />
             </Field>
             <Field label="Gender">
-              <select value={form.gender} onChange={setF("gender")} style={fld}>
+              <select value={form.gender} onChange={setF("gender")} className="his-field">
                 {["Male", "Female", "Other"].map(g => <option key={g}>{g}</option>)}
               </select>
             </Field>
             <Field label="Role" required>
-              <select value={form.role} onChange={setF("role")} style={fld}>
+              <select value={form.role} onChange={setF("role")} className="his-field">
                 {ROLES.map(r => <option key={r}>{r}</option>)}
               </select>
             </Field>
             <Field label="Department">
               <input value={form.department} onChange={setF("department")}
-                placeholder="Department name" style={fld} />
+                placeholder="Department name" className="his-field" />
             </Field>
           </div>
 
@@ -458,7 +453,7 @@ export default function UserManagementPage() {
               <div style={{ position: "relative" }}>
                 <input type={showPwd ? "text" : "password"} value={form.password}
                   onChange={setF("password")} placeholder="Minimum 6 characters"
-                  style={{ ...fld, paddingRight: 36 }} />
+                  className="his-field" style={{ paddingRight: 36 }} />
                 <button onClick={() => setShowPwd(p => !p)} type="button"
                   style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)",
                     background: "none", border: "none", cursor: "pointer", color: C.muted }}>
@@ -519,7 +514,7 @@ export default function UserManagementPage() {
                 <input type={showPwd ? "text" : "password"} value={newPwd}
                   onChange={e => setNewPwd(e.target.value)}
                   placeholder="Enter new password (min 6 characters)"
-                  style={{ ...fld, paddingRight: 36 }} autoFocus />
+                  className="his-field" style={{ paddingRight: 36 }} autoFocus />
                 <button onClick={() => setShowPwd(p => !p)} type="button"
                   style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)",
                     background: "none", border: "none", cursor: "pointer", color: C.muted }}>

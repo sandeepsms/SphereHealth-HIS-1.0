@@ -28,31 +28,6 @@ const C = {
   pink: "#be185d", pinkL: "#fdf2f8",
 };
 
-const fld = {
-  padding: "9px 12px",
-  border: "1.5px solid #e2e8f0",
-  borderRadius: 8,
-  fontFamily: "'DM Sans',sans-serif",
-  fontSize: 13,
-  color: "#0f172a",
-  outline: "none",
-  background: "white",
-  width: "100%",
-  boxSizing: "border-box",
-};
-
-const sel = { ...fld, cursor: "pointer" };
-
-const lbl = {
-  display: "block",
-  fontSize: 11,
-  fontWeight: 700,
-  color: "#64748b",
-  textTransform: "uppercase",
-  letterSpacing: ".6px",
-  marginBottom: 5,
-};
-
 // ─── Status config ─────────────────────────────────────────────────────────────
 const STATUS_CFG = {
   Waiting:      { bg: C.amberL,  color: C.amber,  dot: "#f59e0b",  border: C.amberB },
@@ -372,7 +347,7 @@ export default function NurseOPDQueuePage() {
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Search by name, UHID, or token…"
-            style={{ ...fld, paddingLeft: 34 }}
+            className="his-field" style={{ paddingLeft: 34 }}
           />
         </div>
 
@@ -381,7 +356,7 @@ export default function NurseOPDQueuePage() {
           <select
             value={filterDept || ""}
             onChange={e => setFilterDept(e.target.value || null)}
-            style={sel}
+            className="his-select"
           >
             {departments.map(d => (
               <option key={String(d.value)} value={d.value || ""}>{d.label}</option>
@@ -394,7 +369,7 @@ export default function NurseOPDQueuePage() {
           <select
             value={filterVitals || ""}
             onChange={e => setFilterVitals(e.target.value || null)}
-            style={sel}
+            className="his-select"
           >
             <option value="">All Vitals</option>
             <option value="Pending">Vitals Pending</option>
@@ -530,16 +505,16 @@ export default function NurseOPDQueuePage() {
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                   <div>
-                    <label style={lbl}>Chief Complaint *</label>
+                    <label className="his-label">Chief Complaint *</label>
                     <input value={vitals.chiefComplaint} onChange={e => vSet("chiefComplaint", e.target.value)}
                       placeholder="e.g. Fever, cough, chest pain…"
-                      style={{ ...fld, borderColor: vitals.chiefComplaint ? "#86efac" : "#fcd34d" }} />
+                      className="his-field" style={{ borderColor: vitals.chiefComplaint ? "#86efac" : "#fcd34d" }} />
                   </div>
                   <div>
-                    <label style={lbl}>Known Allergies</label>
+                    <label className="his-label">Known Allergies</label>
                     <input value={vitals.allergyHistory} onChange={e => vSet("allergyHistory", e.target.value)}
                       placeholder="e.g. Penicillin, Sulfa, NKDA"
-                      style={fld} />
+                      className="his-field" />
                   </div>
                 </div>
               </div>
@@ -554,12 +529,12 @@ export default function NurseOPDQueuePage() {
                 <VitalInputCustom label="Height (cm)" value={vitals.height} onChange={v => vSet("height", v)} placeholder="e.g. 170" />
                 <VitalInputCustom label="Temperature (°F)" value={vitals.temperature} onChange={v => vSet("temperature", v)} placeholder="e.g. 98.6" />
                 <div>
-                  <label style={lbl}>Blood Pressure</label>
+                  <label className="his-label">Blood Pressure</label>
                   <input
                     value={vitals.bloodPressure}
                     onChange={e => vSet("bloodPressure", e.target.value)}
                     placeholder="120/80"
-                    style={fld}
+                    className="his-field"
                   />
                 </div>
                 <VitalInputCustom label="Pulse (bpm)" value={vitals.pulse} onChange={v => vSet("pulse", v)} placeholder="e.g. 72" />
@@ -575,7 +550,7 @@ export default function NurseOPDQueuePage() {
                     padding: "12px 16px",
                     display: "flex", flexDirection: "column", justifyContent: "center",
                   }}>
-                    <label style={{ ...lbl, color: C.green }}>BMI (calculated)</label>
+                    <label className="his-label" style={{ color: C.green }}>BMI (calculated)</label>
                     <div style={{ fontSize: 28, fontWeight: 800, color: C.green, lineHeight: 1 }}>{bmi}</div>
                     <div style={{ fontSize: 11, color: C.green, opacity: .8, marginTop: 3 }}>
                       {bmi < 18.5 ? "Underweight" : bmi < 25 ? "Normal" : bmi < 30 ? "Overweight" : "Obese"}
@@ -633,13 +608,13 @@ export default function NurseOPDQueuePage() {
 function VitalInputCustom({ label, value, onChange, placeholder }) {
   return (
     <div>
-      <label style={lbl}>{label}</label>
+      <label className="his-label">{label}</label>
       <input
         type="number"
         value={value === null || value === undefined ? "" : value}
         onChange={e => onChange(e.target.value === "" ? null : Number(e.target.value))}
         placeholder={placeholder}
-        style={fld}
+        className="his-field"
       />
     </div>
   );

@@ -13,6 +13,7 @@ import { useAutoSave } from "../../hooks/useAutoSave";
 import { useDigitalSignature } from "../../hooks/useDigitalSignature";
 import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
 import SignaturePad from "../../Components/signature/SignaturePad";
+import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 
 const API = `${API_ENDPOINTS.BASE}/consent-forms`;
 
@@ -405,13 +406,6 @@ const C = {
   green: "#16a34a", red: "#dc2626", amber: "#d97706", blue: "#1e40af",
 };
 
-const fld = {
-  padding: "8px 11px", border: `1.5px solid ${C.border}`, borderRadius: 8,
-  fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: C.text,
-  outline: "none", background: "white", width: "100%", boxSizing: "border-box",
-};
-const ta = { ...fld, resize: "vertical", minHeight: 80 };
-
 function F({ label, required, children }) {
   return (
     <div>
@@ -493,7 +487,7 @@ function EditableList({ items, setItems, placeholder, color }) {
             display: "flex", alignItems: "center", justifyContent: "center",
             fontSize: 10, fontWeight: 700, color, flexShrink: 0 }}>{i + 1}</span>
           <input
-            style={{ ...fld, flex: 1 }}
+            className="his-field" style={{ flex: 1 }}
             value={item}
             onChange={e => setItems(p => p.map((x, idx) => idx === i ? e.target.value : x))}
             placeholder={placeholder}
@@ -718,7 +712,7 @@ function ConsentPrintView({ data, type, onClose }) {
 /* ══════════════════════════════════════
    MAIN PAGE
 ══════════════════════════════════════ */
-export default function ConsentFormPage() {
+function ConsentFormPageContent({ selectedPatient }) {
   const { user } = useAuth();
 
   // Views: "catalogue" | "form" | "list"
@@ -760,6 +754,23 @@ export default function ConsentFormPage() {
 
   const token = localStorage.getItem("his_token");
   const headers = { Authorization: `Bearer ${token}` };
+
+  // Auto-fill when patient selected from AdmittedPatientPanel
+  useEffect(() => {
+    if (!selectedPatient) return;
+    const found = selectedPatient;
+    setUhid(found.UHID || "");
+    setPatInfo(found);
+    setConsentData(p => ({
+      ...p,
+      UHID: found.UHID || "",
+      patientName: found.patientName || found.patientId?.fullName || "",
+      ipdNo: found.admissionNumber || "",
+      wardBed: `${found.wardId?.wardName || found.wardName || ""} / ${found.bedNumber || ""}`.replace(/^\s*\/\s*$/, ""),
+      admissionDate: found.admissionDate ? new Date(found.admissionDate).toLocaleDateString("en-IN") : "",
+    }));
+    toast.success(`Patient loaded: ${found.patientName || found.UHID}`);
+  }, [selectedPatient?._id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleTypeSelect = (type) => {
     setSelectedType(type);
@@ -962,7 +973,7 @@ export default function ConsentFormPage() {
             <input
               value={uhid} onChange={e => setUhid(e.target.value)}
               onKeyDown={e => e.key === "Enter" && (searchPatient(), fetchSavedForms())}
-              style={{ ...fld, flex: 1, minWidth: 220 }} placeholder="Enter UHID / Admission No. to load patient…"
+              className="his-field" style={{ flex: 1, minWidth: 220 }} placeholder="Enter UHID / Admission No. to load patient…"
             />
             <button onClick={() => { searchPatient(); fetchSavedForms(); }} disabled={searching} style={{
               padding: "8px 16px", borderRadius: 8, border: "none",
@@ -1078,7 +1089,7 @@ export default function ConsentFormPage() {
             <G4>
               <F label="UHID" required>
                 <div style={{ display: "flex", gap: 6 }}>
-                  <input style={{ ...fld, flex: 1 }} value={consentData.UHID}
+                  <input className="his-field" style={{ flex: 1 }} value={consentData.UHID}
                     onChange={upd("UHID")} placeholder="UHID" />
                   <button onClick={searchPatient} style={{
                     padding: "8px 10px", borderRadius: 7, border: "none",
@@ -1089,28 +1100,28 @@ export default function ConsentFormPage() {
                 </div>
               </F>
               <F label="Patient Name" required>
-                <input style={fld} value={consentData.patientName} onChange={upd("patientName")} />
+                <input className="his-field" value={consentData.patientName} onChange={upd("patientName")} />
               </F>
               <F label="Age">
-                <input style={fld} value={consentData.age} onChange={upd("age")} placeholder="e.g. 45 years" />
+                <input className="his-field" value={consentData.age} onChange={upd("age")} placeholder="e.g. 45 years" />
               </F>
               <F label="Gender">
-                <select style={fld} value={consentData.gender} onChange={upd("gender")}>
+                <select className="his-field" value={consentData.gender} onChange={upd("gender")}>
                   <option value="">Select</option>
                   {["Male","Female","Other"].map(g => <option key={g}>{g}</option>)}
                 </select>
               </F>
               <F label="IPD / OPD No.">
-                <input style={fld} value={consentData.ipdNo} onChange={upd("ipdNo")} />
+                <input className="his-field" value={consentData.ipdNo} onChange={upd("ipdNo")} />
               </F>
               <F label="Ward / Bed">
-                <input style={fld} value={consentData.wardBed} onChange={upd("wardBed")} />
+                <input className="his-field" value={consentData.wardBed} onChange={upd("wardBed")} />
               </F>
               <F label="Admission Date">
-                <input style={fld} value={consentData.admissionDate} onChange={upd("admissionDate")} />
+                <input className="his-field" value={consentData.admissionDate} onChange={upd("admissionDate")} />
               </F>
               <F label="Department">
-                <input style={fld} value={consentData.department} onChange={upd("department")} placeholder="e.g. Surgery" />
+                <input className="his-field" value={consentData.department} onChange={upd("department")} placeholder="e.g. Surgery" />
               </F>
             </G4>
           </Section>
@@ -1118,12 +1129,12 @@ export default function ConsentFormPage() {
           {/* Consent Title & Body */}
           <Section title="Consent Content" icon="pi-file-edit" color={selectedType.color}>
             <F label="Consent Title" required>
-              <input style={{ ...fld, fontWeight: 700, fontSize: 14 }}
+              <input className="his-field" style={{ fontWeight: 700, fontSize: 14 }}
                 value={consentData.consentTitle} onChange={upd("consentTitle")} />
             </F>
             <div style={{ marginTop: 12 }}>
               <F label="Consent Body / Procedure Description">
-                <textarea style={{ ...ta, minHeight: 120, lineHeight: 1.7 }}
+                <textarea className="his-textarea" style={{ minHeight: 120, lineHeight: 1.7 }}
                   value={body} onChange={e => setBody(e.target.value)} />
               </F>
             </div>
@@ -1153,7 +1164,7 @@ export default function ConsentFormPage() {
           <Section title="Communication & Language" icon="pi-comments" color="#0891b2">
             <G3>
               <F label="Language of Explanation" required>
-                <select style={fld} value={consentData.language} onChange={upd("language")}>
+                <select className="his-field" value={consentData.language} onChange={upd("language")}>
                   {["Hindi","English","Marathi","Bengali","Gujarati","Tamil","Telugu","Kannada","Malayalam","Punjabi","Odia","Other"].map(l => (
                     <option key={l}>{l}</option>
                   ))}
@@ -1168,7 +1179,7 @@ export default function ConsentFormPage() {
               </F>
               {consentData.interpreterRequired && (
                 <F label="Interpreter Name">
-                  <input style={fld} value={consentData.interpreterName} onChange={upd("interpreterName")} />
+                  <input className="his-field" value={consentData.interpreterName} onChange={upd("interpreterName")} />
                 </F>
               )}
             </G3>
@@ -1178,7 +1189,7 @@ export default function ConsentFormPage() {
           <Section title="Consent Given By" icon="pi-user-edit" color="#7c3aed">
             <G3>
               <F label="Consent Given By" required>
-                <select style={fld} value={consentData.consentBy} onChange={upd("consentBy")}>
+                <select className="his-field" value={consentData.consentBy} onChange={upd("consentBy")}>
                   <option value="SELF">Patient (Self)</option>
                   <option value="GUARDIAN">Parent / Guardian</option>
                   <option value="SPOUSE">Spouse</option>
@@ -1189,13 +1200,13 @@ export default function ConsentFormPage() {
               {consentData.consentBy !== "SELF" && (
                 <>
                   <F label="Guardian / Relative Name" required>
-                    <input style={fld} value={consentData.guardianName} onChange={upd("guardianName")} />
+                    <input className="his-field" value={consentData.guardianName} onChange={upd("guardianName")} />
                   </F>
                   <F label="Relation to Patient">
-                    <input style={fld} value={consentData.guardianRelation} onChange={upd("guardianRelation")} />
+                    <input className="his-field" value={consentData.guardianRelation} onChange={upd("guardianRelation")} />
                   </F>
                   <F label="Contact Number">
-                    <input style={fld} value={consentData.guardianContact} onChange={upd("guardianContact")} />
+                    <input className="his-field" value={consentData.guardianContact} onChange={upd("guardianContact")} />
                   </F>
                 </>
               )}
@@ -1206,16 +1217,16 @@ export default function ConsentFormPage() {
           <Section title="Witness & Doctor Details" icon="pi-shield" color="#64748b">
             <G4>
               <F label="Witness Name">
-                <input style={fld} value={consentData.witnessName} onChange={upd("witnessName")} />
+                <input className="his-field" value={consentData.witnessName} onChange={upd("witnessName")} />
               </F>
               <F label="Witness Relation">
-                <input style={fld} value={consentData.witnessRelation} onChange={upd("witnessRelation")} />
+                <input className="his-field" value={consentData.witnessRelation} onChange={upd("witnessRelation")} />
               </F>
               <F label="Explained By (Doctor)" required>
-                <input style={fld} value={consentData.doctorName} onChange={upd("doctorName")} />
+                <input className="his-field" value={consentData.doctorName} onChange={upd("doctorName")} />
               </F>
               <F label="Doctor Reg. No.">
-                <input style={fld} value={consentData.doctorRegNo} onChange={upd("doctorRegNo")} />
+                <input className="his-field" value={consentData.doctorRegNo} onChange={upd("doctorRegNo")} />
               </F>
             </G4>
           </Section>
@@ -1223,7 +1234,7 @@ export default function ConsentFormPage() {
           {/* Additional Notes */}
           <Section title="Additional Notes" icon="pi-pencil" color={C.muted} defaultOpen={false}>
             <F label="Additional Notes / Special Instructions">
-              <textarea style={ta} value={consentData.additionalNotes} onChange={upd("additionalNotes")}
+              <textarea className="his-textarea" value={consentData.additionalNotes} onChange={upd("additionalNotes")}
                 placeholder="Any additional clinical information or special instructions…" />
             </F>
           </Section>
@@ -1255,5 +1266,14 @@ export default function ConsentFormPage() {
         />
       )}
     </div>
+  );
+}
+
+export default function ConsentFormPage() {
+  const [sel, setSel] = useState(null);
+  return (
+    <ClinicalLayout onPatientSelect={setSel} selectedId={sel?._id} pageType="consent">
+      <ConsentFormPageContent selectedPatient={sel} />
+    </ClinicalLayout>
   );
 }

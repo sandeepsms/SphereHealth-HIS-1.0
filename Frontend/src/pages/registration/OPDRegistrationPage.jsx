@@ -38,22 +38,6 @@ const C = {
 
 const FF = "'DM Sans', sans-serif";
 
-const fld = {
-  padding: "8px 11px",
-  border: `1.5px solid ${C.border}`,
-  borderRadius: 8,
-  fontFamily: FF,
-  fontSize: 13,
-  color: C.text,
-  outline: "none",
-  background: "white",
-  width: "100%",
-  boxSizing: "border-box",
-  transition: "border-color .15s",
-};
-const ta = { ...fld, resize: "vertical", minHeight: 72 };
-const sel = { ...fld, cursor: "pointer", appearance: "auto" };
-
 const G2 = ({ children, gap = 14 }) => (
   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap }}>{children}</div>
 );
@@ -773,28 +757,28 @@ function FormPhase({
           <G2 gap={14}>
             <div style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: 10 }}>
               <F label="Title" required>
-                <select value={np.title} onChange={e => npSet("title", e.target.value)} style={sel}>
+                <select value={np.title} onChange={e => npSet("title", e.target.value)} className="his-select">
                   {["Mr.", "Mrs.", "Miss", "Master", "Baby", "Dr.", "Prof."].map(t => <option key={t}>{t}</option>)}
                 </select>
               </F>
               <F label="Full Name" required hint="As per ID proof">
                 <input value={np.fullName} onChange={e => npSet("fullName", e.target.value)}
-                  placeholder="Patient's full legal name" style={fld} />
+                  placeholder="Patient's full legal name" className="his-field" />
               </F>
             </div>
             <G3>
               <F label="Gender" required>
-                <select value={np.gender} onChange={e => npSet("gender", e.target.value)} style={sel}>
+                <select value={np.gender} onChange={e => npSet("gender", e.target.value)} className="his-select">
                   <option value="">Select…</option>
                   {GENDER_OPTS.map(g => <option key={g}>{g}</option>)}
                 </select>
               </F>
               <F label="Date of Birth" required hint={np.dateOfBirth ? `Age: ${calcAge(np.dateOfBirth)} yrs` : ""}>
                 <input type="date" value={np.dateOfBirth} max={todayISO()}
-                  onChange={e => npSet("dateOfBirth", e.target.value)} style={fld} />
+                  onChange={e => npSet("dateOfBirth", e.target.value)} className="his-field" />
               </F>
               <F label="Marital Status">
-                <select value={np.maritalStatus} onChange={e => npSet("maritalStatus", e.target.value)} style={sel}>
+                <select value={np.maritalStatus} onChange={e => npSet("maritalStatus", e.target.value)} className="his-select">
                   <option value="">Select…</option>
                   {MARITAL_OPTS.map(m => <option key={m}>{m}</option>)}
                 </select>
@@ -805,35 +789,35 @@ function FormPhase({
             <G3>
               <F label="Mobile Number" required>
                 <input value={np.contactNumber} onChange={e => npSet("contactNumber", e.target.value)}
-                  placeholder="10-digit mobile" maxLength={10} style={fld} />
+                  placeholder="10-digit mobile" maxLength={10} className="his-field" />
               </F>
               <F label="Alt. Contact">
                 <input value={np.altContact} onChange={e => npSet("altContact", e.target.value)}
-                  placeholder="Secondary number" style={fld} />
+                  placeholder="Secondary number" className="his-field" />
               </F>
               <F label="Email Address">
                 <input type="email" value={np.email} onChange={e => npSet("email", e.target.value)}
-                  placeholder="patient@email.com" style={fld} />
+                  placeholder="patient@email.com" className="his-field" />
               </F>
             </G3>
           </div>
           <div style={{ marginTop: 12 }}>
             <G3>
               <F label="Blood Group">
-                <select value={np.bloodGroup} onChange={e => npSet("bloodGroup", e.target.value)} style={sel}>
+                <select value={np.bloodGroup} onChange={e => npSet("bloodGroup", e.target.value)} className="his-select">
                   <option value="">Unknown</option>
                   {BLOOD_OPTS.map(b => <option key={b}>{b}</option>)}
                 </select>
               </F>
               <F label="ID Proof Type">
-                <select value={np.idProofType} onChange={e => npSet("idProofType", e.target.value)} style={sel}>
+                <select value={np.idProofType} onChange={e => npSet("idProofType", e.target.value)} className="his-select">
                   <option value="">Select…</option>
                   {ID_PROOF_OPTS.map(i => <option key={i}>{i}</option>)}
                 </select>
               </F>
               <F label="ID Proof Number">
                 <input value={np.idProofNumber} onChange={e => npSet("idProofNumber", e.target.value)}
-                  placeholder="ID number" style={fld} />
+                  placeholder="ID number" className="his-field" />
               </F>
             </G3>
           </div>
@@ -845,25 +829,25 @@ function FormPhase({
         <Section title="Address & Contact" icon="pi-map-marker" color={C.teal || "#0d9488"} nabh badge="NABH AAC.1" defaultOpen>
           <F label="Complete Address" span={3}>
             <input value={np.address.completeAddress} onChange={e => npAddr("completeAddress", e.target.value)}
-              placeholder="House/Flat No., Street, Locality…" style={fld} />
+              placeholder="House/Flat No., Street, Locality…" className="his-field" />
           </F>
           <div style={{ marginTop: 12 }}>
             <G4>
               <F label="Pincode" required>
                 <input value={np.address.pincode} onChange={e => npAddr("pincode", e.target.value)}
-                  placeholder="6-digit pincode" maxLength={6} style={fld} />
+                  placeholder="6-digit pincode" maxLength={6} className="his-field" />
               </F>
               <F label="City">
                 <input value={np.address.city} onChange={e => npAddr("city", e.target.value)}
-                  placeholder="City" style={fld} />
+                  placeholder="City" className="his-field" />
               </F>
               <F label="District">
                 <input value={np.address.district} onChange={e => npAddr("district", e.target.value)}
-                  placeholder="District" style={fld} />
+                  placeholder="District" className="his-field" />
               </F>
               <F label="State">
                 <input value={np.address.state} onChange={e => npAddr("state", e.target.value)}
-                  placeholder="State" style={fld} />
+                  placeholder="State" className="his-field" />
               </F>
             </G4>
           </div>
@@ -899,20 +883,20 @@ function FormPhase({
                 display: "grid", gridTemplateColumns: "100px 1fr 1fr 110px 32px", gap: 8, alignItems: "end",
               }}>
                 <F label="Type">
-                  <select value={a.type} onChange={e => updateAllergy(i, "type", e.target.value)} style={{ ...sel, fontSize: 12 }}>
+                  <select value={a.type} onChange={e => updateAllergy(i, "type", e.target.value)} className="his-select" style={{ fontSize: 12 }}>
                     {["Drug", "Food", "Environmental", "Latex", "Other"].map(t => <option key={t}>{t}</option>)}
                   </select>
                 </F>
                 <F label="Substance / Agent">
                   <input value={a.substance} onChange={e => updateAllergy(i, "substance", e.target.value)}
-                    placeholder="e.g. Penicillin, Peanuts" style={{ ...fld, fontSize: 12 }} />
+                    placeholder="e.g. Penicillin, Peanuts" className="his-field" style={{ fontSize: 12 }} />
                 </F>
                 <F label="Reaction / Symptoms">
                   <input value={a.reaction} onChange={e => updateAllergy(i, "reaction", e.target.value)}
-                    placeholder="e.g. Urticaria, Anaphylaxis" style={{ ...fld, fontSize: 12 }} />
+                    placeholder="e.g. Urticaria, Anaphylaxis" className="his-field" style={{ fontSize: 12 }} />
                 </F>
                 <F label="Severity">
-                  <select value={a.severity} onChange={e => updateAllergy(i, "severity", e.target.value)} style={{ ...sel, fontSize: 12 }}>
+                  <select value={a.severity} onChange={e => updateAllergy(i, "severity", e.target.value)} className="his-select" style={{ fontSize: 12 }}>
                     {ALLERGY_SEVERITY.map(s => <option key={s}>{s}</option>)}
                   </select>
                 </F>
@@ -943,13 +927,13 @@ function FormPhase({
       <Section title="Visit Details" icon="pi-calendar-plus" color={C.accent} nabh badge="NABH AAC.4" defaultOpen>
         <G2>
           <F label="Department" required>
-            <select value={vf.departmentId} onChange={e => onDeptChange(e.target.value)} style={sel} disabled={loadingDept}>
+            <select value={vf.departmentId} onChange={e => onDeptChange(e.target.value)} className="his-select" disabled={loadingDept}>
               <option value="">{loadingDept ? "Loading departments…" : "Select department…"}</option>
               {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
           </F>
           <F label="Consultant Doctor" required>
-            <select value={vf.doctorId} onChange={e => onDoctorChange(e.target.value)} style={sel}
+            <select value={vf.doctorId} onChange={e => onDoctorChange(e.target.value)} className="his-select"
               disabled={!vf.departmentId || loadingDoctors}>
               <option value="">
                 {loadingDoctors ? "Loading doctors…" : !vf.departmentId ? "Select department first…" : "Select doctor…"}
@@ -961,13 +945,13 @@ function FormPhase({
         <div style={{ marginTop: 12 }}>
           <G2>
             <F label="Visit Type">
-              <select value={vf.visitType} onChange={e => vfSet("visitType", e.target.value)} style={sel}>
+              <select value={vf.visitType} onChange={e => vfSet("visitType", e.target.value)} className="his-select">
                 {VISIT_TYPE_OPTS.map(v => <option key={v}>{v}</option>)}
               </select>
             </F>
             <F label="Referred By">
               <input value={vf.referredBy} onChange={e => vfSet("referredBy", e.target.value)}
-                placeholder="Dr. / Hospital / Self" style={fld} />
+                placeholder="Dr. / Hospital / Self" className="his-field" />
             </F>
           </G2>
         </div>
@@ -975,11 +959,11 @@ function FormPhase({
           <G2>
             <F label="Chief Complaint" required hint="Primary reason for today's visit">
               <textarea value={vf.chiefComplaint} onChange={e => vfSet("chiefComplaint", e.target.value)}
-                placeholder="Main presenting complaint…" rows={3} style={ta} />
+                placeholder="Main presenting complaint…" rows={3} className="his-textarea" />
             </F>
             <F label="Duration of Complaint">
               <input value={vf.complaintDuration} onChange={e => vfSet("complaintDuration", e.target.value)}
-                placeholder="e.g. 3 days, 2 weeks, 1 month" style={fld} />
+                placeholder="e.g. 3 days, 2 weeks, 1 month" className="his-field" />
             </F>
           </G2>
         </div>
@@ -990,17 +974,17 @@ function FormPhase({
         <G2>
           <F label="History of Present Illness">
             <textarea value={vf.historyOfPresentIllness} onChange={e => vfSet("historyOfPresentIllness", e.target.value)}
-              placeholder="Timeline, severity, aggravating factors…" rows={3} style={ta} />
+              placeholder="Timeline, severity, aggravating factors…" rows={3} className="his-textarea" />
           </F>
           <F label="Past Medical / Surgical History">
             <textarea value={vf.pastMedicalHistory} onChange={e => vfSet("pastMedicalHistory", e.target.value)}
-              placeholder="Previous illnesses, surgeries, hospitalizations…" rows={3} style={ta} />
+              placeholder="Previous illnesses, surgeries, hospitalizations…" rows={3} className="his-textarea" />
           </F>
         </G2>
         <div style={{ marginTop: 12 }}>
           <F label="Current Medications" hint="List all medications patient is currently taking">
             <textarea value={vf.currentMedications} onChange={e => vfSet("currentMedications", e.target.value)}
-              placeholder="Medication name – dose – frequency (or NONE)" rows={2} style={ta} />
+              placeholder="Medication name – dose – frequency (or NONE)" rows={2} className="his-textarea" />
           </F>
         </div>
       </Section>
@@ -1010,17 +994,17 @@ function FormPhase({
         <Section title="Payment & Insurance" icon="pi-wallet" color={C.blue} defaultOpen={false} nabh badge="NABH MOM.3">
           <G3>
             <F label="Payment Type" required>
-              <select value={np.paymentType} onChange={e => npSet("paymentType", e.target.value)} style={sel}>
+              <select value={np.paymentType} onChange={e => npSet("paymentType", e.target.value)} className="his-select">
                 {PAYMENT_OPTS.map(p => <option key={p}>{p}</option>)}
               </select>
             </F>
             <F label="Insurance / TPA Name">
               <input value={np.insuranceName} onChange={e => npSet("insuranceName", e.target.value)}
-                placeholder="Insurance provider name" style={fld} />
+                placeholder="Insurance provider name" className="his-field" />
             </F>
             <F label="Policy / TPA Number">
               <input value={np.insurancePolicyNo} onChange={e => npSet("insurancePolicyNo", e.target.value)}
-                placeholder="Policy / member ID" style={fld} />
+                placeholder="Policy / member ID" className="his-field" />
             </F>
           </G3>
         </Section>
@@ -1032,17 +1016,17 @@ function FormPhase({
           <G3>
             <F label="Companion Name">
               <input value={np.companionName} onChange={e => npSet("companionName", e.target.value)}
-                placeholder="Full name" style={fld} />
+                placeholder="Full name" className="his-field" />
             </F>
             <F label="Relationship">
-              <select value={np.companionRelationship} onChange={e => npSet("companionRelationship", e.target.value)} style={sel}>
+              <select value={np.companionRelationship} onChange={e => npSet("companionRelationship", e.target.value)} className="his-select">
                 <option value="">Select…</option>
                 {RELATION_OPTS.map(r => <option key={r}>{r}</option>)}
               </select>
             </F>
             <F label="Contact Number">
               <input value={np.companionContact} onChange={e => npSet("companionContact", e.target.value)}
-                placeholder="Mobile number" style={fld} />
+                placeholder="Mobile number" className="his-field" />
             </F>
           </G3>
         </Section>
@@ -1070,7 +1054,7 @@ function FormPhase({
               <div style={{ marginTop: 10 }}>
                 <F label="Consent Given By (if not patient)">
                   <input value={np.consentBy} onChange={e => setNp(prev => ({ ...prev, consentBy: e.target.value }))}
-                    placeholder="Name of legal guardian / attendant (if patient cannot consent)" style={{ ...fld, marginTop: 4 }} />
+                    placeholder="Name of legal guardian / attendant (if patient cannot consent)" className="his-field" style={{ marginTop: 4 }} />
                 </F>
               </div>
             )}
