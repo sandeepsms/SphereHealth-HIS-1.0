@@ -30,14 +30,6 @@ const C = {
 };
 const FF = "'DM Sans', sans-serif";
 
-const fld = {
-  padding: "8px 11px", border: `1.5px solid ${C.border}`, borderRadius: 8,
-  fontFamily: FF, fontSize: 13, color: C.text, outline: "none",
-  background: "white", width: "100%", boxSizing: "border-box",
-};
-const ta = { ...fld, resize: "vertical", minHeight: 80 };
-const sel = { ...fld, cursor: "pointer", appearance: "auto" };
-
 /* ── Role color map ── */
 const ROLE_COLORS = {
   "Primary Consultant":    { color: C.purple, bg: C.purpleL, icon: "pi-star-fill" },
@@ -330,7 +322,7 @@ export default function TreatmentTeamPanel({ admissionId, patientName, UHID, ref
                 <label style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", display: "block", marginBottom: 4 }}>
                   Department *
                 </label>
-                <select value={addForm.departmentId} onChange={e => onDeptChange(e.target.value)} style={sel}>
+                <select value={addForm.departmentId} onChange={e => onDeptChange(e.target.value)} className="his-select">
                   <option value="">Select department…</option>
                   {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                 </select>
@@ -339,7 +331,7 @@ export default function TreatmentTeamPanel({ admissionId, patientName, UHID, ref
                 <label style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", display: "block", marginBottom: 4 }}>
                   Consultant *
                 </label>
-                <select value={addForm.doctorId} onChange={e => onDoctorChange(e.target.value)} style={sel}
+                <select value={addForm.doctorId} onChange={e => onDoctorChange(e.target.value)} className="his-select"
                   disabled={!addForm.departmentId || loadingDoctors}>
                   <option value="">
                     {loadingDoctors ? "Loading…" : !addForm.departmentId ? "Select dept first…" : "Select doctor…"}
@@ -352,7 +344,7 @@ export default function TreatmentTeamPanel({ admissionId, patientName, UHID, ref
                     value={addForm.doctorName}
                     onChange={e => setAddForm(f => ({ ...f, doctorName: e.target.value }))}
                     placeholder="Type doctor name manually"
-                    style={{ ...fld, marginTop: 6 }}
+                    className="his-field" style={{ marginTop: 6 }}
                   />
                 )}
               </div>
@@ -360,20 +352,20 @@ export default function TreatmentTeamPanel({ admissionId, patientName, UHID, ref
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
               <div>
                 <label style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", display: "block", marginBottom: 4 }}>Role</label>
-                <select value={addForm.role} onChange={e => setAddForm(f => ({ ...f, role: e.target.value }))} style={sel}>
+                <select value={addForm.role} onChange={e => setAddForm(f => ({ ...f, role: e.target.value }))} className="his-select">
                   {ROLES.map(r => <option key={r}>{r}</option>)}
                 </select>
               </div>
               <div>
                 <label style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", display: "block", marginBottom: 4 }}>Urgency</label>
-                <select value={addForm.urgency} onChange={e => setAddForm(f => ({ ...f, urgency: e.target.value }))} style={sel}>
+                <select value={addForm.urgency} onChange={e => setAddForm(f => ({ ...f, urgency: e.target.value }))} className="his-select">
                   {URGENCY_OPTS.map(u => <option key={u}>{u}</option>)}
                 </select>
               </div>
               <div>
                 <label style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", display: "block", marginBottom: 4 }}>Specialization</label>
                 <input value={addForm.specialization} onChange={e => setAddForm(f => ({ ...f, specialization: e.target.value }))}
-                  placeholder="e.g. Cardiology" style={fld} />
+                  placeholder="e.g. Cardiology" className="his-field" />
               </div>
             </div>
             <div style={{ marginBottom: 12 }}>
@@ -384,7 +376,7 @@ export default function TreatmentTeamPanel({ admissionId, patientName, UHID, ref
                 value={addForm.reason}
                 onChange={e => setAddForm(f => ({ ...f, reason: e.target.value }))}
                 placeholder="Clinical reason for requesting this consultation… (e.g. Uncontrolled diabetes requiring Endocrinology review)"
-                rows={2} style={ta}
+                rows={2} className="his-textarea"
               />
             </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
@@ -489,7 +481,7 @@ export default function TreatmentTeamPanel({ admissionId, patientName, UHID, ref
                 onChange={e => setNoteText(e.target.value)}
                 rows={6}
                 placeholder="Document your clinical findings, assessment, and recommendations for the primary team…"
-                style={{ ...ta, minHeight: 140 }}
+                className="his-textarea" style={{ minHeight: 140 }}
                 autoFocus
               />
               <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 12 }}>

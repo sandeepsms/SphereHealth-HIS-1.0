@@ -1,4 +1,4 @@
-/**
+﻿/**
  * DoctorOrdersPanel.jsx
  * Comprehensive doctor order entry + full audit trail viewer
  * NABH COP.2 / MOM.3 / SRC.1 compliant
@@ -29,46 +29,6 @@ const C = {
   lime: "#65a30d", limeL: "#f7fee7", limeB: "#d9f99d",
 };
 
-const fld = { padding: "8px 11px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: C.text, outline: "none", background: "white", width: "100%", boxSizing: "border-box" };
-const sel = { ...fld, cursor: "pointer" };
-const ta  = { ...fld, resize: "vertical", minHeight: 68 };
-const lbl = { display: "block", fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 4 };
-const row = { display: "grid", gap: 10, marginBottom: 10 };
-
-/* ── Order type registry ── */
-const ORDER_TYPES = [
-  { id: "Medication",      label: "Medication",          icon: "pi-tablets",        color: C.purple,  bg: C.purpleL, border: C.purpleB },
-  { id: "IV_Fluid",        label: "IV Fluid",            icon: "pi-inbox",          color: C.blue,    bg: C.blueL,   border: C.blueB   },
-  { id: "Lab",             label: "Lab Investigation",   icon: "pi-search",         color: C.teal,    bg: C.tealL,   border: C.tealB   },
-  { id: "Radiology",       label: "Imaging / Radiology", icon: "pi-eye",            color: C.indigo,  bg: C.indigoL, border: "#a5b4fc"  },
-  { id: "Procedure",       label: "Procedure",           icon: "pi-cog",            color: C.orange,  bg: C.orangeL, border: C.orangeB },
-  { id: "BloodTransfusion",label: "Blood Transfusion",   icon: "pi-heart",          color: C.red,     bg: C.redL,    border: C.redB    },
-  { id: "Diet",            label: "Diet / Nutrition",    icon: "pi-star",           color: C.green,   bg: C.greenL,  border: C.greenB  },
-  { id: "Oxygen",          label: "Oxygen Therapy",      icon: "pi-cloud",          color: C.cyan,    bg: C.cyanL,   border: C.cyanB   },
-  { id: "Physiotherapy",   label: "Physiotherapy",       icon: "pi-user",           color: C.lime,    bg: C.limeL,   border: C.limeB   },
-  { id: "Activity",        label: "Activity / Mobility", icon: "pi-arrows-alt",     color: C.amber,   bg: C.amberL,  border: C.amberB  },
-  { id: "Nursing",         label: "Nursing Care",        icon: "pi-heart-fill",     color: C.pink,    bg: C.pinkL,   border: C.pinkB   },
-  { id: "Consultation",    label: "Consultation Request",icon: "pi-users",          color: C.slate,   bg: "#f1f5f9", border: "#cbd5e1" },
-];
-
-const TYPE_MAP = Object.fromEntries(ORDER_TYPES.map(t => [t.id, t]));
-
-/* ── Step definitions (mirrors NurseOrdersPanel) ── */
-const STEPS = {
-  Medication:       ["Prepared", "Administered"],
-  IV_Fluid:         ["Prepared", "Line Checked", "Infusion Started", "Completed"],
-  Lab:              ["Sample Collected", "Sample Sent", "Report Received"],
-  Radiology:        ["Scheduled", "Patient Sent", "Scan Done", "Report Received"],
-  Procedure:        ["Consent Taken", "Patient Prepped", "Procedure Done", "Patient Returned"],
-  BloodTransfusion: ["Cross-Match Verified", "Blood Issued", "Transfusion Started", "Transfusion Completed"],
-  Diet:             ["Ordered", "Prepared", "Delivered"],
-  Oxygen:           ["Equipment Set", "O₂ Started", "Target Achieved"],
-  Physiotherapy:    ["Scheduled", "Session Started", "Session Completed"],
-  Activity:         ["Instructed", "Started", "Goal Met"],
-  Nursing:          ["Acknowledged", "In Progress", "Done"],
-  Consultation:     ["Referral Sent", "Consultant Informed", "Consultation Done", "Advice Received"],
-};
-
 /* ── Priority colours ── */
 const PRIO = {
   STAT:    { bg: C.redL,   color: C.red,   label: "STAT"    },
@@ -92,218 +52,298 @@ const STAT_STYLE = {
 function OrderForm({ typeId, form, set }) {
   const g = (cols) => ({ ...row, gridTemplateColumns: cols });
 
-  const Field = ({ label: l, name, placeholder, type="text", options, span }) => (
-    <div style={span ? { gridColumn: `span ${span}` } : {}}>
-      <label style={lbl}>{l}</label>
-      {options
-        ? <select style={sel} value={form[name]||""} onChange={e=>set(name,e.target.value)}>
-            <option value="">— select —</option>
-            {options.map(o=><option key={o} value={o}>{o}</option>)}
-          </select>
-        : type==="textarea"
-          ? <textarea style={ta} placeholder={placeholder} value={form[name]||""} onChange={e=>set(name,e.target.value)}/>
-          : <input style={fld} type={type} placeholder={placeholder} value={form[name]||""} onChange={e=>set(name,e.target.value)}/>
-      }
-    </div>
-  );
-
   if (typeId === "Medication") return (
     <>
-      <div style={g("1fr 1fr 1fr")}>
-        <Field label="Drug Name *" name="medicineName" placeholder="e.g. Amoxicillin" span={2}/>
-        <Field label="Dose *" name="dose" placeholder="e.g. 500mg"/>
+      <div style={g("2fr 1fr")}>
+        <Field form={form} set={set} label="Drug Name *" name="medicineName" placeholder="e.g. Amoxicillin"/>
+        <Field form={form} set={set} label="Dose *" name="dose" type="number" placeholder="e.g. 500"
+          unitOptions={["mg","mcg","g","ml","units","IU","mEq"]} unitName="doseUnit"/>
       </div>
       <div style={g("1fr 1fr 1fr 1fr")}>
-        <Field label="Route" name="route" options={["IV","IM","Oral","SC","SL","Topical","Inhalation","Rectal","NG Tube"]}/>
-        <Field label="Frequency" name="frequency" options={["OD","BD","TDS","QID","6 Hourly","8 Hourly","12 Hourly","SOS","Stat","Weekly"]}/>
-        <Field label="Duration" name="duration" placeholder="e.g. 5 days"/>
-        <Field label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
+        <Field form={form} set={set} label="Route" name="route" options={["IV","IM","Oral","SC","SL","Topical","Inhalation","Rectal","NG Tube"]}/>
+        <Field form={form} set={set} label="Frequency" name="frequency" options={["OD","BD","TDS","QID","6 Hourly","8 Hourly","12 Hourly","SOS","Stat","Weekly"]}/>
+        <Field form={form} set={set} label="Duration" name="durationValue" type="number" placeholder="e.g. 5"
+          unitOptions={["days","hrs","weeks"]} unitName="durationUnit"/>
+        <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
       </div>
-      <Field label="Special Instructions" name="notes" placeholder="Pre/post food, monitoring, interactions…" type="textarea"/>
+      {/* IV Dilution — shown for IV / IM routes; auto-logs to patient Input chart on each dose given */}
+      {(form.route === "IV" || form.route === "IM") && (
+        <div style={{ padding: "10px 12px", background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 8, marginBottom: 6 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "#0369a1", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 8 }}>
+            💧 IV Dilution — optional · auto-logged to Input chart when nurse administers
+          </div>
+          <div style={g("140px 1fr")}>
+            <div>
+              <label className="his-label">Volume (ml)</label>
+              <input type="number" min="0" className="his-field" placeholder="e.g. 100"
+                value={form.dilutionVolume || ""} onChange={e => set("dilutionVolume", e.target.value ? Number(e.target.value) : "")} />
+            </div>
+            <div>
+              <label className="his-label">Diluent / Vehicle</label>
+              <select className="his-select" value={form.dilutionFluid || "NS 0.9%"} onChange={e => set("dilutionFluid", e.target.value)}>
+                <option value="NS 0.9%">NS 0.9% (Normal Saline)</option>
+                <option value="DNS">DNS (Dextrose Normal Saline)</option>
+                <option value="D5W">D5W (Dextrose 5% in Water)</option>
+                <option value="RL">RL (Ringer's Lactate)</option>
+                <option value="D10W">D10W (Dextrose 10%)</option>
+                <option value="Sterile Water">Sterile Water for Injection</option>
+                <option value="Isolyte-S">Isolyte-S</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+          </div>
+          {form.dilutionVolume > 0 && (
+            <div style={{ marginTop: 6, fontSize: 11, color: "#0369a1" }}>
+              📋 <strong>{form.medicineName || "Drug"}</strong> ko <strong>{form.dilutionVolume} ml {form.dilutionFluid || "NS 0.9%"}</strong> mein dilute karke dena — har dose administration par Input chart mein auto-entry hogi.
+            </div>
+          )}
+        </div>
+      )}
+      {/* Indication */}
+      <Field form={form} set={set} label="Indication / Clinical Reason" name="indication" placeholder="e.g. Community-acquired pneumonia, Post-op pain, Type 2 DM" type="textarea"/>
+      {/* HAM — High Alert Medication status */}
+      {(() => {
+        const HAM_KW = ["insulin","heparin","enoxaparin","warfarin","digoxin","amiodarone","kcl","potassium","magnesium sulphate","mgso4","morphine","fentanyl","pethidine","tramadol iv","noradrenaline","norepinephrine","adrenaline","epinephrine","dopamine","dobutamine","vasopressin","suxamethonium","succinylcholine","vecuronium","rocuronium","streptokinase","alteplase","methotrexate","cyclophosphamide","cisplatin","vincristine","oxytocin","nitroprusside","ketamine","propofol","midazolam iv","vancomycin iv","gentamicin iv","amikacin iv","dextrose 25%","dextrose 50%","concentrated sodium","hypertonic saline","fondaparinux","acenocoumarol","lidocaine","lignocaine"];
+        const autoHAM = HAM_KW.some(k => (form.medicineName || "").toLowerCase().includes(k));
+        const isHAM  = form.hamFlag || autoHAM;
+        return (
+          <div style={{ padding: "10px 12px", background: isHAM ? "#fef2f2" : "#f9fafb", border: `1.5px solid ${isHAM ? "#fca5a5" : C.border}`, borderRadius: 8, marginBottom: 6 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer" }}>
+                <input type="checkbox" checked={!!form.hamFlag || autoHAM}
+                  onChange={e => set("hamFlag", e.target.checked)}
+                  style={{ width: 15, height: 15, accentColor: "#dc2626" }}
+                  disabled={autoHAM}/>
+                <span style={{ fontWeight: 700, fontSize: 12, color: isHAM ? "#dc2626" : C.muted }}>
+                  {autoHAM ? "⚠ HIGH ALERT MEDICATION — Auto-detected" : "Mark as High Alert Medication (HAM)"}
+                </span>
+              </label>
+              {isHAM && (
+                <span style={{ fontSize: 10, color: "#991b1b", background: "#fee2e2", border: "1px solid #fca5a5", padding: "2px 7px", borderRadius: 4, fontWeight: 700 }}>
+                  NABH MOM.9 — Two-nurse verification on administration
+                </span>
+              )}
+            </div>
+            {isHAM && (
+              <div style={{ display: "flex", gap: 16, marginTop: 8, flexWrap: "wrap" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#dc2626", cursor: "pointer" }}>
+                  <input type="checkbox" checked={!!form.twoNurseRequired || autoHAM}
+                    onChange={e => set("twoNurseRequired", e.target.checked)} style={{ accentColor: "#dc2626" }}/>
+                  Two-nurse verification required
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#dc2626", cursor: "pointer" }}>
+                  <input type="checkbox" checked={!!form.concentratedElectrolyte}
+                    onChange={e => set("concentratedElectrolyte", e.target.checked)} style={{ accentColor: "#dc2626" }}/>
+                  Concentrated electrolyte
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#dc2626", cursor: "pointer" }}>
+                  <input type="checkbox" checked={!!form.highRisk}
+                    onChange={e => set("highRisk", e.target.checked)} style={{ accentColor: "#dc2626" }}/>
+                  High risk / narrow therapeutic index
+                </label>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+      <Field form={form} set={set} label="Special Instructions" name="notes" placeholder="Pre/post food, monitoring, interactions…" type="textarea"/>
     </>
   );
 
   if (typeId === "IV_Fluid") return (
     <>
       <div style={g("2fr 1fr 1fr")}>
-        <Field label="Fluid / Solution *" name="medicineName" placeholder="e.g. NS 0.9%, RL, DNS, Dextrose 5%"/>
-        <Field label="Volume (ml)" name="dose" placeholder="e.g. 500"/>
-        <Field label="Rate (ml/hr)" name="rate" placeholder="e.g. 83"/>
+        <Field form={form} set={set} label="Fluid / Solution *" name="medicineName" placeholder="e.g. NS 0.9%, RL, DNS, Dextrose 5%"/>
+        <Field form={form} set={set} label="Volume *" name="dose" type="number" placeholder="500" unit="ml"/>
+        <Field form={form} set={set} label="Rate" name="rate" type="number" placeholder="83" unit="ml / hr"/>
       </div>
       <div style={g("1fr 1fr 1fr 1fr")}>
-        <Field label="Duration" name="duration" placeholder="e.g. 6 hrs"/>
-        <Field label="Access Site" name="accessSite" options={["Peripheral IV","Central Line (CVP)","PICC","Arterial Line","Intraosseous"]}/>
-        <Field label="Additives" name="additives" placeholder="KCl 20mEq, MgSO4…"/>
-        <Field label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
+        <Field form={form} set={set} label="Duration" name="durationValue" type="number" placeholder="6"
+          unitOptions={["hrs","mins","days"]} unitName="durationUnit"/>
+        <Field form={form} set={set} label="Access Site" name="accessSite" options={["Peripheral IV","Central Line (CVP)","PICC","Arterial Line","Intraosseous"]}/>
+        <Field form={form} set={set} label="Additives" name="additives" placeholder="KCl 20mEq, MgSO4…"/>
+        <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
       </div>
-      <Field label="Instructions" name="notes" placeholder="Drip rate, monitoring, pump settings…" type="textarea"/>
+      {/* Infusion schedule preview */}
+      {(form.dose > 0 && form.rate > 0) && (() => {
+        const hrs = form.durationValue > 0
+          ? (form.durationUnit === "mins" ? form.durationValue / 60 : form.durationUnit === "days" ? form.durationValue * 24 : form.durationValue)
+          : form.dose / form.rate;
+        return (
+          <div style={{ padding: "10px 14px", background: "#f0fdf4", border: "1.5px solid #86efac", borderRadius: 8, marginBottom: 6, fontSize: 11, color: "#15803d" }}>
+            📊 <strong>{form.dose} ml</strong> at <strong>{form.rate} ml/hr</strong> → runs for <strong>~{Math.round(hrs * 10) / 10} hrs</strong>
+            {Math.ceil(hrs) > 1 && <> · <strong>{Math.ceil(hrs)} hourly entries</strong> will be auto-created in the Input/Output chart when nurse starts the infusion</>}
+          </div>
+        );
+      })()}
+      <Field form={form} set={set} label="Instructions" name="notes" placeholder="Drip rate, monitoring, pump settings…" type="textarea"/>
     </>
   );
 
   if (typeId === "Lab") return (
     <>
       <div style={g("2fr 1fr 1fr")}>
-        <Field label="Test Name(s) *" name="testName" placeholder="CBC, LFT, RFT, Blood Culture, Coagulation…" span={2}/>
-        <Field label="Urgency" name="urgency" options={["Routine","Urgent","STAT"]}/>
+        <Field form={form} set={set} label="Test Name(s) *" name="testName" placeholder="CBC, LFT, RFT, Blood Culture, Coagulation…" span={2}/>
+        <Field form={form} set={set} label="Urgency" name="urgency" options={["Routine","Urgent","STAT"]}/>
       </div>
       <div style={g("1fr 1fr 1fr")}>
-        <Field label="Sample Type" name="sampleType" options={["Venous Blood","Arterial Blood","Urine (Spot)","Urine (24hr)","Stool","Sputum","Swab","CSF","Pleural Fluid","Ascitic Fluid","Tissue Biopsy"]}/>
-        <Field label="Fasting Required" name="fasting" options={["No","Yes — 8 hrs","Yes — 12 hrs"]}/>
-        <Field label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
+        <Field form={form} set={set} label="Sample Type" name="sampleType" options={["Venous Blood","Arterial Blood","Urine (Spot)","Urine (24hr)","Stool","Sputum","Swab","CSF","Pleural Fluid","Ascitic Fluid","Tissue Biopsy"]}/>
+        <Field form={form} set={set} label="Fasting Required" name="fasting" options={["No","Yes — 8 hrs","Yes — 12 hrs"]}/>
+        <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
       </div>
-      <Field label="Clinical Details / Special Instructions" name="notes" placeholder="Pre-antibiotic, timing, paired samples…" type="textarea"/>
+      <Field form={form} set={set} label="Clinical Details / Special Instructions" name="notes" placeholder="Pre-antibiotic, timing, paired samples…" type="textarea"/>
     </>
   );
 
   if (typeId === "Radiology") return (
     <>
       <div style={g("2fr 1fr 1fr")}>
-        <Field label="Scan / Study *" name="testName" placeholder="e.g. CECT Chest, USG Abdomen, MRI Brain, X-Ray PA"/>
-        <Field label="Region / Body Part" name="region" placeholder="e.g. Chest, Abdomen-Pelvis"/>
-        <Field label="Urgency" name="urgency" options={["Routine","Urgent","STAT"]}/>
+        <Field form={form} set={set} label="Scan / Study *" name="testName" placeholder="e.g. CECT Chest, USG Abdomen, MRI Brain, X-Ray PA"/>
+        <Field form={form} set={set} label="Region / Body Part" name="region" placeholder="e.g. Chest, Abdomen-Pelvis"/>
+        <Field form={form} set={set} label="Urgency" name="urgency" options={["Routine","Urgent","STAT"]}/>
       </div>
       <div style={g("1fr 1fr 1fr 1fr")}>
-        <Field label="Contrast" name="contrast" options={["Plain (No Contrast)","With IV Contrast","With Oral Contrast","Both"]}/>
-        <Field label="Sedation Required" name="sedation" options={["No","Yes"]}/>
-        <Field label="Laterality" name="laterality" options={["—","Right","Left","Bilateral"]}/>
-        <Field label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
+        <Field form={form} set={set} label="Contrast" name="contrast" options={["Plain (No Contrast)","With IV Contrast","With Oral Contrast","Both"]}/>
+        <Field form={form} set={set} label="Sedation Required" name="sedation" options={["No","Yes"]}/>
+        <Field form={form} set={set} label="Laterality" name="laterality" options={["—","Right","Left","Bilateral"]}/>
+        <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
       </div>
-      <Field label="Clinical Indication / History" name="notes" placeholder="Relevant clinical details, allergy to contrast, prior imaging…" type="textarea"/>
+      <Field form={form} set={set} label="Clinical Indication / History" name="notes" placeholder="Relevant clinical details, allergy to contrast, prior imaging…" type="textarea"/>
     </>
   );
 
   if (typeId === "Procedure") return (
     <>
       <div style={g("2fr 1fr")}>
-        <Field label="Procedure Name *" name="procedureName" placeholder="e.g. Chest Drain Insertion, Lumbar Puncture, IV Cannula"/>
-        <Field label="Type" name="procedureType" options={["Minor","Major","Diagnostic","Therapeutic","Bedside"]}/>
+        <Field form={form} set={set} label="Procedure Name *" name="procedureName" placeholder="e.g. Chest Drain Insertion, Lumbar Puncture, IV Cannula"/>
+        <Field form={form} set={set} label="Type" name="procedureType" options={["Minor","Major","Diagnostic","Therapeutic","Bedside"]}/>
       </div>
       <div style={g("1fr 1fr 1fr")}>
-        <Field label="Indication *" name="indication" placeholder="e.g. Pleural Effusion, Raised ICP"/>
-        <Field label="Estimated Duration" name="estimatedDuration" placeholder="e.g. 30 min"/>
-        <Field label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
+        <Field form={form} set={set} label="Indication *" name="indication" placeholder="e.g. Pleural Effusion, Raised ICP"/>
+        <Field form={form} set={set} label="Estimated Duration" name="estimatedDuration" placeholder="e.g. 30 min"/>
+        <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
       </div>
       <div style={g("1fr 1fr 1fr")}>
-        <Field label="Consent Required" name="consentRequired" options={["Yes","No"]}/>
-        <Field label="Anaesthesia" name="anaesthesia" options={["None","Local","Sedation","GA"]}/>
-        <Field label="Position" name="position" options={["Supine","Lateral Decubitus","Sitting","Prone","Lithotomy"]}/>
+        <Field form={form} set={set} label="Consent Required" name="consentRequired" options={["Yes","No"]}/>
+        <Field form={form} set={set} label="Anaesthesia" name="anaesthesia" options={["None","Local","Sedation","GA"]}/>
+        <Field form={form} set={set} label="Position" name="position" options={["Supine","Lateral Decubitus","Sitting","Prone","Lithotomy"]}/>
       </div>
-      <Field label="Pre-procedure Instructions / Equipment Needed" name="notes" placeholder="NPO, coagulation check, equipment list…" type="textarea"/>
+      <Field form={form} set={set} label="Pre-procedure Instructions / Equipment Needed" name="notes" placeholder="NPO, coagulation check, equipment list…" type="textarea"/>
     </>
   );
 
   if (typeId === "BloodTransfusion") return (
     <>
       <div style={g("1fr 1fr 1fr 1fr")}>
-        <Field label="Blood Product *" name="medicineName" options={["Packed Red Cells","Whole Blood","Fresh Frozen Plasma","Platelets","Cryoprecipitate","Albumin"]}/>
-        <Field label="Units / Volume" name="dose" placeholder="e.g. 2 units / 400ml"/>
-        <Field label="Rate" name="rate" placeholder="e.g. 4 hrs/unit"/>
-        <Field label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
+        <Field form={form} set={set} label="Blood Product *" name="medicineName" options={["Packed Red Cells","Whole Blood","Fresh Frozen Plasma","Platelets","Cryoprecipitate","Albumin"]}/>
+        <Field form={form} set={set} label="Units / Volume" name="dose" placeholder="e.g. 2 units / 400ml"/>
+        <Field form={form} set={set} label="Rate" name="rate" placeholder="e.g. 4 hrs/unit"/>
+        <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
       </div>
       <div style={g("1fr 1fr 1fr")}>
-        <Field label="Blood Group (Patient)" name="bloodGroup" placeholder="e.g. B+"/>
-        <Field label="Cross-Match Done" name="crossMatchDone" options={["Yes","No — Emergency"]}/>
-        <Field label="Consent for Transfusion" name="consentRequired" options={["Yes","No"]}/>
+        <Field form={form} set={set} label="Blood Group (Patient)" name="bloodGroup" placeholder="e.g. B+"/>
+        <Field form={form} set={set} label="Cross-Match Done" name="crossMatchDone" options={["Yes","No — Emergency"]}/>
+        <Field form={form} set={set} label="Consent for Transfusion" name="consentRequired" options={["Yes","No"]}/>
       </div>
       <div style={g("1fr 1fr")}>
-        <Field label="Pre-medications" name="premeds" placeholder="e.g. Paracetamol 1g IV, Hydrocortisone 100mg IV"/>
-        <Field label="Monitoring Frequency" name="monitoring" options={["Every 15 min (1st hr)","Every 30 min","Hourly","Continuous"]}/>
+        <Field form={form} set={set} label="Pre-medications" name="premeds" placeholder="e.g. Paracetamol 1g IV, Hydrocortisone 100mg IV"/>
+        <Field form={form} set={set} label="Monitoring Frequency" name="monitoring" options={["Every 15 min (1st hr)","Every 30 min","Hourly","Continuous"]}/>
       </div>
-      <Field label="Special Instructions / Transfusion Notes" name="notes" placeholder="Reaction plan, warmer required, irradiated blood…" type="textarea"/>
+      <Field form={form} set={set} label="Special Instructions / Transfusion Notes" name="notes" placeholder="Reaction plan, warmer required, irradiated blood…" type="textarea"/>
     </>
   );
 
   if (typeId === "Diet") return (
     <>
       <div style={g("1fr 1fr 1fr")}>
-        <Field label="Diet Type *" name="dietType" options={["Regular/Normal","Soft","Semi-Solid","Liquid","Clear Liquid","NPO (Nil by Mouth)","Diabetic Diet","Low Salt","Low Fat","High Protein","Renal Diet","Hepatic Diet","Enteral (NG Tube)","TPN (Total Parenteral)"]}/>
-        <Field label="Caloric Target (kcal)" name="calories" placeholder="e.g. 2000"/>
-        <Field label="Protein Target (g)" name="protein" placeholder="e.g. 80"/>
+        <Field form={form} set={set} label="Diet Type *" name="dietType" options={["Regular/Normal","Soft","Semi-Solid","Liquid","Clear Liquid","NPO (Nil by Mouth)","Diabetic Diet","Low Salt","Low Fat","High Protein","Renal Diet","Hepatic Diet","Enteral (NG Tube)","TPN (Total Parenteral)"]}/>
+        <Field form={form} set={set} label="Caloric Target (kcal)" name="calories" placeholder="e.g. 2000"/>
+        <Field form={form} set={set} label="Protein Target (g)" name="protein" placeholder="e.g. 80"/>
       </div>
       <div style={g("1fr 1fr 1fr")}>
-        <Field label="Fluid Restriction" name="fluidRestriction" placeholder="e.g. 1500ml/day"/>
-        <Field label="Consistency" name="consistency" options={["Normal","Minced","Pureed","Thickened"]}/>
-        <Field label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
+        <Field form={form} set={set} label="Fluid Restriction" name="fluidRestriction" placeholder="e.g. 1500ml/day"/>
+        <Field form={form} set={set} label="Consistency" name="consistency" options={["Normal","Minced","Pureed","Thickened"]}/>
+        <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
       </div>
-      <Field label="Specific Instructions / Allergies / Supplements" name="notes" placeholder="Food allergies, supplements, tube feeding formula…" type="textarea"/>
+      <Field form={form} set={set} label="Specific Instructions / Allergies / Supplements" name="notes" placeholder="Food allergies, supplements, tube feeding formula…" type="textarea"/>
     </>
   );
 
   if (typeId === "Oxygen") return (
     <>
       <div style={g("1fr 1fr 1fr 1fr")}>
-        <Field label="Delivery Device *" name="deliveryDevice" options={["Nasal Prongs","Simple Face Mask","Non-Rebreather Mask","Venturi Mask","High-Flow Nasal Cannula (HFNC)","CPAP Mask","BiPAP Mask","Tracheostomy Collar","Incubator / Hood","Room Air"]}/>
-        <Field label="Flow Rate (L/min)" name="flowRate" placeholder="e.g. 4"/>
-        <Field label="FiO₂ (%)" name="fio2" placeholder="e.g. 40"/>
-        <Field label="Target SpO₂ (%)" name="targetSpo2" placeholder="e.g. ≥95"/>
+        <Field form={form} set={set} label="Delivery Device *" name="deliveryDevice" options={["Nasal Prongs","Simple Face Mask","Non-Rebreather Mask","Venturi Mask","High-Flow Nasal Cannula (HFNC)","CPAP Mask","BiPAP Mask","Tracheostomy Collar","Incubator / Hood","Room Air"]}/>
+        <Field form={form} set={set} label="Flow Rate (L/min)" name="flowRate" placeholder="e.g. 4"/>
+        <Field form={form} set={set} label="FiO₂ (%)" name="fio2" placeholder="e.g. 40"/>
+        <Field form={form} set={set} label="Target SpO₂ (%)" name="targetSpo2" placeholder="e.g. ≥95"/>
       </div>
       <div style={g("1fr 1fr 1fr")}>
-        <Field label="HFNC Flow (L/min)" name="hfncFlow" placeholder="e.g. 40 (if HFNC)"/>
-        <Field label="Duration" name="duration" placeholder="e.g. Continuous, PRN, 6 hrs"/>
-        <Field label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
+        <Field form={form} set={set} label="HFNC Flow (L/min)" name="hfncFlow" placeholder="e.g. 40 (if HFNC)"/>
+        <Field form={form} set={set} label="Duration" name="duration" placeholder="e.g. Continuous, PRN, 6 hrs"/>
+        <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
       </div>
-      <Field label="Weaning Instructions / Special Notes" name="notes" placeholder="Wean by 2 L/min every 4 hrs if SpO₂ stable…" type="textarea"/>
+      <Field form={form} set={set} label="Weaning Instructions / Special Notes" name="notes" placeholder="Wean by 2 L/min every 4 hrs if SpO₂ stable…" type="textarea"/>
     </>
   );
 
   if (typeId === "Physiotherapy") return (
     <>
       <div style={g("1fr 1fr 1fr")}>
-        <Field label="PT Type *" name="ptType" options={["Chest Physiotherapy","Respiratory Exercises","Limb Exercises (Passive)","Limb Exercises (Active)","Ambulation","Transfer Training","Strengthening","Range of Motion","Incentive Spirometry","Postural Drainage","Traction","Ultrasound Therapy"]}/>
-        <Field label="Frequency" name="frequency" options={["Once Daily","Twice Daily","Three Times Daily","PRN","Every 4 hrs","Post Op (Immediately)"]}/>
-        <Field label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
+        <Field form={form} set={set} label="PT Type *" name="ptType" options={["Chest Physiotherapy","Respiratory Exercises","Limb Exercises (Passive)","Limb Exercises (Active)","Ambulation","Transfer Training","Strengthening","Range of Motion","Incentive Spirometry","Postural Drainage","Traction","Ultrasound Therapy"]}/>
+        <Field form={form} set={set} label="Frequency" name="frequency" options={["Once Daily","Twice Daily","Three Times Daily","PRN","Every 4 hrs","Post Op (Immediately)"]}/>
+        <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
       </div>
       <div style={g("1fr 1fr")}>
-        <Field label="Goals" name="goals" placeholder="e.g. Improve sputum clearance, prevent DVT, restore ambulation"/>
-        <Field label="Precautions / Contraindications" name="precautions" placeholder="e.g. Avoid vigorous chest PT if INR > 2.5"/>
+        <Field form={form} set={set} label="Goals" name="goals" placeholder="e.g. Improve sputum clearance, prevent DVT, restore ambulation"/>
+        <Field form={form} set={set} label="Precautions / Contraindications" name="precautions" placeholder="e.g. Avoid vigorous chest PT if INR > 2.5"/>
       </div>
-      <Field label="Instructions for Physiotherapist" name="notes" placeholder="Specific exercises, pain threshold, assistive devices…" type="textarea"/>
+      <Field form={form} set={set} label="Instructions for Physiotherapist" name="notes" placeholder="Specific exercises, pain threshold, assistive devices…" type="textarea"/>
     </>
   );
 
   if (typeId === "Activity") return (
     <>
       <div style={g("1fr 1fr 1fr")}>
-        <Field label="Activity Level *" name="activityLevel" options={["Bed Rest (Strict)","Bed Rest with Commode","Bed Rest with BRP","Dangle at Bedside","Chair Sit (30 min)","Ambulate in Room","Ambulate in Corridor","Independent Ambulation","As Tolerated"]}/>
-        <Field label="Assistance Level" name="assistanceLevel" options={["Independent","Supervision Only","Minimum Assist (< 25%)","Moderate Assist (25–50%)","Maximum Assist (> 50%)","Dependent / Full Assist"]}/>
-        <Field label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
+        <Field form={form} set={set} label="Activity Level *" name="activityLevel" options={["Bed Rest (Strict)","Bed Rest with Commode","Bed Rest with BRP","Dangle at Bedside","Chair Sit (30 min)","Ambulate in Room","Ambulate in Corridor","Independent Ambulation","As Tolerated"]}/>
+        <Field form={form} set={set} label="Assistance Level" name="assistanceLevel" options={["Independent","Supervision Only","Minimum Assist (< 25%)","Moderate Assist (25–50%)","Maximum Assist (> 50%)","Dependent / Full Assist"]}/>
+        <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
       </div>
       <div style={g("1fr 1fr")}>
-        <Field label="Restrictions" name="restrictions" placeholder="e.g. No weight bearing left leg, no bending > 90°"/>
-        <Field label="Goals" name="goals" placeholder="e.g. Prevent DVT, improve lung expansion"/>
+        <Field form={form} set={set} label="Restrictions" name="restrictions" placeholder="e.g. No weight bearing left leg, no bending > 90°"/>
+        <Field form={form} set={set} label="Goals" name="goals" placeholder="e.g. Prevent DVT, improve lung expansion"/>
       </div>
-      <Field label="Nursing / Rehab Instructions" name="notes" placeholder="Fall precautions, assistive device, reassessment…" type="textarea"/>
+      <Field form={form} set={set} label="Nursing / Rehab Instructions" name="notes" placeholder="Fall precautions, assistive device, reassessment…" type="textarea"/>
     </>
   );
 
   if (typeId === "Nursing") return (
     <>
       <div style={g("2fr 1fr")}>
-        <Field label="Nursing Instruction *" name="instruction" placeholder="e.g. 2-hourly position change, hourly urine output, wound care"/>
-        <Field label="Frequency" name="frequency" options={["Stat (Once)","Hourly","2-Hourly","4-Hourly","6-Hourly","8-Hourly","12-Hourly","Daily","BD","TDS","PRN","Continuous"]}/>
+        <Field form={form} set={set} label="Nursing Instruction *" name="instruction" placeholder="e.g. 2-hourly position change, hourly urine output, wound care"/>
+        <Field form={form} set={set} label="Frequency" name="frequency" options={["Stat (Once)","Hourly","2-Hourly","4-Hourly","6-Hourly","8-Hourly","12-Hourly","Daily","BD","TDS","PRN","Continuous"]}/>
       </div>
       <div style={g("1fr 1fr 1fr")}>
-        <Field label="Care Category" name="careCategory" options={["Wound Care","Catheter Care","NG Tube Care","Tracheostomy Care","Pressure Area Care","Oral Hygiene","Eye Care","IV Site Care","Drain Care","Monitoring","Medication-Related","Other"]}/>
-        <Field label="Duration" name="duration" placeholder="e.g. Until DC, 3 days"/>
-        <Field label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
+        <Field form={form} set={set} label="Care Category" name="careCategory" options={["Wound Care","Catheter Care","NG Tube Care","Tracheostomy Care","Pressure Area Care","Oral Hygiene","Eye Care","IV Site Care","Drain Care","Monitoring","Medication-Related","Other"]}/>
+        <Field form={form} set={set} label="Duration" name="duration" placeholder="e.g. Until DC, 3 days"/>
+        <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
       </div>
-      <Field label="Detailed Instructions" name="notes" placeholder="Step-by-step nursing instructions, product to use, documentation required…" type="textarea"/>
+      <Field form={form} set={set} label="Detailed Instructions" name="notes" placeholder="Step-by-step nursing instructions, product to use, documentation required…" type="textarea"/>
     </>
   );
 
   if (typeId === "Consultation") return (
     <>
       <div style={g("1fr 1fr 1fr")}>
-        <Field label="Speciality *" name="speciality" options={["Cardiology","Neurology","Nephrology","Pulmonology","Gastroenterology","Endocrinology","Haematology","Oncology","Infectious Disease","Orthopaedics","General Surgery","Urology","Gynaecology","Ophthalmology","ENT","Dermatology","Psychiatry","Anaesthesia","ICU / Critical Care","Palliative Care","Dietitian","Physiotherapy","Social Work"]}/>
-        <Field label="Consultant Name" name="consultantName" placeholder="e.g. Dr. Sharma"/>
-        <Field label="Urgency" name="urgency" options={["Routine (Within 24 hrs)","Urgent (Within 4 hrs)","Emergency (Immediate)"]}/>
+        <Field form={form} set={set} label="Speciality *" name="speciality" options={["Cardiology","Neurology","Nephrology","Pulmonology","Gastroenterology","Endocrinology","Haematology","Oncology","Infectious Disease","Orthopaedics","General Surgery","Urology","Gynaecology","Ophthalmology","ENT","Dermatology","Psychiatry","Anaesthesia","ICU / Critical Care","Palliative Care","Dietitian","Physiotherapy","Social Work"]}/>
+        <Field form={form} set={set} label="Consultant Name" name="consultantName" placeholder="e.g. Dr. Sharma"/>
+        <Field form={form} set={set} label="Urgency" name="urgency" options={["Routine (Within 24 hrs)","Urgent (Within 4 hrs)","Emergency (Immediate)"]}/>
       </div>
       <div style={g("1fr 1fr")}>
-        <Field label="Referred By" name="referredBy" placeholder="Referring doctor name"/>
-        <Field label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
+        <Field form={form} set={set} label="Referred By" name="referredBy" placeholder="Referring doctor name"/>
+        <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
       </div>
-      <Field label="Reason for Referral / Clinical Summary *" name="reason" placeholder="Brief history, key findings, specific question for consultant…" type="textarea"/>
-      <Field label="Investigations Shared" name="notes" placeholder="CBC, CT scan, ECG reports shared…" type="textarea"/>
+      <Field form={form} set={set} label="Reason for Referral / Clinical Summary *" name="reason" placeholder="Brief history, key findings, specific question for consultant…" type="textarea"/>
+      <Field form={form} set={set} label="Investigations Shared" name="notes" placeholder="CBC, CT scan, ECG reports shared…" type="textarea"/>
     </>
   );
 
@@ -525,15 +565,35 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
     // Build orderDetails
     const d = { ...form };
     delete d.priority;
+    // Strip root-level HAM flags from orderDetails (they live at root, not nested)
+    delete d.hamFlag; delete d.twoNurseRequired; delete d.concentratedElectrolyte; delete d.highRisk;
+
+    // Combine dose + unit into human-readable string (e.g. "500mg") for display
+    if (d.dose !== undefined && d.dose !== "" && d.doseUnit) {
+      d.dose = `${d.dose}${d.doseUnit}`;
+    }
+    // Combine durationValue + unit into duration string (e.g. "6 hrs") for display
+    if (d.durationValue !== undefined && d.durationValue !== "") {
+      d.duration = `${d.durationValue} ${d.durationUnit || "hrs"}`;
+    }
+
     base.orderDetails = d;
+
+    // HAM root-level flags (Medication only)
+    if (selType === "Medication") {
+      base.hamFlag              = !!form.hamFlag;
+      base.twoNurseRequired     = !!form.twoNurseRequired;
+      base.concentratedElectrolyte = !!form.concentratedElectrolyte;
+      base.highRisk             = !!form.highRisk;
+    }
 
     // Specific model fields for display/query
     if (selType === "Medication" || selType === "IV_Fluid" || selType === "BloodTransfusion") {
       base.medicineName = form.medicineName;
-      base.dose = form.dose;
+      base.dose = d.dose || form.dose;   // use combined string
       base.route = form.route;
       base.frequency = form.frequency;
-      base.duration = form.duration;
+      base.duration = d.duration || form.duration;
     }
     if (selType === "Lab" || selType === "Radiology") {
       base.testName = form.testName;
@@ -717,7 +777,7 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
           </button>
         ))}
         <div style={{ width: 1, height: 16, background: C.border, margin: "0 4px" }}/>
-        <select style={{ ...sel, width: "auto", fontSize: 11, padding: "3px 8px", minWidth: 120 }} value={filterType} onChange={e => setFilterType(e.target.value)}>
+        <select className="his-select" style={{ width: "auto", fontSize: 11, padding: "3px 8px", minWidth: 120 }} value={filterType} onChange={e => setFilterType(e.target.value)}>
           <option value="All">All Types</option>
           {ORDER_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
         </select>

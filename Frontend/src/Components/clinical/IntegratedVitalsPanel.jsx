@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
+import "./clinical-forms.css";
 import { toast } from "react-toastify";
 import { getVitalSheet, saveVitalSheet } from "../../Services/vital/vitalService";
 
@@ -12,16 +13,6 @@ const C = {
   blue: "#1d4ed8", blueL: "#eff6ff", blueB: "#bfdbfe",
   teal: "#0d9488", tealL: "#f0fdfa",
   slate: "#1e293b",
-};
-
-const fld = {
-  padding: "8px 11px", border: "1.5px solid #e2e8f0", borderRadius: 8,
-  fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#0f172a",
-  outline: "none", background: "white", width: "100%", boxSizing: "border-box",
-};
-const lbl = {
-  display: "block", fontSize: 11, fontWeight: 700, color: C.muted,
-  textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 4,
 };
 
 /* ── Abnormal ranges ── */
@@ -89,7 +80,7 @@ function formatDateTime(date, time) {
 }
 
 const DEFAULT_ENTRY = {
-  time: "", bp: "", pulse: "", temp: "", spo2: "", rr: "", bsl: "", gcs: "", pain: "",
+  time: "", bp_sys: "", bp_dia: "", pulse: "", temp: "", spo2: "", rr: "", bsl: "", gcs: "", pain: "",
   weight: "", o2Device: "None", o2Flow: "", notes: "",
 };
 
@@ -140,7 +131,8 @@ export default function IntegratedVitalsPanel({ UHID, nurseName = "", onVitalsCh
     if (onVitalsChangeRef.current) {
       const synth = { ...entry, [k]: v };
       onVitalsChangeRef.current({
-        bp: synth.bp, pulse: synth.pulse, temp: synth.temp,
+        bp_sys: synth.bp_sys, bp_dia: synth.bp_dia,
+        pulse: synth.pulse, temp: synth.temp,
         spo2: synth.spo2, rr: synth.rr, gcs: synth.gcs,
         bsl: synth.bsl, painScore: synth.pain,
         weight: synth.weight, o2Device: synth.o2Device, o2Flow: synth.o2Flow,
@@ -152,7 +144,7 @@ export default function IntegratedVitalsPanel({ UHID, nurseName = "", onVitalsCh
   /* ── Save to VitalSheet API ── */
   const handleSave = async () => {
     if (!UHID) { toast.error("No patient selected"); return; }
-    if (!entry.bp && !entry.pulse && !entry.temp && !entry.spo2) {
+    if (!entry.bp_sys && !entry.pulse && !entry.temp && !entry.spo2) {
       toast.warn("Enter at least one vital (BP, Pulse, Temp, or SpO₂)");
       return;
     }
@@ -160,7 +152,8 @@ export default function IntegratedVitalsPanel({ UHID, nurseName = "", onVitalsCh
     setSaving(true);
     try {
       const dateStr = todayDate();
-      const [sbpVal = "", dbpVal = ""] = entry.bp.split("/");
+      const sbpVal = entry.bp_sys || "";
+      const dbpVal = entry.bp_dia || "";
 
       // Build values object for this time-slot
       const values = {};
@@ -227,10 +220,10 @@ export default function IntegratedVitalsPanel({ UHID, nurseName = "", onVitalsCh
   };
 
   /* ── MEWS live ── */
-  const [sbp = ""] = entry.bp.split("/");
+  const sbp = entry.bp_sys || "";
   const mewsScore = calcMEWS({ rr: entry.rr, spo2: entry.spo2, temp: entry.temp, sbp, hr: entry.pulse });
   const band = mewsBand(mewsScore);
-  const hasAnyVital = entry.bp || entry.pulse || entry.temp || entry.spo2 || entry.rr;
+  const hasAnyVital = entry.bp_sys || entry.pulse || entry.temp || entry.spo2 || entry.rr;
 
   /* ── History rows for selected date ── */
   const filteredSheet = history.find(s => s.date === histDate);
@@ -257,7 +250,7 @@ export default function IntegratedVitalsPanel({ UHID, nurseName = "", onVitalsCh
             <select
               value={histDate}
               onChange={e => setHistDate(e.target.value)}
-              style={{ ...fld, width: "auto", padding: "5px 10px", fontSize: 12 }}
+              className="his-field" style={{ width: "auto", padding: "5px 10px", fontSize: 12 }}
             >
               {recordDates.length === 0 && <option value={todayDate()}>Today</option>}
               {recordDates.map(d => (
@@ -328,25 +321,30 @@ export default function IntegratedVitalsPanel({ UHID, nurseName = "", onVitalsCh
         </div>
         <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 12 }}>
 
-          {/* Row 1: Time + BP + Pulse + Temp */}
-          <div style={{ display: "grid", gridTemplateColumns: "120px 1fr 1fr 1fr", gap: 10 }}>
+          {/* Row 1: Time + BP Systolic + BP Diastolic + Pulse + Temp */}
+          <div style={{ display: "grid", gridTemplateColumns: "120px 1fr 1fr 1fr 1fr", gap: 10 }}>
             <div>
-              <label style={lbl}>Time *</label>
-              <input type="time" style={fld} value={entry.time} onChange={e => setE("time", e.target.value)} />
+              <label className="his-label">Time *</label>
+              <input type="time" className="his-field" value={entry.time} onChange={e => setE("time", e.target.value)} />
             </div>
             <div>
-              <label style={lbl}>BP (Sys/Dia mmHg)</label>
-              <input style={{ ...fld, borderColor: isAbnormal("sbp", entry.bp.split("/")[0]) ? C.red : "#e2e8f0" }}
-                placeholder="120/80" value={entry.bp} onChange={e => setE("bp", e.target.value)} />
+              <label className="his-label">Systolic BP (mmHg)</label>
+              <input type="number" className="his-field" style={{ borderColor: isAbnormal("sbp", entry.bp_sys) ? C.red : "#e2e8f0" }}
+                placeholder="120" value={entry.bp_sys} onChange={e => setE("bp_sys", e.target.value)} />
             </div>
             <div>
-              <label style={lbl}>Pulse (/min)</label>
-              <input type="number" style={{ ...fld, borderColor: isAbnormal("pulse", entry.pulse) ? C.red : "#e2e8f0" }}
+              <label className="his-label">Diastolic BP (mmHg)</label>
+              <input type="number" className="his-field" style={{ borderColor: isAbnormal("dbp", entry.bp_dia) ? C.red : "#e2e8f0" }}
+                placeholder="80" value={entry.bp_dia} onChange={e => setE("bp_dia", e.target.value)} />
+            </div>
+            <div>
+              <label className="his-label">Pulse (/min)</label>
+              <input type="number" className="his-field" style={{ borderColor: isAbnormal("pulse", entry.pulse) ? C.red : "#e2e8f0" }}
                 placeholder="80" value={entry.pulse} onChange={e => setE("pulse", e.target.value)} />
             </div>
             <div>
-              <label style={lbl}>Temperature (°F)</label>
-              <input type="number" step="0.1" style={{ ...fld, borderColor: isAbnormal("temp", entry.temp) ? C.red : "#e2e8f0" }}
+              <label className="his-label">Temperature (°F)</label>
+              <input type="number" step="0.1" className="his-field" style={{ borderColor: isAbnormal("temp", entry.temp) ? C.red : "#e2e8f0" }}
                 placeholder="98.6" value={entry.temp} onChange={e => setE("temp", e.target.value)} />
             </div>
           </div>
@@ -354,48 +352,48 @@ export default function IntegratedVitalsPanel({ UHID, nurseName = "", onVitalsCh
           {/* Row 2: SpO2 + RR + BSL + GCS */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 }}>
             <div>
-              <label style={lbl}>SpO₂ (%)</label>
-              <input type="number" style={{ ...fld, borderColor: isAbnormal("spo2", entry.spo2) ? C.red : "#e2e8f0" }}
+              <label className="his-label">SpO₂ (%)</label>
+              <input type="number" className="his-field" style={{ borderColor: isAbnormal("spo2", entry.spo2) ? C.red : "#e2e8f0" }}
                 placeholder="98" value={entry.spo2} onChange={e => setE("spo2", e.target.value)} />
             </div>
             <div>
-              <label style={lbl}>Resp Rate (/min)</label>
-              <input type="number" style={{ ...fld, borderColor: isAbnormal("rr", entry.rr) ? C.red : "#e2e8f0" }}
+              <label className="his-label">Resp Rate (/min)</label>
+              <input type="number" className="his-field" style={{ borderColor: isAbnormal("rr", entry.rr) ? C.red : "#e2e8f0" }}
                 placeholder="16" value={entry.rr} onChange={e => setE("rr", e.target.value)} />
             </div>
             <div>
-              <label style={lbl}>BSL (mg/dL)</label>
-              <input type="number" style={{ ...fld, borderColor: isAbnormal("bsl", entry.bsl) ? C.red : "#e2e8f0" }}
+              <label className="his-label">BSL (mg/dL)</label>
+              <input type="number" className="his-field" style={{ borderColor: isAbnormal("bsl", entry.bsl) ? C.red : "#e2e8f0" }}
                 placeholder="110" value={entry.bsl} onChange={e => setE("bsl", e.target.value)} />
             </div>
             <div>
-              <label style={lbl}>GCS (E/V/M or total)</label>
-              <input style={fld} placeholder="E4V5M6 / 15" value={entry.gcs} onChange={e => setE("gcs", e.target.value)} />
+              <label className="his-label">GCS (E/V/M or total)</label>
+              <input className="his-field" placeholder="E4V5M6 / 15" value={entry.gcs} onChange={e => setE("gcs", e.target.value)} />
             </div>
           </div>
 
           {/* Row 3: Pain + Weight + O2 Device + O2 Flow */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 }}>
             <div>
-              <label style={lbl}>Pain Score (NRS 0–10)</label>
+              <label className="his-label">Pain Score (NRS 0–10)</label>
               <input type="number" min="0" max="10"
-                style={{ ...fld, borderColor: Number(entry.pain) >= 7 ? C.red : Number(entry.pain) >= 4 ? C.amber : "#e2e8f0" }}
+                className="his-field" style={{ borderColor: Number(entry.pain) >= 7 ? C.red : Number(entry.pain) >= 4 ? C.amber : "#e2e8f0" }}
                 placeholder="0" value={entry.pain} onChange={e => setE("pain", e.target.value)} />
             </div>
             <div>
-              <label style={lbl}>Weight (kg)</label>
-              <input type="number" step="0.1" style={fld} placeholder="60" value={entry.weight} onChange={e => setE("weight", e.target.value)} />
+              <label className="his-label">Weight (kg)</label>
+              <input type="number" step="0.1" className="his-field" placeholder="60" value={entry.weight} onChange={e => setE("weight", e.target.value)} />
             </div>
             <div>
-              <label style={lbl}>O₂ Delivery Device</label>
-              <select style={{ ...fld, cursor: "pointer" }} value={entry.o2Device} onChange={e => setE("o2Device", e.target.value)}>
+              <label className="his-label">O₂ Delivery Device</label>
+              <select className="his-field" style={{ cursor: "pointer" }} value={entry.o2Device} onChange={e => setE("o2Device", e.target.value)}>
                 {["None","Nasal Prongs","Simple Mask","Venturi Mask","NRM Mask","CPAP","BiPAP","Ventilator"].map(o => <option key={o}>{o}</option>)}
               </select>
             </div>
             {entry.o2Device !== "None" && (
               <div>
-                <label style={lbl}>O₂ Flow (L/min)</label>
-                <input type="number" style={fld} placeholder="4" value={entry.o2Flow} onChange={e => setE("o2Flow", e.target.value)} />
+                <label className="his-label">O₂ Flow (L/min)</label>
+                <input type="number" className="his-field" placeholder="4" value={entry.o2Flow} onChange={e => setE("o2Flow", e.target.value)} />
               </div>
             )}
           </div>
@@ -418,8 +416,8 @@ export default function IntegratedVitalsPanel({ UHID, nurseName = "", onVitalsCh
 
           {/* Notes */}
           <div>
-            <label style={lbl}>Notes / Remarks</label>
-            <textarea style={{ ...fld, resize: "vertical", minHeight: 56 }}
+            <label className="his-label">Notes / Remarks</label>
+            <textarea className="his-field" style={{ resize: "vertical", minHeight: 56 }}
               placeholder="Any additional observations…"
               value={entry.notes} onChange={e => setE("notes", e.target.value)} />
           </div>
