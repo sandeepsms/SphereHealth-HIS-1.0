@@ -153,6 +153,13 @@ function PatientCard({ adm, selected, onClick, collapsed }) {
   const allergy = adm.allergies || adm.knownAllergies || "";
   const isActive = (adm.status || "Active").toLowerCase() === "active";
 
+  // Initial-assessment status — drives the NEW! badge for fresh admissions
+  const doctorAssessed = adm.initialAssessment?.doctorCompleted === true;
+  const nurseAssessed  = adm.initialAssessment?.nurseCompleted  === true;
+  const assessmentPending = !doctorAssessed || !nurseAssessed;
+  // Show NEW only for IPD/DC/ER admissions less than 24h old AND not fully assessed
+  const isFreshAdmission = days !== null && days < 1 && assessmentPending;
+
   const typeConf = TYPES.find(t => t.key === type) || TYPES[1];
 
   /* ── Collapsed (icon-only) ── */
@@ -286,6 +293,16 @@ function PatientCard({ adm, selected, onClick, collapsed }) {
 
         {/* Type + Day badge stack */}
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, flexShrink: 0 }}>
+          {isFreshAdmission && (
+            <span title="New admission - Initial Assessment pending" style={{
+              fontSize: 9, fontWeight: 900, padding: "2px 7px", borderRadius: 4,
+              background: "linear-gradient(135deg, #dc2626, #f97316)",
+              color: "#fff",
+              letterSpacing: ".5px", textTransform: "uppercase",
+              boxShadow: "0 0 0 2px rgba(220, 38, 38, .15)",
+              animation: "pulseNew 1.5s ease-in-out infinite",
+            }}>NEW</span>
+          )}
           <span style={{
             fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 4,
             background: typeConf.color + "18", color: typeConf.color,
@@ -436,8 +453,18 @@ export default function AdmittedPatientPanel({ onPatientSelect, selectedId, page
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
-    const t = setInterval(() => load(true), 90000);
+    // Poll every 30s (was 90s) so newly-admitted patients appear in the
+    // doctor/nurse panel within seconds of reception completing admission.
+    const t = setInterval(() => load(true), 30000);
     return () => clearInterval(t);
+  }, [load]);
+
+  // Refresh immediately when the window regains focus (e.g. user switched
+  // tabs to reception, admitted a patient, then came back).
+  useEffect(() => {
+    const onFocus = () => load(true);
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
   }, [load]);
 
   /* ── Keyboard shortcut: / or Ctrl+K focuses search ── */
@@ -464,6 +491,22 @@ export default function AdmittedPatientPanel({ onPatientSelect, selectedId, page
       (a.department || "").toLowerCase().includes(s) ||
       (a.wardName || "").toLowerCase().includes(s);
     return matchType && matchSearch;
+  })
+  // Sort: NEW admissions (Initial Assessment pending, <24h old) first,
+  // then by most-recent admission date.
+  .sort((a, b) => {
+    const aNew = (() => {
+      const d = daysSince(a.admissionDate);
+      const pending = !(a.initialAssessment?.doctorCompleted && a.initialAssessment?.nurseCompleted);
+      return d !== null && d < 1 && pending ? 1 : 0;
+    })();
+    const bNew = (() => {
+      const d = daysSince(b.admissionDate);
+      const pending = !(b.initialAssessment?.doctorCompleted && b.initialAssessment?.nurseCompleted);
+      return d !== null && d < 1 && pending ? 1 : 0;
+    })();
+    if (aNew !== bNew) return bNew - aNew;
+    return new Date(b.admissionDate || 0) - new Date(a.admissionDate || 0);
   });
 
   /* Count per type */
@@ -473,6 +516,13 @@ export default function AdmittedPatientPanel({ onPatientSelect, selectedId, page
     Daycare:   admissions.filter(a => typeOf(a) === "Daycare").length,
     Emergency: admissions.filter(a => typeOf(a) === "Emergency").length,
   };
+
+  /* Count new admissions (< 24h old) pending Initial Assessment */
+  const newAdmissionsCount = admissions.filter(a => {
+    const d = daysSince(a.admissionDate);
+    const pending = !(a.initialAssessment?.doctorCompleted && a.initialAssessment?.nurseCompleted);
+    return d !== null && d < 1 && pending;
+  }).length;
 
   const W = collapsed ? 56 : 280;
 
@@ -698,6 +748,38 @@ export default function AdmittedPatientPanel({ onPatientSelect, selectedId, page
               })}
             </div>
           </>
+        )}
+
+        {/* ══════════════  NEW-ADMISSION BANNER  ══════════════ */}
+        {!collapsed && newAdmissionsCount > 0 && (
+          <div style={{
+            margin: "8px 10px 0",
+            padding: "8px 12px",
+            borderRadius: 8,
+            background: "linear-gradient(135deg, #fef2f2, #fff7ed)",
+            border: "1.5px solid #fca5a5",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flexShrink: 0,
+          }}>
+            <div style={{
+              width: 22, height: 22, borderRadius: "50%",
+              background: "linear-gradient(135deg, #dc2626, #f97316)",
+              color: "#fff", fontSize: 11, fontWeight: 900,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              flexShrink: 0,
+              animation: "pulseNew 1.5s ease-in-out infinite",
+            }}>{newAdmissionsCount}</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#991b1b", letterSpacing: ".2px" }}>
+                NEW ADMISSION{newAdmissionsCount > 1 ? "S" : ""}
+              </div>
+              <div style={{ fontSize: 10, color: "#9a3412" }}>
+                Initial Assessment pending
+              </div>
+            </div>
+          </div>
         )}
 
         {/* ══════════════  PATIENT LIST  ══════════════ */}

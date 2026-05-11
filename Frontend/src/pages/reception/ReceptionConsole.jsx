@@ -1011,11 +1011,28 @@ export default function ReceptionConsole() {
                 <div className="rc-grid-3">
                   <div className="his-field-group">
                     <label className="his-label">Expected Stay (days)</label>
-                    <input className="his-field" type="number" value={ipd.expectedStayDays}
-                      onChange={e => setIpd(p => ({ ...p, expectedStayDays: e.target.value }))} />
+                    <input className="his-field" type="number" min="0" value={ipd.expectedStayDays}
+                      onChange={e => {
+                        const days = e.target.value;
+                        // Auto-compute Expected Discharge = today + days
+                        const n = parseInt(days);
+                        let nextDischarge = ipd.expectedDischargeDate;
+                        if (!isNaN(n) && n >= 0) {
+                          const d = new Date();
+                          d.setHours(0, 0, 0, 0);
+                          d.setDate(d.getDate() + n);
+                          nextDischarge = d.toISOString().slice(0, 10);
+                        }
+                        setIpd(p => ({ ...p, expectedStayDays: days, expectedDischargeDate: nextDischarge }));
+                      }} />
                   </div>
                   <div className="his-field-group">
-                    <label className="his-label">Expected Discharge</label>
+                    <label className="his-label">
+                      Expected Discharge
+                      <span style={{ color:"#64748b", fontWeight:500, marginLeft:6, fontSize:10, textTransform:"none", letterSpacing:0 }}>
+                        (auto from stay days — editable)
+                      </span>
+                    </label>
                     <input className="his-field" type="date" value={ipd.expectedDischargeDate}
                       onChange={e => setIpd(p => ({ ...p, expectedDischargeDate: e.target.value }))} />
                   </div>
