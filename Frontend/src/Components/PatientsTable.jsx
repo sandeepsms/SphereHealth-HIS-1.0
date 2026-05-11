@@ -110,7 +110,7 @@ function PatientsTable() {
     setGlobalFilterValue(value);
   };
 
-  const handleEdit = (rowData) => navigate(`/registration/${rowData._id}`);
+  const handleEdit = (rowData) => navigate(`/reception?patientId=${rowData._id}`);
 
   const handleView = async (rowData) => {
     try {

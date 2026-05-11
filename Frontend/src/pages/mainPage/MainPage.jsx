@@ -34,10 +34,10 @@ const STATS = [
 /* ── All module definitions with role restrictions ── */
 const ALL_MODULES = [
   // Front Desk / Receptionist
-  { label: "New OPD",              icon: "pi-plus-circle",          path: "/registration/OPD",       color: C.teal,   roles: ["Admin","Receptionist"] },
-  { label: "IPD Registration",     icon: "pi-user-plus",            path: "/registration/IPD",       color: C.accent, roles: ["Admin","Receptionist"] },
-  { label: "Emergency",            icon: "pi-exclamation-circle",   path: "/registration/Emergency", color: C.red,    roles: ["Admin","Receptionist","Nurse","Doctor"] },
-  { label: "Daycare",              icon: "pi-sun",                  path: "/registration/Daycare",   color: C.orange, roles: ["Admin","Receptionist"] },
+  { label: "New OPD",              icon: "pi-plus-circle",          path: "/reception",       color: C.teal,   roles: ["Admin","Receptionist"] },
+  { label: "IPD Registration",     icon: "pi-user-plus",            path: "/reception",       color: C.accent, roles: ["Admin","Receptionist"] },
+  { label: "Emergency",            icon: "pi-exclamation-circle",   path: "/reception", color: C.red,    roles: ["Admin","Receptionist","Nurse","Doctor"] },
+  { label: "Daycare",              icon: "pi-sun",                  path: "/reception",   color: C.orange, roles: ["Admin","Receptionist"] },
   { label: "Bed Visual",           icon: "pi-th-large",             path: "/bed-visual",             color: C.purple, roles: ["Admin","Doctor","Nurse","Receptionist"] },
   { label: "Patient Billing",      icon: "pi-receipt",              path: "/patient-billing",        color: C.green,  roles: ["Admin","Receptionist","TPA Coordinator"] },
   // Doctor
@@ -52,7 +52,7 @@ const ALL_MODULES = [
   { label: "MAR",                  icon: "pi-list-check",           path: "/mar",                    color: C.amber,  roles: ["Admin","Nurse","Doctor"] },
   // Admin
   { label: "User Management",      icon: "pi-users",                path: "/admin/users",            color: C.purple, roles: ["Admin"] },
-  { label: "IPD Admission",        icon: "pi-building",             path: "/ipd-admission",          color: C.accent, roles: ["Admin","Receptionist"] },
+  { label: "IPD Admission",        icon: "pi-building",             path: "/reception",          color: C.accent, roles: ["Admin","Receptionist"] },
 ];
 
 /* ── Filter modules by role ── */
@@ -61,17 +61,17 @@ const getModules = (role) => ALL_MODULES.filter(m => m.roles.includes(role));
 /* ── Quick Access per role ── */
 const QUICK_ACCESS_MAP = {
   Admin:            [
-    { label: "New OPD",          icon: "pi-plus-circle",       path: "/registration/OPD",      color: C.teal   },
-    { label: "IPD Admission",    icon: "pi-building",          path: "/ipd-admission",          color: C.accent },
-    { label: "Emergency",        icon: "pi-exclamation-circle",path: "/registration/Emergency", color: C.red    },
+    { label: "New OPD",          icon: "pi-plus-circle",       path: "/reception",      color: C.teal   },
+    { label: "IPD Admission",    icon: "pi-building",          path: "/reception",          color: C.accent },
+    { label: "Emergency",        icon: "pi-exclamation-circle",path: "/reception", color: C.red    },
     { label: "Patient Search",   icon: "pi-search",            path: "/allpatient",             color: C.purple },
     { label: "Patient Billing",  icon: "pi-receipt",           path: "/patient-billing",        color: C.green  },
     { label: "User Management",  icon: "pi-users",             path: "/admin/users",            color: C.purple },
   ],
   Receptionist:     [
-    { label: "New OPD",          icon: "pi-plus-circle",       path: "/registration/OPD",      color: C.teal   },
-    { label: "IPD Admission",    icon: "pi-building",          path: "/ipd-admission",          color: C.accent },
-    { label: "Emergency",        icon: "pi-exclamation-circle",path: "/registration/Emergency", color: C.red    },
+    { label: "New OPD",          icon: "pi-plus-circle",       path: "/reception",      color: C.teal   },
+    { label: "IPD Admission",    icon: "pi-building",          path: "/reception",          color: C.accent },
+    { label: "Emergency",        icon: "pi-exclamation-circle",path: "/reception", color: C.red    },
     { label: "Patient Search",   icon: "pi-search",            path: "/allpatient",             color: C.purple },
     { label: "Patient Billing",  icon: "pi-receipt",           path: "/patient-billing",        color: C.green  },
     { label: "Bed Layout",       icon: "pi-th-large",          path: "/bed-visual",             color: C.amber  },
@@ -567,7 +567,7 @@ export default function MainPage() {
                             <i className="pi pi-eye" style={{ fontSize: 10, marginRight: 4 }} />View
                           </button>
                           {(role === "Admin" || role === "Receptionist") && (
-                            <button onClick={() => navigate(`/registration/IPD/${p._id}`)}
+                            <button onClick={() => navigate(`/reception?patientId=${p._id}&visit=IPD`)}
                               style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${C.border}`,
                                 background: "white", cursor: "pointer", fontSize: 11, fontWeight: 600, color: C.muted }}>
                               <i className="pi pi-file-edit" style={{ fontSize: 10, marginRight: 4 }} />Edit

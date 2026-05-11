@@ -70,9 +70,7 @@ const NAV = [
     icon: "pi-user-plus", color: "#0891b2", light: "#ecfeff",
     nabh: true, roles: [ADMIN, RX, DR, NR],
     items: [
-      { label: "IPD Admission",     icon: "pi-plus-circle",         path: "/ipd-admission",       nabh: true,  roles: [ADMIN, RX] },
-      { label: "OPD Registration",  icon: "pi-user-plus",           path: "/opd-register",        nabh: true,  roles: [ADMIN, RX] },
-      { label: "ER Registration",   icon: "pi-bolt",                path: "/emergency/register",  nabh: true,  roles: [ADMIN, RX, DR, NR] },
+      { label: "Reception Console", icon: "pi-desktop",             path: "/reception",            nabh: true,  badge: "NEW", roles: [ADMIN, RX, DR, NR] },
       { label: "Patient Search",    icon: "pi-search",              path: "/allpatient",           roles: [ADMIN, RX, DR, NR, PH, LB, RL, AC, PT, DT, TPA] },
       { label: "Patient Records",   icon: "pi-id-card",             path: "/patients",             roles: [ADMIN, RX, DR, NR, AC, TPA] },
       { label: "Visit History",     icon: "pi-clock",               path: "/patient-history",      roles: [ADMIN, RX, DR] },

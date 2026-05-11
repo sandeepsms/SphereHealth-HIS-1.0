@@ -27,7 +27,6 @@ import MainPage from "./pages/mainPage/MainPage";
 import Dashboard1 from "./pages/patient/Dashboard";
 
 // ── Lazy-loaded pages (downloaded on-demand) ────────────────────
-const Registration = lazy(() => import("./Components/Registration"));
 const PatientsTable = lazy(() => import("./Components/PatientsTable"));
 const Servicebtn = lazy(() => import("./Components/Servicebtn"));
 const OPDPrint = lazy(() => import("./pages/OPD/OPDPrint"));
@@ -49,14 +48,11 @@ const PatientDetails = lazy(() => import("./pages/patient/PatientDetails"));
 
 // OPD
 const OPList = lazy(() => import("./pages/OPD/OPDList"));
-const OPDForm = lazy(() => import("./pages/OPD/OPDForm"));
 const OPDDetails = lazy(() => import("./pages/OPD/OPDDetails"));
 
 // Emergency
 const Emergencylist = lazy(() => import("./pages/emergency/EmergencyList"));
-const EmergencyForm = lazy(() => import("./pages/emergency/EmergencyForm"));
 const EmergencyDetails = lazy(() => import("./pages/emergency/EmergencyDetails"));
-const EmergencyRegistrationPage = lazy(() => import("./pages/emergency/EmergencyRegistrationPage"));
 const EmergencyAssessmentPage = lazy(() => import("./pages/emergency/EmergencyAssessmentPage"));
 
 // Doctors
@@ -101,8 +97,10 @@ const NutritionalAssessmentPage = lazy(() => import("./pages/nursing/Nutritional
 const DailyNursingAssessmentPage = lazy(() => import("./pages/nursing/DailyNursingAssessmentPage"));
 const PatientEducationPage = lazy(() => import("./pages/nursing/PatientEducationPage"));
 
+// ── Reception Console (single-window registration) ──
+const ReceptionConsole = lazy(() => import("./pages/reception/ReceptionConsole"));
+
 // Clinical pages
-const OPDRegistrationPage = lazy(() => import("./pages/registration/OPDRegistrationPage"));
 const NurseOPDQueuePage = lazy(() => import("./pages/nurse/NurseOPDQueuePage"));
 const NursePatientPanel = lazy(() => import("./pages/nurse/NursePatientPanel"));
 const DoctorOPDPanelPage = lazy(() => import("./pages/doctor/DoctorOPDPanelPage"));
@@ -111,7 +109,6 @@ const MARPage = lazy(() => import("./pages/clinical/MARPage"));
 const DischargeSummaryPage = lazy(() => import("./pages/clinical/DischargeSummaryPage"));
 const ConsentFormPage = lazy(() => import("./pages/clinical/ConsentFormPage"));
 const IPDInitialAssessmentPage = lazy(() => import("./pages/clinical/IPDInitialAssessmentPage"));
-const IPDAdmissionPage = lazy(() => import("./pages/ipd/IPDAdmissionPage"));
 const DoctorAssessmentPage = lazy(() => import("./pages/doctor/DoctorAssessmentPage"));
 const OPDAssessmentPage = lazy(() => import("./pages/doctor/OPDAssessmentPage"));
 const DoctorPatientPanel = lazy(() => import("./pages/doctor/DoctorPatientPanel"));
@@ -212,9 +209,7 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/dashboard1" element={<Dashboard1 />} />
             <Route path="/dash" element={<Dashboard1 />} />
 
-            {/* ── Patient Registration ──────────────────────────── */}
-            <Route path="/registration/:typedata" element={<Registration />} />
-            <Route path="/registration/:typedata/:id" element={<Registration />} />
+            {/* Patient Registration moved to /reception (see below) */}
             <Route path="/allpatient" element={<PatientsTable />} />
 
             {/* ── Doctors ──────────────────────────────────────── */}
@@ -229,17 +224,18 @@ function AppLayout({ collapsed, setCollapsed }) {
             {/* ── OPD ──────────────────────────────────────────── */}
             <Route path="/opd/:UHID" element={<OPDPrint />} />
             <Route path="/opd-visit" element={<OPList />} />
-            <Route path="/opd/new" element={<OPDForm />} />
-            <Route path="/opd/edit/:visitNumber" element={<OPDForm />} />
+            {/* /opd/new moved to /reception (see below) */}
+            <Route path="/opd/new" element={<Navigate to="/reception" replace />} />
+            <Route path="/opd/edit/:visitNumber" element={<Navigate to="/reception" replace />} />
             <Route path="/opd/:visitNumber" element={<OPDDetails />} />
 
             {/* ── Emergency ─────────────────────────────────────── */}
             <Route path="/emergency-assessment" element={<EmergencyAssessmentPage />} />
             <Route path="/emergency-assessment/:uhid" element={<EmergencyAssessmentPage />} />
             <Route path="/emergency" element={<Emergencylist />} />
-            <Route path="/emergency/register" element={<EmergencyRegistrationPage />} />
-            <Route path="/emergency/new" element={<EmergencyForm />} />
-            <Route path="/emergency/edit/:emergencyNumber" element={<EmergencyForm />} />
+            {/* /emergency/register moved to /reception (see below) */}
+            <Route path="/emergency/new" element={<Navigate to="/reception" replace />} />
+            <Route path="/emergency/edit/:emergencyNumber" element={<Navigate to="/reception" replace />} />
             <Route path="/emergency/:emergencyNumber" element={<EmergencyDetails />} />
 
             {/* ── Vitals ───────────────────────────────── */}
@@ -300,8 +296,17 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/" element={<Navigate to="/mainpage" />} />
             <Route path="/mainpage" element={<MainPage />} />
 
+            {/* ── Reception Console (single-window registration) ── */}
+            <Route path="/reception" element={<ReceptionConsole />} />
+            <Route path="/reception-console" element={<ReceptionConsole />} />
+            {/* Legacy routes redirect to the new console */}
+            <Route path="/ipd-admission" element={<Navigate to="/reception" replace />} />
+            <Route path="/opd-register" element={<Navigate to="/reception" replace />} />
+            <Route path="/emergency/register" element={<Navigate to="/reception" replace />} />
+            <Route path="/registration/:typedata" element={<Navigate to="/reception" replace />} />
+            <Route path="/registration/:typedata/:id" element={<Navigate to="/reception" replace />} />
+
             {/* ── Clinical pages ── */}
-            <Route path="/opd-register" element={<OPDRegistrationPage />} />
             <Route path="/opd-queue" element={<NurseOPDQueuePage />} />
             <Route path="/nurse-patient-panel" element={<NursePatientPanel />} />
             <Route path="/doctor-opd-panel" element={<DoctorOPDPanelPage />} />
@@ -311,7 +316,6 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/consent-forms" element={<ConsentFormPage />} />
             <Route path="/nurse-initial-assessment" element={<NurseInitialAssessmentPage />} />
             <Route path="/ipd-initial-assessment" element={<IPDInitialAssessmentPage />} />
-            <Route path="/ipd-admission" element={<IPDAdmissionPage />} />
             <Route path="/doctor-assessment" element={<DoctorAssessmentPage />} />
             <Route path="/opd-assessment" element={<OPDAssessmentPage />} />
             <Route path="/doctor-patient-panel" element={<DoctorPatientPanel />} />
