@@ -29,7 +29,7 @@ class NurseNotesController {
     const note = await nurseNotesService.createNurseNote(data, nurseUserId);
     // ── Auto-billing hook ──────────────────────────────────────
     try {
-      const autoBilling = require("../../services/billing/autoBillingService");
+      const autoBilling = require("../../services/Billing/autoBillingService");
       autoBilling.onNurseNoteSaved(note).catch(() => {});
     } catch {}
     return res.status(201).json({ success: true, data: note });

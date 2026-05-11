@@ -213,7 +213,7 @@ exports.aiSuggest = async (req, res, next) => {
         .status(400)
         .json({ success: false, message: "billId and diagnosis are required" });
     }
-    const aiSvc = require("../../services/billing/aiChargeService");
+    const aiSvc = require("../../services/Billing/aiChargeService");
     const result = await aiSvc.suggestMissedCharges({
       billId,
       diagnosis,
@@ -235,7 +235,7 @@ exports.aiConfirm = async (req, res, next) => {
         .status(400)
         .json({ success: false, message: "billId and serviceIds[] required" });
     }
-    const aiSvc = require("../../services/billing/aiChargeService");
+    const aiSvc = require("../../services/Billing/aiChargeService");
     const result = await aiSvc.confirmAISuggestions(
       billId,
       serviceIds,
@@ -283,7 +283,7 @@ exports.getNurseChargeableServices = async (req, res, next) => {
 // GET /api/billing/audit-trail/:admissionId
 exports.getAuditTrail = async (req, res, next) => {
   try {
-    const autoBilling = require("../../services/billing/autoBillingService");
+    const autoBilling = require("../../services/Billing/autoBillingService");
     const result = await autoBilling.getAuditTrail(req.params.admissionId, req.query);
     res.json({ success: true, ...result });
   } catch (e) { next(e); }
@@ -292,7 +292,7 @@ exports.getAuditTrail = async (req, res, next) => {
 // GET /api/billing/audit-summary/:admissionId
 exports.getAuditSummary = async (req, res, next) => {
   try {
-    const autoBilling = require("../../services/billing/autoBillingService");
+    const autoBilling = require("../../services/Billing/autoBillingService");
     const result = await autoBilling.getAdmissionBillingSummary(req.params.admissionId);
     res.json({ success: true, data: result });
   } catch (e) { next(e); }
@@ -301,7 +301,7 @@ exports.getAuditSummary = async (req, res, next) => {
 // POST /api/billing/audit/:triggerId/confirm-bill
 exports.confirmTriggerBill = async (req, res, next) => {
   try {
-    const autoBilling = require("../../services/billing/autoBillingService");
+    const autoBilling = require("../../services/Billing/autoBillingService");
     const { confirmedBy, confirmedByRole } = req.body;
     const result = await autoBilling.confirmAndBillTrigger(req.params.triggerId, { confirmedBy, confirmedByRole });
     res.json({ success: true, data: result });

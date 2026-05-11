@@ -4,6 +4,20 @@ class OPDController {
   async createOPDVisit(req, res) {
     try {
       const visit = await opdService.createOPDVisit(req.body);
+
+      // ── Auto-billing: fire OPD consultation charge ──
+      try {
+        const autoBilling = require("../../services/Billing/autoBillingService");
+        const Admission   = require("../../models/Patient/admissionModel");
+        // OPD visits may not have a paired admission — use a virtual one for billing.
+        const admission =
+          (visit.UHID && (await Admission.findOne({ UHID: visit.UHID, admissionType: { $in: ["OPD", "Day Care"] } })))
+          || { _id: visit._id, UHID: visit.UHID, patientId: visit.patientId, department: visit.department };
+        autoBilling.onOPDRegistered(visit, admission).catch((e) =>
+          console.error("OPD auto-billing error:", e.message)
+        );
+      } catch (e) { /* don't block the visit creation */ }
+
       res.status(201).json({ success: true, message: "OPD visit created successfully", data: visit });
     } catch (error) {
       res.status(400).json({ success: false, message: error.message });

@@ -3,6 +3,19 @@ class EmergencyController {
   async createEmergencyVisit(req, res) {
     try {
       const visit = await emergencyService.createEmergencyVisit(req.body);
+
+      // ── Auto-billing: fire ER triage charge ──
+      try {
+        const autoBilling = require("../../services/Billing/autoBillingService");
+        const Admission   = require("../../models/Patient/admissionModel");
+        const admission =
+          (visit.UHID && (await Admission.findOne({ UHID: visit.UHID, admissionType: "Emergency" }).sort({ createdAt: -1 })))
+          || { _id: visit._id, UHID: visit.UHID, patientId: visit.patientId, department: null };
+        autoBilling.onEmergencyVisitCreated(visit, admission).catch((e) =>
+          console.error("ER auto-billing error:", e.message)
+        );
+      } catch (e) { /* don't block visit creation */ }
+
       res.status(201).json({
         success: true,
         message: "Emergency visit created successfully",

@@ -32,7 +32,7 @@ class DoctorNotesController {
     );
     // ── Auto-billing hook ──────────────────────────────────────
     try {
-      const autoBilling = require("../../services/billing/autoBillingService");
+      const autoBilling = require("../../services/Billing/autoBillingService");
       autoBilling.onDoctorNoteSaved(note).catch(() => {});
     } catch {}
     return res.status(201).json({ success: true, data: note });

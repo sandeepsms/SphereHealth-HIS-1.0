@@ -13,6 +13,15 @@ const handle = (fn) => async (req, res) => {
 class AdmissionController {
   createAdmission = handle(async (req, res) => {
     const admission = await AdmissionService.createAdmission(req.body);
+
+    // ── Auto-billing: fire registration + admission + first bed-day charges ──
+    try {
+      const autoBilling = require("../../services/Billing/autoBillingService");
+      autoBilling.onAdmissionCreated(admission).catch((e) =>
+        console.error("Admission auto-billing error:", e.message)
+      );
+    } catch (e) { /* don't block the admission */ }
+
     return res.status(201).json({
       success: true,
       message: "Patient admitted successfully",
@@ -399,6 +408,10 @@ class AdmissionController {
     if (!admission) return res.status(404).json({ success: false, message: "Admission not found" });
 
     const now = new Date();
+    // Ensure initialAssessment object exists (Mixed type needs explicit init)
+    if (!admission.initialAssessment || typeof admission.initialAssessment !== "object") {
+      admission.initialAssessment = {};
+    }
     if (role === "doctor") {
       admission.initialAssessment.doctorCompleted   = true;
       admission.initialAssessment.doctorCompletedAt = now;
@@ -408,6 +421,8 @@ class AdmissionController {
       admission.initialAssessment.nurseCompletedAt = now;
       admission.initialAssessment.nurseName        = name;
     }
+    // markModified is required for Mixed-type fields so Mongoose tracks the change
+    admission.markModified("initialAssessment");
     await admission.save();
     return res.json({ success: true, message: `${role} initial assessment marked complete`, data: admission.initialAssessment });
   });

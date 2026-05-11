@@ -19,7 +19,7 @@ exports.logItems = async (req, res) => {
     const result = await svc.logItems({ admissionId, items, shift, chargedBy, chargedById, dateKey });
     // ── Auto-billing audit trail ────────────────────────────────
     try {
-      const autoBilling = require("../../services/billing/autoBillingService");
+      const autoBilling = require("../../services/Billing/autoBillingService");
       for (const saved of result.saved || []) {
         autoBilling.onEquipmentCharged({ ...saved, admissionId, UHID: req.body.UHID, chargedBy }, saved.billItemId).catch(() => {});
       }
