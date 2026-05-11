@@ -266,7 +266,10 @@ function NursingNotesContent({ selectedPatient }) {
 
   /* ── Module-specific form state ── */
   const [vitals,    setVitals]    = useState({ bp_sys: "", bp_dia: "", pulse: "", temp: "", spo2: "", rr: "", gcs: "", bsl: "", painScore: "", o2Flow: "", o2Device: "None", weight: "", position: "Supine" });
-  const [blood,     setBlood]     = useState({ product: "PRC (Packed RBC)", bagNo: "", crossMatchNo: "", volume: "350", groupVerified: true, secondNurse: "", startTime: "", status: "Transfusing", endTime: "", reactionType: "None", preBP_sys: "", preBP_dia: "", prePulse: "", preTemp: "", postBP_sys: "", postBP_dia: "", postPulse: "" });
+  const [blood,     setBlood]     = useState({ product: "PRC (Packed RBC)", bagNo: "", crossMatchNo: "", volume: "350", groupVerified: true, secondNurse: "", startTime: "", status: "Transfusing", endTime: "", reactionType: "None", preBP_sys: "", preBP_dia: "", prePulse: "", preTemp: "", postBP_sys: "", postBP_dia: "", postPulse: "",
+    // NABH COP.7 monitoring log — one entry per checkpoint
+    monitoringLogs: [],  // [{ interval, time, bp_sys, bp_dia, pulse, temp, spo2, rr, reaction, action, comment }]
+  });
   const [iv,        setIV]        = useState({ fluid: "NS 0.9%", volume: "", rate: "", dropsPerMin: "", route: "IV Right Forearm", site: "Patent", cannulaDate: "", setChangeDate: "", additive: "" });
   const [intake,    setIntake]    = useState({ oral: "", ivFluids: "", bloodProducts: "", urineOutput: "", drainOutput: "", nasogastric: "", emesis: "", bloodLoss: "" });
   const [ivMedOrders,    setIvMedOrders]    = useState([]); // IV dilution volumes from Treatment Chart
@@ -614,7 +617,7 @@ function NursingNotesContent({ selectedPatient }) {
     setActiveModal(id);
     setNoteText(""); setIsCritical(false); setSelectedTags([]);
     // vitals persist across tab switches — they're updated live by IntegratedVitalsPanel
-    setBlood({ product: "PRC (Packed RBC)", bagNo: "", crossMatchNo: "", volume: "350", groupVerified: true, secondNurse: "", startTime: "", status: "Transfusing", endTime: "", reactionType: "None", preBP_sys: "", preBP_dia: "", prePulse: "", preTemp: "", postBP_sys: "", postBP_dia: "", postPulse: "" });
+    setBlood({ product: "PRC (Packed RBC)", bagNo: "", crossMatchNo: "", volume: "350", groupVerified: true, secondNurse: "", startTime: "", status: "Transfusing", endTime: "", reactionType: "None", preBP_sys: "", preBP_dia: "", prePulse: "", preTemp: "", postBP_sys: "", postBP_dia: "", postPulse: "", monitoringLogs: [] });
     setIV({ fluid: "NS 0.9%", volume: "", rate: "", dropsPerMin: "", route: "IV Right Forearm", site: "Patent", cannulaDate: "", setChangeDate: "", additive: "" });
     setIntake({ oral: "", ivFluids: "", bloodProducts: "", urineOutput: "", drainOutput: "", nasogastric: "", emesis: "", bloodLoss: "" });
     // When opening MEWS tab, seed from current vitals; otherwise reset
@@ -1656,9 +1659,10 @@ function NursingNotesContent({ selectedPatient }) {
                           limbLL:"Lower-L", limbLR:"Lower-R",
                           product:"Product", bagNo:"Bag No.", crossMatchNo:"X-Match No.",
                           volume:"Volume (mL)", groupVerified:"Group Verified", secondNurse:"2nd Nurse",
-                          startTime:"Start", endTime:"End", reactionType:"Reaction",
-                          preBP:"Pre-BP", preBP_sys:"Pre-Sys BP", preBP_dia:"Pre-Dia BP",
-                          prePulse:"Pre-Pulse", postBP:"Post-BP", postBP_sys:"Post-Sys BP", postBP_dia:"Post-Dia BP", postPulse:"Post-Pulse",
+                          startTime:"Start", endTime:"End", status:"Status", reactionType:"Reaction",
+                          preBP_sys:"Pre-Sys BP", preBP_dia:"Pre-Dia BP", prePulse:"Pre-Pulse", preTemp:"Pre-Temp", preSpO2:"Pre-SpO₂",
+                          postBP_sys:"Post-Sys BP", postBP_dia:"Post-Dia BP", postPulse:"Post-Pulse", postTemp:"Post-Temp", postSpO2:"Post-SpO₂",
+                          monitoringLogs:"Monitoring Log",
                           fluid:"Fluid", rate:"Rate (mL/hr)", dropsPerMin:"gtts/min",
                           route:"Route", site:"Site", cannulaDate:"Cannula Date",
                           setChangeDate:"Set Change", additive:"Additive",
@@ -1715,11 +1719,17 @@ function NursingNotesContent({ selectedPatient }) {
                           railsUp:"Bed Rails",
                         };
                         const fmtKey = k => FIELD_LBL[k] || k.replace(/([A-Z])/g," $1").replace(/^[Ii]nt /,"").trim();
-                        const fmtVal = v => {
+                        const fmtVal = (v, key) => {
                           if (v === null || v === undefined || v === "" || v === false) return null;
                           if (typeof v === "boolean") return "✓ Yes";
                           if (Array.isArray(v)) {
                             if (!v.length) return null;
+                            // Monitoring log — format each entry as a compact row
+                            if (key === "monitoringLogs") {
+                              return v.map(x =>
+                                `[${x.interval||"?"}@${x.time||"--:--"}] BP:${x.bp_sys||"—"}/${x.bp_dia||"—"} P:${x.pulse||"—"} T:${x.temp||"—"} SpO₂:${x.spo2||"—"}% RR:${x.rr||"—"}${x.reaction&&x.reaction!=="None"?" ⚠"+x.reaction:""}`
+                              ).join(" · ");
+                            }
                             return v.map(x => typeof x === "object" ? (x.statement || x.topic || x.name || JSON.stringify(x)) : String(x)).join(", ");
                           }
                           if (typeof v === "object") {
@@ -1736,12 +1746,17 @@ function NursingNotesContent({ selectedPatient }) {
                             if (Array.isArray(mv)) {
                               const items = mv.filter(Boolean);
                               if (!items.length) return null;
+                              // Monitoring logs — use compact format with key
+                              if (mk === "monitoringLogs") {
+                                const formatted = fmtVal(items, mk);
+                                return { key: mk, label: MOD_SECTION_LBL[mk]||"Monitoring Log", chips:[{label:`${items.length} check${items.length!==1?"s":""}`, value: formatted}] };
+                              }
                               const summary = items.map((x,i) => typeof x === "object" ? (x.statement||x.topic||x.name||`Item ${i+1}`) : String(x)).join(" | ");
                               return { key: mk, label: MOD_SECTION_LBL[mk]||mk, chips:[{label:`${items.length} item(s)`, value: summary}] };
                             }
                             if (typeof mv !== "object") return null;
                             const chips = Object.entries(mv)
-                              .map(([k,v]) => ({ label: fmtKey(k), value: fmtVal(v) }))
+                              .map(([k,v]) => ({ label: fmtKey(k), value: fmtVal(v, k) }))
                               .filter(c => c.value !== null);
                             if (!chips.length) return null;
                             return { key: mk, label: MOD_SECTION_LBL[mk]||mk.replace(/([A-Z])/g," $1").trim(), chips };
@@ -2059,11 +2074,52 @@ function NursingNotesContent({ selectedPatient }) {
               )}
 
               {/* ── Blood Transfusion (NABH COP.7) ── */}
-              {activeModal === "blood" && (
+              {activeModal === "blood" && (() => {
+                // ── NABH COP.7 helpers ──
+                const INTERVALS = ["Pre","15 min","30 min","1 hr","2 hr","End"];
+                const REACTIONS = ["None","Febrile","Allergic / Urticaria","Anaphylaxis","Haemolytic","TACO (fluid overload)","TRALI","Other"];
+                const ACTIONS   = ["Continue transfusion","Slow rate","Stop transfusion","Notify doctor","IV Antihistamine given","IV Corticosteroid given","Adrenaline given","Blood bag returned to blood bank","Other"];
+
+                // Look up today's blood transfusion notes in timeline for active bag
+                const today = new Date().toDateString();
+                const todayBloodNotes = notes.filter(n => n.noteType === "blood" && new Date(n.createdAt).toDateString() === today);
+                const activeBag = todayBloodNotes.find(n => n.moduleData?.bloodTransfusion?.status === "Transfusing");
+
+                const addMonitorLog = () => {
+                  const now = new Date();
+                  const hhmm = now.getHours().toString().padStart(2,"0") + ":" + now.getMinutes().toString().padStart(2,"0");
+                  const used = blood.monitoringLogs.map(l => l.interval);
+                  const nextInterval = INTERVALS.find(iv => !used.includes(iv)) || "15 min";
+                  setBlood(p => ({ ...p, monitoringLogs: [...p.monitoringLogs, {
+                    interval: nextInterval, time: hhmm,
+                    bp_sys: "", bp_dia: "", pulse: "", temp: "", spo2: "", rr: "",
+                    reaction: "None", action: "", comment: ""
+                  }]}));
+                };
+                const updateLog = (idx, key, val) => setBlood(p => {
+                  const logs = [...p.monitoringLogs];
+                  logs[idx] = { ...logs[idx], [key]: val };
+                  return { ...p, monitoringLogs: logs };
+                });
+                const removeLog = (idx) => setBlood(p => ({ ...p, monitoringLogs: p.monitoringLogs.filter((_,i) => i !== idx) }));
+
+                return (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  {/* NABH banner */}
                   <div style={{ background: C.redL, border: `1.5px solid #fca5a5`, borderRadius: 8, padding: "10px 14px", fontSize: 12, color: C.red, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
                     <i className="pi pi-exclamation-triangle" style={{ fontSize: 13 }} /> NABH COP.7 — Blood Product Administration · Dual RN Verification Mandatory
                   </div>
+
+                  {/* Active transfusion banner */}
+                  {activeBag && (
+                    <div style={{ background:"#fefce8", border:"1.5px solid #fde047", borderRadius:8, padding:"10px 14px", fontSize:12, color:"#854d0e", fontWeight:700, display:"flex", alignItems:"center", gap:8 }}>
+                      <i className="pi pi-clock" style={{ fontSize:13 }} />
+                      Active transfusion in progress — Bag {activeBag.moduleData.bloodTransfusion.bagNo} · {activeBag.moduleData.bloodTransfusion.product} · Started {activeBag.moduleData.bloodTransfusion.startTime}
+                      <span style={{ marginLeft:"auto", fontWeight:500, fontSize:11 }}>Add monitoring entry below ↓</span>
+                    </div>
+                  )}
+
+                  {/* Bag / product details */}
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
                     <FL label="Blood Product *">
                       <select style={sel} value={blood.product} onChange={e => setBlood(p => ({ ...p, product: e.target.value }))}>
@@ -2073,36 +2129,118 @@ function NursingNotesContent({ selectedPatient }) {
                     <FL label="Bag / Unit No. *"><input style={fld} value={blood.bagNo} placeholder="BT-YYYYMMDD-01" onChange={e => setBlood(p => ({ ...p, bagNo: e.target.value }))} /></FL>
                     <FL label="Cross-Match Report No. *"><input style={fld} value={blood.crossMatchNo} placeholder="CM-2024-001" onChange={e => setBlood(p => ({ ...p, crossMatchNo: e.target.value }))} /></FL>
                   </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 }}>
                     <FL label="Volume (mL) *"><input type="number" style={fld} value={blood.volume} placeholder="350" onChange={e => setBlood(p => ({ ...p, volume: e.target.value }))} /></FL>
-                    <FL label="Transfusion Start Time *"><input type="time" style={fld} value={blood.startTime} onChange={e => setBlood(p => ({ ...p, startTime: e.target.value }))} /></FL>
-                    <FL label="End Time / Status *">
-                      <select style={sel} value={blood.status} onChange={e => setBlood(p => ({ ...p, status: e.target.value }))}>
+                    <FL label="Start Time *"><input type="time" style={fld} value={blood.startTime} onChange={e => setBlood(p => ({ ...p, startTime: e.target.value }))} /></FL>
+                    <FL label="End Time"><input type="time" style={fld} value={blood.endTime} onChange={e => setBlood(p => ({ ...p, endTime: e.target.value }))} /></FL>
+                    <FL label="Status *">
+                      <select style={{ ...sel, borderColor: blood.status==="Reaction"||blood.status==="Stopped"?C.red:blood.status==="Completed"?C.green:"#e2e8f0" }} value={blood.status} onChange={e => setBlood(p => ({ ...p, status: e.target.value }))}>
                         {["Transfusing","Completed","Held","Reaction","Stopped"].map(o => <option key={o}>{o}</option>)}
                       </select>
                     </FL>
                   </div>
+
                   {/* Pre-transfusion vitals */}
                   <div style={{ background:"#fff7ed", border:`1px solid #fed7aa`, borderRadius:8, padding:"10px 14px" }}>
-                    <div style={{ fontSize:11, fontWeight:700, color:C.orange, textTransform:"uppercase", letterSpacing:".6px", marginBottom:8 }}>Pre-Transfusion Vitals *</div>
-                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:10 }}>
-                      <FL label="Systolic BP (mmHg)"><input type="number" style={fld} value={blood.preBP_sys} placeholder="120" onChange={e => setBlood(p => ({ ...p, preBP_sys: e.target.value }))} /></FL>
-                      <FL label="Diastolic BP (mmHg)"><input type="number" style={fld} value={blood.preBP_dia} placeholder="80" onChange={e => setBlood(p => ({ ...p, preBP_dia: e.target.value }))} /></FL>
-                      <FL label="Pulse (/min)"><input type="number" style={fld} value={blood.prePulse} placeholder="80" onChange={e => setBlood(p => ({ ...p, prePulse: e.target.value }))} /></FL>
+                    <div style={{ fontSize:11, fontWeight:700, color:C.orange, textTransform:"uppercase", letterSpacing:".6px", marginBottom:8 }}>Pre-Transfusion Vitals (Baseline) *</div>
+                    <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:8 }}>
+                      <FL label="Sys BP"><input type="number" style={fld} value={blood.preBP_sys} placeholder="120" onChange={e => setBlood(p => ({ ...p, preBP_sys: e.target.value }))} /></FL>
+                      <FL label="Dia BP"><input type="number" style={fld} value={blood.preBP_dia} placeholder="80" onChange={e => setBlood(p => ({ ...p, preBP_dia: e.target.value }))} /></FL>
+                      <FL label="Pulse"><input type="number" style={fld} value={blood.prePulse} placeholder="80" onChange={e => setBlood(p => ({ ...p, prePulse: e.target.value }))} /></FL>
                       <FL label="Temp (°F)"><input type="number" style={fld} value={blood.preTemp} placeholder="98.6" onChange={e => setBlood(p => ({ ...p, preTemp: e.target.value }))} /></FL>
+                      <FL label="SpO₂ (%)"><input type="number" style={fld} value={blood.preSpO2||""} placeholder="98" onChange={e => setBlood(p => ({ ...p, preSpO2: e.target.value }))} /></FL>
                     </div>
                   </div>
+
+                  {/* ── NABH monitoring log ── */}
+                  <div style={{ background:"#f8fafc", border:`1.5px solid ${C.border}`, borderRadius:10, overflow:"hidden" }}>
+                    <div style={{ padding:"9px 14px", background:"#f1f5f9", borderBottom:`1px solid ${C.border}`, display:"flex", alignItems:"center", gap:8 }}>
+                      <i className="pi pi-chart-line" style={{ fontSize:12, color:C.red }} />
+                      <span style={{ fontSize:12, fontWeight:700, color:C.slate, textTransform:"uppercase", letterSpacing:".5px" }}>NABH COP.7 — Transfusion Monitoring Log</span>
+                      <span style={{ fontSize:11, color:C.muted, marginLeft:"auto" }}>Record vitals at 15 min · 30 min · 1 hr · 2 hr · End</span>
+                    </div>
+
+                    {blood.monitoringLogs.length === 0 && (
+                      <div style={{ padding:"14px", fontSize:12, color:C.muted, textAlign:"center" }}>
+                        No monitoring entries yet — click <strong>+ Add Monitoring Entry</strong> below to record vitals at each interval
+                      </div>
+                    )}
+
+                    {blood.monitoringLogs.map((log, idx) => {
+                      const hasReaction = log.reaction && log.reaction !== "None";
+                      return (
+                        <div key={idx} style={{ margin:"8px 12px", padding:"10px 12px", background: hasReaction ? C.redL : "white", border:`1px solid ${hasReaction?"#fca5a5":C.border}`, borderRadius:8 }}>
+                          {/* Header row */}
+                          <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8 }}>
+                            <span style={{ background: hasReaction?C.red:C.primary, color:"white", borderRadius:5, padding:"2px 10px", fontSize:11, fontWeight:700 }}>
+                              {log.interval || "—"}
+                            </span>
+                            <select style={{ ...sel, width:"auto", minWidth:100, fontSize:12, padding:"4px 8px" }} value={log.interval} onChange={e => updateLog(idx,"interval",e.target.value)}>
+                              {INTERVALS.map(iv => <option key={iv}>{iv}</option>)}
+                            </select>
+                            <FL label="Time"><input type="time" style={{ ...fld, width:120, padding:"4px 8px" }} value={log.time} onChange={e => updateLog(idx,"time",e.target.value)} /></FL>
+                            <button onClick={() => removeLog(idx)} style={{ marginLeft:"auto", border:"none", background:"transparent", color:C.muted, cursor:"pointer", fontSize:16, lineHeight:1 }} title="Remove">×</button>
+                          </div>
+                          {/* Vitals row */}
+                          <div style={{ display:"grid", gridTemplateColumns:"repeat(6,1fr)", gap:7, marginBottom:8 }}>
+                            {[["bp_sys","Sys BP","120"],["bp_dia","Dia BP","80"],["pulse","Pulse","80"],["temp","Temp°F","98.6"],["spo2","SpO₂%","98"],["rr","RR","16"]].map(([k,l,ph]) => (
+                              <FL key={k} label={l}>
+                                <input type="number" style={{ ...fld, padding:"5px 8px", fontSize:12,
+                                  borderColor: k==="bp_sys"&&Number(log[k])>160?"#ef4444":k==="spo2"&&Number(log[k])<93?"#ef4444":"#e2e8f0"
+                                }} value={log[k]||""} placeholder={ph} onChange={e => updateLog(idx,k,e.target.value)} />
+                              </FL>
+                            ))}
+                          </div>
+                          {/* Reaction + Action */}
+                          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom: log.comment ? 8 : 0 }}>
+                            <FL label="Reaction Noted">
+                              <select style={{ ...sel, borderColor: hasReaction?C.red:"#e2e8f0", fontSize:12 }} value={log.reaction||"None"} onChange={e => updateLog(idx,"reaction",e.target.value)}>
+                                {REACTIONS.map(r => <option key={r}>{r}</option>)}
+                              </select>
+                            </FL>
+                            <FL label="Action Taken">
+                              <select style={{ ...sel, fontSize:12 }} value={log.action||""} onChange={e => updateLog(idx,"action",e.target.value)}>
+                                <option value="">— Select action —</option>
+                                {ACTIONS.map(a => <option key={a}>{a}</option>)}
+                              </select>
+                            </FL>
+                          </div>
+                          <FL label="Comment / Clinical Observation">
+                            <input style={{ ...fld, fontSize:12 }} value={log.comment||""} placeholder="e.g. Patient comfortable, no complaints" onChange={e => updateLog(idx,"comment",e.target.value)} />
+                          </FL>
+                          {hasReaction && (
+                            <div style={{ marginTop:8, padding:"6px 10px", background:C.red, color:"white", borderRadius:6, fontSize:11, fontWeight:700 }}>
+                              ⚠ REACTION: Stop transfusion · Notify Doctor · Send bag to Blood Bank · Document as Critical Event
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    <div style={{ padding:"10px 14px", borderTop: blood.monitoringLogs.length ? `1px solid ${C.border}` : "none" }}>
+                      <button onClick={addMonitorLog} style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", border:`1.5px dashed ${C.primary}`, borderRadius:7, background:"transparent", color:C.primary, fontWeight:700, fontSize:12, cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}>
+                        <i className="pi pi-plus" style={{ fontSize:11 }} /> Add Monitoring Entry
+                      </button>
+                    </div>
+                  </div>
+
                   {/* Post-transfusion vitals */}
-                  {blood.status === "Completed" && (
-                    <div style={{ background:C.greenL, border:`1px solid ${C.greenB}`, borderRadius:8, padding:"10px 14px" }}>
-                      <div style={{ fontSize:11, fontWeight:700, color:C.green, textTransform:"uppercase", letterSpacing:".6px", marginBottom:8 }}>Post-Transfusion Vitals *</div>
-                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
-                        <FL label="Systolic BP (mmHg)"><input type="number" style={fld} value={blood.postBP_sys} placeholder="118" onChange={e => setBlood(p => ({ ...p, postBP_sys: e.target.value }))} /></FL>
-                        <FL label="Diastolic BP (mmHg)"><input type="number" style={fld} value={blood.postBP_dia} placeholder="76" onChange={e => setBlood(p => ({ ...p, postBP_dia: e.target.value }))} /></FL>
-                        <FL label="Pulse (/min)"><input type="number" style={fld} value={blood.postPulse} placeholder="78" onChange={e => setBlood(p => ({ ...p, postPulse: e.target.value }))} /></FL>
+                  {(blood.status === "Completed" || blood.status === "Stopped") && (
+                    <div style={{ background:blood.status==="Completed"?C.greenL:C.redL, border:`1px solid ${blood.status==="Completed"?C.greenB:"#fca5a5"}`, borderRadius:8, padding:"10px 14px" }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:blood.status==="Completed"?C.green:C.red, textTransform:"uppercase", letterSpacing:".6px", marginBottom:8 }}>
+                        {blood.status==="Completed"?"Post-Transfusion Vitals *":"Stop Vitals"}
+                      </div>
+                      <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:8 }}>
+                        <FL label="Sys BP"><input type="number" style={fld} value={blood.postBP_sys} placeholder="118" onChange={e => setBlood(p => ({ ...p, postBP_sys: e.target.value }))} /></FL>
+                        <FL label="Dia BP"><input type="number" style={fld} value={blood.postBP_dia} placeholder="76" onChange={e => setBlood(p => ({ ...p, postBP_dia: e.target.value }))} /></FL>
+                        <FL label="Pulse"><input type="number" style={fld} value={blood.postPulse} placeholder="78" onChange={e => setBlood(p => ({ ...p, postPulse: e.target.value }))} /></FL>
+                        <FL label="Temp (°F)"><input type="number" style={fld} value={blood.postTemp||""} placeholder="98.6" onChange={e => setBlood(p => ({ ...p, postTemp: e.target.value }))} /></FL>
+                        <FL label="SpO₂ (%)"><input type="number" style={fld} value={blood.postSpO2||""} placeholder="98" onChange={e => setBlood(p => ({ ...p, postSpO2: e.target.value }))} /></FL>
                       </div>
                     </div>
                   )}
+
+                  {/* Verification */}
                   <div style={{ display:"flex", gap:20, alignItems:"center", flexWrap:"wrap" }}>
                     <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontWeight:700, fontSize:13, color:blood.groupVerified?C.green:C.red }}>
                       <input type="checkbox" checked={blood.groupVerified} onChange={e => setBlood(p => ({ ...p, groupVerified: e.target.checked }))} style={{ accentColor:C.green, width:15, height:15 }} />
@@ -2111,19 +2249,20 @@ function NursingNotesContent({ selectedPatient }) {
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                     <FL label="Second Nurse Verified (Name) *"><input style={fld} value={blood.secondNurse} placeholder="Verifying nurse name" onChange={e => setBlood(p => ({ ...p, secondNurse: e.target.value }))} /></FL>
-                    <FL label="Transfusion Reaction">
+                    <FL label="Overall Transfusion Reaction">
                       <select style={{ ...sel, borderColor: blood.reactionType!=="None"?C.red:"#e2e8f0" }} value={blood.reactionType} onChange={e => setBlood(p => ({ ...p, reactionType: e.target.value }))}>
-                        {["None","Febrile","Allergic / Urticaria","Anaphylaxis","Haemolytic","TACO","TRALI","Other"].map(o=><option key={o}>{o}</option>)}
+                        {REACTIONS.map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                   </div>
                   {blood.reactionType !== "None" && (
                     <div style={{ background:C.redL, border:`1.5px solid #fca5a5`, borderRadius:8, padding:10, fontSize:12, color:C.red, fontWeight:600 }}>
-                      ⚠️ Reaction reported — stop transfusion, notify doctor, send blood bag to lab. Document in critical event.
+                      ⚠️ Reaction reported — stop transfusion, notify doctor immediately, return blood bag to lab, activate critical event documentation.
                     </div>
                   )}
                 </div>
-              )}
+                );
+              })()}
 
               {/* ── Intake / Output (NABH COP.2) ── */}
               {activeModal === "intake" && (() => {
@@ -2136,8 +2275,108 @@ function NursingNotesContent({ selectedPatient }) {
                   next.has(id) ? next.delete(id) : next.add(id);
                   return next;
                 });
+
+                // ── Previous I/O entries for today (from already-fetched notes) ──
+                const todayStr = new Date().toDateString();
+                const prevIO = notes.filter(n => n.noteType === "intake" && new Date(n.createdAt).toDateString() === todayStr);
+                // Cumulative totals across all previous entries
+                const cumIn  = prevIO.reduce((s,n) => s + ((n.intakeOutput?.oral||0)+(n.intakeOutput?.ivFluids||0)+(n.intakeOutput?.ivMedFluids||0)), 0);
+                const cumOut = prevIO.reduce((s,n) => s + ((n.intakeOutput?.urineOutput||0)+(n.intakeOutput?.otherOutput||0)+(n.intakeOutput?.nasogastricOutput||0)), 0);
+                // Shift-wise subtotals
+                const SHIFT_ORDER = ["morning","evening","night"];
+                const shiftTotals = SHIFT_ORDER.reduce((acc, sh) => {
+                  const shiftNotes = prevIO.filter(n => n.shift === sh);
+                  if (!shiftNotes.length) return acc;
+                  const inn  = shiftNotes.reduce((s,n) => s + ((n.intakeOutput?.oral||0)+(n.intakeOutput?.ivFluids||0)+(n.intakeOutput?.ivMedFluids||0)), 0);
+                  const out  = shiftNotes.reduce((s,n) => s + ((n.intakeOutput?.urineOutput||0)+(n.intakeOutput?.otherOutput||0)+(n.intakeOutput?.nasogastricOutput||0)), 0);
+                  acc.push({ shift: sh, count: shiftNotes.length, in: inn, out, notes: shiftNotes });
+                  return acc;
+                }, []);
+
                 return (
                   <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+
+                    {/* ── Today's I/O History + Running Totals ── */}
+                    {prevIO.length > 0 && (
+                      <div style={{ background:"#f0f9ff", border:`1.5px solid ${C.blueB}`, borderRadius:10, overflow:"hidden" }}>
+                        <div style={{ padding:"9px 14px", background:"#dbeafe", borderBottom:`1px solid ${C.blueB}`, display:"flex", alignItems:"center", gap:8 }}>
+                          <i className="pi pi-list" style={{ fontSize:12, color:C.blue }} />
+                          <span style={{ fontSize:12, fontWeight:700, color:C.blue, textTransform:"uppercase", letterSpacing:".5px" }}>Today's I/O Chart — {prevIO.length} previous {prevIO.length===1?"entry":"entries"}</span>
+                          <span style={{ marginLeft:"auto", fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:800, color: cumIn>=cumOut?C.green:C.red }}>
+                            Balance: {cumIn>=cumOut?"+":""}{cumIn-cumOut} mL
+                          </span>
+                        </div>
+                        {/* Shift-wise rows */}
+                        <div style={{ padding:"10px 14px", display:"flex", flexDirection:"column", gap:6 }}>
+                          {shiftTotals.map(st => (
+                            <div key={st.shift} style={{ display:"flex", alignItems:"center", gap:12, padding:"7px 10px", background:"white", borderRadius:7, border:`1px solid ${C.border}` }}>
+                              <span style={{ fontSize:10, fontWeight:800, textTransform:"uppercase", letterSpacing:".5px", color:C.muted, minWidth:60 }}>
+                                {st.shift.charAt(0).toUpperCase()+st.shift.slice(1)}
+                              </span>
+                              <span style={{ fontSize:11, color:C.muted }}>{st.count} {st.count===1?"entry":"entries"}</span>
+                              <div style={{ flex:1, display:"flex", gap:16, justifyContent:"flex-end", alignItems:"center" }}>
+                                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:C.blue, fontWeight:700 }}>
+                                  In: {st.in} mL
+                                </span>
+                                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:C.amber, fontWeight:700 }}>
+                                  Out: {st.out} mL
+                                </span>
+                                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:800, color:st.in>=st.out?C.green:C.red, minWidth:80, textAlign:"right" }}>
+                                  {st.in>=st.out?"+":""}{st.in-st.out} mL
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                          {/* Individual entries table */}
+                          <div style={{ marginTop:4 }}>
+                            <div style={{ display:"grid", gridTemplateColumns:"60px 60px 1fr 70px 70px 70px 70px 70px 80px", gap:"0 8px", padding:"4px 10px", fontSize:9, fontWeight:800, textTransform:"uppercase", letterSpacing:".5px", color:C.muted }}>
+                              <span>Time</span><span>Shift</span><span>Nurse</span><span>Oral</span><span>IV</span><span>Urine</span><span>Drain</span><span>NGT</span><span>Balance</span>
+                            </div>
+                            {prevIO.map((n, i) => {
+                              const io = n.intakeOutput || {};
+                              const inn = (io.oral||0)+(io.ivFluids||0)+(io.ivMedFluids||0);
+                              const out = (io.urineOutput||0)+(io.otherOutput||0)+(io.nasogastricOutput||0);
+                              const bal = inn - out;
+                              const t = new Date(n.createdAt).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"});
+                              return (
+                                <div key={n._id||i} style={{ display:"grid", gridTemplateColumns:"60px 60px 1fr 70px 70px 70px 70px 70px 80px", gap:"0 8px", padding:"5px 10px", fontSize:11, background: i%2===0?"#f8fafc":"white", borderRadius:4, alignItems:"center" }}>
+                                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11 }}>{t}</span>
+                                  <span style={{ fontSize:10, fontWeight:700, textTransform:"capitalize", color:C.muted }}>{n.shift}</span>
+                                  <span style={{ fontSize:11, color:C.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{n.nurseName || "—"}</span>
+                                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:C.blue }}>{io.oral||0}</span>
+                                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:C.blue }}>{(io.ivFluids||0)+(io.ivMedFluids||0)}</span>
+                                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:C.amber }}>{io.urineOutput||0}</span>
+                                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:C.amber }}>{io.otherOutput||0}</span>
+                                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:C.amber }}>{io.nasogastricOutput||0}</span>
+                                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, fontWeight:800, color:bal>=0?C.green:C.red }}>{bal>=0?"+":""}{bal}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                          {/* 24-hr totals bar */}
+                          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:10, marginTop:6, padding:"10px 12px", background: cumIn>=cumOut?"#dcfce7":C.redL, borderRadius:8, border:`1.5px solid ${cumIn>=cumOut?C.greenB:"#fca5a5"}` }}>
+                            <div style={{ display:"flex", flexDirection:"column", gap:2 }}>
+                              <span style={{ fontSize:9, fontWeight:800, textTransform:"uppercase", letterSpacing:".5px", color:C.muted }}>24-hr Total In</span>
+                              <span style={{ fontFamily:"'DM Mono',monospace", fontSize:15, fontWeight:800, color:C.blue }}>{cumIn} mL</span>
+                            </div>
+                            <div style={{ display:"flex", flexDirection:"column", gap:2 }}>
+                              <span style={{ fontSize:9, fontWeight:800, textTransform:"uppercase", letterSpacing:".5px", color:C.muted }}>24-hr Total Out</span>
+                              <span style={{ fontFamily:"'DM Mono',monospace", fontSize:15, fontWeight:800, color:C.amber }}>{cumOut} mL</span>
+                            </div>
+                            <div style={{ display:"flex", flexDirection:"column", gap:2 }}>
+                              <span style={{ fontSize:9, fontWeight:800, textTransform:"uppercase", letterSpacing:".5px", color:C.muted }}>Cumulative Balance</span>
+                              <span style={{ fontFamily:"'DM Mono',monospace", fontSize:15, fontWeight:800, color:cumIn>=cumOut?C.green:C.red }}>{cumIn>=cumOut?"+":""}{cumIn-cumOut} mL</span>
+                            </div>
+                            <div style={{ display:"flex", flexDirection:"column", gap:2 }}>
+                              <span style={{ fontSize:9, fontWeight:800, textTransform:"uppercase", letterSpacing:".5px", color:C.muted }}>Status</span>
+                              <span style={{ fontSize:12, fontWeight:700, color:cumIn>=cumOut?C.green:C.red }}>
+                                {cumIn-cumOut > 500 ? "⚠ Fluid Overload Risk" : cumIn-cumOut < -500 ? "⚠ Fluid Deficit" : "✓ Balanced"}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
                     {/* ── IV Medication Volumes from Treatment Chart ── */}
                     <div style={{ background:"#f0f9ff", border:"1.5px solid #bae6fd", borderRadius:10, overflow:"hidden" }}>
@@ -2229,9 +2468,19 @@ function NursingNotesContent({ selectedPatient }) {
                         </div>
                       </div>
                     </div>
-                    <div style={{ background: balance>=0?C.greenL:C.redL, border:`1.5px solid ${balance>=0?C.greenB:"#fca5a5"}`, borderRadius:10, padding:"12px 18px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-                      <span style={{ fontSize:13, fontWeight:700, color:balance>=0?C.green:C.red }}>Fluid Balance (This Entry)</span>
-                      <span style={{ fontFamily:"'DM Mono',monospace", fontSize:22, fontWeight:800, color:balance>=0?C.green:C.red }}>{balance>=0?"+":""}{balance} mL</span>
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                      <div style={{ background: balance>=0?C.greenL:C.redL, border:`1.5px solid ${balance>=0?C.greenB:"#fca5a5"}`, borderRadius:10, padding:"12px 18px", display:"flex", flexDirection:"column", gap:2 }}>
+                        <span style={{ fontSize:11, fontWeight:700, color:balance>=0?C.green:C.red, textTransform:"uppercase", letterSpacing:".5px" }}>This Entry Balance</span>
+                        <span style={{ fontFamily:"'DM Mono',monospace", fontSize:22, fontWeight:800, color:balance>=0?C.green:C.red }}>{balance>=0?"+":""}{balance} mL</span>
+                      </div>
+                      {prevIO.length > 0 && (
+                        <div style={{ background: (cumIn+totalIn)>=(cumOut+totalOut)?C.greenL:C.redL, border:`1.5px solid ${(cumIn+totalIn)>=(cumOut+totalOut)?C.greenB:"#fca5a5"}`, borderRadius:10, padding:"12px 18px", display:"flex", flexDirection:"column", gap:2 }}>
+                          <span style={{ fontSize:11, fontWeight:700, color:(cumIn+totalIn)>=(cumOut+totalOut)?C.green:C.red, textTransform:"uppercase", letterSpacing:".5px" }}>Running 24-hr Balance (After Save)</span>
+                          <span style={{ fontFamily:"'DM Mono',monospace", fontSize:22, fontWeight:800, color:(cumIn+totalIn)>=(cumOut+totalOut)?C.green:C.red }}>
+                            {(cumIn+totalIn)>=(cumOut+totalOut)?"+":""}{(cumIn+totalIn)-(cumOut+totalOut)} mL
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
