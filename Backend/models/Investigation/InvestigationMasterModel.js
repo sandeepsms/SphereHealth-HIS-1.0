@@ -119,7 +119,6 @@ InvestigationMasterSchema.pre("save", async function (next) {
   next();
 });
 
-InvestigationMasterSchema.index({ investigationCode: 1 });
 InvestigationMasterSchema.index({ category: 1 });
 InvestigationMasterSchema.index({ performedAt: 1 });
 InvestigationMasterSchema.index({ isActive: 1 });

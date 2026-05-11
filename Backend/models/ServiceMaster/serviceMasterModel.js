@@ -136,7 +136,6 @@ const ServiceMasterSchema = new mongoose.Schema(
   },
 );
 
-ServiceMasterSchema.index({ serviceCode: 1 });
 ServiceMasterSchema.index({ category: 1 });
 ServiceMasterSchema.index({ domain: 1 });
 ServiceMasterSchema.index({ applicableTo: 1 });

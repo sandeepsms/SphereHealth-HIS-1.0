@@ -217,7 +217,6 @@ InvestigationOrderSchema.pre("save", async function (next) {
 });
 
 InvestigationOrderSchema.index({ UHID: 1 });
-InvestigationOrderSchema.index({ orderNumber: 1 });
 InvestigationOrderSchema.index({ orderStatus: 1 });
 InvestigationOrderSchema.index({ prescriptionId: 1 });
 InvestigationOrderSchema.index({ createdAt: -1 });

@@ -171,7 +171,6 @@ const OPDSchema = new mongoose.Schema(
 
 OPDSchema.index({ patientId: 1, visitDate: -1 });
 OPDSchema.index({ UHID: 1 });
-OPDSchema.index({ visitNumber: 1 });
 OPDSchema.index({ visitDate: -1 });
 OPDSchema.index({ departmentId: 1, visitDate: -1 });
 OPDSchema.index({ doctorId: 1, visitDate: -1 });

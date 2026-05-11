@@ -129,7 +129,6 @@ DoctorSchema.pre("save", async function (next) {
 });
 
 // Indexes
-DoctorSchema.index({ doctorId: 1 });
 DoctorSchema.index({ "professional.specialization": 1 });
 DoctorSchema.index({ department: 1 });
 DoctorSchema.index({ isActive: 1 });

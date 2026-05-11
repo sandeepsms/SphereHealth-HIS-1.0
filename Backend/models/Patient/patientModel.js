@@ -94,9 +94,8 @@ const PatientSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-// Indexes
-PatientSchema.index({ patientId: 1 });
-PatientSchema.index({ UHID: 1 });
+// Indexes — patientId and UHID already get unique indexes via
+// `unique: true` on the field definitions above, no need to re-declare.
 PatientSchema.index({ contactNumber: 1 });
 PatientSchema.index({ paymentType: 1 });
 PatientSchema.index({ tpa: 1 });

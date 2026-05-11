@@ -129,7 +129,6 @@ const TPASchema = new mongoose.Schema(
 );
 
 // Indexes for better query performance
-TPASchema.index({ tpaCode: 1 });
 TPASchema.index({ isActive: 1 });
 TPASchema.index({ tpaName: 1 });
 TPASchema.index({ "roomCharges.roomCategory": 1 });

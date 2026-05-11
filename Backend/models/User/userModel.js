@@ -246,8 +246,6 @@ UserSchema.virtual("age").get(function () {
 });
 
 // Indexes
-UserSchema.index({ employeeId: 1 });
-UserSchema.index({ email: 1 });
 UserSchema.index({ role: 1, status: 1 });
 UserSchema.index({ department: 1 });
 UserSchema.index({ "doctorDetails.specialization": 1 });

@@ -240,7 +240,6 @@ const EmergencySchema = new mongoose.Schema(
 
 EmergencySchema.index({ patientId: 1, arrivalDate: -1 });
 EmergencySchema.index({ UHID: 1 });
-EmergencySchema.index({ emergencyNumber: 1 });
 EmergencySchema.index({ triageCategory: 1 });
 EmergencySchema.index({ status: 1 });
 EmergencySchema.index({ arrivalDate: -1 });

@@ -134,7 +134,6 @@ const RoomCategorySchema = new mongoose.Schema(
 );
 
 // ========== INDEXES ==========
-RoomCategorySchema.index({ categoryCode: 1 }, { unique: true });
 RoomCategorySchema.index({ isActive: 1, displayOrder: 1 });
 RoomCategorySchema.index({ roomType: 1 });
 
