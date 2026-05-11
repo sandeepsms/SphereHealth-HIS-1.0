@@ -6,6 +6,7 @@ import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import PatientHeaderCard from "../../Components/clinical/PatientHeaderCard";
+import "../../Components/clinical/clinical-forms.css";
 import { DoctorAssessmentContent } from "./DoctorAssessmentPage";
 import DoctorOrdersPanel from "../../Components/doctor/DoctorOrdersPanel";
 import TreatmentChart from "../../Components/clinical/TreatmentChart";
@@ -142,8 +143,11 @@ function getShift() {
 /* ── Helpers ── */
 function FL({ label, children, span }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 5, gridColumn: span ? `span ${span}` : undefined }}>
-      <label style={lbl}>{label}</label>
+    <div
+      className="his-field-group"
+      style={span ? { gridColumn: `span ${span}` } : undefined}
+    >
+      <label className="his-label">{label}</label>
       {children}
     </div>
   );
@@ -1861,15 +1865,15 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                       <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Admission Details</div>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
                         <FL label="Mode of Admission">
-                          <select style={sel} value={ia.admissionMode} onChange={e => set("admissionMode", e.target.value)}>
+                          <select className="his-select" value={ia.admissionMode} onChange={e => set("admissionMode", e.target.value)}>
                             {["Planned","Emergency","Transfer","OPD Referral","Day Care"].map(o => <option key={o}>{o}</option>)}
                           </select>
                         </FL>
                         <FL label="Chief Complaint *">
-                          <input style={fld} value={ia.chiefComplaint} placeholder="e.g. Chest pain" onChange={e => set("chiefComplaint", e.target.value)} />
+                          <input className="his-field" value={ia.chiefComplaint} placeholder="e.g. Chest pain" onChange={e => set("chiefComplaint", e.target.value)} />
                         </FL>
                         <FL label="Duration">
-                          <input style={fld} value={ia.duration} placeholder="e.g. 2 days" onChange={e => set("duration", e.target.value)} />
+                          <input className="his-field" value={ia.duration} placeholder="e.g. 2 days" onChange={e => set("duration", e.target.value)} />
                         </FL>
                       </div>
                       <div style={{ marginTop: 10 }}>
@@ -1892,8 +1896,8 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                             <div style={{ fontSize: 10, color: C.red, fontWeight: 700, marginTop: 3 }}>⚠ Allergy documented — verify before prescribing</div>
                           )}
                         </FL>
-                        <FL label="Family History"><input style={fld} value={ia.familyHistory} placeholder="Hereditary conditions, sudden cardiac death…" onChange={e => set("familyHistory", e.target.value)} /></FL>
-                        <FL label="Social History"><input style={fld} value={ia.socialHistory} placeholder="Smoking, alcohol, occupation, marital status…" onChange={e => set("socialHistory", e.target.value)} /></FL>
+                        <FL label="Family History"><input className="his-field" value={ia.familyHistory} placeholder="Hereditary conditions, sudden cardiac death…" onChange={e => set("familyHistory", e.target.value)} /></FL>
+                        <FL label="Social History"><input className="his-field" value={ia.socialHistory} placeholder="Smoking, alcohol, occupation, marital status…" onChange={e => set("socialHistory", e.target.value)} /></FL>
                       </div>
                     </div>
 
@@ -1902,7 +1906,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                       <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Vitals on Admission</div>
                       <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8 }}>
                         {[{k:"bp_sys",l:"Systolic BP (mmHg)",ph:"120"},{k:"bp_dia",l:"Diastolic BP (mmHg)",ph:"80"},{k:"pulse",l:"Pulse (/min)",ph:"80"},{k:"temp",l:"Temp (°F)",ph:"98.6"},{k:"spo2",l:"SpO₂ (%)",ph:"98"},{k:"rr",l:"RR (/min)",ph:"16"},{k:"weight",l:"Weight (kg)",ph:"60"},{k:"height",l:"Height (cm)",ph:"165"},{k:"bsl",l:"BSL (mg/dL)",ph:"100"}].map(f => (
-                          <FL key={f.k} label={f.l}><input type="number" style={fld} value={ia[f.k]} placeholder={f.ph} onChange={e => set(f.k, e.target.value)} /></FL>
+                          <FL key={f.k} label={f.l}><input type="number" className="his-field" value={ia[f.k]} placeholder={f.ph} onChange={e => set(f.k, e.target.value)} /></FL>
                         ))}
                       </div>
                     </div>
@@ -1940,10 +1944,10 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     <div style={{ background: "#f8fafc", borderRadius: 10, padding: "12px 14px", border: `1px solid ${C.border}` }}>
                       <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Diagnosis</div>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                        <FL label="Provisional Diagnosis *"><input style={fld} value={ia.provisionalDx} placeholder="Working diagnosis on admission" onChange={e => set("provisionalDx", e.target.value)} /></FL>
-                        <FL label="Differential Diagnosis"><input style={fld} value={ia.differentialDx} placeholder="Differential diagnoses (comma separated)" onChange={e => set("differentialDx", e.target.value)} /></FL>
-                        <FL label="Final Diagnosis (if known)"><input style={fld} value={ia.finalDx} placeholder="Confirmed diagnosis" onChange={e => set("finalDx", e.target.value)} /></FL>
-                        <FL label="ICD-10 Code"><input style={fld} value={ia.icd10} placeholder="e.g. J18.9 — Pneumonia" onChange={e => set("icd10", e.target.value)} /></FL>
+                        <FL label="Provisional Diagnosis *"><input className="his-field" value={ia.provisionalDx} placeholder="Working diagnosis on admission" onChange={e => set("provisionalDx", e.target.value)} /></FL>
+                        <FL label="Differential Diagnosis"><input className="his-field" value={ia.differentialDx} placeholder="Differential diagnoses (comma separated)" onChange={e => set("differentialDx", e.target.value)} /></FL>
+                        <FL label="Final Diagnosis (if known)"><input className="his-field" value={ia.finalDx} placeholder="Confirmed diagnosis" onChange={e => set("finalDx", e.target.value)} /></FL>
+                        <FL label="ICD-10 Code"><input className="his-field" value={ia.icd10} placeholder="e.g. J18.9 — Pneumonia" onChange={e => set("icd10", e.target.value)} /></FL>
                       </div>
                     </div>
 
@@ -2288,20 +2292,20 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                   ))}
                   {/* Diagnosis */}
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 }}>
-                    <FL label="Provisional Diagnosis"><input style={fld} value={diag.provisional} placeholder="Working diagnosis" onChange={e => setDiag(p => ({ ...p, provisional: e.target.value }))} /></FL>
-                    <FL label="Working Diagnosis"><input style={fld} value={diag.working} placeholder="Current working diagnosis" onChange={e => setDiag(p => ({ ...p, working: e.target.value }))} /></FL>
-                    <FL label="Final Diagnosis"><input style={fld} value={diag.final} placeholder="Confirmed diagnosis" onChange={e => setDiag(p => ({ ...p, final: e.target.value }))} /></FL>
-                    <FL label="ICD-10 Code"><input style={fld} value={diag.icd10Code} placeholder="e.g. J18.9" onChange={e => setDiag(p => ({ ...p, icd10Code: e.target.value }))} /></FL>
-                    <FL label="ICD-10 Description"><input style={fld} value={diag.icd10Description} placeholder="e.g. Unspecified pneumonia" onChange={e => setDiag(p => ({ ...p, icd10Description: e.target.value }))} /></FL>
+                    <FL label="Provisional Diagnosis"><input className="his-field" value={diag.provisional} placeholder="Working diagnosis" onChange={e => setDiag(p => ({ ...p, provisional: e.target.value }))} /></FL>
+                    <FL label="Working Diagnosis"><input className="his-field" value={diag.working} placeholder="Current working diagnosis" onChange={e => setDiag(p => ({ ...p, working: e.target.value }))} /></FL>
+                    <FL label="Final Diagnosis"><input className="his-field" value={diag.final} placeholder="Confirmed diagnosis" onChange={e => setDiag(p => ({ ...p, final: e.target.value }))} /></FL>
+                    <FL label="ICD-10 Code"><input className="his-field" value={diag.icd10Code} placeholder="e.g. J18.9" onChange={e => setDiag(p => ({ ...p, icd10Code: e.target.value }))} /></FL>
+                    <FL label="ICD-10 Description"><input className="his-field" value={diag.icd10Description} placeholder="e.g. Unspecified pneumonia" onChange={e => setDiag(p => ({ ...p, icd10Description: e.target.value }))} /></FL>
                     <FL label="Patient Status">
-                      <select style={sel} value={diag.status} onChange={e => setDiag(p => ({ ...p, status: e.target.value }))}>
+                      <select className="his-select" value={diag.status} onChange={e => setDiag(p => ({ ...p, status: e.target.value }))}>
                         {["Stable","Improving","Unchanged","Deteriorating","Critical","Ready for Discharge"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                   </div>
                   {/* Investigations ordered */}
                   <FL label="Investigations Ordered (comma-separated)">
-                    <input style={fld} value={invx} placeholder="CBC, LFT, Chest X-Ray, USG Abdomen, ECG…" onChange={e => setInvx(e.target.value)} />
+                    <input className="his-field" value={invx} placeholder="CBC, LFT, Chest X-Ray, USG Abdomen, ECG…" onChange={e => setInvx(e.target.value)} />
                   </FL>
                   {/* Inline Orders */}
                   <div style={{ background: "#f8fafc", border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px" }}>
@@ -2367,14 +2371,14 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                   <div style={{ background: "#f8fafc", border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px" }}>
                     <div style={{ fontSize: 11, fontWeight: 700, color: C.red, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Ventilator Parameters</div>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8 }}>
-                      <FL label="Mode"><select style={sel} value={icu.ventMode} onChange={e => setIcu(p=>({...p,ventMode:e.target.value}))}>{["CPAP/PSV","SIMV","A/C","BiPAP","PC-AC","VC-AC","Spontaneous","Not Ventilated"].map(o=><option key={o}>{o}</option>)}</select></FL>
-                      <FL label="FiO₂ (%)"><input type="number" min="21" max="100" style={fld} value={icu.fio2} placeholder="40" onChange={e=>setIcu(p=>({...p,fio2:e.target.value}))} /></FL>
-                      <FL label="PEEP (cmH₂O)"><input type="number" style={fld} value={icu.peep} placeholder="5" onChange={e=>setIcu(p=>({...p,peep:e.target.value}))} /></FL>
-                      <FL label="Tidal Vol (mL)"><input type="number" style={fld} value={icu.tv} placeholder="500" onChange={e=>setIcu(p=>({...p,tv:e.target.value}))} /></FL>
-                      <FL label="Set RR (/min)"><input type="number" style={fld} value={icu.ventRR} placeholder="14" onChange={e=>setIcu(p=>({...p,ventRR:e.target.value}))} /></FL>
-                      <FL label="PIP (cmH₂O)"><input type="number" style={fld} value={icu.pip} placeholder="25" onChange={e=>setIcu(p=>({...p,pip:e.target.value}))} /></FL>
-                      <FL label="MAP (mmHg)"><input type="number" style={fld} value={icu.map} placeholder="75" onChange={e=>setIcu(p=>({...p,map:e.target.value}))} /></FL>
-                      <FL label="CVP (cmH₂O)"><input type="number" style={fld} value={icu.cvp} placeholder="10" onChange={e=>setIcu(p=>({...p,cvp:e.target.value}))} /></FL>
+                      <FL label="Mode"><select className="his-select" value={icu.ventMode} onChange={e => setIcu(p=>({...p,ventMode:e.target.value}))}>{["CPAP/PSV","SIMV","A/C","BiPAP","PC-AC","VC-AC","Spontaneous","Not Ventilated"].map(o=><option key={o}>{o}</option>)}</select></FL>
+                      <FL label="FiO₂ (%)"><input type="number" min="21" max="100" className="his-field" value={icu.fio2} placeholder="40" onChange={e=>setIcu(p=>({...p,fio2:e.target.value}))} /></FL>
+                      <FL label="PEEP (cmH₂O)"><input type="number" className="his-field" value={icu.peep} placeholder="5" onChange={e=>setIcu(p=>({...p,peep:e.target.value}))} /></FL>
+                      <FL label="Tidal Vol (mL)"><input type="number" className="his-field" value={icu.tv} placeholder="500" onChange={e=>setIcu(p=>({...p,tv:e.target.value}))} /></FL>
+                      <FL label="Set RR (/min)"><input type="number" className="his-field" value={icu.ventRR} placeholder="14" onChange={e=>setIcu(p=>({...p,ventRR:e.target.value}))} /></FL>
+                      <FL label="PIP (cmH₂O)"><input type="number" className="his-field" value={icu.pip} placeholder="25" onChange={e=>setIcu(p=>({...p,pip:e.target.value}))} /></FL>
+                      <FL label="MAP (mmHg)"><input type="number" className="his-field" value={icu.map} placeholder="75" onChange={e=>setIcu(p=>({...p,map:e.target.value}))} /></FL>
+                      <FL label="CVP (cmH₂O)"><input type="number" className="his-field" value={icu.cvp} placeholder="10" onChange={e=>setIcu(p=>({...p,cvp:e.target.value}))} /></FL>
                     </div>
                   </div>
                   {/* Sedation */}
@@ -2384,8 +2388,8 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                         {[{v:"+4",l:"+4 Combative"},{v:"+3",l:"+3 Very Agitated"},{v:"+2",l:"+2 Agitated"},{v:"+1",l:"+1 Restless"},{v:"0",l:"0 Alert & Calm"},{v:"-1",l:"-1 Drowsy"},{v:"-2",l:"-2 Light Sedation"},{v:"-3",l:"-3 Mod Sedation"},{v:"-4",l:"-4 Deep Sedation"},{v:"-5",l:"-5 Unarousable"}].map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
                       </select>
                     </FL>
-                    <FL label="BPS Score (3-12)"><input type="number" min="3" max="12" style={fld} value={icu.bpsScore} placeholder="3 (no pain)" onChange={e=>setIcu(p=>({...p,bpsScore:e.target.value}))} /></FL>
-                    <FL label="Sedation Drugs"><input style={fld} value={icu.sedation} placeholder="Midazolam 2mg/hr, Fentanyl…" onChange={e=>setIcu(p=>({...p,sedation:e.target.value}))} /></FL>
+                    <FL label="BPS Score (3-12)"><input type="number" min="3" max="12" className="his-field" value={icu.bpsScore} placeholder="3 (no pain)" onChange={e=>setIcu(p=>({...p,bpsScore:e.target.value}))} /></FL>
+                    <FL label="Sedation Drugs"><input className="his-field" value={icu.sedation} placeholder="Midazolam 2mg/hr, Fentanyl…" onChange={e=>setIcu(p=>({...p,sedation:e.target.value}))} /></FL>
                   </div>
                   {/* Organ System Review */}
                   <div style={{ background: "#f8fafc", border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px" }}>
@@ -2393,7 +2397,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
                       {[{k:"neuro",l:"Neuro",opts:["Intact","Agitated","Encephalopathy","Sedated","Unconscious"]},{k:"cvs",l:"CVS",opts:["Stable","Hypotensive","Hypertensive","Arrhythmia","Vasopressors On"]},{k:"resp",l:"Respiratory",opts:["Self-ventilating","Supported","Weaning","Extubated","ARDS"]},{k:"renal",l:"Renal",opts:["Adequate","Oliguria","Anuria","On CRRT","AKI"]},{k:"gi",l:"GI/Nutrition",opts:["Active","NGT Feed","TPN","Ileus","GI Bleed"]},{k:"haem",l:"Haematology",opts:["Normal","Anaemia","Coagulopathy","Thrombocytopaenia","Anticoag On"]},{k:"infective",l:"Infection",opts:["None","Suspected Sepsis","Confirmed Sepsis","On Antibiotics","MDRO"]},{k:"vasopressorDetail",l:"Vasopressors",opts:["None","Noradrenaline","Vasopressin","Dopamine","Adrenaline","Multiple"]}].map(s=>(
                         <FL key={s.k} label={s.l}>
-                          <select style={sel} value={icu[s.k]||icu.vasopressorDetail} onChange={e=>setIcu(p=>({...p,[s.k]:e.target.value}))}>
+                          <select className="his-select" value={icu[s.k]||icu.vasopressorDetail} onChange={e=>setIcu(p=>({...p,[s.k]:e.target.value}))}>
                             {s.opts.map(o=><option key={o}>{o}</option>)}
                           </select>
                         </FL>
@@ -2411,9 +2415,9 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     <textarea style={{ ...ta, minHeight: 60, borderColor: `${C.green}40` }} value={icu.dailyGoals} placeholder="Target SpO₂ >95%, MAP >65, urine >0.5ml/kg/hr, pain BPS <6, sedation RASS 0 to -2…" onChange={e=>setIcu(p=>({...p,dailyGoals:e.target.value}))} />
                   </FL>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                    <FL label="Provisional Diagnosis"><input style={fld} value={diag.provisional} placeholder="e.g. Septic shock — ARDS" onChange={e=>setDiag(p=>({...p,provisional:e.target.value}))} /></FL>
+                    <FL label="Provisional Diagnosis"><input className="his-field" value={diag.provisional} placeholder="e.g. Septic shock — ARDS" onChange={e=>setDiag(p=>({...p,provisional:e.target.value}))} /></FL>
                     <FL label="Patient Status">
-                      <select style={sel} value={diag.status} onChange={e=>setDiag(p=>({...p,status:e.target.value}))}>
+                      <select className="his-select" value={diag.status} onChange={e=>setDiag(p=>({...p,status:e.target.value}))}>
                         {["Stable","Improving","Unchanged","Deteriorating","Critical","Moribund"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
@@ -2425,29 +2429,29 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
               {activeModal === "procedure" && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-                    <FL label="Procedure Name *"><input style={fld} value={proc.procedureName} placeholder="e.g. Central venous line insertion" onChange={e=>setProc(p=>({...p,procedureName:e.target.value}))} /></FL>
-                    <FL label="Indication *"><input style={fld} value={proc.indication} placeholder="Reason for procedure" onChange={e=>setProc(p=>({...p,indication:e.target.value}))} /></FL>
-                    <FL label="Time of Procedure *"><input type="time" style={fld} value={proc.time} onChange={e=>setProc(p=>({...p,time:e.target.value}))} /></FL>
+                    <FL label="Procedure Name *"><input className="his-field" value={proc.procedureName} placeholder="e.g. Central venous line insertion" onChange={e=>setProc(p=>({...p,procedureName:e.target.value}))} /></FL>
+                    <FL label="Indication *"><input className="his-field" value={proc.indication} placeholder="Reason for procedure" onChange={e=>setProc(p=>({...p,indication:e.target.value}))} /></FL>
+                    <FL label="Time of Procedure *"><input type="time" className="his-field" value={proc.time} onChange={e=>setProc(p=>({...p,time:e.target.value}))} /></FL>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-                    <FL label="Surgeon / Performer *"><input style={fld} value={proc.surgeon} placeholder="Dr. Name" onChange={e=>setProc(p=>({...p,surgeon:e.target.value}))} /></FL>
-                    <FL label="Assistant"><input style={fld} value={proc.assistant} placeholder="Assisting doctor/nurse" onChange={e=>setProc(p=>({...p,assistant:e.target.value}))} /></FL>
+                    <FL label="Surgeon / Performer *"><input className="his-field" value={proc.surgeon} placeholder="Dr. Name" onChange={e=>setProc(p=>({...p,surgeon:e.target.value}))} /></FL>
+                    <FL label="Assistant"><input className="his-field" value={proc.assistant} placeholder="Assisting doctor/nurse" onChange={e=>setProc(p=>({...p,assistant:e.target.value}))} /></FL>
                     <FL label="Anaesthesia">
-                      <select style={sel} value={proc.anaesthesia} onChange={e=>setProc(p=>({...p,anaesthesia:e.target.value}))}>
+                      <select className="his-select" value={proc.anaesthesia} onChange={e=>setProc(p=>({...p,anaesthesia:e.target.value}))}>
                         {["None (Awake)","Local Anaesthesia","Sedation","Spinal","Epidural","General Anaesthesia"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                     <FL label="Patient Position">
-                      <select style={sel} value={proc.position} onChange={e=>setProc(p=>({...p,position:e.target.value}))}>
+                      <select className="his-select" value={proc.position} onChange={e=>setProc(p=>({...p,position:e.target.value}))}>
                         {["Supine","Left Lateral","Right Lateral","Lithotomy","Prone","Trendelenburg","Semi-Fowler's"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
-                    <FL label="Blood Loss"><input style={fld} value={proc.bloodLoss} placeholder="Minimal / mL" onChange={e=>setProc(p=>({...p,bloodLoss:e.target.value}))} /></FL>
+                    <FL label="Blood Loss"><input className="his-field" value={proc.bloodLoss} placeholder="Minimal / mL" onChange={e=>setProc(p=>({...p,bloodLoss:e.target.value}))} /></FL>
                   </div>
                   <FL label="Technique / Description *"><textarea style={{ ...ta, minHeight: 80 }} value={proc.technique} placeholder="Step-by-step description of technique used, sterile field maintained…" onChange={e=>setProc(p=>({...p,technique:e.target.value}))} /></FL>
-                  <FL label="Intraoperative Findings"><textarea style={ta} value={proc.findings} placeholder="What was found during the procedure…" onChange={e=>setProc(p=>({...p,findings:e.target.value}))} /></FL>
+                  <FL label="Intraoperative Findings"><textarea className="his-textarea" value={proc.findings} placeholder="What was found during the procedure…" onChange={e=>setProc(p=>({...p,findings:e.target.value}))} /></FL>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                     <FL label="Complications">
                       <select style={{ ...sel, borderColor: proc.complications!=="None"?C.red:"#e2e8f0" }} value={proc.complications} onChange={e=>setProc(p=>({...p,complications:e.target.value}))}>
@@ -2463,8 +2467,8 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                       </label>
                     </div>
                   </div>
-                  {proc.specimenSent && <FL label="Specimen Type"><input style={fld} value={proc.specimenType} placeholder="e.g. Tissue biopsy, Fluid C&S" onChange={e=>setProc(p=>({...p,specimenType:e.target.value}))} /></FL>}
-                  <FL label="Post-Procedure Instructions"><textarea style={ta} value={proc.postInstructions} placeholder="Monitor site for 1 hour, check vitals every 15 min, CXR post-line…" onChange={e=>setProc(p=>({...p,postInstructions:e.target.value}))} /></FL>
+                  {proc.specimenSent && <FL label="Specimen Type"><input className="his-field" value={proc.specimenType} placeholder="e.g. Tissue biopsy, Fluid C&S" onChange={e=>setProc(p=>({...p,specimenType:e.target.value}))} /></FL>}
+                  <FL label="Post-Procedure Instructions"><textarea className="his-textarea" value={proc.postInstructions} placeholder="Monitor site for 1 hour, check vitals every 15 min, CXR post-line…" onChange={e=>setProc(p=>({...p,postInstructions:e.target.value}))} /></FL>
                 </div>
               )}
 
@@ -2472,20 +2476,20 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
               {activeModal === "consultation" && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-                    <FL label="Consultant Name *"><input style={fld} value={consult.consultantName} placeholder="Dr. Name" onChange={e=>setConsult(p=>({...p,consultantName:e.target.value}))} /></FL>
-                    <FL label="Speciality *"><input style={fld} value={consult.speciality} placeholder="e.g. Cardiology, Nephrology" onChange={e=>setConsult(p=>({...p,speciality:e.target.value}))} /></FL>
-                    <FL label="Reg No."><input style={fld} value={consult.consultantRegNo} placeholder="MCI / State reg. no." onChange={e=>setConsult(p=>({...p,consultantRegNo:e.target.value}))} /></FL>
+                    <FL label="Consultant Name *"><input className="his-field" value={consult.consultantName} placeholder="Dr. Name" onChange={e=>setConsult(p=>({...p,consultantName:e.target.value}))} /></FL>
+                    <FL label="Speciality *"><input className="his-field" value={consult.speciality} placeholder="e.g. Cardiology, Nephrology" onChange={e=>setConsult(p=>({...p,speciality:e.target.value}))} /></FL>
+                    <FL label="Reg No."><input className="his-field" value={consult.consultantRegNo} placeholder="MCI / State reg. no." onChange={e=>setConsult(p=>({...p,consultantRegNo:e.target.value}))} /></FL>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                    <FL label="Referred By"><input style={fld} value={consult.referredBy} placeholder="Attending doctor name" onChange={e=>setConsult(p=>({...p,referredBy:e.target.value}))} /></FL>
-                    <FL label="Reason for Referral *"><input style={fld} value={consult.reason} placeholder="e.g. Chest pain — rule out ACS" onChange={e=>setConsult(p=>({...p,reason:e.target.value}))} /></FL>
+                    <FL label="Referred By"><input className="his-field" value={consult.referredBy} placeholder="Attending doctor name" onChange={e=>setConsult(p=>({...p,referredBy:e.target.value}))} /></FL>
+                    <FL label="Reason for Referral *"><input className="his-field" value={consult.reason} placeholder="e.g. Chest pain — rule out ACS" onChange={e=>setConsult(p=>({...p,reason:e.target.value}))} /></FL>
                   </div>
-                  <FL label="Clinical Summary (for consultant)"><textarea style={ta} value={consult.clinicalSummary} placeholder="Brief history, current condition, relevant investigations…" onChange={e=>setConsult(p=>({...p,clinicalSummary:e.target.value}))} /></FL>
-                  <FL label="Investigations Shared"><input style={fld} value={consult.investigations} placeholder="ECG, Echo, Troponin, CBC…" onChange={e=>setConsult(p=>({...p,investigations:e.target.value}))} /></FL>
-                  <FL label="Consultant's Findings"><textarea style={ta} value={consult.findings} placeholder="Examination findings noted by consultant…" onChange={e=>setConsult(p=>({...p,findings:e.target.value}))} /></FL>
-                  <FL label="Impression / Diagnosis"><input style={fld} value={consult.impression} placeholder="Consultant's diagnostic impression" onChange={e=>setConsult(p=>({...p,impression:e.target.value}))} /></FL>
+                  <FL label="Clinical Summary (for consultant)"><textarea className="his-textarea" value={consult.clinicalSummary} placeholder="Brief history, current condition, relevant investigations…" onChange={e=>setConsult(p=>({...p,clinicalSummary:e.target.value}))} /></FL>
+                  <FL label="Investigations Shared"><input className="his-field" value={consult.investigations} placeholder="ECG, Echo, Troponin, CBC…" onChange={e=>setConsult(p=>({...p,investigations:e.target.value}))} /></FL>
+                  <FL label="Consultant's Findings"><textarea className="his-textarea" value={consult.findings} placeholder="Examination findings noted by consultant…" onChange={e=>setConsult(p=>({...p,findings:e.target.value}))} /></FL>
+                  <FL label="Impression / Diagnosis"><input className="his-field" value={consult.impression} placeholder="Consultant's diagnostic impression" onChange={e=>setConsult(p=>({...p,impression:e.target.value}))} /></FL>
                   <FL label="Recommendations *"><textarea style={{ ...ta, minHeight: 80 }} value={consult.recommendations} placeholder="Specific management recommendations from consultant…" onChange={e=>setConsult(p=>({...p,recommendations:e.target.value}))} /></FL>
-                  <FL label="Follow-up Plan"><input style={fld} value={consult.followUp} placeholder="Review in 48hrs / on discharge / as needed" onChange={e=>setConsult(p=>({...p,followUp:e.target.value}))} /></FL>
+                  <FL label="Follow-up Plan"><input className="his-field" value={consult.followUp} placeholder="Review in 48hrs / on discharge / as needed" onChange={e=>setConsult(p=>({...p,followUp:e.target.value}))} /></FL>
                 </div>
               )}
 
@@ -2493,23 +2497,23 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
               {activeModal === "preop" && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-                    <FL label="Planned Procedure *"><input style={fld} value={preop.procedure} placeholder="e.g. Laparoscopic appendicectomy" onChange={e=>setPreop(p=>({...p,procedure:e.target.value}))} /></FL>
-                    <FL label="Indication"><input style={fld} value={preop.indication} placeholder="Acute appendicitis" onChange={e=>setPreop(p=>({...p,indication:e.target.value}))} /></FL>
-                    <FL label="Pre-op Diagnosis"><input style={fld} value={preop.preopDiagnosis} placeholder="Confirmed diagnosis" onChange={e=>setPreop(p=>({...p,preopDiagnosis:e.target.value}))} /></FL>
+                    <FL label="Planned Procedure *"><input className="his-field" value={preop.procedure} placeholder="e.g. Laparoscopic appendicectomy" onChange={e=>setPreop(p=>({...p,procedure:e.target.value}))} /></FL>
+                    <FL label="Indication"><input className="his-field" value={preop.indication} placeholder="Acute appendicitis" onChange={e=>setPreop(p=>({...p,indication:e.target.value}))} /></FL>
+                    <FL label="Pre-op Diagnosis"><input className="his-field" value={preop.preopDiagnosis} placeholder="Confirmed diagnosis" onChange={e=>setPreop(p=>({...p,preopDiagnosis:e.target.value}))} /></FL>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 }}>
                     <FL label="ASA Grade *">
-                      <select style={sel} value={preop.asaGrade} onChange={e=>setPreop(p=>({...p,asaGrade:e.target.value}))}>
+                      <select className="his-select" value={preop.asaGrade} onChange={e=>setPreop(p=>({...p,asaGrade:e.target.value}))}>
                         {["ASA I","ASA II","ASA III","ASA IV","ASA V","ASA VI","ASA IE","ASA IIE","ASA IIIE"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                     <FL label="Planned Anaesthesia *">
-                      <select style={sel} value={preop.plannedAnaesthesia} onChange={e=>setPreop(p=>({...p,plannedAnaesthesia:e.target.value}))}>
+                      <select className="his-select" value={preop.plannedAnaesthesia} onChange={e=>setPreop(p=>({...p,plannedAnaesthesia:e.target.value}))}>
                         {["General","Spinal","Epidural","Local","Sedation","Combined Spinal-Epidural"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
-                    <FL label="Blood Group"><input style={fld} value={preop.bloodGroup} placeholder="A+, B-, O+" onChange={e=>setPreop(p=>({...p,bloodGroup:e.target.value}))} /></FL>
-                    <FL label="Allergy Status"><input style={fld} value={preop.allergies} placeholder="NKDA / Drug name" onChange={e=>setPreop(p=>({...p,allergies:e.target.value}))} /></FL>
+                    <FL label="Blood Group"><input className="his-field" value={preop.bloodGroup} placeholder="A+, B-, O+" onChange={e=>setPreop(p=>({...p,bloodGroup:e.target.value}))} /></FL>
+                    <FL label="Allergy Status"><input className="his-field" value={preop.allergies} placeholder="NKDA / Drug name" onChange={e=>setPreop(p=>({...p,allergies:e.target.value}))} /></FL>
                   </div>
                   {/* Investigations Reviewed */}
                   <div style={{ background: "#f8fafc", border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px" }}>
@@ -2523,13 +2527,13 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     </div>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                    <FL label="Co-morbidities"><input style={fld} value={preop.comorbidities} placeholder="DM, HTN, IHD, CKD…" onChange={e=>setPreop(p=>({...p,comorbidities:e.target.value}))} /></FL>
-                    <FL label="Current Medications"><input style={fld} value={preop.currentMeds} placeholder="Metformin held, anticoagulants…" onChange={e=>setPreop(p=>({...p,currentMeds:e.target.value}))} /></FL>
+                    <FL label="Co-morbidities"><input className="his-field" value={preop.comorbidities} placeholder="DM, HTN, IHD, CKD…" onChange={e=>setPreop(p=>({...p,comorbidities:e.target.value}))} /></FL>
+                    <FL label="Current Medications"><input className="his-field" value={preop.currentMeds} placeholder="Metformin held, anticoagulants…" onChange={e=>setPreop(p=>({...p,currentMeds:e.target.value}))} /></FL>
                   </div>
-                  <FL label="Pre-op Orders"><textarea style={ta} value={preop.preopOrders} placeholder="NBM from midnight, IV access, pre-med (Tab Alprazolam 0.5mg HS)…" onChange={e=>setPreop(p=>({...p,preopOrders:e.target.value}))} /></FL>
+                  <FL label="Pre-op Orders"><textarea className="his-textarea" value={preop.preopOrders} placeholder="NBM from midnight, IV access, pre-med (Tab Alprazolam 0.5mg HS)…" onChange={e=>setPreop(p=>({...p,preopOrders:e.target.value}))} /></FL>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                    <FL label="Operating Surgeon"><input style={fld} value={preop.surgeon} placeholder="Dr. Name" onChange={e=>setPreop(p=>({...p,surgeon:e.target.value}))} /></FL>
-                    <FL label="Anaesthetist"><input style={fld} value={preop.anaesthetist} placeholder="Dr. Name" onChange={e=>setPreop(p=>({...p,anaesthetist:e.target.value}))} /></FL>
+                    <FL label="Operating Surgeon"><input className="his-field" value={preop.surgeon} placeholder="Dr. Name" onChange={e=>setPreop(p=>({...p,surgeon:e.target.value}))} /></FL>
+                    <FL label="Anaesthetist"><input className="his-field" value={preop.anaesthetist} placeholder="Dr. Name" onChange={e=>setPreop(p=>({...p,anaesthetist:e.target.value}))} /></FL>
                   </div>
                   <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontWeight:700, fontSize:13, color:preop.consentObtained?C.green:C.red }}>
                     <input type="checkbox" checked={preop.consentObtained} onChange={e=>setPreop(p=>({...p,consentObtained:e.target.checked}))} style={{ accentColor:C.green, width:15, height:15 }} /> Informed Consent Obtained & Witnessed *
@@ -2541,46 +2545,46 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
               {activeModal === "postop" && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                    <FL label="Procedure Performed *"><input style={fld} value={postop.procedurePerformed} placeholder="e.g. Laparoscopic appendicectomy" onChange={e=>setPostop(p=>({...p,procedurePerformed:e.target.value}))} /></FL>
-                    <FL label="Post-op Diagnosis"><input style={fld} value={postop.postopDiagnosis} placeholder="Confirmed post-op diagnosis" onChange={e=>setPostop(p=>({...p,postopDiagnosis:e.target.value}))} /></FL>
+                    <FL label="Procedure Performed *"><input className="his-field" value={postop.procedurePerformed} placeholder="e.g. Laparoscopic appendicectomy" onChange={e=>setPostop(p=>({...p,procedurePerformed:e.target.value}))} /></FL>
+                    <FL label="Post-op Diagnosis"><input className="his-field" value={postop.postopDiagnosis} placeholder="Confirmed post-op diagnosis" onChange={e=>setPostop(p=>({...p,postopDiagnosis:e.target.value}))} /></FL>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 }}>
-                    <FL label="Start Time"><input type="time" style={fld} value={postop.startTime} onChange={e=>setPostop(p=>({...p,startTime:e.target.value}))} /></FL>
-                    <FL label="End Time"><input type="time" style={fld} value={postop.endTime} onChange={e=>setPostop(p=>({...p,endTime:e.target.value}))} /></FL>
-                    <FL label="Surgeon"><input style={fld} value={postop.surgeon} placeholder="Dr. Name" onChange={e=>setPostop(p=>({...p,surgeon:e.target.value}))} /></FL>
-                    <FL label="Anaesthetist"><input style={fld} value={postop.anaesthetist} placeholder="Dr. Name" onChange={e=>setPostop(p=>({...p,anaesthetist:e.target.value}))} /></FL>
+                    <FL label="Start Time"><input type="time" className="his-field" value={postop.startTime} onChange={e=>setPostop(p=>({...p,startTime:e.target.value}))} /></FL>
+                    <FL label="End Time"><input type="time" className="his-field" value={postop.endTime} onChange={e=>setPostop(p=>({...p,endTime:e.target.value}))} /></FL>
+                    <FL label="Surgeon"><input className="his-field" value={postop.surgeon} placeholder="Dr. Name" onChange={e=>setPostop(p=>({...p,surgeon:e.target.value}))} /></FL>
+                    <FL label="Anaesthetist"><input className="his-field" value={postop.anaesthetist} placeholder="Dr. Name" onChange={e=>setPostop(p=>({...p,anaesthetist:e.target.value}))} /></FL>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
                     <FL label="Anaesthesia Used">
-                      <select style={sel} value={postop.anaesthesia} onChange={e=>setPostop(p=>({...p,anaesthesia:e.target.value}))}>
+                      <select className="his-select" value={postop.anaesthesia} onChange={e=>setPostop(p=>({...p,anaesthesia:e.target.value}))}>
                         {["General","Spinal","Epidural","Local","Sedation","Combined"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
-                    <FL label="Blood Loss (mL)"><input type="number" style={fld} value={postop.bloodLoss} placeholder="50" onChange={e=>setPostop(p=>({...p,bloodLoss:e.target.value}))} /></FL>
+                    <FL label="Blood Loss (mL)"><input type="number" className="his-field" value={postop.bloodLoss} placeholder="50" onChange={e=>setPostop(p=>({...p,bloodLoss:e.target.value}))} /></FL>
                     <FL label="Transfusion">
-                      <select style={sel} value={postop.transfusion} onChange={e=>setPostop(p=>({...p,transfusion:e.target.value}))}>
+                      <select className="his-select" value={postop.transfusion} onChange={e=>setPostop(p=>({...p,transfusion:e.target.value}))}>
                         {["None","1 Unit PRC","2 Units PRC","FFP","Platelets","Multiple"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-                    <FL label="Fluids Given (mL)"><input type="number" style={fld} value={postop.fluidsGiven} placeholder="2000" onChange={e=>setPostop(p=>({...p,fluidsGiven:e.target.value}))} /></FL>
-                    <FL label="Urine Output (mL)"><input type="number" style={fld} value={postop.urineOutput} placeholder="400" onChange={e=>setPostop(p=>({...p,urineOutput:e.target.value}))} /></FL>
+                    <FL label="Fluids Given (mL)"><input type="number" className="his-field" value={postop.fluidsGiven} placeholder="2000" onChange={e=>setPostop(p=>({...p,fluidsGiven:e.target.value}))} /></FL>
+                    <FL label="Urine Output (mL)"><input type="number" className="his-field" value={postop.urineOutput} placeholder="400" onChange={e=>setPostop(p=>({...p,urineOutput:e.target.value}))} /></FL>
                     <FL label="Condition Leaving OT">
                       <select style={{ ...sel, borderColor: postop.conditionLeavingOT==="Critical"?C.red:"#e2e8f0" }} value={postop.conditionLeavingOT} onChange={e=>setPostop(p=>({...p,conditionLeavingOT:e.target.value}))}>
                         {["Stable","Satisfactory","Critical","On Ventilator","Extubated in OT"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                   </div>
-                  <FL label="Operative Findings"><textarea style={ta} value={postop.operativeFindings} placeholder="What was found intraoperatively…" onChange={e=>setPostop(p=>({...p,operativeFindings:e.target.value}))} /></FL>
+                  <FL label="Operative Findings"><textarea className="his-textarea" value={postop.operativeFindings} placeholder="What was found intraoperatively…" onChange={e=>setPostop(p=>({...p,operativeFindings:e.target.value}))} /></FL>
                   <div style={{ display: "flex", gap: 20 }}>
                     <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontWeight:700, fontSize:13, color:postop.specimenSent?C.blue:C.muted }}>
                       <input type="checkbox" checked={postop.specimenSent} onChange={e=>setPostop(p=>({...p,specimenSent:e.target.checked}))} style={{ accentColor:C.blue, width:15, height:15 }} /> Specimen sent
                     </label>
                   </div>
-                  {postop.specimenSent && <FL label="Specimen Type"><input style={fld} value={postop.specimenType} placeholder="Histopathology / C&S" onChange={e=>setPostop(p=>({...p,specimenType:e.target.value}))} /></FL>}
-                  <FL label="Post-op Orders"><textarea style={ta} value={postop.postopOrders} placeholder="IV fluids, analgesia, monitoring parameters, diet, drain/suction care…" onChange={e=>setPostop(p=>({...p,postopOrders:e.target.value}))} /></FL>
-                  <FL label="Recovery Room Instructions"><input style={fld} value={postop.recoveryInstructions} placeholder="Airway monitoring, vitals Q15, oxygen, call criteria…" onChange={e=>setPostop(p=>({...p,recoveryInstructions:e.target.value}))} /></FL>
+                  {postop.specimenSent && <FL label="Specimen Type"><input className="his-field" value={postop.specimenType} placeholder="Histopathology / C&S" onChange={e=>setPostop(p=>({...p,specimenType:e.target.value}))} /></FL>}
+                  <FL label="Post-op Orders"><textarea className="his-textarea" value={postop.postopOrders} placeholder="IV fluids, analgesia, monitoring parameters, diet, drain/suction care…" onChange={e=>setPostop(p=>({...p,postopOrders:e.target.value}))} /></FL>
+                  <FL label="Recovery Room Instructions"><input className="his-field" value={postop.recoveryInstructions} placeholder="Airway monitoring, vitals Q15, oxygen, call criteria…" onChange={e=>setPostop(p=>({...p,recoveryInstructions:e.target.value}))} /></FL>
                 </div>
               )}
 
@@ -2591,9 +2595,9 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     <i className="pi pi-exclamation-triangle" style={{ fontSize: 13 }} /> Death Summary — NABH MOI.10 · Complete all mandatory fields
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                    <FL label="Date & Time of Death *"><input type="datetime-local" style={fld} value={death.dateTime} onChange={e=>setDeath(p=>({...p,dateTime:e.target.value}))} /></FL>
+                    <FL label="Date & Time of Death *"><input type="datetime-local" className="his-field" value={death.dateTime} onChange={e=>setDeath(p=>({...p,dateTime:e.target.value}))} /></FL>
                     <FL label="Mode of Death *">
-                      <select style={sel} value={death.modeOfDeath} onChange={e=>setDeath(p=>({...p,modeOfDeath:e.target.value}))}>
+                      <select className="his-select" value={death.modeOfDeath} onChange={e=>setDeath(p=>({...p,modeOfDeath:e.target.value}))}>
                         {["Cardiac Arrest","Respiratory Failure","Multi-organ Failure","Septic Shock","Haemorrhage","Renal Failure","Hepatic Failure","CNS Failure","Other"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
@@ -2601,16 +2605,16 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                   <div style={{ background: "#f8fafc", border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px" }}>
                     <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Cause of Death (ICD-10 Format)</div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      <FL label="I (a) — Immediate Cause of Death *"><input style={fld} value={death.causeDeath1} placeholder="e.g. Acute myocardial infarction" onChange={e=>setDeath(p=>({...p,causeDeath1:e.target.value}))} /></FL>
-                      <FL label="I (b) — Due to / Underlying Cause *"><input style={fld} value={death.causeDeath2} placeholder="e.g. Coronary artery disease" onChange={e=>setDeath(p=>({...p,causeDeath2:e.target.value}))} /></FL>
-                      <FL label="I (c) — Due to (if applicable)"><input style={fld} value={death.causeDeath3} placeholder="e.g. Hypertension, Diabetes" onChange={e=>setDeath(p=>({...p,causeDeath3:e.target.value}))} /></FL>
-                      <FL label="II — Other Contributing Conditions"><input style={fld} value={death.contributing} placeholder="e.g. Chronic kidney disease, anaemia" onChange={e=>setDeath(p=>({...p,contributing:e.target.value}))} /></FL>
+                      <FL label="I (a) — Immediate Cause of Death *"><input className="his-field" value={death.causeDeath1} placeholder="e.g. Acute myocardial infarction" onChange={e=>setDeath(p=>({...p,causeDeath1:e.target.value}))} /></FL>
+                      <FL label="I (b) — Due to / Underlying Cause *"><input className="his-field" value={death.causeDeath2} placeholder="e.g. Coronary artery disease" onChange={e=>setDeath(p=>({...p,causeDeath2:e.target.value}))} /></FL>
+                      <FL label="I (c) — Due to (if applicable)"><input className="his-field" value={death.causeDeath3} placeholder="e.g. Hypertension, Diabetes" onChange={e=>setDeath(p=>({...p,causeDeath3:e.target.value}))} /></FL>
+                      <FL label="II — Other Contributing Conditions"><input className="his-field" value={death.contributing} placeholder="e.g. Chronic kidney disease, anaemia" onChange={e=>setDeath(p=>({...p,contributing:e.target.value}))} /></FL>
                     </div>
                   </div>
                   <FL label="Brief Sequence of Events *"><textarea style={{ ...ta, minHeight: 80 }} value={death.sequenceOfEvents} placeholder="Timeline of clinical events leading to death…" onChange={e=>setDeath(p=>({...p,sequenceOfEvents:e.target.value}))} /></FL>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                    <FL label="Family Informed By *"><input style={fld} value={death.familyInformedBy} placeholder="Doctor/nurse name" onChange={e=>setDeath(p=>({...p,familyInformedBy:e.target.value}))} /></FL>
-                    <FL label="Time Family Informed"><input type="time" style={fld} value={death.familyInformedTime} onChange={e=>setDeath(p=>({...p,familyInformedTime:e.target.value}))} /></FL>
+                    <FL label="Family Informed By *"><input className="his-field" value={death.familyInformedBy} placeholder="Doctor/nurse name" onChange={e=>setDeath(p=>({...p,familyInformedBy:e.target.value}))} /></FL>
+                    <FL label="Time Family Informed"><input type="time" className="his-field" value={death.familyInformedTime} onChange={e=>setDeath(p=>({...p,familyInformedTime:e.target.value}))} /></FL>
                   </div>
                   <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
                     {[{k:"familyInformed",l:"Family Informed",c:C.green},{k:"dnrInPlace",l:"DNR Was in Place",c:C.blue},{k:"mlc",l:"MLC Case",c:C.red},{k:"pmAdvised",l:"Post-mortem Advised",c:C.amber},{k:"certificateIssued",l:"Death Certificate Issued",c:C.green}].map(f=>(
@@ -2630,7 +2634,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                   </div>
                   <FL label="Note to be Amended (ID or date)">
                     {notes.filter(n=>n.status==="signed").length > 0 ? (
-                      <select style={sel} value={amendment.originalNoteId} onChange={e=>setAmendment(p=>({...p,originalNoteId:e.target.value}))}>
+                      <select className="his-select" value={amendment.originalNoteId} onChange={e=>setAmendment(p=>({...p,originalNoteId:e.target.value}))}>
                         <option value="">— Select signed note —</option>
                         {notes.filter(n=>n.status==="signed").map(n=>(
                           <option key={n._id} value={n._id}>
@@ -2639,16 +2643,16 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                         ))}
                       </select>
                     ) : (
-                      <input style={fld} value={amendment.originalNoteId} placeholder="Note ID / Date of note being amended" onChange={e=>setAmendment(p=>({...p,originalNoteId:e.target.value}))} />
+                      <input className="his-field" value={amendment.originalNoteId} placeholder="Note ID / Date of note being amended" onChange={e=>setAmendment(p=>({...p,originalNoteId:e.target.value}))} />
                     )}
                   </FL>
                   <FL label="Reason for Amendment *">
-                    <select style={sel} value={amendment.reason} onChange={e=>setAmendment(p=>({...p,reason:e.target.value}))}>
+                    <select className="his-select" value={amendment.reason} onChange={e=>setAmendment(p=>({...p,reason:e.target.value}))}>
                       {["Typographical Error","Clinical Correction","Missing Information","Wrong Medication","Wrong Dose","Clarification Required","Other"].map(o=><option key={o}>{o}</option>)}
                     </select>
                   </FL>
                   <FL label="Amendment / Correction *"><textarea style={{ ...ta, minHeight: 100 }} value={amendment.correction} placeholder="State the correction clearly. Note: original signed content is preserved in the record. This amendment is added as an addendum with date, time, and signature." onChange={e=>setAmendment(p=>({...p,correction:e.target.value}))} /></FL>
-                  <FL label="Witnessed By *"><input style={fld} value={amendment.witness} placeholder="Name of witnessing doctor/nurse" onChange={e=>setAmendment(p=>({...p,witness:e.target.value}))} /></FL>
+                  <FL label="Witnessed By *"><input className="his-field" value={amendment.witness} placeholder="Name of witnessing doctor/nurse" onChange={e=>setAmendment(p=>({...p,witness:e.target.value}))} /></FL>
                   <div style={{ background: "#fffbeb", border: `1px solid ${C.amberB}`, borderRadius: 7, padding: "10px 14px", fontSize: 12, color: "#92400e" }}>
                     <b>NABH Requirement:</b> This amendment will be signed with your credentials, time-stamped, and appended to the original note. The original remains unaltered in the system audit trail.
                   </div>
@@ -2658,7 +2662,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
               {/* ── Quick Tags ── */}
               {MODULE_TAGS[activeModal]?.length > 0 && (
                 <div style={{ marginTop: 14 }}>
-                  <div style={lbl}>Quick Tags</div>
+                  <div className="his-label">Quick Tags</div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                     {MODULE_TAGS[activeModal].map(t => (
                       <button key={t} onClick={() => toggleTag(t)}

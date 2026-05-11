@@ -10,6 +10,7 @@ import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
 import SignaturePad from "../../Components/signature/SignaturePad";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import PatientHeaderCard from "../../Components/clinical/PatientHeaderCard";
+import "../../Components/clinical/clinical-forms.css";
 import NurseOrdersPanel from "../../Components/clinical/NurseOrdersPanel";
 import TreatmentChart from "../../Components/clinical/TreatmentChart";
 import FingerprintConsentModal from "../../Components/clinical/FingerprintConsentModal";
@@ -195,8 +196,8 @@ const isAbnormal = (key, val) => {
 /* ── Field label helper ── */
 function FL({ label, children }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-      <label style={lbl}>{label}</label>
+    <div className="his-field-group">
+      <label className="his-label">{label}</label>
       {children}
     </div>
   );
@@ -1770,19 +1771,19 @@ function NursingNotesContent({ selectedPatient }) {
                     <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>Glasgow Coma Scale</div>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10 }}>
                       <FL label="Eyes (E 1-4)">
-                        <select style={sel} value={neuro.gcse} onChange={e => setNeuro(p => ({ ...p, gcse: e.target.value }))}>
+                        <select className="his-select" value={neuro.gcse} onChange={e => setNeuro(p => ({ ...p, gcse: e.target.value }))}>
                           <option value="">—</option>
                           {[{v:"1",l:"1 – No response"},{v:"2",l:"2 – To pain"},{v:"3",l:"3 – To sound"},{v:"4",l:"4 – Spontaneous"}].map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
                         </select>
                       </FL>
                       <FL label="Verbal (V 1-5)">
-                        <select style={sel} value={neuro.gcsv} onChange={e => setNeuro(p => ({ ...p, gcsv: e.target.value }))}>
+                        <select className="his-select" value={neuro.gcsv} onChange={e => setNeuro(p => ({ ...p, gcsv: e.target.value }))}>
                           <option value="">—</option>
                           {[{v:"1",l:"1 – None"},{v:"2",l:"2 – Sounds"},{v:"3",l:"3 – Words"},{v:"4",l:"4 – Confused"},{v:"5",l:"5 – Oriented"}].map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
                         </select>
                       </FL>
                       <FL label="Motor (M 1-6)">
-                        <select style={sel} value={neuro.gcsm} onChange={e => setNeuro(p => ({ ...p, gcsm: e.target.value }))}>
+                        <select className="his-select" value={neuro.gcsm} onChange={e => setNeuro(p => ({ ...p, gcsm: e.target.value }))}>
                           <option value="">—</option>
                           {[{v:"1",l:"1 – None"},{v:"2",l:"2 – Extension"},{v:"3",l:"3 – Flexion"},{v:"4",l:"4 – Withdrawal"},{v:"5",l:"5 – Localises"},{v:"6",l:"6 – Obeys"}].map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
                         </select>
@@ -1797,18 +1798,18 @@ function NursingNotesContent({ selectedPatient }) {
                   {/* Pupils */}
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:10 }}>
                     <FL label="Pupil Reaction">
-                      <select style={sel} value={neuro.pupils} onChange={e => setNeuro(p => ({ ...p, pupils: e.target.value }))}>
+                      <select className="his-select" value={neuro.pupils} onChange={e => setNeuro(p => ({ ...p, pupils: e.target.value }))}>
                         {["Equal & Reactive","Unequal","Fixed & Dilated","Pinpoint","Sluggish"].map(o => <option key={o}>{o}</option>)}
                       </select>
                     </FL>
                     <FL label="Pupil Size L (mm)">
-                      <input type="number" min="1" max="8" style={fld} value={neuro.pupilSizeL} placeholder="3" onChange={e => setNeuro(p => ({ ...p, pupilSizeL: e.target.value }))} />
+                      <input type="number" min="1" max="8" className="his-field" value={neuro.pupilSizeL} placeholder="3" onChange={e => setNeuro(p => ({ ...p, pupilSizeL: e.target.value }))} />
                     </FL>
                     <FL label="Pupil Size R (mm)">
-                      <input type="number" min="1" max="8" style={fld} value={neuro.pupilSizeR} placeholder="3" onChange={e => setNeuro(p => ({ ...p, pupilSizeR: e.target.value }))} />
+                      <input type="number" min="1" max="8" className="his-field" value={neuro.pupilSizeR} placeholder="3" onChange={e => setNeuro(p => ({ ...p, pupilSizeR: e.target.value }))} />
                     </FL>
                     <FL label="Light Reflex">
-                      <select style={sel} value={neuro.lightReflex} onChange={e => setNeuro(p => ({ ...p, lightReflex: e.target.value }))}>
+                      <select className="his-select" value={neuro.lightReflex} onChange={e => setNeuro(p => ({ ...p, lightReflex: e.target.value }))}>
                         {["Present","Absent","Sluggish"].map(o => <option key={o}>{o}</option>)}
                       </select>
                     </FL>
@@ -1816,7 +1817,7 @@ function NursingNotesContent({ selectedPatient }) {
                   {/* Orientation & Limbs */}
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                     <FL label="Orientation / Consciousness">
-                      <select style={sel} value={neuro.orientation} onChange={e => setNeuro(p => ({ ...p, orientation: e.target.value }))}>
+                      <select className="his-select" value={neuro.orientation} onChange={e => setNeuro(p => ({ ...p, orientation: e.target.value }))}>
                         {["Alert & Oriented ×3","Oriented to person only","Confused","Drowsy","Unconscious","Sedated"].map(o => <option key={o}>{o}</option>)}
                       </select>
                     </FL>
@@ -1842,7 +1843,7 @@ function NursingNotesContent({ selectedPatient }) {
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
                     <FL label="Pain Scale Used">
-                      <select style={sel} value={pain.scale} onChange={e => setPain(p => ({ ...p, scale: e.target.value }))}>
+                      <select className="his-select" value={pain.scale} onChange={e => setPain(p => ({ ...p, scale: e.target.value }))}>
                         {["NRS (Numeric)","VAS","Wong-Baker Faces","FLACC (Paediatric)","CPOT (Non-verbal)"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
@@ -1851,7 +1852,7 @@ function NursingNotesContent({ selectedPatient }) {
                         value={pain.score} placeholder="0" onChange={e => setPain(p => ({ ...p, score: e.target.value }))} />
                     </FL>
                     <FL label="Pain Type">
-                      <select style={sel} value={pain.type} onChange={e => setPain(p => ({ ...p, type: e.target.value }))}>
+                      <select className="his-select" value={pain.type} onChange={e => setPain(p => ({ ...p, type: e.target.value }))}>
                         {["Acute","Chronic","Neuropathic","Breakthrough","Procedural"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
@@ -1864,26 +1865,26 @@ function NursingNotesContent({ selectedPatient }) {
                     <span style={{ fontSize:11, fontWeight:800, color:Number(pain.score)>=7?C.red:Number(pain.score)>=4?C.amber:C.green, marginLeft:6, minWidth:36 }}>{pain.score}/10</span>
                   </div>}
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
-                    <FL label="Location *"><input style={fld} value={pain.location} placeholder="e.g. Right lower abdomen" onChange={e => setPain(p => ({ ...p, location: e.target.value }))} /></FL>
+                    <FL label="Location *"><input className="his-field" value={pain.location} placeholder="e.g. Right lower abdomen" onChange={e => setPain(p => ({ ...p, location: e.target.value }))} /></FL>
                     <FL label="Character">
-                      <select style={sel} value={pain.character} onChange={e => setPain(p => ({ ...p, character: e.target.value }))}>
+                      <select className="his-select" value={pain.character} onChange={e => setPain(p => ({ ...p, character: e.target.value }))}>
                         {["Dull","Sharp","Burning","Stabbing","Colicky","Throbbing","Cramping","Aching","Shooting"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                     <FL label="Onset">
-                      <select style={sel} value={pain.onset} onChange={e => setPain(p => ({ ...p, onset: e.target.value }))}>
+                      <select className="his-select" value={pain.onset} onChange={e => setPain(p => ({ ...p, onset: e.target.value }))}>
                         {["Sudden","Gradual","Intermittent"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
                     <FL label="Frequency">
-                      <select style={sel} value={pain.frequency} onChange={e => setPain(p => ({ ...p, frequency: e.target.value }))}>
+                      <select className="his-select" value={pain.frequency} onChange={e => setPain(p => ({ ...p, frequency: e.target.value }))}>
                         {["Constant","Intermittent","Episodic"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
-                    <FL label="Duration"><input style={fld} value={pain.duration} placeholder="e.g. 2 hrs, since morning" onChange={e => setPain(p => ({ ...p, duration: e.target.value }))} /></FL>
-                    <FL label="Aggravating Factors"><input style={fld} value={pain.aggravating} placeholder="movement, breathing…" onChange={e => setPain(p => ({ ...p, aggravating: e.target.value }))} /></FL>
+                    <FL label="Duration"><input className="his-field" value={pain.duration} placeholder="e.g. 2 hrs, since morning" onChange={e => setPain(p => ({ ...p, duration: e.target.value }))} /></FL>
+                    <FL label="Aggravating Factors"><input className="his-field" value={pain.aggravating} placeholder="movement, breathing…" onChange={e => setPain(p => ({ ...p, aggravating: e.target.value }))} /></FL>
                   </div>
                   <div style={{ display:"flex", gap:20, flexWrap:"wrap" }}>
                     <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontWeight:600, fontSize:13, color:pain.radiation?C.amber:C.muted }}>
@@ -1899,22 +1900,22 @@ function NursingNotesContent({ selectedPatient }) {
                       Analgesic given
                     </label>
                   </div>
-                  {pain.radiation && <FL label="Radiation Site"><input style={fld} value={pain.radiationSite} placeholder="e.g. radiates to left shoulder" onChange={e => setPain(p => ({ ...p, radiationSite: e.target.value }))} /></FL>}
+                  {pain.radiation && <FL label="Radiation Site"><input className="his-field" value={pain.radiationSite} placeholder="e.g. radiates to left shoulder" onChange={e => setPain(p => ({ ...p, radiationSite: e.target.value }))} /></FL>}
                   {pain.analgesicGiven && (
                     <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr", gap:10 }}>
-                      <FL label="Drug & Dose"><input style={fld} value={pain.analgesic} placeholder="Inj. Paracetamol 1g" onChange={e => setPain(p => ({ ...p, analgesic: e.target.value }))} /></FL>
+                      <FL label="Drug & Dose"><input className="his-field" value={pain.analgesic} placeholder="Inj. Paracetamol 1g" onChange={e => setPain(p => ({ ...p, analgesic: e.target.value }))} /></FL>
                       <FL label="Route">
-                        <select style={sel} value={pain.analgesicRoute} onChange={e => setPain(p => ({ ...p, analgesicRoute: e.target.value }))}>
+                        <select className="his-select" value={pain.analgesicRoute} onChange={e => setPain(p => ({ ...p, analgesicRoute: e.target.value }))}>
                           {["IV","IM","Oral","Sublingual","Topical","PR","Epidural"].map(o=><option key={o}>{o}</option>)}
                         </select>
                       </FL>
-                      <FL label="Time Given"><input type="time" style={fld} value={pain.analgesicTime} onChange={e => setPain(p => ({ ...p, analgesicTime: e.target.value }))} /></FL>
+                      <FL label="Time Given"><input type="time" className="his-field" value={pain.analgesicTime} onChange={e => setPain(p => ({ ...p, analgesicTime: e.target.value }))} /></FL>
                     </div>
                   )}
-                  <FL label="Non-Pharmacological Interventions"><input style={fld} value={pain.nonPharm} placeholder="Positioning, ice pack, heat, relaxation, distraction…" onChange={e => setPain(p => ({ ...p, nonPharm: e.target.value }))} /></FL>
+                  <FL label="Non-Pharmacological Interventions"><input className="his-field" value={pain.nonPharm} placeholder="Positioning, ice pack, heat, relaxation, distraction…" onChange={e => setPain(p => ({ ...p, nonPharm: e.target.value }))} /></FL>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-                    <FL label="Reassessment Score (0-10)"><input type="number" min="0" max="10" style={fld} value={pain.reassessScore} onChange={e => setPain(p => ({ ...p, reassessScore: e.target.value }))} /></FL>
-                    <FL label="Reassessment Time"><input type="time" style={fld} value={pain.reassessTime} onChange={e => setPain(p => ({ ...p, reassessTime: e.target.value }))} /></FL>
+                    <FL label="Reassessment Score (0-10)"><input type="number" min="0" max="10" className="his-field" value={pain.reassessScore} onChange={e => setPain(p => ({ ...p, reassessScore: e.target.value }))} /></FL>
+                    <FL label="Reassessment Time"><input type="time" className="his-field" value={pain.reassessTime} onChange={e => setPain(p => ({ ...p, reassessTime: e.target.value }))} /></FL>
                   </div>
                 </div>
               )}
@@ -1924,18 +1925,18 @@ function NursingNotesContent({ selectedPatient }) {
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
                     <FL label="IV Fluid *">
-                      <select style={sel} value={iv.fluid} onChange={e => setIV(p => ({ ...p, fluid: e.target.value }))}>
+                      <select className="his-select" value={iv.fluid} onChange={e => setIV(p => ({ ...p, fluid: e.target.value }))}>
                         {["NS 0.9%","RL (Ringer's Lactate)","DNS","D5W","D10W","NS 0.45%","Plasmalyte","Isolyte S","Haemaccel","Other"].map(o => <option key={o}>{o}</option>)}
                       </select>
                     </FL>
-                    <FL label="Volume (mL) *"><input type="number" style={fld} value={iv.volume} placeholder="500" onChange={e => setIV(p => ({ ...p, volume: e.target.value }))} /></FL>
-                    <FL label="Rate (mL/hr) *"><input type="number" style={fld} value={iv.rate} placeholder="84" onChange={e => { const r=e.target.value; const d=r?Math.round(Number(r)*20/60):""  ; setIV(p => ({ ...p, rate: r, dropsPerMin: String(d) })); }} /></FL>
+                    <FL label="Volume (mL) *"><input type="number" className="his-field" value={iv.volume} placeholder="500" onChange={e => setIV(p => ({ ...p, volume: e.target.value }))} /></FL>
+                    <FL label="Rate (mL/hr) *"><input type="number" className="his-field" value={iv.rate} placeholder="84" onChange={e => { const r=e.target.value; const d=r?Math.round(Number(r)*20/60):""  ; setIV(p => ({ ...p, rate: r, dropsPerMin: String(d) })); }} /></FL>
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
                     <FL label="Drip Rate (drops/min)">
                       <div style={{ ...fld, background:"#f8fafc", fontFamily:"monospace", fontWeight:700, color:C.primary }}>{iv.dropsPerMin || "—"}</div>
                     </FL>
-                    <FL label="Route / Access *"><input style={fld} value={iv.route} placeholder="IV Right Forearm" onChange={e => setIV(p => ({ ...p, route: e.target.value }))} /></FL>
+                    <FL label="Route / Access *"><input className="his-field" value={iv.route} placeholder="IV Right Forearm" onChange={e => setIV(p => ({ ...p, route: e.target.value }))} /></FL>
                     <FL label="IV Site Status *">
                       <select style={{ ...sel, borderColor: iv.site==="Patent"?C.green:iv.site==="Infiltration"||iv.site==="Blocked"?C.red:C.amber }} value={iv.site} onChange={e => setIV(p => ({ ...p, site: e.target.value }))}>
                         {["Patent","Redness","Swelling","Infiltration","Replaced","Blocked","Phlebitis"].map(o => <option key={o}>{o}</option>)}
@@ -1943,10 +1944,10 @@ function NursingNotesContent({ selectedPatient }) {
                     </FL>
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-                    <FL label="Cannula Insertion Date"><input type="date" style={fld} value={iv.cannulaDate} onChange={e => setIV(p => ({ ...p, cannulaDate: e.target.value }))} /></FL>
-                    <FL label="IV Set Last Changed"><input type="date" style={fld} value={iv.setChangeDate} onChange={e => setIV(p => ({ ...p, setChangeDate: e.target.value }))} /></FL>
+                    <FL label="Cannula Insertion Date"><input type="date" className="his-field" value={iv.cannulaDate} onChange={e => setIV(p => ({ ...p, cannulaDate: e.target.value }))} /></FL>
+                    <FL label="IV Set Last Changed"><input type="date" className="his-field" value={iv.setChangeDate} onChange={e => setIV(p => ({ ...p, setChangeDate: e.target.value }))} /></FL>
                   </div>
-                  <FL label="Medication Additive (if any)"><input style={fld} value={iv.additive} placeholder="e.g. Inj. KCl 20 mEq, Inj. MgSO₄ 1g" onChange={e => setIV(p => ({ ...p, additive: e.target.value }))} /></FL>
+                  <FL label="Medication Additive (if any)"><input className="his-field" value={iv.additive} placeholder="e.g. Inj. KCl 20 mEq, Inj. MgSO₄ 1g" onChange={e => setIV(p => ({ ...p, additive: e.target.value }))} /></FL>
                 </div>
               )}
 
@@ -2173,7 +2174,7 @@ function NursingNotesContent({ selectedPatient }) {
                                 </select>
                               </FL>
                               <FL label="Action Taken">
-                                <select style={sel} value={newMonitorEntry.action} onChange={e => setNewMonitorEntry(p => ({ ...p, action: e.target.value }))}>
+                                <select className="his-select" value={newMonitorEntry.action} onChange={e => setNewMonitorEntry(p => ({ ...p, action: e.target.value }))}>
                                   <option value="">— Select action —</option>
                                   {ACTIONS.map(a=><option key={a}>{a}</option>)}
                                 </select>
@@ -2222,7 +2223,7 @@ function NursingNotesContent({ selectedPatient }) {
                             </div>
                             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:10 }}>
                               <FL label="End Time">
-                                <input type="time" style={fld} value={bloodActionForm.endTime} onChange={e=>setBloodActionForm(p=>({...p,endTime:e.target.value}))} />
+                                <input type="time" className="his-field" value={bloodActionForm.endTime} onChange={e=>setBloodActionForm(p=>({...p,endTime:e.target.value}))} />
                               </FL>
                               <FL label="Reaction Type">
                                 <select style={{ ...sel, borderColor: bloodActionForm.reactionType!=="None"?C.red:"#e2e8f0" }} value={bloodActionForm.reactionType} onChange={e=>setBloodActionForm(p=>({...p,reactionType:e.target.value}))}>
@@ -2232,11 +2233,11 @@ function NursingNotesContent({ selectedPatient }) {
                             </div>
                             <div style={{ fontSize:11, fontWeight:700, color: bloodActionForm.action==="Completed"?C.green:C.red, textTransform:"uppercase", marginBottom:6 }}>Post-Transfusion Vitals</div>
                             <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:8, marginBottom:12 }}>
-                              <FL label="Sys BP"><input type="number" style={fld} value={bloodActionForm.postBP_sys} placeholder="118" onChange={e=>setBloodActionForm(p=>({...p,postBP_sys:e.target.value}))} /></FL>
-                              <FL label="Dia BP"><input type="number" style={fld} value={bloodActionForm.postBP_dia} placeholder="76" onChange={e=>setBloodActionForm(p=>({...p,postBP_dia:e.target.value}))} /></FL>
-                              <FL label="Pulse"><input type="number" style={fld} value={bloodActionForm.postPulse} placeholder="78" onChange={e=>setBloodActionForm(p=>({...p,postPulse:e.target.value}))} /></FL>
-                              <FL label="Temp (°F)"><input type="number" style={fld} value={bloodActionForm.postTemp} placeholder="98.6" onChange={e=>setBloodActionForm(p=>({...p,postTemp:e.target.value}))} /></FL>
-                              <FL label="SpO₂ (%)"><input type="number" style={fld} value={bloodActionForm.postSpO2} placeholder="98" onChange={e=>setBloodActionForm(p=>({...p,postSpO2:e.target.value}))} /></FL>
+                              <FL label="Sys BP"><input type="number" className="his-field" value={bloodActionForm.postBP_sys} placeholder="118" onChange={e=>setBloodActionForm(p=>({...p,postBP_sys:e.target.value}))} /></FL>
+                              <FL label="Dia BP"><input type="number" className="his-field" value={bloodActionForm.postBP_dia} placeholder="76" onChange={e=>setBloodActionForm(p=>({...p,postBP_dia:e.target.value}))} /></FL>
+                              <FL label="Pulse"><input type="number" className="his-field" value={bloodActionForm.postPulse} placeholder="78" onChange={e=>setBloodActionForm(p=>({...p,postPulse:e.target.value}))} /></FL>
+                              <FL label="Temp (°F)"><input type="number" className="his-field" value={bloodActionForm.postTemp} placeholder="98.6" onChange={e=>setBloodActionForm(p=>({...p,postTemp:e.target.value}))} /></FL>
+                              <FL label="SpO₂ (%)"><input type="number" className="his-field" value={bloodActionForm.postSpO2} placeholder="98" onChange={e=>setBloodActionForm(p=>({...p,postSpO2:e.target.value}))} /></FL>
                             </div>
                             <button onClick={finalizeTransfusion} disabled={loading}
                               style={{ width:"100%", padding:"10px", background: bloodActionForm.action==="Completed"?C.green:C.red, color:"white", border:"none", borderRadius:8, fontWeight:800, fontSize:14, cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}>
@@ -2254,17 +2255,17 @@ function NursingNotesContent({ selectedPatient }) {
                     {/* Bag / product details */}
                     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
                       <FL label="Blood Product *">
-                        <select style={sel} value={blood.product} onChange={e => setBlood(p => ({ ...p, product: e.target.value }))}>
+                        <select className="his-select" value={blood.product} onChange={e => setBlood(p => ({ ...p, product: e.target.value }))}>
                           {PRODUCTS.map(o => <option key={o}>{o}</option>)}
                         </select>
                       </FL>
-                      <FL label="Bag / Unit No. *"><input style={fld} value={blood.bagNo} placeholder="BT-YYYYMMDD-01" onChange={e => setBlood(p => ({ ...p, bagNo: e.target.value }))} /></FL>
-                      <FL label="Cross-Match Report No. *"><input style={fld} value={blood.crossMatchNo} placeholder="CM-2024-001" onChange={e => setBlood(p => ({ ...p, crossMatchNo: e.target.value }))} /></FL>
+                      <FL label="Bag / Unit No. *"><input className="his-field" value={blood.bagNo} placeholder="BT-YYYYMMDD-01" onChange={e => setBlood(p => ({ ...p, bagNo: e.target.value }))} /></FL>
+                      <FL label="Cross-Match Report No. *"><input className="his-field" value={blood.crossMatchNo} placeholder="CM-2024-001" onChange={e => setBlood(p => ({ ...p, crossMatchNo: e.target.value }))} /></FL>
                     </div>
                     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:10 }}>
-                      <FL label="Volume (mL) *"><input type="number" style={fld} value={blood.volume} placeholder="350" onChange={e => setBlood(p => ({ ...p, volume: e.target.value }))} /></FL>
-                      <FL label="Start Time *"><input type="time" style={fld} value={blood.startTime} onChange={e => setBlood(p => ({ ...p, startTime: e.target.value }))} /></FL>
-                      <FL label="End Time"><input type="time" style={fld} value={blood.endTime} onChange={e => setBlood(p => ({ ...p, endTime: e.target.value }))} /></FL>
+                      <FL label="Volume (mL) *"><input type="number" className="his-field" value={blood.volume} placeholder="350" onChange={e => setBlood(p => ({ ...p, volume: e.target.value }))} /></FL>
+                      <FL label="Start Time *"><input type="time" className="his-field" value={blood.startTime} onChange={e => setBlood(p => ({ ...p, startTime: e.target.value }))} /></FL>
+                      <FL label="End Time"><input type="time" className="his-field" value={blood.endTime} onChange={e => setBlood(p => ({ ...p, endTime: e.target.value }))} /></FL>
                       <FL label="Status *">
                         <select style={{ ...sel, borderColor: blood.status==="Reaction"||blood.status==="Stopped"?C.red:blood.status==="Completed"?C.green:"#e2e8f0" }} value={blood.status} onChange={e => setBlood(p => ({ ...p, status: e.target.value }))}>
                           {["Transfusing","Completed","Held","Reaction","Stopped"].map(o => <option key={o}>{o}</option>)}
@@ -2276,11 +2277,11 @@ function NursingNotesContent({ selectedPatient }) {
                     <div style={{ background:"#fff7ed", border:`1px solid #fed7aa`, borderRadius:8, padding:"10px 14px" }}>
                       <div style={{ fontSize:11, fontWeight:700, color:C.orange, textTransform:"uppercase", letterSpacing:".6px", marginBottom:8 }}>Pre-Transfusion Vitals (Baseline) *</div>
                       <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:8 }}>
-                        <FL label="Sys BP"><input type="number" style={fld} value={blood.preBP_sys} placeholder="120" onChange={e => setBlood(p => ({ ...p, preBP_sys: e.target.value }))} /></FL>
-                        <FL label="Dia BP"><input type="number" style={fld} value={blood.preBP_dia} placeholder="80" onChange={e => setBlood(p => ({ ...p, preBP_dia: e.target.value }))} /></FL>
-                        <FL label="Pulse"><input type="number" style={fld} value={blood.prePulse} placeholder="80" onChange={e => setBlood(p => ({ ...p, prePulse: e.target.value }))} /></FL>
-                        <FL label="Temp (°F)"><input type="number" style={fld} value={blood.preTemp} placeholder="98.6" onChange={e => setBlood(p => ({ ...p, preTemp: e.target.value }))} /></FL>
-                        <FL label="SpO₂ (%)"><input type="number" style={fld} value={blood.preSpO2||""} placeholder="98" onChange={e => setBlood(p => ({ ...p, preSpO2: e.target.value }))} /></FL>
+                        <FL label="Sys BP"><input type="number" className="his-field" value={blood.preBP_sys} placeholder="120" onChange={e => setBlood(p => ({ ...p, preBP_sys: e.target.value }))} /></FL>
+                        <FL label="Dia BP"><input type="number" className="his-field" value={blood.preBP_dia} placeholder="80" onChange={e => setBlood(p => ({ ...p, preBP_dia: e.target.value }))} /></FL>
+                        <FL label="Pulse"><input type="number" className="his-field" value={blood.prePulse} placeholder="80" onChange={e => setBlood(p => ({ ...p, prePulse: e.target.value }))} /></FL>
+                        <FL label="Temp (°F)"><input type="number" className="his-field" value={blood.preTemp} placeholder="98.6" onChange={e => setBlood(p => ({ ...p, preTemp: e.target.value }))} /></FL>
+                        <FL label="SpO₂ (%)"><input type="number" className="his-field" value={blood.preSpO2||""} placeholder="98" onChange={e => setBlood(p => ({ ...p, preSpO2: e.target.value }))} /></FL>
                       </div>
                     </div>
 
@@ -2309,11 +2310,11 @@ function NursingNotesContent({ selectedPatient }) {
                           {blood.status==="Completed"?"Post-Transfusion Vitals *":"Stop Vitals"}
                         </div>
                         <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:8 }}>
-                          <FL label="Sys BP"><input type="number" style={fld} value={blood.postBP_sys} placeholder="118" onChange={e => setBlood(p => ({ ...p, postBP_sys: e.target.value }))} /></FL>
-                          <FL label="Dia BP"><input type="number" style={fld} value={blood.postBP_dia} placeholder="76" onChange={e => setBlood(p => ({ ...p, postBP_dia: e.target.value }))} /></FL>
-                          <FL label="Pulse"><input type="number" style={fld} value={blood.postPulse} placeholder="78" onChange={e => setBlood(p => ({ ...p, postPulse: e.target.value }))} /></FL>
-                          <FL label="Temp (°F)"><input type="number" style={fld} value={blood.postTemp||""} placeholder="98.6" onChange={e => setBlood(p => ({ ...p, postTemp: e.target.value }))} /></FL>
-                          <FL label="SpO₂ (%)"><input type="number" style={fld} value={blood.postSpO2||""} placeholder="98" onChange={e => setBlood(p => ({ ...p, postSpO2: e.target.value }))} /></FL>
+                          <FL label="Sys BP"><input type="number" className="his-field" value={blood.postBP_sys} placeholder="118" onChange={e => setBlood(p => ({ ...p, postBP_sys: e.target.value }))} /></FL>
+                          <FL label="Dia BP"><input type="number" className="his-field" value={blood.postBP_dia} placeholder="76" onChange={e => setBlood(p => ({ ...p, postBP_dia: e.target.value }))} /></FL>
+                          <FL label="Pulse"><input type="number" className="his-field" value={blood.postPulse} placeholder="78" onChange={e => setBlood(p => ({ ...p, postPulse: e.target.value }))} /></FL>
+                          <FL label="Temp (°F)"><input type="number" className="his-field" value={blood.postTemp||""} placeholder="98.6" onChange={e => setBlood(p => ({ ...p, postTemp: e.target.value }))} /></FL>
+                          <FL label="SpO₂ (%)"><input type="number" className="his-field" value={blood.postSpO2||""} placeholder="98" onChange={e => setBlood(p => ({ ...p, postSpO2: e.target.value }))} /></FL>
                         </div>
                       </div>
                     )}
@@ -2326,7 +2327,7 @@ function NursingNotesContent({ selectedPatient }) {
                       </label>
                     </div>
                     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-                      <FL label="Second Nurse Verified (Name) *"><input style={fld} value={blood.secondNurse} placeholder="Verifying nurse name" onChange={e => setBlood(p => ({ ...p, secondNurse: e.target.value }))} /></FL>
+                      <FL label="Second Nurse Verified (Name) *"><input className="his-field" value={blood.secondNurse} placeholder="Verifying nurse name" onChange={e => setBlood(p => ({ ...p, secondNurse: e.target.value }))} /></FL>
                       <FL label="Overall Transfusion Reaction">
                         <select style={{ ...sel, borderColor: blood.reactionType!=="None"?C.red:"#e2e8f0" }} value={blood.reactionType} onChange={e => setBlood(p => ({ ...p, reactionType: e.target.value }))}>
                           {REACTIONS.map(o=><option key={o}>{o}</option>)}
@@ -2572,41 +2573,41 @@ function NursingNotesContent({ selectedPatient }) {
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
                     <FL label="Wound Type *">
-                      <select style={sel} value={wound.type} onChange={e => setWound(p => ({ ...p, type: e.target.value }))}>
+                      <select className="his-select" value={wound.type} onChange={e => setWound(p => ({ ...p, type: e.target.value }))}>
                         {["Surgical","Pressure Injury","Traumatic","Burn","Diabetic Foot","Vascular","Fungating","Other"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
-                    <FL label="Wound Site / Location *"><input style={fld} value={wound.site} placeholder="e.g. Right lower leg, sacrum" onChange={e => setWound(p => ({ ...p, site: e.target.value }))} /></FL>
+                    <FL label="Wound Site / Location *"><input className="his-field" value={wound.site} placeholder="e.g. Right lower leg, sacrum" onChange={e => setWound(p => ({ ...p, site: e.target.value }))} /></FL>
                     <FL label="Healing Stage *">
-                      <select style={sel} value={wound.healingStage} onChange={e => setWound(p => ({ ...p, healingStage: e.target.value }))}>
+                      <select className="his-select" value={wound.healingStage} onChange={e => setWound(p => ({ ...p, healingStage: e.target.value }))}>
                         {["Haemostasis","Inflammatory","Granulating","Epithelializing","Sloughy","Infected","Necrotic","Dehisced"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
-                    <FL label="Length (cm) *"><input type="number" style={fld} value={wound.length} placeholder="3" onChange={e => setWound(p => ({ ...p, length: e.target.value }))} /></FL>
-                    <FL label="Width (cm) *"><input type="number" style={fld} value={wound.width} placeholder="2" onChange={e => setWound(p => ({ ...p, width: e.target.value }))} /></FL>
-                    <FL label="Depth (cm)"><input type="number" style={fld} value={wound.depth} placeholder="0.5" onChange={e => setWound(p => ({ ...p, depth: e.target.value }))} /></FL>
+                    <FL label="Length (cm) *"><input type="number" className="his-field" value={wound.length} placeholder="3" onChange={e => setWound(p => ({ ...p, length: e.target.value }))} /></FL>
+                    <FL label="Width (cm) *"><input type="number" className="his-field" value={wound.width} placeholder="2" onChange={e => setWound(p => ({ ...p, width: e.target.value }))} /></FL>
+                    <FL label="Depth (cm)"><input type="number" className="his-field" value={wound.depth} placeholder="0.5" onChange={e => setWound(p => ({ ...p, depth: e.target.value }))} /></FL>
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                     <FL label="Exudate Amount">
-                      <select style={sel} value={wound.exudateAmt} onChange={e => setWound(p => ({ ...p, exudateAmt: e.target.value }))}>
+                      <select className="his-select" value={wound.exudateAmt} onChange={e => setWound(p => ({ ...p, exudateAmt: e.target.value }))}>
                         {["None","Scant","Minimal","Moderate","Heavy"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                     <FL label="Exudate Type">
-                      <select style={sel} value={wound.exudateType} onChange={e => setWound(p => ({ ...p, exudateType: e.target.value }))}>
+                      <select className="his-select" value={wound.exudateType} onChange={e => setWound(p => ({ ...p, exudateType: e.target.value }))}>
                         {["Serous","Sero-sanguinous","Sanguinous","Purulent","Haemopurulent"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                     <FL label="Surrounding Skin">
-                      <select style={sel} value={wound.surroundingSkin} onChange={e => setWound(p => ({ ...p, surroundingSkin: e.target.value }))}>
+                      <select className="his-select" value={wound.surroundingSkin} onChange={e => setWound(p => ({ ...p, surroundingSkin: e.target.value }))}>
                         {["Intact","Erythema","Macerated","Oedematous","Dry/Scaly","Excoriated"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
-                    <FL label="Dressing Applied *"><input style={fld} value={wound.dressing} placeholder="e.g. Povidone-Iodine + paraffin gauze" onChange={e => setWound(p => ({ ...p, dressing: e.target.value }))} /></FL>
+                    <FL label="Dressing Applied *"><input className="his-field" value={wound.dressing} placeholder="e.g. Povidone-Iodine + paraffin gauze" onChange={e => setWound(p => ({ ...p, dressing: e.target.value }))} /></FL>
                   </div>
                   <div style={{ display:"flex", gap:20, flexWrap:"wrap" }}>
                     {[
@@ -2620,8 +2621,8 @@ function NursingNotesContent({ selectedPatient }) {
                     ))}
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-                    <FL label="Pain During Dressing (NRS 0-10)"><input type="number" min="0" max="10" style={fld} value={wound.painDuring} placeholder="0" onChange={e => setWound(p => ({ ...p, painDuring: e.target.value }))} /></FL>
-                    <FL label="Next Dressing Due"><input type="date" style={fld} value={wound.nextDressingDate} onChange={e => setWound(p => ({ ...p, nextDressingDate: e.target.value }))} /></FL>
+                    <FL label="Pain During Dressing (NRS 0-10)"><input type="number" min="0" max="10" className="his-field" value={wound.painDuring} placeholder="0" onChange={e => setWound(p => ({ ...p, painDuring: e.target.value }))} /></FL>
+                    <FL label="Next Dressing Due"><input type="date" className="his-field" value={wound.nextDressingDate} onChange={e => setWound(p => ({ ...p, nextDressingDate: e.target.value }))} /></FL>
                   </div>
                 </div>
               )}
@@ -2661,19 +2662,19 @@ function NursingNotesContent({ selectedPatient }) {
                     </div>
                     {/* Pressure injury details */}
                     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
-                      <FL label="Pressure Area Location"><input style={fld} value={skin.area} placeholder="e.g. Sacrum, heels, occiput" onChange={e => setSkin(p => ({ ...p, area: e.target.value }))} /></FL>
+                      <FL label="Pressure Area Location"><input className="his-field" value={skin.area} placeholder="e.g. Sacrum, heels, occiput" onChange={e => setSkin(p => ({ ...p, area: e.target.value }))} /></FL>
                       <FL label="Pressure Injury Stage">
-                        <select style={sel} value={skin.stage} onChange={e => setSkin(p => ({ ...p, stage: e.target.value }))}>
+                        <select className="his-select" value={skin.stage} onChange={e => setSkin(p => ({ ...p, stage: e.target.value }))}>
                           {["No Injury","Stage I","Stage II","Stage III","Stage IV","Unstageable","Deep Tissue Injury"].map(o=><option key={o}>{o}</option>)}
                         </select>
                       </FL>
                       <FL label="Repositioning Frequency">
-                        <select style={sel} value={skin.repositionFreq} onChange={e => setSkin(p => ({ ...p, repositionFreq: e.target.value }))}>
+                        <select className="his-select" value={skin.repositionFreq} onChange={e => setSkin(p => ({ ...p, repositionFreq: e.target.value }))}>
                           {["Hourly","2-hourly","4-hourly","As tolerated","On request"].map(o=><option key={o}>{o}</option>)}
                         </select>
                       </FL>
                     </div>
-                    <FL label="Interventions Applied"><input style={fld} value={skin.intervention} placeholder="Foam dressing, barrier cream, pressure-relieving mattress, heel wedge…" onChange={e => setSkin(p => ({ ...p, intervention: e.target.value }))} /></FL>
+                    <FL label="Interventions Applied"><input className="his-field" value={skin.intervention} placeholder="Foam dressing, barrier cream, pressure-relieving mattress, heel wedge…" onChange={e => setSkin(p => ({ ...p, intervention: e.target.value }))} /></FL>
                     <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontWeight:700, fontSize:13, color:skin.repositioned?C.green:C.muted }}>
                       <input type="checkbox" checked={skin.repositioned} onChange={e => setSkin(p => ({ ...p, repositioned: e.target.checked }))} style={{ accentColor:C.green, width:15, height:15 }} />
                       Patient repositioned this entry
@@ -2722,7 +2723,7 @@ function NursingNotesContent({ selectedPatient }) {
                       </div>
                     </div>
                     <div>
-                      <div style={lbl}>Interventions Applied (check all that apply)</div>
+                      <div className="his-label">Interventions Applied (check all that apply)</div>
                       <div style={{ display:"flex", flexWrap:"wrap", gap:8, marginTop:6 }}>
                         {intList.map(f=>(
                           <label key={f.k} style={{ display:"flex", alignItems:"center", gap:7, cursor:"pointer", fontWeight:600, fontSize:12, color:fallRisk[f.k]?C.green:C.muted, padding:"6px 12px", border:`1.5px solid ${fallRisk[f.k]?C.green:C.border}`, borderRadius:20, background:fallRisk[f.k]?C.greenL:"white", transition:"all .15s" }}>
@@ -2740,28 +2741,28 @@ function NursingNotesContent({ selectedPatient }) {
               {activeModal === "procedure" && (
                 <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
-                    <FL label="Procedure Name *"><input style={fld} value={procedure.procedureName} placeholder="e.g. Urinary catheterisation" onChange={e => setProcedure(p => ({ ...p, procedureName: e.target.value }))} /></FL>
-                    <FL label="Indication / Reason *"><input style={fld} value={procedure.indication} placeholder="Reason for procedure" onChange={e => setProcedure(p => ({ ...p, indication: e.target.value }))} /></FL>
-                    <FL label="Time of Procedure *"><input type="time" style={fld} value={procedure.time} onChange={e => setProcedure(p => ({ ...p, time: e.target.value }))} /></FL>
+                    <FL label="Procedure Name *"><input className="his-field" value={procedure.procedureName} placeholder="e.g. Urinary catheterisation" onChange={e => setProcedure(p => ({ ...p, procedureName: e.target.value }))} /></FL>
+                    <FL label="Indication / Reason *"><input className="his-field" value={procedure.indication} placeholder="Reason for procedure" onChange={e => setProcedure(p => ({ ...p, indication: e.target.value }))} /></FL>
+                    <FL label="Time of Procedure *"><input type="time" className="his-field" value={procedure.time} onChange={e => setProcedure(p => ({ ...p, time: e.target.value }))} /></FL>
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
-                    <FL label="Performed By *"><input style={fld} value={procedure.performedBy} placeholder="Name of performer" onChange={e => setProcedure(p => ({ ...p, performedBy: e.target.value }))} /></FL>
+                    <FL label="Performed By *"><input className="his-field" value={procedure.performedBy} placeholder="Name of performer" onChange={e => setProcedure(p => ({ ...p, performedBy: e.target.value }))} /></FL>
                     <FL label="Designation *">
-                      <select style={sel} value={procedure.designation} onChange={e => setProcedure(p => ({ ...p, designation: e.target.value }))}>
+                      <select className="his-select" value={procedure.designation} onChange={e => setProcedure(p => ({ ...p, designation: e.target.value }))}>
                         {["Staff Nurse","Senior Nurse","Resident Doctor","Consultant","Anaesthetist","Technician"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
-                    <FL label="Assistant"><input style={fld} value={procedure.assistant} placeholder="Assisting nurse/doctor" onChange={e => setProcedure(p => ({ ...p, assistant: e.target.value }))} /></FL>
+                    <FL label="Assistant"><input className="his-field" value={procedure.assistant} placeholder="Assisting nurse/doctor" onChange={e => setProcedure(p => ({ ...p, assistant: e.target.value }))} /></FL>
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
-                    <FL label="Site / Location"><input style={fld} value={procedure.site} placeholder="e.g. Right subclavian" onChange={e => setProcedure(p => ({ ...p, site: e.target.value }))} /></FL>
+                    <FL label="Site / Location"><input className="his-field" value={procedure.site} placeholder="e.g. Right subclavian" onChange={e => setProcedure(p => ({ ...p, site: e.target.value }))} /></FL>
                     <FL label="Laterality">
-                      <select style={sel} value={procedure.laterality} onChange={e => setProcedure(p => ({ ...p, laterality: e.target.value }))}>
+                      <select className="his-select" value={procedure.laterality} onChange={e => setProcedure(p => ({ ...p, laterality: e.target.value }))}>
                         {["N/A","Left","Right","Bilateral","Midline"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                     <FL label="Patient Position">
-                      <select style={sel} value={procedure.position} onChange={e => setProcedure(p => ({ ...p, position: e.target.value }))}>
+                      <select className="his-select" value={procedure.position} onChange={e => setProcedure(p => ({ ...p, position: e.target.value }))}>
                         {["Supine","Left Lateral","Right Lateral","Lithotomy","Trendelenburg","Prone","Sitting"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
@@ -2773,9 +2774,9 @@ function NursingNotesContent({ selectedPatient }) {
                         {["Tolerated Well","Partial Cooperation","Procedure Abandoned","Complication Noted"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
-                    <FL label="Complications (if any)"><input style={fld} value={procedure.complications} placeholder="None / describe" onChange={e => setProcedure(p => ({ ...p, complications: e.target.value }))} /></FL>
+                    <FL label="Complications (if any)"><input className="his-field" value={procedure.complications} placeholder="None / describe" onChange={e => setProcedure(p => ({ ...p, complications: e.target.value }))} /></FL>
                   </div>
-                  <FL label="Post-Procedure Monitoring / Follow-up"><input style={fld} value={procedure.followUp} placeholder="e.g. Monitor urine output, check site for bleeding in 30 min" onChange={e => setProcedure(p => ({ ...p, followUp: e.target.value }))} /></FL>
+                  <FL label="Post-Procedure Monitoring / Follow-up"><input className="his-field" value={procedure.followUp} placeholder="e.g. Monitor urine output, check site for bleeding in 30 min" onChange={e => setProcedure(p => ({ ...p, followUp: e.target.value }))} /></FL>
                   <div style={{ display:"flex", gap:20, flexWrap:"wrap" }}>
                     <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontWeight:700, fontSize:13, color:procedure.consentObtained?C.green:C.red }}>
                       <input type="checkbox" checked={procedure.consentObtained} onChange={e => setProcedure(p => ({ ...p, consentObtained: e.target.checked }))} style={{ accentColor:C.green, width:15, height:15 }} />
@@ -2790,7 +2791,7 @@ function NursingNotesContent({ selectedPatient }) {
                       Specimen sent
                     </label>
                   </div>
-                  {procedure.specimenSent && <FL label="Specimen Type"><input style={fld} value={procedure.specimenType} placeholder="e.g. Urine C&S, Blood culture, Tissue biopsy" onChange={e => setProcedure(p => ({ ...p, specimenType: e.target.value }))} /></FL>}
+                  {procedure.specimenSent && <FL label="Specimen Type"><input className="his-field" value={procedure.specimenType} placeholder="e.g. Urine C&S, Blood culture, Tissue biopsy" onChange={e => setProcedure(p => ({ ...p, specimenType: e.target.value }))} /></FL>}
                 </div>
               )}
 
@@ -2799,7 +2800,7 @@ function NursingNotesContent({ selectedPatient }) {
                 <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
                     <FL label="Handover Type *">
-                      <select style={sel} value={discharge.type} onChange={e => setDischarge(p => ({ ...p, type: e.target.value }))}>
+                      <select className="his-select" value={discharge.type} onChange={e => setDischarge(p => ({ ...p, type: e.target.value }))}>
                         {["Shift Handover","Patient Discharge","Ward Transfer","ICU Transfer","LAMA","Death Summary"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
@@ -2809,7 +2810,7 @@ function NursingNotesContent({ selectedPatient }) {
                         {["Stable","Improving","Unchanged","Critical","Deteriorating","Deceased"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
-                    <FL label="Receiving Nurse / Handover To *"><input style={fld} value={discharge.incomingNurse} placeholder="Name of incoming nurse" onChange={e => setDischarge(p => ({ ...p, incomingNurse: e.target.value }))} /></FL>
+                    <FL label="Receiving Nurse / Handover To *"><input className="his-field" value={discharge.incomingNurse} placeholder="Name of incoming nurse" onChange={e => setDischarge(p => ({ ...p, incomingNurse: e.target.value }))} /></FL>
                   </div>
                   {/* SBAR */}
                   <div style={{ background:"#f8fafc", border:`1px solid ${C.border}`, borderRadius:10, padding:"12px 14px" }}>
@@ -2829,7 +2830,7 @@ function NursingNotesContent({ selectedPatient }) {
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                     <div>
-                      <div style={lbl}>Patient / Family Education</div>
+                      <div className="his-label">Patient / Family Education</div>
                       <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
                         <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontWeight:600, fontSize:13, color:discharge.educationGiven?C.green:C.muted }}>
                           <input type="checkbox" checked={discharge.educationGiven} onChange={e => setDischarge(p => ({ ...p, educationGiven: e.target.checked }))} style={{ accentColor:C.green, width:14, height:14 }} />
@@ -2841,9 +2842,9 @@ function NursingNotesContent({ selectedPatient }) {
                         </label>
                       </div>
                     </div>
-                    <FL label="Follow-up Date"><input type="date" style={fld} value={discharge.followUpDate} onChange={e => setDischarge(p => ({ ...p, followUpDate: e.target.value }))} /></FL>
+                    <FL label="Follow-up Date"><input type="date" className="his-field" value={discharge.followUpDate} onChange={e => setDischarge(p => ({ ...p, followUpDate: e.target.value }))} /></FL>
                   </div>
-                  {discharge.educationGiven && <FL label="Education Topics Covered"><input style={fld} value={discharge.educationTopics} placeholder="Medication adherence, wound care, diet, warning signs, follow-up…" onChange={e => setDischarge(p => ({ ...p, educationTopics: e.target.value }))} /></FL>}
+                  {discharge.educationGiven && <FL label="Education Topics Covered"><input className="his-field" value={discharge.educationTopics} placeholder="Medication adherence, wound care, diet, warning signs, follow-up…" onChange={e => setDischarge(p => ({ ...p, educationTopics: e.target.value }))} /></FL>}
                 </div>
               )}
 
@@ -2930,17 +2931,17 @@ function NursingNotesContent({ selectedPatient }) {
                   {/* Row 1 — Clinical status */}
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
                     <FL label="Consciousness">
-                      <select style={sel} value={generalObs.consciousness} onChange={e=>setGeneralObs(p=>({...p,consciousness:e.target.value}))}>
+                      <select className="his-select" value={generalObs.consciousness} onChange={e=>setGeneralObs(p=>({...p,consciousness:e.target.value}))}>
                         {["Conscious","Drowsy","Stuporous","Unconscious","Sedated","Confused"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                     <FL label="Orientation">
-                      <select style={sel} value={generalObs.orientation} onChange={e=>setGeneralObs(p=>({...p,orientation:e.target.value}))}>
+                      <select className="his-select" value={generalObs.orientation} onChange={e=>setGeneralObs(p=>({...p,orientation:e.target.value}))}>
                         {["Oriented ×3","Oriented to person only","Disoriented","Not assessable"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                     <FL label="Co-operation">
-                      <select style={sel} value={generalObs.cooperation} onChange={e=>setGeneralObs(p=>({...p,cooperation:e.target.value}))}>
+                      <select className="his-select" value={generalObs.cooperation} onChange={e=>setGeneralObs(p=>({...p,cooperation:e.target.value}))}>
                         {["Cooperative","Uncooperative","Partially cooperative","Anxious","Agitated"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
@@ -2948,22 +2949,22 @@ function NursingNotesContent({ selectedPatient }) {
                   {/* Row 2 — General wellbeing */}
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:10 }}>
                     <FL label="Mood / Affect">
-                      <select style={sel} value={generalObs.mood} onChange={e=>setGeneralObs(p=>({...p,mood:e.target.value}))}>
+                      <select className="his-select" value={generalObs.mood} onChange={e=>setGeneralObs(p=>({...p,mood:e.target.value}))}>
                         {["Calm","Anxious","Depressed","Irritable","Euphoric","Flat"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                     <FL label="Activity Level">
-                      <select style={sel} value={generalObs.activityLevel} onChange={e=>setGeneralObs(p=>({...p,activityLevel:e.target.value}))}>
+                      <select className="his-select" value={generalObs.activityLevel} onChange={e=>setGeneralObs(p=>({...p,activityLevel:e.target.value}))}>
                         {["Ambulatory","Ambulatory with assistance","Chair rest","Bed rest","Bed-bound"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                     <FL label="Sleep Quality">
-                      <select style={sel} value={generalObs.sleepQuality} onChange={e=>setGeneralObs(p=>({...p,sleepQuality:e.target.value}))}>
+                      <select className="his-select" value={generalObs.sleepQuality} onChange={e=>setGeneralObs(p=>({...p,sleepQuality:e.target.value}))}>
                         {["Good","Disturbed","Poor","Unable to sleep"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                     <FL label="Appetite">
-                      <select style={sel} value={generalObs.appetite} onChange={e=>setGeneralObs(p=>({...p,appetite:e.target.value}))}>
+                      <select className="his-select" value={generalObs.appetite} onChange={e=>setGeneralObs(p=>({...p,appetite:e.target.value}))}>
                         {["Good","Fair","Poor","Nil by mouth","NGT feeding"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
@@ -2971,23 +2972,23 @@ function NursingNotesContent({ selectedPatient }) {
                   {/* Row 3 — Physical findings */}
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
                     <FL label="Comfort Level">
-                      <select style={sel} value={generalObs.comfort} onChange={e=>setGeneralObs(p=>({...p,comfort:e.target.value}))}>
+                      <select className="his-select" value={generalObs.comfort} onChange={e=>setGeneralObs(p=>({...p,comfort:e.target.value}))}>
                         {["Comfortable","Mild discomfort","Moderate distress","Severe distress"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                     <FL label="Bowel Sounds">
-                      <select style={sel} value={generalObs.bowelSounds} onChange={e=>setGeneralObs(p=>({...p,bowelSounds:e.target.value}))}>
+                      <select className="his-select" value={generalObs.bowelSounds} onChange={e=>setGeneralObs(p=>({...p,bowelSounds:e.target.value}))}>
                         {["Normal","Hyperactive","Hypoactive","Absent"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                     <FL label="Urine Output">
-                      <select style={sel} value={generalObs.urineOutput} onChange={e=>setGeneralObs(p=>({...p,urineOutput:e.target.value}))}>
+                      <select className="his-select" value={generalObs.urineOutput} onChange={e=>setGeneralObs(p=>({...p,urineOutput:e.target.value}))}>
                         {["Adequate","Reduced","Oliguric","Anuric","Catheterised — draining","Incontinent"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                   </div>
                   <FL label="Skin Condition">
-                    <select style={sel} value={generalObs.skin} onChange={e=>setGeneralObs(p=>({...p,skin:e.target.value}))}>
+                    <select className="his-select" value={generalObs.skin} onChange={e=>setGeneralObs(p=>({...p,skin:e.target.value}))}>
                       {["Intact","Pallor","Jaundice","Cyanosis","Oedema","Rash / Urticaria","Wound present","Pressure injury present"].map(o=><option key={o}>{o}</option>)}
                     </select>
                   </FL>
@@ -3079,7 +3080,7 @@ function NursingNotesContent({ selectedPatient }) {
                         {SYSTEMS.map(sys=>(
                           <div key={sys.k} style={{ display:"grid", gridTemplateColumns:"160px 1fr", alignItems:"center", gap:10 }}>
                             <label style={{ fontSize:12, fontWeight:600, color:C.text }}>{sys.label}</label>
-                            <select style={sel} value={dailyAssess[sys.k]} onChange={e=>setDailyAssess(p=>({...p,[sys.k]:e.target.value}))}>
+                            <select className="his-select" value={dailyAssess[sys.k]} onChange={e=>setDailyAssess(p=>({...p,[sys.k]:e.target.value}))}>
                               {SYS_DEFAULTS[sys.k].map(o=><option key={o}>{o}</option>)}
                             </select>
                           </div>
@@ -3115,18 +3116,18 @@ function NursingNotesContent({ selectedPatient }) {
                       <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>Admission Details</div>
                       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                         <FL label="Mode of Admission">
-                          <select style={sel} value={initialAssess.admissionMode} onChange={e=>setInitialAssess(p=>({...p,admissionMode:e.target.value}))}>
+                          <select className="his-select" value={initialAssess.admissionMode} onChange={e=>setInitialAssess(p=>({...p,admissionMode:e.target.value}))}>
                             {["Planned","Emergency","Transfer","OPD Referral"].map(o=><option key={o}>{o}</option>)}
                           </select>
                         </FL>
                         <FL label="Chief Complaint">
-                          <input style={fld} value={initialAssess.chiefComplaint} placeholder="e.g. Chest pain" onChange={e=>setInitialAssess(p=>({...p,chiefComplaint:e.target.value}))} />
+                          <input className="his-field" value={initialAssess.chiefComplaint} placeholder="e.g. Chest pain" onChange={e=>setInitialAssess(p=>({...p,chiefComplaint:e.target.value}))} />
                         </FL>
                         <FL label="Duration of Complaint">
-                          <input style={fld} value={initialAssess.duration} placeholder="e.g. 2 days" onChange={e=>setInitialAssess(p=>({...p,duration:e.target.value}))} />
+                          <input className="his-field" value={initialAssess.duration} placeholder="e.g. 2 days" onChange={e=>setInitialAssess(p=>({...p,duration:e.target.value}))} />
                         </FL>
                         <FL label="Allergies">
-                          <input style={fld} value={initialAssess.allergies} placeholder="None / NKDA" onChange={e=>setInitialAssess(p=>({...p,allergies:e.target.value}))} />
+                          <input className="his-field" value={initialAssess.allergies} placeholder="None / NKDA" onChange={e=>setInitialAssess(p=>({...p,allergies:e.target.value}))} />
                         </FL>
                       </div>
                       <div style={{ marginTop:10 }}>
@@ -3141,7 +3142,7 @@ function NursingNotesContent({ selectedPatient }) {
                       <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8 }}>
                         {[{k:"bp_sys",l:"Systolic BP (mmHg)",ph:"120"},{k:"bp_dia",l:"Diastolic BP (mmHg)",ph:"80"},{k:"pulse",l:"Pulse (/min)",ph:"80"},{k:"temp",l:"Temp (°F)",ph:"98.6"},{k:"spo2",l:"SpO₂ (%)",ph:"98"},{k:"rr",l:"RR/min",ph:"16"},{k:"weight",l:"Weight (kg)",ph:"60"},{k:"height",l:"Height (cm)",ph:"165"}].map(f=>(
                           <FL key={f.k} label={f.l}>
-                            <input type="number" style={fld} value={initialAssess[f.k]} placeholder={f.ph} onChange={e=>setInitialAssess(p=>({...p,[f.k]:e.target.value}))} />
+                            <input type="number" className="his-field" value={initialAssess[f.k]} placeholder={f.ph} onChange={e=>setInitialAssess(p=>({...p,[f.k]:e.target.value}))} />
                           </FL>
                         ))}
                       </div>
@@ -3185,7 +3186,7 @@ function NursingNotesContent({ selectedPatient }) {
                           {k:"m6",l:"Mental Status",opts:[{v:"0",l:"Oriented (0)"},{v:"15",l:"Overestimates ability (15)"}]},
                         ].map(f=>(
                           <FL key={f.k} label={f.l}>
-                            <select style={sel} value={initialAssess[f.k]} onChange={e=>setInitialAssess(p=>({...p,[f.k]:e.target.value}))}>
+                            <select className="his-select" value={initialAssess[f.k]} onChange={e=>setInitialAssess(p=>({...p,[f.k]:e.target.value}))}>
                               {f.opts.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
                             </select>
                           </FL>
@@ -3205,7 +3206,7 @@ function NursingNotesContent({ selectedPatient }) {
                           {k:"dischargePlan",l:"Planned Discharge To",opts:["Home","Rehab","SNF","Transfer","Unknown"]},
                         ].map(f=>(
                           <FL key={f.k} label={f.l}>
-                            <select style={sel} value={initialAssess[f.k]} onChange={e=>setInitialAssess(p=>({...p,[f.k]:e.target.value}))}>
+                            <select className="his-select" value={initialAssess[f.k]} onChange={e=>setInitialAssess(p=>({...p,[f.k]:e.target.value}))}>
                               {f.opts.map(o=><option key={o}>{o}</option>)}
                             </select>
                           </FL>
@@ -3265,10 +3266,10 @@ function NursingNotesContent({ selectedPatient }) {
                           </div>
                         </div>
                         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-                          <FL label="Problem Statement"><input style={fld} value={prob.statement} placeholder="e.g. Impaired gas exchange" onChange={e=>updateProblem(prob.id,"statement",e.target.value)} /></FL>
-                          <FL label="Related To"><input style={fld} value={prob.relatedTo} placeholder="Underlying cause" onChange={e=>updateProblem(prob.id,"relatedTo",e.target.value)} /></FL>
-                          <FL label="Evidenced By"><input style={fld} value={prob.evidencedBy} placeholder="Signs / symptoms" onChange={e=>updateProblem(prob.id,"evidencedBy",e.target.value)} /></FL>
-                          <FL label="Target Date"><input type="date" style={fld} value={prob.targetDate} onChange={e=>updateProblem(prob.id,"targetDate",e.target.value)} /></FL>
+                          <FL label="Problem Statement"><input className="his-field" value={prob.statement} placeholder="e.g. Impaired gas exchange" onChange={e=>updateProblem(prob.id,"statement",e.target.value)} /></FL>
+                          <FL label="Related To"><input className="his-field" value={prob.relatedTo} placeholder="Underlying cause" onChange={e=>updateProblem(prob.id,"relatedTo",e.target.value)} /></FL>
+                          <FL label="Evidenced By"><input className="his-field" value={prob.evidencedBy} placeholder="Signs / symptoms" onChange={e=>updateProblem(prob.id,"evidencedBy",e.target.value)} /></FL>
+                          <FL label="Target Date"><input type="date" className="his-field" value={prob.targetDate} onChange={e=>updateProblem(prob.id,"targetDate",e.target.value)} /></FL>
                         </div>
                         <div style={{ marginTop:8, display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
                           <FL label="Goals / Expected Outcomes"><textarea style={{...ta,minHeight:48}} value={prob.goals} placeholder="Patient will..." onChange={e=>updateProblem(prob.id,"goals",e.target.value)} /></FL>
@@ -3322,7 +3323,7 @@ function NursingNotesContent({ selectedPatient }) {
                         <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>NRS-2002 Full Scoring</div>
                         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                           <FL label="Nutritional Status Score">
-                            <select style={sel} value={nutrition.nutritionScore} onChange={e=>setNutrition(p=>({...p,nutritionScore:e.target.value}))}>
+                            <select className="his-select" value={nutrition.nutritionScore} onChange={e=>setNutrition(p=>({...p,nutritionScore:e.target.value}))}>
                               <option value="0">0 — Normal nutritional status</option>
                               <option value="1">1 — Weight loss &gt;5% in 3 months / intake 50-75% of requirement</option>
                               <option value="2">2 — Weight loss &gt;5% in 2 months / BMI 18.5-20.5 + impaired condition</option>
@@ -3330,7 +3331,7 @@ function NursingNotesContent({ selectedPatient }) {
                             </select>
                           </FL>
                           <FL label="Disease Severity Score">
-                            <select style={sel} value={nutrition.diseaseScore} onChange={e=>setNutrition(p=>({...p,diseaseScore:e.target.value}))}>
+                            <select className="his-select" value={nutrition.diseaseScore} onChange={e=>setNutrition(p=>({...p,diseaseScore:e.target.value}))}>
                               <option value="0">0 — Normal requirements</option>
                               <option value="1">1 — Hip fracture, chronic illness (COPD, DM, dialysis, cancer)</option>
                               <option value="2">2 — Major abdominal surgery, stroke, severe pneumonia, haematology</option>
@@ -3353,7 +3354,7 @@ function NursingNotesContent({ selectedPatient }) {
                       <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8 }}>
                         {[{k:"weight",l:"Weight (kg)",ph:"60"},{k:"height",l:"Height (cm)",ph:"165"},{k:"midArmCirc",l:"Mid-Arm Circ. (cm)",ph:"28"},{k:"caloriesToday",l:"Calories Today (kcal)",ph:"1800"},{k:"proteinToday",l:"Protein (g)",ph:"60"},{k:"fluidToday",l:"Fluid Intake (ml)",ph:"2000"}].map(f=>(
                           <FL key={f.k} label={f.l}>
-                            <input type="number" style={fld} value={nutrition[f.k]} placeholder={f.ph} onChange={e=>setNutrition(p=>({...p,[f.k]:e.target.value}))} />
+                            <input type="number" className="his-field" value={nutrition[f.k]} placeholder={f.ph} onChange={e=>setNutrition(p=>({...p,[f.k]:e.target.value}))} />
                           </FL>
                         ))}
                       </div>
@@ -3363,22 +3364,22 @@ function NursingNotesContent({ selectedPatient }) {
                       <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>Diet & Feeding</div>
                       <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8 }}>
                         <FL label="Diet Type">
-                          <select style={sel} value={nutrition.dietType} onChange={e=>setNutrition(p=>({...p,dietType:e.target.value}))}>
+                          <select className="his-select" value={nutrition.dietType} onChange={e=>setNutrition(p=>({...p,dietType:e.target.value}))}>
                             {["Regular","Soft","Semi-solid","Liquid","Clear Liquid","NPO","Diabetic","Low-sodium","Renal Diet","Cardiac Diet"].map(o=><option key={o}>{o}</option>)}
                           </select>
                         </FL>
                         <FL label="Appetite">
-                          <select style={sel} value={nutrition.appetite} onChange={e=>setNutrition(p=>({...p,appetite:e.target.value}))}>
+                          <select className="his-select" value={nutrition.appetite} onChange={e=>setNutrition(p=>({...p,appetite:e.target.value}))}>
                             {["Good","Fair","Poor","Anorexic"].map(o=><option key={o}>{o}</option>)}
                           </select>
                         </FL>
                         <FL label="Swallowing">
-                          <select style={sel} value={nutrition.swallowing} onChange={e=>setNutrition(p=>({...p,swallowing:e.target.value}))}>
+                          <select className="his-select" value={nutrition.swallowing} onChange={e=>setNutrition(p=>({...p,swallowing:e.target.value}))}>
                             {["Normal","Dysphagia — Mild","Dysphagia — Moderate","Dysphagia — Severe","NPO"].map(o=><option key={o}>{o}</option>)}
                           </select>
                         </FL>
                         <FL label="Feeding Mode">
-                          <select style={sel} value={nutrition.feedingMode} onChange={e=>setNutrition(p=>({...p,feedingMode:e.target.value}))}>
+                          <select className="his-select" value={nutrition.feedingMode} onChange={e=>setNutrition(p=>({...p,feedingMode:e.target.value}))}>
                             {["Oral","NGT","PEG","TPN","Combination"].map(o=><option key={o}>{o}</option>)}
                           </select>
                         </FL>
@@ -3407,13 +3408,13 @@ function NursingNotesContent({ selectedPatient }) {
                   <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
                     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
                       <FL label="Date">
-                        <input type="date" style={fld} value={education.date} onChange={e=>setEducation(p=>({...p,date:e.target.value}))} />
+                        <input type="date" className="his-field" value={education.date} onChange={e=>setEducation(p=>({...p,date:e.target.value}))} />
                       </FL>
                       <FL label="Educator Name">
-                        <input style={fld} value={education.educator} placeholder="Nurse name" onChange={e=>setEducation(p=>({...p,educator:e.target.value}))} />
+                        <input className="his-field" value={education.educator} placeholder="Nurse name" onChange={e=>setEducation(p=>({...p,educator:e.target.value}))} />
                       </FL>
                       <FL label="Language of Education">
-                        <select style={sel} value={education.language} onChange={e=>setEducation(p=>({...p,language:e.target.value}))}>
+                        <select className="his-select" value={education.language} onChange={e=>setEducation(p=>({...p,language:e.target.value}))}>
                           {["Hindi","English","Marathi","Bengali","Tamil","Telugu","Gujarati","Punjabi","Other"].map(o=><option key={o}>{o}</option>)}
                         </select>
                       </FL>
@@ -3451,12 +3452,12 @@ function NursingNotesContent({ selectedPatient }) {
                     {/* Understanding & Response */}
                     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                       <FL label="Level of Understanding">
-                        <select style={sel} value={education.understanding} onChange={e=>setEducation(p=>({...p,understanding:e.target.value}))}>
+                        <select className="his-select" value={education.understanding} onChange={e=>setEducation(p=>({...p,understanding:e.target.value}))}>
                           {["Excellent","Good","Fair","Poor","Unable to Assess"].map(o=><option key={o}>{o}</option>)}
                         </select>
                       </FL>
                       <FL label="Patient Response">
-                        <select style={sel} value={education.response} onChange={e=>setEducation(p=>({...p,response:e.target.value}))}>
+                        <select className="his-select" value={education.response} onChange={e=>setEducation(p=>({...p,response:e.target.value}))}>
                           {["Positive","Cooperative","Anxious","Resistant","Indifferent"].map(o=><option key={o}>{o}</option>)}
                         </select>
                       </FL>
@@ -3488,7 +3489,7 @@ function NursingNotesContent({ selectedPatient }) {
 
               {/* ── Common: Notes + Tags ── */}
               <div style={{ marginTop: 16 }}>
-                <label style={lbl}>Nursing Notes / Observations</label>
+                <label className="his-label">Nursing Notes / Observations</label>
                 <textarea style={{ ...ta, minHeight: 88 }} value={noteText}
                   onChange={e => setNoteText(e.target.value)}
                   placeholder="Document clinical observations, actions taken, patient response\u2026" />
@@ -3497,7 +3498,7 @@ function NursingNotesContent({ selectedPatient }) {
               {/* ── Quick Tags ── */}
               {MODULE_TAGS[activeModal]?.length > 0 && (
                 <div style={{ marginTop: 12 }}>
-                  <div style={lbl}>Quick Tags</div>
+                  <div className="his-label">Quick Tags</div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                     {MODULE_TAGS[activeModal].map(t => (
                       <button key={t} onClick={() => toggleTag(t)}
