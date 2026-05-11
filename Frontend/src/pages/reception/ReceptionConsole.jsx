@@ -197,7 +197,13 @@ export default function ReceptionConsole() {
         setDoctors(docList.map(d => ({
           label: d.personalInfo?.fullName || d.fullName || d.name || "Doctor",
           value: d._id,
-          department: d.professional?.department?._id || d.professional?.department || d.department,
+          // d.department can be a populated object {_id, departmentName, ...} OR
+          // a bare ObjectId string — normalize to the ID string here so the
+          // doctor-filter useMemo below can compare against opd/ipd/dayCare.department.
+          department:
+            (typeof d.department === "object" && d.department !== null)
+              ? String(d.department._id || d.department)
+              : (d.department ? String(d.department) : ""),
         })));
 
         if (tpaRes?.success) {
