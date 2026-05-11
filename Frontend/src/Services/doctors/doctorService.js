@@ -6,7 +6,10 @@ const API_URL = API_ENDPOINTS.DOCTORS;
 export const doctorService = {
   getAllDoctors: async (filters = {}) => {
     try {
-      const response = await axios.get(API_URL, { params: filters });
+      // Default backend limit is 10 — bump to 500 so dropdowns show the
+      // full active doctor list. Callers can still override via filters.
+      const params = { limit: 500, page: 1, ...filters };
+      const response = await axios.get(API_URL, { params });
       return response.data.data || response.data;
     } catch (error) {
       console.error("Failed to fetch doctors:", error);
