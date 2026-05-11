@@ -159,10 +159,22 @@ function RouteLoader() {
   );
 }
 
+/* Role-aware landing page (keep in sync with LoginPage.landingPageForRole) */
+const homeForRole = (role) => {
+  switch (role) {
+    case "Receptionist":     return "/reception";
+    case "Doctor":           return "/doctor/opd-queue";
+    case "Nurse":            return "/nurse/opd-queue";
+    case "TPA Coordinator":  return "/tpa-cases";
+    default:                 return "/mainpage";
+  }
+};
+
 /* ── Inner app — uses hooks that require Router context ── */
 function AppLayout({ collapsed, setCollapsed }) {
   const { user, loading } = useAuth();
   const location = useLocation();
+  const homePath = homeForRole(user?.role);
 
   /* Show spinner during initial session restore */
   if (loading) return <AppLoader />;
@@ -190,7 +202,7 @@ function AppLayout({ collapsed, setCollapsed }) {
   if (isLogin) {
     return (
       <Routes>
-        <Route path="/login" element={user ? <Navigate to="/mainpage" replace /> : <LoginPage />} />
+        <Route path="/login" element={user ? <Navigate to={homePath} replace /> : <LoginPage />} />
       </Routes>
     );
   }
@@ -298,8 +310,11 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/billing-audit-trail/:uhid" element={<BillingAuditTrailPage />} />
 
             {/* ── Main / Default ───────────────────────────────── */}
-            <Route path="/" element={<Navigate to="/mainpage" />} />
-            <Route path="/mainpage" element={<MainPage />} />
+            <Route path="/" element={<Navigate to={homePath} replace />} />
+            <Route
+              path="/mainpage"
+              element={user?.role === "Receptionist" ? <Navigate to="/reception" replace /> : <MainPage />}
+            />
 
             {/* ── Reception Console (single-window registration) ── */}
             <Route path="/reception" element={<ReceptionDashboard />} />
@@ -343,7 +358,7 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/admin/users" element={<UserManagementPage />} />
 
             {/* ── Catch-all: redirect to dashboard ── */}
-            <Route path="*" element={<Navigate to="/mainpage" replace />} />
+            <Route path="*" element={<Navigate to={homePath} replace />} />
           </Routes>
         </Suspense>
       </div>

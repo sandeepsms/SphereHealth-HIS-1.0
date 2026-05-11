@@ -28,13 +28,24 @@ export default function LoginPage() {
   const { login } = useAuth();
   const navigate  = useNavigate();
   const location  = useLocation();
-  const from      = location.state?.from?.pathname || "/mainpage";
+  const fromState = location.state?.from?.pathname;
 
   const [email, setEmail]       = useState("");
   const [password, setPassword] = useState("");
   const [showPwd, setShowPwd]   = useState(false);
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState("");
+
+  // Role-aware landing page: each role gets its own home
+  const landingPageForRole = (role) => {
+    switch (role) {
+      case "Receptionist":     return "/reception";
+      case "Doctor":           return "/doctor/opd-queue";
+      case "Nurse":            return "/nurse/opd-queue";
+      case "TPA Coordinator":  return "/tpa-cases";
+      default:                 return "/mainpage";
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -43,7 +54,10 @@ export default function LoginPage() {
     setLoading(true);
     try {
       const user = await login(email.trim(), password);
-      navigate(from, { replace: true });
+      // Prefer the page the user was trying to reach before login; otherwise
+      // send them to their role-specific home (Receptionist → /reception).
+      const dest = fromState && fromState !== "/mainpage" ? fromState : landingPageForRole(user?.role);
+      navigate(dest, { replace: true });
     } catch (err) {
       setError(err?.response?.data?.message || "Login failed. Please check your credentials.");
     } finally {

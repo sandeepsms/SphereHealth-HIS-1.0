@@ -185,7 +185,7 @@ export default function Header() {
 
               {/* Menu items */}
               {[
-                { icon: "pi-home",     label: "Dashboard",       action: () => { navigate("/mainpage"); setDropOpen(false); } },
+                { icon: "pi-home",     label: "Dashboard",       action: () => { navigate(user?.role === "Receptionist" ? "/reception" : "/mainpage"); setDropOpen(false); } },
                 { icon: "pi-user",     label: "My Profile",      action: () => setDropOpen(false) },
                 { icon: "pi-cog",      label: "Settings",        action: () => setDropOpen(false) },
               ].map(item => (
