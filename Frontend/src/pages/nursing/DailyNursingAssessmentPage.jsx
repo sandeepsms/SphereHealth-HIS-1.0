@@ -28,95 +28,6 @@ const C = {
   slate: "#1e293b", pink: "#be185d",
 };
 
-const fld = { padding:"9px 12px", border:"1.5px solid #e2e8f0", borderRadius:8, fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#0f172a", outline:"none", background:"white", width:"100%", boxSizing:"border-box" };
-const sel = { ...fld, cursor:"pointer" };
-const ta  = { ...fld, resize:"vertical", minHeight:80 };
-const lbl = { display:"block", fontSize:11, fontWeight:700, color:"#64748b", textTransform:"uppercase", letterSpacing:".6px", marginBottom:5 };
-
-function Section({ title, icon, color=C.primary, badge, children, defaultOpen=true }) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <div style={{ background:C.card, border:`1.5px solid ${C.border}`, borderRadius:14, marginBottom:16, overflow:"hidden", boxShadow:"0 1px 3px rgba(0,0,0,.04)" }}>
-      <div onClick={()=>setOpen(o=>!o)} style={{ padding:"12px 20px", background:"#f8fafc", borderBottom:open?`1px solid ${C.border}`:"none", display:"flex", alignItems:"center", justifyContent:"space-between", cursor:"pointer", userSelect:"none" }}>
-        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-          <span style={{ width:30, height:30, borderRadius:8, background:color+"18", display:"flex", alignItems:"center", justifyContent:"center" }}>
-            <i className={`pi ${icon}`} style={{ fontSize:13, color }} />
-          </span>
-          <span style={{ fontWeight:700, fontSize:13, color:C.text }}>{title}</span>
-          {badge && <span style={{ background:color+"20", color, fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:8 }}>{badge}</span>}
-        </div>
-        <i className={`pi ${open?"pi-chevron-up":"pi-chevron-down"}`} style={{ fontSize:11, color:C.muted }} />
-      </div>
-      {open && <div style={{ padding:"18px 20px" }}>{children}</div>}
-    </div>
-  );
-}
-
-function Field({ label, children, style }) {
-  return (
-    <div style={style}>
-      {label && <label style={lbl}>{label}</label>}
-      {children}
-    </div>
-  );
-}
-
-function PageHeader({ icon, title, subtitle, gradient, right }) {
-  return (
-    <div style={{ background:gradient, borderRadius:14, padding:"18px 24px", marginBottom:20, display:"flex", justifyContent:"space-between", alignItems:"center", boxShadow:"0 4px 16px rgba(0,0,0,.08)" }}>
-      <div style={{ display:"flex", alignItems:"center", gap:14 }}>
-        <div style={{ width:46, height:46, borderRadius:12, background:"rgba(255,255,255,.2)", display:"flex", alignItems:"center", justifyContent:"center" }}>
-          <i className={`pi ${icon}`} style={{ fontSize:20, color:"#fff" }} />
-        </div>
-        <div>
-          <div style={{ color:"#fff", fontWeight:800, fontSize:18, letterSpacing:"-.3px" }}>{title}</div>
-          <div style={{ color:"rgba(255,255,255,.7)", fontSize:12, marginTop:2 }}>{subtitle}</div>
-        </div>
-      </div>
-      {right && <div>{right}</div>}
-    </div>
-  );
-}
-
-const SHIFTS = [
-  { id:"morning", label:"Morning Shift", time:"7:00 AM – 3:00 PM", color:C.amber },
-  { id:"evening", label:"Evening Shift", time:"3:00 PM – 11:00 PM", color:C.purple },
-  { id:"night",   label:"Night Shift",   time:"11:00 PM – 7:00 AM", color:C.blue },
-];
-
-const NURSING_INTERVENTIONS = [
-  "Wound Dressing","IV Care","Catheter Care","Oral Care","Skin Care / Repositioning",
-  "Patient Education","Fall Prevention","Restraint Check","Suctioning",
-  "Nebulization","Physiotherapy Assisted","Vital Sign Monitoring","Medication Administration",
-  "Fluid Balance Monitoring","Blood Glucose Check",
-];
-
-const defaultVitals = { sysBP:"", diasBP:"", pulse:"", tempC:"", tempUnit:"C", spo2:"", rr:"", gcsE:"", gcsV:"", gcsM:"", weight:"", glucose:"" };
-const defaultNeuro  = { consciousness:"", orientPerson:false, orientPlace:false, orientTime:false, pupils:"", motorStrength:"" };
-const defaultResp   = { breathSounds:"", o2Therapy:"", o2Flow:"", secretions:"", cough:"", sputumColor:"" };
-const defaultCardio = { rhythm:"", peripheralPulse:"", edema:"", crt:"", skinColor:"", ivSite:"", ivType:"", ivCondition:"" };
-const defaultGI     = { bowelSounds:"", lastBM:"", abdomen:"", nauseaVomiting:"", dietTolerance:"" };
-const defaultGU     = { urineOutput:"", urineColor:"", catheter:"", catheterCare:false };
-const defaultMusc   = { mobility:"", exercise:"", positionFreq:"", skinIntegrity:"" };
-const defaultPsycho = { mood:"", sleepQuality:"", concerns:"" };
-const defaultSignOff= { nurseName:"", designation:"", time:new Date().toTimeString().slice(0,5) };
-
-const defaultForm = {
-  date: new Date().toISOString().slice(0,10),
-  shift: "morning",
-  vitals: defaultVitals,
-  neuro: defaultNeuro,
-  resp: defaultResp,
-  cardio: defaultCardio,
-  gi: defaultGI,
-  gu: defaultGU,
-  musc: defaultMusc,
-  psycho: defaultPsycho,
-  medications: "",
-  interventions: [],
-  signOff: defaultSignOff,
-};
-
 function RadioGroup({ options, value, onChange, color=C.primary }) {
   return (
     <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
@@ -257,7 +168,7 @@ function DailyNursingContent({ patient }) {
       {/* Shift Header */}
       <div style={{ background:C.card, border:`1.5px solid ${C.border}`, borderRadius:14, padding:"16px 20px", marginBottom:16, display:"flex", gap:16, alignItems:"center", flexWrap:"wrap" }}>
         <Field label="Assessment Date" style={{ flex:1, minWidth:160 }}>
-          <input type="date" style={fld} value={form.date} onChange={e=>setTop("date",e.target.value)} />
+          <input type="date" className="his-field" value={form.date} onChange={e=>setTop("date",e.target.value)} />
         </Field>
         <Field label="Shift" style={{ flex:2, minWidth:300 }}>
           <div style={{ display:"flex", gap:10 }}>
@@ -279,36 +190,36 @@ function DailyNursingContent({ patient }) {
       {/* 1. Vital Signs */}
       <Section title="1. Vital Signs" icon="pi-heart" color={C.red}>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))", gap:12 }}>
-          <Field label="BP Systolic (mmHg)"><input type="number" style={fld} value={form.vitals.sysBP} onChange={e=>setSection("vitals","sysBP",e.target.value)} placeholder="120" /></Field>
-          <Field label="BP Diastolic (mmHg)"><input type="number" style={fld} value={form.vitals.diasBP} onChange={e=>setSection("vitals","diasBP",e.target.value)} placeholder="80" /></Field>
-          <Field label="Pulse (bpm)"><input type="number" style={fld} value={form.vitals.pulse} onChange={e=>setSection("vitals","pulse",e.target.value)} placeholder="72" /></Field>
+          <Field label="BP Systolic (mmHg)"><input type="number" className="his-field" value={form.vitals.sysBP} onChange={e=>setSection("vitals","sysBP",e.target.value)} placeholder="120" /></Field>
+          <Field label="BP Diastolic (mmHg)"><input type="number" className="his-field" value={form.vitals.diasBP} onChange={e=>setSection("vitals","diasBP",e.target.value)} placeholder="80" /></Field>
+          <Field label="Pulse (bpm)"><input type="number" className="his-field" value={form.vitals.pulse} onChange={e=>setSection("vitals","pulse",e.target.value)} placeholder="72" /></Field>
           <Field label={`Temperature (°${form.vitals.tempUnit})`}>
             <div style={{ display:"flex", gap:6 }}>
-              <input type="number" step="0.1" style={{...fld,flex:1}} value={form.vitals.tempC} onChange={e=>setSection("vitals","tempC",e.target.value)} placeholder={form.vitals.tempUnit==="C"?"37.0":"98.6"} />
+              <input type="number" step="0.1" className="his-field" style={{ flex:1 }} value={form.vitals.tempC} onChange={e=>setSection("vitals","tempC",e.target.value)} placeholder={form.vitals.tempUnit==="C"?"37.0":"98.6"} />
               <button onClick={()=>setSection("vitals","tempUnit",form.vitals.tempUnit==="C"?"F":"C")}
                 style={{ padding:"0 10px", borderRadius:8, border:`1.5px solid ${C.border}`, background:"#f8fafc", color:C.muted, fontWeight:700, fontSize:11, cursor:"pointer" }}>
                 °{form.vitals.tempUnit==="C"?"F":"C"}
               </button>
             </div>
           </Field>
-          <Field label="SpO2 (%)"><input type="number" style={fld} value={form.vitals.spo2} onChange={e=>setSection("vitals","spo2",e.target.value)} placeholder="98" /></Field>
-          <Field label="RR (breaths/min)"><input type="number" style={fld} value={form.vitals.rr} onChange={e=>setSection("vitals","rr",e.target.value)} placeholder="16" /></Field>
+          <Field label="SpO2 (%)"><input type="number" className="his-field" value={form.vitals.spo2} onChange={e=>setSection("vitals","spo2",e.target.value)} placeholder="98" /></Field>
+          <Field label="RR (breaths/min)"><input type="number" className="his-field" value={form.vitals.rr} onChange={e=>setSection("vitals","rr",e.target.value)} placeholder="16" /></Field>
           <Field label="GCS — Eyes (1-4)">
-            <select style={sel} value={form.vitals.gcsE} onChange={e=>setSection("vitals","gcsE",e.target.value)}>
+            <select className="his-select" value={form.vitals.gcsE} onChange={e=>setSection("vitals","gcsE",e.target.value)}>
               <option value="">-</option>
               <option value="1">1 – No opening</option><option value="2">2 – To pain</option>
               <option value="3">3 – To voice</option><option value="4">4 – Spontaneous</option>
             </select>
           </Field>
           <Field label="GCS — Verbal (1-5)">
-            <select style={sel} value={form.vitals.gcsV} onChange={e=>setSection("vitals","gcsV",e.target.value)}>
+            <select className="his-select" value={form.vitals.gcsV} onChange={e=>setSection("vitals","gcsV",e.target.value)}>
               <option value="">-</option>
               <option value="1">1 – None</option><option value="2">2 – Sounds</option>
               <option value="3">3 – Words</option><option value="4">4 – Confused</option><option value="5">5 – Oriented</option>
             </select>
           </Field>
           <Field label="GCS — Motor (1-6)">
-            <select style={sel} value={form.vitals.gcsM} onChange={e=>setSection("vitals","gcsM",e.target.value)}>
+            <select className="his-select" value={form.vitals.gcsM} onChange={e=>setSection("vitals","gcsM",e.target.value)}>
               <option value="">-</option>
               <option value="1">1 – None</option><option value="2">2 – Extension</option>
               <option value="3">3 – Flexion abnormal</option><option value="4">4 – Flexion withdrawal</option>
@@ -320,8 +231,8 @@ function DailyNursingContent({ patient }) {
               {gcsTotal() ? `${gcsTotal()} / 15` : "—"}
             </div>
           </Field>
-          <Field label="Weight (kg)"><input type="number" step="0.1" style={fld} value={form.vitals.weight} onChange={e=>setSection("vitals","weight",e.target.value)} placeholder="70.0" /></Field>
-          <Field label="Blood Glucose (mg/dL)"><input type="number" style={fld} value={form.vitals.glucose} onChange={e=>setSection("vitals","glucose",e.target.value)} placeholder="100" /></Field>
+          <Field label="Weight (kg)"><input type="number" step="0.1" className="his-field" value={form.vitals.weight} onChange={e=>setSection("vitals","weight",e.target.value)} placeholder="70.0" /></Field>
+          <Field label="Blood Glucose (mg/dL)"><input type="number" className="his-field" value={form.vitals.glucose} onChange={e=>setSection("vitals","glucose",e.target.value)} placeholder="100" /></Field>
         </div>
       </Section>
 
@@ -355,13 +266,13 @@ function DailyNursingContent({ patient }) {
           </Field>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
             <Field label="O2 Therapy">
-              <select style={sel} value={form.resp.o2Therapy} onChange={e=>setSection("resp","o2Therapy",e.target.value)}>
+              <select className="his-select" value={form.resp.o2Therapy} onChange={e=>setSection("resp","o2Therapy",e.target.value)}>
                 <option value="">Select</option>
                 {["None","Nasal Cannula","Simple Mask","Non-rebreather Mask","Ventilator"].map(v=><option key={v}>{v}</option>)}
               </select>
             </Field>
             <Field label="O2 Flow Rate (L/min)">
-              <input type="number" step="0.5" style={fld} value={form.resp.o2Flow} onChange={e=>setSection("resp","o2Flow",e.target.value)} placeholder="2" />
+              <input type="number" step="0.5" className="his-field" value={form.resp.o2Flow} onChange={e=>setSection("resp","o2Flow",e.target.value)} placeholder="2" />
             </Field>
           </div>
           <Field label="Secretions">
@@ -372,7 +283,7 @@ function DailyNursingContent({ patient }) {
               <RadioGroup options={["None","Non-productive","Productive"]} value={form.resp.cough} onChange={v=>setSection("resp","cough",v)} color={C.blue} />
             </Field>
             <Field label="Sputum Color">
-              <input style={fld} value={form.resp.sputumColor} onChange={e=>setSection("resp","sputumColor",e.target.value)} placeholder="e.g. Clear, Yellow, Green, Blood-streaked" />
+              <input className="his-field" value={form.resp.sputumColor} onChange={e=>setSection("resp","sputumColor",e.target.value)} placeholder="e.g. Clear, Yellow, Green, Blood-streaked" />
             </Field>
           </div>
         </div>
@@ -389,7 +300,7 @@ function DailyNursingContent({ patient }) {
               <RadioGroup options={["Present","Absent","Weak"]} value={form.cardio.peripheralPulse} onChange={v=>setSection("cardio","peripheralPulse",v)} color={C.red} />
             </Field>
             <Field label="Edema">
-              <select style={sel} value={form.cardio.edema} onChange={e=>setSection("cardio","edema",e.target.value)}>
+              <select className="his-select" value={form.cardio.edema} onChange={e=>setSection("cardio","edema",e.target.value)}>
                 <option value="">Select</option>
                 {["None","1+","2+","3+","4+"].map(v=><option key={v}>{v}</option>)}
               </select>
@@ -398,14 +309,14 @@ function DailyNursingContent({ patient }) {
               <RadioGroup options={["< 2 sec","≥ 2 sec"]} value={form.cardio.crt} onChange={v=>setSection("cardio","crt",v)} color={C.red} />
             </Field>
             <Field label="Skin Colour / Colour">
-              <input style={fld} value={form.cardio.skinColor} onChange={e=>setSection("cardio","skinColor",e.target.value)} placeholder="e.g. Normal, Pale, Cyanotic, Jaundiced" />
+              <input className="his-field" value={form.cardio.skinColor} onChange={e=>setSection("cardio","skinColor",e.target.value)} placeholder="e.g. Normal, Pale, Cyanotic, Jaundiced" />
             </Field>
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12 }}>
-            <Field label="IV Access Site"><input style={fld} value={form.cardio.ivSite} onChange={e=>setSection("cardio","ivSite",e.target.value)} placeholder="e.g. Right forearm" /></Field>
-            <Field label="IV Type"><input style={fld} value={form.cardio.ivType} onChange={e=>setSection("cardio","ivType",e.target.value)} placeholder="e.g. Peripheral, Central" /></Field>
+            <Field label="IV Access Site"><input className="his-field" value={form.cardio.ivSite} onChange={e=>setSection("cardio","ivSite",e.target.value)} placeholder="e.g. Right forearm" /></Field>
+            <Field label="IV Type"><input className="his-field" value={form.cardio.ivType} onChange={e=>setSection("cardio","ivType",e.target.value)} placeholder="e.g. Peripheral, Central" /></Field>
             <Field label="IV Site Condition">
-              <select style={sel} value={form.cardio.ivCondition} onChange={e=>setSection("cardio","ivCondition",e.target.value)}>
+              <select className="his-select" value={form.cardio.ivCondition} onChange={e=>setSection("cardio","ivCondition",e.target.value)}>
                 <option value="">Select</option>
                 {["Patent","Redness","Swelling","Phlebitis","Infiltrated","Not applicable"].map(v=><option key={v}>{v}</option>)}
               </select>
@@ -421,7 +332,7 @@ function DailyNursingContent({ patient }) {
             <RadioGroup options={["Present","Absent","Hyperactive"]} value={form.gi.bowelSounds} onChange={v=>setSection("gi","bowelSounds",v)} color={C.amber} />
           </Field>
           <Field label="Last Bowel Movement">
-            <input type="date" style={fld} value={form.gi.lastBM} onChange={e=>setSection("gi","lastBM",e.target.value)} />
+            <input type="date" className="his-field" value={form.gi.lastBM} onChange={e=>setSection("gi","lastBM",e.target.value)} />
           </Field>
           <Field label="Abdomen">
             <RadioGroup options={["Soft","Distended","Tender","Rigid"]} value={form.gi.abdomen} onChange={v=>setSection("gi","abdomen",v)} color={C.amber} />
@@ -430,7 +341,7 @@ function DailyNursingContent({ patient }) {
             <RadioGroup options={["None","Nausea only","Vomiting"]} value={form.gi.nauseaVomiting} onChange={v=>setSection("gi","nauseaVomiting",v)} color={C.amber} />
           </Field>
           <Field label="Diet Tolerance">
-            <select style={sel} value={form.gi.dietTolerance} onChange={e=>setSection("gi","dietTolerance",e.target.value)}>
+            <select className="his-select" value={form.gi.dietTolerance} onChange={e=>setSection("gi","dietTolerance",e.target.value)}>
               <option value="">Select</option>
               {["Full diet tolerated","Partial","Not tolerated","NPO"].map(v=><option key={v}>{v}</option>)}
             </select>
@@ -441,9 +352,9 @@ function DailyNursingContent({ patient }) {
       {/* 6. Genitourinary */}
       <Section title="6. Genitourinary Assessment" icon="pi-tint" color={C.blue}>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))", gap:12 }}>
-          <Field label="Urine Output (mL)"><input type="number" style={fld} value={form.gu.urineOutput} onChange={e=>setSection("gu","urineOutput",e.target.value)} placeholder="e.g. 1200" /></Field>
+          <Field label="Urine Output (mL)"><input type="number" className="his-field" value={form.gu.urineOutput} onChange={e=>setSection("gu","urineOutput",e.target.value)} placeholder="e.g. 1200" /></Field>
           <Field label="Urine Colour">
-            <select style={sel} value={form.gu.urineColor} onChange={e=>setSection("gu","urineColor",e.target.value)}>
+            <select className="his-select" value={form.gu.urineColor} onChange={e=>setSection("gu","urineColor",e.target.value)}>
               <option value="">Select</option>
               {["Clear","Pale Yellow","Yellow","Dark Yellow","Amber","Blood-stained","Cloudy"].map(v=><option key={v}>{v}</option>)}
             </select>
@@ -470,13 +381,13 @@ function DailyNursingContent({ patient }) {
               <RadioGroup options={["Yes","No"]} value={form.musc.exercise} onChange={v=>setSection("musc","exercise",v)} color={C.primary} />
             </Field>
             <Field label="Position Change Frequency">
-              <select style={sel} value={form.musc.positionFreq} onChange={e=>setSection("musc","positionFreq",e.target.value)}>
+              <select className="his-select" value={form.musc.positionFreq} onChange={e=>setSection("musc","positionFreq",e.target.value)}>
                 <option value="">Select</option>
                 {["Every 2 hours","Every 4 hours","Patient repositions independently","Not required"].map(v=><option key={v}>{v}</option>)}
               </select>
             </Field>
             <Field label="Skin Integrity">
-              <select style={sel} value={form.musc.skinIntegrity} onChange={e=>setSection("musc","skinIntegrity",e.target.value)}>
+              <select className="his-select" value={form.musc.skinIntegrity} onChange={e=>setSection("musc","skinIntegrity",e.target.value)}>
                 <option value="">Select</option>
                 {["Intact","Redness","Bruising","Wound Present","Pressure Injury"].map(v=><option key={v}>{v}</option>)}
               </select>
@@ -493,13 +404,13 @@ function DailyNursingContent({ patient }) {
           </Field>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
             <Field label="Sleep Quality">
-              <select style={sel} value={form.psycho.sleepQuality} onChange={e=>setSection("psycho","sleepQuality",e.target.value)}>
+              <select className="his-select" value={form.psycho.sleepQuality} onChange={e=>setSection("psycho","sleepQuality",e.target.value)}>
                 <option value="">Select</option>
                 {["Good","Fair","Poor","Unable to sleep"].map(v=><option key={v}>{v}</option>)}
               </select>
             </Field>
             <Field label="Patient / Family Concerns">
-              <input style={fld} value={form.psycho.concerns} onChange={e=>setSection("psycho","concerns",e.target.value)} placeholder="Document any concerns raised" />
+              <input className="his-field" value={form.psycho.concerns} onChange={e=>setSection("psycho","concerns",e.target.value)} placeholder="Document any concerns raised" />
             </Field>
           </div>
         </div>
@@ -508,7 +419,7 @@ function DailyNursingContent({ patient }) {
       {/* 9. Medications */}
       <Section title="9. Medications Administered" icon="pi-tablet" color={C.purple}>
         <Field label="Medications Given This Shift">
-          <textarea style={{...ta,minHeight:100}} value={form.medications} onChange={e=>setTop("medications",e.target.value)}
+          <textarea className="his-textarea" style={{ minHeight:100 }} value={form.medications} onChange={e=>setTop("medications",e.target.value)}
             placeholder="List medications administered during this shift (drug, dose, route, time, response)…" />
         </Field>
       </Section>
@@ -537,9 +448,9 @@ function DailyNursingContent({ patient }) {
       {/* 11. Sign-off */}
       <Section title="11. Nurse Sign-off" icon="pi-pen" color={C.slate}>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12 }}>
-          <Field label="Nurse Name"><input style={fld} value={form.signOff.nurseName} onChange={e=>setSection("signOff","nurseName",e.target.value)} placeholder="Full name" /></Field>
-          <Field label="Designation"><input style={fld} value={form.signOff.designation} onChange={e=>setSection("signOff","designation",e.target.value)} placeholder="e.g. Staff Nurse, Senior Nurse" /></Field>
-          <Field label="Time of Sign-off"><input type="time" style={fld} value={form.signOff.time} onChange={e=>setSection("signOff","time",e.target.value)} /></Field>
+          <Field label="Nurse Name"><input className="his-field" value={form.signOff.nurseName} onChange={e=>setSection("signOff","nurseName",e.target.value)} placeholder="Full name" /></Field>
+          <Field label="Designation"><input className="his-field" value={form.signOff.designation} onChange={e=>setSection("signOff","designation",e.target.value)} placeholder="e.g. Staff Nurse, Senior Nurse" /></Field>
+          <Field label="Time of Sign-off"><input type="time" className="his-field" value={form.signOff.time} onChange={e=>setSection("signOff","time",e.target.value)} /></Field>
         </div>
       </Section>
 

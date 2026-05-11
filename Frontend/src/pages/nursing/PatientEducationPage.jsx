@@ -26,11 +26,6 @@ const C = {
   slate: "#1e293b", pink: "#be185d",
 };
 
-const fld = { padding:"9px 12px", border:"1.5px solid #e2e8f0", borderRadius:8, fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#0f172a", outline:"none", background:"white", width:"100%", boxSizing:"border-box" };
-const sel = { ...fld, cursor:"pointer" };
-const ta  = { ...fld, resize:"vertical", minHeight:80 };
-const lbl = { display:"block", fontSize:11, fontWeight:700, color:"#64748b", textTransform:"uppercase", letterSpacing:".6px", marginBottom:5 };
-
 function Section({ title, icon, color=C.primary, badge, children, defaultOpen=true }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
@@ -53,7 +48,7 @@ function Section({ title, icon, color=C.primary, badge, children, defaultOpen=tr
 function Field({ label, children, style }) {
   return (
     <div style={style}>
-      {label && <label style={lbl}>{label}</label>}
+      {label && <label className="his-label">{label}</label>}
       {children}
     </div>
   );
@@ -168,10 +163,10 @@ function EducationSessionCard({ session, idx, onChange, onRemove }) {
       </div>
 
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12, marginBottom:14 }}>
-        <Field label="Date"><input type="date" style={fld} value={s.date} onChange={e=>set("date",e.target.value)} /></Field>
-        <Field label="Time"><input type="time" style={fld} value={s.time} onChange={e=>set("time",e.target.value)} /></Field>
+        <Field label="Date"><input type="date" className="his-field" value={s.date} onChange={e=>set("date",e.target.value)} /></Field>
+        <Field label="Time"><input type="time" className="his-field" value={s.time} onChange={e=>set("time",e.target.value)} /></Field>
         <Field label="Educator">
-          <select style={sel} value={s.educator} onChange={e=>set("educator",e.target.value)}>
+          <select className="his-select" value={s.educator} onChange={e=>set("educator",e.target.value)}>
             <option value="">Select Educator</option>
             {EDUCATORS.map(v=><option key={v}>{v}</option>)}
           </select>
@@ -189,7 +184,7 @@ function EducationSessionCard({ session, idx, onChange, onRemove }) {
 
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:14 }}>
         <Field label="Language Used">
-          <input style={fld} value={s.language} onChange={e=>set("language",e.target.value)} placeholder="e.g. English, Hindi, Tamil" />
+          <input className="his-field" value={s.language} onChange={e=>set("language",e.target.value)} placeholder="e.g. English, Hindi, Tamil" />
         </Field>
         <Field label="Patient Understanding">
           <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
@@ -222,13 +217,13 @@ function EducationSessionCard({ session, idx, onChange, onRemove }) {
         </Field>
         {s.furtherNeeded==="Yes" && (
           <Field label="Specific Needs">
-            <input style={fld} value={s.furtherNeeds} onChange={e=>set("furtherNeeds",e.target.value)} placeholder="Describe specific education needs" />
+            <input className="his-field" value={s.furtherNeeds} onChange={e=>set("furtherNeeds",e.target.value)} placeholder="Describe specific education needs" />
           </Field>
         )}
       </div>
 
       <Field label="Educator Signature">
-        <input style={fld} value={s.signature} onChange={e=>set("signature",e.target.value)} placeholder="Name, designation, date" />
+        <input className="his-field" value={s.signature} onChange={e=>set("signature",e.target.value)} placeholder="Name, designation, date" />
       </Field>
 
       {s.understanding && (

@@ -3,6 +3,7 @@ import axios from "axios";
 import { useLocation } from "react-router-dom";
 import { API_ENDPOINTS } from "../../config/api";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
+import "../../Components/clinical/clinical-forms.css";
 import { useAuth } from "../../context/AuthContext";
 import { useAutoSave } from "../../hooks/useAutoSave";
 import { useDigitalSignature } from "../../hooks/useDigitalSignature";
@@ -27,7 +28,7 @@ const C = {
   stat: "#be185d", statL: "#fdf2f8",
 };
 
-const fld = { padding: "8px 11px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: C.text, outline: "none", background: "white", width: "100%", boxSizing: "border-box" };
+/* Form primitive moved to clinical-forms.css — use className="his-field" */
 
 const ORDER_TYPES = [
   { key: "medication",   label: "💊 Medication",          bg: "#dbeafe",        color: C.accent },
@@ -175,7 +176,7 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
   /* ── NEW: Treatment Chart Orders (DoctorOrders collection) ── */
   const [treatmentOrders,  setTreatmentOrders]  = useState([]);
   const [orderAddSaving,   setOrderAddSaving]   = useState(false);
-  const [medForm, setMedForm] = useState({ drug:"", dose:"", route:"Oral", frequency:"OD", priority:"Routine", hamOverride:false, indication:"" });
+  const [medForm, setMedForm] = useState({ drug:"", dose:"", route:"Oral", frequency:"OD", priority:"Routine", hamOverride:false, indication:"", dilutionVol:"", dilutionFluid:"NS 0.9%" });
   const [infForm, setInfForm] = useState({ drugFluid:"", volume:"", rate:"", dilution:"", priority:"Routine", hamOverride:false, startTime:"" });
   const [showMedForm, setShowMedForm] = useState(false);
   const [showInfForm, setShowInfForm] = useState(false);
@@ -353,7 +354,7 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
         orderType: "Medication",
         priority: medForm.priority,
         hamFlag, twoNurseRequired: hamFlag, highRisk: hamFlag,
-        orderDetails: { medicineName: medForm.drug, dose: medForm.dose, route: medForm.route, frequency: medForm.frequency, indication: medForm.indication },
+        orderDetails: { medicineName: medForm.drug, dose: medForm.dose, route: medForm.route, frequency: medForm.frequency, indication: medForm.indication, ...(medForm.dilutionVol ? { dilutionVolume: Number(medForm.dilutionVol), dilutionFluid: medForm.dilutionFluid } : {}) },
         orderedBy: docName, orderedByRole: "Doctor", orderedAt: new Date(),
         scheduledTimes: times,
         administrationRecord: times
@@ -362,7 +363,7 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
         auditLog: [{ step: "Order created — Initial Assessment", doneBy: docName, doneAt: new Date(), notes: medForm.indication || "" }],
       }, { headers });
       showToast(`✓ ${medForm.drug} added to Treatment Chart`, "ok");
-      setMedForm({ drug:"", dose:"", route:"Oral", frequency:"OD", priority:"Routine", hamOverride:false, indication:"" });
+      setMedForm({ drug:"", dose:"", route:"Oral", frequency:"OD", priority:"Routine", hamOverride:false, indication:"", dilutionVol:"", dilutionFluid:"NS 0.9%" });
       setShowMedForm(false);
       await fetchTreatmentOrders(patient.UHID || patient.uhid);
     } catch (err) { showToast(err?.response?.data?.message || "Failed to add order", "err"); }
@@ -557,7 +558,7 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
             <div style={{ fontWeight: 700, fontSize: 18, color: C.slate, marginBottom: 6 }}>Doctor Assessment & Order Entry</div>
             <div style={{ color: C.muted, fontSize: 13, marginBottom: 20 }}>Enter UHID or IPD Number to load patient</div>
             <form onSubmit={handleSearch} style={{ display: "flex", gap: 10 }}>
-              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="UHID / IPD No…" style={{ ...fld, flex: 1 }} />
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="UHID / IPD No…" className="his-field" style={{ flex: 1 }} />
               <button type="submit" style={{ padding: "9px 22px", background: C.accent, color: "white", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans',sans-serif" }}>
                 {loading ? "Loading…" : "Search"}
               </button>
@@ -675,14 +676,14 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
             <>
               <SectionCard title="👨‍⚕️ Doctor & Shift">
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
-                  <FG label="Doctor Name *"><input style={fld} value={form.doctorName} onChange={e => sf("doctorName", e.target.value)} placeholder="Dr. …" /></FG>
-                  <FG label="Reg. No"><input style={fld} value={form.doctorRegNo} onChange={e => sf("doctorRegNo", e.target.value)} placeholder="MCI / State Reg" /></FG>
+                  <FG label="Doctor Name *"><input className="his-field" value={form.doctorName} onChange={e => sf("doctorName", e.target.value)} placeholder="Dr. …" /></FG>
+                  <FG label="Reg. No"><input className="his-field" value={form.doctorRegNo} onChange={e => sf("doctorRegNo", e.target.value)} placeholder="MCI / State Reg" /></FG>
                   <FG label="Shift">
-                    <select style={fld} value={form.shift} onChange={e => sf("shift", e.target.value)}>
+                    <select className="his-field" value={form.shift} onChange={e => sf("shift", e.target.value)}>
                       {["morning","afternoon","evening","night"].map(s => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
                     </select>
                   </FG>
-                  <FG label="Date"><input style={fld} type="date" defaultValue={new Date().toISOString().slice(0,10)} /></FG>
+                  <FG label="Date"><input className="his-field" type="date" defaultValue={new Date().toISOString().slice(0,10)} /></FG>
                 </div>
               </SectionCard>
 
@@ -701,7 +702,7 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
                   ].map(v => (
                     <div key={v.k} style={{ display: "flex", flexDirection: "column", gap: 5 }}>
                       <label style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".7px", color: C.muted }}>{v.label} <span style={{ color: C.muted, fontWeight: 400 }}>({v.unit})</span></label>
-                      <input type="number" value={form.vitals[v.k]} onChange={e => svital(v.k, e.target.value)} style={fld} />
+                      <input type="number" value={form.vitals[v.k]} onChange={e => svital(v.k, e.target.value)} className="his-field" />
                     </div>
                   ))}
                 </div>
@@ -716,7 +717,7 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
                     { k:"plan",       label:"P — Plan (Treatment Plan)", ph:"Treatment plan, procedures, follow up…" },
                   ].map(s => (
                     <FG key={s.k} label={s.label}>
-                      <textarea style={{ ...fld, minHeight: 90, resize: "vertical" }} value={form.soap[s.k]} onChange={e => ssoap(s.k, e.target.value)} placeholder={s.ph} />
+                      <textarea className="his-field" style={{ minHeight: 90, resize: "vertical" }} value={form.soap[s.k]} onChange={e => ssoap(s.k, e.target.value)} placeholder={s.ph} />
                     </FG>
                   ))}
                 </div>
@@ -803,25 +804,25 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
                     <div style={{ fontWeight: 700, fontSize: 12, color: "#0369a1", marginBottom: 10 }}>🫁 Respiratory System (RS)</div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                       <FG label="Breath Sounds">
-                        <select style={fld} value={form.rs.breathSounds} onChange={e => srs("breathSounds", e.target.value)}>
+                        <select className="his-field" value={form.rs.breathSounds} onChange={e => srs("breathSounds", e.target.value)}>
                           <option value="">Select…</option>
                           {["Clear","Vesicular","Bronchial","Diminished","Absent"].map(o => <option key={o}>{o}</option>)}
                         </select>
                       </FG>
                       <FG label="Added Sounds">
-                        <select style={fld} value={form.rs.addedSounds} onChange={e => srs("addedSounds", e.target.value)}>
+                        <select className="his-field" value={form.rs.addedSounds} onChange={e => srs("addedSounds", e.target.value)}>
                           <option value="">None</option>
                           {["Crepitations","Rhonchi","Wheeze","Pleural Rub","Stridor"].map(o => <option key={o}>{o}</option>)}
                         </select>
                       </FG>
                       <FG label="Percussion Note">
-                        <select style={fld} value={form.rs.percussionNote} onChange={e => srs("percussionNote", e.target.value)}>
+                        <select className="his-field" value={form.rs.percussionNote} onChange={e => srs("percussionNote", e.target.value)}>
                           <option value="">Select…</option>
                           {["Resonant","Dull","Stony Dull","Hyper-resonant","Tympanic"].map(o => <option key={o}>{o}</option>)}
                         </select>
                       </FG>
                       <FG label="Trachea Position">
-                        <select style={fld} value={form.rs.tracheaPosition} onChange={e => srs("tracheaPosition", e.target.value)}>
+                        <select className="his-field" value={form.rs.tracheaPosition} onChange={e => srs("tracheaPosition", e.target.value)}>
                           <option value="">Select…</option>
                           {["Central","Shifted to Right","Shifted to Left"].map(o => <option key={o}>{o}</option>)}
                         </select>
@@ -834,22 +835,22 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
                     <div style={{ fontWeight: 700, fontSize: 12, color: C.red, marginBottom: 10 }}>❤️ Cardiovascular System (CVS)</div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                       <FG label="Heart Rhythm">
-                        <select style={fld} value={form.cvs.heartRhythm} onChange={e => scvs("heartRhythm", e.target.value)}>
+                        <select className="his-field" value={form.cvs.heartRhythm} onChange={e => scvs("heartRhythm", e.target.value)}>
                           <option value="">Select…</option>
                           {["Regular","Irregularly Irregular","Regularly Irregular"].map(o => <option key={o}>{o}</option>)}
                         </select>
                       </FG>
                       <FG label="Heart Sounds">
-                        <select style={fld} value={form.cvs.heartSounds} onChange={e => scvs("heartSounds", e.target.value)}>
+                        <select className="his-field" value={form.cvs.heartSounds} onChange={e => scvs("heartSounds", e.target.value)}>
                           <option value="">Select…</option>
                           {["S1 S2 Normal","S1 S2 + S3","S1 S2 + S4","Muffled","Prosthetic Valve"].map(o => <option key={o}>{o}</option>)}
                         </select>
                       </FG>
                       <FG label="Murmur">
-                        <input style={fld} value={form.cvs.murmur} onChange={e => scvs("murmur", e.target.value)} placeholder="Timing, grade, location…" />
+                        <input className="his-field" value={form.cvs.murmur} onChange={e => scvs("murmur", e.target.value)} placeholder="Timing, grade, location…" />
                       </FG>
                       <FG label="JVP">
-                        <select style={fld} value={form.cvs.jvp} onChange={e => scvs("jvp", e.target.value)}>
+                        <select className="his-field" value={form.cvs.jvp} onChange={e => scvs("jvp", e.target.value)}>
                           <option value="">Select…</option>
                           {["Normal","Raised","Not Visible"].map(o => <option key={o}>{o}</option>)}
                         </select>
@@ -862,7 +863,7 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
                     <div style={{ fontWeight: 700, fontSize: 12, color: C.amber, marginBottom: 10 }}>🫃 Abdomen</div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                       <FG label="Tenderness">
-                        <input style={fld} value={form.abdomen.tenderness} onChange={e => sabd("tenderness", e.target.value)} placeholder="Location of tenderness…" />
+                        <input className="his-field" value={form.abdomen.tenderness} onChange={e => sabd("tenderness", e.target.value)} placeholder="Location of tenderness…" />
                       </FG>
                       <FG label="Organomegaly">
                         <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px" }}>
@@ -882,13 +883,13 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
                         </div>
                       </FG>
                       <FG label="Bowel Sounds">
-                        <select style={fld} value={form.abdomen.bowelSounds} onChange={e => sabd("bowelSounds", e.target.value)}>
+                        <select className="his-field" value={form.abdomen.bowelSounds} onChange={e => sabd("bowelSounds", e.target.value)}>
                           <option value="">Select…</option>
                           {["Normal","Increased","Decreased","Absent"].map(o => <option key={o}>{o}</option>)}
                         </select>
                       </FG>
                       <FG label="Ascites">
-                        <select style={fld} value={form.abdomen.ascites} onChange={e => sabd("ascites", e.target.value)}>
+                        <select className="his-field" value={form.abdomen.ascites} onChange={e => sabd("ascites", e.target.value)}>
                           <option value="">Select…</option>
                           {["Absent","Mild","Moderate","Gross"].map(o => <option key={o}>{o}</option>)}
                         </select>
@@ -901,30 +902,30 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
                     <div style={{ fontWeight: 700, fontSize: 12, color: C.purple, marginBottom: 10 }}>🧠 CNS / Neuro</div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                       <FG label="Motor System">
-                        <select style={fld} value={form.cns.motorSystem} onChange={e => scns("motorSystem", e.target.value)}>
+                        <select className="his-field" value={form.cns.motorSystem} onChange={e => scns("motorSystem", e.target.value)}>
                           <option value="">Select…</option>
                           {["Normal","Hemiparesis","Hemiplegia","Paraparesis","Paraplegia","Quadriparesis","Quadriplegia","Focal Deficit"].map(o => <option key={o}>{o}</option>)}
                         </select>
                       </FG>
                       {form.cns.motorSystem && form.cns.motorSystem !== "Normal" && (
                         <FG label="Affected Side">
-                          <select style={fld} value={form.cns.motorSide} onChange={e => scns("motorSide", e.target.value)}>
+                          <select className="his-field" value={form.cns.motorSide} onChange={e => scns("motorSide", e.target.value)}>
                             <option value="">Select…</option>
                             {["Right","Left","Bilateral"].map(o => <option key={o}>{o}</option>)}
                           </select>
                         </FG>
                       )}
                       <FG label="Tone">
-                        <select style={fld} value={form.cns.tone} onChange={e => scns("tone", e.target.value)}>
+                        <select className="his-field" value={form.cns.tone} onChange={e => scns("tone", e.target.value)}>
                           <option value="">Select…</option>
                           {["Normal","Hypertonia","Hypotonia","Flaccid"].map(o => <option key={o}>{o}</option>)}
                         </select>
                       </FG>
                       <FG label="Reflexes (DTR/Plantar)">
-                        <input style={fld} value={form.cns.reflexes} onChange={e => scns("reflexes", e.target.value)} placeholder="e.g. DTR+2, Plantar flexor…" />
+                        <input className="his-field" value={form.cns.reflexes} onChange={e => scns("reflexes", e.target.value)} placeholder="e.g. DTR+2, Plantar flexor…" />
                       </FG>
                       <FG label="Speech">
-                        <select style={fld} value={form.cns.speech} onChange={e => scns("speech", e.target.value)}>
+                        <select className="his-field" value={form.cns.speech} onChange={e => scns("speech", e.target.value)}>
                           <option value="">Select…</option>
                           {["Normal","Slurred","Aphasia","Dysarthria","Non-verbal"].map(o => <option key={o}>{o}</option>)}
                         </select>
@@ -938,15 +939,15 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
               <SectionCard title="📋 Additional History" open={false}>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
                   <FG label="Current Medications">
-                    <textarea style={{ ...fld, minHeight: 70, resize: "vertical" }} value={form.currentMedication}
+                    <textarea className="his-field" style={{ minHeight: 70, resize: "vertical" }} value={form.currentMedication}
                       onChange={e => sf("currentMedication", e.target.value)} placeholder="Ongoing drugs, doses…" />
                   </FG>
                   <FG label="Family / Personal History">
-                    <textarea style={{ ...fld, minHeight: 70, resize: "vertical" }} value={form.familyHistory}
+                    <textarea className="his-field" style={{ minHeight: 70, resize: "vertical" }} value={form.familyHistory}
                       onChange={e => sf("familyHistory", e.target.value)} placeholder="Family illness, personal habits…" />
                   </FG>
                   <FG label="Birth History / Milestones (Paeds)">
-                    <textarea style={{ ...fld, minHeight: 70, resize: "vertical" }} value={form.birthHistory}
+                    <textarea className="his-field" style={{ minHeight: 70, resize: "vertical" }} value={form.birthHistory}
                       onChange={e => sf("birthHistory", e.target.value)} placeholder="Applicable for paediatric patients…" />
                   </FG>
                 </div>
@@ -980,7 +981,7 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
                           </div>
                         </FG>
                         <FG label="Justification / Comments">
-                          <textarea style={{ ...fld, minHeight: 60, resize: "vertical" }} value={form.restraintComment}
+                          <textarea className="his-field" style={{ minHeight: 60, resize: "vertical" }} value={form.restraintComment}
                             onChange={e => sf("restraintComment", e.target.value)} placeholder="Reason for restraint, review plan…" />
                         </FG>
                       </div>
@@ -1007,11 +1008,11 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
 
               <SectionCard title="🏥 Diagnosis">
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
-                  <FG label="Provisional Diagnosis"><input style={fld} value={form.provisionalDiagnosis} onChange={e => sf("provisionalDiagnosis", e.target.value)} placeholder="Working diagnosis…" /></FG>
-                  <FG label="Final Diagnosis / ICD-10"><input style={fld} value={form.finalDiagnosis} onChange={e => sf("finalDiagnosis", e.target.value)} placeholder="Final diagnosis + ICD code…" /></FG>
+                  <FG label="Provisional Diagnosis"><input className="his-field" value={form.provisionalDiagnosis} onChange={e => sf("provisionalDiagnosis", e.target.value)} placeholder="Working diagnosis…" /></FG>
+                  <FG label="Final Diagnosis / ICD-10"><input className="his-field" value={form.finalDiagnosis} onChange={e => sf("finalDiagnosis", e.target.value)} placeholder="Final diagnosis + ICD code…" /></FG>
                 </div>
                 <FG label="Investigations Ordered (comma separated)">
-                  <input style={fld} value={form.investigations} onChange={e => sf("investigations", e.target.value)} placeholder="CBC, LFT, RFT, Chest X-Ray…" />
+                  <input className="his-field" value={form.investigations} onChange={e => sf("investigations", e.target.value)} placeholder="CBC, LFT, RFT, Chest X-Ray…" />
                 </FG>
               </SectionCard>
 
@@ -1043,22 +1044,22 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
                     <div style={{ fontSize: 11, fontWeight: 700, color: "#1d4ed8", textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>New Medication Order</div>
                     <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
                       <FG label="Drug Name *">
-                        <input style={{ ...fld, fontWeight: 700, borderColor: isHAM_IA(medForm.drug) ? "#f59e0b" : C.border }} value={medForm.drug} onChange={e => setMedForm(p => ({ ...p, drug: e.target.value }))} placeholder="Generic drug name" />
+                        <input className="his-field" style={{ fontWeight: 700, borderColor: isHAM_IA(medForm.drug) ? "#f59e0b" : C.border }} value={medForm.drug} onChange={e => setMedForm(p => ({ ...p, drug: e.target.value }))} placeholder="Generic drug name" />
                         {isHAM_IA(medForm.drug) && <div style={{ fontSize: 10, color: "#92400e", marginTop: 2 }}>🔴 HIGH ALERT MEDICATION — auto-detected</div>}
                       </FG>
-                      <FG label="Dose"><input style={fld} value={medForm.dose} onChange={e => setMedForm(p => ({ ...p, dose: e.target.value }))} placeholder="e.g. 500mg" /></FG>
+                      <FG label="Dose"><input className="his-field" value={medForm.dose} onChange={e => setMedForm(p => ({ ...p, dose: e.target.value }))} placeholder="e.g. 500mg" /></FG>
                       <FG label="Route">
-                        <select style={fld} value={medForm.route} onChange={e => setMedForm(p => ({ ...p, route: e.target.value }))}>
+                        <select className="his-field" value={medForm.route} onChange={e => setMedForm(p => ({ ...p, route: e.target.value }))}>
                           {ROUTES_IA.map(r => <option key={r}>{r}</option>)}
                         </select>
                       </FG>
                       <FG label="Frequency">
-                        <select style={fld} value={medForm.frequency} onChange={e => setMedForm(p => ({ ...p, frequency: e.target.value }))}>
+                        <select className="his-field" value={medForm.frequency} onChange={e => setMedForm(p => ({ ...p, frequency: e.target.value }))}>
                           {FREQ_LIST_IA.map(f => <option key={f}>{f}</option>)}
                         </select>
                       </FG>
                       <FG label="Priority">
-                        <select style={{ ...fld, color: medForm.priority==="STAT"?C.red:medForm.priority==="Urgent"?"#d97706":C.muted, fontWeight: 700 }} value={medForm.priority} onChange={e => setMedForm(p => ({ ...p, priority: e.target.value }))}>
+                        <select className="his-field" style={{ color: medForm.priority==="STAT"?C.red:medForm.priority==="Urgent"?"#d97706":C.muted, fontWeight: 700 }} value={medForm.priority} onChange={e => setMedForm(p => ({ ...p, priority: e.target.value }))}>
                           <option value="Routine">Routine</option>
                           <option value="Urgent">🔶 Urgent</option>
                           <option value="STAT">⚡ STAT</option>
@@ -1067,7 +1068,7 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "2fr auto", gap: 8, alignItems: "flex-end" }}>
                       <FG label="Indication / Reason">
-                        <input style={fld} value={medForm.indication} onChange={e => setMedForm(p => ({ ...p, indication: e.target.value }))} placeholder="e.g. GI prophylaxis, pain management…" />
+                        <input className="his-field" value={medForm.indication} onChange={e => setMedForm(p => ({ ...p, indication: e.target.value }))} placeholder="e.g. GI prophylaxis, pain management…" />
                       </FG>
                       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                         {!isHAM_IA(medForm.drug) && (
@@ -1081,6 +1082,30 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
                         </button>
                       </div>
                     </div>
+                    {/* IV Dilution row — for injectable drugs diluted before administration */}
+                    {(medForm.route === "IV" || medForm.route === "IM") && (
+                      <div style={{ marginTop: 8, padding: "10px 12px", background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 8 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: "#0369a1", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 7 }}>💧 IV Dilution (optional) — auto-logged to Input chart on administration</div>
+                        <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 8 }}>
+                          <FG label="Volume (ml)">
+                            <input type="number" min="0" className="his-field" placeholder="e.g. 100" value={medForm.dilutionVol} onChange={e => setMedForm(p => ({ ...p, dilutionVol: e.target.value }))} />
+                          </FG>
+                          <FG label="Diluent / Vehicle">
+                            <select className="his-field" value={medForm.dilutionFluid} onChange={e => setMedForm(p => ({ ...p, dilutionFluid: e.target.value }))}>
+                              <option value="NS 0.9%">NS 0.9% (Normal Saline)</option>
+                              <option value="DNS">DNS (Dextrose Normal Saline)</option>
+                              <option value="D5W">D5W (Dextrose 5% in Water)</option>
+                              <option value="RL">RL (Ringer's Lactate)</option>
+                              <option value="D10W">D10W (Dextrose 10%)</option>
+                              <option value="Sterile Water">Sterile Water for Injection</option>
+                              <option value="Isolyte-S">Isolyte-S</option>
+                              <option value="Other">Other</option>
+                            </select>
+                          </FG>
+                        </div>
+                        {medForm.dilutionVol && <div style={{ fontSize: 10, color: "#0369a1", marginTop: 5 }}>📋 {medForm.drug || "Drug"} will be diluted in <strong>{medForm.dilutionVol} ml {medForm.dilutionFluid}</strong> — nurse's Input chart updated automatically on each dose given.</div>}
+                      </div>
+                    )}
                     {medForm.frequency && <div style={{ marginTop: 6, fontSize: 10, color: "#1d4ed8", fontFamily: "monospace" }}>Admin times: {(FREQ_TIMES_IA[medForm.frequency] || []).join(" · ")}</div>}
                   </div>
                 )}
@@ -1091,14 +1116,14 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
                     <div style={{ fontSize: 11, fontWeight: 700, color: "#0d9488", textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>New Infusion / IV Fluid Order</div>
                     <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
                       <FG label="Drug / Fluid *">
-                        <input style={{ ...fld, fontWeight: 700, borderColor: isHAM_IA(infForm.drugFluid) ? "#f59e0b" : C.border }} value={infForm.drugFluid} onChange={e => setInfForm(p => ({ ...p, drugFluid: e.target.value }))} placeholder="NS 0.9%, Noradrenaline, PRBC…" />
+                        <input className="his-field" style={{ fontWeight: 700, borderColor: isHAM_IA(infForm.drugFluid) ? "#f59e0b" : C.border }} value={infForm.drugFluid} onChange={e => setInfForm(p => ({ ...p, drugFluid: e.target.value }))} placeholder="NS 0.9%, Noradrenaline, PRBC…" />
                         {isHAM_IA(infForm.drugFluid) && <div style={{ fontSize: 10, color: "#92400e", marginTop: 2 }}>🔴 HIGH ALERT MEDICATION — auto-detected</div>}
                       </FG>
-                      <FG label="Vol (ml)"><input type="number" style={fld} value={infForm.volume} onChange={e => setInfForm(p => ({ ...p, volume: e.target.value }))} placeholder="500" /></FG>
-                      <FG label="Rate (ml/hr)"><input type="number" style={fld} value={infForm.rate} onChange={e => setInfForm(p => ({ ...p, rate: e.target.value }))} placeholder="100" /></FG>
-                      <FG label="Dilution"><input style={fld} value={infForm.dilution} onChange={e => setInfForm(p => ({ ...p, dilution: e.target.value }))} placeholder="4mg in 50ml NS" /></FG>
+                      <FG label="Vol (ml)"><input type="number" className="his-field" value={infForm.volume} onChange={e => setInfForm(p => ({ ...p, volume: e.target.value }))} placeholder="500" /></FG>
+                      <FG label="Rate (ml/hr)"><input type="number" className="his-field" value={infForm.rate} onChange={e => setInfForm(p => ({ ...p, rate: e.target.value }))} placeholder="100" /></FG>
+                      <FG label="Dilution"><input className="his-field" value={infForm.dilution} onChange={e => setInfForm(p => ({ ...p, dilution: e.target.value }))} placeholder="4mg in 50ml NS" /></FG>
                       <FG label="Priority">
-                        <select style={{ ...fld, color: infForm.priority==="STAT"?C.red:infForm.priority==="Urgent"?"#d97706":C.muted, fontWeight: 700 }} value={infForm.priority} onChange={e => setInfForm(p => ({ ...p, priority: e.target.value }))}>
+                        <select className="his-field" style={{ color: infForm.priority==="STAT"?C.red:infForm.priority==="Urgent"?"#d97706":C.muted, fontWeight: 700 }} value={infForm.priority} onChange={e => setInfForm(p => ({ ...p, priority: e.target.value }))}>
                           <option value="Routine">Routine</option>
                           <option value="Urgent">🔶 Urgent</option>
                           <option value="STAT">⚡ STAT</option>
@@ -1106,7 +1131,7 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
                       </FG>
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "flex-end" }}>
-                      <FG label="Start Time"><input type="time" style={fld} value={infForm.startTime} onChange={e => setInfForm(p => ({ ...p, startTime: e.target.value }))} /></FG>
+                      <FG label="Start Time"><input type="time" className="his-field" value={infForm.startTime} onChange={e => setInfForm(p => ({ ...p, startTime: e.target.value }))} /></FG>
                       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                         {!isHAM_IA(infForm.drugFluid) && (
                           <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, color: "#92400e", cursor: "pointer" }}>
@@ -1233,7 +1258,7 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
               <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.border}`, background: C.grayL, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div style={{ fontWeight: 700, fontSize: 14 }}>Active Doctor Orders</div>
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <select style={{ ...fld, width: 140 }}><option>All Types</option>{ORDER_TYPES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}</select>
+                  <select className="his-field" style={{ width: 140 }}><option>All Types</option>{ORDER_TYPES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}</select>
                   <button onClick={() => setActiveTab("assessment")} style={{ padding: "7px 16px", background: C.accent, color: "white", border: "none", borderRadius: 7, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>+ New Note</button>
                 </div>
               </div>
@@ -1366,31 +1391,31 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
             <div style={{ padding: "20px 22px" }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
                 <FG label="Order Type">
-                  <select style={fld} value={newOrder.type} onChange={e => setNewOrder(p => ({ ...p, type: e.target.value }))}>
+                  <select className="his-field" value={newOrder.type} onChange={e => setNewOrder(p => ({ ...p, type: e.target.value }))}>
                     {ORDER_TYPES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
                   </select>
                 </FG>
                 <FG label="Priority">
-                  <select style={fld} value={newOrder.priority} onChange={e => setNewOrder(p => ({ ...p, priority: e.target.value }))}>
+                  <select className="his-field" value={newOrder.priority} onChange={e => setNewOrder(p => ({ ...p, priority: e.target.value }))}>
                     {["ROUTINE","URGENT","STAT"].map(p => <option key={p} value={p}>{p}</option>)}
                   </select>
                 </FG>
               </div>
               <FG label="Order / Drug Name *" style={{ marginBottom: 12 }}>
-                <input style={fld} value={newOrder.instruction} onChange={e => setNewOrder(p => ({ ...p, instruction: e.target.value }))} placeholder="Drug name / test / instruction…" />
+                <input className="his-field" value={newOrder.instruction} onChange={e => setNewOrder(p => ({ ...p, instruction: e.target.value }))} placeholder="Drug name / test / instruction…" />
               </FG>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
-                <FG label="Dose / Rate"><input style={fld} value={newOrder.dose} onChange={e => setNewOrder(p => ({ ...p, dose: e.target.value }))} placeholder="40mg / 500mL @ 84mL/hr" /></FG>
+                <FG label="Dose / Rate"><input className="his-field" value={newOrder.dose} onChange={e => setNewOrder(p => ({ ...p, dose: e.target.value }))} placeholder="40mg / 500mL @ 84mL/hr" /></FG>
                 <FG label="Route">
-                  <select style={fld} value={newOrder.route} onChange={e => setNewOrder(p => ({ ...p, route: e.target.value }))}>
+                  <select className="his-field" value={newOrder.route} onChange={e => setNewOrder(p => ({ ...p, route: e.target.value }))}>
                     {["","IV","IM","Oral","SC","SL","Topical","Inhalation","Blood"].map(r => <option key={r} value={r}>{r || "— Select —"}</option>)}
                   </select>
                 </FG>
-                <FG label="Frequency"><input style={fld} value={newOrder.frequency} onChange={e => setNewOrder(p => ({ ...p, frequency: e.target.value }))} placeholder="OD / BD / TDS / Continuous" /></FG>
-                <FG label="Duration"><input style={fld} value={newOrder.duration} onChange={e => setNewOrder(p => ({ ...p, duration: e.target.value }))} placeholder="3 days / 1 week / Ongoing" /></FG>
+                <FG label="Frequency"><input className="his-field" value={newOrder.frequency} onChange={e => setNewOrder(p => ({ ...p, frequency: e.target.value }))} placeholder="OD / BD / TDS / Continuous" /></FG>
+                <FG label="Duration"><input className="his-field" value={newOrder.duration} onChange={e => setNewOrder(p => ({ ...p, duration: e.target.value }))} placeholder="3 days / 1 week / Ongoing" /></FG>
               </div>
               <FG label="Special Instructions">
-                <textarea style={{ ...fld, minHeight: 60, resize: "vertical" }} value={newOrder.notes} onChange={e => setNewOrder(p => ({ ...p, notes: e.target.value }))} placeholder="Additional notes…" />
+                <textarea className="his-field" style={{ minHeight: 60, resize: "vertical" }} value={newOrder.notes} onChange={e => setNewOrder(p => ({ ...p, notes: e.target.value }))} placeholder="Additional notes…" />
               </FG>
             </div>
             <div style={{ padding: "13px 22px", borderTop: `1px solid ${C.border}`, display: "flex", justifyContent: "flex-end", gap: 10, background: C.grayL, borderRadius: "0 0 16px 16px" }}>
