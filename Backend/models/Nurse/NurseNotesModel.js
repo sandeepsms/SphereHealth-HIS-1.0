@@ -10,8 +10,7 @@ const NurseVitalsSchema = new mongoose.Schema(
     temp: Number,
     rr: Number,
     spo2: Number,
-    bloodSugar: Number,
-  },
+    bloodSugar: Number },
   { _id: false },
 );
 
@@ -20,8 +19,7 @@ const OrderExecutionSchema = new mongoose.Schema(
     doctorNoteId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "DoctorNotes",
-      required: true,
-    },
+      required: true },
     orderId: { type: mongoose.Schema.Types.ObjectId, required: true },
     instruction: { type: String, required: true },
     type: { type: String },
@@ -29,11 +27,9 @@ const OrderExecutionSchema = new mongoose.Schema(
       type: String,
       enum: ["done", "skipped", "partial"],
       required: true,
-      default: "done",
-    },
+      default: "done" },
     executedAt: { type: Date, default: Date.now },
-    remarks: { type: String },
-  },
+    remarks: { type: String } },
   { _id: true },
 );
 
@@ -55,8 +51,7 @@ const IOSchema = new mongoose.Schema(
         orderId:   { type: mongoose.Schema.Types.ObjectId },
         enteredBy: { type: String },          // nurse name
       },
-    ],
-  },
+    ] },
   { _id: false },
 );
 
@@ -66,18 +61,16 @@ const NurseNotesSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Patient",
       required: false, // allow saving even if patient ObjectId lookup fails
-      index: true,
-    },
+      index: true },
     patientName: { type: String },
     patientUHID: { type: String, index: true },
-    ipdNo: { type: String, required: false, index: true },
+    ipdNo: { type: String, required: false },
 
     noteDate: { type: Date, required: true, default: Date.now },
     shift: {
       type: String,
       enum: ["morning", "evening", "night", "general"],
-      default: "general",
-    },
+      default: "general" },
 
     nurse: {
       type: mongoose.Schema.Types.ObjectId,
@@ -98,8 +91,7 @@ const NurseNotesSchema = new mongoose.Schema(
       oriented: { type: Boolean, default: false },
       cooperative: { type: Boolean, default: false },
       drowsy: { type: Boolean, default: false },
-      unconscious: { type: Boolean, default: false },
-    },
+      unconscious: { type: Boolean, default: false } },
 
     vitals: NurseVitalsSchema,
     painScore: { type: Number, min: 0, max: 10, default: 0 },
@@ -110,10 +102,8 @@ const NurseNotesSchema = new mongoose.Schema(
       condition: {
         type: String,
         enum: ["Patent", "Swollen", "Redness", "Removed", "Not applicable"],
-        default: "Patent",
-      },
-      notes: { type: String },
-    },
+        default: "Patent" },
+      notes: { type: String } },
 
     intakeOutput: IOSchema,
     ordersExecuted: [OrderExecutionSchema],
@@ -125,8 +115,7 @@ const NurseNotesSchema = new mongoose.Schema(
       catheterCare: { type: Boolean, default: false },
       woundDressing: { type: Boolean, default: false },
       patientEducation: { type: Boolean, default: false },
-      otherCare: { type: String },
-    },
+      otherCare: { type: String } },
 
     remarks: { type: String },
 
@@ -149,8 +138,7 @@ const NurseNotesSchema = new mongoose.Schema(
     status: { type: String, enum: ["draft", "submitted"], default: "draft" },
     submittedAt: { type: Date },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "NurseStaff" },
-    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "NurseStaff" },
-  },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "NurseStaff" } },
   { timestamps: true, collection: "nurse_notes" },
 );
 
@@ -169,16 +157,13 @@ NurseNotesSchema.post("save", async function (doc) {
       await DoctorNotes.updateOne(
         {
           _id: new mongoose.Types.ObjectId(exec.doctorNoteId.toString()),
-          "orders._id": new mongoose.Types.ObjectId(exec.orderId.toString()),
-        },
+          "orders._id": new mongoose.Types.ObjectId(exec.orderId.toString()) },
         {
           $set: {
             "orders.$.nurseStatus": exec.status,
             "orders.$.nurseConfirmedBy": doc.nurse,
             "orders.$.nurseConfirmedAt": exec.executedAt || new Date(),
-            "orders.$.nurseRemarks": exec.remarks || "",
-          },
-        },
+            "orders.$.nurseRemarks": exec.remarks || "" } },
       );
     } catch (e) {
       console.error("nurseNotesModel post-save error:", e.message);

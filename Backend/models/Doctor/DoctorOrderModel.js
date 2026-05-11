@@ -34,8 +34,7 @@ const AdminRecordSchema = new mongoose.Schema({
   status: {
     type: String,
     enum: ["pending","given","hold","not_available","delayed","skipped","refused","partial"],
-    default: "pending",
-  },
+    default: "pending" },
   givenAt:        { type: Date },
   givenBy:        { type: String },           // nurse name
   givenByRole:    { type: String, default: "Nurse" },
@@ -58,6 +57,10 @@ const AdminRecordSchema = new mongoose.Schema({
   // Adverse event
   adverseEvent:   { type: Boolean, default: false },
   adverseDetails: { type: String },
+  // STAT / Emergency dose (given outside the scheduled window)
+  isStatDose:     { type: Boolean, default: false },
+  statReason:     { type: String },
+  nextDoseAdjustedAt: { type: String }, // "HH:MM" — recalculated from STAT givenAt
 }, { _id: false, timestamps: false });
 
 // Infusion rate change log
@@ -74,13 +77,11 @@ const RateChangeSchema = new mongoose.Schema({
       "Infusion complete — rate reduced","Titration protocol","Patient complaint",
       "Extravasation — site changed","Pump malfunction","Other"
     ],
-    default: "Doctor order",
-  },
+    default: "Doctor order" },
   reasonDetail:  { type: String },
   verifiedBy:    { type: String },          // second nurse for HAM infusions
   doctorInformed:{ type: Boolean, default: false },
-  doctorName:    { type: String },
-}, { _id: false });
+  doctorName:    { type: String } }, { _id: false });
 
 // Infusion nursing monitoring entry
 const InfusionMonitorSchema = new mongoose.Schema({
@@ -94,12 +95,11 @@ const InfusionMonitorSchema = new mongoose.Schema({
   volumeInfused: { type: String },
   siteCondition: { type: String, enum: ["Patent","Swollen","Leaking","Phlebitis","Changed",""], default: "" },
   action:        { type: String, enum: ["No Change","Rate Increased","Rate Decreased","Infusion Stopped","Site Changed","Doctor Informed",""], default: "No Change" },
-  remarks:       { type: String },
-}, { _id: false });
+  remarks:       { type: String } }, { _id: false });
 
 /* ────────────── Main Schema ────────────── */
 const DoctorOrderSchema = new mongoose.Schema({
-  UHID:      { type: String, required: true, index: true },
+  UHID:      { type: String, required: true },
   patientId: { type: mongoose.Schema.Types.ObjectId, ref: "Patient" },
   patientName: String,
   visitId:   String,
@@ -112,8 +112,7 @@ const DoctorOrderSchema = new mongoose.Schema({
       "Procedure","BloodTransfusion","Diet","Oxygen","Physiotherapy",
       "Activity","Nursing","Consultation",
     ],
-    required: true,
-  },
+    required: true },
   priority: { type: String, enum: ["Routine","Urgent","STAT"], default: "Routine" },
 
   /* ── NABH High Alert Medication flags ── */
@@ -152,6 +151,9 @@ const DoctorOrderSchema = new mongoose.Schema({
     speciality: String, consultantName: String, reason: String, referredBy: String,
     // Common
     notes: String, displayName: String,
+    // IV dilution / vehicle — for injectable medications diluted before administration
+    dilutionVolume: Number,   // ml — e.g. 100 (auto-logged to Input chart on administration)
+    dilutionFluid:  String,   // e.g. "NS 0.9%", "DNS", "D5W", "RL", "Sterile Water"
   },
 
   orderedBy:     String,
@@ -161,9 +163,7 @@ const DoctorOrderSchema = new mongoose.Schema({
   status: {
     type: String,
     enum: ["Pending","Acknowledged","InProgress","Completed","Cancelled","OnHold","Stopped","Held"],
-    default: "Pending",
-    index: true,
-  },
+    default: "Pending" },
 
   /* ── Nursing administration record (NABH MAR) ── */
   administrationRecord: [AdminRecordSchema],
@@ -185,50 +185,20 @@ const DoctorOrderSchema = new mongoose.Schema({
   consentStatus: {
     type: String,
     enum: ["NotRequired","Pending","Obtained","Declined"],
-    default: "NotRequired",
-  },
+    default: "NotRequired" },
   consentData: {
     obtainedAt: Date, obtainedBy: String,
     fingerprintHash: String, fingerprintVerified: { type: Boolean, default: false },
     webAuthnCredentialId: String,
-    witnessName: String, guardianName: String, guardianRelation: String, notes: String,
-  },
+    witnessName: String, guardianName: String, guardianRelation: String, notes: String },
 
   // Step-based audit trail (matches NABH order workflow)
   auditLog: [{
     step:   { type: String, required: true },
     doneBy: { type: String, required: true },
     doneAt: { type: Date, default: Date.now },
-    notes:  { type: String },
-  }],
-  currentStepIndex: { type: Number, default: -1 },
-
-  /* ── Telephonic / Verbal Order tracking (NABH MOM.1) ── */
-  orderSource: {
-    type: String,
-    enum: ["Written", "Telephonic", "Electronic"],
-    default: "Written",
-  },
-  telephonicData: {
-    doctorName:        { type: String },
-    doctorRegNo:       { type: String },
-    callTime:          { type: String },        // "HH:MM"
-    readBackDone:      { type: Boolean, default: false },
-    readBackBy:        { type: String },        // nurse who did read-back
-    countersignStatus: {
-      type: String,
-      enum: ["pending", "countersigned", "rejected"],
-      default: "pending",
-    },
-    countersignedBy:   { type: String },
-    countersignedAt:   { type: Date },
-    countersignNotes:  { type: String },
-    rejectedBy:        { type: String },
-    rejectedAt:        { type: Date },
-    rejectedReason:    { type: String },
-  },
-
-}, { timestamps: true, collection: "doctor_orders" });
+    notes:  { type: String } }],
+  currentStepIndex: { type: Number, default: -1 } }, { timestamps: true, collection: "doctor_orders" });
 
 /* ── Auto-set hamFlag before save ── */
 DoctorOrderSchema.pre("save", function (next) {

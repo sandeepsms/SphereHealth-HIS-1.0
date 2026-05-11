@@ -22,8 +22,7 @@ const TreatmentTeamMemberSchema = new mongoose.Schema(
       type: String,
       enum: ["Primary Consultant", "Co-Consultant", "Consulting Specialist",
              "Physiotherapist", "Dietician", "Other"],
-      default: "Consulting Specialist",
-    },
+      default: "Consulting Specialist" },
 
     // Who added this consultant and when
     addedBy:     { type: String, trim: true, default: "" },   // Primary doctor name
@@ -42,9 +41,7 @@ const TreatmentTeamMemberSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: ["Pending", "Active", "Completed", "Declined"],
-      default: "Active",
-    },
-  },
+      default: "Active" } },
   { timestamps: true },
 );
 
@@ -53,8 +50,7 @@ const TransferHistorySchema = new mongoose.Schema(
     fromBed: { type: mongoose.Schema.Types.ObjectId, ref: "Beds" },
     toBed: { type: mongoose.Schema.Types.ObjectId, ref: "Beds" },
     reason: String,
-    date: { type: Date, default: Date.now },
-  },
+    date: { type: Date, default: Date.now } },
   { _id: false },
 );
 
@@ -64,24 +60,18 @@ const AdmissionSchema = new mongoose.Schema(
     UHID: {
       type: String,
       required: [true, "UHID is required"],
-      trim: true,
-      index: true,
-    },
+      trim: true },
     patientId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Patient",
-      required: [true, "Patient ID is required"],
-      index: true,
-    },
+      required: [true, "Patient ID is required"] },
     patientName: {
       type: String,
       required: [true, "Patient name is required"],
-      trim: true,
-    },
+      trim: true },
     contactNumber: {
       type: String,
-      required: [true, "Contact number is required"],
-    },
+      required: [true, "Contact number is required"] },
     email: String,
 
     // ── Bed Info (OPTIONAL — Emergency/OPD may not have bed) ──
@@ -91,23 +81,19 @@ const AdmissionSchema = new mongoose.Schema(
     roomId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Room",
-      default: null,
-    },
+      default: null },
     wardId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Ward",
-      default: null,
-    },
+      default: null },
     floorId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Floor",
-      default: null,
-    },
+      default: null },
     buildingId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Building",
-      default: null,
-    },
+      default: null },
 
     // ✅ Flag: does this admission have a bed allocated?
     hasBed: { type: Boolean, default: false },
@@ -119,8 +105,7 @@ const AdmissionSchema = new mongoose.Schema(
     admissionDate: {
       type: Date,
       default: Date.now,
-      required: true,
-    },
+      required: true },
     expectedDischargeDate: Date,
 
     reasonForAdmission: { type: String, default: "" }, // ✅ No longer required
@@ -137,8 +122,7 @@ const AdmissionSchema = new mongoose.Schema(
         "Daycare",
         "Services",
       ],
-      default: "Emergency",
-    },
+      default: "Emergency" },
 
     attendingDoctor: { type: String, trim: true, default: "" },
     // ObjectId ref to the User (role=Doctor) who is the attending doctor
@@ -146,20 +130,17 @@ const AdmissionSchema = new mongoose.Schema(
     attendingDoctorId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      default: null,
-    },
+      default: null },
     // Department as ObjectId ref (alongside the string field)
     departmentId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Department",
-      default: null,
-    },
+      default: null },
 
     status: {
       type: String,
       enum: ["Active", "Discharged", "Transferred", "Cancelled"],
-      default: "Active",
-    },
+      default: "Active" },
 
     // ── Billing ──────────────────────────────────────────────
     estimatedCost: { type: Number, default: 0 },
@@ -173,8 +154,7 @@ const AdmissionSchema = new mongoose.Schema(
     conditionOnDischarge: {
       type: String,
       enum: ["Stable", "Improved", "Critical", "LAMA", null],
-      default: null,
-    },
+      default: null },
     followUpInstructions: String,
 
     // ── Cancel ───────────────────────────────────────────────
@@ -203,9 +183,7 @@ const AdmissionSchema = new mongoose.Schema(
       doctorCompletedAt: { type: Date, default: null },
       nurseCompletedAt:  { type: Date, default: null },
       doctorName:        { type: String, default: "" },
-      nurseName:         { type: String, default: "" },
-    },
-  },
+      nurseName:         { type: String, default: "" } } },
   { timestamps: true },
 );
 

@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 
 const BillingTriggerSchema = new mongoose.Schema({
   // ── Patient context ─────────────────────────────────────────
-  admissionId:  { type: mongoose.Schema.Types.ObjectId, ref: "Admission", index: true },
+  admissionId:  { type: mongoose.Schema.Types.ObjectId, ref: "Admission" },
   opdVisitId:   { type: mongoose.Schema.Types.ObjectId, ref: "OPD" },
   patientId:    { type: mongoose.Schema.Types.ObjectId, ref: "Patient" },
   UHID:         { type: String, index: true },
@@ -21,8 +21,7 @@ const BillingTriggerSchema = new mongoose.Schema({
     type: String,
     enum: ["NurseNote","DoctorNote","DoctorAssessment","MAR","InvestigationOrder",
            "Equipment","CarePlan","Discharge","Procedure","DoctorVisit","Manual","AutoCharge"],
-    required: true,
-  },
+    required: true },
   sourceDocumentId:    { type: mongoose.Schema.Types.ObjectId },
   sourceDocumentModel: String, // "NurseNote", "DoctorNote", "MAR", etc.
 
@@ -50,9 +49,7 @@ const BillingTriggerSchema = new mongoose.Schema({
   status: {
     type: String,
     enum: ["pending","in_progress","completed","billed","cancelled","voided","skipped"],
-    default: "pending",
-    index: true,
-  },
+    default: "pending" },
 
   // ── Flags ────────────────────────────────────────────────────
   autoCharged:          { type: Boolean, default: false },
@@ -63,10 +60,8 @@ const BillingTriggerSchema = new mongoose.Schema({
   // ── Metadata ─────────────────────────────────────────────────
   shift:      String,
   department: String,
-  notes:      String,
-}, {
-  timestamps: true,
-});
+  notes:      String }, {
+  timestamps: true });
 
 // Compound index for daily dedup
 BillingTriggerSchema.index({ admissionId: 1, serviceCode: 1, dateKey: 1, status: 1 });

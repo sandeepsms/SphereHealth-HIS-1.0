@@ -40,10 +40,7 @@ const BedTransferSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: ["PendingHandover", "Complete", "Cancelled"],
-      default: "PendingHandover",
-      index: true,
-    },
-  },
+      default: "PendingHandover" } },
   { timestamps: true }
 );
 

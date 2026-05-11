@@ -10,18 +10,15 @@ const ConsentFormSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Patient",
       required: true,
-      index: true,
-    },
-    UHID: { type: String, required: true, trim: true, index: true },
+      index: true },
+    UHID: { type: String, required: true, trim: true },
     patientName: { type: String, trim: true },
     age: { type: String },
     gender: { type: String },
 
     admissionId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Admission",
-      index: true,
-    },
+      ref: "Admission" },
     ipdNo: { type: String, index: true },
 
     // ── Consent Details ──────────────────────────────────────
@@ -42,8 +39,7 @@ const ConsentFormSchema = new mongoose.Schema(
         "OTHER",
       ],
       required: true,
-      index: true,
-    },
+      index: true },
     consentTitle: { type: String, required: true, trim: true },
     procedureDescription: { type: String },
     risksDisclosed: [{ type: String, trim: true }],
@@ -59,8 +55,7 @@ const ConsentFormSchema = new mongoose.Schema(
     consentGivenBy: {
       type: String,
       enum: ["SELF", "GUARDIAN", "SPOUSE", "PARENT", "SIBLING", "OTHER"],
-      default: "SELF",
-    },
+      default: "SELF" },
     guardianName: { type: String, trim: true },
     guardianRelation: { type: String, trim: true },
     guardianContact: { type: String, trim: true },
@@ -73,8 +68,7 @@ const ConsentFormSchema = new mongoose.Schema(
     // ── Doctor who explained ─────────────────────────────────
     explainedByDoctor: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Doctor",
-    },
+      ref: "Doctor" },
     explainedByDoctorName: { type: String, trim: true },
     doctorRegNo: { type: String, trim: true },
 
@@ -82,9 +76,7 @@ const ConsentFormSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: ["PENDING", "SIGNED", "REFUSED", "REVOKED"],
-      default: "PENDING",
-      index: true,
-    },
+      default: "PENDING" },
     signedAt: { type: Date },
     refusalReason: { type: String },
     revokedAt: { type: Date },
@@ -93,8 +85,7 @@ const ConsentFormSchema = new mongoose.Schema(
     additionalNotes: { type: String },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" },
-    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" },
-  },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" } },
   { timestamps: true, collection: "consent_forms" }
 );
 

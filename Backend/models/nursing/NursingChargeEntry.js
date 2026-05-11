@@ -8,7 +8,7 @@ const mongoose = require("mongoose");
 
 const NursingChargeEntrySchema = new mongoose.Schema(
   {
-    admissionId: { type: mongoose.Schema.Types.ObjectId, ref: "Admission", required: true, index: true },
+    admissionId: { type: mongoose.Schema.Types.ObjectId, ref: "Admission", required: true },
     patientId:   { type: mongoose.Schema.Types.ObjectId, ref: "Patient",   required: true },
     UHID:        { type: String, required: true, index: true },
 
@@ -31,8 +31,7 @@ const NursingChargeEntrySchema = new mongoose.Schema(
     voidReason:  { type: String },
 
     // set to true once pushed to main billing ledger
-    billed:      { type: Boolean, default: false },
-  },
+    billed:      { type: Boolean, default: false } },
   { timestamps: true }
 );
 
