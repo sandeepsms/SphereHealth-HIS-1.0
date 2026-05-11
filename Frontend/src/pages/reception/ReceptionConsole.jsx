@@ -172,6 +172,8 @@ export default function ReceptionConsole() {
 
   /* ── UI state ── */
   const [serviceSearch, setServiceSearch] = useState("");
+  const [pincodeLookup, setPincodeLookup] = useState({ loading: false, ok: false, error: "" });
+  const pincodeTimerRef = useRef(null);
   const [serviceDropdownOpen, setServiceDropdownOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState({});
@@ -247,6 +249,48 @@ export default function ReceptionConsole() {
     if (!dept) return doctors;
     return doctors.filter(d => String(d.department) === String(dept));
   }, [doctors, opd.department, ipd.department, dayCare.department, visitType]);
+
+  /* ─── Pincode auto-lookup (India Post free API) ─── */
+  // When user enters a 6-digit Indian pincode, fetch district + city + state
+  // and auto-fill the address fields. Receptionist only needs to ask the
+  // patient for their local street/landmark (verbal input).
+  useEffect(() => {
+    const pin = patient.address.pincode;
+    if (!pin || pin.length !== 6) {
+      setPincodeLookup({ loading: false, ok: false, error: "" });
+      return;
+    }
+    if (pincodeTimerRef.current) clearTimeout(pincodeTimerRef.current);
+    pincodeTimerRef.current = setTimeout(async () => {
+      setPincodeLookup({ loading: true, ok: false, error: "" });
+      try {
+        // India Post Pincode API — free, no auth, returns city/district/state
+        const res = await fetch(`https://api.postalpincode.in/pincode/${pin}`);
+        const data = await res.json();
+        const entry = Array.isArray(data) ? data[0] : null;
+        if (entry?.Status === "Success" && entry.PostOffice?.length) {
+          const po = entry.PostOffice[0];
+          setPatient(p => ({
+            ...p,
+            address: {
+              ...p.address,
+              // Don't overwrite user's manual entries unless empty
+              city:     po.Block || po.Division || po.Name || p.address.city,
+              district: po.District || p.address.district,
+              state:    po.State    || p.address.state,
+            },
+          }));
+          setPincodeLookup({ loading: false, ok: true, error: "" });
+        } else {
+          setPincodeLookup({ loading: false, ok: false, error: "Pincode not found" });
+        }
+      } catch (e) {
+        setPincodeLookup({ loading: false, ok: false, error: "Lookup failed" });
+      }
+    }, 400);
+    return () => pincodeTimerRef.current && clearTimeout(pincodeTimerRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patient.address.pincode]);
 
   /* ─── Debounced patient search ─── */
   useEffect(() => {
@@ -735,21 +779,51 @@ export default function ReceptionConsole() {
                 </div>
               </div>
 
+              {/* Pincode-first address row — auto-fills district/state/city */}
               <div className="rc-grid-4">
-                <div className="his-field-group rc-span-2">
-                  <label className="his-label">Address</label>
-                  <input className="his-field" value={patient.address.completeAddress}
-                    onChange={e => setPAddr("completeAddress", e.target.value)} placeholder="Street, locality" />
+                <div className="his-field-group">
+                  <label className="his-label">
+                    Pincode
+                    {pincodeLookup.loading && <span style={{ color:"#0891b2", marginLeft:6, fontSize:10 }}>⏳ looking up…</span>}
+                    {pincodeLookup.ok      && <span style={{ color:"#15803d", marginLeft:6, fontSize:10 }}>✓ found</span>}
+                    {pincodeLookup.error   && <span style={{ color:"#dc2626", marginLeft:6, fontSize:10 }}>⚠ {pincodeLookup.error}</span>}
+                  </label>
+                  <input
+                    className={`his-field ${pincodeLookup.ok ? "his-field--ok" : pincodeLookup.error ? "his-field--err" : ""}`}
+                    value={patient.address.pincode}
+                    onChange={e => setPAddr("pincode", e.target.value.replace(/\D/g, ""))}
+                    placeholder="6-digit pincode"
+                    maxLength={6}
+                    inputMode="numeric"
+                  />
                 </div>
                 <div className="his-field-group">
-                  <label className="his-label">City</label>
-                  <input className="his-field" value={patient.address.city} onChange={e => setPAddr("city", e.target.value)} />
+                  <label className="his-label">District</label>
+                  <input className="his-field" value={patient.address.district || ""}
+                    onChange={e => setPAddr("district", e.target.value)} placeholder="auto-filled" />
                 </div>
                 <div className="his-field-group">
-                  <label className="his-label">Pincode</label>
-                  <input className="his-field" value={patient.address.pincode}
-                    onChange={e => setPAddr("pincode", e.target.value.replace(/\D/g, ""))} maxLength={6} />
+                  <label className="his-label">State</label>
+                  <input className="his-field" value={patient.address.state || ""}
+                    onChange={e => setPAddr("state", e.target.value)} placeholder="auto-filled" />
                 </div>
+                <div className="his-field-group">
+                  <label className="his-label">City / Block</label>
+                  <input className="his-field" value={patient.address.city}
+                    onChange={e => setPAddr("city", e.target.value)} placeholder="auto-filled" />
+                </div>
+              </div>
+              {/* Local address (verbal input from patient) */}
+              <div className="his-field-group">
+                <label className="his-label">
+                  Local Address
+                  <span style={{ color:"#64748b", fontWeight:500, marginLeft:6, fontSize:10, textTransform:"none", letterSpacing:0 }}>
+                    (street / house no / landmark — ask the patient verbally)
+                  </span>
+                </label>
+                <input className="his-field" value={patient.address.completeAddress}
+                  onChange={e => setPAddr("completeAddress", e.target.value)}
+                  placeholder="e.g. House 14, near Hanuman Mandir, MG Road" />
               </div>
             </div>
           </div>
