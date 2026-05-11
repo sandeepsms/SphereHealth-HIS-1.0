@@ -2065,8 +2065,8 @@ function NursingNotesContent({ selectedPatient }) {
                 <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
 
                   {/* ── NABH banner ── */}
-                  <div style={{ background:C.redL, border:`1.5px solid #fca5a5`, borderRadius:8, padding:"10px 14px", fontSize:12, color:C.red, fontWeight:700, display:"flex", alignItems:"center", gap:8 }}>
-                    <i className="pi pi-exclamation-triangle" style={{ fontSize:13 }} /> NABH COP.7 — Blood Product Administration · Dual RN Verification Mandatory
+                  <div className="his-banner his-banner--err">
+                    <i className="pi pi-exclamation-triangle" /> NABH COP.7 — Blood Product Administration · Dual RN Verification Mandatory
                   </div>
 
                   {/* ── Tab bar: one tab per active bag + New Bag ── */}
@@ -2327,7 +2327,7 @@ function NursingNotesContent({ selectedPatient }) {
                       </FL>
                     </div>
                     {blood.reactionType !== "None" && (
-                      <div style={{ background:C.redL, border:`1.5px solid #fca5a5`, borderRadius:8, padding:10, fontSize:12, color:C.red, fontWeight:600 }}>
+                      <div className="his-banner his-banner--err" style={{ fontWeight:600 }}>
                         ⚠️ Reaction reported — stop transfusion, notify doctor immediately, return blood bag to lab, activate critical event documentation.
                       </div>
                     )}
@@ -3504,7 +3504,7 @@ function NursingNotesContent({ selectedPatient }) {
               )}
 
               {/* ── Critical Event ── */}
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, padding: "10px 14px", background: C.redL, border: `1.5px solid #fca5a5`, borderRadius: 8 }}>
+              <div className="his-banner his-banner--err" style={{ marginTop: 14 }}>
                 <input type="checkbox" id="criticalEvt" checked={isCritical} onChange={e => setIsCritical(e.target.checked)}
                   style={{ accentColor: C.red, width: 16, height: 16 }} />
                 <label htmlFor="criticalEvt" style={{ fontSize: 13, fontWeight: 600, color: C.red, cursor: "pointer" }}>
