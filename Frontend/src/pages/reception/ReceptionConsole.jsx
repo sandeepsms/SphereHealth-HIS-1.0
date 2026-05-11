@@ -564,7 +564,8 @@ export default function ReceptionConsole() {
         receiptTotal,
       });
 
-      // Reset for next patient
+      // Reset for next patient + clear the auto-saved snapshot
+      clearAutosave();
       newPatient();
 
     } catch (err) {
@@ -575,7 +576,7 @@ export default function ReceptionConsole() {
     }
   };
 
-  /* ─── Save draft (localStorage) ─── */
+  /* ─── Save draft (manual button — uses localStorage so it survives browser close) ─── */
   const saveDraft = () => {
     const draft = { visitType, patient, opd, ipd, dayCare, er, services, bedData, isExisting, ts: Date.now() };
     try {
@@ -584,13 +585,40 @@ export default function ReceptionConsole() {
     } catch (e) { toast.error("Could not save draft"); }
   };
 
-  /* ─── Restore draft on mount ─── */
+  /* ─── Auto-save on EVERY change (sessionStorage — survives nav-away & page reload) ─── */
+  // This is the key fix: previously the form only saved when the user clicked
+  // "Save Draft". If they paused, clicked elsewhere in the sidebar, or the tab
+  // got discarded by the browser, all in-progress data was lost and the visit
+  // type reset to the default (OPD). Now every keystroke writes to
+  // sessionStorage (debounced 400ms), so the form survives any kind of
+  // unmount/remount — including navigating away and coming back.
+  const restoredRef = useRef(false);
+  const autosaveTimerRef = useRef(null);
+  useEffect(() => {
+    // Don't auto-save during the initial restore — only after first user touch.
+    if (!restoredRef.current) return;
+    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = setTimeout(() => {
+      try {
+        sessionStorage.setItem("rc_autosave", JSON.stringify({
+          visitType, patient, opd, ipd, dayCare, er, services, bedData, isExisting,
+          ts: Date.now(),
+        }));
+      } catch { /* quota exceeded or private mode — ignore */ }
+    }, 400);
+    return () => autosaveTimerRef.current && clearTimeout(autosaveTimerRef.current);
+  }, [visitType, patient, opd, ipd, dayCare, er, services, bedData, isExisting]);
+
+  /* ─── Restore on mount (sessionStorage takes precedence over manual localStorage draft) ─── */
   useEffect(() => {
     try {
-      const raw = localStorage.getItem("rc_draft");
-      if (!raw) return;
+      // Prefer sessionStorage (auto-saved every change) over localStorage (manual save button)
+      const raw = sessionStorage.getItem("rc_autosave") || localStorage.getItem("rc_draft");
+      if (!raw) { restoredRef.current = true; return; }
       const d = JSON.parse(raw);
-      if (Date.now() - (d.ts || 0) > 24 * 60 * 60 * 1000) return; // ignore older than 24h
+      // Auto-saves expire after 4h, manual drafts after 24h
+      const ageLimit = sessionStorage.getItem("rc_autosave") ? 4 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+      if (Date.now() - (d.ts || 0) > ageLimit) { restoredRef.current = true; return; }
       if (d.visitType)    setVisitType(d.visitType);
       if (d.patient)      setPatient(d.patient);
       if (d.opd)          setOpd(d.opd);
@@ -601,7 +629,16 @@ export default function ReceptionConsole() {
       if (d.bedData)      setBedData(d.bedData);
       if (d.isExisting)   setIsExisting(true);
     } catch { /* ignore */ }
+    // Mark restoration complete on the next tick so auto-save can start.
+    setTimeout(() => { restoredRef.current = true; }, 50);
   }, []);
+
+  /* ─── Clear auto-save when patient is successfully saved ─── */
+  // Called from saveAndProcess after a successful submit. Avoids the next mount
+  // restoring a patient who's already been processed.
+  const clearAutosave = () => {
+    try { sessionStorage.removeItem("rc_autosave"); } catch {}
+  };
 
   /* ─── Load patient by query param (e.g. /reception?patientId=XXX) ─── */
   useEffect(() => {

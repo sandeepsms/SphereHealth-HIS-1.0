@@ -160,7 +160,24 @@
 .rc-tab:hover { transform: translateY(-2px); }
 .rc-tab--active {
   border-color: currentColor;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, .08);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .12);
+  position: relative;
+  /* Subtle tint of the tab's own colour so the active state is unmistakable */
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.6), rgba(255,255,255,.95)),
+    currentColor;
+  background-blend-mode: lighten;
+}
+.rc-tab--active::after {
+  content: "";
+  position: absolute;
+  bottom: -2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 60%;
+  height: 4px;
+  background: currentColor;
+  border-radius: 2px;
 }
 .rc-tab-icon { font-size: 22px; margin-bottom: 4px; display: block; }
 .rc-tab-label {
