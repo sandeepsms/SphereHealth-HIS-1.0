@@ -45,7 +45,8 @@ const AppointmentSchema = new mongoose.Schema(
     cancelReason: String,
 
     // Link to OPD visit (filled when checked-in)
-    opdVisitId: { type: mongoose.Schema.Types.ObjectId, ref: "OPDRegistration" },
+    opdVisitId:     { type: mongoose.Schema.Types.ObjectId, ref: "OPDRegistration" },
+    opdVisitNumber: { type: String }, // denormalised visit number for navigation
   },
   { timestamps: true }
 );

@@ -18,6 +18,8 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "react-toastify";
+import axios from "axios";
+import { API_ENDPOINTS } from "../../config/api";
 import "../../Components/clinical/clinical-forms.css";
 import "./ReceptionConsole.css";
 
@@ -89,6 +91,7 @@ const emptyPatient = {
   knownAllergies: "",
   paymentType: "Cash",
   tpa: null,
+  policyNumber: "", // mandatory when paymentType === "TPA" (backend validation)
   emergencyContact: { name: "", relation: "", phone: "" },
   UHID: "",
 };
@@ -130,6 +133,8 @@ const emptyER = {
   presentingComplaint: "",
   isMLC: false,
   mlcNumber: "",
+  policeStation: "",     // captured for MLC cases (NABH IPC.6)
+  informedPolice: false, // whether police have been informed
   attendingDoctor: "",
   modeOfArrival: "Walk-in",
   broughtBy: "",
@@ -246,9 +251,13 @@ export default function ReceptionConsole() {
         ]);
         const admList = adm?.data || adm || [];
         const opdList = opdToday?.data?.data || opdToday?.data || [];
+        // IPD count = anything that's NOT Day Care or Emergency. Includes
+        // Planned admissions, ward Transfers, re-admissions, and rows with
+        // a missing admissionType (defaults to "Emergency" on the model so
+        // those still show up under ER, which is correct).
         setStats({
           opd:  Array.isArray(opdList) ? opdList.length : 0,
-          ipd:  admList.filter(a => a.admissionType === "Planned").length,
+          ipd:  admList.filter(a => !["Day Care", "Emergency"].includes(a.admissionType)).length,
           dc:   admList.filter(a => a.admissionType === "Day Care").length,
           er:   admList.filter(a => a.admissionType === "Emergency").length,
           svc:  0,    // could be wired to a service-bills count API later
@@ -346,6 +355,7 @@ export default function ReceptionConsole() {
       knownAllergies: Array.isArray(p.knownAllergies) ? p.knownAllergies.join(", ") : (p.knownAllergies || ""),
       paymentType: p.paymentType || "Cash",
       tpa: p.tpa?._id || p.tpa || null,
+      policyNumber: p.policyNumber || "",
       emergencyContact: p.emergencyContact || { name: "", relation: "", phone: "" },
       UHID: p.UHID || "",
     });
@@ -418,10 +428,14 @@ export default function ReceptionConsole() {
     if (!patient.gender)           e.gender   = "Gender required";
     if (!patient.contactNumber || !/^\d{10}$/.test(patient.contactNumber)) e.contactNumber = "Valid 10-digit phone";
     if (!patient.dateOfBirth && !patient.age) e.age = "Age or DOB required";
+    // Backend requires both TPA and policyNumber whenever paymentType === "TPA"
+    if (patient.paymentType === "TPA" && !patient.tpa)          e.tpa          = "TPA provider required";
+    if (patient.paymentType === "TPA" && !patient.policyNumber) e.policyNumber = "Policy number required for TPA";
 
     if (visitType === "OPD") {
-      if (!opd.department) e.department = "Department required";
-      if (!opd.doctor)     e.doctor     = "Doctor required";
+      if (!opd.department)        e.department = "Department required";
+      if (!opd.doctor)            e.doctor     = "Doctor required";
+      if (!opd.chiefComplaint?.trim()) e.complaint = "Chief complaint required";
     } else if (visitType === "IPD") {
       if (!ipd.department)            e.department = "Department required";
       if (!ipd.admittingDoctor)       e.doctor     = "Admitting doctor required";
@@ -434,6 +448,7 @@ export default function ReceptionConsole() {
     } else if (visitType === "Emergency") {
       if (!er.presentingComplaint)    e.complaint = "Presenting complaint required";
       if (!bedData.bedId)             e.bed       = "Emergency bed required";
+      if (!er.attendingDoctor)        e.doctor    = "Attending doctor required";
       if (er.isMLC && !er.mlcNumber)  e.mlc       = "MLC number required";
     } else if (visitType === "Services") {
       if (services.cart.length === 0) e.services  = "Add at least one service";
@@ -452,21 +467,32 @@ export default function ReceptionConsole() {
       let patientId = patient._id;
       let patientUHID = patient.UHID;
 
+      // Resolve the visit's primary dept/doctor so the Patient record
+      // links to one even before the OPD/IPD/ER visit is created.
+      const primaryDept   = opd.department || ipd.department || dayCare.department || null;
+      const primaryDoctor = opd.doctor || ipd.admittingDoctor || dayCare.doctor || er.attendingDoctor || null;
+
       const patientPayload = {
         title:           patient.title,
         fullName:        patient.fullName,
         gender:          patient.gender,
         dateOfBirth:     patient.dateOfBirth || (patient.age ? dobFromAge(patient.age) : undefined),
         age:             patient.age,
-        maritalStatus:   patient.maritalStatus,
+        maritalStatus:   patient.maritalStatus || "",
         contactNumber:   patient.contactNumber,
         email:           patient.email,
         address:         patient.address,
-        bloodGroup:      patient.bloodGroup,
-        knownAllergies:  patient.knownAllergies ? patient.knownAllergies.split(/,\s*/).filter(Boolean) : [],
+        bloodGroup:      patient.bloodGroup || "Unknown",
+        // Allergies: model stores a string; receptionist enters comma-separated.
+        knownAllergies:  patient.knownAllergies || "",
         paymentType:     patient.paymentType,
         tpa:             patient.tpa || null,
+        policyNumber:    patient.policyNumber || undefined,
         emergencyContact:patient.emergencyContact,
+        // Optional but useful when present
+        department:      primaryDept || undefined,
+        doctor:          primaryDoctor || undefined,
+        registrationType: visitType === "Daycare" ? "Daycare" : visitType,
       };
 
       if (isExisting && patientId) {
@@ -479,17 +505,24 @@ export default function ReceptionConsole() {
       }
 
       // ── Step 2: Create the visit/admission/bill based on type ──
+      // Resolve human-readable labels for denormalised storage and receipts
+      const deptLabelFor = (id) => departments.find(d => d.value === id)?.label || "";
+      const docLabelFor  = (id) => doctors.find(d => d.value === id)?.label || "";
+
       let tokenNumber = null; // captured for receipt print
       if (visitType === "OPD") {
         const opdResp = await opdService.createOPDVisit({
           patientId,
           UHID: patientUHID,
           patientName: patient.fullName,
-          department: opd.department,
-          doctorId: opd.doctor,
+          // ObjectId refs + denormalised display strings — match OPDModels schema
+          departmentId:   opd.department,
+          department:     deptLabelFor(opd.department),
+          doctorId:       opd.doctor,
+          consultantName: docLabelFor(opd.doctor),
           visitDate: opd.appointmentDate,
           visitTime: opd.appointmentTime,
-          chiefComplaint: opd.chiefComplaint,
+          chiefComplaint: opd.chiefComplaint || "—",  // required server-side
           consultationFee: Number(opd.consultationFee) || 0,
           hasAppointment: opd.hasAppointment,
           createdBy: user?._id,
@@ -501,14 +534,22 @@ export default function ReceptionConsole() {
       } else if (visitType === "IPD" || visitType === "Daycare" || visitType === "Emergency") {
         const isER = visitType === "Emergency";
         const isDC = visitType === "Daycare";
+        const docIdFor = isER ? er.attendingDoctor : (isDC ? dayCare.doctor : ipd.admittingDoctor);
         const admissionPayload = {
           patientId,
           UHID: patientUHID,
           patientName: patient.fullName,
           admissionType: REG_TO_ADM_TYPE[visitType],
           admissionDate: new Date().toISOString(),
-          department:     isER ? null : (isDC ? dayCare.department : ipd.department),
-          attendingDoctor: isER ? er.attendingDoctor : (isDC ? dayCare.doctor : ipd.admittingDoctor),
+          // Admission model has `department` as a String (display label) plus
+          // a separate departmentId ObjectId. We pass labels for both code-paths
+          // so grouping by department works for ER too.
+          department:   deptLabelFor(isER ? "" : (isDC ? dayCare.department : ipd.department)) || "Emergency",
+          departmentId: isER ? undefined : (isDC ? dayCare.department : ipd.department),
+          // Send BOTH the doctor's name (string field) and the doctor's ObjectId
+          // so doctor-side endpoints (my-patients, team access) actually work.
+          attendingDoctor:   docLabelFor(docIdFor),
+          attendingDoctorId: docIdFor || undefined,
           reasonForAdmission: isER ? er.presentingComplaint :
                               isDC ? dayCare.procedureName :
                               ipd.reasonForAdmission,
@@ -516,7 +557,9 @@ export default function ReceptionConsole() {
           expectedStayDays: isDC ? 0 : (Number(ipd.expectedStayDays) || 0),
           expectedDischargeDate: isDC ? todayDate() : ipd.expectedDischargeDate,
           specialInstructions: isER ? "" : (isDC ? dayCare.specialInstructions : ipd.specialInstructions),
-          advancePayment: isDC || isER ? 0 : (Number(ipd.advancePayment) || 0),
+          // Admission model field is `advancePaid` — sending under the old
+          // name silently dropped every IPD advance the receptionist took.
+          advancePaid:    isDC || isER ? 0 : (Number(ipd.advancePayment) || 0),
           // bed
           bedId:        bedData.bedId,
           bedNumber:    bedData.bedNumber,
@@ -535,44 +578,85 @@ export default function ReceptionConsole() {
         await admissionService.createAdmission(admissionPayload);
 
         // If Emergency, also create the emergency-visit record (parallel)
+        // The Emergency model uses specific enum values + field names; map
+        // our UI fields onto them before posting (without this, the entire
+        // POST 422s with a mongoose ValidationError).
         if (isER) {
+          // Triage UI "Red (P1)" → schema "Critical" etc.
+          const TRIAGE_MAP = {
+            "Red (P1)":    "Critical",
+            "Yellow (P2)": "Emergency",
+            "Green (P3)":  "Urgent",
+            "Blue (P4)":   "Non-urgent",
+          };
+          // Arrival-mode UI label → schema enum (Emergency model only allows
+          // Ambulance/Walk-in/Police/Referred/Other).
+          const ARRIVAL_MAP = {
+            "Ambulance":    "Ambulance",
+            "Walk-in":      "Walk-in",
+            "Walk In":      "Walk-in",
+            "Police":       "Police",
+            "Referred":     "Referred",
+            "Brought Dead": "Other",   // closest enum value; flagged in remarks
+            "Other":        "Other",
+          };
           try {
             await emergencyService.createEmergencyVisit({
               patientId,
               UHID: patientUHID,
-              patientName: patient.fullName,
-              presentingComplaint: er.presentingComplaint,
-              triageCategory: er.triageLevel,
-              emergencyType: er.erType,
-              isMLC: er.isMLC,
-              mlcNumber: er.mlcNumber,
-              modeOfArrival: er.modeOfArrival,
-              broughtBy: er.broughtBy,
-              attendingDoctor: er.attendingDoctor,
+              // Denormalised on the Emergency model so list views work without populate
+              patientName:   patient.fullName,
+              age:           Number(patient.age) || undefined,
+              gender:        patient.gender,
+              contactNumber: patient.contactNumber,
+              presentingComplaints: er.presentingComplaint || "—",
+              triageCategory: TRIAGE_MAP[er.triageLevel] || "Urgent",
+              arrivalMode:    ARRIVAL_MAP[er.modeOfArrival] || "Walk-in",
+              consultantIncharge: docLabelFor(er.attendingDoctor) || "On-call",
+              isMLC:          er.isMLC,
+              mlcNumber:      er.mlcNumber,
+              policeStation:  er.policeStation || "",
+              informedPolice: er.isMLC ? !!er.informedPolice : undefined,
+              attendingDoctorId: er.attendingDoctor,
+              emergencyType:  er.erType,
+              broughtBy:      er.broughtBy,
             });
-          } catch (e) { /* don't block the registration */ }
+          } catch (e) {
+            // Don't block the admission, but surface a warning so the
+            // receptionist knows the ER triage record didn't save.
+            console.error("Emergency-visit creation failed:", e);
+            toast.warning("ER record not created — admission saved but ER queue won't show this patient. " + (e?.response?.data?.message || e?.message || ""));
+          }
         }
         toast.success(`${visitType} registration complete`);
 
       } else if (visitType === "Services") {
-        // Use service-billing endpoint pattern. We post to /service-bills if available,
-        // otherwise create a generic bill record. We'll defer to the existing
-        // PatientBilling component flow by handing off via navigate with state.
-        navigate("/patient-billing", {
-          state: {
-            patientId,
+        // Create the bill server-side and add cart items so the cart isn't lost
+        // when we hand off to the bill page. We hit the existing billing
+        // endpoints (`/billing/create` + `/billing/:id/add-service`) so the
+        // bill draft is fully persisted before navigation.
+        try {
+          const draftRes = await axios.post(`${API_ENDPOINTS.BILLING}/create`, {
             UHID: patientUHID,
-            preloadServices: services.cart.map(c => ({
-              serviceId: c.service._id,
-              serviceName: c.service.serviceName,
-              price: c.service.price,
-              qty: c.qty,
-            })),
-            notes: services.notes,
-            paymentMode: services.paymentMode,
-          },
-        });
-        toast.success(`Services ready — opening bill...`);
+            visitType: "OPD",
+          });
+          const draft = draftRes.data?.data || draftRes.data;
+          if (draft?._id) {
+            for (const c of services.cart) {
+              await axios.post(`${API_ENDPOINTS.BILLING}/${draft._id}/add-service`, {
+                serviceId: c.service._id,
+                quantity:  c.qty || 1,
+                remarks:   services.notes || undefined,
+              });
+            }
+            toast.success("Services bill created — opening payments…");
+            navigate(`/reception-billing/${patientUHID}`);
+          } else {
+            toast.error("Could not create services bill");
+          }
+        } catch (e) {
+          toast.error(e?.response?.data?.message || "Services bill failed");
+        }
         setSaving(false);
         return;
       }
@@ -661,16 +745,33 @@ export default function ReceptionConsole() {
     try { sessionStorage.removeItem("rc_autosave"); } catch {}
   };
 
-  /* ─── Load patient by query param (e.g. /reception?patientId=XXX) ─── */
+  /* ─── Load patient & visit type from query params ───────────
+     Supports:
+       ?patientId=<mongo _id>      → load existing patient by id
+       ?uhid=UH0001                → load existing patient by UHID
+       ?visit=OPD|IPD|Emergency    → preset the visit type (legacy)
+       ?type=OPD|IPD|Emergency     → preset the visit type (new)
+       ?prefill=<search term>      → put the term into the search box
+                                     so the receptionist can find / create
+  */
   useEffect(() => {
-    const pid = searchParams.get("patientId");
-    const visit = searchParams.get("visit");
+    const pid     = searchParams.get("patientId");
+    const uhid    = searchParams.get("uhid");
+    const visit   = searchParams.get("visit") || searchParams.get("type");
+    const prefill = searchParams.get("prefill");
     if (visit && VISIT_TYPES.find(v => v.id === visit)) setVisitType(visit);
-    if (!pid) return;
-    patientService.getPatientById(pid).then(res => {
-      const p = res?.data || res;
-      if (p?._id) selectExistingPatient(p);
-    }).catch(() => { /* ignore */ });
+    if (prefill) setSearchTerm(prefill);
+    if (pid) {
+      patientService.getPatientById(pid).then(res => {
+        const p = res?.data || res;
+        if (p?._id) selectExistingPatient(p);
+      }).catch(() => { /* ignore */ });
+    } else if (uhid) {
+      patientService.getPatientByUHID(uhid).then(res => {
+        const p = res?.data || res;
+        if (p?._id) selectExistingPatient(p);
+      }).catch(() => { /* ignore */ });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
@@ -931,15 +1032,25 @@ export default function ReceptionConsole() {
                     </select>
                   </div>
                   {patient.paymentType !== "Cash" && (
-                    <div className="his-field-group rc-span-2">
-                      <label className="his-label">TPA / Insurance Provider{TPA_MANDATORY(visitType) && <span className="rc-req">*</span>}</label>
-                      <select className={`his-select ${errors.tpa ? "his-field--err" : ""}`} value={patient.tpa || ""}
-                        onChange={e => setP("tpa", e.target.value)}>
-                        <option value="">— Select TPA —</option>
-                        {tpaList.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                      </select>
-                      {errors.tpa && <span className="rc-err">{errors.tpa}</span>}
-                    </div>
+                    <>
+                      <div className="his-field-group">
+                        <label className="his-label">TPA / Insurance Provider{TPA_MANDATORY(visitType) && <span className="rc-req">*</span>}</label>
+                        <select className={`his-select ${errors.tpa ? "his-field--err" : ""}`} value={patient.tpa || ""}
+                          onChange={e => setP("tpa", e.target.value)}>
+                          <option value="">— Select TPA —</option>
+                          {tpaList.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                        </select>
+                        {errors.tpa && <span className="rc-err">{errors.tpa}</span>}
+                      </div>
+                      <div className="his-field-group">
+                        <label className="his-label">Policy Number{patient.paymentType === "TPA" && <span className="rc-req">*</span>}</label>
+                        <input className={`his-field ${errors.policyNumber ? "his-field--err" : ""}`}
+                          value={patient.policyNumber || ""}
+                          onChange={e => setP("policyNumber", e.target.value)}
+                          placeholder="e.g. POL-2026-001234" />
+                        {errors.policyNumber && <span className="rc-err">{errors.policyNumber}</span>}
+                      </div>
+                    </>
                   )}
                 </div>
               </div>
@@ -1207,12 +1318,25 @@ export default function ReceptionConsole() {
                   </label>
                 </div>
                 {er.isMLC && (
-                  <div className="his-field-group">
-                    <label className="his-label">MLC Number<span className="rc-req">*</span></label>
-                    <input className={`his-field ${errors.mlc ? "his-field--err" : ""}`} value={er.mlcNumber}
-                      onChange={e => setEr(p => ({ ...p, mlcNumber: e.target.value }))} placeholder="MLC-YYYY-NNNN" />
-                    {errors.mlc && <span className="rc-err">{errors.mlc}</span>}
-                  </div>
+                  <>
+                    <div className="his-field-group">
+                      <label className="his-label">MLC Number<span className="rc-req">*</span></label>
+                      <input className={`his-field ${errors.mlc ? "his-field--err" : ""}`} value={er.mlcNumber}
+                        onChange={e => setEr(p => ({ ...p, mlcNumber: e.target.value }))} placeholder="MLC-YYYY-NNNN" />
+                      {errors.mlc && <span className="rc-err">{errors.mlc}</span>}
+                    </div>
+                    <div className="his-field-group">
+                      <label className="his-label">Police Station</label>
+                      <input className="his-field" value={er.policeStation}
+                        onChange={e => setEr(p => ({ ...p, policeStation: e.target.value }))}
+                        placeholder="e.g. Sector 5 PS, Faridabad" />
+                    </div>
+                    <label className={`rc-check ${er.informedPolice ? "rc-check--active" : ""}`}>
+                      <input type="checkbox" checked={er.informedPolice}
+                        onChange={e => setEr(p => ({ ...p, informedPolice: e.target.checked }))} />
+                      Police informed
+                    </label>
+                  </>
                 )}
               </div>
             </div>

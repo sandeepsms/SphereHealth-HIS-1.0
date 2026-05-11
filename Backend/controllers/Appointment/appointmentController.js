@@ -1,5 +1,7 @@
 const Appointment = require("../../models/Appointment/appointmentModel");
 const OPDRegistration = require("../../models/Patient/OPDModels");
+const OPDService = require("../../services/Patient/OPDService");
+const Patient = require("../../models/Patient/patientModel");
 
 const handle = (fn) => async (req, res) => {
   try { return await fn(req, res); }
@@ -111,29 +113,66 @@ exports.getSlots = handle(async (req, res) => {
 });
 
 /* POST /api/appointments/:id/check-in
-   Converts a booked appointment to an OPD visit (the patient has arrived). */
+   Converts a booked appointment to an OPD visit (the patient has arrived).
+   Routes through OPDService so the visit gets the bridging Admission record,
+   patient-counter increments, and auto-billing — same as a direct OPD
+   registration through the Reception Console. */
 exports.checkIn = handle(async (req, res) => {
   const apt = await Appointment.findById(req.params.id);
   if (!apt) return res.status(404).json({ success: false, message: "Appointment not found" });
   if (apt.status === "CheckedIn" || apt.status === "Completed")
     return res.status(400).json({ success: false, message: "Appointment already checked in" });
 
-  // Create the OPD visit
-  const visit = await OPDRegistration.create({
+  // The appointment may have been booked over the phone for a brand-new
+  // patient (just name + phone). OPDService requires a real Patient _id —
+  // create a stub Patient record so the check-in doesn't fail.
+  if (!apt.patientId) {
+    const stub = await Patient.create({
+      fullName:        apt.patientName,
+      gender:          "Other",     // unknown at booking time
+      contactNumber:   apt.patientPhone,
+      paymentType:     "Cash",
+      registrationType: "OPD",
+      hasAppointment:  true,
+    });
+    apt.patientId = stub._id;
+    apt.UHID      = stub.UHID;
+  }
+
+  // Resolve dept + doctor display names for denormalisation on the visit.
+  let deptName = "";
+  let doctorName = apt.doctorName || "";
+  try {
+    if (apt.departmentId) {
+      const Dept = require("../../models/Department/department");
+      const d = await Dept.findById(apt.departmentId).lean();
+      deptName = d?.departmentName || d?.name || "";
+    }
+    if (!doctorName && apt.doctorId) {
+      const Doc = require("../../models/Doctor/doctorModel");
+      const doc = await Doc.findById(apt.doctorId).lean();
+      doctorName = doc?.personalInfo?.fullName || doc?.fullName || "";
+    }
+  } catch (e) { /* fallback to blank labels */ }
+
+  // Hand off to OPDService — it generates the visitNumber, creates the
+  // bridging Admission, increments patient counters, and fires auto-billing.
+  const visit = await OPDService.createOPDVisit({
     patientId:        apt.patientId,
-    UHID:             apt.UHID,
-    patientName:      apt.patientName,
+    departmentId:     apt.departmentId,
+    department:       deptName,
     doctorId:         apt.doctorId,
-    department:       apt.departmentId,
+    consultantName:   doctorName,
     visitDate:        new Date(),
-    chiefComplaint:   apt.chiefComplaint,
+    chiefComplaint:   apt.chiefComplaint || "Follow-up",
     consultationFee:  req.body.consultationFee || 0,
     hasAppointment:   true,
   });
 
-  apt.status      = "CheckedIn";
-  apt.checkedInAt = new Date();
-  apt.opdVisitId  = visit._id;
+  apt.status         = "CheckedIn";
+  apt.checkedInAt    = new Date();
+  apt.opdVisitId     = visit._id;
+  apt.opdVisitNumber = visit.visitNumber; // saved for navigation (/opd-details/:visitNumber)
   await apt.save();
 
   return res.json({ success: true, data: { appointment: apt, opdVisit: visit } });

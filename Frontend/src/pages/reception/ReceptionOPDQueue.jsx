@@ -196,8 +196,10 @@ function OPDRow({ v, idx, navigate, reload }) {
         </div>
       </div>
       <div className="rx-card-actions">
+        {/* `/opd/:UHID` opens OPDPrint (receipt) — see App.jsx route */}
         <button className="rx-action-btn"
-                onClick={() => navigate(`/opd/${v.visitNumber}/print`)} title="Print OPD receipt">
+                onClick={() => uhid ? navigate(`/opd/${uhid}`) : toast.warning("No UHID linked")}
+                title="Print OPD receipt" disabled={!uhid}>
           <i className="pi pi-print" /> Receipt
         </button>
         {uhid && (

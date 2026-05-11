@@ -153,7 +153,7 @@ class EmergencyService {
       status: { $in: ["Active", "Under Observation"] },
     })
       .sort({ triageCategory: 1, arrivalDate: 1 })
-      .populate("patientId", "fullName UHID age gender");
+      .populate("patientId", "fullName UHID age gender contactNumber bloodGroup");
   }
 
   async getEmergenciesByTriage(triageCategory) {
@@ -162,7 +162,7 @@ class EmergencyService {
       status: { $in: ["Active", "Under Observation"] },
     })
       .sort({ arrivalDate: 1 })
-      .populate("patientId", "fullName UHID");
+      .populate("patientId", "fullName UHID age gender contactNumber");
   }
 
   async getTodayEmergencies() {
@@ -177,13 +177,13 @@ class EmergencyService {
         $gte: today,
         $lt: tomorrow,
       },
-    }).populate("patientId", "fullName UHID");
+    }).populate("patientId", "fullName UHID age gender contactNumber");
   }
 
   async getMLCCases() {
     return await Emergency.find({ isMLC: true })
       .sort({ arrivalDate: -1 })
-      .populate("patientId", "fullName UHID contactNumber");
+      .populate("patientId", "fullName UHID age gender contactNumber");
   }
 }
 

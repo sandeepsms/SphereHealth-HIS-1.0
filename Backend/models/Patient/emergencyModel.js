@@ -2,8 +2,9 @@ const mongoose = require("mongoose");
 
 const EmergencySchema = new mongoose.Schema(
   {
+    // Proper ObjectId ref so populate works reliably across queries.
     patientId: {
-      type: String,
+      type: mongoose.Schema.Types.ObjectId,
       required: true,
       ref: "Patient",
     },
@@ -11,6 +12,11 @@ const EmergencySchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    // Denormalised so the queue/board can render without populate too
+    patientName: { type: String },
+    age:         { type: Number },
+    gender:      { type: String, enum: ["Male", "Female", "Other"] },
+    contactNumber: { type: String },
     emergencyNumber: {
       type: String,
       unique: true,
@@ -137,9 +143,10 @@ const EmergencySchema = new mongoose.Schema(
       quadriplegia: Boolean,
       details: String,
     },
+    // Filled in by the doctor after examination — not required at intake.
     provisionalDiagnosis: {
       type: String,
-      required: true,
+      default: "",
     },
     finalDiagnosis: String,
     investigationsOrdered: [
@@ -189,6 +196,8 @@ const EmergencySchema = new mongoose.Schema(
       type: String,
       enum: ["Low", "Medium", "High"],
     },
+    // Disposition is decided at the END of the ER stay (doctor sets it).
+    // At intake (receptionist's call) it's not known — so not required.
     disposition: {
       type: String,
       enum: [
@@ -199,8 +208,9 @@ const EmergencySchema = new mongoose.Schema(
         "Absconded",
         "Expired",
         "Observation",
+        "Pending",
       ],
-      required: true,
+      default: "Pending",
     },
     admission: {
       type: mongoose.Schema.Types.ObjectId,

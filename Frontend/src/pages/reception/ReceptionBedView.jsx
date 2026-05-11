@@ -40,17 +40,17 @@ export default function ReceptionBedView() {
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState(null);
 
+  // Always fetch ALL beds so the KPI strip can show the full breakdown.
+  // Filtering by status happens client-side in `grouped`.
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (statusFilter) params.set("status", statusFilter);
-      const { data } = await axios.get(`${API_ENDPOINTS.BEDS}?${params}`);
+      const { data } = await axios.get(`${API_ENDPOINTS.BEDS}`);
       setBeds(data?.data || data || []);
     } catch (e) {
       toast.error("Could not load beds");
     } finally { setLoading(false); }
-  }, [statusFilter]);
+  }, []);
 
   useEffect(() => { load(); }, [load]);
 
@@ -71,6 +71,8 @@ export default function ReceptionBedView() {
   const occupancy = counts.total ? Math.round((counts.Occupied / counts.total) * 100) : 0;
 
   // Group: Building → Floor → Ward → beds
+  // bedsModel stores denormalised buildingName/floorNumber/wardName/roomNumber,
+  // so we read those directly rather than relying on populate.
   const grouped = useMemo(() => {
     const s = search.trim().toLowerCase();
     const tree = {}; // building → floor → ward → []
@@ -82,13 +84,13 @@ export default function ReceptionBedView() {
         const hay = `${b.bedNumber} ${patientName} ${patientUHID}`.toLowerCase();
         if (!hay.includes(s)) return;
       }
-      const bldg = b.building?.buildingName || b.building?.name || "Main Building";
-      const flr  = b.floor?.floorNumber != null ? `Floor ${b.floor.floorNumber}` : (b.floor?.name || "Ground Floor");
-      const ward = b.ward?.wardName || b.ward?.name || "—";
-      const key1 = bldg, key2 = flr, key3 = ward;
-      (tree[key1] ||= {});
-      (tree[key1][key2] ||= {});
-      (tree[key1][key2][key3] ||= []).push(b);
+      const bldg = b.buildingName || b.building?.buildingName || b.building?.name || "Main Building";
+      const flrNum = b.floorNumber ?? b.floor?.floorNumber;
+      const flr  = flrNum != null && flrNum !== "" ? `Floor ${flrNum}` : (b.floor?.name || "Ground Floor");
+      const ward = b.wardName || b.ward?.wardName || b.ward?.name || "—";
+      (tree[bldg] ||= {});
+      (tree[bldg][flr] ||= {});
+      (tree[bldg][flr][ward] ||= []).push(b);
     });
     return tree;
   }, [beds, statusFilter, search]);
@@ -233,10 +235,10 @@ function BedDetailModal({ bed, onClose, navigate }) {
         </div>
         <div className="rx-modal-body">
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, fontSize: 12 }}>
-            <div>Building: <strong>{bed.building?.buildingName || bed.building?.name || "—"}</strong></div>
-            <div>Floor: <strong>{bed.floor?.floorNumber ?? "—"}</strong></div>
-            <div>Ward: <strong>{bed.ward?.wardName || bed.ward?.name || "—"}</strong></div>
-            <div>Room: <strong>{bed.room?.roomNumber || bed.room?.name || "—"}</strong></div>
+            <div>Building: <strong>{bed.buildingName || bed.building?.buildingName || bed.building?.name || "—"}</strong></div>
+            <div>Floor: <strong>{bed.floorNumber ?? bed.floor?.floorNumber ?? "—"}</strong></div>
+            <div>Ward: <strong>{bed.wardName || bed.ward?.wardName || bed.ward?.name || "—"}</strong></div>
+            <div>Room: <strong>{bed.roomNumber || bed.room?.roomNumber || bed.room?.name || "—"}</strong></div>
             {bed.category && <div>Category: <strong>{bed.category}</strong></div>}
           </div>
 

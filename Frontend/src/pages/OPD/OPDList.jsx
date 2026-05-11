@@ -121,17 +121,24 @@ const OPDList = () => {
           rounded
           outlined
           className="p-button-sm"
-          onClick={() => navigate(`/opd/${rowData.visitNumber}`)}
+          onClick={() => navigate(`/opd-details/${rowData.visitNumber}`)}
           tooltip="View Details"
         />
+        {/*
+          OPD visit edit is not supported through the receptionist console
+          (visits are clinical records — edits happen via the doctor's notes
+          UI). Route the button to the details view so users have a
+          consistent landing instead of being dumped on the registration
+          form. If a dedicated editor is added later, switch this back.
+        */}
         <Button
-          icon="pi pi-pencil"
+          icon="pi pi-eye"
           rounded
           outlined
           severity="info"
           className="p-button-sm"
-          onClick={() => navigate(`/opd/edit/${rowData.visitNumber}`)}
-          tooltip="Edit"
+          onClick={() => navigate(`/opd-details/${rowData.visitNumber}`)}
+          tooltip="Open Visit"
         />
       </div>
     );

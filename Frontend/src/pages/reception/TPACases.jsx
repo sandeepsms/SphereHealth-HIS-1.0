@@ -1,7 +1,8 @@
 /**
  * TPACases.jsx — Insurance / TPA workflow for receptionist
  *
- * Stages: PENDING (no submission yet) → SUBMITTED → APPROVED / DENIED → SETTLED
+ * Stages match PatientBillModel.tpaClaimStatus enum:
+ *   PENDING (incl. NOT_APPLICABLE) → SUBMITTED → APPROVED / PARTIAL_APPROVED / REJECTED
  */
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
@@ -14,7 +15,24 @@ import "../../Components/clinical/clinical-forms.css";
 const fmtCur = (n) => `₹${(Number(n) || 0).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 
-const STATUSES = ["PENDING", "SUBMITTED", "APPROVED", "DENIED", "SETTLED"];
+// The PatientBill.tpaClaimStatus enum is:
+//   NOT_APPLICABLE | PENDING | SUBMITTED | APPROVED | REJECTED | PARTIAL_APPROVED
+// We use these values verbatim in the filter; the UI labels normalise display.
+const STATUSES = ["PENDING", "SUBMITTED", "APPROVED", "PARTIAL_APPROVED", "REJECTED"];
+const STATUS_LABEL = {
+  PENDING:          "Pending",
+  SUBMITTED:        "Submitted",
+  APPROVED:         "Approved",
+  PARTIAL_APPROVED: "Partial",
+  REJECTED:         "Denied",
+};
+const STATUS_CLASS = {
+  PENDING:          "pending",
+  SUBMITTED:        "submitted",
+  APPROVED:         "approved",
+  PARTIAL_APPROVED: "submitted",
+  REJECTED:         "denied",
+};
 
 export default function TPACases() {
   const navigate = useNavigate();
@@ -35,8 +53,12 @@ export default function TPACases() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
+  // Treat NOT_APPLICABLE and missing status as "PENDING" so brand-new TPA bills
+  // show up in the receptionist's queue.
+  const normaliseStatus = (s) => (!s || s === "NOT_APPLICABLE") ? "PENDING" : s;
+
   const filtered = useMemo(() => {
-    let r = list.filter(b => (b.tpaClaimStatus || "PENDING") === tab);
+    let r = list.filter(b => normaliseStatus(b.tpaClaimStatus) === tab);
     const s = search.trim().toLowerCase();
     if (s) r = r.filter(b =>
       (b.patientName || "").toLowerCase().includes(s) ||
@@ -48,7 +70,7 @@ export default function TPACases() {
   }, [list, tab, search]);
 
   const counts = STATUSES.reduce((acc, s) => {
-    acc[s] = list.filter(b => (b.tpaClaimStatus || "PENDING") === s).length;
+    acc[s] = list.filter(b => normaliseStatus(b.tpaClaimStatus) === s).length;
     return acc;
   }, {});
 
@@ -70,7 +92,7 @@ export default function TPACases() {
       <div className="rx-tabs">
         {STATUSES.map(s => (
           <button key={s} className={`rx-tab ${tab === s ? "rx-tab--active" : ""}`} onClick={() => setTab(s)}>
-            {s} <span className="rx-tab-count">{counts[s] || 0}</span>
+            {STATUS_LABEL[s] || s} <span className="rx-tab-count">{counts[s] || 0}</span>
           </button>
         ))}
       </div>
@@ -88,29 +110,29 @@ export default function TPACases() {
           No {tab.toLowerCase()} TPA cases
         </div>
       ) : filtered.map(bill => {
-        const cls = bill.tpaClaimStatus === "APPROVED" ? "approved" :
-                    bill.tpaClaimStatus === "DENIED"   ? "denied" :
-                    bill.tpaClaimStatus === "SUBMITTED"? "submitted" :
-                    bill.tpaClaimStatus === "SETTLED"  ? "done" : "pending";
+        const cls = STATUS_CLASS[bill.tpaClaimStatus] || "pending";
+        const patientName = bill.patientName || bill.patient?.fullName || "Patient";
+        const uhid        = bill.UHID || bill.patient?.UHID || "—";
+        const grossAmt    = bill.netAmount || bill.netPayable || bill.totalAmount || 0;
         return (
           <div key={bill._id} className="rx-card">
             <div className="rx-card-main">
               <div className="rx-card-name">
-                {bill.patientName || "Patient"}
-                <span className={`rx-card-stage rx-card-stage--${cls}`}>{bill.tpaClaimStatus || "PENDING"}</span>
+                {patientName}
+                <span className={`rx-card-stage rx-card-stage--${cls}`}>{STATUS_LABEL[bill.tpaClaimStatus] || bill.tpaClaimStatus || "Pending"}</span>
               </div>
               <div className="rx-card-meta">
-                <span>UHID: <strong>{bill.UHID}</strong></span>
+                <span>UHID: <strong>{uhid}</strong></span>
                 <span>Bill: <strong>{bill.billNumber || "—"}</strong></span>
                 <span>TPA: <strong>{bill.tpa?.tpaName || bill.tpaName || "—"}</strong></span>
                 {bill.tpaClaimNumber && <span>Claim #: <strong>{bill.tpaClaimNumber}</strong></span>}
-                <span>Gross: <strong>{fmtCur(bill.netPayable || bill.totalAmount)}</strong></span>
+                <span>Gross: <strong>{fmtCur(grossAmt)}</strong></span>
                 <span>TPA portion: <strong>{fmtCur(bill.tpaPayableAmount)}</strong></span>
                 {bill.tpaApprovedAmount > 0 && <span style={{ color:"#15803d" }}>Approved: <strong>{fmtCur(bill.tpaApprovedAmount)}</strong></span>}
               </div>
             </div>
             <div className="rx-card-actions">
-              {(!bill.tpaClaimStatus || bill.tpaClaimStatus === "PENDING") && (
+              {(!bill.tpaClaimStatus || bill.tpaClaimStatus === "PENDING" || bill.tpaClaimStatus === "NOT_APPLICABLE") && (
                 <button className="rx-action-btn rx-action-btn--primary"
                         onClick={() => { setActionBill(bill); setActionType("submit"); }}>
                   <i className="pi pi-send" /> Submit Pre-Auth

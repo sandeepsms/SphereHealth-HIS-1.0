@@ -50,10 +50,27 @@ export default function ReceptionVisitHistory() {
         axios.get(`${API_ENDPOINTS.BILLING}/uhid/${uhidArg}`),
         axios.get(`${API_ENDPOINTS.ADMISSIONS}?patientId=${p._id}`),
       ]);
-      if (opdRes.status === "fulfilled") setOpdList(opdRes.value.data?.data || opdRes.value.data || []);
-      if (erRes.status  === "fulfilled") setErList(erRes.value.data?.data  || erRes.value.data  || []);
-      if (billRes.status === "fulfilled") setBills(billRes.value.data?.bills || billRes.value.data?.data?.bills || []);
-      if (admRes.status === "fulfilled") setAdmList(admRes.value.data?.data || admRes.value.data || []);
+      const asArr = (v) => Array.isArray(v) ? v : [];
+      if (opdRes.status === "fulfilled") {
+        const d = opdRes.value.data;
+        setOpdList(asArr(d?.data) || asArr(d));
+      }
+      if (erRes.status === "fulfilled") {
+        const d = erRes.value.data;
+        setErList(asArr(d?.data) || asArr(d));
+      }
+      if (billRes.status === "fulfilled") {
+        const d = billRes.value.data;
+        setBills(asArr(d?.bills) || asArr(d?.data?.bills));
+      }
+      // admissions endpoint returns { success, admissions, pagination }
+      if (admRes.status === "fulfilled") {
+        const ad = admRes.value.data;
+        const arr = Array.isArray(ad?.admissions) ? ad.admissions
+                  : Array.isArray(ad?.data)       ? ad.data
+                  : Array.isArray(ad)             ? ad : [];
+        setAdmList(arr);
+      }
     } catch (e) {
       toast.error("Failed to load patient history");
     } finally { setLoading(false); }

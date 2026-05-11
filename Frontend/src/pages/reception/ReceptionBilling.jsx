@@ -35,7 +35,9 @@ const STATUS_CLASS = {
   REFUNDED:  "expired",
 };
 
-const PAYMENT_MODES = ["CASH", "UPI", "CARD", "CHEQUE", "ONLINE"];
+// Matches PaymentSchema.paymentMode enum on the backend. TPA_CLAIM is used
+// when the TPA reimbursement settles a previously-pending share of a bill.
+const PAYMENT_MODES = ["CASH", "UPI", "CARD", "CHEQUE", "ONLINE", "TPA_CLAIM"];
 
 export default function ReceptionBilling() {
   const { uhid: paramUhid } = useParams();
@@ -47,6 +49,8 @@ export default function ReceptionBilling() {
   const [activeBill, setActiveBill] = useState(null); // full bill detail
   const [billLoading, setBillLoading] = useState(false);
   const [payTarget, setPayTarget] = useState(null);
+  const [refundTarget, setRefundTarget] = useState(null);
+  const [cancelTarget, setCancelTarget] = useState(null);
   const [todayCollection, setTodayCollection] = useState(null);
 
   const load = useCallback(async (uhidArg) => {
@@ -67,10 +71,11 @@ export default function ReceptionBilling() {
 
   useEffect(() => { if (paramUhid) load(paramUhid); }, [paramUhid, load]);
 
-  // Today's collection summary — small live tile
+  // Today's collection summary — small live tile.
+  // Response shape: { success, date, summary: { totalCollected, totalGross, ... } }
   useEffect(() => {
     axios.get(`${API_ENDPOINTS.BILLING}/collection-summary?date=${new Date().toISOString().slice(0, 10)}`)
-      .then(({ data }) => setTodayCollection(data?.data || data))
+      .then(({ data }) => setTodayCollection(data?.summary || data?.data?.summary || null))
       .catch(() => {});
   }, []);
 
@@ -123,7 +128,7 @@ export default function ReceptionBilling() {
           <div className="rx-header-title"><i className="pi pi-receipt" /> Billing & Payments</div>
           <div className="rx-header-meta">
             Patient bills · Cash / UPI / Card collection · Receipt printing
-            {todayCollection?.total != null && <> · Today: <strong style={{ color: "#86efac" }}>{fmtCur(todayCollection.total)}</strong></>}
+            {todayCollection?.totalCollected != null && <> · Today: <strong style={{ color: "#86efac" }}>{fmtCur(todayCollection.totalCollected)}</strong></>}
           </div>
         </div>
         <div className="rx-header-actions">
@@ -254,6 +259,8 @@ export default function ReceptionBilling() {
                   onGenerate={() => generateBill(activeBill._id)}
                   onPay={() => setPayTarget(activeBill)}
                   onPrint={() => printReceipt(activeBill)}
+                  onRefund={() => setRefundTarget(activeBill)}
+                  onCancel={() => setCancelTarget(activeBill)}
                 />
               )}
             </div>
@@ -273,17 +280,46 @@ export default function ReceptionBilling() {
           }}
         />
       )}
+
+      {refundTarget && (
+        <RefundModal
+          bill={refundTarget}
+          onClose={() => setRefundTarget(null)}
+          onDone={async () => {
+            const id = refundTarget._id;
+            setRefundTarget(null);
+            await load(uhid);
+            await loadBill(id);
+          }}
+        />
+      )}
+
+      {cancelTarget && (
+        <CancelBillModal
+          bill={cancelTarget}
+          onClose={() => setCancelTarget(null)}
+          onDone={async () => {
+            const id = cancelTarget._id;
+            setCancelTarget(null);
+            await load(uhid);
+            await loadBill(id);
+          }}
+        />
+      )}
     </div>
   );
 }
 
 /* ───────────────────────────────────────────────────────────── */
 
-function BillDetail({ bill, onGenerate, onPay, onPrint }) {
-  const isDraft  = bill.billStatus === "DRAFT";
-  const canPay   = ["GENERATED", "PARTIAL"].includes(bill.billStatus);
-  const items = bill.billItems || [];
-  const payments = bill.payments || [];
+function BillDetail({ bill, onGenerate, onPay, onPrint, onRefund, onCancel }) {
+  const isDraft   = bill.billStatus === "DRAFT";
+  const canPay    = ["GENERATED", "PARTIAL"].includes(bill.billStatus);
+  const items     = bill.billItems || [];
+  const payments  = bill.payments || [];
+  const paidTotal = payments.reduce((s, p) => s + (p.amount || 0), 0);
+  const canRefund = paidTotal > 0 && bill.billStatus !== "CANCELLED";
+  const canCancel = !isDraft && paidTotal <= 0 && !["CANCELLED", "REFUNDED"].includes(bill.billStatus);
 
   return (
     <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12 }}>
@@ -309,6 +345,16 @@ function BillDetail({ bill, onGenerate, onPay, onPrint }) {
         {!isDraft && (
           <button className="rx-action-btn" onClick={onPrint}>
             <i className="pi pi-print" /> Print
+          </button>
+        )}
+        {canRefund && (
+          <button className="rx-action-btn rx-action-btn--danger" onClick={onRefund} title="Refund a payment">
+            <i className="pi pi-undo" /> Refund
+          </button>
+        )}
+        {canCancel && (
+          <button className="rx-action-btn" onClick={onCancel} title="Cancel this bill (only when nothing collected)">
+            <i className="pi pi-ban" /> Cancel
           </button>
         )}
       </div>
@@ -496,6 +542,151 @@ function PaymentModal({ bill, onClose, onDone }) {
 }
 
 /* ───────────────────────────────────────────────────────────── */
+
+function RefundModal({ bill, onClose, onDone }) {
+  const paid = (bill.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
+  const [amount, setAmount] = useState(paid);
+  const [mode, setMode] = useState("CASH");
+  const [reason, setReason] = useState("");
+  const [refundedBy, setRefundedBy] = useState("");
+  const [txnId, setTxnId] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    const amt = Number(amount);
+    if (!amt || amt <= 0) return toast.error("Enter a refund amount");
+    if (amt > paid + 0.5) return toast.error(`Cannot refund more than collected (${fmtCur(paid)})`);
+    if (!reason.trim()) return toast.error("Refund reason is mandatory for audit");
+    setSaving(true);
+    try {
+      await axios.post(`${API_ENDPOINTS.BILLING}/${bill._id}/refund`, {
+        amount: amt, mode, reason: reason.trim(),
+        refundedBy: refundedBy || undefined,
+        transactionId: txnId || undefined,
+      });
+      toast.success(`Refund ${fmtCur(amt)} recorded`);
+      onDone();
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Refund failed");
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div className="rx-modal-backdrop" onClick={onClose}>
+      <div className="rx-modal" onClick={e => e.stopPropagation()}>
+        <div className="rx-modal-head" style={{ background: "linear-gradient(135deg,#7f1d1d,#dc2626)" }}>
+          <i className="pi pi-undo" />
+          <span className="rx-modal-title">Refund — {bill.billNumber}</span>
+          <button className="rx-modal-close" onClick={onClose}>×</button>
+        </div>
+        <div className="rx-modal-body">
+          <div style={{ background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#b91c1c" }}>
+            ⚠ Already collected: <strong>{fmtCur(paid)}</strong> · Refunds are permanently logged for NABH audit.
+          </div>
+
+          <div className="his-field-group">
+            <label className="his-label">Refund Amount (₹) *</label>
+            <input className="his-field" type="number" min="0" step="0.01"
+                   value={amount} onChange={e => setAmount(e.target.value)} autoFocus />
+          </div>
+
+          <div className="his-field-group">
+            <label className="his-label">Refund Mode</label>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6 }}>
+              {PAYMENT_MODES.map(m => (
+                <button key={m} type="button"
+                        className={`rx-slot ${mode === m ? "rx-slot--selected" : ""}`}
+                        onClick={() => setMode(m)}>{m}</button>
+              ))}
+            </div>
+          </div>
+
+          <div className="his-field-group">
+            <label className="his-label">Reason *</label>
+            <textarea className="his-textarea" rows={3} value={reason} onChange={e => setReason(e.target.value)}
+                      placeholder="e.g. Service not rendered, duplicate charge, patient complaint…" />
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div className="his-field-group">
+              <label className="his-label">Refunded By</label>
+              <input className="his-field" value={refundedBy} onChange={e => setRefundedBy(e.target.value)} placeholder="Reception staff name" />
+            </div>
+            {mode !== "CASH" && (
+              <div className="his-field-group">
+                <label className="his-label">{mode === "UPI" ? "UPI Reference" : mode === "CHEQUE" ? "Cheque #" : "Transaction ID"}</label>
+                <input className="his-field" value={txnId} onChange={e => setTxnId(e.target.value)} />
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="rx-modal-foot">
+          <button className="rx-modal-btn-cancel" onClick={onClose}>Keep Payment</button>
+          <button className="rx-modal-btn-primary" onClick={submit} disabled={saving}
+                  style={{ background: "linear-gradient(135deg,#7f1d1d,#dc2626)" }}>
+            <i className={`pi ${saving ? "pi-spin pi-spinner" : "pi-undo"}`} /> Confirm Refund
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CancelBillModal({ bill, onClose, onDone }) {
+  const [reason, setReason] = useState("");
+  const [cancelledBy, setCancelledBy] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    if (!reason.trim()) return toast.error("Cancellation reason is mandatory");
+    setSaving(true);
+    try {
+      await axios.post(`${API_ENDPOINTS.BILLING}/${bill._id}/cancel`, {
+        reason: reason.trim(),
+        cancelledBy: cancelledBy || undefined,
+      });
+      toast.success("Bill cancelled");
+      onDone();
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Cancel failed");
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div className="rx-modal-backdrop" onClick={onClose}>
+      <div className="rx-modal" onClick={e => e.stopPropagation()}>
+        <div className="rx-modal-head" style={{ background: "linear-gradient(135deg,#374151,#6b7280)" }}>
+          <i className="pi pi-ban" />
+          <span className="rx-modal-title">Cancel Bill — {bill.billNumber}</span>
+          <button className="rx-modal-close" onClick={onClose}>×</button>
+        </div>
+        <div className="rx-modal-body">
+          <div style={{ background: "#f3f4f6", border: "1px solid #d1d5db", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#374151" }}>
+            ⚠ Cancellation is permanent. Only allowed when no payment has been collected. For collected bills, issue a refund instead.
+          </div>
+          <div className="his-field-group">
+            <label className="his-label">Cancellation Reason *</label>
+            <textarea className="his-textarea" rows={3} value={reason} onChange={e => setReason(e.target.value)}
+                      placeholder="e.g. Duplicate bill, wrong patient, services not rendered" />
+          </div>
+          <div className="his-field-group">
+            <label className="his-label">Cancelled By</label>
+            <input className="his-field" value={cancelledBy} onChange={e => setCancelledBy(e.target.value)} placeholder="Reception staff name" />
+          </div>
+        </div>
+        <div className="rx-modal-foot">
+          <button className="rx-modal-btn-cancel" onClick={onClose}>Keep Bill</button>
+          <button className="rx-modal-btn-primary" onClick={submit} disabled={saving}
+                  style={{ background: "linear-gradient(135deg,#374151,#6b7280)" }}>
+            <i className={`pi ${saving ? "pi-spin pi-spinner" : "pi-ban"}`} /> Confirm Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ───────────────────────────────────────────────────────────── */
 /* Print receipt — opens a simple printable window                */
 
 function receiptHTML(bill, patient) {
@@ -510,7 +701,7 @@ function receiptHTML(bill, patient) {
   const payments = (bill.payments || []).map(p => `
     <tr>
       <td>${fmtDateTime(p.paidAt)}</td>
-      <td>${p.paymentMode}</td>
+      <td>${escapeHtml(p.paymentMode || "")}</td>
       <td>${escapeHtml(p.transactionId || "—")}</td>
       <td style="text-align:right">${fmtCur(p.amount)}</td>
     </tr>`).join("");
@@ -540,7 +731,7 @@ function receiptHTML(bill, patient) {
       </div>
       <div style="text-align:right">
         <strong>Bill #:</strong> ${escapeHtml(bill.billNumber || "—")}<br>
-        <strong>Status:</strong> <span class="pill">${bill.billStatus}</span><br>
+        <strong>Status:</strong> <span class="pill">${escapeHtml(bill.billStatus || "")}</span><br>
         <strong>Date:</strong> ${fmtDate(bill.createdAt)}<br>
         <strong>Type:</strong> ${escapeHtml(bill.visitType || "OPD")}
       </div>

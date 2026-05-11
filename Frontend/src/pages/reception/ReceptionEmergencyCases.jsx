@@ -167,11 +167,14 @@ export default function ReceptionEmergencyCases() {
 /* ───────────────────────────────────────────────────────────── */
 
 function EmergencyRow({ e, navigate }) {
-  const name = e.patientId?.fullName || e.patientName || "Unknown Patient";
-  const uhid = e.patientId?.UHID || e.UHID;
-  const age = e.patientId?.age;
-  const gender = e.patientId?.gender;
-  const phone = e.patientId?.contactNumber || e.contactNumber;
+  // Prefer populated patient (latest values), fall back to denormalised
+  // fields on the Emergency record itself so the row still renders even
+  // when the populate didn't run.
+  const name   = e.patientId?.fullName     || e.patientName || "Unknown Patient";
+  const uhid   = e.patientId?.UHID         || e.UHID;
+  const age    = e.patientId?.age          ?? e.age;
+  const gender = e.patientId?.gender       || e.gender;
+  const phone  = e.patientId?.contactNumber || e.contactNumber;
   const triageClass = TRIAGE_CLASS[e.triageCategory] || "urgent";
   const vitals = e.vitals || {};
   const gcs = e.triage?.glasgowComaScale;

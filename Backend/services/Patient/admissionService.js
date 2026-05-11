@@ -114,7 +114,8 @@ class AdmissionService {
           "0000000000",
         email: patient.email || "",
         ...bedData,
-        department: data.department || "",
+        department:   data.department || "",
+        departmentId: data.departmentId || undefined,
         admissionDate: data.admissionDate
           ? new Date(data.admissionDate)
           : new Date(),
@@ -122,10 +123,22 @@ class AdmissionService {
           ? new Date(data.expectedDischargeDate)
           : undefined,
         reasonForAdmission: data.reasonForAdmission || "",
+        provisionalDiagnosis: data.provisionalDiagnosis || "",
+        specialInstructions:  data.specialInstructions || "",
+        expectedStayDays:     Number(data.expectedStayDays) || 0,
         admissionType: data.admissionType || "Emergency",
-        attendingDoctor: data.attendingDoctor || "",
+        attendingDoctor:   data.attendingDoctor || "",
+        // ref to the doctor's User _id — drives IPD file access control
+        attendingDoctorId: data.attendingDoctorId || undefined,
         estimatedCost: Number(data.estimatedCost) || 0,
         advancePaid: Number(data.advancePaid) || 0,
+        // ER-specific clinical context captured at intake
+        isMLC:         data.isMLC || false,
+        mlcNumber:     data.mlcNumber || "",
+        triageLevel:   data.triageLevel || "",
+        erType:        data.erType || "",
+        modeOfArrival: data.modeOfArrival || "",
+        broughtBy:     data.broughtBy || "",
         status: "Active",
       });
     } catch (err) {

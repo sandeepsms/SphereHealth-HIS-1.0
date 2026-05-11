@@ -109,6 +109,17 @@ const AdmissionSchema = new mongoose.Schema(
     expectedDischargeDate: Date,
 
     reasonForAdmission: { type: String, default: "" }, // ✅ No longer required
+    // Free-text clinical context captured at admission
+    provisionalDiagnosis: { type: String, default: "" },
+    specialInstructions:  { type: String, default: "" },
+    expectedStayDays:     { type: Number, default: 0 },
+    // ER-specific intake fields (only set when admissionType === Emergency)
+    isMLC:         { type: Boolean, default: false },
+    mlcNumber:     { type: String, default: "" },
+    triageLevel:   { type: String, default: "" },
+    erType:        { type: String, default: "" },
+    modeOfArrival: { type: String, default: "" },
+    broughtBy:     { type: String, default: "" },
 
     admissionType: {
       type: String,

@@ -133,15 +133,12 @@ exports.searchPatients = async (req, res) => {
   label: `${p.fullName} | ${p.UHID} | ${p.contactNumber}`,
   value: p._id,
 }));
-console.log("FORMATTED", JSON.stringify(formatted, null, 2));
 
     res.status(200).json({
       success: true,
       data: formatted,
       count: formatted.length,
-      
     });
-    console.log("dddddddddddddd",data);
   } catch (error) {
     res.status(500).json({ success: false, message: error.message, data: [] });
   }

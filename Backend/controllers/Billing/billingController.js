@@ -326,9 +326,12 @@ exports.getTPACases = async (req, res, next) => {
     }
     const list = await PatientBill.find(filter)
       .populate("tpa", "tpaName tpaCode")
+      .populate("patient", "fullName UHID contactNumber")
       .sort({ updatedAt: -1 })
       .limit(500)
       .lean();
+    // Denormalise patientName for the UI so the row labels are filled in.
+    list.forEach(b => { if (!b.patientName) b.patientName = b.patient?.fullName || ""; });
     res.json({ success: true, count: list.length, data: list });
   } catch (e) { next(e); }
 };
@@ -363,14 +366,97 @@ exports.tpaApprove = async (req, res, next) => {
   } catch (e) { next(e); }
 };
 
+// POST /api/billing/:billId/refund
+//   Body: { amount, reason, mode?, refundedBy?, transactionId? }
+// Records a refund payment row (negative amount) on the bill, recalculates
+// balance, and flips status to REFUNDED if the full amount was refunded.
+// Cannot refund more than what's already been paid.
+exports.refundPayment = async (req, res, next) => {
+  try {
+    const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+    const bill = await PatientBill.findById(req.params.billId);
+    if (!bill) return res.status(404).json({ success: false, message: "Bill not found" });
+
+    const amt = Number(req.body.amount);
+    if (!amt || amt <= 0) {
+      return res.status(400).json({ success: false, message: "Refund amount must be greater than zero" });
+    }
+    const paid = (bill.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
+    if (amt > paid + 0.5) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot refund ₹${amt} — only ₹${paid} has been collected on this bill`,
+      });
+    }
+    if (!req.body.reason || !String(req.body.reason).trim()) {
+      return res.status(400).json({ success: false, message: "Refund reason is required for audit trail" });
+    }
+
+    // Allowed payment modes (must match PaymentSchema enum exactly)
+    const ALLOWED = ["CASH", "CARD", "UPI", "CHEQUE", "ONLINE", "TPA_CLAIM"];
+    const reqMode = String(req.body.mode || "CASH").toUpperCase();
+    const mode = ALLOWED.includes(reqMode) ? reqMode : "CASH";
+
+    bill.payments.push({
+      amount:        -amt, // negative entry = refund
+      paymentMode:   mode,
+      transactionId: req.body.transactionId,
+      receivedBy:    req.body.refundedBy || "Reception",
+      remarks:       `REFUND: ${req.body.reason}`,
+    });
+
+    // Status: fully refunded → REFUNDED, partial refund of a PAID bill → PARTIAL.
+    // (advancePaid / balanceAmount are recomputed in the pre-save hook based on
+    // billStatus, so we just set the status here.)
+    const newPaid = paid - amt;
+    if (newPaid <= 0.5) {
+      bill.billStatus = "REFUNDED";
+    } else if (bill.billStatus === "PAID") {
+      bill.billStatus = "PARTIAL";
+    }
+    bill.remarks = (bill.remarks || "") + ` | Refund ₹${amt}: ${req.body.reason}`;
+    await bill.save();
+    return res.json({ success: true, data: bill });
+  } catch (e) { next(e); }
+};
+
+// POST /api/billing/:billId/cancel-bill
+//   Body: { reason, cancelledBy }
+// Marks a bill as CANCELLED. Only allowed when no payments have been made.
+exports.cancelBill = async (req, res, next) => {
+  try {
+    const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+    const bill = await PatientBill.findById(req.params.billId);
+    if (!bill) return res.status(404).json({ success: false, message: "Bill not found" });
+    const paid = (bill.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
+    if (paid > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot cancel — ₹${paid} already collected. Issue a refund first.`,
+      });
+    }
+    if (!req.body.reason || !String(req.body.reason).trim()) {
+      return res.status(400).json({ success: false, message: "Cancellation reason is required" });
+    }
+    bill.billStatus = "CANCELLED";
+    bill.remarks = (bill.remarks || "") + ` | Cancelled: ${req.body.reason} (by ${req.body.cancelledBy || "Reception"})`;
+    await bill.save();
+    return res.json({ success: true, data: bill });
+  } catch (e) { next(e); }
+};
+
 // POST /api/billing/:billId/tpa-deny  Body: { reason }
+// NOTE: the bill schema's tpaClaimStatus enum is
+// [NOT_APPLICABLE, PENDING, SUBMITTED, APPROVED, REJECTED, PARTIAL_APPROVED]
+// — there is no "DENIED" value. Map UI "Deny" → "REJECTED".
 exports.tpaDeny = async (req, res, next) => {
   try {
     const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
     const bill = await PatientBill.findById(req.params.billId);
     if (!bill) return res.status(404).json({ success: false, message: "Bill not found" });
-    bill.tpaClaimStatus = "DENIED";
+    bill.tpaClaimStatus = "REJECTED";
     bill.tpaApprovedAmount = 0;
+    if (req.body.reason) bill.remarks = `TPA Denied: ${req.body.reason}`;
     await bill.save();
     res.json({ success: true, data: bill });
   } catch (e) { next(e); }
@@ -415,8 +501,11 @@ exports.getCollectionSummary = async (req, res, next) => {
     const byReceptionist = {};
 
     for (const b of bills) {
-      const paid    = Number(b.totalPaid || b.amountPaid || 0);
-      const gross   = Number(b.netPayable || b.grossAmount || b.totalAmount || 0);
+      // PatientBillModel exposes paid as `advancePaid` (the pre-save hook
+      // sums the payments[] array). Older bills used `totalPaid`/`amountPaid`
+      // — keep them as fallbacks for compatibility.
+      const paid    = Number(b.advancePaid ?? b.totalPaid ?? b.amountPaid ?? 0);
+      const gross   = Number(b.netAmount ?? b.netPayable ?? b.grossAmount ?? b.totalAmount ?? 0);
       const pending = Math.max(gross - paid, 0);
       totalCollected += paid;
       totalGross     += gross;

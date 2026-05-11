@@ -187,19 +187,31 @@ export default function DischargeQueue() {
 }
 
 /* ─────────── Clear Final Bill Modal ─────────── */
+const FINAL_PAY_MODES = ["CASH", "UPI", "CARD", "CHEQUE", "ONLINE", "TPA_CLAIM"];
+
 function ClearBillModal({ admission, onClose, onCleared, userName }) {
   const w = admission.dischargeWorkflow || {};
   const [amount, setAmount] = useState(w.finalBillAmount || 0);
   const [billNumber, setBillNumber] = useState(w.finalBillNumber || "");
+  const [paymentMode, setPaymentMode] = useState("CASH");
+  const [transactionId, setTransactionId] = useState("");
   const [saving, setSaving] = useState(false);
 
   const save = async () => {
+    if (!Number(amount) || Number(amount) <= 0) {
+      return toast.error("Enter the final amount settled");
+    }
+    if (["UPI", "CARD", "CHEQUE", "ONLINE", "TPA_CLAIM"].includes(paymentMode) && !transactionId.trim()) {
+      if (!window.confirm(`No transaction reference for ${paymentMode}. Record anyway?`)) return;
+    }
     setSaving(true);
     try {
       await axios.post(`${API_ENDPOINTS.BASE}/admissions/${admission._id}/clear-final-bill`, {
         finalBillAmount: Number(amount) || 0,
         finalBillNumber: billNumber,
         clearedBy: userName,
+        paymentMode,                              // forwarded to linked PatientBill.payments
+        transactionId: transactionId || undefined,
       });
       toast.success("Final bill cleared — patient ready for gate pass");
       onCleared();
@@ -222,11 +234,30 @@ function ClearBillModal({ admission, onClose, onCleared, userName }) {
             <input className="his-field" value={billNumber} onChange={e => setBillNumber(e.target.value)} placeholder="e.g. BILL-20260511-00012" />
           </div>
           <div className="his-field-group">
-            <label className="his-label">Final Amount Settled (₹)</label>
+            <label className="his-label">Final Amount Settled (₹) *</label>
             <input className="his-field" type="number" value={amount} onChange={e => setAmount(e.target.value)} />
           </div>
+          <div className="his-field-group">
+            <label className="his-label">Payment Mode *</label>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 6 }}>
+              {FINAL_PAY_MODES.map(m => (
+                <button key={m} type="button"
+                        className={`rx-slot ${paymentMode === m ? "rx-slot--selected" : ""}`}
+                        onClick={() => setPaymentMode(m)}>
+                  {m === "TPA_CLAIM" ? "TPA" : m}
+                </button>
+              ))}
+            </div>
+          </div>
+          {paymentMode !== "CASH" && (
+            <div className="his-field-group">
+              <label className="his-label">{paymentMode === "UPI" ? "UPI Reference" : paymentMode === "CHEQUE" ? "Cheque Number" : paymentMode === "TPA_CLAIM" ? "Claim Reference" : "Transaction ID"}</label>
+              <input className="his-field" value={transactionId} onChange={e => setTransactionId(e.target.value)}
+                     placeholder={paymentMode === "UPI" ? "e.g. 412345678901" : "Reference / auth code"} />
+            </div>
+          )}
           <div style={{ background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#c2410c" }}>
-            <strong>NABH check:</strong> Confirm cash/card/UPI/TPA payment received before proceeding. Once cleared, the patient becomes eligible for gate pass.
+            <strong>NABH check:</strong> Confirm payment received via the selected mode before proceeding. The payment is logged on the patient's bill ledger for audit.
           </div>
         </div>
         <div className="rx-modal-foot">

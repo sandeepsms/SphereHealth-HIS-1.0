@@ -250,7 +250,9 @@ function AppLayout({ collapsed, setCollapsed }) {
             {/* /opd/new moved to /reception (see below) */}
             <Route path="/opd/new" element={<Navigate to="/reception" replace />} />
             <Route path="/opd/edit/:visitNumber" element={<Navigate to="/reception" replace />} />
-            <Route path="/opd/:visitNumber" element={<OPDDetails />} />
+            {/* `/opd/:visitNumber` was unreachable because `/opd/:UHID` matched
+                first. Use a distinct prefix so detail views actually open. */}
+            <Route path="/opd-details/:visitNumber" element={<OPDDetails />} />
 
             {/* ── Emergency ─────────────────────────────────────── */}
             <Route path="/emergency-assessment" element={<EmergencyAssessmentPage />} />

@@ -35,6 +35,8 @@ router.post("/create", ctrl.getOrCreateBill); // POST /api/billing/create  {UHID
 router.post("/:billId/add-service", ctrl.addService); // POST /api/billing/:id/add-service  {serviceId, quantity}
 router.post("/:billId/generate", ctrl.generateBill); // POST /api/billing/:id/generate
 router.post("/:billId/payment", ctrl.recordPayment); // POST /api/billing/:id/payment  {amount, paymentMode}
+router.post("/:billId/refund",  ctrl.refundPayment); // POST /api/billing/:id/refund   {amount, reason, mode?, refundedBy?, transactionId?}
+router.post("/:billId/cancel",  ctrl.cancelBill);    // POST /api/billing/:id/cancel   {reason, cancelledBy}
 router.post("/:billId/tpa-claim", ctrl.setTPAClaimStatus); // POST /api/billing/:id/tpa-claim
 router.put("/:billId/items/:itemId", ctrl.updateItemQty); // PUT  /api/billing/:id/items/:itemId  {quantity}
 router.delete("/:billId/items/:itemId", ctrl.removeItem); // DELETE /api/billing/:id/items/:itemId

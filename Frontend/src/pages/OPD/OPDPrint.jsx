@@ -13,8 +13,21 @@ const OPDPrint = () => {
 
   useEffect(() => {
     if (!UHID) return;
-    getPatientbyID(UHID).then((res) => setPatient(res || {}));
+    // userService returns { success, data: <patient> }. Unwrap to the patient itself
+    // (with a fallback for older response shapes).
+    getPatientbyID(UHID).then((res) => setPatient(res?.data || res || {}));
   }, [UHID]);
+
+  // Patient model uses fullName / contactNumber / doctor (ObjectId, populated).
+  // Old code referenced patient.name, patient.contact, patient.DoctorName, etc.,
+  // which never existed — derive the right values here so the receipt renders.
+  const patientName = patient.fullName || patient.name || "—";
+  const patientPhone = patient.contactNumber || patient.contact || "—";
+  const doctorObj = (patient.doctor && typeof patient.doctor === "object") ? patient.doctor : null;
+  const doctorName = doctorObj?.personalInfo?.fullName || doctorObj?.fullName || patient.DoctorName || "—";
+  const doctorSpec = doctorObj?.professional?.specialization || patient.DoctorSpecilist || "—";
+  const doctorDeg  = doctorObj?.professional?.qualification || patient.DoctorDegree || "";
+  const consultFee = patient.OPDpricedata || doctorObj?.professional?.consultationFee || 0;
 
   const handlePdf = () => {
     const element = document.getElementById("print-area");
@@ -84,26 +97,25 @@ const OPDPrint = () => {
               <strong>UHID:</strong> {patient.UHID}
             </div>
             <div className="col-6">
-              <strong>Name:</strong> {patient.name}
+              <strong>Name:</strong> {patientName}
             </div>
           </div>
 
           <div className="row g-3 mb-2">
             <div className="col-6">
-              <strong>Age / Gender:</strong> {patient.age} 77/ {patient.gender}
+              <strong>Age / Gender:</strong> {patient.age ?? "—"} / {patient.gender || "—"}
             </div>
             <div className="col-6">
-              <strong>Mobile:</strong> {patient.contact}
+              <strong>Mobile:</strong> {patientPhone}
             </div>
           </div>
 
           <div className="row g-3 mb-2">
             <div className="col-6">
-              <strong>Doctor:</strong> {patient.DoctorName} (
-              {patient.DoctorDegree})
+              <strong>Doctor:</strong> {doctorName}{doctorDeg ? ` (${doctorDeg})` : ""}
             </div>
             <div className="col-6">
-              <strong>Speciality:</strong> {patient.DoctorSpecilist}
+              <strong>Speciality:</strong> {doctorSpec}
             </div>
           </div>
 
@@ -127,15 +139,15 @@ const OPDPrint = () => {
           <tbody>
             <tr>
               <td>OPD Consultation Charges</td>
-              <td>{patient.OPDpricedata}</td>
+              <td>{consultFee}</td>
               <td>0.00</td>
-              <td>{patient.OPDpricedata}</td>
+              <td>{consultFee}</td>
             </tr>
             <tr>
               <td colSpan="3" className="text-end fw-bold">
                 Grand Total
               </td>
-              <td className="fw-bold">₹ {patient.OPDpricedata}</td>
+              <td className="fw-bold">₹ {consultFee}</td>
             </tr>
           </tbody>
         </table>
@@ -148,7 +160,7 @@ const OPDPrint = () => {
           <p className="mb-0">Emergency Contact: 📞+91 - 7988307850</p>
         </div>
       </div>
-      {/* PRINT BUTTON */}z
+      {/* PRINT BUTTON */}
       <div className="container text-end mb-2">
         <button className="btn btn-primary " onClick={handlePdf}>
           🖨️ Print

@@ -22,16 +22,25 @@ class PatientService {
      CREATE — new patient + increment correct counter
   ══════════════════════════════════════════════ */
   async createPatient(patientData) {
-    const department = await Department.findById(patientData.department);
-    if (!department) throw new Error("Department not found");
-
-    const doctor = await Doctor.findById(patientData.doctor);
-    if (!doctor) throw new Error("Doctor not found");
-
-    if (doctor.department.toString() !== patientData.department.toString()) {
-      throw new Error(
-        "Selected doctor does not belong to the selected department",
-      );
+    // Department/doctor are now optional at registration (Emergency walk-ins
+    // and Services bills don't always have them pre-selected). Validate them
+    // only when supplied.
+    if (patientData.department) {
+      const department = await Department.findById(patientData.department);
+      if (!department) throw new Error("Department not found");
+    }
+    if (patientData.doctor) {
+      const doctor = await Doctor.findById(patientData.doctor);
+      if (!doctor) throw new Error("Doctor not found");
+      if (
+        patientData.department &&
+        doctor.department &&
+        doctor.department.toString() !== patientData.department.toString()
+      ) {
+        throw new Error(
+          "Selected doctor does not belong to the selected department",
+        );
+      }
     }
 
     if (patientData.paymentType === "TPA") {
@@ -159,7 +168,8 @@ class PatientService {
   async getPatientByUHID(uhid) {
     const patient = await Patient.findOne({ UHID: uhid })
       .populate("department", "departmentName")
-      .populate("doctor", "personalInfo")
+      // Include professional fields so the OPD receipt can show specialty / fee.
+      .populate("doctor", "personalInfo professional")
       .populate("tpa", "tpaName tpaCode phone");
     if (!patient) throw new Error("Patient not found");
     return patient;

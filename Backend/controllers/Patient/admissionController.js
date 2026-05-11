@@ -434,15 +434,24 @@ class AdmissionController {
   ═══════════════════════════════════════════════════════════ */
 
   // GET /api/admissions/discharge-queue
-  // Returns active admissions where doctor has approved discharge
-  // but reception hasn't completed gate-pass yet.
+  // Returns the discharge workflow queue:
+  //   • DoctorApproved + BillCleared + GatePassIssued → all returned
+  //   • Completed → only those gate-passed today (so the "Discharged Today"
+  //     tab doesn't grow unbounded over weeks of history).
   getDischargeQueue = handle(async (req, res) => {
     const Admission = require("../../models/Patient/admissionModel");
+    const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
     const list = await Admission.find({
       status: { $in: ["Active", "Discharged"] },
-      "dischargeWorkflow.stage": { $in: ["DoctorApproved", "BillCleared", "GatePassIssued", "Completed"] },
+      $or: [
+        { "dischargeWorkflow.stage": { $in: ["DoctorApproved", "BillCleared", "GatePassIssued"] } },
+        {
+          "dischargeWorkflow.stage": "Completed",
+          "dischargeWorkflow.gatePassIssuedAt": { $gte: startOfToday },
+        },
+      ],
     })
-      .populate("patientId",  "fullName UHID dateOfBirth age gender")
+      .populate("patientId",  "fullName UHID dateOfBirth age gender contactNumber")
       .populate("doctor",     "personalInfo")
       .populate("department", "departmentName")
       .sort({ "dischargeWorkflow.doctorApprovedAt": -1 })
@@ -470,13 +479,26 @@ class AdmissionController {
 
   // POST /api/admissions/:id/clear-final-bill
   // Receptionist clears the final bill (after payment collected).
+  // Body: { finalBillNumber, finalBillAmount, clearedBy, paymentMode?, transactionId? }
+  // If a PatientBill exists for this admission, also record the payment on it
+  // so the bill's balanceAmount drops to 0 and billStatus becomes PAID.
   clearFinalBill = handle(async (req, res) => {
-    const Admission = require("../../models/Patient/admissionModel");
+    const Admission   = require("../../models/Patient/admissionModel");
+    const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
     const adm = await Admission.findById(req.params.id);
     if (!adm) return res.status(404).json({ success: false, message: "Admission not found" });
     if (!adm.dischargeWorkflow) adm.dischargeWorkflow = {};
     if (adm.dischargeWorkflow.stage === "NotRequested") {
       return res.status(400).json({ success: false, message: "Doctor has not yet approved discharge" });
+    }
+    // Idempotency: refuse to re-clear an already-cleared bill so concurrent
+    // receptionists (or accidental retries) don't double-push payment rows
+    // onto the linked PatientBill.
+    if (["BillCleared", "GatePassIssued", "Completed"].includes(adm.dischargeWorkflow.stage)) {
+      return res.status(409).json({
+        success: false,
+        message: `Final bill already cleared on ${adm.dischargeWorkflow.billClearedAt || "an earlier action"}.`,
+      });
     }
     adm.dischargeWorkflow.stage           = "BillCleared";
     adm.dischargeWorkflow.billClearedAt   = new Date();
@@ -486,6 +508,51 @@ class AdmissionController {
       adm.dischargeWorkflow.finalBillAmount = Number(req.body.finalBillAmount) || 0;
     adm.markModified("dischargeWorkflow");
     await adm.save();
+
+    // Also push a payment row onto the linked IPD/DAYCARE bill so the
+    // patient's outstanding balance reflects the final-bill clearance.
+    // We try (a) admission link, (b) admissionNumber denorm, then
+    // (c) the patient's open IPD/DAYCARE bill — covering bills created
+    // through any of the three paths the system supports.
+    try {
+      const finalAmt = Number(req.body.finalBillAmount) || 0;
+      if (finalAmt > 0) {
+        const openCond = { billStatus: { $nin: ["PAID", "CANCELLED", "REFUNDED"] } };
+        let bill = await PatientBill.findOne({ admission: adm._id, ...openCond });
+        if (!bill && adm.admissionNumber)
+          bill = await PatientBill.findOne({ admissionNumber: adm.admissionNumber, ...openCond });
+        if (!bill && adm.UHID)
+          bill = await PatientBill.findOne({
+            UHID: adm.UHID,
+            visitType: { $in: ["IPD", "DAYCARE"] },
+            ...openCond,
+          });
+        if (bill) {
+          // Validate paymentMode against PaymentSchema enum
+          const ALLOWED = ["CASH", "CARD", "UPI", "CHEQUE", "ONLINE", "TPA_CLAIM"];
+          const reqMode = String(req.body.paymentMode || "CASH").toUpperCase();
+          const mode = ALLOWED.includes(reqMode) ? reqMode : "CASH";
+
+          bill.payments.push({
+            amount:        finalAmt,
+            paymentMode:   mode,
+            transactionId: req.body.transactionId,
+            receivedBy:    req.body.clearedBy || "Reception",
+            remarks:       "Final bill cleared at discharge",
+          });
+          // Status flip happens before save so the pre-save hook (which
+          // honours billStatus when computing balanceAmount) sees the right
+          // value. The hook itself recomputes advancePaid + balanceAmount
+          // using patientPayableAmount, so we don't need manual math here.
+          const paid = bill.payments.reduce((s, p) => s + (p.amount || 0), 0);
+          const patientShare = bill.patientPayableAmount || bill.netAmount || 0;
+          bill.billStatus    = paid + 0.5 >= patientShare ? "PAID" : "PARTIAL";
+          if (bill.billStatus === "PAID") bill.paidAt = new Date();
+          await bill.save();
+        }
+      }
+    } catch (e) { /* don't block discharge clearance on bill update */ }
+
     return res.json({ success: true, data: adm.dischargeWorkflow });
   });
 
@@ -499,6 +566,14 @@ class AdmissionController {
     if (adm.dischargeWorkflow.stage !== "BillCleared" && adm.dischargeWorkflow.stage !== "GatePassIssued") {
       return res.status(400).json({ success: false, message: "Final bill must be cleared before issuing gate pass" });
     }
+    // Idempotency: if a gate pass already exists, return it instead of
+    // generating a new one (avoids duplicate GP numbers on retry).
+    if (adm.dischargeWorkflow.stage === "Completed" || adm.dischargeWorkflow.gatePassNumber) {
+      return res.status(409).json({
+        success: false,
+        message: `Gate pass already issued (${adm.dischargeWorkflow.gatePassNumber || "—"})`,
+      });
+    }
     // Generate gate-pass number: GP-YYYYMMDD-XXXX
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, "");
     const seq = await Admission.countDocuments({ "dischargeWorkflow.gatePassNumber": { $regex: `^GP-${dateStr}-` } });
@@ -511,6 +586,21 @@ class AdmissionController {
     adm.actualDischargeDate                 = new Date();
     adm.markModified("dischargeWorkflow");
     await adm.save();
+
+    // Free the bed so the next admission can use it. Mirrors
+    // admissionService.dischargePatient — without this, beds stay stuck
+    // "Occupied" forever after a receptionist-issued gate pass.
+    if (adm.bedId) {
+      try {
+        const Bed = require("../../models/bedMgmt/bedsModel");
+        await Bed.findByIdAndUpdate(adm.bedId, {
+          $set: { status: "Available", currentAdmission: null, patient: null },
+        });
+      } catch (e) {
+        console.error("[issueGatePass] Failed to release bed:", e.message);
+      }
+    }
+
     return res.json({ success: true, data: adm.dischargeWorkflow });
   });
 }

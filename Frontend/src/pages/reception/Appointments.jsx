@@ -164,8 +164,9 @@ export default function Appointments() {
                   </button>
                 </>
               )}
-              {apt.status === "CheckedIn" && apt.opdVisitId && (
-                <button className="rx-action-btn rx-action-btn--primary" onClick={() => navigate(`/opd/${apt.opdVisitId}`)}>
+              {apt.status === "CheckedIn" && (apt.opdVisitNumber || apt.opdVisitId) && (
+                <button className="rx-action-btn rx-action-btn--primary"
+                        onClick={() => navigate(`/opd-details/${apt.opdVisitNumber || apt.opdVisitId}`)}>
                   <i className="pi pi-external-link" /> Open OPD Visit
                 </button>
               )}
@@ -212,7 +213,9 @@ function BookAppointmentModal({ onClose, onDone, defaultDate }) {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    axios.get(`${API_ENDPOINTS.DOCTORS}`)
+    // Backend defaults limit=10 — bump it so hospitals with more than 10
+    // doctors don't lose the rest from the dropdown.
+    axios.get(API_ENDPOINTS.DOCTORS, { params: { limit: 500 } })
       .then(({ data }) => setDoctors(data?.data || data || []))
       .catch(() => toast.error("Could not load doctors"));
   }, []);
@@ -229,13 +232,16 @@ function BookAppointmentModal({ onClose, onDone, defaultDate }) {
   const lookupPatient = async () => {
     if (!phone || phone.length < 10) return;
     try {
-      const { data } = await axios.get(`${API_ENDPOINTS.PATIENTS}?phone=${phone}`);
-      const p = (data?.data || data || [])[0];
+      // Patient search supports name/UHID/phone with a single ?q= param
+      const { data } = await axios.get(`${API_ENDPOINTS.PATIENTS}/search?q=${encodeURIComponent(phone)}&limit=5`);
+      const list = data?.data || data || [];
+      // Prefer an exact phone match
+      const p = list.find(x => (x.contactNumber || "").replace(/\D/g, "").endsWith(phone.replace(/\D/g, ""))) || list[0];
       if (p) {
         setUhid(p.UHID || "");
         setPatientId(p._id || "");
-        setPatientName(`${p.firstName || ""} ${p.lastName || ""}`.trim());
-        toast.success(`Found: ${p.UHID}`);
+        setPatientName(p.fullName || p.patientName || "");
+        toast.success(`Found: ${p.UHID || p.fullName}`);
       } else {
         toast.info("No patient found with that phone — enter name to book a new one");
       }
@@ -253,7 +259,10 @@ function BookAppointmentModal({ onClose, onDone, defaultDate }) {
         patientId, UHID: uhid, patientName, patientPhone: phone,
         doctorId,
         doctorName: doctor?.personalInfo?.fullName || doctor?.fullName || "",
-        departmentId: doctor?.professional?.department?._id || doctor?.professional?.department || undefined,
+        // Doctor schema stores `department` at the ROOT (ObjectId ref), not under
+        // `professional`. Reading the wrong path left every appointment with no
+        // departmentId and broke the department filter on the checked-in OPD visit.
+        departmentId: doctor?.department?._id || doctor?.department || undefined,
         appointmentDate: date,
         slotTime: selectedSlot,
         chiefComplaint,

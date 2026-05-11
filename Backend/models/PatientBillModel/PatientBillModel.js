@@ -219,10 +219,17 @@ PatientBillSchema.pre("save", async function (next) {
     this.patientPayableAmount = ptPay;
   }
 
-  // Recalculate balance
+  // Recalculate balance. Payment rows can be negative (refunds), so totalPaid
+  // is a net figure. When the bill is fully refunded or cancelled, force the
+  // balance to zero — the receptionist shouldn't see a "balance due" on a
+  // closed-out bill.
   const totalPaid = this.payments.reduce((s, p) => s + p.amount, 0);
   this.advancePaid = totalPaid;
-  this.balanceAmount = Math.max(0, this.patientPayableAmount - totalPaid);
+  if (this.billStatus === "REFUNDED" || this.billStatus === "CANCELLED") {
+    this.balanceAmount = 0;
+  } else {
+    this.balanceAmount = Math.max(0, this.patientPayableAmount - totalPaid);
+  }
 
   next();
 });
