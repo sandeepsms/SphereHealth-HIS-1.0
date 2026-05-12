@@ -508,9 +508,9 @@ class AdmissionController {
         },
       ],
     })
-      .populate("patientId",  "fullName UHID dateOfBirth age gender contactNumber")
-      .populate("doctor",     "personalInfo")
-      .populate("department", "departmentName")
+      .populate("patientId",     "fullName UHID dateOfBirth age gender contactNumber")
+      .populate("attendingDoctorId", "firstName lastName fullName doctorDetails.specialization")
+      .populate("departmentId",      "departmentName")
       .sort({ "dischargeWorkflow.doctorApprovedAt": -1 })
       .lean();
     return res.json({ success: true, count: list.length, data: list });

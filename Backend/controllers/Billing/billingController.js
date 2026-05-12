@@ -170,14 +170,25 @@ exports.setTPAClaimStatus = async (req, res) => {
 exports.getServicePrice = async (req, res) => {
   try {
     const { tariffType = "CASH", tpaId } = req.query;
-    const data = await billingService.getEffectivePrice(
-      req.params.serviceId,
-      tariffType,
-      tpaId,
-    );
-    res.json({ success: true, data });
+    // `billingService.getEffectivePrice` doesn't exist — pricing logic lives
+    // on ServicePricing.getPriceFor(serviceId, paymentType, tpaId).
+    const ServicePricing = require("../../models/ServicePricing/ServicePricingModel");
+    const ServiceMaster  = require("../../models/ServiceMaster/serviceMasterModel");
+    const service = await ServiceMaster.findById(req.params.serviceId).lean();
+    if (!service) return res.status(404).json({ success: false, message: "Service not found" });
+    const pricing = await ServicePricing.getPriceFor(req.params.serviceId, tariffType, tpaId || null);
+    res.json({
+      success: true,
+      data: {
+        serviceId:       req.params.serviceId,
+        tariffType,
+        effectivePrice:  pricing ? pricing.finalPrice : (service.defaultPrice || 0),
+        pricing:         pricing || null,
+        service:         { serviceName: service.serviceName, serviceCode: service.serviceCode },
+      },
+    });
   } catch (e) {
-    const status = e.message.includes("not found") ? 404 : 500;
+    const status = e.message?.includes("not found") ? 404 : 500;
     res.status(status).json({ success: false, message: e.message });
   }
 };
@@ -526,12 +537,16 @@ exports.getCollectionSummary = async (req, res, next) => {
     const dayEnd   = new Date(`${dateStr}T23:59:59.999`);
 
     // All bills created/updated today (cast a wide net — bill mutation captures the work)
+    // NOTE: PatientBill has no `doctor` ref field — populating it would throw
+    // StrictPopulateError on Mongoose 8 and 500 the entire endpoint. The
+    // per-doctor breakdown below correctly returns empty when bill.doctor is
+    // absent (documented system debt).
     const bills = await PatientBill.find({
       $or: [
         { createdAt: { $gte: dayStart, $lte: dayEnd } },
         { updatedAt: { $gte: dayStart, $lte: dayEnd } },
       ],
-    }).populate("doctor", "personalInfo professional").lean();
+    }).lean();
 
     // Aggregators
     let totalCollected = 0, totalGross = 0, totalPending = 0, advanceDue = 0, tpaPending = 0;
