@@ -3,21 +3,11 @@ const opdService = require("../../services/Patient/OPDService");
 class OPDController {
   async createOPDVisit(req, res) {
     try {
+      // OPDService.createOPDVisit already fires onOPDRegistered (creates the
+      // bridging admission AND the consultation charge). The controller-level
+      // auto-billing block here used to fire the SAME event a second time,
+      // double-charging every visit. Removed.
       const visit = await opdService.createOPDVisit(req.body);
-
-      // ── Auto-billing: fire OPD consultation charge ──
-      try {
-        const autoBilling = require("../../services/Billing/autoBillingService");
-        const Admission   = require("../../models/Patient/admissionModel");
-        // OPD visits may not have a paired admission — use a virtual one for billing.
-        const admission =
-          (visit.UHID && (await Admission.findOne({ UHID: visit.UHID, admissionType: { $in: ["OPD", "Day Care"] } })))
-          || { _id: visit._id, UHID: visit.UHID, patientId: visit.patientId, department: visit.department };
-        autoBilling.onOPDRegistered(visit, admission).catch((e) =>
-          console.error("OPD auto-billing error:", e.message)
-        );
-      } catch (e) { /* don't block the visit creation */ }
-
       res.status(201).json({ success: true, message: "OPD visit created successfully", data: visit });
     } catch (error) {
       res.status(400).json({ success: false, message: error.message });
@@ -158,7 +148,12 @@ class OPDController {
   async getFollowUpDue(req, res) {
     try {
       const { date = new Date() } = req.query;
-      const visits = await opdService.getFollowUpDue(date);
+      // Doctor scope: only their own follow-ups.
+      const opts = {};
+      if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
+        opts.doctorId = req.doctorProfile._id;
+      }
+      const visits = await opdService.getFollowUpDue(date, opts);
       res.status(200).json({ success: true, data: visits });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });

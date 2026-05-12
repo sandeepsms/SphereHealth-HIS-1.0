@@ -3,6 +3,13 @@ const OPDRegistration = require("../../models/Patient/OPDModels");
 const OPDService = require("../../services/Patient/OPDService");
 const Patient = require("../../models/Patient/patientModel");
 
+// IST date-range helpers so server timezone doesn't shift the day window
+// (clinics in India should see Saturday-IST appointments under Saturday,
+// not under Sunday-UTC). Appointments stored as `appointmentDate` are
+// inserted via this same helper so booking + lookup agree.
+const istDayStart = (d) => new Date(`${d}T00:00:00+05:30`);
+const istDayEnd   = (d) => new Date(`${d}T23:59:59.999+05:30`);
+
 const handle = (fn) => async (req, res) => {
   try { return await fn(req, res); }
   catch (e) { res.status(e.statusCode || 500).json({ success: false, message: e.message }); }
@@ -24,9 +31,9 @@ exports.book = handle(async (req, res) => {
   if (!patientName || !patientPhone || !doctorId || !appointmentDate || !slotTime)
     return res.status(400).json({ success: false, message: "patientName, patientPhone, doctorId, appointmentDate, slotTime required" });
 
-  // Conflict check — same doctor + same date + same slot
-  const dayStart = new Date(`${appointmentDate}T00:00:00`);
-  const dayEnd   = new Date(`${appointmentDate}T23:59:59.999`);
+  // Conflict check — same doctor + same date + same slot (IST window).
+  const dayStart = istDayStart(appointmentDate);
+  const dayEnd   = istDayEnd(appointmentDate);
   const conflict = await Appointment.findOne({
     doctorId,
     appointmentDate: { $gte: dayStart, $lte: dayEnd },
@@ -39,7 +46,7 @@ exports.book = handle(async (req, res) => {
   const apt = await Appointment.create({
     patientId, UHID, patientName, patientPhone,
     doctorId, doctorName, departmentId,
-    appointmentDate: dayStart,
+    appointmentDate: dayStart, // IST midnight; pairs with istDay* lookups
     slotTime, durationMinutes,
     chiefComplaint, notes, bookedBy,
   });
@@ -50,9 +57,7 @@ exports.book = handle(async (req, res) => {
 exports.list = handle(async (req, res) => {
   const filter = {};
   if (req.query.date) {
-    const d = new Date(`${req.query.date}T00:00:00`);
-    const e = new Date(`${req.query.date}T23:59:59.999`);
-    filter.appointmentDate = { $gte: d, $lte: e };
+    filter.appointmentDate = { $gte: istDayStart(req.query.date), $lte: istDayEnd(req.query.date) };
   }
   if (req.query.doctorId) filter.doctorId = req.query.doctorId;
   if (req.query.status)   filter.status   = req.query.status;
@@ -90,8 +95,8 @@ exports.getSlots = handle(async (req, res) => {
     }
   }
 
-  const dayStart = new Date(`${date}T00:00:00`);
-  const dayEnd   = new Date(`${date}T23:59:59.999`);
+  const dayStart = istDayStart(date);
+  const dayEnd   = istDayEnd(date);
   const booked = await Appointment.find({
     doctorId,
     appointmentDate: { $gte: dayStart, $lte: dayEnd },

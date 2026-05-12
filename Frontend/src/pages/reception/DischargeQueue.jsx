@@ -39,8 +39,17 @@ export default function DischargeQueue() {
   }, []);
   useEffect(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t); }, [load]);
 
+  // "Bill Cleared" bucket includes BOTH "BillCleared" (ready for gate pass)
+  // and "GatePassIssued" (gate pass printed but admission not yet flipped to
+  // Completed) so receptionists never lose track of mid-workflow admissions.
+  const matchesTab = (a) => {
+    const st = a.dischargeWorkflow?.stage;
+    if (tab === "BillCleared") return st === "BillCleared" || st === "GatePassIssued";
+    return st === tab;
+  };
+
   const filtered = useMemo(() => {
-    let r = list.filter(a => a.dischargeWorkflow?.stage === tab);
+    let r = list.filter(matchesTab);
     const s = search.trim().toLowerCase();
     if (s) r = r.filter(a =>
       (a.patientName || "").toLowerCase().includes(s) ||
@@ -52,7 +61,7 @@ export default function DischargeQueue() {
 
   const counts = {
     DoctorApproved:  list.filter(a => a.dischargeWorkflow?.stage === "DoctorApproved").length,
-    BillCleared:     list.filter(a => a.dischargeWorkflow?.stage === "BillCleared").length,
+    BillCleared:     list.filter(a => ["BillCleared", "GatePassIssued"].includes(a.dischargeWorkflow?.stage)).length,
     Completed:       list.filter(a => a.dischargeWorkflow?.stage === "Completed").length,
   };
 

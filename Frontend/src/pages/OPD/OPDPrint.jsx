@@ -26,8 +26,16 @@ const OPDPrint = () => {
   const doctorObj = (patient.doctor && typeof patient.doctor === "object") ? patient.doctor : null;
   const doctorName = doctorObj?.personalInfo?.fullName || doctorObj?.fullName || patient.DoctorName || "—";
   const doctorSpec = doctorObj?.professional?.specialization || patient.DoctorSpecilist || "—";
-  const doctorDeg  = doctorObj?.professional?.qualification || patient.DoctorDegree || "";
-  const consultFee = patient.OPDpricedata || doctorObj?.professional?.consultationFee || 0;
+  // Doctor schema stores `qualifications` (plural array) on professional.
+  const doctorDeg  = Array.isArray(doctorObj?.professional?.qualifications)
+    ? doctorObj.professional.qualifications.join(", ")
+    : (doctorObj?.professional?.qualification || patient.DoctorDegree || "");
+  // Consultation fee lives at doctor.consultationFee.opd (top-level on Doctor),
+  // not under professional. Fall back to legacy/embedded fields.
+  const consultFee = doctorObj?.consultationFee?.opd
+                  || doctorObj?.professional?.consultationFee
+                  || patient.OPDpricedata
+                  || 0;
 
   const handlePdf = () => {
     const element = document.getElementById("print-area");
