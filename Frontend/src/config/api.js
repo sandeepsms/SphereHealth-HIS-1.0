@@ -41,6 +41,9 @@ export const API_ENDPOINTS = {
   DOCTORPRECEPTION: `${API_BASE_URL}/patients/uhid`,
   PRESCRIPTIONS: `${API_BASE_URL}/prescriptions`,
 
+  // ── Medico-Legal Cases (MLC) ──────────────────────────────────
+  MLC: `${API_BASE_URL}/mlc`,
+
   // ── Search ────────────────────────────────────────────────────
   RegistrationSearch: `${API_BASE_URL}/registartion-search`,
 

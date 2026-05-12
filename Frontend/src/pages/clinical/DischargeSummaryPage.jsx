@@ -15,6 +15,7 @@ import { useDigitalSignature } from "../../hooks/useDigitalSignature";
 import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
 import SignaturePad from "../../Components/signature/SignaturePad";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
+import MLCAutoStamp from "../../Components/mlc/MLCAutoStamp";
 
 const API = `${API_ENDPOINTS.BASE}/discharge-summary`;
 
@@ -478,6 +479,9 @@ function PrintModal({ data, dept, onClose }) {
 
         <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
           <div id="ds-print-content">
+            {/* MLC stamp (auto-applied if patient has an active MLC) */}
+            <MLCAutoStamp uhid={data.UHID} variant="banner" />
+            <MLCAutoStamp uhid={data.UHID} />
             {/* Hospital header */}
             <div className="hosp" style={{ textAlign: "center", marginBottom: 6 }}>
               <div style={{ fontWeight: 800, fontSize: 16, textTransform: "uppercase" }}>SphereHealth Hospital</div>

@@ -5,6 +5,7 @@ import { useParams } from "react-router-dom";
 import { getPatientbyID } from "../../Services/userService";
 import html2pdf from "html2pdf.js";
 import { Fullscreen } from "lucide-react";
+import MLCAutoStamp from "../../Components/mlc/MLCAutoStamp";
 
 const OPDPrint = () => {
   const { UHID } = useParams();
@@ -77,6 +78,9 @@ const OPDPrint = () => {
     <div className="bg-light py-3">
       {/* PRINT AREA */}
       <div id="print-area" className="container opd-page bg-white p-4">
+        {/* MLC stamp (auto-applied if patient has an active MLC) */}
+        <MLCAutoStamp uhid={patient.UHID || UHID} variant="banner" />
+        <MLCAutoStamp uhid={patient.UHID || UHID} />
         {/* HEADER */}
         <div className="row align-items-center border-bottom pb-3 mb-3">
           <div className="col-2">

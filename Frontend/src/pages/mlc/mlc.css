@@ -1,0 +1,181 @@
+/* ─── MLC module — shares the rx-* design language ─────────────────── */
+
+/* ─ MLR stamp — applied to any patient document page when the patient
+   has a live MLC. Pure CSS, no inline styles. Two layers: a watermark in
+   the page corner (.mlc-stamp) and a printable strip header
+   (.mlc-stamp-banner). Either / both can be combined. */
+.mlc-stamp {
+  position: fixed;
+  top: 80px;
+  right: 24px;
+  z-index: 50;
+  width: 168px;
+  height: 168px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border: 3px double #b91c1c;
+  border-radius: 50%;
+  color: #b91c1c;
+  background: rgba(254, 226, 226, 0.65);
+  font-family: "DM Mono", "Roboto Mono", monospace;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  transform: rotate(-12deg);
+  pointer-events: none;
+  text-transform: uppercase;
+  text-align: center;
+  box-shadow: 0 4px 14px rgba(185, 28, 28, 0.15);
+  user-select: none;
+}
+.mlc-stamp-title { font-size: 18px; line-height: 1.1; }
+.mlc-stamp-mlr   { font-size: 13px; margin-top: 4px; opacity: 0.85; }
+.mlc-stamp-sub   { font-size: 10px; margin-top: 2px; opacity: 0.7; }
+
+/* In-flow stamp (use inside a printable report header) */
+.mlc-stamp-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: linear-gradient(135deg, #fef2f2, #fee2e2);
+  border: 1px solid #fca5a5;
+  border-left: 5px solid #b91c1c;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 8px 0 14px;
+  color: #7f1d1d;
+}
+.mlc-stamp-banner-title {
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-size: 12px;
+}
+.mlc-stamp-banner-mlr {
+  font-family: "DM Mono", "Roboto Mono", monospace;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+@media print {
+  .mlc-stamp { position: fixed; top: 24px; right: 18px; }
+}
+
+/* ─ MLC list / detail page-specific tweaks (everything else uses rx-*) ─ */
+.mlc-section-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+@media (max-width: 720px) {
+  .mlc-section-grid { grid-template-columns: 1fr; }
+}
+
+.mlc-form-section {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+.mlc-form-section-title {
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #475569;
+  margin-bottom: 8px;
+  border-bottom: 1px solid #f1f5f9;
+  padding-bottom: 6px;
+}
+
+.mlc-injuries-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.mlc-injuries-table th, .mlc-injuries-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #f1f5f9;
+  text-align: left;
+}
+.mlc-injuries-table th {
+  font-weight: 700;
+  color: #475569;
+  text-transform: uppercase;
+  font-size: 10.5px;
+  letter-spacing: 0.4px;
+  background: #f8fafc;
+}
+.mlc-injuries-table tbody tr:hover { background: #f8fafc; }
+
+.mlc-pill-source--internal {
+  background: #fef2f2 !important;
+  color: #b91c1c !important;
+  border-color: #fca5a5 !important;
+}
+.mlc-pill-source--external {
+  background: #eff6ff !important;
+  color: #1d4ed8 !important;
+  border-color: #93c5fd !important;
+}
+
+.mlc-mlr-large {
+  font-family: "DM Mono", "Roboto Mono", monospace;
+  font-size: 22px;
+  font-weight: 800;
+  color: #b91c1c;
+  letter-spacing: 1px;
+}
+
+.mlc-toggle-pills {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.mlc-toggle-pill {
+  flex: 1;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-align: center;
+}
+.mlc-toggle-pill:hover { border-color: #94a3b8; }
+.mlc-toggle-pill--active {
+  background: #fef2f2;
+  border-color: #b91c1c;
+  box-shadow: 0 2px 6px rgba(185, 28, 28, 0.15);
+}
+.mlc-toggle-pill--active.mlc-toggle-pill--external {
+  background: #eff6ff;
+  border-color: #1d4ed8;
+  box-shadow: 0 2px 6px rgba(29, 78, 216, 0.15);
+}
+.mlc-toggle-pill-title {
+  font-weight: 800;
+  font-size: 13px;
+  color: #0f172a;
+}
+.mlc-toggle-pill-sub {
+  font-size: 11px;
+  color: #64748b;
+  margin-top: 4px;
+}
+
+.mlc-prefix-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  color: #7f1d1d;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-family: "DM Mono", "Roboto Mono", monospace;
+  font-size: 11px;
+  font-weight: 700;
+}

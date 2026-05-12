@@ -125,5 +125,7 @@ router.use("/presence",         require("./Presence/presenceRoutes"));
 router.use("/visitor-passes",   require("./VisitorPass/visitorPassRoutes"));
 // Appointment booking (OPD slot system)
 router.use("/appointments",     require("./Appointment/appointmentRoutes"));
+// Medico-Legal Cases — MLC reports + auto-generated MLR numbers per doctor
+router.use("/mlc",              require("./MLC/mlcRoutes"));
 
 module.exports = router;

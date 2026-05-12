@@ -126,6 +126,7 @@ const DoctorAssessmentPage = lazy(() => import("./pages/doctor/DoctorAssessmentP
 const OPDAssessmentPage = lazy(() => import("./pages/doctor/OPDAssessmentPage"));
 const DoctorPatientPanel = lazy(() => import("./pages/doctor/DoctorPatientPanel"));
 const DoctorNotesPage = lazy(() => import("./pages/doctor/DoctorNotesPage"));
+const MLCPage = lazy(() => import("./pages/mlc/MLCPage"));
 
 const BillPrintPage = lazy(() => import("./pages/billing/BillPrintPage"));
 const HospitalSettingsPage = lazy(() => import("./pages/admin/HospitalSettingsPage"));
@@ -267,6 +268,9 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/emergency-assessment" element={<EmergencyAssessmentPage />} />
             <Route path="/emergency-assessment/:uhid" element={<EmergencyAssessmentPage />} />
             <Route path="/emergency" element={<Emergencylist />} />
+            {/* Medico-Legal Cases — doctors land here to record/issue MLR-stamped reports */}
+            <Route path="/mlc" element={<MLCPage />} />
+            <Route path="/mlc/:mlrNumber" element={<MLCPage />} />
             {/* /emergency/register moved to /reception (see below) */}
             <Route path="/emergency/new" element={<Navigate to="/reception" replace />} />
             <Route path="/emergency/edit/:emergencyNumber" element={<Navigate to="/reception" replace />} />
