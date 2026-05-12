@@ -8,6 +8,15 @@ import { useSearchParams, useNavigate } from "react-router-dom";
 import axios from "axios";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import PatientFileExport from "../../Components/clinical/PatientFileExport";
+import {
+  InitialAssessmentTab,
+  MLCOrDoctorNotesTab,
+  NursingNotesExpandedTab,
+  VitalChartTab,
+  IntakeOutputChartTab,
+  BloodTransfusionRecordsTab,
+  RBSMonitoringTab,
+} from "../../Components/clinical/PatientPanelTabs";
 
 const BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
 
@@ -24,16 +33,31 @@ const C = {
   card:"#ffffff",    bg:"#f8fafc",       border:"#e2e8f0",
 };
 
+// Tab order per user spec (May-12 patient-panel restructure):
+//   1. Overview — keep the at-a-glance summary
+//   2. Initial Assessment — combined doctor + nursing intake (NABH COP.2/IPSG.6)
+//   3. MLC / Doctor Notes — MLC if cut, otherwise doctor notes timeline
+//   4. Nursing Notes — fully-expanded categorised list
+//   5. Vital Chart — every vital ever recorded, table view
+//   6. Input/Output Chart — daily I/O with totals + net balance
+//   7. Blood Transfusion — every transfusion record
+//   8. RBS Monitoring — sugar readings + antidiabetic doses given
+//   9. Treatment Chart — existing orders + admin audit trail
+//  10. Orders / Medications / Billing / Emergency — kept
 const TABS = [
-  { id:"overview",   label:"📋 Overview"          },
-  { id:"clinical",   label:"🩺 Clinical Notes"    },
-  { id:"nursing",    label:"📝 Nursing Records"   },
-  { id:"vitals",     label:"📈 Vital Trends"      },
-  { id:"meds",       label:"💊 Medications"       },
-  { id:"treatment",  label:"💉 Treatment Chart"   },
-  { id:"orders",     label:"📋 Orders"            },
-  { id:"billing",    label:"💰 Billing"           },
-  { id:"emergency",  label:"🚨 Emergency"         },
+  { id:"overview",   label:"📋 Overview"             },
+  { id:"initial",    label:"🩺 Initial Assessment"   },
+  { id:"mlc",        label:"⚖ MLC / Doctor Notes"   },
+  { id:"nursing",    label:"📝 Nursing Notes"        },
+  { id:"vitals",     label:"📈 Vital Chart"          },
+  { id:"io",         label:"💧 Intake / Output"      },
+  { id:"blood",      label:"🩸 Blood Transfusion"    },
+  { id:"rbs",        label:"🩸 RBS Monitoring"       },
+  { id:"treatment",  label:"💉 Treatment Chart"      },
+  { id:"orders",     label:"📋 Orders"               },
+  { id:"meds",       label:"💊 Medications"          },
+  { id:"billing",    label:"💰 Billing"              },
+  { id:"emergency",  label:"🚨 Emergency"            },
 ];
 
 /* ── Formatters ─────────────────────────────────────────────────────────────── */
@@ -1979,9 +2003,13 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
             </div>
             <div style={{padding:"22px 22px",minHeight:200}}>
               {activeTab==="overview"   && <OverviewTab patient={patient} admission={admission} opdVisits={opdVisits} billing={billing} doctorNotes={doctorNotes} nursingNotes={nursingNotes} onShiftBed={openShiftModal} pendingTransfer={pendingTransfer} onCancelTransfer={cancelTransfer}/>}
-              {activeTab==="clinical"   && <ClinicalNotesTab notes={doctorNotes}/>}
-              {activeTab==="nursing"    && <NursingRecordsTab notes={nursingNotes}/>}
-              {activeTab==="vitals"     && <VitalTrendsTab vitalSheet={vitalSheet}/>}
+              {activeTab==="initial"    && <InitialAssessmentTab doctorNotes={doctorNotes} nursingNotes={nursingNotes} admission={admission}/>}
+              {activeTab==="mlc"        && <MLCOrDoctorNotesTab  patient={patient}      doctorNotes={doctorNotes}/>}
+              {activeTab==="nursing"    && <NursingNotesExpandedTab nursingNotes={nursingNotes}/>}
+              {activeTab==="vitals"     && <VitalChartTab        nursingNotes={nursingNotes} vitalSheet={vitalSheet}/>}
+              {activeTab==="io"         && <IntakeOutputChartTab nursingNotes={nursingNotes}/>}
+              {activeTab==="blood"      && <BloodTransfusionRecordsTab nursingNotes={nursingNotes}/>}
+              {activeTab==="rbs"        && <RBSMonitoringTab     nursingNotes={nursingNotes} doctorOrders={doctorOrders}/>}
               {activeTab==="meds"       && <MedicationsTab doctorNotes={doctorNotes} doctorOrders={doctorOrders}/>}
               {activeTab==="treatment"  && <TreatmentChartTab doctorOrders={doctorOrders} doctorNotes={doctorNotes}/>}
               {activeTab==="orders"     && <OrdersTab doctorNotes={doctorNotes}/>}

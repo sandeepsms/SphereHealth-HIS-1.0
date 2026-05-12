@@ -8,6 +8,15 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import axios from "axios";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import PatientFileExport from "../../Components/clinical/PatientFileExport";
+import {
+  InitialAssessmentTab,
+  MLCOrDoctorNotesTab,
+  NursingNotesExpandedTab,
+  VitalChartTab,
+  IntakeOutputChartTab,
+  BloodTransfusionRecordsTab,
+  RBSMonitoringTab,
+} from "../../Components/clinical/PatientPanelTabs";
 
 const BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
 
@@ -26,14 +35,22 @@ const C = {
 };
 
 const TABS = [
-  { id:"overview",  label:"📋 Overview"       },
-  { id:"vitals",    label:"📈 Vital Trends"   },
-  { id:"nursing",   label:"📝 Nursing Notes"  },
-  { id:"docnotes",  label:"🩺 Doctor Notes"   },
-  { id:"orders",    label:"📋 Doctor Orders"  },
-  { id:"meds",      label:"💊 Medications"    },
-  { id:"billing",   label:"💰 Billing"        },
-  { id:"emergency", label:"🚨 Emergency"      },
+  // Same tab order as DoctorPatientPanel — "nursing patient panel = doctor
+  // patient panel" per the user's spec. Role-specific actions (initiate
+  // bed-transfer vs write handover notes) are gated inside each tab, not
+  // by hiding tabs.
+  { id:"overview",   label:"📋 Overview"             },
+  { id:"initial",    label:"🩺 Initial Assessment"   },
+  { id:"mlc",        label:"⚖ MLC / Doctor Notes"   },
+  { id:"nursing",    label:"📝 Nursing Notes"        },
+  { id:"vitals",     label:"📈 Vital Chart"          },
+  { id:"io",         label:"💧 Intake / Output"      },
+  { id:"blood",      label:"🩸 Blood Transfusion"    },
+  { id:"rbs",        label:"🩸 RBS Monitoring"       },
+  { id:"orders",     label:"📋 Doctor Orders"        },
+  { id:"meds",       label:"💊 Medications"          },
+  { id:"billing",    label:"💰 Billing"              },
+  { id:"emergency",  label:"🚨 Emergency"            },
 ];
 
 /* ── Helpers ── */
@@ -2038,9 +2055,13 @@ function NursePatientPanelContent({ selectedAdmission }) {
 
             {/* Tab content */}
             {activeTab==="overview"  && <OverviewTab patient={patient} admission={admission} nursingNotes={nursingNotes} billing={billing} doctorNotes={doctorNotes}/>}
-            {activeTab==="vitals"    && <VitalTrendsTab vitalSheet={vitalSheet}/>}
-            {activeTab==="nursing"   && <NursingNotesTab notes={nursingNotes}/>}
-            {activeTab==="docnotes"  && <DoctorNotesTab doctorNotes={doctorNotes}/>}
+            {activeTab==="initial"   && <InitialAssessmentTab doctorNotes={doctorNotes} nursingNotes={nursingNotes} admission={admission}/>}
+            {activeTab==="mlc"       && <MLCOrDoctorNotesTab  patient={patient}      doctorNotes={doctorNotes}/>}
+            {activeTab==="nursing"   && <NursingNotesExpandedTab nursingNotes={nursingNotes}/>}
+            {activeTab==="vitals"    && <VitalChartTab        nursingNotes={nursingNotes} vitalSheet={vitalSheet}/>}
+            {activeTab==="io"        && <IntakeOutputChartTab nursingNotes={nursingNotes}/>}
+            {activeTab==="blood"     && <BloodTransfusionRecordsTab nursingNotes={nursingNotes}/>}
+            {activeTab==="rbs"       && <RBSMonitoringTab     nursingNotes={nursingNotes} doctorOrders={doctorOrders}/>}
             {activeTab==="orders"    && <DoctorOrdersTab doctorNotes={doctorNotes}/>}
             {activeTab==="meds"      && <MedicationsTab doctorNotes={doctorNotes} doctorOrders={doctorOrders}/>}
             {activeTab==="billing"   && <BillingTab billing={billing}/>}
