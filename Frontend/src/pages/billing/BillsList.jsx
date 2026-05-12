@@ -122,29 +122,24 @@ const BillsList = () => {
   };
 
   const statusBodyTemplate = (rowData) => {
-    const severity =
-      rowData.status === "paid"
-        ? "success"
-        : rowData.status === "partial"
-          ? "warning"
-          : rowData.status === "cancelled"
-            ? "danger"
-            : "info";
-
-    return (
-      <Tag
-        value={rowData.status?.toUpperCase() || "DRAFT"}
-        severity={severity}
-      />
-    );
+    // PatientBill schema field is `billStatus` (uppercase enum: DRAFT/
+    // GENERATED/PARTIAL/PAID/CANCELLED/REFUNDED), not `status`.
+    const st = (rowData.billStatus || "DRAFT");
+    const sev =
+      st === "PAID"               ? "success"
+    : st === "PARTIAL"            ? "warning"
+    : (st === "CANCELLED" ||
+       st === "REFUNDED")         ? "danger"
+    :                               "info";
+    return <Tag value={st} severity={sev} />;
   };
 
-  const amountBodyTemplate = (rowData) => {
-    return `₹${rowData.financials?.total?.toFixed(2) || 0}`;
-  };
+  // Bill totals are top-level on the document, not under a `financials` key.
+  const amountBodyTemplate = (rowData) =>
+    `₹${(Number(rowData.netAmount) || 0).toFixed(2)}`;
 
   const balanceBodyTemplate = (rowData) => {
-    const balance = rowData.financials?.balance || 0;
+    const balance = Number(rowData.balanceAmount) || 0;
     return (
       <span
         className={balance > 0 ? "text-red-600 font-bold" : "text-green-600"}

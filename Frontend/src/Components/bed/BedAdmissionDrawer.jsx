@@ -347,7 +347,10 @@ export default function BedAdmissionDrawer({
 
       /* STEP 2: Create admission + book bed */
       const admRes = await fetch(
-        `${API_ENDPOINTS.BASE_URL || ""}/api/admissions`,
+        // `BASE_URL` doesn't exist on API_ENDPOINTS — that returned a bare
+        // `/api/admissions` which the browser resolved against the frontend
+        // host, missing the API origin entirely. Use the named endpoint.
+        API_ENDPOINTS.ADMISSIONS,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

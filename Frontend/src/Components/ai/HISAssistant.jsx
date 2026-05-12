@@ -621,7 +621,9 @@ export default function HISAssistant() {
       addMsg("error", "❌ Failed: " + errorMsg);
     } else {
       const dispatched = results.some((r) => r.result?.dispatched);
-      const userName = user?.name || user?.username || "you";
+      // AuthContext exposes `fullName` / `firstName` / `lastName` — not
+      // `name` / `username` (those were never set).
+      const userName = user?.fullName || user?.firstName || "you";
       if (dispatched) {
         addMsg("system",
           `✅ Sent to the form! Saving under ${userName}… check the page in a moment.`
@@ -707,7 +709,7 @@ export default function HISAssistant() {
           </div>
           {user && (
             <div style={S.contextBadge}>
-              {user.name || user.username || "User"}
+              {user.fullName || user.firstName || "User"}
             </div>
           )}
         </div>
