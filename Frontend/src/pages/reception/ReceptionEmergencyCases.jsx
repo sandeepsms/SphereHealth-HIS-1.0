@@ -29,6 +29,54 @@ const TRIAGE_CLASS = {
   "Non-urgent":   "nonurgent",
 };
 
+// Map ReceptionConsole-style triage labels to the Emergency enum so admission
+// records that only carry a UI label still get classified.
+const TRIAGE_NORMALIZE = {
+  "Red (P1)":    "Critical",
+  "Yellow (P2)": "Emergency",
+  "Green (P3)":  "Urgent",
+  "Blue (P4)":   "Non-urgent",
+};
+
+/**
+ * The receptionist's "New ER" flow creates BOTH an Emergency record AND an
+ * Admission with admissionType="Emergency". The Emergency record creation
+ * occasionally fails (validation, missing doctor) — in that case the ER
+ * dashboard would silently lose the patient. To make the dashboard robust we
+ * also pull Emergency-type admissions and normalise them onto the same card
+ * shape. De-dupe by UHID + arrivalDate so the same patient never appears
+ * twice when both records exist.
+ */
+const admissionToErCard = (a) => ({
+  _id: a._id,
+  _source: "admission",
+  emergencyNumber: a.admissionNumber || a._id,
+  patientId: a.patientId,
+  UHID: a.UHID,
+  patientName: a.patientName,
+  age: a.patientId?.age ?? a.age,
+  gender: a.patientId?.gender ?? a.gender,
+  contactNumber: a.patientId?.contactNumber ?? a.contactNumber,
+  arrivalDate: a.admissionDate || a.createdAt,
+  arrivalMode: a.modeOfArrival || "Walk-in",
+  triageCategory: TRIAGE_NORMALIZE[a.triageLevel] || a.triageCategory || "Urgent",
+  isMLC: !!a.isMLC,
+  mlcNumber: a.mlcNumber || "",
+  consultantIncharge: a.attendingDoctor || "On-call",
+  presentingComplaints: a.reasonForAdmission || a.provisionalDiagnosis || "",
+  vitals: {},
+  status: a.status === "Active" ? "Active" : a.status,
+});
+
+const dedupeMerge = (emergencies, admissions) => {
+  const seen = new Set(emergencies.map(e => `${e.UHID}|${(new Date(e.arrivalDate)).toDateString()}`));
+  const extra = admissions.filter(a => {
+    const key = `${a.UHID}|${(new Date(a.admissionDate || a.createdAt)).toDateString()}`;
+    return !seen.has(key);
+  });
+  return [...emergencies, ...extra.map(admissionToErCard)];
+};
+
 const fmtTime = (d) => d ? new Date(d).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "—";
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short" }) : "—";
 const minutesAgo = (d) => {
@@ -49,12 +97,33 @@ export default function ReceptionEmergencyCases() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      let url;
-      if (tab === "MLC")    url = `${API_ENDPOINTS.EMERGENCY}/mlc`;
-      else if (tab === "Today") url = `${API_ENDPOINTS.EMERGENCY}/today`;
-      else url = `${API_ENDPOINTS.EMERGENCY}/active`;
-      const { data } = await axios.get(url);
-      setList(data?.data || data || []);
+      // Build the two parallel queries: one against the Emergency collection
+      // (the canonical ER record) and one against Admission with
+      // admissionType="Emergency" (covers cases where the Emergency-record
+      // create failed but the admission saved).
+      let emergencyUrl, admissionParams;
+      if (tab === "MLC") {
+        emergencyUrl    = `${API_ENDPOINTS.EMERGENCY}/mlc`;
+        admissionParams = { admissionType: "Emergency", isMLC: true, limit: 200 };
+      } else if (tab === "Today") {
+        emergencyUrl    = `${API_ENDPOINTS.EMERGENCY}/today`;
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        admissionParams = { admissionType: "Emergency", fromDate: today.toISOString(), limit: 200 };
+      } else {
+        emergencyUrl    = `${API_ENDPOINTS.EMERGENCY}/active`;
+        admissionParams = { admissionType: "Emergency", status: "Active", limit: 200 };
+      }
+
+      const [erRes, admRes] = await Promise.all([
+        axios.get(emergencyUrl).catch(() => ({ data: { data: [] } })),
+        axios.get(`${API_ENDPOINTS.ADMISSIONS}`, { params: admissionParams }).catch(() => ({ data: { admissions: [], data: [] } })),
+      ]);
+      const emergencies = erRes.data?.data || erRes.data || [];
+      let admissions    = admRes.data?.admissions || admRes.data?.data || [];
+      // Backend's admissions list doesn't accept isMLC filter — narrow it
+      // client-side so the MLC tab doesn't include non-MLC admissions.
+      if (tab === "MLC") admissions = admissions.filter(a => !!a.isMLC);
+      setList(dedupeMerge(emergencies, admissions));
     } catch (e) {
       toast.error("Could not load emergency cases");
     } finally { setLoading(false); }
