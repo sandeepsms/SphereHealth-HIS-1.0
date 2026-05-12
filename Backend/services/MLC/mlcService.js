@@ -211,7 +211,11 @@ class MLCService {
     }
     if (filters.UHID)   query.UHID   = filters.UHID;
     if (filters.search) {
-      const r = new RegExp(filters.search.trim(), "i");
+      // Escape regex metacharacters — raw user input would throw on
+      // malformed patterns ("[", "?") and is vulnerable to catastrophic
+      // backtracking (ReDoS) on inputs like "(a+)+$".
+      const esc = filters.search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const r = new RegExp(esc, "i");
       query.$or = [
         { mlrNumber: r },
         { patientName: r },
@@ -256,6 +260,20 @@ class MLCService {
   async deleteMLC(idOrMlr) {
     const isOid = mongoose.isValidObjectId(idOrMlr);
     const filter = isOid ? { _id: idOrMlr } : { mlrNumber: String(idOrMlr).toUpperCase() };
+    // Medico-legal records must preserve chain of custody. Only Draft MLCs
+    // (typo / wrong-patient / abandoned forms) may be hard-deleted. A
+    // Finalized or Closed MLC must NEVER vanish from the audit trail —
+    // statutory requirement under IPC §201/§204. Use the Close workflow
+    // (status="Closed" + closedReason) to retire a real case instead.
+    const existing = await MLC.findOne(filter).select("_id status mlrNumber").lean();
+    if (!existing) return null;
+    if (existing.status !== "Draft") {
+      const err = new Error(
+        `MLC ${existing.mlrNumber} is ${existing.status} and cannot be deleted — close it instead`,
+      );
+      err.statusCode = 409;
+      throw err;
+    }
     return MLC.findOneAndDelete(filter);
   }
 }

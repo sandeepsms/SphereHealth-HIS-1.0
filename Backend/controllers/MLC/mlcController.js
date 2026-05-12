@@ -102,7 +102,10 @@ exports.deleteMLC = async (req, res) => {
     if (!doc) return res.status(404).json({ success: false, message: "MLC not found" });
     res.status(200).json({ success: true });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    // Service raises a 409 (Conflict) for "Finalized/Closed MLC may not be
+    // deleted" — surface that distinct status instead of a blanket 500.
+    const code = e.statusCode || 500;
+    res.status(code).json({ success: false, message: e.message });
   }
 };
 
