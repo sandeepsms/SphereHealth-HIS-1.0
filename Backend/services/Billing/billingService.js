@@ -514,9 +514,24 @@ class BillingService {
     const results = [];
     const failed = [];
 
+    // Map Admission.admissionType → PatientBill.visitType enum
+    // (enum: ["OPD","IPD","DAYCARE","EMERGENCY"]).
+    const admTypeToVisitType = {
+      "Planned":   "IPD",
+      "Transfer":  "IPD",
+      "Emergency": "EMERGENCY",
+      "Day Care":  "DAYCARE",
+      "Daycare":   "DAYCARE",
+      "OPD":       "OPD",
+      "Services":  "OPD",
+    };
+
     for (const item of items) {
       try {
-        if (!item.admission || item.admission.status !== "ADMITTED") {
+        // Admission.status enum is ["Active","Discharged","Transferred","Cancelled"].
+        // The legacy check against "ADMITTED" stopped EVERY active admission's
+        // daily auto-charges on the first cron run.
+        if (!item.admission || item.admission.status !== "Active") {
           item.isActive = false;
           await item.save();
           results.push({
@@ -527,9 +542,10 @@ class BillingService {
           continue;
         }
 
+        const visitType = admTypeToVisitType[item.admission.admissionType] || "IPD";
         const bill = await this.getOrCreateDraftBill(
           item.UHID,
-          item.admission.admissionType,
+          visitType,
           item.admission._id,
         );
 
