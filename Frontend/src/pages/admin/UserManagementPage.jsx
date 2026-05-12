@@ -17,10 +17,13 @@ const C = {
   slate: "#1e293b",
 };
 
+// Keep in sync with the userModel.role enum so Admin can create accounts
+// for every supported role (NOT just clinical ones).
 const ROLES = [
   "Admin", "Doctor", "Nurse", "Receptionist",
   "Pharmacist", "Lab Technician", "Dietician", "TPA Coordinator",
   "Radiologist", "Physiotherapist", "Accountant",
+  "Ward Boy", "Security", "Housekeeping",
 ];
 
 const ROLE_COLOR = {

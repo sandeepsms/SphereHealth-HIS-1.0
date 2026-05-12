@@ -1200,17 +1200,10 @@ function MedicationsTab({doctorNotes=[], doctorOrders=[], UHID="", onRefresh=()=
     !["Cancelled","Stopped"].includes(o.status)
   );
 
-  const handleCountersign = async (order) => {
-    setCsSaving(order._id);
-    try {
-      await axios.patch(`${BASE}/doctor-orders/${order._id}/countersign` .replace("/countersign",""), {
-        telephonicData: { ...order.telephonicData, countersignStatus: "countersigned", countersignedAt: new Date() },
-        auditLog: [...(order.auditLog||[]), { step:"Telephonic Order Countersigned", doneBy:"Doctor", doneAt: new Date(), notes:"Countersigned via Doctor Patient Panel" }],
-      });
-      onRefresh();
-    } catch { /* silent */ }
-    finally { setCsSaving(null); }
-  };
+  // (Dead legacy handler removed — the dedicated countersign endpoint
+  // POST /api/doctor-orders/:id/countersign is now used via `countersign()`
+  // below. Keeping this stub prevented accidental regressions during
+  // refactoring; safe to drop now that the backend endpoint exists.)
 
   // Use the dedicated countersign endpoint
   const countersign = async (order) => {

@@ -209,13 +209,16 @@ exports.getSummary = async (req, res) => {
 exports.listBills = async (req, res) => {
   try {
     const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
-    const { page = 1, limit = 50, status, visitType, paymentType, UHID, billNumber, startDate, endDate } = req.query;
+    const { page = 1, limit = 50, status, visitType, paymentType, UHID, billNumber, patientName, startDate, endDate } = req.query;
     const query = {};
-    if (status)       query.billStatus  = status;
-    if (visitType)    query.visitType   = visitType;
-    if (paymentType)  query.paymentType = paymentType;
+    // Enum values on the model are upper-case (DRAFT/GENERATED/PAID/etc.);
+    // accept lower-case from the frontend dropdown and normalize.
+    if (status)       query.billStatus  = String(status).toUpperCase();
+    if (visitType)    query.visitType   = String(visitType).toUpperCase();
+    if (paymentType)  query.paymentType = String(paymentType).toUpperCase();
     if (UHID)         query.UHID        = { $regex: UHID, $options: "i" };
     if (billNumber)   query.billNumber  = { $regex: billNumber, $options: "i" };
+    if (patientName)  query.patientName = { $regex: patientName, $options: "i" };
     if (startDate || endDate) {
       query.billDate = {};
       if (startDate) query.billDate.$gte = new Date(startDate);
