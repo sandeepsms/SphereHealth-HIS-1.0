@@ -65,8 +65,27 @@ exports.getMLC = async (req, res) => {
   }
 };
 
+// Shared ownership check: a Doctor user may only mutate their own MLCs.
+// Admin / Receptionist / Nurse bypass this. Returns the existing doc on
+// success, or sends a 404/403 response and returns null on failure.
+async function loadAndAuthorize(req, res) {
+  const existing = await mlcService.getMLC(req.params.idOrMlr);
+  if (!existing) {
+    res.status(404).json({ success: false, message: "MLC not found" });
+    return null;
+  }
+  if (req.user?.role === "Doctor" && req.doctorProfile?._id &&
+      String(existing.doctorId?._id || existing.doctorId) !== String(req.doctorProfile._id)) {
+    res.status(403).json({ success: false, message: "Not your MLC" });
+    return null;
+  }
+  return existing;
+}
+
 exports.updateMLC = async (req, res) => {
   try {
+    const existing = await loadAndAuthorize(req, res);
+    if (!existing) return; // response already sent
     const doc = await mlcService.updateMLC(req.params.idOrMlr, req.body, actorFrom(req));
     if (!doc) return res.status(404).json({ success: false, message: "MLC not found" });
     res.status(200).json({ success: true, data: doc });
@@ -77,6 +96,8 @@ exports.updateMLC = async (req, res) => {
 
 exports.deleteMLC = async (req, res) => {
   try {
+    const existing = await loadAndAuthorize(req, res);
+    if (!existing) return;
     const doc = await mlcService.deleteMLC(req.params.idOrMlr);
     if (!doc) return res.status(404).json({ success: false, message: "MLC not found" });
     res.status(200).json({ success: true });
