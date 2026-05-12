@@ -16,6 +16,7 @@ import {
   IntakeOutputChartTab,
   BloodTransfusionRecordsTab,
   RBSMonitoringTab,
+  HandoverNotesTab,
 } from "../../Components/clinical/PatientPanelTabs";
 
 const BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
@@ -53,6 +54,7 @@ const TABS = [
   { id:"io",         label:"💧 Intake / Output"      },
   { id:"blood",      label:"🩸 Blood Transfusion"    },
   { id:"rbs",        label:"🩸 RBS Monitoring"       },
+  { id:"handover",   label:"🔄 Handover Notes"       },
   { id:"treatment",  label:"💉 Treatment Chart"      },
   { id:"orders",     label:"📋 Orders"               },
   { id:"meds",       label:"💊 Medications"          },
@@ -2010,6 +2012,7 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
               {activeTab==="io"         && <IntakeOutputChartTab nursingNotes={nursingNotes}/>}
               {activeTab==="blood"      && <BloodTransfusionRecordsTab nursingNotes={nursingNotes}/>}
               {activeTab==="rbs"        && <RBSMonitoringTab     nursingNotes={nursingNotes} doctorOrders={doctorOrders}/>}
+              {activeTab==="handover"   && <HandoverNotesTab     patient={patient} admission={admission} doctorNotes={doctorNotes} nursingNotes={nursingNotes}/>}
               {activeTab==="meds"       && <MedicationsTab doctorNotes={doctorNotes} doctorOrders={doctorOrders}/>}
               {activeTab==="treatment"  && <TreatmentChartTab doctorOrders={doctorOrders} doctorNotes={doctorNotes}/>}
               {activeTab==="orders"     && <OrdersTab doctorNotes={doctorNotes}/>}

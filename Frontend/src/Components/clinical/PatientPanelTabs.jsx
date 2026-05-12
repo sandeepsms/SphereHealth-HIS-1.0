@@ -623,6 +623,211 @@ export function RBSMonitoringTab({ nursingNotes = [], doctorOrders = [] }) {
   );
 }
 
+/* ────────────────────────────────────────────────────────────────
+   8. HandoverNotesTab
+   ────────────────────────────────────────────────────────────────
+   Aggregates every kind of handover record on file for this admission
+   so the next shift / next doctor / receiving department picks up
+   without losing context:
+
+     • 🛏  Bed-Transfer Handover (Doctor → Nurse handover that's already
+            its own state-machine — Doctor initiates, Nurse completes)
+     • 🌅  Nursing Shift (SBAR)   — noteType="discharge" with SBAR or
+                                    noteType="handover"/"shiftHandover"
+     • 🩺  Doctor Shift Handover  — doctor noteType="handover"/"shift"
+     • ➡  Doctor → Nurse Care    — doctor handover meant for nursing
+                                    (noteData.targetRole === "Nurse")
+     • ⚠   Critical Findings      — nurse → doctor escalation
+                                    (noteData.handoverType === "critical")
+     • 🚪  Pre-Discharge Handover — doctor or nurse with
+                                    noteType="predischarge"
+
+   Each entry renders fully expanded for proper reading + printing.
+*/
+export function HandoverNotesTab({ patient, admission, doctorNotes = [], nursingNotes = [] }) {
+  const admissionId = admission?._id;
+  const [transfers, setTransfers] = useState([]);
+  const [loadingTx, setLoadingTx]   = useState(false);
+
+  useEffect(() => {
+    if (!admissionId) { setTransfers([]); return; }
+    setLoadingTx(true);
+    axios.get(`${API_ENDPOINTS.BASE}/bed-transfers?admissionId=${admissionId}`)
+      .then((r) => setTransfers(r.data?.data || r.data?.transfers || []))
+      .catch(() => setTransfers([]))
+      .finally(() => setLoadingTx(false));
+  }, [admissionId]);
+
+  /* ── Classify nursing handovers ───────────────────────────────── */
+  const nursingHandovers = nursingNotes.filter((n) => {
+    const t = (n.noteType || "").toLowerCase();
+    const subtype = (n.noteData?.handoverType || "").toLowerCase();
+    return t === "discharge" || t === "handover" || t === "shifthandover" || t === "sbar"
+        || subtype === "shift" || subtype === "sbar";
+  });
+
+  const sbar     = nursingHandovers.filter((n) => {
+    const t = (n.noteType || "").toLowerCase();
+    return t !== "predischarge" && (n.noteData?.handoverType || "").toLowerCase() !== "critical";
+  });
+  const critical = nursingHandovers.filter((n) => (n.noteData?.handoverType || "").toLowerCase() === "critical");
+
+  /* ── Classify doctor handovers ───────────────────────────────── */
+  const doctorHandovers = doctorNotes.filter((n) => {
+    const t = (n.noteType || "").toLowerCase();
+    return t === "handover" || t === "shift" || t === "shifthandover";
+  });
+  const doctorShift = doctorHandovers.filter((n) => {
+    const target = (n.noteData?.targetRole || n.targetRole || "").toLowerCase();
+    return target !== "nurse";
+  });
+  const doctorToNurse = doctorHandovers.filter((n) => {
+    const target = (n.noteData?.targetRole || n.targetRole || "").toLowerCase();
+    return target === "nurse";
+  });
+
+  /* ── Pre-discharge handovers (from either side) ─────────────── */
+  const preDischarge = [
+    ...doctorNotes.filter((n) => (n.noteType || "").toLowerCase() === "predischarge"),
+    ...nursingNotes.filter((n) => (n.noteType || "").toLowerCase() === "predischarge"),
+  ].sort((a, b) => new Date(b.createdAt || b.noteDate) - new Date(a.createdAt || a.noteDate));
+
+  /* ── Bed-transfer handovers ──────────────────────────────────── */
+  const pending  = transfers.filter((t) => t.status === "PendingHandover");
+  const completed = transfers.filter((t) => t.status === "Complete");
+
+  const totalCount = pending.length + completed.length + sbar.length + critical.length
+                   + doctorShift.length + doctorToNurse.length + preDischarge.length;
+
+  return (
+    <div className="ppt-tab">
+      <div className="ppt-tab-header">
+        <h2 className="ppt-tab-title">🔄 Handover Notes — All Types</h2>
+        <p className="ppt-tab-sub">
+          Shift handovers, bed-transfer handovers, doctor→nurse care plans, critical-findings escalations,
+          and pre-discharge handovers · {totalCount} record(s)
+        </p>
+      </div>
+
+      {/* 1 — Pending bed-transfer (action required) */}
+      {pending.length > 0 && (
+        <div className="ppt-card ppt-card--mlc">
+          <div className="ppt-section-title">
+            <span className="ppt-section-icon">🛏</span>
+            Bed Transfer — Handover Pending
+            <span className="ppt-badge ppt-badge--warn">ACTION REQUIRED</span>
+          </div>
+          {pending.map((t) => <BedTransferRow key={t._id} t={t} state="pending" />)}
+        </div>
+      )}
+
+      {/* 2 — Nursing Shift (SBAR) */}
+      <HandoverSection
+        title="🌅 Nursing Shift Handover (SBAR)"
+        items={sbar}
+        emptyMsg="No nursing shift handovers recorded yet."
+        kind="nurse"
+      />
+
+      {/* 3 — Doctor Shift */}
+      <HandoverSection
+        title="🩺 Doctor Shift Handover"
+        items={doctorShift}
+        emptyMsg="No doctor shift handovers recorded yet."
+        kind="doctor"
+      />
+
+      {/* 4 — Doctor → Nurse care plan */}
+      <HandoverSection
+        title="➡ Doctor → Nurse Care Handover"
+        items={doctorToNurse}
+        emptyMsg="No doctor-to-nurse care handovers recorded yet."
+        kind="doctor"
+      />
+
+      {/* 5 — Critical Findings (nurse → doctor escalation) */}
+      <HandoverSection
+        title="⚠ Critical Findings Handover (Nurse → Doctor escalation)"
+        items={critical}
+        emptyMsg="No critical-findings escalations on record."
+        kind="nurse"
+        urgent
+      />
+
+      {/* 6 — Pre-Discharge */}
+      <HandoverSection
+        title="🚪 Pre-Discharge Handover"
+        items={preDischarge}
+        emptyMsg="No pre-discharge handovers recorded yet."
+        kind="mixed"
+      />
+
+      {/* 7 — Completed bed-transfer history */}
+      <div className="ppt-card">
+        <div className="ppt-section-title">
+          <span className="ppt-section-icon">🛏</span>
+          Bed-Transfer Handover History
+          <span className="ppt-badge ppt-badge--info">{completed.length} completed</span>
+        </div>
+        {loadingTx && <div className="ppt-empty"><i className="pi pi-spin pi-spinner" /> Loading transfers…</div>}
+        {!loadingTx && completed.length === 0 && (
+          <div className="ppt-empty">No completed bed transfers on file.</div>
+        )}
+        {completed
+          .sort((a, b) => new Date(b.handoverAt || b.updatedAt) - new Date(a.handoverAt || a.updatedAt))
+          .map((t) => <BedTransferRow key={t._id} t={t} state="completed" />)}
+      </div>
+    </div>
+  );
+}
+
+function HandoverSection({ title, items, emptyMsg, kind, urgent }) {
+  return (
+    <div className={`ppt-card ${urgent ? "ppt-card--blood" : kind === "doctor" ? "ppt-card--doctor" : kind === "nurse" ? "ppt-card--nurse" : ""}`}>
+      <div className="ppt-section-title">
+        {title}
+        <span className={`ppt-badge ${items.length === 0 ? "ppt-badge--info" : urgent ? "ppt-badge--warn" : "ppt-badge--ok"}`}>
+          {items.length} record(s)
+        </span>
+      </div>
+      {items.length === 0 ? (
+        <div className="ppt-empty">{emptyMsg}</div>
+      ) : (
+        items.map((n) => (
+          kind === "doctor"
+            ? <DoctorNoteExpanded key={n._id} note={n} />
+            : <NurseNoteExpanded  key={n._id} note={n} />
+        ))
+      )}
+    </div>
+  );
+}
+
+function BedTransferRow({ t, state }) {
+  return (
+    <div className="ppt-note ppt-note--nurse">
+      <div className="ppt-note-head">
+        <span className="ppt-note-type">
+          {t.transferNo || "Bed Transfer"}
+          {state === "pending"  && <span className="ppt-note-status ppt-note-status--draft">{t.status}</span>}
+          {state === "completed" && <span className="ppt-note-status ppt-note-status--signed">{t.status}</span>}
+        </span>
+        <span className="ppt-note-meta">
+          Initiated: {fmtDateTime(t.requestedAt)} {t.requestedBy && <>by <strong>{t.requestedBy}</strong></>}
+          {t.handoverAt && <> · Completed: {fmtDateTime(t.handoverAt)} by <strong>{t.handoverBy || "Nurse"}</strong></>}
+        </span>
+      </div>
+      <div className="ppt-detail-grid">
+        <Field label="From Bed" value={[t.fromBedNumber, t.fromWardName].filter(Boolean).join(" — ")} />
+        <Field label="To Bed"   value={[t.toBedNumber, t.toWardName].filter(Boolean).join(" — ")} />
+        <Field label="Reason"   value={t.reason} wide />
+        <Field label="Doctor's Shifting Notes" value={t.shiftingNotes} wide />
+        {t.handoverNotes && <Field label="Nurse's Handover Notes" value={t.handoverNotes} wide />}
+      </div>
+    </div>
+  );
+}
+
 /* ════════════════════════════════════════════════════════════════
    Building blocks — DoctorNoteExpanded, NurseNoteExpanded, MLCExpanded
    ════════════════════════════════════════════════════════════════ */
