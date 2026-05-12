@@ -54,13 +54,23 @@ const AppointmentSchema = new mongoose.Schema(
 AppointmentSchema.index({ doctorId: 1, appointmentDate: 1, slotTime: 1 });
 AppointmentSchema.index({ appointmentDate: 1, status: 1 });
 
-AppointmentSchema.pre("save", async function (next) {
+// Use `pre("validate")` (not `pre("save")`) so the auto-generated number is
+// populated BEFORE Mongoose runs validation. With `appointmentNumber` marked
+// `required: true`, a `pre("save")` hook fires too late — Mongoose validates
+// FIRST, sees the empty path, and rejects the doc with
+// "Appointment validation failed: appointmentNumber: Path `appointmentNumber`
+// is required." which broke every appointment booking.
+AppointmentSchema.pre("validate", async function (next) {
   if (this.isNew && !this.appointmentNumber) {
-    const date  = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-    const count = await mongoose.model("Appointment").countDocuments({
-      appointmentNumber: { $regex: `^APT-${date}-` },
-    });
-    this.appointmentNumber = `APT-${date}-${String(count + 1).padStart(4, "0")}`;
+    try {
+      const date  = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+      const count = await mongoose.model("Appointment").countDocuments({
+        appointmentNumber: { $regex: `^APT-${date}-` },
+      });
+      this.appointmentNumber = `APT-${date}-${String(count + 1).padStart(4, "0")}`;
+    } catch (err) {
+      return next(err);
+    }
   }
   next();
 });

@@ -259,8 +259,12 @@ UserSchema.pre("save", function (next) {
   next();
 });
 
-// Pre-save: Generate employeeId
-UserSchema.pre("save", async function (next) {
+// Pre-VALIDATE (not pre-save): Generate employeeId before required-check runs.
+// `employeeId` is `required: true` (line 9), so if we generate it in `pre("save")`
+// Mongoose validates first and rejects the doc with "Path `employeeId` is
+// required." which blocks every user creation. Same anti-pattern as the
+// Appointment bug fixed in appointmentModel.js.
+UserSchema.pre("validate", async function (next) {
   if (this.isNew && !this.employeeId) {
     const count = await mongoose.model("User").countDocuments();
     const year = new Date().getFullYear();
