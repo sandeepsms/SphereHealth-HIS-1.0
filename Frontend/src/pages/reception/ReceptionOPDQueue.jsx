@@ -24,7 +24,15 @@ const fmtTime = (d) => d ? new Date(d).toLocaleTimeString("en-IN", { hour: "2-di
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 const fmtCur  = (n) => `₹${(Number(n) || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
 
+// "Active" is a UI bucket that maps to OPD enum values "Waiting" + "In Progress"
+// — see `bucketOf()` below. Without this mapping every walk-in lived in
+// "Waiting" and the default tab silently showed an empty queue.
 const STATUSES = ["Active", "Completed", "Referred"];
+const bucketOf = (v) => {
+  const st = v?.status || "Waiting";
+  if (st === "Waiting" || st === "In Progress") return "Active";
+  return st;
+};
 
 export default function ReceptionOPDQueue() {
   const navigate = useNavigate();
@@ -61,7 +69,7 @@ export default function ReceptionOPDQueue() {
   }, [load]);
 
   const filtered = useMemo(() => {
-    let r = list.filter(v => (v.status || "Active") === tab);
+    let r = list.filter(v => bucketOf(v) === tab);
     const s = search.trim().toLowerCase();
     if (s) r = r.filter(v => {
       const name = v.patientId?.fullName || v.patientName || "";
@@ -75,7 +83,7 @@ export default function ReceptionOPDQueue() {
   }, [list, tab, search]);
 
   const counts = STATUSES.reduce((acc, s) => {
-    acc[s] = list.filter(v => (v.status || "Active") === s).length;
+    acc[s] = list.filter(v => bucketOf(v) === s).length;
     return acc;
   }, {});
 
