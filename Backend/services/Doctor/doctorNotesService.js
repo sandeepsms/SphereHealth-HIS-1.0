@@ -1,7 +1,7 @@
 // Doctor/Services/doctorNotesService.js
 // Business logic — Controller calls these functions
 
-const DoctorNotes = require("../../models/Doctor/doctorNotesModel");
+const DoctorNotes = require("../../models/Doctor/DoctorNotesModel");
 const Patient = require("../../models/Patient/patientModel");
 const Doctor = require("../../models/Doctor/doctorModel");
 const TreatmentChart = require("../../models/Doctor/treatmentChartModel");

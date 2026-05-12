@@ -1,9 +1,9 @@
 // services/Nurse/nurseNotesService.js
 
 const mongoose = require("mongoose");
-const NurseNotes = require("../../models/Nurse/nurseNotesModel");
-const NurseStaff = require("../../models/Nurse/nurseStaffModel");
-const DoctorNotes = require("../../models/Doctor/doctorNotesModel");
+const NurseNotes = require("../../models/Nurse/NurseNotesModel");
+const NurseStaff = require("../../models/Nurse/NurseStaffModel");
+const DoctorNotes = require("../../models/Doctor/DoctorNotesModel");
 const Patient = require("../../models/Patient/patientModel");
 const TreatmentChart = require("../../models/Doctor/treatmentChartModel");
 

@@ -3,7 +3,7 @@
 
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
-const NurseStaff = require("../../models/Nurse/nurseStaffModel");
+const NurseStaff = require("../../models/Nurse/NurseStaffModel");
 
 // ─────────────────────────────────────────────────────────────
 // Create nurse staff
@@ -179,7 +179,7 @@ const deleteNurseStaff = async (id) => {
     throw error;
   }
 
-  const NurseNotes = require("../models/nurseNotesModel");
+  const NurseNotes = require("../../models/Nurse/NurseNotesModel");
   const count = await NurseNotes.countDocuments({ nurse: id });
   if (count > 0) {
     const error = new Error(

@@ -1,6 +1,6 @@
 const VitalSheet = require("../../models/Vitals/vitalSheetModel");
 const Patient = require("../../models/Patient/patientModel");
-const NurseStaff = require("../../models/Nurse/nurseStaffModel");
+const NurseStaff = require("../../models/Nurse/NurseStaffModel");
 
 // ── Helper: date format ──────────────────────────────
 const formatDate = (date) => {
