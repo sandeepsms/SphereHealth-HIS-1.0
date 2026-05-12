@@ -1,11 +1,5 @@
-const router      = require("express").Router();
+const router   = require("express").Router();
 const DoctorOrder = require("../../models/Doctor/DoctorOrderModel");
-const NurseNotes  = require("../../models/Nurse/NurseNotesModel");
-const { attemptAuth } = require("../../middleware/auth");
-
-// Soft-auth — every order/administer/discontinue write carries req.user
-// for the audit trail. Reads remain open for backward compat.
-router.use(attemptAuth);
 
 /* ─────────────────────────────────────────────────────
    NABH High Alert Medication detection (shared util)
@@ -264,49 +258,6 @@ router.post("/:id/administer", async (req, res) => {
     }
 
     await order.save();
-
-    // ── Auto-log diluent volume to Input chart ──────────────────
-    // If the doctor specified a dilution (dilutionVolume + dilutionFluid),
-    // add that volume to the shift's ivFluids total automatically.
-    if (status === "given" && order.orderDetails?.dilutionVolume) {
-      try {
-        const hr = new Date().getHours();
-        const autoShift = hr < 14 ? "morning" : hr < 20 ? "evening" : "night";
-        const today    = new Date(); today.setHours(0, 0, 0, 0);
-        const tomorrow = new Date(today.getTime() + 86_400_000);
-        await NurseNotes.findOneAndUpdate(
-          { ipdNo: order.visitId, shift: autoShift, noteDate: { $gte: today, $lt: tomorrow } },
-          {
-            $inc:  { "intakeOutput.ivFluids": order.orderDetails.dilutionVolume },
-            $push: {
-              "intakeOutput.ivFluidEntries": {
-                time:      new Date(),
-                volume:    order.orderDetails.dilutionVolume,
-                fluid:     order.orderDetails.dilutionFluid || "NS",
-                via:       order.orderDetails.medicineName || order.orderDetails.displayName || "",
-                auto:      true,
-                orderId:   order._id,
-                enteredBy: givenBy,
-              },
-            },
-            $setOnInsert: {
-              ipdNo:       order.visitId,
-              patientUHID: order.UHID,
-              patientName: order.patientName || "",
-              noteDate:    new Date(),
-              noteType:    "general",
-              status:      "draft",
-              shift:       autoShift,
-            },
-          },
-          { upsert: true, new: true }
-        );
-      } catch (ioErr) {
-        console.error("Auto I/O dilution log error:", ioErr.message);
-      }
-    }
-    // ───────────────────────────────────────────────────────────
-
     res.json({ ok: true, data: order });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message });
@@ -488,55 +439,6 @@ router.post("/:id/doctor-action", async (req, res) => {
     res.json({ ok: true, data: order, newOrder: newOrder || undefined });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message });
-  }
-});
-
-/* ═══════════════════════════════════════════════════
-   Telephonic-order countersign / reject (NABH MOM.4.c)
-═══════════════════════════════════════════════════ */
-/**
- * POST /:id/countersign
- * Body: { type: "countersign" | "reject", doneBy: String, rejectedReason?: String }
- * Doctor either countersigns a telephonic order or rejects it. Audit trail
- * is appended either way.
- */
-router.post("/:id/countersign", async (req, res) => {
-  try {
-    const { type = "countersign", doneBy = "Doctor", rejectedReason } = req.body || {};
-    const order = await DoctorOrder.findById(req.params.id);
-    if (!order) return res.status(404).json({ ok: false, message: "Not found" });
-
-    const now = new Date();
-    order.telephonicData = order.telephonicData || {};
-
-    if (type === "reject") {
-      order.telephonicData.countersignStatus = "rejected";
-      order.telephonicData.rejectedAt        = now;
-      order.telephonicData.rejectedBy        = doneBy;
-      order.telephonicData.rejectedReason    = rejectedReason || "Rejected by doctor";
-      order.status = "Cancelled";
-      (order.auditLog || (order.auditLog = [])).push({
-        step: "Telephonic Order Rejected",
-        doneBy,
-        doneAt: now,
-        notes: rejectedReason || "Rejected on countersign",
-      });
-    } else {
-      order.telephonicData.countersignStatus = "countersigned";
-      order.telephonicData.countersignedAt   = now;
-      order.telephonicData.countersignedBy   = doneBy;
-      (order.auditLog || (order.auditLog = [])).push({
-        step: "Telephonic Order Countersigned",
-        doneBy,
-        doneAt: now,
-        notes: "Countersigned via Doctor Patient Panel",
-      });
-    }
-
-    await order.save();
-    return res.json({ ok: true, data: order });
-  } catch (err) {
-    return res.status(400).json({ ok: false, message: err.message });
   }
 });
 

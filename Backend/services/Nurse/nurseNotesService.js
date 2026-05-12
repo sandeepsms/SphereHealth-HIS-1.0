@@ -1,9 +1,9 @@
 // services/Nurse/nurseNotesService.js
 
 const mongoose = require("mongoose");
-const NurseNotes = require("../../models/Nurse/NurseNotesModel");
-const NurseStaff = require("../../models/Nurse/NurseStaffModel");
-const DoctorNotes = require("../../models/Doctor/DoctorNotesModel");
+const NurseNotes = require("../../models/Nurse/nurseNotesModel");
+const NurseStaff = require("../../models/Nurse/nurseStaffModel");
+const DoctorNotes = require("../../models/Doctor/doctorNotesModel");
 const Patient = require("../../models/Patient/patientModel");
 const TreatmentChart = require("../../models/Doctor/treatmentChartModel");
 
@@ -307,138 +307,12 @@ const confirmSingleOrder = async (data, nurseUserId) => {
       },
       { _id: nurse._id, name: nurse.personalInfo?.fullName },
     );
-
-    // ── Auto-log diluent volume to Input chart ──
-    // If the doctor specified a dilution (e.g. 100ml NS), add it to ivFluids
-    // in the current shift's I/O record whenever nurse marks the order as done.
-    const confirmedOrder = doctorNote.orders?.find(
-      (o) => o._id?.toString() === orderId
-    );
-    if ((status === "done" || !status) && confirmedOrder?.dilutionVolume) {
-      try {
-        await _autoLogDilutionIO({
-          ipdNo:          doctorNote.ipdNo,
-          UHID:           doctorNote.patientUHID,
-          patientName:    doctorNote.patientName,
-          shift:          shift || "morning",
-          dilutionVolume: confirmedOrder.dilutionVolume,
-          dilutionFluid:  confirmedOrder.dilutionFluid || "NS",
-          medicineName:   confirmedOrder.instruction || "medication",
-          orderId:        confirmedOrder._id,
-          nurseName:      nurse.personalInfo?.fullName || "",
-        });
-      } catch (ioErr) {
-        console.error("Auto I/O dilution log error:", ioErr.message);
-      }
-    }
   }
 
   return {
     confirmedBy: nurse.personalInfo?.fullName,
     status: status || "done",
   };
-};
-
-/* ─────────────────────────────────────────────────────────────
-   Auto-log diluent volume to I/O chart (internal helper)
-   Upserts today's NurseNote for the given ipdNo+shift and:
-     • increments intakeOutput.ivFluids by dilutionVolume
-     • pushes one record into intakeOutput.ivFluidEntries
-───────────────────────────────────────────────────────────── */
-async function _autoLogDilutionIO({
-  ipdNo, UHID, patientName, shift,
-  dilutionVolume, dilutionFluid, medicineName, orderId, nurseName,
-}) {
-  const today    = new Date(); today.setHours(0, 0, 0, 0);
-  const tomorrow = new Date(today.getTime() + 86_400_000);
-  const entry = {
-    time:      new Date(),
-    volume:    dilutionVolume,
-    fluid:     dilutionFluid,
-    via:       medicineName,
-    auto:      true,
-    orderId,
-    enteredBy: nurseName,
-  };
-  await NurseNotes.findOneAndUpdate(
-    { ipdNo, shift, noteDate: { $gte: today, $lt: tomorrow } },
-    {
-      $inc:  { "intakeOutput.ivFluids": dilutionVolume },
-      $push: { "intakeOutput.ivFluidEntries": entry },
-      $setOnInsert: {
-        ipdNo,
-        patientUHID: UHID || "",
-        patientName: patientName || "",
-        noteDate:    new Date(),
-        noteType:    "general",
-        status:      "draft",
-        shift,
-      },
-    },
-    { upsert: true, new: true }
-  );
-}
-
-/* ─────────────────────────────────────────────────────────────
-   Add one monitoring log entry to an existing blood-transfusion note
-   (submitted notes are intentionally updatable here — monitoring
-    continues after the note is first saved)
-───────────────────────────────────────────────────────────── */
-const addBloodMonitoringEntry = async (noteId, entry) => {
-  const note = await NurseNotes.findById(noteId);
-  if (!note) {
-    const e = new Error("Note not found");
-    e.statusCode = 404;
-    throw e;
-  }
-  if (note.noteType !== "blood") {
-    const e = new Error("Note is not a blood-transfusion note");
-    e.statusCode = 400;
-    throw e;
-  }
-
-  // noteData is Mixed — create new object refs so Mongoose detects the change
-  const bt = { ...(note.noteData?.bloodTransfusion || {}) };
-  bt.monitoringLogs = [
-    ...(Array.isArray(bt.monitoringLogs) ? bt.monitoringLogs : []),
-    { ...entry, savedAt: new Date() },
-  ];
-  note.noteData = { ...(note.noteData || {}), bloodTransfusion: bt };
-  note.markModified("noteData");
-  await note.save();
-  return note;
-};
-
-/* ─────────────────────────────────────────────────────────────
-   Update blood-transfusion status (Completed / Stopped / Held / Reaction)
-   + record end-time and post-transfusion vitals
-───────────────────────────────────────────────────────────── */
-const updateBloodTransfusionStatus = async (noteId, { status, endTime, reactionType, postVitals }) => {
-  const note = await NurseNotes.findById(noteId);
-  if (!note) {
-    const e = new Error("Note not found");
-    e.statusCode = 404;
-    throw e;
-  }
-  if (note.noteType !== "blood") {
-    const e = new Error("Note is not a blood-transfusion note");
-    e.statusCode = 400;
-    throw e;
-  }
-
-  const bt = { ...(note.noteData?.bloodTransfusion || {}) };
-  if (status)                    bt.status      = status;
-  if (endTime)                   bt.endTime     = endTime;
-  if (reactionType !== undefined) bt.reactionType = reactionType;
-  if (postVitals && typeof postVitals === "object") {
-    // postBP_sys, postBP_dia, postPulse, postTemp, postSpO2
-    Object.assign(bt, postVitals);
-  }
-
-  note.noteData = { ...(note.noteData || {}), bloodTransfusion: bt };
-  note.markModified("noteData");
-  await note.save();
-  return note;
 };
 
 /* ─────────────────────────────────────────────────────────────
@@ -484,7 +358,5 @@ module.exports = {
   getNoteById,
   updateNurseNote,
   confirmSingleOrder,
-  addBloodMonitoringEntry,
-  updateBloodTransfusionStatus,
   deleteNurseNote,
 };

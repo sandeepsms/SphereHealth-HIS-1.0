@@ -9,8 +9,6 @@ import { useDigitalSignature } from "../../hooks/useDigitalSignature";
 import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
 import SignaturePad from "../../Components/signature/SignaturePad";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
-import PatientHeaderCard from "../../Components/clinical/PatientHeaderCard";
-import "../../Components/clinical/clinical-forms.css";
 import NurseOrdersPanel from "../../Components/clinical/NurseOrdersPanel";
 import TreatmentChart from "../../Components/clinical/TreatmentChart";
 import FingerprintConsentModal from "../../Components/clinical/FingerprintConsentModal";
@@ -35,11 +33,18 @@ const C = {
   gray: "#9ca3af", grayL: "#f9fafb",
 };
 
-/* Form primitives moved to clinical-forms.css — use:
-   .his-field   (input)    .his-select (select)
-   .his-textarea (textarea) .his-label (label)
-   .his-field-group (label+input wrapper)
-*/
+const fld = {
+  padding: "9px 12px", border: "1.5px solid #e2e8f0", borderRadius: 8,
+  fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#0f172a",
+  outline: "none", background: "white", width: "100%", boxSizing: "border-box",
+};
+const sel = { ...fld, cursor: "pointer" };
+const ta = { ...fld, resize: "vertical", minHeight: 80 };
+
+const lbl = {
+  display: "block", fontSize: 11, fontWeight: 700, color: C.muted,
+  textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 5,
+};
 
 /* ── Module definitions ── */
 const MODULES = [
@@ -189,8 +194,8 @@ const isAbnormal = (key, val) => {
 /* ── Field label helper ── */
 function FL({ label, children }) {
   return (
-    <div className="his-field-group">
-      <label className="his-label">{label}</label>
+    <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+      <label style={lbl}>{label}</label>
       {children}
     </div>
   );
@@ -261,10 +266,7 @@ function NursingNotesContent({ selectedPatient }) {
 
   /* ── Module-specific form state ── */
   const [vitals,    setVitals]    = useState({ bp_sys: "", bp_dia: "", pulse: "", temp: "", spo2: "", rr: "", gcs: "", bsl: "", painScore: "", o2Flow: "", o2Device: "None", weight: "", position: "Supine" });
-  const [blood,     setBlood]     = useState({ product: "PRC (Packed RBC)", bagNo: "", crossMatchNo: "", volume: "350", groupVerified: true, secondNurse: "", startTime: "", status: "Transfusing", endTime: "", reactionType: "None", preBP_sys: "", preBP_dia: "", prePulse: "", preTemp: "", postBP_sys: "", postBP_dia: "", postPulse: "",
-    // NABH COP.7 monitoring log — one entry per checkpoint
-    monitoringLogs: [],  // [{ interval, time, bp_sys, bp_dia, pulse, temp, spo2, rr, reaction, action, comment }]
-  });
+  const [blood,     setBlood]     = useState({ product: "PRC (Packed RBC)", bagNo: "", crossMatchNo: "", volume: "350", groupVerified: true, secondNurse: "", startTime: "", status: "Transfusing", endTime: "", reactionType: "None", preBP_sys: "", preBP_dia: "", prePulse: "", preTemp: "", postBP_sys: "", postBP_dia: "", postPulse: "" });
   const [iv,        setIV]        = useState({ fluid: "NS 0.9%", volume: "", rate: "", dropsPerMin: "", route: "IV Right Forearm", site: "Patent", cannulaDate: "", setChangeDate: "", additive: "" });
   const [intake,    setIntake]    = useState({ oral: "", ivFluids: "", bloodProducts: "", urineOutput: "", drainOutput: "", nasogastric: "", emesis: "", bloodLoss: "" });
   const [ivMedOrders,    setIvMedOrders]    = useState([]); // IV dilution volumes from Treatment Chart
@@ -278,26 +280,6 @@ function NursingNotesContent({ selectedPatient }) {
   const [procedure, setProcedure] = useState({ procedureName: "", indication: "", site: "", laterality: "N/A", time: "", consentObtained: true, performedBy: "", designation: "Staff Nurse", assistant: "", sterile: true, position: "Supine", outcome: "Tolerated Well", complications: "None", specimenSent: false, specimenType: "", postProcVitals: "", followUp: "" });
   const [discharge, setDischarge] = useState({ type: "Shift Handover", situation: "", background: "", assessment: "", recommendation: "", incomingNurse: "", patientStatus: "Stable", educationGiven: false, educationTopics: "", followUpDate: "", valuablesHandedOver: false });
   const [mews,      setMews]      = useState({ rr: "", spo2: "", temp: "", sbp: "", hr: "", avpu: "A" });
-  const [generalObs, setGeneralObs] = useState({
-    consciousness: "Conscious", orientation: "Oriented ×3", cooperation: "Cooperative",
-    mood: "Calm", activityLevel: "Ambulatory", sleepQuality: "Good", appetite: "Good",
-    comfort: "Comfortable", oxygenNeeded: false, catheterPresent: false, ngPresent: false,
-    ivAccess: false, restraintUsed: false, callBellInReach: true, railsUp: true,
-    bowelSounds: "Normal", urineOutput: "Adequate", skin: "Intact",
-    observations: "",
-  });
-
-  /* ── Blood transfusion — active-bag tracking ── */
-  const [bloodTab,        setBloodTab]       = useState("new");   // "new" | noteId of active bag
-  const [newMonitorEntry, setNewMonitorEntry] = useState({
-    interval: "Pre", time: "", bp_sys: "", bp_dia: "", pulse: "", temp: "", spo2: "", rr: "",
-    reaction: "None", action: "", comment: "",
-  });
-  const [bloodActionForm, setBloodActionForm] = useState({
-    action: null,   // null | "Completed" | "Stopped" | "Reaction"
-    endTime: "", reactionType: "None",
-    postBP_sys: "", postBP_dia: "", postPulse: "", postTemp: "", postSpO2: "",
-  });
 
   /* ── Fetch IV dilution orders when I/O tab opens ── */
   useEffect(() => {
@@ -583,9 +565,7 @@ function NursingNotesContent({ selectedPatient }) {
     try {
       const { data } = await axios.get(`${API_ENDPOINTS.NURSING_NOTES}/ipd/${encodeURIComponent(ipdNo)}`);
       const arr = Array.isArray(data) ? data : data.data || [];
-      // Map noteData → moduleData so timeline renderer can access structured module fields
-      const mapped = arr.map(n => ({ ...n, moduleData: n.noteData || {} }));
-      setNotes(mapped.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
+      setNotes(arr.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
 
       /* ── Retroactive fix: if notes exist but nurseCompleted not flagged in DB,
              persist the flag now so the gate never re-activates on reload.        ── */
@@ -624,7 +604,7 @@ function NursingNotesContent({ selectedPatient }) {
     setActiveModal(id);
     setNoteText(""); setIsCritical(false); setSelectedTags([]);
     // vitals persist across tab switches — they're updated live by IntegratedVitalsPanel
-    setBlood({ product: "PRC (Packed RBC)", bagNo: "", crossMatchNo: "", volume: "350", groupVerified: true, secondNurse: "", startTime: "", status: "Transfusing", endTime: "", reactionType: "None", preBP_sys: "", preBP_dia: "", prePulse: "", preTemp: "", postBP_sys: "", postBP_dia: "", postPulse: "", monitoringLogs: [] });
+    setBlood({ product: "PRC (Packed RBC)", bagNo: "", crossMatchNo: "", volume: "350", groupVerified: true, secondNurse: "", startTime: "", status: "Transfusing", endTime: "", reactionType: "None", preBP_sys: "", preBP_dia: "", prePulse: "", preTemp: "", postBP_sys: "", postBP_dia: "", postPulse: "" });
     setIV({ fluid: "NS 0.9%", volume: "", rate: "", dropsPerMin: "", route: "IV Right Forearm", site: "Patent", cannulaDate: "", setChangeDate: "", additive: "" });
     setIntake({ oral: "", ivFluids: "", bloodProducts: "", urineOutput: "", drainOutput: "", nasogastric: "", emesis: "", bloodLoss: "" });
     // When opening MEWS tab, seed from current vitals; otherwise reset
@@ -638,10 +618,6 @@ function NursingNotesContent({ selectedPatient }) {
     setCarePlan({ problems: [{ id: Date.now(), statement:"", relatedTo:"", evidencedBy:"", priority:"High", goals:"", targetDate:"", interventions:"", evaluation:"", status:"Active" }] });
     setNutrition({ bmi:"", bmiLow:false, weightLoss:false, reducedIntake:false, seriouslyIll:false, nutritionScore:"0", diseaseScore:"0", ageScore:false, weight:"", height:"", idealBodyWeight:"", actualWeightPercent:"", midArmCirc:"", dietType:"Regular", consistency:"Normal", fluidRestriction:false, fluidLimit:"", appetite:"Good", swallowing:"Normal", feedingMode:"Oral", ngtPresent:false, caloriesToday:"", proteinToday:"", fluidToday:"", dietitianReferral:false, referralReason:"" });
     setEducation({ date: new Date().toISOString().split("T")[0], educator:"", topics:[], methods:[], language:"Hindi", understanding:"Good", barriers:[], response:"Positive", sessionNotes:"", nextSessionDate:"" });
-    setGeneralObs({ consciousness:"Conscious", orientation:"Oriented ×3", cooperation:"Cooperative", mood:"Calm", activityLevel:"Ambulatory", sleepQuality:"Good", appetite:"Good", comfort:"Comfortable", oxygenNeeded:false, catheterPresent:false, ngPresent:false, ivAccess:false, restraintUsed:false, callBellInReach:true, railsUp:true, bowelSounds:"Normal", urineOutput:"Adequate", skin:"Intact", observations:"" });
-    setBloodTab("new");
-    setNewMonitorEntry({ interval:"Pre", time:"", bp_sys:"", bp_dia:"", pulse:"", temp:"", spo2:"", rr:"", reaction:"None", action:"", comment:"" });
-    setBloodActionForm({ action:null, endTime:"", reactionType:"None", postBP_sys:"", postBP_dia:"", postPulse:"", postTemp:"", postSpO2:"" });
   };
 
   const toggleTag = (t) => setSelectedTags(ts => ts.includes(t) ? ts.filter(x => x !== t) : [...ts, t]);
@@ -663,7 +639,7 @@ function NursingNotesContent({ selectedPatient }) {
       nurseEmployeeId: user?.employeeId || "",
       nurseId: user?._id || user?.id || undefined,
     };
-    if (activeModal === "vitals")   payload.vitals = { bp: { systolic: Number(vitals.bp_sys || 0), diastolic: Number(vitals.bp_dia || 0) }, pulse: Number(vitals.pulse), temp: Number(vitals.temp), spo2: Number(vitals.spo2), rr: Number(vitals.rr), gcs: vitals.gcs || "", bsl: vitals.bsl ? Number(vitals.bsl) : undefined, o2Flow: vitals.o2Flow ? Number(vitals.o2Flow) : undefined, o2Device: vitals.o2Device || undefined, weight: vitals.weight ? Number(vitals.weight) : undefined, position: vitals.position || undefined };
+    if (activeModal === "vitals")   payload.vitals = { bp: { systolic: Number(vitals.bp_sys || 0), diastolic: Number(vitals.bp_dia || 0) }, pulse: Number(vitals.pulse), temp: Number(vitals.temp), spo2: Number(vitals.spo2), rr: Number(vitals.rr), gcs: vitals.gcs, bsl: Number(vitals.bsl) };
     if (activeModal === "blood")    payload.bloodTransfusion = blood;
     if (activeModal === "iv")       payload.ivInfusion = iv;
     if (activeModal === "intake") {
@@ -671,14 +647,13 @@ function NursingNotesContent({ selectedPatient }) {
       payload.intakeOutput = { oral: Number(intake.oral), ivFluids: Number(intake.ivFluids) + _autoMedVol, ivMedFluids: _autoMedVol, urineOutput: Number(intake.urineOutput), nasogastricOutput: Number(intake.nasogastric), otherOutput: Number(intake.drainOutput) };
     }
     if (activeModal === "neuro")    payload.neuroAssessment = neuro;
-    if (activeModal === "pain")     payload.painModule = pain;  // avoid BASE_FIELDS collision (painAssessment is String field)
+    if (activeModal === "pain")     payload.painAssessment = pain;
     if (activeModal === "wound")    payload.woundCare = wound;
     if (activeModal === "skin")     payload.skinAssessment = skin;
     if (activeModal === "fall")     payload.fallRisk = fallRisk;
     if (activeModal === "procedure") payload.procedure = procedure;
     if (activeModal === "discharge") payload.discharge = discharge;
     if (activeModal === "mews")      payload.mewsScore = { ...mews, total: calcMEWS(mews), band: mewsBand(calcMEWS(mews)).label };
-    if (activeModal === "general")   payload.generalObservation = generalObs;
     if (activeModal === "daily")     payload.dailyAssessment = dailyAssess;
     if (activeModal === "initial")   payload.initialAssessment = initialAssess;
     if (activeModal === "careplan")  payload.carePlan = carePlan;
@@ -876,28 +851,167 @@ function NursingNotesContent({ selectedPatient }) {
         </div>
       </div>
 
-      {/* ── Patient header (shared component — no inline styles) ── */}
+      {/* ── Patient Search ── */}
       {!patient ? (
-        <PatientHeaderCard
-          patient={null}
-          searchUHID={searchUHID}
-          onSearchChange={setSearchUHID}
-          onLoad={loadPatient}
-          loading={loading}
-        />
+        <div style={{ maxWidth: 560, margin: "0 auto", paddingTop: 8 }}>
+          <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 14, padding: "28px 28px", boxShadow: "0 4px 24px rgba(0,0,0,.06)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+              <div style={{ width: 36, height: 36, borderRadius: 9, background: C.primaryL, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <i className="pi pi-user-plus" style={{ fontSize: 16, color: C.primary }} />
+              </div>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 15, color: C.slate }}>Load Patient</div>
+                <div style={{ color: C.muted, fontSize: 12 }}>Enter UHID or Admission No to begin</div>
+              </div>
+            </div>
+            <div style={{ height: 1, background: C.border, margin: "16px 0" }} />
+            <form onSubmit={loadPatient} style={{ display: "flex", gap: 10 }}>
+              <input
+                value={searchUHID}
+                onChange={e => setSearchUHID(e.target.value.toUpperCase())}
+                placeholder="UHID / Admission No..."
+                style={{ ...fld, flex: 1 }}
+                autoFocus
+              />
+              <button type="submit" disabled={loading}
+                style={{ padding: "9px 22px", background: C.primary, color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 7, boxShadow: `0 4px 12px ${C.primary}30` }}>
+                {loading ? <i className="pi pi-spin pi-spinner" style={{ fontSize: 13 }} /> : <i className="pi pi-search" style={{ fontSize: 12 }} />}
+                Load Patient
+              </button>
+            </form>
+          </div>
+        </div>
       ) : (
         <>
-          <PatientHeaderCard
-            patient={patient}
-            searchUHID={searchUHID}
-            actions={[
-              { label: "Care Plan",      icon: "pi-clipboard",  onClick: () => navigate("/nursing-care-plan") },
-              { label: "Vitals Trend",   icon: "pi-chart-bar",  onClick: () => navigate("/vitalsView") },
-              { label: "Print / PDF",    icon: "pi-print",      onClick: () => setShowReport(true), variant: "accent" },
-              { label: "IPD Assessment", icon: "pi-file-check", onClick: () => navigate(`/ipd-assessment/${patient.uhid || patient.UHID || searchUHID}`), variant: "accent" },
-            ]}
-            onChangePatient={() => { setPatient(null); setNotes([]); setSearchUHID(""); }}
-          />
+          {/* ── Patient Banner ── */}
+          {(() => {
+            const patName    = patient.patientName || patient.patient?.name || '—';
+            const initials   = patName.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+            const age        = patient.age || patient.patient?.age || '?';
+            const gender     = (patient.gender || patient.patient?.gender || '?')[0]?.toUpperCase();
+            const uhidVal    = patient.uhid || patient.UHID || searchUHID;
+            const bedVal     = patient.bedNumber ? `Bed ${patient.bedNumber}` : '—';
+            const wardVal    = patient.wardName || '—';
+            const admDate    = patient.admissionDate
+              ? new Date(patient.admissionDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+              : '—';
+            const diagnosis  = patient.diagnosis || patient.admittingDiagnosis || '—';
+            const consultant = patient.doctorName || patient.consultantName || '—';
+            const admType    = patient.admissionType?.toUpperCase() || 'IPD';
+            const allergies  = (patient.allergies || patient.knownAllergies || []).filter(Boolean);
+            const dayStay    = patient.admissionDate
+              ? Math.floor((Date.now() - new Date(patient.admissionDate)) / (1000 * 60 * 60 * 24))
+              : null;
+            const admTypeColor = admType === 'EMERGENCY'
+              ? { bg: '#fef2f2', color: '#dc2626', border: '#fca5a5' }
+              : admType === 'DAY CARE'
+              ? { bg: '#eff6ff', color: '#1d4ed8', border: '#93c5fd' }
+              : { bg: '#f5f3ff', color: '#7c3aed', border: '#c4b5fd' };
+            return (
+              <div style={{ background: C.card, borderRadius: 16, marginBottom: 14, overflow: 'hidden', boxShadow: '0 2px 12px rgba(15,118,110,.08)', border: `1px solid ${C.border}` }}>
+                {/* Top gradient accent bar */}
+                <div style={{ height: 4, background: `linear-gradient(90deg, ${C.primary}, ${C.primaryMid}, #34d399)` }} />
+                <div style={{ padding: '18px 22px' }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+
+                    {/* Left: avatar + core info */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 16, flex: 1, minWidth: 0 }}>
+                      {/* Avatar circle */}
+                      <div style={{ flexShrink: 0, width: 56, height: 56, borderRadius: 14, background: `linear-gradient(135deg, ${C.primary}, ${C.primaryMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: `0 4px 12px ${C.primary}35` }}>
+                        <span style={{ fontSize: 20, fontWeight: 900, color: 'white', letterSpacing: '-1px' }}>{initials}</span>
+                      </div>
+                      {/* Name + tags */}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 5 }}>
+                          <span style={{ fontSize: 17, fontWeight: 800, color: C.text }}>{patName}</span>
+                          <span style={{ padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700, background: admTypeColor.bg, color: admTypeColor.color, border: `1px solid ${admTypeColor.border}` }}>
+                            {admType}
+                          </span>
+                          {patient.bloodGroup && (
+                            <span style={{ padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700, background: C.redL, color: C.red, border: '1px solid #fca5a5', fontFamily: "'DM Mono',monospace" }}>
+                              🦸 {patient.bloodGroup}
+                            </span>
+                          )}
+                          {dayStay !== null && (
+                            <span style={{ padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700, background: '#f0fdf4', color: '#15803d', border: '1px solid #86efac' }}>
+                              Day {dayStay + 1}
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ display: 'flex', gap: '6px 20px', flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: 12, color: C.muted }}>
+                            <span style={{ fontWeight: 700, color: C.text }}>{age}Y / {gender}</span>
+                          </span>
+                          <span style={{ fontSize: 12, color: C.muted }}>
+                            ID: <span style={{ fontWeight: 700, color: C.primary, fontFamily: "'DM Mono',monospace" }}>{uhidVal}</span>
+                          </span>
+                          <span style={{ fontSize: 12, color: C.muted }}>
+                            🏥 <span style={{ fontWeight: 600, color: C.text }}>{wardVal}</span>
+                            {' · '}
+                            <span style={{ fontWeight: 600, color: C.text }}>{bedVal}</span>
+                          </span>
+                          <span style={{ fontSize: 12, color: C.muted }}>
+                            📅 <span style={{ fontWeight: 600, color: C.text }}>{admDate}</span>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Right: action buttons */}
+                    <div style={{ display: 'flex', gap: 6, flexShrink: 0, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                      {[
+                        { label: 'Care Plan',       icon: 'pi-clipboard',  action: () => navigate('/nursing-care-plan') },
+                        { label: 'Vitals Trend',    icon: 'pi-chart-bar',  action: () => navigate('/vitalsView') },
+                        { label: 'Print / PDF',     icon: 'pi-print',      action: () => setShowReport(true), accent: true },
+                        { label: 'IPD Assessment',  icon: 'pi-file-check', action: () => navigate(`/ipd-assessment/${uhidVal}`), accent: true },
+                        { label: 'Change Patient',  icon: 'pi-arrows-h',   action: () => { setPatient(null); setNotes([]); setSearchUHID(''); }, danger: true },
+                      ].map(b => (
+                        <button key={b.label} onClick={b.action} style={{
+                          padding: '7px 13px',
+                          border: `1.5px solid ${b.danger ? '#fca5a5' : b.accent ? `${C.primary}35` : C.border}`,
+                          borderRadius: 9,
+                          background: b.danger ? C.redL : b.accent ? C.primaryL : 'white',
+                          fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                          color: b.danger ? C.red : b.accent ? C.primary : C.text,
+                          display: 'flex', alignItems: 'center', gap: 5,
+                          transition: 'all .15s',
+                          boxShadow: b.accent ? `0 2px 8px ${C.primary}20` : 'none',
+                        }}
+                          onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = `0 4px 14px ${b.danger ? C.red : C.primary}25`; }}
+                          onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = b.accent ? `0 2px 8px ${C.primary}20` : 'none'; }}>
+                          <i className={`pi ${b.icon}`} style={{ fontSize: 11 }} /> {b.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Bottom: diagnosis + consultant + allergies */}
+                  <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px dashed ${C.border}`, display: 'flex', gap: '8px 24px', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <i className="pi pi-stethoscope" style={{ fontSize: 11, color: C.muted }} />
+                      <span style={{ fontSize: 12, color: C.muted }}>Consultant:</span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{consultant}</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <i className="pi pi-tag" style={{ fontSize: 11, color: C.muted }} />
+                      <span style={{ fontSize: 12, color: C.muted }}>Diagnosis:</span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{diagnosis}</span>
+                    </div>
+                    {allergies.length > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: C.red, display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <i className="pi pi-exclamation-triangle" style={{ fontSize: 11 }} /> ALLERGY:
+                        </span>
+                        {allergies.map(a => (
+                          <span key={a} style={{ background: C.redL, color: C.red, border: '1px solid #fca5a5', padding: '2px 9px', borderRadius: 20, fontSize: 11, fontWeight: 700 }}>{a}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* ── Doctor's Active Orders (NurseOrdersPanel) ── */}
           <div style={{ marginBottom: 14 }}>
@@ -1501,7 +1615,7 @@ function NursingNotesContent({ selectedPatient }) {
                           note.noteType === "vitals" ? ["vitals"]    : []
                         );
                         const MOD_SECTION_LBL = {
-                          painAssessment:"Pain Assessment", painModule:"Pain Assessment", neuroAssessment:"Neuro / GCS",
+                          painAssessment:"Pain Assessment", neuroAssessment:"Neuro / GCS",
                           bloodTransfusion:"Blood Transfusion", ivInfusion:"IV Infusion",
                           intakeOutput:"Intake / Output", woundCare:"Wound / Dressing",
                           skinAssessment:"Skin / Pressure (Braden)", fallRisk:"Fall Risk (Morse Scale)",
@@ -1509,7 +1623,6 @@ function NursingNotesContent({ selectedPatient }) {
                           dailyAssessment:"Daily Assessment", initialAssessment:"Initial Assessment",
                           carePlan:"Care Plan", nutritionalAssessment:"Nutritional Assessment (NRS-2002)",
                           patientEducation:"Patient Education",
-                          generalObservation:"General Observation",
                         };
                         const FIELD_LBL = {
                           m1:"History of Falls", m2:"Secondary Dx", m3:"Ambul. Aid",
@@ -1530,10 +1643,9 @@ function NursingNotesContent({ selectedPatient }) {
                           limbLL:"Lower-L", limbLR:"Lower-R",
                           product:"Product", bagNo:"Bag No.", crossMatchNo:"X-Match No.",
                           volume:"Volume (mL)", groupVerified:"Group Verified", secondNurse:"2nd Nurse",
-                          startTime:"Start", endTime:"End", status:"Status", reactionType:"Reaction",
-                          preBP_sys:"Pre-Sys BP", preBP_dia:"Pre-Dia BP", prePulse:"Pre-Pulse", preTemp:"Pre-Temp", preSpO2:"Pre-SpO₂",
-                          postBP_sys:"Post-Sys BP", postBP_dia:"Post-Dia BP", postPulse:"Post-Pulse", postTemp:"Post-Temp", postSpO2:"Post-SpO₂",
-                          monitoringLogs:"Monitoring Log",
+                          startTime:"Start", endTime:"End", reactionType:"Reaction",
+                          preBP:"Pre-BP", preBP_sys:"Pre-Sys BP", preBP_dia:"Pre-Dia BP",
+                          prePulse:"Pre-Pulse", postBP:"Post-BP", postBP_sys:"Post-Sys BP", postBP_dia:"Post-Dia BP", postPulse:"Post-Pulse",
                           fluid:"Fluid", rate:"Rate (mL/hr)", dropsPerMin:"gtts/min",
                           route:"Route", site:"Site", cannulaDate:"Cannula Date",
                           setChangeDate:"Set Change", additive:"Additive",
@@ -1581,26 +1693,13 @@ function NursingNotesContent({ selectedPatient }) {
                           topics:"Topics", methods:"Methods", understanding:"Understanding",
                           language:"Language", response:"Response", barriers:"Barriers",
                           sessionNotes:"Session Notes", nextSessionDate:"Next Session",
-                          consciousness:"Consciousness", orientation:"Orientation",
-                          cooperation:"Cooperation", mood:"Mood", activityLevel:"Activity",
-                          sleepQuality:"Sleep", comfort:"Comfort", bowelSounds:"Bowel Sounds",
-                          urineOutput:"Urine Output", skin:"Skin", observations:"Observations",
-                          oxygenNeeded:"Oxygen", catheterPresent:"Catheter", ngPresent:"NGT",
-                          ivAccess:"IV Access", restraintUsed:"Restraint", callBellInReach:"Call Bell",
-                          railsUp:"Bed Rails",
                         };
                         const fmtKey = k => FIELD_LBL[k] || k.replace(/([A-Z])/g," $1").replace(/^[Ii]nt /,"").trim();
-                        const fmtVal = (v, key) => {
+                        const fmtVal = v => {
                           if (v === null || v === undefined || v === "" || v === false) return null;
                           if (typeof v === "boolean") return "✓ Yes";
                           if (Array.isArray(v)) {
                             if (!v.length) return null;
-                            // Monitoring log — format each entry as a compact row
-                            if (key === "monitoringLogs") {
-                              return v.map(x =>
-                                `[${x.interval||"?"}@${x.time||"--:--"}] BP:${x.bp_sys||"—"}/${x.bp_dia||"—"} P:${x.pulse||"—"} T:${x.temp||"—"} SpO₂:${x.spo2||"—"}% RR:${x.rr||"—"}${x.reaction&&x.reaction!=="None"?" ⚠"+x.reaction:""}`
-                              ).join(" · ");
-                            }
                             return v.map(x => typeof x === "object" ? (x.statement || x.topic || x.name || JSON.stringify(x)) : String(x)).join(", ");
                           }
                           if (typeof v === "object") {
@@ -1617,17 +1716,12 @@ function NursingNotesContent({ selectedPatient }) {
                             if (Array.isArray(mv)) {
                               const items = mv.filter(Boolean);
                               if (!items.length) return null;
-                              // Monitoring logs — use compact format with key
-                              if (mk === "monitoringLogs") {
-                                const formatted = fmtVal(items, mk);
-                                return { key: mk, label: MOD_SECTION_LBL[mk]||"Monitoring Log", chips:[{label:`${items.length} check${items.length!==1?"s":""}`, value: formatted}] };
-                              }
                               const summary = items.map((x,i) => typeof x === "object" ? (x.statement||x.topic||x.name||`Item ${i+1}`) : String(x)).join(" | ");
                               return { key: mk, label: MOD_SECTION_LBL[mk]||mk, chips:[{label:`${items.length} item(s)`, value: summary}] };
                             }
                             if (typeof mv !== "object") return null;
                             const chips = Object.entries(mv)
-                              .map(([k,v]) => ({ label: fmtKey(k), value: fmtVal(v, k) }))
+                              .map(([k,v]) => ({ label: fmtKey(k), value: fmtVal(v) }))
                               .filter(c => c.value !== null);
                             if (!chips.length) return null;
                             return { key: mk, label: MOD_SECTION_LBL[mk]||mk.replace(/([A-Z])/g," $1").trim(), chips };
@@ -1696,13 +1790,13 @@ function NursingNotesContent({ selectedPatient }) {
           onClose={() => setConsentOrder(null)}
           onConfirm={async (hash) => {
             try {
-              // Use the absolute endpoint (the global axios interceptor adds
-              // the bearer token). Bare `/api/...` was being resolved against
-              // the frontend host → 404 in any non-dev deployment.
+              const token = localStorage.getItem("his_token");
+              const headers = token ? { Authorization: `Bearer ${token}` } : {};
               const nurseName = user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim();
               await axios.patch(
-                `${API_ENDPOINTS.DOCTOR_ORDERS}/${consentOrder._id}`,
-                { consentStatus: "Obtained", consentData: { fingerprintHash: hash, obtainedAt: new Date().toISOString(), nurseName } }
+                `/api/doctor-orders/${consentOrder._id}`,
+                { consentStatus: "Obtained", consentData: { fingerprintHash: hash, obtainedAt: new Date().toISOString(), nurseName } },
+                { headers }
               );
               toast.success("Biometric consent captured & stored");
               setConsentOrder(null);
@@ -1764,25 +1858,25 @@ function NursingNotesContent({ selectedPatient }) {
                     <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>Glasgow Coma Scale</div>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10 }}>
                       <FL label="Eyes (E 1-4)">
-                        <select className="his-select" value={neuro.gcse} onChange={e => setNeuro(p => ({ ...p, gcse: e.target.value }))}>
+                        <select style={sel} value={neuro.gcse} onChange={e => setNeuro(p => ({ ...p, gcse: e.target.value }))}>
                           <option value="">—</option>
                           {[{v:"1",l:"1 – No response"},{v:"2",l:"2 – To pain"},{v:"3",l:"3 – To sound"},{v:"4",l:"4 – Spontaneous"}].map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
                         </select>
                       </FL>
                       <FL label="Verbal (V 1-5)">
-                        <select className="his-select" value={neuro.gcsv} onChange={e => setNeuro(p => ({ ...p, gcsv: e.target.value }))}>
+                        <select style={sel} value={neuro.gcsv} onChange={e => setNeuro(p => ({ ...p, gcsv: e.target.value }))}>
                           <option value="">—</option>
                           {[{v:"1",l:"1 – None"},{v:"2",l:"2 – Sounds"},{v:"3",l:"3 – Words"},{v:"4",l:"4 – Confused"},{v:"5",l:"5 – Oriented"}].map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
                         </select>
                       </FL>
                       <FL label="Motor (M 1-6)">
-                        <select className="his-select" value={neuro.gcsm} onChange={e => setNeuro(p => ({ ...p, gcsm: e.target.value }))}>
+                        <select style={sel} value={neuro.gcsm} onChange={e => setNeuro(p => ({ ...p, gcsm: e.target.value }))}>
                           <option value="">—</option>
                           {[{v:"1",l:"1 – None"},{v:"2",l:"2 – Extension"},{v:"3",l:"3 – Flexion"},{v:"4",l:"4 – Withdrawal"},{v:"5",l:"5 – Localises"},{v:"6",l:"6 – Obeys"}].map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
                         </select>
                       </FL>
                       <FL label="GCS Total">
-                        <div className="his-field" style={{ fontWeight:800, textAlign:"center", fontFamily:"monospace", fontSize:18, color: (() => { const t=(Number(neuro.gcse)||0)+(Number(neuro.gcsv)||0)+(Number(neuro.gcsm)||0); return t<=8?C.red:t<=12?C.amber:C.green; })(), display:"flex", alignItems:"center", justifyContent:"center" }}>
+                        <div style={{ ...fld, fontWeight:800, textAlign:"center", fontFamily:"monospace", fontSize:18, color: (() => { const t=(Number(neuro.gcse)||0)+(Number(neuro.gcsv)||0)+(Number(neuro.gcsm)||0); return t<=8?C.red:t<=12?C.amber:C.green; })(), display:"flex", alignItems:"center", justifyContent:"center" }}>
                           {(Number(neuro.gcse)||0)+(Number(neuro.gcsv)||0)+(Number(neuro.gcsm)||0)||"—"}/15
                         </div>
                       </FL>
@@ -1791,18 +1885,18 @@ function NursingNotesContent({ selectedPatient }) {
                   {/* Pupils */}
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:10 }}>
                     <FL label="Pupil Reaction">
-                      <select className="his-select" value={neuro.pupils} onChange={e => setNeuro(p => ({ ...p, pupils: e.target.value }))}>
+                      <select style={sel} value={neuro.pupils} onChange={e => setNeuro(p => ({ ...p, pupils: e.target.value }))}>
                         {["Equal & Reactive","Unequal","Fixed & Dilated","Pinpoint","Sluggish"].map(o => <option key={o}>{o}</option>)}
                       </select>
                     </FL>
                     <FL label="Pupil Size L (mm)">
-                      <input type="number" min="1" max="8" className="his-field" value={neuro.pupilSizeL} placeholder="3" onChange={e => setNeuro(p => ({ ...p, pupilSizeL: e.target.value }))} />
+                      <input type="number" min="1" max="8" style={fld} value={neuro.pupilSizeL} placeholder="3" onChange={e => setNeuro(p => ({ ...p, pupilSizeL: e.target.value }))} />
                     </FL>
                     <FL label="Pupil Size R (mm)">
-                      <input type="number" min="1" max="8" className="his-field" value={neuro.pupilSizeR} placeholder="3" onChange={e => setNeuro(p => ({ ...p, pupilSizeR: e.target.value }))} />
+                      <input type="number" min="1" max="8" style={fld} value={neuro.pupilSizeR} placeholder="3" onChange={e => setNeuro(p => ({ ...p, pupilSizeR: e.target.value }))} />
                     </FL>
                     <FL label="Light Reflex">
-                      <select className="his-select" value={neuro.lightReflex} onChange={e => setNeuro(p => ({ ...p, lightReflex: e.target.value }))}>
+                      <select style={sel} value={neuro.lightReflex} onChange={e => setNeuro(p => ({ ...p, lightReflex: e.target.value }))}>
                         {["Present","Absent","Sluggish"].map(o => <option key={o}>{o}</option>)}
                       </select>
                     </FL>
@@ -1810,14 +1904,14 @@ function NursingNotesContent({ selectedPatient }) {
                   {/* Orientation & Limbs */}
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                     <FL label="Orientation / Consciousness">
-                      <select className="his-select" value={neuro.orientation} onChange={e => setNeuro(p => ({ ...p, orientation: e.target.value }))}>
+                      <select style={sel} value={neuro.orientation} onChange={e => setNeuro(p => ({ ...p, orientation: e.target.value }))}>
                         {["Alert & Oriented ×3","Oriented to person only","Confused","Drowsy","Unconscious","Sedated"].map(o => <option key={o}>{o}</option>)}
                       </select>
                     </FL>
                     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
                       {[{k:"limbUL",l:"Upper L"},{k:"limbUR",l:"Upper R"},{k:"limbLL",l:"Lower L"},{k:"limbLR",l:"Lower R"}].map(f=>(
                         <FL key={f.k} label={`Limb Movement ${f.l}`}>
-                          <select className="his-select" style={{ fontSize:12 }} value={neuro[f.k]} onChange={e => setNeuro(p => ({ ...p, [f.k]: e.target.value }))}>
+                          <select style={{ ...sel, fontSize:12 }} value={neuro[f.k]} onChange={e => setNeuro(p => ({ ...p, [f.k]: e.target.value }))}>
                             {["Normal","Weak","Absent","Paralysed"].map(o=><option key={o}>{o}</option>)}
                           </select>
                         </FL>
@@ -1836,16 +1930,16 @@ function NursingNotesContent({ selectedPatient }) {
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
                     <FL label="Pain Scale Used">
-                      <select className="his-select" value={pain.scale} onChange={e => setPain(p => ({ ...p, scale: e.target.value }))}>
+                      <select style={sel} value={pain.scale} onChange={e => setPain(p => ({ ...p, scale: e.target.value }))}>
                         {["NRS (Numeric)","VAS","Wong-Baker Faces","FLACC (Paediatric)","CPOT (Non-verbal)"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                     <FL label="Pain Score (0-10) *">
-                      <input type="number" min="0" max="10" className="his-field" style={{ fontWeight:800, fontSize:15, textAlign:"center", borderColor: Number(pain.score)>=7?C.red:Number(pain.score)>=4?C.amber:"#e2e8f0" }}
+                      <input type="number" min="0" max="10" style={{ ...fld, fontWeight:800, fontSize:15, textAlign:"center", borderColor: Number(pain.score)>=7?C.red:Number(pain.score)>=4?C.amber:"#e2e8f0" }}
                         value={pain.score} placeholder="0" onChange={e => setPain(p => ({ ...p, score: e.target.value }))} />
                     </FL>
                     <FL label="Pain Type">
-                      <select className="his-select" value={pain.type} onChange={e => setPain(p => ({ ...p, type: e.target.value }))}>
+                      <select style={sel} value={pain.type} onChange={e => setPain(p => ({ ...p, type: e.target.value }))}>
                         {["Acute","Chronic","Neuropathic","Breakthrough","Procedural"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
@@ -1858,26 +1952,26 @@ function NursingNotesContent({ selectedPatient }) {
                     <span style={{ fontSize:11, fontWeight:800, color:Number(pain.score)>=7?C.red:Number(pain.score)>=4?C.amber:C.green, marginLeft:6, minWidth:36 }}>{pain.score}/10</span>
                   </div>}
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
-                    <FL label="Location *"><input className="his-field" value={pain.location} placeholder="e.g. Right lower abdomen" onChange={e => setPain(p => ({ ...p, location: e.target.value }))} /></FL>
+                    <FL label="Location *"><input style={fld} value={pain.location} placeholder="e.g. Right lower abdomen" onChange={e => setPain(p => ({ ...p, location: e.target.value }))} /></FL>
                     <FL label="Character">
-                      <select className="his-select" value={pain.character} onChange={e => setPain(p => ({ ...p, character: e.target.value }))}>
+                      <select style={sel} value={pain.character} onChange={e => setPain(p => ({ ...p, character: e.target.value }))}>
                         {["Dull","Sharp","Burning","Stabbing","Colicky","Throbbing","Cramping","Aching","Shooting"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                     <FL label="Onset">
-                      <select className="his-select" value={pain.onset} onChange={e => setPain(p => ({ ...p, onset: e.target.value }))}>
+                      <select style={sel} value={pain.onset} onChange={e => setPain(p => ({ ...p, onset: e.target.value }))}>
                         {["Sudden","Gradual","Intermittent"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
                     <FL label="Frequency">
-                      <select className="his-select" value={pain.frequency} onChange={e => setPain(p => ({ ...p, frequency: e.target.value }))}>
+                      <select style={sel} value={pain.frequency} onChange={e => setPain(p => ({ ...p, frequency: e.target.value }))}>
                         {["Constant","Intermittent","Episodic"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
-                    <FL label="Duration"><input className="his-field" value={pain.duration} placeholder="e.g. 2 hrs, since morning" onChange={e => setPain(p => ({ ...p, duration: e.target.value }))} /></FL>
-                    <FL label="Aggravating Factors"><input className="his-field" value={pain.aggravating} placeholder="movement, breathing…" onChange={e => setPain(p => ({ ...p, aggravating: e.target.value }))} /></FL>
+                    <FL label="Duration"><input style={fld} value={pain.duration} placeholder="e.g. 2 hrs, since morning" onChange={e => setPain(p => ({ ...p, duration: e.target.value }))} /></FL>
+                    <FL label="Aggravating Factors"><input style={fld} value={pain.aggravating} placeholder="movement, breathing…" onChange={e => setPain(p => ({ ...p, aggravating: e.target.value }))} /></FL>
                   </div>
                   <div style={{ display:"flex", gap:20, flexWrap:"wrap" }}>
                     <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontWeight:600, fontSize:13, color:pain.radiation?C.amber:C.muted }}>
@@ -1893,22 +1987,22 @@ function NursingNotesContent({ selectedPatient }) {
                       Analgesic given
                     </label>
                   </div>
-                  {pain.radiation && <FL label="Radiation Site"><input className="his-field" value={pain.radiationSite} placeholder="e.g. radiates to left shoulder" onChange={e => setPain(p => ({ ...p, radiationSite: e.target.value }))} /></FL>}
+                  {pain.radiation && <FL label="Radiation Site"><input style={fld} value={pain.radiationSite} placeholder="e.g. radiates to left shoulder" onChange={e => setPain(p => ({ ...p, radiationSite: e.target.value }))} /></FL>}
                   {pain.analgesicGiven && (
                     <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr", gap:10 }}>
-                      <FL label="Drug & Dose"><input className="his-field" value={pain.analgesic} placeholder="Inj. Paracetamol 1g" onChange={e => setPain(p => ({ ...p, analgesic: e.target.value }))} /></FL>
+                      <FL label="Drug & Dose"><input style={fld} value={pain.analgesic} placeholder="Inj. Paracetamol 1g" onChange={e => setPain(p => ({ ...p, analgesic: e.target.value }))} /></FL>
                       <FL label="Route">
-                        <select className="his-select" value={pain.analgesicRoute} onChange={e => setPain(p => ({ ...p, analgesicRoute: e.target.value }))}>
+                        <select style={sel} value={pain.analgesicRoute} onChange={e => setPain(p => ({ ...p, analgesicRoute: e.target.value }))}>
                           {["IV","IM","Oral","Sublingual","Topical","PR","Epidural"].map(o=><option key={o}>{o}</option>)}
                         </select>
                       </FL>
-                      <FL label="Time Given"><input type="time" className="his-field" value={pain.analgesicTime} onChange={e => setPain(p => ({ ...p, analgesicTime: e.target.value }))} /></FL>
+                      <FL label="Time Given"><input type="time" style={fld} value={pain.analgesicTime} onChange={e => setPain(p => ({ ...p, analgesicTime: e.target.value }))} /></FL>
                     </div>
                   )}
-                  <FL label="Non-Pharmacological Interventions"><input className="his-field" value={pain.nonPharm} placeholder="Positioning, ice pack, heat, relaxation, distraction…" onChange={e => setPain(p => ({ ...p, nonPharm: e.target.value }))} /></FL>
+                  <FL label="Non-Pharmacological Interventions"><input style={fld} value={pain.nonPharm} placeholder="Positioning, ice pack, heat, relaxation, distraction…" onChange={e => setPain(p => ({ ...p, nonPharm: e.target.value }))} /></FL>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-                    <FL label="Reassessment Score (0-10)"><input type="number" min="0" max="10" className="his-field" value={pain.reassessScore} onChange={e => setPain(p => ({ ...p, reassessScore: e.target.value }))} /></FL>
-                    <FL label="Reassessment Time"><input type="time" className="his-field" value={pain.reassessTime} onChange={e => setPain(p => ({ ...p, reassessTime: e.target.value }))} /></FL>
+                    <FL label="Reassessment Score (0-10)"><input type="number" min="0" max="10" style={fld} value={pain.reassessScore} onChange={e => setPain(p => ({ ...p, reassessScore: e.target.value }))} /></FL>
+                    <FL label="Reassessment Time"><input type="time" style={fld} value={pain.reassessTime} onChange={e => setPain(p => ({ ...p, reassessTime: e.target.value }))} /></FL>
                   </div>
                 </div>
               )}
@@ -1918,425 +2012,98 @@ function NursingNotesContent({ selectedPatient }) {
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
                     <FL label="IV Fluid *">
-                      <select className="his-select" value={iv.fluid} onChange={e => setIV(p => ({ ...p, fluid: e.target.value }))}>
+                      <select style={sel} value={iv.fluid} onChange={e => setIV(p => ({ ...p, fluid: e.target.value }))}>
                         {["NS 0.9%","RL (Ringer's Lactate)","DNS","D5W","D10W","NS 0.45%","Plasmalyte","Isolyte S","Haemaccel","Other"].map(o => <option key={o}>{o}</option>)}
                       </select>
                     </FL>
-                    <FL label="Volume (mL) *"><input type="number" className="his-field" value={iv.volume} placeholder="500" onChange={e => setIV(p => ({ ...p, volume: e.target.value }))} /></FL>
-                    <FL label="Rate (mL/hr) *"><input type="number" className="his-field" value={iv.rate} placeholder="84" onChange={e => { const r=e.target.value; const d=r?Math.round(Number(r)*20/60):""  ; setIV(p => ({ ...p, rate: r, dropsPerMin: String(d) })); }} /></FL>
+                    <FL label="Volume (mL) *"><input type="number" style={fld} value={iv.volume} placeholder="500" onChange={e => setIV(p => ({ ...p, volume: e.target.value }))} /></FL>
+                    <FL label="Rate (mL/hr) *"><input type="number" style={fld} value={iv.rate} placeholder="84" onChange={e => { const r=e.target.value; const d=r?Math.round(Number(r)*20/60):""  ; setIV(p => ({ ...p, rate: r, dropsPerMin: String(d) })); }} /></FL>
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
                     <FL label="Drip Rate (drops/min)">
-                      <div className="his-field" style={{ background:"#f8fafc", fontFamily:"monospace", fontWeight:700, color:C.primary }}>{iv.dropsPerMin || "—"}</div>
+                      <div style={{ ...fld, background:"#f8fafc", fontFamily:"monospace", fontWeight:700, color:C.primary }}>{iv.dropsPerMin || "—"}</div>
                     </FL>
-                    <FL label="Route / Access *"><input className="his-field" value={iv.route} placeholder="IV Right Forearm" onChange={e => setIV(p => ({ ...p, route: e.target.value }))} /></FL>
+                    <FL label="Route / Access *"><input style={fld} value={iv.route} placeholder="IV Right Forearm" onChange={e => setIV(p => ({ ...p, route: e.target.value }))} /></FL>
                     <FL label="IV Site Status *">
-                      <select className="his-select" style={{ borderColor: iv.site==="Patent"?C.green:iv.site==="Infiltration"||iv.site==="Blocked"?C.red:C.amber }} value={iv.site} onChange={e => setIV(p => ({ ...p, site: e.target.value }))}>
+                      <select style={{ ...sel, borderColor: iv.site==="Patent"?C.green:iv.site==="Infiltration"||iv.site==="Blocked"?C.red:C.amber }} value={iv.site} onChange={e => setIV(p => ({ ...p, site: e.target.value }))}>
                         {["Patent","Redness","Swelling","Infiltration","Replaced","Blocked","Phlebitis"].map(o => <option key={o}>{o}</option>)}
                       </select>
                     </FL>
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-                    <FL label="Cannula Insertion Date"><input type="date" className="his-field" value={iv.cannulaDate} onChange={e => setIV(p => ({ ...p, cannulaDate: e.target.value }))} /></FL>
-                    <FL label="IV Set Last Changed"><input type="date" className="his-field" value={iv.setChangeDate} onChange={e => setIV(p => ({ ...p, setChangeDate: e.target.value }))} /></FL>
+                    <FL label="Cannula Insertion Date"><input type="date" style={fld} value={iv.cannulaDate} onChange={e => setIV(p => ({ ...p, cannulaDate: e.target.value }))} /></FL>
+                    <FL label="IV Set Last Changed"><input type="date" style={fld} value={iv.setChangeDate} onChange={e => setIV(p => ({ ...p, setChangeDate: e.target.value }))} /></FL>
                   </div>
-                  <FL label="Medication Additive (if any)"><input className="his-field" value={iv.additive} placeholder="e.g. Inj. KCl 20 mEq, Inj. MgSO₄ 1g" onChange={e => setIV(p => ({ ...p, additive: e.target.value }))} /></FL>
+                  <FL label="Medication Additive (if any)"><input style={fld} value={iv.additive} placeholder="e.g. Inj. KCl 20 mEq, Inj. MgSO₄ 1g" onChange={e => setIV(p => ({ ...p, additive: e.target.value }))} /></FL>
                 </div>
               )}
 
               {/* ── Blood Transfusion (NABH COP.7) ── */}
-              {activeModal === "blood" && (() => {
-                // ── NABH COP.7 helpers ──
-                const INTERVALS = ["Pre","15 min","30 min","1 hr","2 hr","End"];
-                const REACTIONS = ["None","Febrile","Allergic / Urticaria","Anaphylaxis","Haemolytic","TACO (fluid overload)","TRALI","Other"];
-                const ACTIONS   = ["Continue transfusion","Slow rate","Stop transfusion","Notify doctor","IV Antihistamine given","IV Corticosteroid given","Adrenaline given","Blood bag returned to blood bank","Other"];
-                const PRODUCTS  = ["PRC (Packed RBC)","FFP","Platelets (RDP)","Platelets (SDP)","Whole Blood","Albumin 5%","Albumin 20%","Cryoprecipitate","Granulocytes"];
-
-                // ── Detect ALL active (Transfusing) bags from notes ──
-                const today = new Date().toDateString();
-                const activeBags = notes.filter(n =>
-                  n.noteType === "blood" &&
-                  new Date(n.createdAt).toDateString() === today &&
-                  n.moduleData?.bloodTransfusion?.status === "Transfusing"
-                );
-
-                // If selected tab's bag is no longer active, fall back to "new"
-                const effectiveTab = (bloodTab !== "new" && !activeBags.find(n => n._id === bloodTab))
-                  ? "new" : bloodTab;
-
-                // Selected active bag
-                const selBag    = effectiveTab !== "new" ? activeBags.find(n => n._id === effectiveTab) : null;
-                const selBT     = selBag?.moduleData?.bloodTransfusion || {};
-                const savedLogs = Array.isArray(selBT.monitoringLogs) ? selBT.monitoringLogs : [];
-
-                // ── API helpers for active-bag tab ──
-                const ptIpdNo = patient?.ipdNo || patient?.admissionNumber || patient?._id;
-
-                const saveMonitorEntry = async () => {
-                  if (!newMonitorEntry.interval) { toast.warn("Select an interval first"); return; }
-                  setLoading(true);
-                  try {
-                    await axios.patch(`${API_ENDPOINTS.NURSE_NOTES}/${effectiveTab}/blood-monitoring`, { entry: newMonitorEntry });
-                    toast.success("Monitoring entry saved");
-                    await fetchNotes(ptIpdNo);
-                    const now = new Date();
-                    const hhmm = now.getHours().toString().padStart(2,"0")+":"+now.getMinutes().toString().padStart(2,"0");
-                    const usedIntervals = [...savedLogs, newMonitorEntry].map(l => l.interval);
-                    const nextIv = INTERVALS.find(iv => !usedIntervals.includes(iv)) || "";
-                    setNewMonitorEntry({ interval: nextIv, time: hhmm, bp_sys:"", bp_dia:"", pulse:"", temp:"", spo2:"", rr:"", reaction:"None", action:"", comment:"" });
-                  } catch(e) { toast.error(e?.response?.data?.message || "Failed to save entry"); }
-                  finally { setLoading(false); }
-                };
-
-                const finalizeTransfusion = async () => {
-                  if (!bloodActionForm.action) return;
-                  setLoading(true);
-                  try {
-                    const now = new Date();
-                    const hhmm = now.getHours().toString().padStart(2,"0")+":"+now.getMinutes().toString().padStart(2,"0");
-                    await axios.patch(`${API_ENDPOINTS.NURSE_NOTES}/${effectiveTab}/blood-status`, {
-                      status:       bloodActionForm.action,
-                      endTime:      bloodActionForm.endTime || hhmm,
-                      reactionType: bloodActionForm.reactionType,
-                      postVitals: {
-                        postBP_sys: bloodActionForm.postBP_sys, postBP_dia: bloodActionForm.postBP_dia,
-                        postPulse:  bloodActionForm.postPulse,  postTemp:   bloodActionForm.postTemp,
-                        postSpO2:   bloodActionForm.postSpO2,
-                      },
-                    });
-                    toast.success(`Transfusion marked as ${bloodActionForm.action}`);
-                    await fetchNotes(ptIpdNo);
-                    setBloodTab("new");
-                    setBloodActionForm({ action:null, endTime:"", reactionType:"None", postBP_sys:"", postBP_dia:"", postPulse:"", postTemp:"", postSpO2:"" });
-                  } catch(e) { toast.error(e?.response?.data?.message || "Failed to update status"); }
-                  finally { setLoading(false); }
-                };
-
-                // ── Helpers for new-bag monitoring log (local state) ──
-                const addMonitorLog = () => {
-                  const now = new Date();
-                  const hhmm = now.getHours().toString().padStart(2,"0")+":"+now.getMinutes().toString().padStart(2,"0");
-                  const used = blood.monitoringLogs.map(l => l.interval);
-                  const nextIv = INTERVALS.find(iv => !used.includes(iv)) || "15 min";
-                  setBlood(p => ({ ...p, monitoringLogs: [...p.monitoringLogs, { interval: nextIv, time: hhmm, bp_sys:"", bp_dia:"", pulse:"", temp:"", spo2:"", rr:"", reaction:"None", action:"", comment:"" }] }));
-                };
-                const updateLog = (idx, key, val) => setBlood(p => { const logs=[...p.monitoringLogs]; logs[idx]={...logs[idx],[key]:val}; return {...p,monitoringLogs:logs}; });
-                const removeLog = (idx) => setBlood(p => ({ ...p, monitoringLogs: p.monitoringLogs.filter((_,i) => i !== idx) }));
-
-                // ── Reusable monitoring-entry row renderer ──
-                const MonitorRow = ({ log, idx, readOnly, onUpdate, onRemove }) => {
-                  const hasReaction = log.reaction && log.reaction !== "None";
-                  return (
-                    <div style={{ margin:"6px 12px", padding:"10px 12px", background: hasReaction ? C.redL : "white", border:`1px solid ${hasReaction?"#fca5a5":C.border}`, borderRadius:8, opacity: readOnly ? .85 : 1 }}>
-                      <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8 }}>
-                        <span style={{ background: hasReaction?C.red:C.primary, color:"white", borderRadius:5, padding:"2px 10px", fontSize:11, fontWeight:700 }}>{log.interval||"—"}</span>
-                        {!readOnly && <select className="his-select" style={{ width:"auto", minWidth:100, fontSize:12, padding:"4px 8px" }} value={log.interval} onChange={e=>onUpdate(idx,"interval",e.target.value)}>{INTERVALS.map(iv=><option key={iv}>{iv}</option>)}</select>}
-                        <FL label="Time">{readOnly ? <span style={{ fontFamily:"monospace", fontSize:13, fontWeight:700 }}>{log.time||"—"}</span> : <input type="time" className="his-field" style={{ width:120, padding:"4px 8px" }} value={log.time} onChange={e=>onUpdate(idx,"time",e.target.value)} />}</FL>
-                        {readOnly && log.savedAt && <span style={{ marginLeft:"auto", fontSize:10, color:C.muted }}>saved {new Date(log.savedAt).toLocaleTimeString()}</span>}
-                        {!readOnly && <button onClick={()=>onRemove(idx)} style={{ marginLeft:"auto", border:"none", background:"transparent", color:C.muted, cursor:"pointer", fontSize:16, lineHeight:1 }}>×</button>}
-                      </div>
-                      <div style={{ display:"grid", gridTemplateColumns:"repeat(6,1fr)", gap:7, marginBottom:8 }}>
-                        {[["bp_sys","Sys BP","120"],["bp_dia","Dia BP","80"],["pulse","Pulse","80"],["temp","Temp°F","98.6"],["spo2","SpO₂%","98"],["rr","RR","16"]].map(([k,l,ph]) => (
-                          <FL key={k} label={l}>
-                            {readOnly
-                              ? <span style={{ fontFamily:"monospace", fontSize:12, fontWeight:700, color: k==="bp_sys"&&Number(log[k])>160?C.red:k==="spo2"&&Number(log[k])<93?C.red:C.text }}>{log[k]||"—"}</span>
-                              : <input type="number" className="his-field" style={{ padding:"5px 8px", fontSize:12, borderColor: k==="bp_sys"&&Number(log[k])>160?"#ef4444":k==="spo2"&&Number(log[k])<93?"#ef4444":"#e2e8f0" }} value={log[k]||""} placeholder={ph} onChange={e=>onUpdate(idx,k,e.target.value)} />
-                            }
-                          </FL>
-                        ))}
-                      </div>
-                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom: log.comment?8:0 }}>
-                        <FL label="Reaction Noted">
-                          {readOnly ? <span style={{ fontSize:12, fontWeight:700, color: hasReaction?C.red:C.green }}>{log.reaction||"None"}</span>
-                            : <select className="his-select" style={{ borderColor: hasReaction?C.red:"#e2e8f0", fontSize:12 }} value={log.reaction||"None"} onChange={e=>onUpdate(idx,"reaction",e.target.value)}>{REACTIONS.map(r=><option key={r}>{r}</option>)}</select>}
-                        </FL>
-                        <FL label="Action Taken">
-                          {readOnly ? <span style={{ fontSize:12, color:C.text }}>{log.action||"—"}</span>
-                            : <select className="his-select" style={{ fontSize:12 }} value={log.action||""} onChange={e=>onUpdate(idx,"action",e.target.value)}><option value="">— Select —</option>{ACTIONS.map(a=><option key={a}>{a}</option>)}</select>}
-                        </FL>
-                      </div>
-                      {(log.comment || !readOnly) && <FL label="Comment"><input className="his-field" style={{ fontSize:12 }} readOnly={readOnly} value={log.comment||""} placeholder="e.g. Patient comfortable, no complaints" onChange={e=>onUpdate&&onUpdate(idx,"comment",e.target.value)} /></FL>}
-                      {hasReaction && <div style={{ marginTop:8, padding:"6px 10px", background:C.red, color:"white", borderRadius:6, fontSize:11, fontWeight:700 }}>⚠ REACTION: Stop transfusion · Notify Doctor · Send bag to Blood Bank · Document as Critical Event</div>}
-                    </div>
-                  );
-                };
-
-                return (
-                <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-
-                  {/* ── NABH banner ── */}
-                  <div className="his-banner his-banner--err">
-                    <i className="pi pi-exclamation-triangle" /> NABH COP.7 — Blood Product Administration · Dual RN Verification Mandatory
+              {activeModal === "blood" && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div style={{ background: C.redL, border: `1.5px solid #fca5a5`, borderRadius: 8, padding: "10px 14px", fontSize: 12, color: C.red, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
+                    <i className="pi pi-exclamation-triangle" style={{ fontSize: 13 }} /> NABH COP.7 — Blood Product Administration · Dual RN Verification Mandatory
                   </div>
-
-                  {/* ── Tab bar: one tab per active bag + New Bag ── */}
-                  <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-                    {activeBags.map(bag => {
-                      const bt = bag.moduleData?.bloodTransfusion || {};
-                      const isSelected = effectiveTab === bag._id;
-                      return (
-                        <button key={bag._id} onClick={() => setBloodTab(bag._id)}
-                          style={{ padding:"7px 14px", borderRadius:20, border:`2px solid ${isSelected?"#ef4444":"#fca5a5"}`, background: isSelected?"#fef2f2":"white", color: isSelected?C.red:"#b91c1c", fontWeight:700, fontSize:12, cursor:"pointer", display:"flex", alignItems:"center", gap:6, fontFamily:"'DM Sans',sans-serif" }}>
-                          <span style={{ width:8, height:8, borderRadius:"50%", background:"#ef4444", display:"inline-block", animation:"pulse 1.5s infinite" }} />
-                          {bt.product||"Blood"} · {bt.bagNo||"—"} · {bt.startTime||"?"}
-                        </button>
-                      );
-                    })}
-                    <button onClick={() => setBloodTab("new")}
-                      style={{ padding:"7px 14px", borderRadius:20, border:`2px solid ${effectiveTab==="new"?C.primary:C.border}`, background: effectiveTab==="new"?C.primary:"white", color: effectiveTab==="new"?"white":C.primary, fontWeight:700, fontSize:12, cursor:"pointer", display:"flex", alignItems:"center", gap:6, fontFamily:"'DM Sans',sans-serif" }}>
-                      <i className="pi pi-plus" style={{ fontSize:11 }} /> New Blood Product
-                    </button>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                    <FL label="Blood Product *">
+                      <select style={sel} value={blood.product} onChange={e => setBlood(p => ({ ...p, product: e.target.value }))}>
+                        {["PRC (Packed RBC)","FFP","Platelets (RDP)","Platelets (SDP)","Whole Blood","Albumin 5%","Albumin 20%","Cryoprecipitate","Granulocytes"].map(o => <option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                    <FL label="Bag / Unit No. *"><input style={fld} value={blood.bagNo} placeholder="BT-YYYYMMDD-01" onChange={e => setBlood(p => ({ ...p, bagNo: e.target.value }))} /></FL>
+                    <FL label="Cross-Match Report No. *"><input style={fld} value={blood.crossMatchNo} placeholder="CM-2024-001" onChange={e => setBlood(p => ({ ...p, crossMatchNo: e.target.value }))} /></FL>
                   </div>
-
-                  {/* ══════════ ACTIVE BAG TAB ══════════ */}
-                  {effectiveTab !== "new" && selBag && (() => {
-                    const entryHasReaction = newMonitorEntry.reaction && newMonitorEntry.reaction !== "None";
-                    return (
-                      <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-
-                        {/* Bag info header */}
-                        <div style={{ background:"#fff1f2", border:`1.5px solid #fecdd3`, borderRadius:10, padding:"12px 16px" }}>
-                          <div style={{ display:"flex", alignItems:"center", gap:12, flexWrap:"wrap" }}>
-                            <span style={{ background:C.red, color:"white", borderRadius:6, padding:"3px 12px", fontSize:12, fontWeight:800 }}>
-                              🩸 {selBT.product}
-                            </span>
-                            <span style={{ fontSize:12, fontWeight:700, color:C.text }}>Bag: <span style={{ fontFamily:"monospace" }}>{selBT.bagNo||"—"}</span></span>
-                            <span style={{ fontSize:12, color:C.muted }}>XM: {selBT.crossMatchNo||"—"}</span>
-                            <span style={{ fontSize:12, color:C.muted }}>{selBT.volume||"—"} mL</span>
-                            <span style={{ fontSize:12, color:C.muted }}>Started: <strong>{selBT.startTime||"—"}</strong></span>
-                            <span style={{ marginLeft:"auto", background:"#dcfce7", color:"#15803d", borderRadius:20, padding:"2px 12px", fontSize:11, fontWeight:700 }}>● Transfusing</span>
-                          </div>
-                          {/* Pre-vitals summary */}
-                          {(selBT.preBP_sys || selBT.prePulse) && (
-                            <div style={{ marginTop:8, display:"flex", gap:12, fontSize:11, color:C.muted }}>
-                              <span>Pre: BP {selBT.preBP_sys||"—"}/{selBT.preBP_dia||"—"}</span>
-                              <span>P {selBT.prePulse||"—"}</span>
-                              <span>T {selBT.preTemp||"—"}</span>
-                              <span>SpO₂ {selBT.preSpO2||"—"}%</span>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Saved monitoring logs (read-only) */}
-                        <div style={{ background:"#f8fafc", border:`1.5px solid ${C.border}`, borderRadius:10, overflow:"hidden" }}>
-                          <div style={{ padding:"9px 14px", background:"#f1f5f9", borderBottom:`1px solid ${C.border}`, display:"flex", alignItems:"center", gap:8 }}>
-                            <i className="pi pi-history" style={{ fontSize:12, color:C.primary }} />
-                            <span style={{ fontSize:12, fontWeight:700, color:C.slate, textTransform:"uppercase", letterSpacing:".5px" }}>Monitoring Log — {savedLogs.length} {savedLogs.length===1?"entry":"entries"} saved</span>
-                          </div>
-                          {savedLogs.length === 0
-                            ? <div style={{ padding:"12px 14px", fontSize:12, color:C.muted, textAlign:"center" }}>No entries yet — add the first monitoring checkpoint below</div>
-                            : savedLogs.map((log, idx) => <MonitorRow key={idx} log={log} idx={idx} readOnly={true} />)
-                          }
-                        </div>
-
-                        {/* Add new monitoring entry form */}
-                        <div style={{ background:"#f0fdf4", border:`1.5px solid ${C.greenB}`, borderRadius:10, overflow:"hidden" }}>
-                          <div style={{ padding:"9px 14px", background:"#dcfce7", borderBottom:`1px solid ${C.greenB}`, display:"flex", alignItems:"center", gap:8 }}>
-                            <i className="pi pi-plus-circle" style={{ fontSize:12, color:C.green }} />
-                            <span style={{ fontSize:12, fontWeight:700, color:"#15803d", textTransform:"uppercase", letterSpacing:".5px" }}>Add Monitoring Entry</span>
-                            <span style={{ marginLeft:"auto", fontSize:11, color:"#16a34a" }}>Record vitals at each checkpoint · 15 min · 30 min · 1 hr · 2 hr · End</span>
-                          </div>
-                          <div style={{ padding:"10px 14px", display:"flex", flexDirection:"column", gap:8 }}>
-                            <div style={{ display:"flex", gap:10, alignItems:"flex-end", flexWrap:"wrap" }}>
-                              <FL label="Interval *">
-                                <select className="his-select" style={{ minWidth:120 }} value={newMonitorEntry.interval}
-                                  onChange={e => setNewMonitorEntry(p => ({ ...p, interval: e.target.value }))}>
-                                  <option value="">— Select —</option>
-                                  {INTERVALS.map(iv => <option key={iv}>{iv}</option>)}
-                                </select>
-                              </FL>
-                              <FL label="Time">
-                                <input type="time" className="his-field" style={{ width:130 }} value={newMonitorEntry.time}
-                                  onChange={e => setNewMonitorEntry(p => ({ ...p, time: e.target.value }))} />
-                              </FL>
-                            </div>
-                            <div style={{ display:"grid", gridTemplateColumns:"repeat(6,1fr)", gap:7 }}>
-                              {[["bp_sys","Sys BP","120"],["bp_dia","Dia BP","80"],["pulse","Pulse","80"],["temp","Temp°F","98.6"],["spo2","SpO₂%","98"],["rr","RR","16"]].map(([k,l,ph]) => (
-                                <FL key={k} label={l}>
-                                  <input type="number" className="his-field" style={{ padding:"5px 8px", fontSize:12,
-                                    borderColor: k==="bp_sys"&&Number(newMonitorEntry[k])>160?"#ef4444":k==="spo2"&&Number(newMonitorEntry[k])<93?"#ef4444":"#e2e8f0" }} value={newMonitorEntry[k]||""} placeholder={ph} onChange={e => setNewMonitorEntry(p => ({ ...p, [k]: e.target.value }))} />
-                                </FL>
-                              ))}
-                            </div>
-                            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-                              <FL label="Reaction Noted">
-                                <select className="his-select" style={{ borderColor: entryHasReaction?C.red:"#e2e8f0" }} value={newMonitorEntry.reaction}
-                                  onChange={e => setNewMonitorEntry(p => ({ ...p, reaction: e.target.value }))}>
-                                  {REACTIONS.map(r=><option key={r}>{r}</option>)}
-                                </select>
-                              </FL>
-                              <FL label="Action Taken">
-                                <select className="his-select" value={newMonitorEntry.action} onChange={e => setNewMonitorEntry(p => ({ ...p, action: e.target.value }))}>
-                                  <option value="">— Select action —</option>
-                                  {ACTIONS.map(a=><option key={a}>{a}</option>)}
-                                </select>
-                              </FL>
-                            </div>
-                            <FL label="Comment / Clinical Observation">
-                              <input className="his-field" style={{ fontSize:12 }} value={newMonitorEntry.comment}
-                                placeholder="e.g. Patient comfortable, no complaints" onChange={e => setNewMonitorEntry(p => ({ ...p, comment: e.target.value }))} />
-                            </FL>
-                            {entryHasReaction && (
-                              <div style={{ padding:"8px 12px", background:C.red, color:"white", borderRadius:7, fontSize:12, fontWeight:700 }}>
-                                ⚠ REACTION DETECTED — After saving, use Stop Transfusion below, notify doctor, return bag to blood bank.
-                              </div>
-                            )}
-                            <div style={{ display:"flex", justifyContent:"flex-end" }}>
-                              <button onClick={saveMonitorEntry} disabled={loading || !newMonitorEntry.interval}
-                                style={{ padding:"8px 20px", background: newMonitorEntry.interval?C.green:"#9ca3af", color:"white", border:"none", borderRadius:8, fontWeight:700, fontSize:13, cursor: newMonitorEntry.interval?"pointer":"not-allowed", fontFamily:"'DM Sans',sans-serif" }}>
-                                {loading ? "Saving…" : "Save Monitoring Entry"}
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Finalize: Complete / Stop transfusion */}
-                        {!bloodActionForm.action && (
-                          <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
-                            <button onClick={() => { const now=new Date(); setBloodActionForm(p=>({...p, action:"Completed", endTime: now.getHours().toString().padStart(2,"0")+":"+now.getMinutes().toString().padStart(2,"0")})); }}
-                              style={{ flex:1, padding:"10px 16px", background:C.green, color:"white", border:"none", borderRadius:8, fontWeight:700, fontSize:13, cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}>
-                              ✓ Mark Transfusion Complete
-                            </button>
-                            <button onClick={() => { const now=new Date(); setBloodActionForm(p=>({...p, action:"Stopped", endTime: now.getHours().toString().padStart(2,"0")+":"+now.getMinutes().toString().padStart(2,"0")})); }}
-                              style={{ flex:1, padding:"10px 16px", background:C.red, color:"white", border:"none", borderRadius:8, fontWeight:700, fontSize:13, cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}>
-                              ✕ Stop Transfusion
-                            </button>
-                          </div>
-                        )}
-
-                        {/* Post-vitals + confirm finalize */}
-                        {bloodActionForm.action && (
-                          <div style={{ background: bloodActionForm.action==="Completed"?C.greenL:C.redL, border:`1.5px solid ${bloodActionForm.action==="Completed"?C.greenB:"#fca5a5"}`, borderRadius:10, padding:"14px 16px" }}>
-                            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
-                              <span style={{ fontSize:13, fontWeight:800, color: bloodActionForm.action==="Completed"?C.green:C.red, textTransform:"uppercase", letterSpacing:".5px" }}>
-                                {bloodActionForm.action==="Completed" ? "✓ Complete Transfusion" : "✕ Stop Transfusion"} — Record End Vitals
-                              </span>
-                              <button onClick={() => setBloodActionForm(p=>({...p,action:null}))} style={{ border:"none", background:"transparent", fontSize:18, cursor:"pointer", color:C.muted }}>×</button>
-                            </div>
-                            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:10 }}>
-                              <FL label="End Time">
-                                <input type="time" className="his-field" value={bloodActionForm.endTime} onChange={e=>setBloodActionForm(p=>({...p,endTime:e.target.value}))} />
-                              </FL>
-                              <FL label="Reaction Type">
-                                <select className="his-select" style={{ borderColor: bloodActionForm.reactionType!=="None"?C.red:"#e2e8f0" }} value={bloodActionForm.reactionType} onChange={e=>setBloodActionForm(p=>({...p,reactionType:e.target.value}))}>
-                                  {REACTIONS.map(r=><option key={r}>{r}</option>)}
-                                </select>
-                              </FL>
-                            </div>
-                            <div style={{ fontSize:11, fontWeight:700, color: bloodActionForm.action==="Completed"?C.green:C.red, textTransform:"uppercase", marginBottom:6 }}>Post-Transfusion Vitals</div>
-                            <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:8, marginBottom:12 }}>
-                              <FL label="Sys BP"><input type="number" className="his-field" value={bloodActionForm.postBP_sys} placeholder="118" onChange={e=>setBloodActionForm(p=>({...p,postBP_sys:e.target.value}))} /></FL>
-                              <FL label="Dia BP"><input type="number" className="his-field" value={bloodActionForm.postBP_dia} placeholder="76" onChange={e=>setBloodActionForm(p=>({...p,postBP_dia:e.target.value}))} /></FL>
-                              <FL label="Pulse"><input type="number" className="his-field" value={bloodActionForm.postPulse} placeholder="78" onChange={e=>setBloodActionForm(p=>({...p,postPulse:e.target.value}))} /></FL>
-                              <FL label="Temp (°F)"><input type="number" className="his-field" value={bloodActionForm.postTemp} placeholder="98.6" onChange={e=>setBloodActionForm(p=>({...p,postTemp:e.target.value}))} /></FL>
-                              <FL label="SpO₂ (%)"><input type="number" className="his-field" value={bloodActionForm.postSpO2} placeholder="98" onChange={e=>setBloodActionForm(p=>({...p,postSpO2:e.target.value}))} /></FL>
-                            </div>
-                            <button onClick={finalizeTransfusion} disabled={loading}
-                              style={{ width:"100%", padding:"10px", background: bloodActionForm.action==="Completed"?C.green:C.red, color:"white", border:"none", borderRadius:8, fontWeight:800, fontSize:14, cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}>
-                              {loading ? "Saving…" : `Confirm — ${bloodActionForm.action}`}
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()}
-
-                  {/* ══════════ NEW BAG TAB ══════════ */}
-                  {effectiveTab === "new" && (
-                  <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-                    {/* Bag / product details */}
-                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
-                      <FL label="Blood Product *">
-                        <select className="his-select" value={blood.product} onChange={e => setBlood(p => ({ ...p, product: e.target.value }))}>
-                          {PRODUCTS.map(o => <option key={o}>{o}</option>)}
-                        </select>
-                      </FL>
-                      <FL label="Bag / Unit No. *"><input className="his-field" value={blood.bagNo} placeholder="BT-YYYYMMDD-01" onChange={e => setBlood(p => ({ ...p, bagNo: e.target.value }))} /></FL>
-                      <FL label="Cross-Match Report No. *"><input className="his-field" value={blood.crossMatchNo} placeholder="CM-2024-001" onChange={e => setBlood(p => ({ ...p, crossMatchNo: e.target.value }))} /></FL>
-                    </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                    <FL label="Volume (mL) *"><input type="number" style={fld} value={blood.volume} placeholder="350" onChange={e => setBlood(p => ({ ...p, volume: e.target.value }))} /></FL>
+                    <FL label="Transfusion Start Time *"><input type="time" style={fld} value={blood.startTime} onChange={e => setBlood(p => ({ ...p, startTime: e.target.value }))} /></FL>
+                    <FL label="End Time / Status *">
+                      <select style={sel} value={blood.status} onChange={e => setBlood(p => ({ ...p, status: e.target.value }))}>
+                        {["Transfusing","Completed","Held","Reaction","Stopped"].map(o => <option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                  </div>
+                  {/* Pre-transfusion vitals */}
+                  <div style={{ background:"#fff7ed", border:`1px solid #fed7aa`, borderRadius:8, padding:"10px 14px" }}>
+                    <div style={{ fontSize:11, fontWeight:700, color:C.orange, textTransform:"uppercase", letterSpacing:".6px", marginBottom:8 }}>Pre-Transfusion Vitals *</div>
                     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:10 }}>
-                      <FL label="Volume (mL) *"><input type="number" className="his-field" value={blood.volume} placeholder="350" onChange={e => setBlood(p => ({ ...p, volume: e.target.value }))} /></FL>
-                      <FL label="Start Time *"><input type="time" className="his-field" value={blood.startTime} onChange={e => setBlood(p => ({ ...p, startTime: e.target.value }))} /></FL>
-                      <FL label="End Time"><input type="time" className="his-field" value={blood.endTime} onChange={e => setBlood(p => ({ ...p, endTime: e.target.value }))} /></FL>
-                      <FL label="Status *">
-                        <select className="his-select" style={{ borderColor: blood.status==="Reaction"||blood.status==="Stopped"?C.red:blood.status==="Completed"?C.green:"#e2e8f0" }} value={blood.status} onChange={e => setBlood(p => ({ ...p, status: e.target.value }))}>
-                          {["Transfusing","Completed","Held","Reaction","Stopped"].map(o => <option key={o}>{o}</option>)}
-                        </select>
-                      </FL>
+                      <FL label="Systolic BP (mmHg)"><input type="number" style={fld} value={blood.preBP_sys} placeholder="120" onChange={e => setBlood(p => ({ ...p, preBP_sys: e.target.value }))} /></FL>
+                      <FL label="Diastolic BP (mmHg)"><input type="number" style={fld} value={blood.preBP_dia} placeholder="80" onChange={e => setBlood(p => ({ ...p, preBP_dia: e.target.value }))} /></FL>
+                      <FL label="Pulse (/min)"><input type="number" style={fld} value={blood.prePulse} placeholder="80" onChange={e => setBlood(p => ({ ...p, prePulse: e.target.value }))} /></FL>
+                      <FL label="Temp (°F)"><input type="number" style={fld} value={blood.preTemp} placeholder="98.6" onChange={e => setBlood(p => ({ ...p, preTemp: e.target.value }))} /></FL>
                     </div>
-
-                    {/* Pre-transfusion vitals */}
-                    <div style={{ background:"#fff7ed", border:`1px solid #fed7aa`, borderRadius:8, padding:"10px 14px" }}>
-                      <div style={{ fontSize:11, fontWeight:700, color:C.orange, textTransform:"uppercase", letterSpacing:".6px", marginBottom:8 }}>Pre-Transfusion Vitals (Baseline) *</div>
-                      <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:8 }}>
-                        <FL label="Sys BP"><input type="number" className="his-field" value={blood.preBP_sys} placeholder="120" onChange={e => setBlood(p => ({ ...p, preBP_sys: e.target.value }))} /></FL>
-                        <FL label="Dia BP"><input type="number" className="his-field" value={blood.preBP_dia} placeholder="80" onChange={e => setBlood(p => ({ ...p, preBP_dia: e.target.value }))} /></FL>
-                        <FL label="Pulse"><input type="number" className="his-field" value={blood.prePulse} placeholder="80" onChange={e => setBlood(p => ({ ...p, prePulse: e.target.value }))} /></FL>
-                        <FL label="Temp (°F)"><input type="number" className="his-field" value={blood.preTemp} placeholder="98.6" onChange={e => setBlood(p => ({ ...p, preTemp: e.target.value }))} /></FL>
-                        <FL label="SpO₂ (%)"><input type="number" className="his-field" value={blood.preSpO2||""} placeholder="98" onChange={e => setBlood(p => ({ ...p, preSpO2: e.target.value }))} /></FL>
-                      </div>
-                    </div>
-
-                    {/* NABH monitoring log for new bag */}
-                    <div style={{ background:"#f8fafc", border:`1.5px solid ${C.border}`, borderRadius:10, overflow:"hidden" }}>
-                      <div style={{ padding:"9px 14px", background:"#f1f5f9", borderBottom:`1px solid ${C.border}`, display:"flex", alignItems:"center", gap:8 }}>
-                        <i className="pi pi-chart-line" style={{ fontSize:12, color:C.red }} />
-                        <span style={{ fontSize:12, fontWeight:700, color:C.slate, textTransform:"uppercase", letterSpacing:".5px" }}>NABH COP.7 — Transfusion Monitoring Log</span>
-                        <span style={{ fontSize:11, color:C.muted, marginLeft:"auto" }}>Record vitals at 15 min · 30 min · 1 hr · 2 hr · End</span>
-                      </div>
-                      {blood.monitoringLogs.length === 0
-                        ? <div style={{ padding:"14px", fontSize:12, color:C.muted, textAlign:"center" }}>No monitoring entries yet — click <strong>+ Add</strong> below</div>
-                        : blood.monitoringLogs.map((log,idx) => <MonitorRow key={idx} log={log} idx={idx} readOnly={false} onUpdate={updateLog} onRemove={removeLog} />)
-                      }
-                      <div style={{ padding:"10px 14px", borderTop: blood.monitoringLogs.length?`1px solid ${C.border}`:"none" }}>
-                        <button onClick={addMonitorLog} style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", border:`1.5px dashed ${C.primary}`, borderRadius:7, background:"transparent", color:C.primary, fontWeight:700, fontSize:12, cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}>
-                          <i className="pi pi-plus" style={{ fontSize:11 }} /> Add Monitoring Entry
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Post-transfusion vitals */}
-                    {(blood.status === "Completed" || blood.status === "Stopped") && (
-                      <div style={{ background:blood.status==="Completed"?C.greenL:C.redL, border:`1px solid ${blood.status==="Completed"?C.greenB:"#fca5a5"}`, borderRadius:8, padding:"10px 14px" }}>
-                        <div style={{ fontSize:11, fontWeight:700, color:blood.status==="Completed"?C.green:C.red, textTransform:"uppercase", letterSpacing:".6px", marginBottom:8 }}>
-                          {blood.status==="Completed"?"Post-Transfusion Vitals *":"Stop Vitals"}
-                        </div>
-                        <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:8 }}>
-                          <FL label="Sys BP"><input type="number" className="his-field" value={blood.postBP_sys} placeholder="118" onChange={e => setBlood(p => ({ ...p, postBP_sys: e.target.value }))} /></FL>
-                          <FL label="Dia BP"><input type="number" className="his-field" value={blood.postBP_dia} placeholder="76" onChange={e => setBlood(p => ({ ...p, postBP_dia: e.target.value }))} /></FL>
-                          <FL label="Pulse"><input type="number" className="his-field" value={blood.postPulse} placeholder="78" onChange={e => setBlood(p => ({ ...p, postPulse: e.target.value }))} /></FL>
-                          <FL label="Temp (°F)"><input type="number" className="his-field" value={blood.postTemp||""} placeholder="98.6" onChange={e => setBlood(p => ({ ...p, postTemp: e.target.value }))} /></FL>
-                          <FL label="SpO₂ (%)"><input type="number" className="his-field" value={blood.postSpO2||""} placeholder="98" onChange={e => setBlood(p => ({ ...p, postSpO2: e.target.value }))} /></FL>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Verification */}
-                    <div style={{ display:"flex", gap:20, alignItems:"center", flexWrap:"wrap" }}>
-                      <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontWeight:700, fontSize:13, color:blood.groupVerified?C.green:C.red }}>
-                        <input type="checkbox" checked={blood.groupVerified} onChange={e => setBlood(p => ({ ...p, groupVerified: e.target.checked }))} style={{ accentColor:C.green, width:15, height:15 }} />
-                        Group & crossmatch verified (Dual RN sign) ✓
-                      </label>
-                    </div>
-                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-                      <FL label="Second Nurse Verified (Name) *"><input className="his-field" value={blood.secondNurse} placeholder="Verifying nurse name" onChange={e => setBlood(p => ({ ...p, secondNurse: e.target.value }))} /></FL>
-                      <FL label="Overall Transfusion Reaction">
-                        <select className="his-select" style={{ borderColor: blood.reactionType!=="None"?C.red:"#e2e8f0" }} value={blood.reactionType} onChange={e => setBlood(p => ({ ...p, reactionType: e.target.value }))}>
-                          {REACTIONS.map(o=><option key={o}>{o}</option>)}
-                        </select>
-                      </FL>
-                    </div>
-                    {blood.reactionType !== "None" && (
-                      <div className="his-banner his-banner--err" style={{ fontWeight:600 }}>
-                        ⚠️ Reaction reported — stop transfusion, notify doctor immediately, return blood bag to lab, activate critical event documentation.
-                      </div>
-                    )}
                   </div>
+                  {/* Post-transfusion vitals */}
+                  {blood.status === "Completed" && (
+                    <div style={{ background:C.greenL, border:`1px solid ${C.greenB}`, borderRadius:8, padding:"10px 14px" }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:C.green, textTransform:"uppercase", letterSpacing:".6px", marginBottom:8 }}>Post-Transfusion Vitals *</div>
+                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+                        <FL label="Systolic BP (mmHg)"><input type="number" style={fld} value={blood.postBP_sys} placeholder="118" onChange={e => setBlood(p => ({ ...p, postBP_sys: e.target.value }))} /></FL>
+                        <FL label="Diastolic BP (mmHg)"><input type="number" style={fld} value={blood.postBP_dia} placeholder="76" onChange={e => setBlood(p => ({ ...p, postBP_dia: e.target.value }))} /></FL>
+                        <FL label="Pulse (/min)"><input type="number" style={fld} value={blood.postPulse} placeholder="78" onChange={e => setBlood(p => ({ ...p, postPulse: e.target.value }))} /></FL>
+                      </div>
+                    </div>
                   )}
-
+                  <div style={{ display:"flex", gap:20, alignItems:"center", flexWrap:"wrap" }}>
+                    <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontWeight:700, fontSize:13, color:blood.groupVerified?C.green:C.red }}>
+                      <input type="checkbox" checked={blood.groupVerified} onChange={e => setBlood(p => ({ ...p, groupVerified: e.target.checked }))} style={{ accentColor:C.green, width:15, height:15 }} />
+                      Group & crossmatch verified (Dual RN sign) ✓
+                    </label>
+                  </div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                    <FL label="Second Nurse Verified (Name) *"><input style={fld} value={blood.secondNurse} placeholder="Verifying nurse name" onChange={e => setBlood(p => ({ ...p, secondNurse: e.target.value }))} /></FL>
+                    <FL label="Transfusion Reaction">
+                      <select style={{ ...sel, borderColor: blood.reactionType!=="None"?C.red:"#e2e8f0" }} value={blood.reactionType} onChange={e => setBlood(p => ({ ...p, reactionType: e.target.value }))}>
+                        {["None","Febrile","Allergic / Urticaria","Anaphylaxis","Haemolytic","TACO","TRALI","Other"].map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                  </div>
+                  {blood.reactionType !== "None" && (
+                    <div style={{ background:C.redL, border:`1.5px solid #fca5a5`, borderRadius:8, padding:10, fontSize:12, color:C.red, fontWeight:600 }}>
+                      ⚠️ Reaction reported — stop transfusion, notify doctor, send blood bag to lab. Document in critical event.
+                    </div>
+                  )}
                 </div>
-                );
-              })()}
+              )}
 
               {/* ── Intake / Output (NABH COP.2) ── */}
               {activeModal === "intake" && (() => {
@@ -2349,108 +2116,8 @@ function NursingNotesContent({ selectedPatient }) {
                   next.has(id) ? next.delete(id) : next.add(id);
                   return next;
                 });
-
-                // ── Previous I/O entries for today (from already-fetched notes) ──
-                const todayStr = new Date().toDateString();
-                const prevIO = notes.filter(n => n.noteType === "intake" && new Date(n.createdAt).toDateString() === todayStr);
-                // Cumulative totals across all previous entries
-                const cumIn  = prevIO.reduce((s,n) => s + ((n.intakeOutput?.oral||0)+(n.intakeOutput?.ivFluids||0)+(n.intakeOutput?.ivMedFluids||0)), 0);
-                const cumOut = prevIO.reduce((s,n) => s + ((n.intakeOutput?.urineOutput||0)+(n.intakeOutput?.otherOutput||0)+(n.intakeOutput?.nasogastricOutput||0)), 0);
-                // Shift-wise subtotals
-                const SHIFT_ORDER = ["morning","evening","night"];
-                const shiftTotals = SHIFT_ORDER.reduce((acc, sh) => {
-                  const shiftNotes = prevIO.filter(n => n.shift === sh);
-                  if (!shiftNotes.length) return acc;
-                  const inn  = shiftNotes.reduce((s,n) => s + ((n.intakeOutput?.oral||0)+(n.intakeOutput?.ivFluids||0)+(n.intakeOutput?.ivMedFluids||0)), 0);
-                  const out  = shiftNotes.reduce((s,n) => s + ((n.intakeOutput?.urineOutput||0)+(n.intakeOutput?.otherOutput||0)+(n.intakeOutput?.nasogastricOutput||0)), 0);
-                  acc.push({ shift: sh, count: shiftNotes.length, in: inn, out, notes: shiftNotes });
-                  return acc;
-                }, []);
-
                 return (
                   <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-
-                    {/* ── Today's I/O History + Running Totals ── */}
-                    {prevIO.length > 0 && (
-                      <div style={{ background:"#f0f9ff", border:`1.5px solid ${C.blueB}`, borderRadius:10, overflow:"hidden" }}>
-                        <div style={{ padding:"9px 14px", background:"#dbeafe", borderBottom:`1px solid ${C.blueB}`, display:"flex", alignItems:"center", gap:8 }}>
-                          <i className="pi pi-list" style={{ fontSize:12, color:C.blue }} />
-                          <span style={{ fontSize:12, fontWeight:700, color:C.blue, textTransform:"uppercase", letterSpacing:".5px" }}>Today's I/O Chart — {prevIO.length} previous {prevIO.length===1?"entry":"entries"}</span>
-                          <span style={{ marginLeft:"auto", fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:800, color: cumIn>=cumOut?C.green:C.red }}>
-                            Balance: {cumIn>=cumOut?"+":""}{cumIn-cumOut} mL
-                          </span>
-                        </div>
-                        {/* Shift-wise rows */}
-                        <div style={{ padding:"10px 14px", display:"flex", flexDirection:"column", gap:6 }}>
-                          {shiftTotals.map(st => (
-                            <div key={st.shift} style={{ display:"flex", alignItems:"center", gap:12, padding:"7px 10px", background:"white", borderRadius:7, border:`1px solid ${C.border}` }}>
-                              <span style={{ fontSize:10, fontWeight:800, textTransform:"uppercase", letterSpacing:".5px", color:C.muted, minWidth:60 }}>
-                                {st.shift.charAt(0).toUpperCase()+st.shift.slice(1)}
-                              </span>
-                              <span style={{ fontSize:11, color:C.muted }}>{st.count} {st.count===1?"entry":"entries"}</span>
-                              <div style={{ flex:1, display:"flex", gap:16, justifyContent:"flex-end", alignItems:"center" }}>
-                                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:C.blue, fontWeight:700 }}>
-                                  In: {st.in} mL
-                                </span>
-                                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:C.amber, fontWeight:700 }}>
-                                  Out: {st.out} mL
-                                </span>
-                                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:800, color:st.in>=st.out?C.green:C.red, minWidth:80, textAlign:"right" }}>
-                                  {st.in>=st.out?"+":""}{st.in-st.out} mL
-                                </span>
-                              </div>
-                            </div>
-                          ))}
-                          {/* Individual entries table */}
-                          <div style={{ marginTop:4 }}>
-                            <div style={{ display:"grid", gridTemplateColumns:"60px 60px 1fr 70px 70px 70px 70px 70px 80px", gap:"0 8px", padding:"4px 10px", fontSize:9, fontWeight:800, textTransform:"uppercase", letterSpacing:".5px", color:C.muted }}>
-                              <span>Time</span><span>Shift</span><span>Nurse</span><span>Oral</span><span>IV</span><span>Urine</span><span>Drain</span><span>NGT</span><span>Balance</span>
-                            </div>
-                            {prevIO.map((n, i) => {
-                              const io = n.intakeOutput || {};
-                              const inn = (io.oral||0)+(io.ivFluids||0)+(io.ivMedFluids||0);
-                              const out = (io.urineOutput||0)+(io.otherOutput||0)+(io.nasogastricOutput||0);
-                              const bal = inn - out;
-                              const t = new Date(n.createdAt).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"});
-                              return (
-                                <div key={n._id||i} style={{ display:"grid", gridTemplateColumns:"60px 60px 1fr 70px 70px 70px 70px 70px 80px", gap:"0 8px", padding:"5px 10px", fontSize:11, background: i%2===0?"#f8fafc":"white", borderRadius:4, alignItems:"center" }}>
-                                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11 }}>{t}</span>
-                                  <span style={{ fontSize:10, fontWeight:700, textTransform:"capitalize", color:C.muted }}>{n.shift}</span>
-                                  <span style={{ fontSize:11, color:C.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{n.nurseName || "—"}</span>
-                                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:C.blue }}>{io.oral||0}</span>
-                                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:C.blue }}>{(io.ivFluids||0)+(io.ivMedFluids||0)}</span>
-                                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:C.amber }}>{io.urineOutput||0}</span>
-                                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:C.amber }}>{io.otherOutput||0}</span>
-                                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:C.amber }}>{io.nasogastricOutput||0}</span>
-                                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, fontWeight:800, color:bal>=0?C.green:C.red }}>{bal>=0?"+":""}{bal}</span>
-                                </div>
-                              );
-                            })}
-                          </div>
-                          {/* 24-hr totals bar */}
-                          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:10, marginTop:6, padding:"10px 12px", background: cumIn>=cumOut?"#dcfce7":C.redL, borderRadius:8, border:`1.5px solid ${cumIn>=cumOut?C.greenB:"#fca5a5"}` }}>
-                            <div style={{ display:"flex", flexDirection:"column", gap:2 }}>
-                              <span style={{ fontSize:9, fontWeight:800, textTransform:"uppercase", letterSpacing:".5px", color:C.muted }}>24-hr Total In</span>
-                              <span style={{ fontFamily:"'DM Mono',monospace", fontSize:15, fontWeight:800, color:C.blue }}>{cumIn} mL</span>
-                            </div>
-                            <div style={{ display:"flex", flexDirection:"column", gap:2 }}>
-                              <span style={{ fontSize:9, fontWeight:800, textTransform:"uppercase", letterSpacing:".5px", color:C.muted }}>24-hr Total Out</span>
-                              <span style={{ fontFamily:"'DM Mono',monospace", fontSize:15, fontWeight:800, color:C.amber }}>{cumOut} mL</span>
-                            </div>
-                            <div style={{ display:"flex", flexDirection:"column", gap:2 }}>
-                              <span style={{ fontSize:9, fontWeight:800, textTransform:"uppercase", letterSpacing:".5px", color:C.muted }}>Cumulative Balance</span>
-                              <span style={{ fontFamily:"'DM Mono',monospace", fontSize:15, fontWeight:800, color:cumIn>=cumOut?C.green:C.red }}>{cumIn>=cumOut?"+":""}{cumIn-cumOut} mL</span>
-                            </div>
-                            <div style={{ display:"flex", flexDirection:"column", gap:2 }}>
-                              <span style={{ fontSize:9, fontWeight:800, textTransform:"uppercase", letterSpacing:".5px", color:C.muted }}>Status</span>
-                              <span style={{ fontSize:12, fontWeight:700, color:cumIn>=cumOut?C.green:C.red }}>
-                                {cumIn-cumOut > 500 ? "⚠ Fluid Overload Risk" : cumIn-cumOut < -500 ? "⚠ Fluid Deficit" : "✓ Balanced"}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    )}
 
                     {/* ── IV Medication Volumes from Treatment Chart ── */}
                     <div style={{ background:"#f0f9ff", border:"1.5px solid #bae6fd", borderRadius:10, overflow:"hidden" }}>
@@ -2515,7 +2182,7 @@ function NursingNotesContent({ selectedPatient }) {
                         <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
                           {[{k:"oral",l:"Oral (mL)"},{k:"ivFluids",l:"IV Drip Fluids (mL)"},{k:"bloodProducts",l:"Blood Products (mL)"}].map(f=>(
                             <FL key={f.k} label={f.l}>
-                              <input type="number" className="his-field" style={{ fontSize:13 }} value={intake[f.k]} placeholder="0" onChange={e => setIntake(p => ({ ...p, [f.k]: e.target.value }))} />
+                              <input type="number" style={{ ...fld, fontSize:13 }} value={intake[f.k]} placeholder="0" onChange={e => setIntake(p => ({ ...p, [f.k]: e.target.value }))} />
                             </FL>
                           ))}
                           {autoMedVol > 0 && (
@@ -2535,26 +2202,16 @@ function NursingNotesContent({ selectedPatient }) {
                         <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
                           {[{k:"urineOutput",l:"Urine Output (mL)"},{k:"drainOutput",l:"Drain Output (mL)"},{k:"nasogastric",l:"Nasogastric (mL)"},{k:"emesis",l:"Emesis / Vomit (mL)"},{k:"bloodLoss",l:"Blood Loss (mL)"}].map(f=>(
                             <FL key={f.k} label={f.l}>
-                              <input type="number" className="his-field" style={{ fontSize:13 }} value={intake[f.k]} placeholder="0" onChange={e => setIntake(p => ({ ...p, [f.k]: e.target.value }))} />
+                              <input type="number" style={{ ...fld, fontSize:13 }} value={intake[f.k]} placeholder="0" onChange={e => setIntake(p => ({ ...p, [f.k]: e.target.value }))} />
                             </FL>
                           ))}
                           <div style={{ fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:700, color:C.amber, paddingTop:4, borderTop:`1px solid ${C.amberB}` }}>Total Out: {totalOut} mL</div>
                         </div>
                       </div>
                     </div>
-                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-                      <div style={{ background: balance>=0?C.greenL:C.redL, border:`1.5px solid ${balance>=0?C.greenB:"#fca5a5"}`, borderRadius:10, padding:"12px 18px", display:"flex", flexDirection:"column", gap:2 }}>
-                        <span style={{ fontSize:11, fontWeight:700, color:balance>=0?C.green:C.red, textTransform:"uppercase", letterSpacing:".5px" }}>This Entry Balance</span>
-                        <span style={{ fontFamily:"'DM Mono',monospace", fontSize:22, fontWeight:800, color:balance>=0?C.green:C.red }}>{balance>=0?"+":""}{balance} mL</span>
-                      </div>
-                      {prevIO.length > 0 && (
-                        <div style={{ background: (cumIn+totalIn)>=(cumOut+totalOut)?C.greenL:C.redL, border:`1.5px solid ${(cumIn+totalIn)>=(cumOut+totalOut)?C.greenB:"#fca5a5"}`, borderRadius:10, padding:"12px 18px", display:"flex", flexDirection:"column", gap:2 }}>
-                          <span style={{ fontSize:11, fontWeight:700, color:(cumIn+totalIn)>=(cumOut+totalOut)?C.green:C.red, textTransform:"uppercase", letterSpacing:".5px" }}>Running 24-hr Balance (After Save)</span>
-                          <span style={{ fontFamily:"'DM Mono',monospace", fontSize:22, fontWeight:800, color:(cumIn+totalIn)>=(cumOut+totalOut)?C.green:C.red }}>
-                            {(cumIn+totalIn)>=(cumOut+totalOut)?"+":""}{(cumIn+totalIn)-(cumOut+totalOut)} mL
-                          </span>
-                        </div>
-                      )}
+                    <div style={{ background: balance>=0?C.greenL:C.redL, border:`1.5px solid ${balance>=0?C.greenB:"#fca5a5"}`, borderRadius:10, padding:"12px 18px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                      <span style={{ fontSize:13, fontWeight:700, color:balance>=0?C.green:C.red }}>Fluid Balance (This Entry)</span>
+                      <span style={{ fontFamily:"'DM Mono',monospace", fontSize:22, fontWeight:800, color:balance>=0?C.green:C.red }}>{balance>=0?"+":""}{balance} mL</span>
                     </div>
                   </div>
                 );
@@ -2565,41 +2222,41 @@ function NursingNotesContent({ selectedPatient }) {
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
                     <FL label="Wound Type *">
-                      <select className="his-select" value={wound.type} onChange={e => setWound(p => ({ ...p, type: e.target.value }))}>
+                      <select style={sel} value={wound.type} onChange={e => setWound(p => ({ ...p, type: e.target.value }))}>
                         {["Surgical","Pressure Injury","Traumatic","Burn","Diabetic Foot","Vascular","Fungating","Other"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
-                    <FL label="Wound Site / Location *"><input className="his-field" value={wound.site} placeholder="e.g. Right lower leg, sacrum" onChange={e => setWound(p => ({ ...p, site: e.target.value }))} /></FL>
+                    <FL label="Wound Site / Location *"><input style={fld} value={wound.site} placeholder="e.g. Right lower leg, sacrum" onChange={e => setWound(p => ({ ...p, site: e.target.value }))} /></FL>
                     <FL label="Healing Stage *">
-                      <select className="his-select" value={wound.healingStage} onChange={e => setWound(p => ({ ...p, healingStage: e.target.value }))}>
+                      <select style={sel} value={wound.healingStage} onChange={e => setWound(p => ({ ...p, healingStage: e.target.value }))}>
                         {["Haemostasis","Inflammatory","Granulating","Epithelializing","Sloughy","Infected","Necrotic","Dehisced"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
-                    <FL label="Length (cm) *"><input type="number" className="his-field" value={wound.length} placeholder="3" onChange={e => setWound(p => ({ ...p, length: e.target.value }))} /></FL>
-                    <FL label="Width (cm) *"><input type="number" className="his-field" value={wound.width} placeholder="2" onChange={e => setWound(p => ({ ...p, width: e.target.value }))} /></FL>
-                    <FL label="Depth (cm)"><input type="number" className="his-field" value={wound.depth} placeholder="0.5" onChange={e => setWound(p => ({ ...p, depth: e.target.value }))} /></FL>
+                    <FL label="Length (cm) *"><input type="number" style={fld} value={wound.length} placeholder="3" onChange={e => setWound(p => ({ ...p, length: e.target.value }))} /></FL>
+                    <FL label="Width (cm) *"><input type="number" style={fld} value={wound.width} placeholder="2" onChange={e => setWound(p => ({ ...p, width: e.target.value }))} /></FL>
+                    <FL label="Depth (cm)"><input type="number" style={fld} value={wound.depth} placeholder="0.5" onChange={e => setWound(p => ({ ...p, depth: e.target.value }))} /></FL>
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                     <FL label="Exudate Amount">
-                      <select className="his-select" value={wound.exudateAmt} onChange={e => setWound(p => ({ ...p, exudateAmt: e.target.value }))}>
+                      <select style={sel} value={wound.exudateAmt} onChange={e => setWound(p => ({ ...p, exudateAmt: e.target.value }))}>
                         {["None","Scant","Minimal","Moderate","Heavy"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                     <FL label="Exudate Type">
-                      <select className="his-select" value={wound.exudateType} onChange={e => setWound(p => ({ ...p, exudateType: e.target.value }))}>
+                      <select style={sel} value={wound.exudateType} onChange={e => setWound(p => ({ ...p, exudateType: e.target.value }))}>
                         {["Serous","Sero-sanguinous","Sanguinous","Purulent","Haemopurulent"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                     <FL label="Surrounding Skin">
-                      <select className="his-select" value={wound.surroundingSkin} onChange={e => setWound(p => ({ ...p, surroundingSkin: e.target.value }))}>
+                      <select style={sel} value={wound.surroundingSkin} onChange={e => setWound(p => ({ ...p, surroundingSkin: e.target.value }))}>
                         {["Intact","Erythema","Macerated","Oedematous","Dry/Scaly","Excoriated"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
-                    <FL label="Dressing Applied *"><input className="his-field" value={wound.dressing} placeholder="e.g. Povidone-Iodine + paraffin gauze" onChange={e => setWound(p => ({ ...p, dressing: e.target.value }))} /></FL>
+                    <FL label="Dressing Applied *"><input style={fld} value={wound.dressing} placeholder="e.g. Povidone-Iodine + paraffin gauze" onChange={e => setWound(p => ({ ...p, dressing: e.target.value }))} /></FL>
                   </div>
                   <div style={{ display:"flex", gap:20, flexWrap:"wrap" }}>
                     {[
@@ -2613,8 +2270,8 @@ function NursingNotesContent({ selectedPatient }) {
                     ))}
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-                    <FL label="Pain During Dressing (NRS 0-10)"><input type="number" min="0" max="10" className="his-field" value={wound.painDuring} placeholder="0" onChange={e => setWound(p => ({ ...p, painDuring: e.target.value }))} /></FL>
-                    <FL label="Next Dressing Due"><input type="date" className="his-field" value={wound.nextDressingDate} onChange={e => setWound(p => ({ ...p, nextDressingDate: e.target.value }))} /></FL>
+                    <FL label="Pain During Dressing (NRS 0-10)"><input type="number" min="0" max="10" style={fld} value={wound.painDuring} placeholder="0" onChange={e => setWound(p => ({ ...p, painDuring: e.target.value }))} /></FL>
+                    <FL label="Next Dressing Due"><input type="date" style={fld} value={wound.nextDressingDate} onChange={e => setWound(p => ({ ...p, nextDressingDate: e.target.value }))} /></FL>
                   </div>
                 </div>
               )}
@@ -2644,7 +2301,7 @@ function NursingNotesContent({ selectedPatient }) {
                       <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8 }}>
                         {bradenFields.map(f => (
                           <FL key={f.k} label={f.label}>
-                            <select className="his-select" style={{ borderColor: Number(skin[f.k])<=2?C.red:Number(skin[f.k])===3?C.amber:"#e2e8f0" }}
+                            <select style={{ ...sel, borderColor: Number(skin[f.k])<=2?C.red:Number(skin[f.k])===3?C.amber:"#e2e8f0" }}
                               value={skin[f.k]} onChange={e => setSkin(p => ({ ...p, [f.k]: e.target.value }))}>
                               {f.opts.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
                             </select>
@@ -2654,19 +2311,19 @@ function NursingNotesContent({ selectedPatient }) {
                     </div>
                     {/* Pressure injury details */}
                     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
-                      <FL label="Pressure Area Location"><input className="his-field" value={skin.area} placeholder="e.g. Sacrum, heels, occiput" onChange={e => setSkin(p => ({ ...p, area: e.target.value }))} /></FL>
+                      <FL label="Pressure Area Location"><input style={fld} value={skin.area} placeholder="e.g. Sacrum, heels, occiput" onChange={e => setSkin(p => ({ ...p, area: e.target.value }))} /></FL>
                       <FL label="Pressure Injury Stage">
-                        <select className="his-select" value={skin.stage} onChange={e => setSkin(p => ({ ...p, stage: e.target.value }))}>
+                        <select style={sel} value={skin.stage} onChange={e => setSkin(p => ({ ...p, stage: e.target.value }))}>
                           {["No Injury","Stage I","Stage II","Stage III","Stage IV","Unstageable","Deep Tissue Injury"].map(o=><option key={o}>{o}</option>)}
                         </select>
                       </FL>
                       <FL label="Repositioning Frequency">
-                        <select className="his-select" value={skin.repositionFreq} onChange={e => setSkin(p => ({ ...p, repositionFreq: e.target.value }))}>
+                        <select style={sel} value={skin.repositionFreq} onChange={e => setSkin(p => ({ ...p, repositionFreq: e.target.value }))}>
                           {["Hourly","2-hourly","4-hourly","As tolerated","On request"].map(o=><option key={o}>{o}</option>)}
                         </select>
                       </FL>
                     </div>
-                    <FL label="Interventions Applied"><input className="his-field" value={skin.intervention} placeholder="Foam dressing, barrier cream, pressure-relieving mattress, heel wedge…" onChange={e => setSkin(p => ({ ...p, intervention: e.target.value }))} /></FL>
+                    <FL label="Interventions Applied"><input style={fld} value={skin.intervention} placeholder="Foam dressing, barrier cream, pressure-relieving mattress, heel wedge…" onChange={e => setSkin(p => ({ ...p, intervention: e.target.value }))} /></FL>
                     <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontWeight:700, fontSize:13, color:skin.repositioned?C.green:C.muted }}>
                       <input type="checkbox" checked={skin.repositioned} onChange={e => setSkin(p => ({ ...p, repositioned: e.target.checked }))} style={{ accentColor:C.green, width:15, height:15 }} />
                       Patient repositioned this entry
@@ -2706,7 +2363,7 @@ function NursingNotesContent({ selectedPatient }) {
                         {morseItems.map(item => (
                           <div key={item.k} style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, alignItems:"center" }}>
                             <div style={{ fontSize:12, fontWeight:600, color:C.text }}>{item.label}</div>
-                            <select className="his-select" style={{ borderColor: Number(fallRisk[item.k])>0?C.amber:"#e2e8f0" }}
+                            <select style={{ ...sel, borderColor: Number(fallRisk[item.k])>0?C.amber:"#e2e8f0" }}
                               value={fallRisk[item.k]} onChange={e => setFallRisk(p => ({ ...p, [item.k]: e.target.value }))}>
                               {item.opts.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
                             </select>
@@ -2715,7 +2372,7 @@ function NursingNotesContent({ selectedPatient }) {
                       </div>
                     </div>
                     <div>
-                      <div className="his-label">Interventions Applied (check all that apply)</div>
+                      <div style={lbl}>Interventions Applied (check all that apply)</div>
                       <div style={{ display:"flex", flexWrap:"wrap", gap:8, marginTop:6 }}>
                         {intList.map(f=>(
                           <label key={f.k} style={{ display:"flex", alignItems:"center", gap:7, cursor:"pointer", fontWeight:600, fontSize:12, color:fallRisk[f.k]?C.green:C.muted, padding:"6px 12px", border:`1.5px solid ${fallRisk[f.k]?C.green:C.border}`, borderRadius:20, background:fallRisk[f.k]?C.greenL:"white", transition:"all .15s" }}>
@@ -2733,42 +2390,42 @@ function NursingNotesContent({ selectedPatient }) {
               {activeModal === "procedure" && (
                 <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
-                    <FL label="Procedure Name *"><input className="his-field" value={procedure.procedureName} placeholder="e.g. Urinary catheterisation" onChange={e => setProcedure(p => ({ ...p, procedureName: e.target.value }))} /></FL>
-                    <FL label="Indication / Reason *"><input className="his-field" value={procedure.indication} placeholder="Reason for procedure" onChange={e => setProcedure(p => ({ ...p, indication: e.target.value }))} /></FL>
-                    <FL label="Time of Procedure *"><input type="time" className="his-field" value={procedure.time} onChange={e => setProcedure(p => ({ ...p, time: e.target.value }))} /></FL>
+                    <FL label="Procedure Name *"><input style={fld} value={procedure.procedureName} placeholder="e.g. Urinary catheterisation" onChange={e => setProcedure(p => ({ ...p, procedureName: e.target.value }))} /></FL>
+                    <FL label="Indication / Reason *"><input style={fld} value={procedure.indication} placeholder="Reason for procedure" onChange={e => setProcedure(p => ({ ...p, indication: e.target.value }))} /></FL>
+                    <FL label="Time of Procedure *"><input type="time" style={fld} value={procedure.time} onChange={e => setProcedure(p => ({ ...p, time: e.target.value }))} /></FL>
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
-                    <FL label="Performed By *"><input className="his-field" value={procedure.performedBy} placeholder="Name of performer" onChange={e => setProcedure(p => ({ ...p, performedBy: e.target.value }))} /></FL>
+                    <FL label="Performed By *"><input style={fld} value={procedure.performedBy} placeholder="Name of performer" onChange={e => setProcedure(p => ({ ...p, performedBy: e.target.value }))} /></FL>
                     <FL label="Designation *">
-                      <select className="his-select" value={procedure.designation} onChange={e => setProcedure(p => ({ ...p, designation: e.target.value }))}>
+                      <select style={sel} value={procedure.designation} onChange={e => setProcedure(p => ({ ...p, designation: e.target.value }))}>
                         {["Staff Nurse","Senior Nurse","Resident Doctor","Consultant","Anaesthetist","Technician"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
-                    <FL label="Assistant"><input className="his-field" value={procedure.assistant} placeholder="Assisting nurse/doctor" onChange={e => setProcedure(p => ({ ...p, assistant: e.target.value }))} /></FL>
+                    <FL label="Assistant"><input style={fld} value={procedure.assistant} placeholder="Assisting nurse/doctor" onChange={e => setProcedure(p => ({ ...p, assistant: e.target.value }))} /></FL>
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
-                    <FL label="Site / Location"><input className="his-field" value={procedure.site} placeholder="e.g. Right subclavian" onChange={e => setProcedure(p => ({ ...p, site: e.target.value }))} /></FL>
+                    <FL label="Site / Location"><input style={fld} value={procedure.site} placeholder="e.g. Right subclavian" onChange={e => setProcedure(p => ({ ...p, site: e.target.value }))} /></FL>
                     <FL label="Laterality">
-                      <select className="his-select" value={procedure.laterality} onChange={e => setProcedure(p => ({ ...p, laterality: e.target.value }))}>
+                      <select style={sel} value={procedure.laterality} onChange={e => setProcedure(p => ({ ...p, laterality: e.target.value }))}>
                         {["N/A","Left","Right","Bilateral","Midline"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                     <FL label="Patient Position">
-                      <select className="his-select" value={procedure.position} onChange={e => setProcedure(p => ({ ...p, position: e.target.value }))}>
+                      <select style={sel} value={procedure.position} onChange={e => setProcedure(p => ({ ...p, position: e.target.value }))}>
                         {["Supine","Left Lateral","Right Lateral","Lithotomy","Trendelenburg","Prone","Sitting"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                     <FL label="Patient Outcome">
-                      <select className="his-select" style={{ borderColor: procedure.outcome==="Complication Noted"||procedure.outcome==="Procedure Abandoned"?C.red:"#e2e8f0" }}
+                      <select style={{ ...sel, borderColor: procedure.outcome==="Complication Noted"||procedure.outcome==="Procedure Abandoned"?C.red:"#e2e8f0" }}
                         value={procedure.outcome} onChange={e => setProcedure(p => ({ ...p, outcome: e.target.value }))}>
                         {["Tolerated Well","Partial Cooperation","Procedure Abandoned","Complication Noted"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
-                    <FL label="Complications (if any)"><input className="his-field" value={procedure.complications} placeholder="None / describe" onChange={e => setProcedure(p => ({ ...p, complications: e.target.value }))} /></FL>
+                    <FL label="Complications (if any)"><input style={fld} value={procedure.complications} placeholder="None / describe" onChange={e => setProcedure(p => ({ ...p, complications: e.target.value }))} /></FL>
                   </div>
-                  <FL label="Post-Procedure Monitoring / Follow-up"><input className="his-field" value={procedure.followUp} placeholder="e.g. Monitor urine output, check site for bleeding in 30 min" onChange={e => setProcedure(p => ({ ...p, followUp: e.target.value }))} /></FL>
+                  <FL label="Post-Procedure Monitoring / Follow-up"><input style={fld} value={procedure.followUp} placeholder="e.g. Monitor urine output, check site for bleeding in 30 min" onChange={e => setProcedure(p => ({ ...p, followUp: e.target.value }))} /></FL>
                   <div style={{ display:"flex", gap:20, flexWrap:"wrap" }}>
                     <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontWeight:700, fontSize:13, color:procedure.consentObtained?C.green:C.red }}>
                       <input type="checkbox" checked={procedure.consentObtained} onChange={e => setProcedure(p => ({ ...p, consentObtained: e.target.checked }))} style={{ accentColor:C.green, width:15, height:15 }} />
@@ -2783,7 +2440,7 @@ function NursingNotesContent({ selectedPatient }) {
                       Specimen sent
                     </label>
                   </div>
-                  {procedure.specimenSent && <FL label="Specimen Type"><input className="his-field" value={procedure.specimenType} placeholder="e.g. Urine C&S, Blood culture, Tissue biopsy" onChange={e => setProcedure(p => ({ ...p, specimenType: e.target.value }))} /></FL>}
+                  {procedure.specimenSent && <FL label="Specimen Type"><input style={fld} value={procedure.specimenType} placeholder="e.g. Urine C&S, Blood culture, Tissue biopsy" onChange={e => setProcedure(p => ({ ...p, specimenType: e.target.value }))} /></FL>}
                 </div>
               )}
 
@@ -2792,17 +2449,17 @@ function NursingNotesContent({ selectedPatient }) {
                 <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
                     <FL label="Handover Type *">
-                      <select className="his-select" value={discharge.type} onChange={e => setDischarge(p => ({ ...p, type: e.target.value }))}>
+                      <select style={sel} value={discharge.type} onChange={e => setDischarge(p => ({ ...p, type: e.target.value }))}>
                         {["Shift Handover","Patient Discharge","Ward Transfer","ICU Transfer","LAMA","Death Summary"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                     <FL label="Patient Status *">
-                      <select className="his-select" style={{ borderColor: discharge.patientStatus==="Critical"||discharge.patientStatus==="Deteriorating"?C.red:"#e2e8f0" }}
+                      <select style={{ ...sel, borderColor: discharge.patientStatus==="Critical"||discharge.patientStatus==="Deteriorating"?C.red:"#e2e8f0" }}
                         value={discharge.patientStatus} onChange={e => setDischarge(p => ({ ...p, patientStatus: e.target.value }))}>
                         {["Stable","Improving","Unchanged","Critical","Deteriorating","Deceased"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
-                    <FL label="Receiving Nurse / Handover To *"><input className="his-field" value={discharge.incomingNurse} placeholder="Name of incoming nurse" onChange={e => setDischarge(p => ({ ...p, incomingNurse: e.target.value }))} /></FL>
+                    <FL label="Receiving Nurse / Handover To *"><input style={fld} value={discharge.incomingNurse} placeholder="Name of incoming nurse" onChange={e => setDischarge(p => ({ ...p, incomingNurse: e.target.value }))} /></FL>
                   </div>
                   {/* SBAR */}
                   <div style={{ background:"#f8fafc", border:`1px solid ${C.border}`, borderRadius:10, padding:"12px 14px" }}>
@@ -2814,15 +2471,15 @@ function NursingNotesContent({ selectedPatient }) {
                       {k:"recommendation", label:"R — Recommendation", placeholder:"Pending orders, actions needed, follow-up, special precautions…", color:C.green},
                     ].map(f=>(
                       <div key={f.k} style={{ marginBottom:10 }}>
-                        <label className="his-label" style={{ color:f.color }}>{f.label}</label>
-                        <textarea className="his-textarea" style={{ minHeight:60, borderColor:`${f.color}40` }} value={discharge[f.k]} placeholder={f.placeholder}
+                        <label style={{ ...lbl, color:f.color }}>{f.label}</label>
+                        <textarea style={{ ...ta, minHeight:60, borderColor:`${f.color}40` }} value={discharge[f.k]} placeholder={f.placeholder}
                           onChange={e => setDischarge(p => ({ ...p, [f.k]: e.target.value }))} />
                       </div>
                     ))}
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                     <div>
-                      <div className="his-label">Patient / Family Education</div>
+                      <div style={lbl}>Patient / Family Education</div>
                       <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
                         <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontWeight:600, fontSize:13, color:discharge.educationGiven?C.green:C.muted }}>
                           <input type="checkbox" checked={discharge.educationGiven} onChange={e => setDischarge(p => ({ ...p, educationGiven: e.target.checked }))} style={{ accentColor:C.green, width:14, height:14 }} />
@@ -2834,9 +2491,9 @@ function NursingNotesContent({ selectedPatient }) {
                         </label>
                       </div>
                     </div>
-                    <FL label="Follow-up Date"><input type="date" className="his-field" value={discharge.followUpDate} onChange={e => setDischarge(p => ({ ...p, followUpDate: e.target.value }))} /></FL>
+                    <FL label="Follow-up Date"><input type="date" style={fld} value={discharge.followUpDate} onChange={e => setDischarge(p => ({ ...p, followUpDate: e.target.value }))} /></FL>
                   </div>
-                  {discharge.educationGiven && <FL label="Education Topics Covered"><input className="his-field" value={discharge.educationTopics} placeholder="Medication adherence, wound care, diet, warning signs, follow-up…" onChange={e => setDischarge(p => ({ ...p, educationTopics: e.target.value }))} /></FL>}
+                  {discharge.educationGiven && <FL label="Education Topics Covered"><input style={fld} value={discharge.educationTopics} placeholder="Medication adherence, wound care, diet, warning signs, follow-up…" onChange={e => setDischarge(p => ({ ...p, educationTopics: e.target.value }))} /></FL>}
                 </div>
               )}
 
@@ -2878,7 +2535,7 @@ function NursingNotesContent({ selectedPatient }) {
                         return (
                           <div key={p.k} style={{ background:"#f8fafc", border:`1px solid ${sc!==null&&sc>0?C.amber:C.border}`, borderRadius:10, padding:"10px 12px" }}>
                             <div style={{ fontSize:10, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:6 }}>{p.label}</div>
-                            <input type="number" className="his-field" style={{ background:"white", marginBottom:6 }} value={mews[p.k]} placeholder={p.placeholder}
+                            <input type="number" style={{ ...fld, background:"white", marginBottom:6 }} value={mews[p.k]} placeholder={p.placeholder}
                               onChange={e => setMews(pr => ({ ...pr, [p.k]: e.target.value }))} />
                             {sc !== null && (
                               <div style={{ fontSize:11, fontWeight:700, color:sc>0?C.red:C.green, textAlign:"center" }}>
@@ -2917,102 +2574,8 @@ function NursingNotesContent({ selectedPatient }) {
                 );
               })()}
 
-              {/* ── General Observation ── */}
-              {activeModal === "general" && (
-                <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-                  {/* Row 1 — Clinical status */}
-                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
-                    <FL label="Consciousness">
-                      <select className="his-select" value={generalObs.consciousness} onChange={e=>setGeneralObs(p=>({...p,consciousness:e.target.value}))}>
-                        {["Conscious","Drowsy","Stuporous","Unconscious","Sedated","Confused"].map(o=><option key={o}>{o}</option>)}
-                      </select>
-                    </FL>
-                    <FL label="Orientation">
-                      <select className="his-select" value={generalObs.orientation} onChange={e=>setGeneralObs(p=>({...p,orientation:e.target.value}))}>
-                        {["Oriented ×3","Oriented to person only","Disoriented","Not assessable"].map(o=><option key={o}>{o}</option>)}
-                      </select>
-                    </FL>
-                    <FL label="Co-operation">
-                      <select className="his-select" value={generalObs.cooperation} onChange={e=>setGeneralObs(p=>({...p,cooperation:e.target.value}))}>
-                        {["Cooperative","Uncooperative","Partially cooperative","Anxious","Agitated"].map(o=><option key={o}>{o}</option>)}
-                      </select>
-                    </FL>
-                  </div>
-                  {/* Row 2 — General wellbeing */}
-                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:10 }}>
-                    <FL label="Mood / Affect">
-                      <select className="his-select" value={generalObs.mood} onChange={e=>setGeneralObs(p=>({...p,mood:e.target.value}))}>
-                        {["Calm","Anxious","Depressed","Irritable","Euphoric","Flat"].map(o=><option key={o}>{o}</option>)}
-                      </select>
-                    </FL>
-                    <FL label="Activity Level">
-                      <select className="his-select" value={generalObs.activityLevel} onChange={e=>setGeneralObs(p=>({...p,activityLevel:e.target.value}))}>
-                        {["Ambulatory","Ambulatory with assistance","Chair rest","Bed rest","Bed-bound"].map(o=><option key={o}>{o}</option>)}
-                      </select>
-                    </FL>
-                    <FL label="Sleep Quality">
-                      <select className="his-select" value={generalObs.sleepQuality} onChange={e=>setGeneralObs(p=>({...p,sleepQuality:e.target.value}))}>
-                        {["Good","Disturbed","Poor","Unable to sleep"].map(o=><option key={o}>{o}</option>)}
-                      </select>
-                    </FL>
-                    <FL label="Appetite">
-                      <select className="his-select" value={generalObs.appetite} onChange={e=>setGeneralObs(p=>({...p,appetite:e.target.value}))}>
-                        {["Good","Fair","Poor","Nil by mouth","NGT feeding"].map(o=><option key={o}>{o}</option>)}
-                      </select>
-                    </FL>
-                  </div>
-                  {/* Row 3 — Physical findings */}
-                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
-                    <FL label="Comfort Level">
-                      <select className="his-select" value={generalObs.comfort} onChange={e=>setGeneralObs(p=>({...p,comfort:e.target.value}))}>
-                        {["Comfortable","Mild discomfort","Moderate distress","Severe distress"].map(o=><option key={o}>{o}</option>)}
-                      </select>
-                    </FL>
-                    <FL label="Bowel Sounds">
-                      <select className="his-select" value={generalObs.bowelSounds} onChange={e=>setGeneralObs(p=>({...p,bowelSounds:e.target.value}))}>
-                        {["Normal","Hyperactive","Hypoactive","Absent"].map(o=><option key={o}>{o}</option>)}
-                      </select>
-                    </FL>
-                    <FL label="Urine Output">
-                      <select className="his-select" value={generalObs.urineOutput} onChange={e=>setGeneralObs(p=>({...p,urineOutput:e.target.value}))}>
-                        {["Adequate","Reduced","Oliguric","Anuric","Catheterised — draining","Incontinent"].map(o=><option key={o}>{o}</option>)}
-                      </select>
-                    </FL>
-                  </div>
-                  <FL label="Skin Condition">
-                    <select className="his-select" value={generalObs.skin} onChange={e=>setGeneralObs(p=>({...p,skin:e.target.value}))}>
-                      {["Intact","Pallor","Jaundice","Cyanosis","Oedema","Rash / Urticaria","Wound present","Pressure injury present"].map(o=><option key={o}>{o}</option>)}
-                    </select>
-                  </FL>
-                  {/* Row 4 — Devices & Safety checkboxes */}
-                  <div style={{ background:"#f8fafc", border:`1px solid ${C.border}`, borderRadius:10, padding:"12px 14px" }}>
-                    <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>Devices In Situ & Safety Checks</div>
-                    <div style={{ display:"flex", flexWrap:"wrap", gap:"10px 24px" }}>
-                      {[
-                        {k:"oxygenNeeded",   l:"Oxygen in use"},
-                        {k:"catheterPresent",l:"Urinary catheter"},
-                        {k:"ngPresent",      l:"NGT in situ"},
-                        {k:"ivAccess",       l:"IV access patent"},
-                        {k:"restraintUsed",  l:"Restraint used"},
-                        {k:"callBellInReach",l:"Call bell in reach"},
-                        {k:"railsUp",        l:"Bed rails raised"},
-                      ].map(({k,l})=>(
-                        <label key={k} style={{ display:"flex", alignItems:"center", gap:7, cursor:"pointer", fontWeight:600, fontSize:13, color:C.text }}>
-                          <input type="checkbox" checked={!!generalObs[k]} onChange={e=>setGeneralObs(p=>({...p,[k]:e.target.checked}))}
-                            style={{ accentColor:C.primary, width:15, height:15 }} />
-                          {l}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                  {/* Free-text observations */}
-                  <FL label="Observations / Remarks">
-                    <textarea className="his-textarea" style={{ minHeight:90 }} value={generalObs.observations}
-                      placeholder="General observations, patient response, any changes noted…"
-                      onChange={e=>setGeneralObs(p=>({...p,observations:e.target.value}))} />
-                  </FL>
-                </div>
-              )}
+              {/* ── General Observation (default free text only) ── */}
+              {activeModal === "general" && null}
 
               {/* ── Daily Assessment (NABH NS.4) ── */}
               {activeModal === "daily" && (() => {
@@ -3060,7 +2623,7 @@ function NursingNotesContent({ selectedPatient }) {
                       <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8 }}>
                         {[{k:"bp_sys",label:"Systolic BP (mmHg)",ph:"120"},{k:"bp_dia",label:"Diastolic BP (mmHg)",ph:"80"},{k:"pulse",label:"Pulse (/min)",ph:"80"},{k:"temp",label:"Temp (°F)",ph:"98.6"},{k:"spo2",label:"SpO₂ (%)",ph:"98"},{k:"rr",label:"RR (/min)",ph:"16"},{k:"bsl",label:"BSL (mg/dL)",ph:"110"},{k:"gcs",label:"GCS",ph:"15"}].map(f=>(
                           <FL key={f.k} label={f.label}>
-                            <input type="number" className="his-field" value={dailyAssess[f.k]} placeholder={f.ph} onChange={e=>setDailyAssess(p=>({...p,[f.k]:e.target.value}))} />
+                            <input type="number" style={f.k==="gcs"?fld:{...fld}} value={dailyAssess[f.k]} placeholder={f.ph} onChange={e=>setDailyAssess(p=>({...p,[f.k]:e.target.value}))} />
                           </FL>
                         ))}
                       </div>
@@ -3072,7 +2635,7 @@ function NursingNotesContent({ selectedPatient }) {
                         {SYSTEMS.map(sys=>(
                           <div key={sys.k} style={{ display:"grid", gridTemplateColumns:"160px 1fr", alignItems:"center", gap:10 }}>
                             <label style={{ fontSize:12, fontWeight:600, color:C.text }}>{sys.label}</label>
-                            <select className="his-select" value={dailyAssess[sys.k]} onChange={e=>setDailyAssess(p=>({...p,[sys.k]:e.target.value}))}>
+                            <select style={sel} value={dailyAssess[sys.k]} onChange={e=>setDailyAssess(p=>({...p,[sys.k]:e.target.value}))}>
                               {SYS_DEFAULTS[sys.k].map(o=><option key={o}>{o}</option>)}
                             </select>
                           </div>
@@ -3108,23 +2671,23 @@ function NursingNotesContent({ selectedPatient }) {
                       <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>Admission Details</div>
                       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                         <FL label="Mode of Admission">
-                          <select className="his-select" value={initialAssess.admissionMode} onChange={e=>setInitialAssess(p=>({...p,admissionMode:e.target.value}))}>
+                          <select style={sel} value={initialAssess.admissionMode} onChange={e=>setInitialAssess(p=>({...p,admissionMode:e.target.value}))}>
                             {["Planned","Emergency","Transfer","OPD Referral"].map(o=><option key={o}>{o}</option>)}
                           </select>
                         </FL>
                         <FL label="Chief Complaint">
-                          <input className="his-field" value={initialAssess.chiefComplaint} placeholder="e.g. Chest pain" onChange={e=>setInitialAssess(p=>({...p,chiefComplaint:e.target.value}))} />
+                          <input style={fld} value={initialAssess.chiefComplaint} placeholder="e.g. Chest pain" onChange={e=>setInitialAssess(p=>({...p,chiefComplaint:e.target.value}))} />
                         </FL>
                         <FL label="Duration of Complaint">
-                          <input className="his-field" value={initialAssess.duration} placeholder="e.g. 2 days" onChange={e=>setInitialAssess(p=>({...p,duration:e.target.value}))} />
+                          <input style={fld} value={initialAssess.duration} placeholder="e.g. 2 days" onChange={e=>setInitialAssess(p=>({...p,duration:e.target.value}))} />
                         </FL>
                         <FL label="Allergies">
-                          <input className="his-field" value={initialAssess.allergies} placeholder="None / NKDA" onChange={e=>setInitialAssess(p=>({...p,allergies:e.target.value}))} />
+                          <input style={fld} value={initialAssess.allergies} placeholder="None / NKDA" onChange={e=>setInitialAssess(p=>({...p,allergies:e.target.value}))} />
                         </FL>
                       </div>
                       <div style={{ marginTop:10 }}>
                         <FL label="History of Present Illness">
-                          <textarea className="his-textarea" style={{ minHeight:56 }} value={initialAssess.historyOfIllness} placeholder="Brief history..." onChange={e=>setInitialAssess(p=>({...p,historyOfIllness:e.target.value}))} />
+                          <textarea style={{...ta,minHeight:56}} value={initialAssess.historyOfIllness} placeholder="Brief history..." onChange={e=>setInitialAssess(p=>({...p,historyOfIllness:e.target.value}))} />
                         </FL>
                       </div>
                     </div>
@@ -3134,7 +2697,7 @@ function NursingNotesContent({ selectedPatient }) {
                       <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8 }}>
                         {[{k:"bp_sys",l:"Systolic BP (mmHg)",ph:"120"},{k:"bp_dia",l:"Diastolic BP (mmHg)",ph:"80"},{k:"pulse",l:"Pulse (/min)",ph:"80"},{k:"temp",l:"Temp (°F)",ph:"98.6"},{k:"spo2",l:"SpO₂ (%)",ph:"98"},{k:"rr",l:"RR/min",ph:"16"},{k:"weight",l:"Weight (kg)",ph:"60"},{k:"height",l:"Height (cm)",ph:"165"}].map(f=>(
                           <FL key={f.k} label={f.l}>
-                            <input type="number" className="his-field" value={initialAssess[f.k]} placeholder={f.ph} onChange={e=>setInitialAssess(p=>({...p,[f.k]:e.target.value}))} />
+                            <input type="number" style={fld} value={initialAssess[f.k]} placeholder={f.ph} onChange={e=>setInitialAssess(p=>({...p,[f.k]:e.target.value}))} />
                           </FL>
                         ))}
                       </div>
@@ -3155,7 +2718,7 @@ function NursingNotesContent({ selectedPatient }) {
                           {k:"b6",l:"Friction & Shear",opts:["1 – Problem","2 – Potential Problem","3 – No Apparent Problem"]},
                         ].map(f=>(
                           <FL key={f.k} label={f.l}>
-                            <select className="his-select" style={{ fontSize:11 }} value={initialAssess[f.k]} onChange={e=>setInitialAssess(p=>({...p,[f.k]:e.target.value}))}>
+                            <select style={{...sel,fontSize:11}} value={initialAssess[f.k]} onChange={e=>setInitialAssess(p=>({...p,[f.k]:e.target.value}))}>
                               {f.opts.map(o=><option key={o} value={o[0]}>{o}</option>)}
                             </select>
                           </FL>
@@ -3178,7 +2741,7 @@ function NursingNotesContent({ selectedPatient }) {
                           {k:"m6",l:"Mental Status",opts:[{v:"0",l:"Oriented (0)"},{v:"15",l:"Overestimates ability (15)"}]},
                         ].map(f=>(
                           <FL key={f.k} label={f.l}>
-                            <select className="his-select" value={initialAssess[f.k]} onChange={e=>setInitialAssess(p=>({...p,[f.k]:e.target.value}))}>
+                            <select style={sel} value={initialAssess[f.k]} onChange={e=>setInitialAssess(p=>({...p,[f.k]:e.target.value}))}>
                               {f.opts.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
                             </select>
                           </FL>
@@ -3198,7 +2761,7 @@ function NursingNotesContent({ selectedPatient }) {
                           {k:"dischargePlan",l:"Planned Discharge To",opts:["Home","Rehab","SNF","Transfer","Unknown"]},
                         ].map(f=>(
                           <FL key={f.k} label={f.l}>
-                            <select className="his-select" value={initialAssess[f.k]} onChange={e=>setInitialAssess(p=>({...p,[f.k]:e.target.value}))}>
+                            <select style={sel} value={initialAssess[f.k]} onChange={e=>setInitialAssess(p=>({...p,[f.k]:e.target.value}))}>
                               {f.opts.map(o=><option key={o}>{o}</option>)}
                             </select>
                           </FL>
@@ -3246,10 +2809,10 @@ function NursingNotesContent({ selectedPatient }) {
                         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
                           <div style={{ fontSize:12, fontWeight:700, color:C.text }}>Problem #{idx+1}</div>
                           <div style={{ display:"flex", gap:6, alignItems:"center" }}>
-                            <select className="his-select" style={{ maxWidth:100,fontSize:11,padding:"4px 8px" }} value={prob.priority} onChange={e=>updateProblem(prob.id,"priority",e.target.value)}>
+                            <select style={{...sel,maxWidth:100,fontSize:11,padding:"4px 8px"}} value={prob.priority} onChange={e=>updateProblem(prob.id,"priority",e.target.value)}>
                               {["High","Medium","Low"].map(o=><option key={o}>{o}</option>)}
                             </select>
-                            <select className="his-select" style={{ maxWidth:100,fontSize:11,padding:"4px 8px" }} value={prob.status} onChange={e=>updateProblem(prob.id,"status",e.target.value)}>
+                            <select style={{...sel,maxWidth:100,fontSize:11,padding:"4px 8px"}} value={prob.status} onChange={e=>updateProblem(prob.id,"status",e.target.value)}>
                               {["Active","Resolved","On Hold"].map(o=><option key={o}>{o}</option>)}
                             </select>
                             {carePlan.problems.length > 1 && (
@@ -3258,17 +2821,17 @@ function NursingNotesContent({ selectedPatient }) {
                           </div>
                         </div>
                         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-                          <FL label="Problem Statement"><input className="his-field" value={prob.statement} placeholder="e.g. Impaired gas exchange" onChange={e=>updateProblem(prob.id,"statement",e.target.value)} /></FL>
-                          <FL label="Related To"><input className="his-field" value={prob.relatedTo} placeholder="Underlying cause" onChange={e=>updateProblem(prob.id,"relatedTo",e.target.value)} /></FL>
-                          <FL label="Evidenced By"><input className="his-field" value={prob.evidencedBy} placeholder="Signs / symptoms" onChange={e=>updateProblem(prob.id,"evidencedBy",e.target.value)} /></FL>
-                          <FL label="Target Date"><input type="date" className="his-field" value={prob.targetDate} onChange={e=>updateProblem(prob.id,"targetDate",e.target.value)} /></FL>
+                          <FL label="Problem Statement"><input style={fld} value={prob.statement} placeholder="e.g. Impaired gas exchange" onChange={e=>updateProblem(prob.id,"statement",e.target.value)} /></FL>
+                          <FL label="Related To"><input style={fld} value={prob.relatedTo} placeholder="Underlying cause" onChange={e=>updateProblem(prob.id,"relatedTo",e.target.value)} /></FL>
+                          <FL label="Evidenced By"><input style={fld} value={prob.evidencedBy} placeholder="Signs / symptoms" onChange={e=>updateProblem(prob.id,"evidencedBy",e.target.value)} /></FL>
+                          <FL label="Target Date"><input type="date" style={fld} value={prob.targetDate} onChange={e=>updateProblem(prob.id,"targetDate",e.target.value)} /></FL>
                         </div>
                         <div style={{ marginTop:8, display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-                          <FL label="Goals / Expected Outcomes"><textarea className="his-textarea" style={{ minHeight:48 }} value={prob.goals} placeholder="Patient will..." onChange={e=>updateProblem(prob.id,"goals",e.target.value)} /></FL>
-                          <FL label="Nursing Interventions"><textarea className="his-textarea" style={{ minHeight:48 }} value={prob.interventions} placeholder="Actions to take..." onChange={e=>updateProblem(prob.id,"interventions",e.target.value)} /></FL>
+                          <FL label="Goals / Expected Outcomes"><textarea style={{...ta,minHeight:48}} value={prob.goals} placeholder="Patient will..." onChange={e=>updateProblem(prob.id,"goals",e.target.value)} /></FL>
+                          <FL label="Nursing Interventions"><textarea style={{...ta,minHeight:48}} value={prob.interventions} placeholder="Actions to take..." onChange={e=>updateProblem(prob.id,"interventions",e.target.value)} /></FL>
                         </div>
                         <div style={{ marginTop:8 }}>
-                          <FL label="Evaluation / Patient Response"><textarea className="his-textarea" style={{ minHeight:40 }} value={prob.evaluation} placeholder="Goal met / partially met / not met..." onChange={e=>updateProblem(prob.id,"evaluation",e.target.value)} /></FL>
+                          <FL label="Evaluation / Patient Response"><textarea style={{...ta,minHeight:40}} value={prob.evaluation} placeholder="Goal met / partially met / not met..." onChange={e=>updateProblem(prob.id,"evaluation",e.target.value)} /></FL>
                         </div>
                       </div>
                     ))}
@@ -3315,7 +2878,7 @@ function NursingNotesContent({ selectedPatient }) {
                         <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>NRS-2002 Full Scoring</div>
                         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                           <FL label="Nutritional Status Score">
-                            <select className="his-select" value={nutrition.nutritionScore} onChange={e=>setNutrition(p=>({...p,nutritionScore:e.target.value}))}>
+                            <select style={sel} value={nutrition.nutritionScore} onChange={e=>setNutrition(p=>({...p,nutritionScore:e.target.value}))}>
                               <option value="0">0 — Normal nutritional status</option>
                               <option value="1">1 — Weight loss &gt;5% in 3 months / intake 50-75% of requirement</option>
                               <option value="2">2 — Weight loss &gt;5% in 2 months / BMI 18.5-20.5 + impaired condition</option>
@@ -3323,7 +2886,7 @@ function NursingNotesContent({ selectedPatient }) {
                             </select>
                           </FL>
                           <FL label="Disease Severity Score">
-                            <select className="his-select" value={nutrition.diseaseScore} onChange={e=>setNutrition(p=>({...p,diseaseScore:e.target.value}))}>
+                            <select style={sel} value={nutrition.diseaseScore} onChange={e=>setNutrition(p=>({...p,diseaseScore:e.target.value}))}>
                               <option value="0">0 — Normal requirements</option>
                               <option value="1">1 — Hip fracture, chronic illness (COPD, DM, dialysis, cancer)</option>
                               <option value="2">2 — Major abdominal surgery, stroke, severe pneumonia, haematology</option>
@@ -3346,7 +2909,7 @@ function NursingNotesContent({ selectedPatient }) {
                       <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8 }}>
                         {[{k:"weight",l:"Weight (kg)",ph:"60"},{k:"height",l:"Height (cm)",ph:"165"},{k:"midArmCirc",l:"Mid-Arm Circ. (cm)",ph:"28"},{k:"caloriesToday",l:"Calories Today (kcal)",ph:"1800"},{k:"proteinToday",l:"Protein (g)",ph:"60"},{k:"fluidToday",l:"Fluid Intake (ml)",ph:"2000"}].map(f=>(
                           <FL key={f.k} label={f.l}>
-                            <input type="number" className="his-field" value={nutrition[f.k]} placeholder={f.ph} onChange={e=>setNutrition(p=>({...p,[f.k]:e.target.value}))} />
+                            <input type="number" style={fld} value={nutrition[f.k]} placeholder={f.ph} onChange={e=>setNutrition(p=>({...p,[f.k]:e.target.value}))} />
                           </FL>
                         ))}
                       </div>
@@ -3356,22 +2919,22 @@ function NursingNotesContent({ selectedPatient }) {
                       <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>Diet & Feeding</div>
                       <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8 }}>
                         <FL label="Diet Type">
-                          <select className="his-select" value={nutrition.dietType} onChange={e=>setNutrition(p=>({...p,dietType:e.target.value}))}>
+                          <select style={sel} value={nutrition.dietType} onChange={e=>setNutrition(p=>({...p,dietType:e.target.value}))}>
                             {["Regular","Soft","Semi-solid","Liquid","Clear Liquid","NPO","Diabetic","Low-sodium","Renal Diet","Cardiac Diet"].map(o=><option key={o}>{o}</option>)}
                           </select>
                         </FL>
                         <FL label="Appetite">
-                          <select className="his-select" value={nutrition.appetite} onChange={e=>setNutrition(p=>({...p,appetite:e.target.value}))}>
+                          <select style={sel} value={nutrition.appetite} onChange={e=>setNutrition(p=>({...p,appetite:e.target.value}))}>
                             {["Good","Fair","Poor","Anorexic"].map(o=><option key={o}>{o}</option>)}
                           </select>
                         </FL>
                         <FL label="Swallowing">
-                          <select className="his-select" value={nutrition.swallowing} onChange={e=>setNutrition(p=>({...p,swallowing:e.target.value}))}>
+                          <select style={sel} value={nutrition.swallowing} onChange={e=>setNutrition(p=>({...p,swallowing:e.target.value}))}>
                             {["Normal","Dysphagia — Mild","Dysphagia — Moderate","Dysphagia — Severe","NPO"].map(o=><option key={o}>{o}</option>)}
                           </select>
                         </FL>
                         <FL label="Feeding Mode">
-                          <select className="his-select" value={nutrition.feedingMode} onChange={e=>setNutrition(p=>({...p,feedingMode:e.target.value}))}>
+                          <select style={sel} value={nutrition.feedingMode} onChange={e=>setNutrition(p=>({...p,feedingMode:e.target.value}))}>
                             {["Oral","NGT","PEG","TPN","Combination"].map(o=><option key={o}>{o}</option>)}
                           </select>
                         </FL>
@@ -3382,7 +2945,7 @@ function NursingNotesContent({ selectedPatient }) {
                       </label>
                       {nutrition.dietitianReferral && (
                         <FL label="Reason for Referral" style={{ marginTop:8 }}>
-                          <textarea className="his-textarea" style={{ minHeight:48 }} value={nutrition.referralReason} placeholder="Reason..." onChange={e=>setNutrition(p=>({...p,referralReason:e.target.value}))} />
+                          <textarea style={{...ta,minHeight:48}} value={nutrition.referralReason} placeholder="Reason..." onChange={e=>setNutrition(p=>({...p,referralReason:e.target.value}))} />
                         </FL>
                       )}
                     </div>
@@ -3400,13 +2963,13 @@ function NursingNotesContent({ selectedPatient }) {
                   <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
                     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
                       <FL label="Date">
-                        <input type="date" className="his-field" value={education.date} onChange={e=>setEducation(p=>({...p,date:e.target.value}))} />
+                        <input type="date" style={fld} value={education.date} onChange={e=>setEducation(p=>({...p,date:e.target.value}))} />
                       </FL>
                       <FL label="Educator Name">
-                        <input className="his-field" value={education.educator} placeholder="Nurse name" onChange={e=>setEducation(p=>({...p,educator:e.target.value}))} />
+                        <input style={fld} value={education.educator} placeholder="Nurse name" onChange={e=>setEducation(p=>({...p,educator:e.target.value}))} />
                       </FL>
                       <FL label="Language of Education">
-                        <select className="his-select" value={education.language} onChange={e=>setEducation(p=>({...p,language:e.target.value}))}>
+                        <select style={sel} value={education.language} onChange={e=>setEducation(p=>({...p,language:e.target.value}))}>
                           {["Hindi","English","Marathi","Bengali","Tamil","Telugu","Gujarati","Punjabi","Other"].map(o=><option key={o}>{o}</option>)}
                         </select>
                       </FL>
@@ -3444,12 +3007,12 @@ function NursingNotesContent({ selectedPatient }) {
                     {/* Understanding & Response */}
                     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                       <FL label="Level of Understanding">
-                        <select className="his-select" value={education.understanding} onChange={e=>setEducation(p=>({...p,understanding:e.target.value}))}>
+                        <select style={sel} value={education.understanding} onChange={e=>setEducation(p=>({...p,understanding:e.target.value}))}>
                           {["Excellent","Good","Fair","Poor","Unable to Assess"].map(o=><option key={o}>{o}</option>)}
                         </select>
                       </FL>
                       <FL label="Patient Response">
-                        <select className="his-select" value={education.response} onChange={e=>setEducation(p=>({...p,response:e.target.value}))}>
+                        <select style={sel} value={education.response} onChange={e=>setEducation(p=>({...p,response:e.target.value}))}>
                           {["Positive","Cooperative","Anxious","Resistant","Indifferent"].map(o=><option key={o}>{o}</option>)}
                         </select>
                       </FL>
@@ -3470,10 +3033,10 @@ function NursingNotesContent({ selectedPatient }) {
                       </div>
                     </div>
                     <FL label="Session Notes">
-                      <textarea className="his-textarea" style={{ minHeight:56 }} value={education.sessionNotes} placeholder="Additional observations, patient questions answered..." onChange={e=>setEducation(p=>({...p,sessionNotes:e.target.value}))} />
+                      <textarea style={{...ta,minHeight:56}} value={education.sessionNotes} placeholder="Additional observations, patient questions answered..." onChange={e=>setEducation(p=>({...p,sessionNotes:e.target.value}))} />
                     </FL>
                     <FL label="Next Education Session Date">
-                      <input type="date" className="his-field" style={{ maxWidth:200 }} value={education.nextSessionDate} onChange={e=>setEducation(p=>({...p,nextSessionDate:e.target.value}))} />
+                      <input type="date" style={{...fld,maxWidth:200}} value={education.nextSessionDate} onChange={e=>setEducation(p=>({...p,nextSessionDate:e.target.value}))} />
                     </FL>
                   </div>
                 );
@@ -3481,8 +3044,8 @@ function NursingNotesContent({ selectedPatient }) {
 
               {/* ── Common: Notes + Tags ── */}
               <div style={{ marginTop: 16 }}>
-                <label className="his-label">Nursing Notes / Observations</label>
-                <textarea className="his-textarea" style={{ minHeight: 88 }} value={noteText}
+                <label style={lbl}>Nursing Notes / Observations</label>
+                <textarea style={{ ...ta, minHeight: 88 }} value={noteText}
                   onChange={e => setNoteText(e.target.value)}
                   placeholder="Document clinical observations, actions taken, patient response\u2026" />
               </div>
@@ -3490,7 +3053,7 @@ function NursingNotesContent({ selectedPatient }) {
               {/* ── Quick Tags ── */}
               {MODULE_TAGS[activeModal]?.length > 0 && (
                 <div style={{ marginTop: 12 }}>
-                  <div className="his-label">Quick Tags</div>
+                  <div style={lbl}>Quick Tags</div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                     {MODULE_TAGS[activeModal].map(t => (
                       <button key={t} onClick={() => toggleTag(t)}
@@ -3504,7 +3067,7 @@ function NursingNotesContent({ selectedPatient }) {
               )}
 
               {/* ── Critical Event ── */}
-              <div className="his-banner his-banner--err" style={{ marginTop: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, padding: "10px 14px", background: C.redL, border: `1.5px solid #fca5a5`, borderRadius: 8 }}>
                 <input type="checkbox" id="criticalEvt" checked={isCritical} onChange={e => setIsCritical(e.target.checked)}
                   style={{ accentColor: C.red, width: 16, height: 16 }} />
                 <label htmlFor="criticalEvt" style={{ fontSize: 13, fontWeight: 600, color: C.red, cursor: "pointer" }}>
@@ -3524,12 +3087,13 @@ function NursingNotesContent({ selectedPatient }) {
                 </span>
               </div>
               <div style={{ display: "flex", gap: 8 }}>
-                <button onClick={() => setActiveModal(null)} className="his-btn--ghost">
+                <button onClick={() => setActiveModal(null)}
+                  style={{ padding: "9px 20px", border: `1.5px solid ${C.border}`, borderRadius: 8, background: "white", fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, cursor: "pointer", color: C.muted }}>
                   Cancel
                 </button>
-                <button onClick={saveNote} disabled={loading} className="his-btn"
-                  style={{ background: loading ? "#5eead4" : `linear-gradient(135deg, ${C.primary}, ${C.primaryMid})` }}>
-                  <i className={`pi ${loading ? "pi-spin pi-spinner" : "pi-check"}`} />
+                <button onClick={saveNote} disabled={loading}
+                  style={{ padding: "9px 28px", background: loading ? "#5eead4" : `linear-gradient(135deg, ${C.primary}, ${C.primaryMid})`, color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 7, boxShadow: `0 4px 12px ${C.primary}35` }}>
+                  <i className={`pi ${loading ? "pi-spin pi-spinner" : "pi-check"}`} style={{ fontSize: 12 }} />
                   {loading ? "Saving\u2026" : "Sign & Submit"}
                 </button>
               </div>

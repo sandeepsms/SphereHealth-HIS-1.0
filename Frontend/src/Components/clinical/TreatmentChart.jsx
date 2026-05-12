@@ -126,11 +126,15 @@ const C = {
   slate: "#1e293b",
 };
 
-/* Form primitives moved to clinical-forms.css */
+const fld = { padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: C.text, outline: "none", background: "white", width: "100%", boxSizing: "border-box" };
+const sel = { ...fld, cursor: "pointer" };
+const ta  = { ...fld, resize: "vertical", minHeight: 56 };
+const lbl = { display: "block", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 4 };
+
 function FL({ label, children }) {
   return (
-    <div className="his-field-group">
-      <label className="his-label">{label}</label>
+    <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+      <label style={lbl}>{label}</label>
       {children}
     </div>
   );
@@ -189,18 +193,6 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
   const [infSaving, setInfSaving] = useState(false);
   const [infForm,   setInfForm]   = useState({
     reason: "", reasonCustom: "", holdUntil: "", notes: "",
-  });
-
-  /* ── Telephonic / Verbal Order entry ── */
-  const [telModal,  setTelModal]  = useState(false);
-  const [telSaving, setTelSaving] = useState(false);
-  const [telForm,   setTelForm]   = useState({
-    orderType: "Medication", medicineName: "", dose: "", route: "IV",
-    frequency: "STAT", duration: "", priority: "STAT",
-    indication: "",
-    hamOverride: false,   // nurse can manually flag HAM if auto-detect misses it
-    doctorName: "", doctorRegNo: "", callTime: "",
-    readBackDone: false, notes: "",
   });
 
   /* ── Fetch ── */
@@ -569,70 +561,6 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
     });
   };
 
-  /* ── Submit Telephonic / Verbal Order ── */
-  const submitTelephonic = async () => {
-    const f = telForm;
-    if (!f.medicineName.trim()) { toast.error("Drug name is required"); return; }
-    if (!f.doctorName.trim())   { toast.error("Doctor name is required"); return; }
-    if (!f.callTime)            { toast.error("Call time is required"); return; }
-    if (!f.readBackDone)        { toast.error("Read-back confirmation is mandatory (NABH MOM.1)"); return; }
-
-    const today = new Date(); today.setHours(0,0,0,0);
-    const FREQ_TIMES_MAP = {
-      "OD":["08:00"],"BD":["08:00","20:00"],"TDS":["08:00","14:00","20:00"],
-      "QID":["06:00","12:00","18:00","00:00"],"Q8H":["06:00","14:00","22:00"],
-      "Q12H":["08:00","20:00"],"STAT":["Immediate"],"SOS":["As Needed"],
-      "HS":["22:00"],"Continuous":["Continuous"],
-    };
-    const times = FREQ_TIMES_MAP[f.frequency] || ["08:00"];
-    const hamFlag = isHAM(f.medicineName) || f.hamOverride;
-
-    const payload = {
-      UHID, visitId, patientName,
-      orderType: f.orderType === "IV_Fluid" ? "IV_Fluid" : "Medication",
-      priority: f.priority,
-      orderSource: "Telephonic",
-      hamFlag, twoNurseRequired: hamFlag, highRisk: hamFlag,
-      orderDetails: {
-        medicineName: f.medicineName, dose: f.dose, route: f.route,
-        frequency: f.frequency, duration: f.duration,
-        indication: f.indication,
-        notes: f.notes,
-      },
-      orderedBy: f.doctorName,
-      orderedByRole: "Doctor",
-      orderedAt: new Date(),
-      telephonicData: {
-        doctorName: f.doctorName, doctorRegNo: f.doctorRegNo,
-        callTime: f.callTime, readBackDone: f.readBackDone,
-        readBackBy: nurseName, countersignStatus: "pending",
-      },
-      scheduledTimes: times,
-      administrationRecord: times
-        .filter(t => !["Immediate","As Needed","Continuous"].includes(t))
-        .map(t => ({ scheduledTime: t, scheduledDate: today, status: "pending" })),
-      auditLog: [{
-        step:   "Telephonic Order Entered by Nurse",
-        doneBy: nurseName,
-        doneAt: new Date(),
-        notes:  `Telephonic order from Dr. ${f.doctorName}${f.doctorRegNo ? ` (Reg: ${f.doctorRegNo})` : ""} at ${f.callTime}. Read-back done by ${nurseName}.`,
-      }],
-    };
-
-    setTelSaving(true);
-    try {
-      await axios.post(API_ENDPOINTS.DOCTOR_ORDERS, payload);
-      toast.success(`📞 Telephonic order for ${f.medicineName} saved — pending Dr. ${f.doctorName}'s countersign`);
-      setTelModal(false);
-      setTelForm({ orderType:"Medication", medicineName:"", dose:"", route:"IV", frequency:"STAT", duration:"", priority:"STAT", indication:"", hamOverride:false, doctorName:"", doctorRegNo:"", callTime:"", readBackDone:false, notes:"" });
-      fetchOrders(true);
-    } catch (err) {
-      toast.error(err.response?.data?.message || "Failed to save telephonic order");
-    } finally {
-      setTelSaving(false);
-    }
-  };
-
   /* ── Scheduled times for an order ── */
   const getScheduledTimes = (order) => {
     const freq = order.orderDetails?.frequency;
@@ -762,12 +690,6 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
           <button onClick={() => window.print()} style={{ padding: "5px 12px", background: "rgba(255,255,255,.12)", border: "1px solid rgba(255,255,255,.25)", borderRadius: 6, color: "white", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
             <i className="pi pi-print" style={{ marginRight: 5, fontSize: 10 }} />Print MAR
           </button>
-          {nurseMode && (
-            <button onClick={() => { const now = new Date().toTimeString().slice(0,5); setTelForm(p=>({...p,callTime:now})); setTelModal(true); }}
-              style={{ padding:"5px 13px", background:"rgba(251,191,36,.18)", border:"1px solid rgba(251,191,36,.5)", borderRadius:6, color:"#fbbf24", fontSize:11, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", gap:5 }}>
-              📞 Telephonic Order
-            </button>
-          )}
         </div>
       </div>
 
@@ -911,17 +833,6 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                             {hamBadge && (
                               <div style={{ background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 4, padding: "2px 7px", fontSize: 9, fontWeight: 800, color: C.red, marginBottom: 4, display: "inline-block" }}>
                                 🔴 HAM {order.twoNurseRequired && "· 👥 2-Nurse"}
-                              </div>
-                            )}
-                            {order.orderSource === "Telephonic" && (
-                              <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:4, padding:"2px 7px", fontSize:9, fontWeight:800, color:"#92400e", marginBottom:4, display:"flex", alignItems:"center", gap:4 }}>
-                                📞 T.O. — Dr. {order.telephonicData?.doctorName || "?"}
-                                {order.telephonicData?.countersignStatus === "pending" && (
-                                  <span style={{ background:"#dc2626", color:"white", borderRadius:3, padding:"1px 5px", fontSize:8, fontWeight:900, marginLeft:4 }}>⚠ Pending Countersign</span>
-                                )}
-                                {order.telephonicData?.countersignStatus === "countersigned" && (
-                                  <span style={{ background:"#15803d", color:"white", borderRadius:3, padding:"1px 5px", fontSize:8, fontWeight:900, marginLeft:4 }}>✓ Countersigned</span>
-                                )}
                               </div>
                             )}
                             <div style={{ color: isStopped ? C.muted : C.text }}>{order.orderDetails?.medicineName || "—"}</div>
@@ -1442,14 +1353,14 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                 <div style={{ background: "#fefce8", border: "1.5px solid #fde047", borderRadius: 10, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
                   <div style={{ fontWeight: 800, color: "#92400e", fontSize: 12 }}>⚡ STAT Dose Documentation — NABH mandatory</div>
                   <FL label="STAT Reason *">
-                    <select className="his-select" style={{ borderColor: "#fde047" }} value={f.statReason} onChange={e => setAdminForm(p => ({ ...p, statReason: e.target.value }))}>
+                    <select style={{ ...sel, borderColor: "#fde047" }} value={f.statReason} onChange={e => setAdminForm(p => ({ ...p, statReason: e.target.value }))}>
                       <option value="">— Select reason —</option>
                       {STAT_REASONS.map(r => <option key={r}>{r}</option>)}
                     </select>
                   </FL>
                   {f.statReason === "Other" && (
                     <FL label="Specify reason">
-                      <input className="his-field" style={{ borderColor: "#fde047" }} value={f.statReasonCustom} placeholder="Describe the clinical reason for STAT administration…" onChange={e => setAdminForm(p => ({ ...p, statReasonCustom: e.target.value }))} />
+                      <input style={{ ...fld, borderColor: "#fde047" }} value={f.statReasonCustom} placeholder="Describe the clinical reason for STAT administration…" onChange={e => setAdminForm(p => ({ ...p, statReasonCustom: e.target.value }))} />
                     </FL>
                   )}
                   {calcNextStatDose(f.givenAt, order.orderDetails?.frequency) && (
@@ -1470,7 +1381,7 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
 
               {/* Action selection */}
               <div>
-                <div className="his-label">Administration Status *</div>
+                <div style={lbl}>Administration Status *</div>
                 <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
                   {[
                     { v: "given", label: "✅ Given", color: C.green },
@@ -1514,17 +1425,17 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
               {/* Given fields */}
               {f.status === "given" && (
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-                  <FL label="Time Given *"><input type="time" className="his-field" value={f.givenAt} onChange={e => setAdminForm(p => ({ ...p, givenAt: e.target.value }))} /></FL>
-                  <FL label="Dose Given (if different)"><input className="his-field" value={f.doseGiven} placeholder={order.orderDetails?.dose} onChange={e => setAdminForm(p => ({ ...p, doseGiven: e.target.value }))} /></FL>
-                  <FL label="Route Used"><input className="his-field" value={f.routeUsed} placeholder={order.orderDetails?.route} onChange={e => setAdminForm(p => ({ ...p, routeUsed: e.target.value }))} /></FL>
-                  <FL label="Injection Site (if applicable)"><input className="his-field" value={f.siteUsed} placeholder="e.g. Right deltoid" onChange={e => setAdminForm(p => ({ ...p, siteUsed: e.target.value }))} /></FL>
+                  <FL label="Time Given *"><input type="time" style={fld} value={f.givenAt} onChange={e => setAdminForm(p => ({ ...p, givenAt: e.target.value }))} /></FL>
+                  <FL label="Dose Given (if different)"><input style={fld} value={f.doseGiven} placeholder={order.orderDetails?.dose} onChange={e => setAdminForm(p => ({ ...p, doseGiven: e.target.value }))} /></FL>
+                  <FL label="Route Used"><input style={fld} value={f.routeUsed} placeholder={order.orderDetails?.route} onChange={e => setAdminForm(p => ({ ...p, routeUsed: e.target.value }))} /></FL>
+                  <FL label="Injection Site (if applicable)"><input style={fld} value={f.siteUsed} placeholder="e.g. Right deltoid" onChange={e => setAdminForm(p => ({ ...p, siteUsed: e.target.value }))} /></FL>
                 </div>
               )}
 
               {/* HAM 2-nurse */}
               {f.status === "given" && ham && (
                 <FL label="Second Nurse Verification * (HAM mandatory)">
-                  <input className="his-field" style={{ borderColor: C.red }} value={f.verifiedBy} placeholder="Name of verifying nurse" onChange={e => setAdminForm(p => ({ ...p, verifiedBy: e.target.value }))} />
+                  <input style={{ ...fld, borderColor: C.red }} value={f.verifiedBy} placeholder="Name of verifying nurse" onChange={e => setAdminForm(p => ({ ...p, verifiedBy: e.target.value }))} />
                 </FL>
               )}
 
@@ -1532,20 +1443,20 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
               {f.status === "hold" && (
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                   <FL label="Hold Reason *">
-                    <select className="his-select" value={f.holdReason} onChange={e => setAdminForm(p => ({ ...p, holdReason: e.target.value }))}>
+                    <select style={sel} value={f.holdReason} onChange={e => setAdminForm(p => ({ ...p, holdReason: e.target.value }))}>
                       <option value="">— Select reason —</option>
                       {HOLD_REASONS.map(r => <option key={r}>{r}</option>)}
                     </select>
                   </FL>
-                  {f.holdReason === "Other" && <FL label="Specify"><input className="his-field" value={f.holdReasonCustom} onChange={e => setAdminForm(p => ({ ...p, holdReasonCustom: e.target.value }))} /></FL>}
-                  <FL label="Hold Until (time)"><input type="time" className="his-field" value={f.holdUntil} onChange={e => setAdminForm(p => ({ ...p, holdUntil: e.target.value }))} /></FL>
+                  {f.holdReason === "Other" && <FL label="Specify"><input style={fld} value={f.holdReasonCustom} onChange={e => setAdminForm(p => ({ ...p, holdReasonCustom: e.target.value }))} /></FL>}
+                  <FL label="Hold Until (time)"><input type="time" style={fld} value={f.holdUntil} onChange={e => setAdminForm(p => ({ ...p, holdUntil: e.target.value }))} /></FL>
                 </div>
               )}
 
               {/* Not Available fields */}
               {f.status === "not_available" && (
                 <FL label="Reason — Not Available *">
-                  <select className="his-select" value={f.holdReason} onChange={e => setAdminForm(p => ({ ...p, holdReason: e.target.value }))}>
+                  <select style={sel} value={f.holdReason} onChange={e => setAdminForm(p => ({ ...p, holdReason: e.target.value }))}>
                     <option value="">— Select reason —</option>
                     {NA_REASONS.map(r => <option key={r}>{r}</option>)}
                   </select>
@@ -1555,14 +1466,14 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
               {/* Delayed fields */}
               {f.status === "delayed" && (
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  <FL label="Delayed To (new time) *"><input type="time" className="his-field" value={f.delayedTo} onChange={e => setAdminForm(p => ({ ...p, delayedTo: e.target.value }))} /></FL>
+                  <FL label="Delayed To (new time) *"><input type="time" style={fld} value={f.delayedTo} onChange={e => setAdminForm(p => ({ ...p, delayedTo: e.target.value }))} /></FL>
                   <FL label="Reason *">
-                    <select className="his-select" value={f.delayReason} onChange={e => setAdminForm(p => ({ ...p, delayReason: e.target.value }))}>
+                    <select style={sel} value={f.delayReason} onChange={e => setAdminForm(p => ({ ...p, delayReason: e.target.value }))}>
                       <option value="">— Select reason —</option>
                       {DELAY_REASONS.map(r => <option key={r}>{r}</option>)}
                     </select>
                   </FL>
-                  {f.delayReason === "Other" && <FL label="Specify"><input className="his-field" value={f.delayReasonCustom} onChange={e => setAdminForm(p => ({ ...p, delayReasonCustom: e.target.value }))} /></FL>}
+                  {f.delayReason === "Other" && <FL label="Specify"><input style={fld} value={f.delayReasonCustom} onChange={e => setAdminForm(p => ({ ...p, delayReasonCustom: e.target.value }))} /></FL>}
                 </div>
               )}
 
@@ -1570,14 +1481,14 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
               {order.orderDetails?.frequency === "SOS" && f.status === "given" && (
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, background: "#fafafa", borderRadius: 8, padding: "10px 12px", border: `1px solid ${C.border}` }}>
                   <FL label="PRN Effectiveness (reassess at)">
-                    <select className="his-select" value={f.prnEffect} onChange={e => setAdminForm(p => ({ ...p, prnEffect: e.target.value }))}>
+                    <select style={sel} value={f.prnEffect} onChange={e => setAdminForm(p => ({ ...p, prnEffect: e.target.value }))}>
                       <option value="">— To be assessed —</option>
                       <option value="effective">Effective</option>
                       <option value="partial">Partial improvement</option>
                       <option value="no_effect">No effect</option>
                     </select>
                   </FL>
-                  <FL label="Reassessment Time"><input type="time" className="his-field" value={f.prnReassessTime} onChange={e => setAdminForm(p => ({ ...p, prnReassessTime: e.target.value }))} /></FL>
+                  <FL label="Reassessment Time"><input type="time" style={fld} value={f.prnReassessTime} onChange={e => setAdminForm(p => ({ ...p, prnReassessTime: e.target.value }))} /></FL>
                 </div>
               )}
 
@@ -1589,12 +1500,12 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
               </label>
               {f.adverseEvent && (
                 <FL label="Adverse Event Details *">
-                  <textarea className="his-textarea" value={f.adverseDetails} placeholder="Describe adverse reaction — symptoms, severity, action taken, doctor notified…" onChange={e => setAdminForm(p => ({ ...p, adverseDetails: e.target.value }))} />
+                  <textarea style={ta} value={f.adverseDetails} placeholder="Describe adverse reaction — symptoms, severity, action taken, doctor notified…" onChange={e => setAdminForm(p => ({ ...p, adverseDetails: e.target.value }))} />
                 </FL>
               )}
 
               <FL label="Notes / Remarks">
-                <textarea className="his-textarea" value={f.notes} placeholder="Additional observations, patient response, any concerns…" onChange={e => setAdminForm(p => ({ ...p, notes: e.target.value }))} />
+                <textarea style={ta} value={f.notes} placeholder="Additional observations, patient response, any concerns…" onChange={e => setAdminForm(p => ({ ...p, notes: e.target.value }))} />
               </FL>
             </div>
             <ModalFooter onCancel={() => setActionModal(null)} onSave={submitAdminister} saving={saving} saveLabel="Submit to MAR" />
@@ -1617,23 +1528,23 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
               )}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 <FL label="Current Rate (ml/hr)">
-                  <div className="his-field" style={{ background: "#f8fafc", color: C.muted, fontFamily: "monospace", fontWeight: 700 }}>{order.currentRate || order.orderDetails?.rate || "—"}</div>
+                  <div style={{ ...fld, background: "#f8fafc", color: C.muted, fontFamily: "monospace", fontWeight: 700 }}>{order.currentRate || order.orderDetails?.rate || "—"}</div>
                 </FL>
                 <FL label="New Rate (ml/hr) *">
-                  <input type="number" className="his-field" style={{ borderColor: C.teal }} value={rateForm.newRate} placeholder="Enter new rate" onChange={e => setRateForm(p => ({ ...p, newRate: e.target.value }))} autoFocus />
+                  <input type="number" style={{ ...fld, borderColor: C.teal }} value={rateForm.newRate} placeholder="Enter new rate" onChange={e => setRateForm(p => ({ ...p, newRate: e.target.value }))} autoFocus />
                 </FL>
               </div>
               <FL label="Reason for Rate Change *">
-                <select className="his-select" value={rateForm.reason} onChange={e => setRateForm(p => ({ ...p, reason: e.target.value }))}>
+                <select style={sel} value={rateForm.reason} onChange={e => setRateForm(p => ({ ...p, reason: e.target.value }))}>
                   {RATE_REASONS.map(r => <option key={r}>{r}</option>)}
                 </select>
               </FL>
               <FL label="Details / Clinical Note">
-                <textarea className="his-textarea" value={rateForm.reasonDetail} placeholder="Clinical basis for rate change — vitals, clinical findings, doctor's verbal order…" onChange={e => setRateForm(p => ({ ...p, reasonDetail: e.target.value }))} />
+                <textarea style={ta} value={rateForm.reasonDetail} placeholder="Clinical basis for rate change — vitals, clinical findings, doctor's verbal order…" onChange={e => setRateForm(p => ({ ...p, reasonDetail: e.target.value }))} />
               </FL>
               {ham && (
                 <FL label="Second Nurse Verification * (HAM)">
-                  <input className="his-field" style={{ borderColor: C.red }} value={rateForm.verifiedBy} placeholder="Name of verifying nurse" onChange={e => setRateForm(p => ({ ...p, verifiedBy: e.target.value }))} />
+                  <input style={{ ...fld, borderColor: C.red }} value={rateForm.verifiedBy} placeholder="Name of verifying nurse" onChange={e => setRateForm(p => ({ ...p, verifiedBy: e.target.value }))} />
                 </FL>
               )}
               <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12, fontWeight: 600, color: rateForm.doctorInformed ? C.green : C.muted }}>
@@ -1641,7 +1552,7 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                 Doctor has been informed of this rate change
               </label>
               {rateForm.doctorInformed && (
-                <FL label="Doctor Name"><input className="his-field" value={rateForm.doctorName} placeholder="Consulting doctor name" onChange={e => setRateForm(p => ({ ...p, doctorName: e.target.value }))} /></FL>
+                <FL label="Doctor Name"><input style={fld} value={rateForm.doctorName} placeholder="Consulting doctor name" onChange={e => setRateForm(p => ({ ...p, doctorName: e.target.value }))} /></FL>
               )}
             </div>
             <ModalFooter onCancel={() => setActionModal(null)} onSave={submitRateChange} saving={saving} saveLabel="Save Rate Change" />
@@ -1664,14 +1575,14 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                 ⚠ This will permanently discontinue the order. An audit trail will be logged (NABH MOM.5).
               </div>
               <FL label="Reason for Discontinuation *">
-                <select className="his-select" value={docForm.reason} onChange={e => setDocForm(p => ({ ...p, reason: e.target.value }))}>
+                <select style={sel} value={docForm.reason} onChange={e => setDocForm(p => ({ ...p, reason: e.target.value }))}>
                   <option value="">— Select reason —</option>
                   {["Treatment course completed","Clinical improvement — no longer required","Adverse drug reaction","Drug interaction identified","Patient refused","Change in diagnosis","Substitute ordered","Switched to oral therapy","Patient transferred","Patient discharged","Other"].map(r => <option key={r}>{r}</option>)}
                 </select>
               </FL>
               {docForm.reason === "Other" || docForm.reason === "" ? null : (
                 <FL label="Additional Details">
-                  <textarea className="his-textarea" value={docForm.reasonDetail} placeholder="Clinical basis, any relevant findings…" onChange={e => setDocForm(p => ({ ...p, reasonDetail: e.target.value }))} />
+                  <textarea style={ta} value={docForm.reasonDetail} placeholder="Clinical basis, any relevant findings…" onChange={e => setDocForm(p => ({ ...p, reasonDetail: e.target.value }))} />
                 </FL>
               )}
             </div>
@@ -1691,17 +1602,17 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                 Order will be held. Nursing staff will be notified. Resume manually when ready.
               </div>
               <FL label="Reason for Hold *">
-                <select className="his-select" value={docForm.reason} onChange={e => setDocForm(p => ({ ...p, reason: e.target.value }))}>
+                <select style={sel} value={docForm.reason} onChange={e => setDocForm(p => ({ ...p, reason: e.target.value }))}>
                   <option value="">— Select reason —</option>
                   {["Pre-operative hold","Awaiting investigation results","Patient NPO","Drug interaction — monitoring","Renal/hepatic function reassessment","Haemodynamic reassessment","Lab values out of range","Patient uncooperative","Consent pending","Other"].map(r => <option key={r}>{r}</option>)}
                 </select>
               </FL>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 <FL label="Hold Until (date/time)">
-                  <input type="datetime-local" className="his-field" value={docForm.holdUntil} onChange={e => setDocForm(p => ({ ...p, holdUntil: e.target.value }))} />
+                  <input type="datetime-local" style={fld} value={docForm.holdUntil} onChange={e => setDocForm(p => ({ ...p, holdUntil: e.target.value }))} />
                 </FL>
                 <FL label="Details">
-                  <input className="his-field" value={docForm.reasonDetail} placeholder="Specific instructions for nursing staff" onChange={e => setDocForm(p => ({ ...p, reasonDetail: e.target.value }))} />
+                  <input style={fld} value={docForm.reasonDetail} placeholder="Specific instructions for nursing staff" onChange={e => setDocForm(p => ({ ...p, reasonDetail: e.target.value }))} />
                 </FL>
               </div>
             </div>
@@ -1721,7 +1632,7 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                 This order will be resumed from held status. Nursing staff will proceed with the existing schedule.
               </div>
               <FL label="Resume Note (optional)">
-                <input className="his-field" value={docForm.reason} placeholder="e.g. Pre-op period over, labs within range, patient consented…" onChange={e => setDocForm(p => ({ ...p, reason: e.target.value }))} />
+                <input style={fld} value={docForm.reason} placeholder="e.g. Pre-op period over, labs within range, patient consented…" onChange={e => setDocForm(p => ({ ...p, reason: e.target.value }))} />
               </FL>
             </div>
             <ModalFooter onCancel={() => setDocModal(null)} onSave={() => submitDocAction("resume")} saving={docSaving} saveLabel="Resume Order" />
@@ -1745,41 +1656,41 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
                 <FL label="New Dose">
-                  <input className="his-field" value={docForm.newDose} placeholder={order.orderDetails?.dose} onChange={e => setDocForm(p => ({ ...p, newDose: e.target.value }))} />
+                  <input style={fld} value={docForm.newDose} placeholder={order.orderDetails?.dose} onChange={e => setDocForm(p => ({ ...p, newDose: e.target.value }))} />
                 </FL>
                 <FL label="Route">
-                  <select className="his-select" value={docForm.newRoute} onChange={e => setDocForm(p => ({ ...p, newRoute: e.target.value }))}>
+                  <select style={sel} value={docForm.newRoute} onChange={e => setDocForm(p => ({ ...p, newRoute: e.target.value }))}>
                     {ROUTES_LIST.map(r => <option key={r}>{r}</option>)}
                   </select>
                 </FL>
                 {!isInfusion ? (
                   <FL label="Frequency">
-                    <select className="his-select" value={docForm.newFrequency} onChange={e => setDocForm(p => ({ ...p, newFrequency: e.target.value }))}>
+                    <select style={sel} value={docForm.newFrequency} onChange={e => setDocForm(p => ({ ...p, newFrequency: e.target.value }))}>
                       {FREQ_LIST.map(f => <option key={f}>{f}</option>)}
                     </select>
                   </FL>
                 ) : (
                   <FL label="New Rate (ml/hr)">
-                    <input type="number" className="his-field" value={docForm.newRate} placeholder={order.currentRate || order.orderDetails?.rate} onChange={e => setDocForm(p => ({ ...p, newRate: e.target.value }))} />
+                    <input type="number" style={fld} value={docForm.newRate} placeholder={order.currentRate || order.orderDetails?.rate} onChange={e => setDocForm(p => ({ ...p, newRate: e.target.value }))} />
                   </FL>
                 )}
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 <FL label="Duration">
-                  <input className="his-field" value={docForm.newDuration} placeholder={order.orderDetails?.duration || "e.g. 5 days"} onChange={e => setDocForm(p => ({ ...p, newDuration: e.target.value }))} />
+                  <input style={fld} value={docForm.newDuration} placeholder={order.orderDetails?.duration || "e.g. 5 days"} onChange={e => setDocForm(p => ({ ...p, newDuration: e.target.value }))} />
                 </FL>
                 <FL label="Instructions / Notes">
-                  <input className="his-field" value={docForm.newNotes} placeholder={order.orderDetails?.notes || "Additional notes"} onChange={e => setDocForm(p => ({ ...p, newNotes: e.target.value }))} />
+                  <input style={fld} value={docForm.newNotes} placeholder={order.orderDetails?.notes || "Additional notes"} onChange={e => setDocForm(p => ({ ...p, newNotes: e.target.value }))} />
                 </FL>
               </div>
               <FL label="Reason for Modification * (Audit log)">
-                <select className="his-select" value={docForm.reason} onChange={e => setDocForm(p => ({ ...p, reason: e.target.value }))}>
+                <select style={sel} value={docForm.reason} onChange={e => setDocForm(p => ({ ...p, reason: e.target.value }))}>
                   <option value="">— Select reason —</option>
                   {["Clinical response — dose adjustment","Adverse effect — dose reduction","Renal impairment — dose reduction","Hepatic impairment — dose reduction","Drug level monitoring","Therapeutic target not achieved","Switch to oral therapy","Route change — IV access issue","Patient weight change","New investigation results","Drug interaction management","Other"].map(r => <option key={r}>{r}</option>)}
                 </select>
               </FL>
               <FL label="Clinical Detail (optional)">
-                <textarea className="his-textarea" value={docForm.reasonDetail} placeholder="Clinical basis, relevant lab values, vitals, clinical assessment…" onChange={e => setDocForm(p => ({ ...p, reasonDetail: e.target.value }))} />
+                <textarea style={ta} value={docForm.reasonDetail} placeholder="Clinical basis, relevant lab values, vitals, clinical assessment…" onChange={e => setDocForm(p => ({ ...p, reasonDetail: e.target.value }))} />
               </FL>
             </div>
             <ModalFooter onCancel={() => setDocModal(null)} onSave={() => submitDocAction("modify")} saving={docSaving} saveLabel="Save Modification" />
@@ -1810,28 +1721,28 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
               <div style={{ background: C.greenL, border: `1px solid ${C.greenB}`, borderRadius: 8, padding: "10px 14px" }}>
                 <div style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 8 }}>New Drug (Substitute)</div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                  <FL label="Drug Name *"><input className="his-field" value={docForm.subName} placeholder="Generic drug name" onChange={e => setDocForm(p => ({ ...p, subName: e.target.value }))} autoFocus /></FL>
-                  <FL label="Dose *"><input className="his-field" value={docForm.subDose} placeholder="e.g. 500mg" onChange={e => setDocForm(p => ({ ...p, subDose: e.target.value }))} /></FL>
+                  <FL label="Drug Name *"><input style={fld} value={docForm.subName} placeholder="Generic drug name" onChange={e => setDocForm(p => ({ ...p, subName: e.target.value }))} autoFocus /></FL>
+                  <FL label="Dose *"><input style={fld} value={docForm.subDose} placeholder="e.g. 500mg" onChange={e => setDocForm(p => ({ ...p, subDose: e.target.value }))} /></FL>
                   <FL label="Route">
-                    <select className="his-select" value={docForm.subRoute} onChange={e => setDocForm(p => ({ ...p, subRoute: e.target.value }))}>
+                    <select style={sel} value={docForm.subRoute} onChange={e => setDocForm(p => ({ ...p, subRoute: e.target.value }))}>
                       {ROUTES_LIST.map(r => <option key={r}>{r}</option>)}
                     </select>
                   </FL>
                   <FL label="Frequency">
-                    <select className="his-select" value={docForm.subFreq} onChange={e => setDocForm(p => ({ ...p, subFreq: e.target.value }))}>
+                    <select style={sel} value={docForm.subFreq} onChange={e => setDocForm(p => ({ ...p, subFreq: e.target.value }))}>
                       {FREQ_LIST.map(f => <option key={f}>{f}</option>)}
                     </select>
                   </FL>
-                  <FL label="Duration"><input className="his-field" value={docForm.subDuration} placeholder="e.g. 5 days" onChange={e => setDocForm(p => ({ ...p, subDuration: e.target.value }))} /></FL>
-                  <FL label="Indication"><input className="his-field" value={docForm.subIndication} placeholder="Reason for prescription" onChange={e => setDocForm(p => ({ ...p, subIndication: e.target.value }))} /></FL>
+                  <FL label="Duration"><input style={fld} value={docForm.subDuration} placeholder="e.g. 5 days" onChange={e => setDocForm(p => ({ ...p, subDuration: e.target.value }))} /></FL>
+                  <FL label="Indication"><input style={fld} value={docForm.subIndication} placeholder="Reason for prescription" onChange={e => setDocForm(p => ({ ...p, subIndication: e.target.value }))} /></FL>
                 </div>
                 <div style={{ marginTop: 8 }}>
-                  <FL label="Notes"><input className="his-field" value={docForm.subNotes} placeholder="Special instructions for nursing staff" onChange={e => setDocForm(p => ({ ...p, subNotes: e.target.value }))} /></FL>
+                  <FL label="Notes"><input style={fld} value={docForm.subNotes} placeholder="Special instructions for nursing staff" onChange={e => setDocForm(p => ({ ...p, subNotes: e.target.value }))} /></FL>
                 </div>
               </div>
 
               <FL label="Reason for Substitution *">
-                <select className="his-select" value={docForm.reason} onChange={e => setDocForm(p => ({ ...p, reason: e.target.value }))}>
+                <select style={sel} value={docForm.reason} onChange={e => setDocForm(p => ({ ...p, reason: e.target.value }))}>
                   <option value="">— Select —</option>
                   {["Drug not available in formulary","Allergy / adverse reaction to original","Therapeutic equivalent substitution","Cost-effective alternative","Route change clinically indicated","Drug-drug interaction","Generic substitution","Patient preference","Other"].map(r => <option key={r}>{r}</option>)}
                 </select>
@@ -1854,20 +1765,20 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 <FL label="Current Rate (ml/hr)">
-                  <div className="his-field" style={{ background: "#f8fafc", fontFamily: "monospace", fontWeight: 700, color: C.muted }}>{order.currentRate || order.orderDetails?.rate || "—"}</div>
+                  <div style={{ ...fld, background: "#f8fafc", fontFamily: "monospace", fontWeight: 700, color: C.muted }}>{order.currentRate || order.orderDetails?.rate || "—"}</div>
                 </FL>
                 <FL label="New Rate (ml/hr) *">
-                  <input type="number" className="his-field" style={{ borderColor: "#0369a1" }} value={docForm.newRate} placeholder="Enter new rate" onChange={e => setDocForm(p => ({ ...p, newRate: e.target.value }))} autoFocus />
+                  <input type="number" style={{ ...fld, borderColor: "#0369a1" }} value={docForm.newRate} placeholder="Enter new rate" onChange={e => setDocForm(p => ({ ...p, newRate: e.target.value }))} autoFocus />
                 </FL>
               </div>
               <FL label="Clinical Reason / Titration Goal *">
-                <select className="his-select" value={docForm.reason} onChange={e => setDocForm(p => ({ ...p, reason: e.target.value }))}>
+                <select style={sel} value={docForm.reason} onChange={e => setDocForm(p => ({ ...p, reason: e.target.value }))}>
                   <option value="">— Select —</option>
                   {["Haemodynamic target achieved — reduce rate","MAP target not met — increase rate","Fluid balance — restrict rate","Renal output adequate — resume standard rate","Titration protocol — step up","Titration protocol — step down","Fluid overload — reduce","Clinical deterioration — increase","Maintenance phase","Weaning off vasoactive support","Post-procedure rate adjustment","Other"].map(r => <option key={r}>{r}</option>)}
                 </select>
               </FL>
               <FL label="Additional Clinical Details">
-                <textarea className="his-textarea" value={docForm.reasonDetail} placeholder="Vitals, labs, clinical findings that prompted this change…" onChange={e => setDocForm(p => ({ ...p, reasonDetail: e.target.value }))} />
+                <textarea style={ta} value={docForm.reasonDetail} placeholder="Vitals, labs, clinical findings that prompted this change…" onChange={e => setDocForm(p => ({ ...p, reasonDetail: e.target.value }))} />
               </FL>
             </div>
             <ModalFooter onCancel={() => setDocModal(null)} onSave={() => submitDocAction("rate")} saving={docSaving} saveLabel="Apply Rate Change" />
@@ -1905,8 +1816,8 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
 
               {/* Reason dropdown */}
               <div>
-                <label className="his-label">{isStop ? "Stop Reason *" : "Hold Reason *"}</label>
-                <select className="his-select" value={f.reason} onChange={e => setInfForm(p => ({ ...p, reason: e.target.value, reasonCustom: "" }))}>
+                <label style={lbl}>{isStop ? "Stop Reason *" : "Hold Reason *"}</label>
+                <select style={sel} value={f.reason} onChange={e => setInfForm(p => ({ ...p, reason: e.target.value, reasonCustom: "" }))}>
                   <option value="">— Select reason —</option>
                   {reasons.map(r => <option key={r}>{r}</option>)}
                 </select>
@@ -1915,8 +1826,8 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
               {/* Custom reason */}
               {f.reason === "Other" && (
                 <div>
-                  <label className="his-label">Specify Reason *</label>
-                  <input className="his-field" style={{ borderColor: color }} value={f.reasonCustom}
+                  <label style={lbl}>Specify Reason *</label>
+                  <input style={{ ...fld, borderColor: color }} value={f.reasonCustom}
                     placeholder="Describe the reason…"
                     onChange={e => setInfForm(p => ({ ...p, reasonCustom: e.target.value }))}
                     autoFocus />
@@ -1926,16 +1837,16 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
               {/* Hold until (only for hold) */}
               {!isStop && (
                 <div>
-                  <label className="his-label">Hold Until (expected resume time)</label>
-                  <input type="datetime-local" className="his-field" value={f.holdUntil}
+                  <label style={lbl}>Hold Until (expected resume time)</label>
+                  <input type="datetime-local" style={fld} value={f.holdUntil}
                     onChange={e => setInfForm(p => ({ ...p, holdUntil: e.target.value }))} />
                 </div>
               )}
 
               {/* Notes */}
               <div>
-                <label className="his-label">Additional Notes / Clinical Observation</label>
-                <textarea className="his-textarea" value={f.notes}
+                <label style={lbl}>Additional Notes / Clinical Observation</label>
+                <textarea style={ta} value={f.notes}
                   placeholder={isStop
                     ? "Volume infused, patient status at time of stopping, doctor informed…"
                     : "Clinical details, doctor informed, restart plan…"}
@@ -1976,166 +1887,39 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                 NABH MOM.2 — Infusion monitoring entry. Document every 30 min for vasoactive / HAM infusions, every 1 hr for standard IV fluids.
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-                <FL label="Current Rate (ml/hr)"><input className="his-field" value={monitorForm.currentRate} placeholder={order.currentRate || ""} onChange={e => setMonitorForm(p => ({ ...p, currentRate: e.target.value }))} /></FL>
-                <FL label="Volume Infused (ml)"><input type="number" className="his-field" value={monitorForm.volumeInfused} placeholder="Total vol given so far" onChange={e => setMonitorForm(p => ({ ...p, volumeInfused: e.target.value }))} /></FL>
+                <FL label="Current Rate (ml/hr)"><input style={fld} value={monitorForm.currentRate} placeholder={order.currentRate || ""} onChange={e => setMonitorForm(p => ({ ...p, currentRate: e.target.value }))} /></FL>
+                <FL label="Volume Infused (ml)"><input type="number" style={fld} value={monitorForm.volumeInfused} placeholder="Total vol given so far" onChange={e => setMonitorForm(p => ({ ...p, volumeInfused: e.target.value }))} /></FL>
               </div>
               <div style={{ background: "#f8fafc", borderRadius: 8, padding: "10px 12px", border: `1px solid ${C.border}` }}>
                 <div style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 8 }}>Vitals</div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8 }}>
-                  <FL label="BP (mmHg)"><input className="his-field" value={monitorForm.bp} placeholder="120/80" onChange={e => setMonitorForm(p => ({ ...p, bp: e.target.value }))} /></FL>
-                  <FL label="Pulse (/min)"><input type="number" className="his-field" value={monitorForm.pulse} placeholder="80" onChange={e => setMonitorForm(p => ({ ...p, pulse: e.target.value }))} /></FL>
-                  <FL label="SpO₂ (%)"><input type="number" className="his-field" value={monitorForm.spo2} placeholder="98" onChange={e => setMonitorForm(p => ({ ...p, spo2: e.target.value }))} /></FL>
-                  <FL label="Urine Output (ml/hr)"><input type="number" className="his-field" value={monitorForm.urineOutput} placeholder="40" onChange={e => setMonitorForm(p => ({ ...p, urineOutput: e.target.value }))} /></FL>
+                  <FL label="BP (mmHg)"><input style={fld} value={monitorForm.bp} placeholder="120/80" onChange={e => setMonitorForm(p => ({ ...p, bp: e.target.value }))} /></FL>
+                  <FL label="Pulse (/min)"><input type="number" style={fld} value={monitorForm.pulse} placeholder="80" onChange={e => setMonitorForm(p => ({ ...p, pulse: e.target.value }))} /></FL>
+                  <FL label="SpO₂ (%)"><input type="number" style={fld} value={monitorForm.spo2} placeholder="98" onChange={e => setMonitorForm(p => ({ ...p, spo2: e.target.value }))} /></FL>
+                  <FL label="Urine Output (ml/hr)"><input type="number" style={fld} value={monitorForm.urineOutput} placeholder="40" onChange={e => setMonitorForm(p => ({ ...p, urineOutput: e.target.value }))} /></FL>
                 </div>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 <FL label="IV Site Condition">
-                  <select className="his-select" value={monitorForm.siteCondition} onChange={e => setMonitorForm(p => ({ ...p, siteCondition: e.target.value }))}>
+                  <select style={sel} value={monitorForm.siteCondition} onChange={e => setMonitorForm(p => ({ ...p, siteCondition: e.target.value }))}>
                     <option value="">— Select —</option>
                     {SITE_CONDITIONS.map(s => <option key={s}>{s}</option>)}
                   </select>
                 </FL>
                 <FL label="Action Taken">
-                  <select className="his-select" value={monitorForm.action} onChange={e => setMonitorForm(p => ({ ...p, action: e.target.value }))}>
+                  <select style={sel} value={monitorForm.action} onChange={e => setMonitorForm(p => ({ ...p, action: e.target.value }))}>
                     {INF_ACTIONS.map(a => <option key={a}>{a}</option>)}
                   </select>
                 </FL>
               </div>
               <FL label="Remarks / Observations">
-                <textarea className="his-textarea" value={monitorForm.remarks} placeholder="Clinical observations, patient response, any concerns or actions taken…" onChange={e => setMonitorForm(p => ({ ...p, remarks: e.target.value }))} />
+                <textarea style={ta} value={monitorForm.remarks} placeholder="Clinical observations, patient response, any concerns or actions taken…" onChange={e => setMonitorForm(p => ({ ...p, remarks: e.target.value }))} />
               </FL>
             </div>
             <ModalFooter onCancel={() => setActionModal(null)} onSave={submitMonitoring} saving={saving} saveLabel="Add Entry" />
           </ModalOverlay>
         );
       })()}
-
-      {/* ════════════════════ TELEPHONIC ORDER MODAL ════════════════════ */}
-      {telModal && (
-        <ModalOverlay onClose={() => setTelModal(false)}>
-          <ModalHeader
-            title="📞 Telephonic / Verbal Order"
-            sub="NABH MOM.1 — Nurse-entered order pending doctor countersign"
-            color="#92400e"
-            icon="pi-phone"
-            onClose={() => setTelModal(false)}
-          />
-          <div style={{ padding:"18px 20px", display:"flex", flexDirection:"column", gap:14 }}>
-
-            {/* NABH advisory */}
-            <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:8, padding:"10px 14px", fontSize:11, color:"#78350f", lineHeight:1.6 }}>
-              <strong>NABH MOM.1 requirement:</strong> Telephonic/verbal orders must be written down immediately, read back to the prescriber for confirmation, and countersigned by the doctor within 24 hours.
-            </div>
-
-            {/* Doctor who called */}
-            <div style={{ background:"#f0f9ff", border:"1px solid #bae6fd", borderRadius:8, padding:"12px 14px" }}>
-              <div style={{ fontSize:10, fontWeight:800, textTransform:"uppercase", letterSpacing:".6px", color:"#0369a1", marginBottom:8 }}>Doctor who gave telephonic order</div>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
-                <FL label="Doctor Name *">
-                  <input className="his-field" value={telForm.doctorName} placeholder="Dr. full name" onChange={e=>setTelForm(p=>({...p,doctorName:e.target.value}))} />
-                </FL>
-                <FL label="Registration No">
-                  <input className="his-field" value={telForm.doctorRegNo} placeholder="Reg / MCI no." onChange={e=>setTelForm(p=>({...p,doctorRegNo:e.target.value}))} />
-                </FL>
-                <FL label="Call Time *">
-                  <input type="time" className="his-field" value={telForm.callTime} onChange={e=>setTelForm(p=>({...p,callTime:e.target.value}))} />
-                </FL>
-              </div>
-            </div>
-
-            {/* Drug details */}
-            <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr", gap:10 }}>
-              <FL label="Drug / Medicine Name *">
-                <input className="his-field" style={{  fontWeight:700 }} value={telForm.medicineName} placeholder="Generic name" onChange={e=>setTelForm(p=>({...p,medicineName:e.target.value}))} />
-              </FL>
-              <FL label="Dose">
-                <input className="his-field" value={telForm.dose} placeholder="e.g. 40mg" onChange={e=>setTelForm(p=>({...p,dose:e.target.value}))} />
-              </FL>
-              <FL label="Route">
-                <select className="his-select" value={telForm.route} onChange={e=>setTelForm(p=>({...p,route:e.target.value}))}>
-                  {["IV","IM","SC","PO","SL","Topical","Inhaled","Rectal","Intrathecal"].map(r=><option key={r}>{r}</option>)}
-                </select>
-              </FL>
-              <FL label="Frequency">
-                <select className="his-select" value={telForm.frequency} onChange={e=>setTelForm(p=>({...p,frequency:e.target.value}))}>
-                  {["STAT","SOS","OD","BD","TDS","QID","Q4H","Q6H","Q8H","Q12H","HS","Continuous"].map(f=><option key={f}>{f}</option>)}
-                </select>
-              </FL>
-            </div>
-
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
-              <FL label="Order Type">
-                <select className="his-select" value={telForm.orderType} onChange={e=>setTelForm(p=>({...p,orderType:e.target.value}))}>
-                  <option value="Medication">Medication</option>
-                  <option value="IV_Fluid">IV Fluid / Infusion</option>
-                </select>
-              </FL>
-              <FL label="Priority">
-                <select className="his-select" style={{  fontWeight:700, color: telForm.priority==="STAT"?C.red:telForm.priority==="Urgent"?C.amber:C.text }} value={telForm.priority} onChange={e=>setTelForm(p=>({...p,priority:e.target.value}))}>
-                  <option value="STAT">⚡ STAT</option>
-                  <option value="Urgent">🔶 Urgent</option>
-                  <option value="Routine">Routine</option>
-                </select>
-              </FL>
-              <FL label="Duration">
-                <input className="his-field" value={telForm.duration} placeholder="e.g. 5 days / SOS" onChange={e=>setTelForm(p=>({...p,duration:e.target.value}))} />
-              </FL>
-            </div>
-
-            <FL label="Indication / Clinical Reason">
-              <input className="his-field" value={telForm.indication} placeholder="e.g. GI prophylaxis, breakthrough pain, fever SOS, post-op nausea…" onChange={e=>setTelForm(p=>({...p,indication:e.target.value}))} />
-            </FL>
-
-            <FL label="Notes / Instructions">
-              <textarea className="his-textarea" style={{  minHeight:42 }} value={telForm.notes} placeholder="Dilution, infusion rate, any special instructions…" onChange={e=>setTelForm(p=>({...p,notes:e.target.value}))} />
-            </FL>
-
-            {/* HAM override */}
-            {(() => {
-              const autoHam = isHAM(telForm.medicineName);
-              return (
-                <div
-                  onClick={()=>{ if (!autoHam) setTelForm(p=>({...p,hamOverride:!p.hamOverride})); }}
-                  style={{ display:"flex", alignItems:"flex-start", gap:10, padding:"11px 14px", background: (autoHam||telForm.hamOverride)?"#fef2f2":"#f9fafb", border:`1.5px solid ${(autoHam||telForm.hamOverride)?"#fca5a5":C.border}`, borderRadius:8, cursor: autoHam?"default":"pointer", userSelect:"none" }}>
-                  <div style={{ width:20, height:20, borderRadius:4, border:`2px solid ${(autoHam||telForm.hamOverride)?"#dc2626":C.border}`, background:(autoHam||telForm.hamOverride)?"#dc2626":"white", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, marginTop:1 }}>
-                    {(autoHam||telForm.hamOverride) && <i className="pi pi-check" style={{ fontSize:11, color:"white" }}/>}
-                  </div>
-                  <div style={{flex:1}}>
-                    <div style={{ fontWeight:700, fontSize:12, color:(autoHam||telForm.hamOverride)?"#dc2626":C.muted, display:"flex", alignItems:"center", gap:7 }}>
-                      🔴 High Alert Medication (HAM)
-                      {autoHam && <span style={{ fontSize:9, background:"#dc2626", color:"white", borderRadius:3, padding:"1px 6px", fontWeight:800 }}>AUTO-DETECTED</span>}
-                      {!autoHam && <span style={{ fontSize:9, color:C.muted, fontWeight:500 }}>(tick if applicable — 2-nurse verification will be required)</span>}
-                    </div>
-                    <div style={{ fontSize:10, color:C.muted, marginTop:2, lineHeight:1.5 }}>
-                      {autoHam
-                        ? "This drug is on the NABH High Alert Medication list. Two-nurse verification will be mandatory before administration."
-                        : "Mark as HAM if the drug is a concentrated electrolyte, anticoagulant, vasoactive agent, opioid, or neuromuscular blocker not auto-detected above."}
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
-
-            {/* Read-back confirmation — MANDATORY */}
-            <div
-              onClick={()=>setTelForm(p=>({...p,readBackDone:!p.readBackDone}))}
-              style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 16px", background: telForm.readBackDone?"#f0fdf4":"#fef2f2", border:`2px solid ${telForm.readBackDone?"#86efac":"#fca5a5"}`, borderRadius:8, cursor:"pointer", userSelect:"none" }}>
-              <div style={{ width:20, height:20, borderRadius:4, border:`2px solid ${telForm.readBackDone?"#15803d":"#dc2626"}`, background:telForm.readBackDone?"#15803d":"white", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                {telForm.readBackDone && <i className="pi pi-check" style={{ fontSize:11, color:"white" }}/>}
-              </div>
-              <div>
-                <div style={{ fontWeight:700, fontSize:13, color: telForm.readBackDone?"#15803d":"#dc2626" }}>
-                  {telForm.readBackDone ? "✓ Read-back confirmed" : "⚠ Read-back NOT confirmed (mandatory)"}
-                </div>
-                <div style={{ fontSize:11, color:"#64748b", marginTop:1 }}>I have read the order back to Dr. {telForm.doctorName||"the prescriber"} and confirmed it is correct — NABH MOM.1</div>
-              </div>
-            </div>
-
-          </div>
-          <ModalFooter onCancel={()=>setTelModal(false)} onSave={submitTelephonic} saving={telSaving} saveLabel="Save Telephonic Order" />
-        </ModalOverlay>
-      )}
-
     </div>
   );
 }
