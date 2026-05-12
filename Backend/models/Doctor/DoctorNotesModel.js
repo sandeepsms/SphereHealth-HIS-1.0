@@ -149,4 +149,6 @@ DoctorNotesSchema.virtual("pendingOrdersCount").get(function () {
   return this.orders.filter((o) => o.nurseStatus === "pending").length;
 });
 
-module.exports = mongoose.model("DoctorNotes", DoctorNotesSchema);
+module.exports =
+  mongoose.models.DoctorNotes ||
+  mongoose.model("DoctorNotes", DoctorNotesSchema);
