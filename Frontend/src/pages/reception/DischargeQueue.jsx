@@ -129,7 +129,12 @@ export default function DischargeQueue() {
               <div className="rx-card-meta">
                 <span>UHID: <strong>{adm.UHID || "—"}</strong></span>
                 <span>Bed: <strong>{adm.bedNumber || "—"}</strong></span>
-                {adm.department?.departmentName && <span>Dept: <strong>{adm.department.departmentName}</strong></span>}
+                {/* `department` on Admission is a plain String; the populated
+                    ref lives on `departmentId`. Fall back to the string if
+                    the ref is missing on older rows. */}
+                {(adm.departmentId?.departmentName || adm.department) && (
+                  <span>Dept: <strong>{adm.departmentId?.departmentName || adm.department}</strong></span>
+                )}
                 <span>Doctor approved: <strong>{w.doctorApprovedBy || "Doctor"}</strong> @ {fmtDateTime(w.doctorApprovedAt)}</span>
                 {w.finalBillAmount > 0 && <span>Bill: <strong>{fmtCur(w.finalBillAmount)}</strong></span>}
                 {w.gatePassNumber && <span>Gate Pass: <strong>{w.gatePassNumber}</strong></span>}
