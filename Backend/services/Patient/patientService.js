@@ -97,12 +97,16 @@ class PatientService {
     if (tpa) query.tpa = tpa;
 
     if (search) {
+      // Escape regex meta-chars — receptionist often types `+91`, `(98)` etc.
+      // which would throw "Invalid regular expression" and 500 the search.
+      // Also prevents ReDoS-style patterns from blocking the event loop.
+      const esc = String(search).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       query.$or = [
-        { fullName: { $regex: search, $options: "i" } },
-        { patientId: { $regex: search, $options: "i" } },
-        { UHID: { $regex: search, $options: "i" } },
-        { contactNumber: { $regex: search, $options: "i" } },
-        { policyNumber: { $regex: search, $options: "i" } },
+        { fullName: { $regex: esc, $options: "i" } },
+        { patientId: { $regex: esc, $options: "i" } },
+        { UHID: { $regex: esc, $options: "i" } },
+        { contactNumber: { $regex: esc, $options: "i" } },
+        { policyNumber: { $regex: esc, $options: "i" } },
       ];
     }
 
@@ -130,14 +134,18 @@ class PatientService {
   async searchPatients(searchTerm, limit = 10) {
     if (!searchTerm || searchTerm.trim().length < 2) return [];
     const trimmed = searchTerm.trim();
+    // Escape regex meta-chars (same fix as getAllPatients) — phone searches
+    // like "+91…" or "(98)…" would otherwise throw "Invalid regular
+    // expression" and 500 the live patient-search bar.
+    const esc = trimmed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return Patient.find({
       isActive: true,
       $or: [
-        { fullName: { $regex: trimmed, $options: "i" } },
-        { UHID: { $regex: trimmed, $options: "i" } },
-        { contactNumber: { $regex: trimmed, $options: "i" } },
-        { patientId: { $regex: trimmed, $options: "i" } },
-        { email: { $regex: trimmed, $options: "i" } },
+        { fullName: { $regex: esc, $options: "i" } },
+        { UHID: { $regex: esc, $options: "i" } },
+        { contactNumber: { $regex: esc, $options: "i" } },
+        { patientId: { $regex: esc, $options: "i" } },
+        { email: { $regex: esc, $options: "i" } },
       ],
     })
       .populate("department", "departmentName")

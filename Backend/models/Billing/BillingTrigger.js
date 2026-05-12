@@ -3,7 +3,10 @@ const mongoose = require("mongoose");
 const BillingTriggerSchema = new mongoose.Schema({
   // ── Patient context ─────────────────────────────────────────
   admissionId:  { type: mongoose.Schema.Types.ObjectId, ref: "Admission" },
-  opdVisitId:   { type: mongoose.Schema.Types.ObjectId, ref: "OPD" },
+  // OPD visit model is registered as "OPDRegistration" (see
+  // Patient/OPDModels.js). The old `ref: "OPD"` would throw
+  // MissingSchemaError on any populate("opdVisitId") call.
+  opdVisitId:   { type: mongoose.Schema.Types.ObjectId, ref: "OPDRegistration" },
   patientId:    { type: mongoose.Schema.Types.ObjectId, ref: "Patient" },
   UHID:         { type: String, index: true },
   patientType:  { type: String, enum: ["OPD","IPD","EMERGENCY","DAYCARE","ICU"], default: "IPD" },

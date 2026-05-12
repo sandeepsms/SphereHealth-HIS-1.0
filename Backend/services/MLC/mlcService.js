@@ -158,21 +158,35 @@ class MLCService {
     // Assign the next MLR number
     const { mlrNumber, mlrPrefix, mlrSeq } = await this.assignMlrNumber(doctor);
 
-    const doc = await MLC.create({
-      ...payload,
-      patientId:   patient._id,
-      UHID:        patient.UHID,
-      patientName: patient.fullName,
-      age:         patient.age,
-      gender:      patient.gender,
-      contactNumber: patient.contactNumber,
-      doctorId:    doctor._id,
-      doctorName:  doctor.personalInfo?.fullName ||
-                   `${doctor.personalInfo?.firstName || ""} ${doctor.personalInfo?.lastName || ""}`.trim(),
-      mlrNumber, mlrPrefix, mlrSeq,
-      createdBy:     actor.fullName || actor.name || "",
-      createdByRole: actor.role     || "",
-    });
+    // If MLC.create fails (validation, mlrNumber collision), roll back
+    // the per-doctor sequence so the next MLR doesn't have a gap. The
+    // gap would still be discoverable in court (court of inquiry expects
+    // no missing numbers in the MLR register).
+    let doc;
+    try {
+      doc = await MLC.create({
+        ...payload,
+        patientId:   patient._id,
+        UHID:        patient.UHID,
+        patientName: patient.fullName,
+        age:         patient.age,
+        gender:      patient.gender,
+        contactNumber: patient.contactNumber,
+        doctorId:    doctor._id,
+        doctorName:  doctor.personalInfo?.fullName ||
+                     `${doctor.personalInfo?.firstName || ""} ${doctor.personalInfo?.lastName || ""}`.trim(),
+        mlrNumber, mlrPrefix, mlrSeq,
+        createdBy:     actor.fullName || actor.name || "",
+        createdByRole: actor.role     || "",
+      });
+    } catch (createErr) {
+      // Roll back the seq increment so the next assignMlrNumber re-uses
+      // this sequence number — no gap, no duplicate (we're rolling back
+      // BEFORE any other MLC could have been issued since the increment
+      // happened only a few ms ago and the prefix is doctor-scoped).
+      await Doctor.findByIdAndUpdate(doctor._id, { $inc: { mlcSeq: -1 } }).catch(() => {});
+      throw createErr;
+    }
 
     // Best-effort: flag the patient + linked emergency / admission as MLC
     // so downstream printouts can decide to render the stamp. We don't fail

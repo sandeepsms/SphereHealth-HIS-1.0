@@ -515,8 +515,33 @@ export function RBSMonitoringTab({ nursingNotes = [], doctorOrders = [] }) {
       .sort((a, b) => new Date(b.when) - new Date(a.when));
   }, [nursingNotes]);
 
-  // Antidiabetic medications administered
-  const ANTIDIABETIC_RE = /insulin|glucose|dextrose|metformin|glimepiride|gliclazide|sitagliptin|sugar/i;
+  // Antidiabetic medications administered. Generic + common Indian
+  // brand names. `glucose`/`dextrose` are included because hospital
+  // RBS-monitoring flow tracks the rescue dose alongside the antidiabetic.
+  const ANTIDIABETIC_RE = new RegExp([
+    // Insulins — generic + trade names
+    "insulin", "humulin", "novolin", "actrapid", "mixtard", "humalog",
+    "lantus", "levemir", "novorapid", "novomix", "tresiba", "ryzodeg",
+    "glargine", "aspart", "lispro", "detemir", "degludec",
+    // Sulfonylureas
+    "glimepiride", "gliclazide", "glipizide", "glibenclamide", "glyburide",
+    // Biguanides
+    "metformin", "glycomet",
+    // DPP-4 inhibitors
+    "sitagliptin", "vildagliptin", "linagliptin", "saxagliptin", "teneligliptin",
+    // SGLT2 inhibitors
+    "empagliflozin", "dapagliflozin", "canagliflozin", "ertugliflozin",
+    // GLP-1 agonists
+    "liraglutide", "semaglutide", "dulaglutide", "exenatide",
+    // Thiazolidinediones
+    "pioglitazone", "rosiglitazone",
+    // Meglitinides
+    "repaglinide", "nateglinide",
+    // α-glucosidase inhibitors
+    "acarbose", "miglitol", "voglibose",
+    // Rescue / monitoring
+    "glucose", "dextrose",
+  ].join("|"), "i");
   const doses = useMemo(() => {
     const list = [];
     (doctorOrders || []).forEach((o) => {

@@ -488,7 +488,13 @@ export default function ReceptionConsole() {
         paymentType:     patient.paymentType,
         tpa:             patient.tpa || null,
         policyNumber:    patient.policyNumber || undefined,
-        emergencyContact:patient.emergencyContact,
+        // Patient model has NO `emergencyContact` field — it uses
+        // `companionName / companionRelationship / companionContact`. The
+        // old code silently dropped the receptionist's input on every save
+        // because of Mongoose strict mode. Map onto the real fields.
+        companionName:        patient.emergencyContact?.name     || "",
+        companionRelationship:patient.emergencyContact?.relation || "",
+        companionContact:     patient.emergencyContact?.phone    || "",
         // Optional but useful when present
         department:      primaryDept || undefined,
         doctor:          primaryDoctor || undefined,

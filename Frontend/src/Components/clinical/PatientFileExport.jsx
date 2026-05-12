@@ -62,6 +62,13 @@ export default function PatientFileExport({ patient, printRef, title = "Patient 
       window.print();
       return;
     }
+    // Re-entry guard — if a previous print is still cleaning up, the
+    // 60s safety timer for THIS invocation could strip classes mid-second-
+    // print and produce a blank page. Block until prior cleanup finishes.
+    if (document.body.classList.contains("pfe-printing")) {
+      toast.info("A print is already in progress — please wait");
+      return;
+    }
     setBusy("print");
     const ancestors = [];
     try {

@@ -39,4 +39,10 @@ const VitalSheetSchema = new mongoose.Schema({
 }, { timestamps: true });
 VitalSheetSchema.index({ uhid: 1, date: 1 }, { unique: true });
 
-module.exports = mongoose.model("VitalSheet", VitalSheetSchema);
+// Legacy orphan file — the live VitalSheet model is at
+// `Vitals/vitalSheetModel.js`. Guard the registration so any accidental
+// require here doesn't OverwriteModelError. Field shapes differ from
+// the live model — do NOT consume this for new code.
+module.exports =
+  mongoose.models.VitalSheet ||
+  mongoose.model("VitalSheet", VitalSheetSchema);

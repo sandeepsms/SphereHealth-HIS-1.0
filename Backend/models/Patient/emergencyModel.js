@@ -254,13 +254,22 @@ EmergencySchema.index({ triageCategory: 1 });
 EmergencySchema.index({ status: 1 });
 EmergencySchema.index({ arrivalDate: -1 });
 
-EmergencySchema.pre("save", async function (next) {
+// Use pre("validate") not pre("save") so the auto-generated number is
+// populated BEFORE Mongoose's required-check runs. Same pattern as
+// appointmentModel + userModel (Pass-1 audit fix).
+EmergencySchema.pre("validate", async function (next) {
   if (this.isNew && !this.emergencyNumber) {
-    const count = await mongoose.model("Emergency").countDocuments();
-    const year = new Date().getFullYear();
-    this.emergencyNumber = `ER-${year}-${String(count + 1).padStart(6, "0")}`;
+    try {
+      const count = await mongoose.model("Emergency").countDocuments();
+      const year = new Date().getFullYear();
+      this.emergencyNumber = `ER-${year}-${String(count + 1).padStart(6, "0")}`;
+    } catch (err) {
+      return next(err);
+    }
   }
   next();
 });
 
-module.exports = mongoose.model("Emergency", EmergencySchema);
+module.exports =
+  mongoose.models.Emergency ||
+  mongoose.model("Emergency", EmergencySchema);
