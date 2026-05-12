@@ -29,7 +29,11 @@ router.get("/discharges/expected", ctrl.getExpectedDischarges);
 router.get("/doctor/:doctorName", ctrl.getAdmissionsByDoctor);
 
 // ── Doctor's own IPD patients (auth required) ────────────────
-router.get("/my-patients", authenticate, authorize("Doctor", "Admin"), ctrl.getMyPatients);
+// Both /my-patients and /my-team-patients MUST come BEFORE the /:id
+// param routes — otherwise Express matches "/:id" first and runs
+// findById("my-patients") which throws CastError.
+router.get("/my-patients", authenticate, attachDoctorProfile, authorize("Doctor", "Admin"), ctrl.getMyPatients);
+router.get("/my-team-patients", authenticate, attachDoctorProfile, authorize("Doctor", "Admin"), ctrl.getMyTeamPatients);
 
 // ── Patient lookups ──────────────────────────────────────────
 router.get("/patient-by-uhid/:uhid", ctrl.getPatientByUHID);
@@ -49,10 +53,10 @@ router.post("/:id/discharge", ctrl.dischargePatient);
 router.post("/:id/cancel", ctrl.cancelAdmission);
 router.post("/:id/transfer", ctrl.transferBed);
 router.put("/:id/initial-assessment", ctrl.markInitialAssessment);
+// Nurse Initial Assessment full payload save (NABH IPSG.6)
+router.post("/:id/nurse-assessment", ctrl.saveNurseInitialAssessment);
 
 // ── Multi-doctor Consultation / Treatment Team (NABH COP.1) ──────────
-// Get all admissions where current doctor is primary OR consulting
-router.get("/my-team-patients", authenticate, authorize("Doctor", "Admin"), ctrl.getMyTeamPatients);
 // Add a consulting doctor — only primary consultant can call this
 router.post("/:id/consultation", authenticate, ctrl.addConsultation);
 // Get the full treatment team for an admission

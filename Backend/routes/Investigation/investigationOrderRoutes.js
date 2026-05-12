@@ -1,6 +1,10 @@
 const express = require("express");
 const router = express.Router();
 const ctrl = require("../../controllers/Investigation/investigationOrderController");
+const { attemptAuth } = require("../../middleware/auth");
+
+// Soft-auth so lab/radiology results carry the technician's user record.
+router.use(attemptAuth);
 
 router.get("/summary", ctrl.getSummary);
 router.get("/patient/:UHID", ctrl.getByUHID);

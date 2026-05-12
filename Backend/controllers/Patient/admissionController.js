@@ -121,10 +121,15 @@ class AdmissionController {
   });
 
   // GET /api/admissions/my-patients  — Doctor's own IPD patients (requires auth)
+  // Admissions store `attendingDoctorId` as the Doctor model's _id (not the
+  // User _id), so we resolve the doctor profile first and pass THAT id.
   getMyPatients = handle(async (req, res) => {
     if (!req.user?.id) return res.status(401).json({ success: false, message: "Not authenticated" });
+    if (!req.doctorProfile?._id) {
+      return res.status(404).json({ success: false, message: "No linked Doctor record" });
+    }
     const { status = "Active" } = req.query;
-    const admissions = await AdmissionService.getMyIPDPatients(req.user.id, status);
+    const admissions = await AdmissionService.getMyIPDPatients(req.doctorProfile._id, status);
     return res.json({ success: true, data: admissions, count: admissions.length });
   });
 
@@ -376,15 +381,20 @@ class AdmissionController {
    */
   getMyTeamPatients = handle(async (req, res) => {
     const Admission = require("../../models/Patient/admissionModel");
-    const userId = req.user?._id?.toString() || req.user?.id?.toString();
-    const userName = req.user?.name || "";
+    // Admissions store the Doctor model `_id` in `attendingDoctorId` (from
+    // the reception console). req.doctorProfile is set by attachDoctorProfile
+    // when a Doctor user is logged in.
+    if (!req.doctorProfile?._id) {
+      return res.status(404).json({ success: false, message: "No linked Doctor record" });
+    }
+    const doctorId = req.doctorProfile._id.toString();
 
     const [asPrimary, asConsulting] = await Promise.all([
-      Admission.find({ attendingDoctorId: userId, status: "Active" })
+      Admission.find({ attendingDoctorId: doctorId, status: "Active" })
         .select("patientName UHID admissionNumber department admissionDate bedNumber attendingDoctor treatmentTeam")
         .sort({ admissionDate: -1 }),
       Admission.find({
-        "treatmentTeam.doctorId": userId,
+        "treatmentTeam.doctorId": doctorId,
         "treatmentTeam.status": "Active",
         status: "Active",
       }).select("patientName UHID admissionNumber department admissionDate bedNumber attendingDoctor treatmentTeam"),
@@ -395,7 +405,7 @@ class AdmissionController {
     const consultingList = asConsulting
       .filter(a => !asPrimary.some(p => p._id.toString() === a._id.toString()))  // dedup
       .map(a => {
-        const myEntry = a.treatmentTeam.find(m => m.doctorId?.toString() === userId);
+        const myEntry = a.treatmentTeam.find(m => m.doctorId?.toString() === doctorId);
         return { ...a.toObject(), myRole: myEntry?.role || "Consulting Specialist", myConsultEntry: myEntry };
       });
 
@@ -408,6 +418,38 @@ class AdmissionController {
       },
     });
   });
+  /**
+   * POST /:id/nurse-assessment
+   * Body: full nurse-initial-assessment payload (vitals, history, etc.) +
+   * `signoff` object with { name, designation, signedAt, notes, nurseSignature }.
+   * Stores the payload on the admission (NABH IPSG.6 nurse signoff trail)
+   * and flips initialAssessment.nurseCompleted = true.
+   */
+  saveNurseInitialAssessment = handle(async (req, res) => {
+    const Admission = require("../../models/Patient/admissionModel");
+    const admission = await Admission.findById(req.params.id);
+    if (!admission) return res.status(404).json({ success: false, message: "Admission not found" });
+
+    // Persist the full payload on a sub-doc so the assessment is traceable.
+    if (!admission.nurseInitialAssessment || typeof admission.nurseInitialAssessment !== "object") {
+      admission.nurseInitialAssessment = {};
+    }
+    Object.assign(admission.nurseInitialAssessment, req.body || {}, { savedAt: new Date() });
+    admission.markModified("nurseInitialAssessment");
+
+    // Flip the gate flag too.
+    if (!admission.initialAssessment || typeof admission.initialAssessment !== "object") {
+      admission.initialAssessment = {};
+    }
+    admission.initialAssessment.nurseCompleted   = true;
+    admission.initialAssessment.nurseCompletedAt = new Date();
+    admission.initialAssessment.nurseName        = req.body?.signoff?.name || req.body?.nurseName || "";
+    admission.markModified("initialAssessment");
+
+    await admission.save();
+    return res.json({ success: true, data: admission.nurseInitialAssessment });
+  });
+
   /**
    * PUT /:id/initial-assessment
    * Body: { role: "doctor" | "nurse", name: "Dr. XYZ" }

@@ -650,6 +650,9 @@ export default function ReceptionConsole() {
               });
             }
             toast.success("Services bill created — opening payments…");
+            // Clear the auto-save snapshot so the next mount doesn't restore
+            // an already-billed cart.
+            clearAutosave();
             navigate(`/reception-billing/${patientUHID}`);
           } else {
             toast.error("Could not create services bill");
@@ -842,7 +845,7 @@ export default function ReceptionConsole() {
               time: opd.appointmentTime || nowTime(),
               tokenNumber: null,
               bedNumber: bedData.bedNumber,
-              wardName: bedData.wardId ? `Ward ${bedData.wardId}` : "",
+              wardName: bedData.wardName || "",
               admittingDoctor: doctors.find(d => d.value === ipd.admittingDoctor)?.label || "",
             }}
             defaultTemplate={

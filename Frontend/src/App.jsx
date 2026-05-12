@@ -120,6 +120,8 @@ const MARPage = lazy(() => import("./pages/clinical/MARPage"));
 const DischargeSummaryPage = lazy(() => import("./pages/clinical/DischargeSummaryPage"));
 const ConsentFormPage = lazy(() => import("./pages/clinical/ConsentFormPage"));
 const IPDInitialAssessmentPage = lazy(() => import("./pages/clinical/IPDInitialAssessmentPage"));
+const InvestigationOrders     = lazy(() => import("./Components/Investigation/InvestigationOrders"));
+const InvestigationMaster     = lazy(() => import("./Components/Investigation/InvestigationMaster"));
 const DoctorAssessmentPage = lazy(() => import("./pages/doctor/DoctorAssessmentPage"));
 const OPDAssessmentPage = lazy(() => import("./pages/doctor/OPDAssessmentPage"));
 const DoctorPatientPanel = lazy(() => import("./pages/doctor/DoctorPatientPanel"));
@@ -172,6 +174,10 @@ const homeForRole = (role) => {
     case "Doctor":           return "/doctor-opd-panel";
     case "Nurse":            return "/opd-queue";
     case "TPA Coordinator":  return "/tpa-cases";
+    case "Pharmacist":       return "/mar";
+    case "Lab Technician":   return "/investigation-orders";
+    case "Radiologist":      return "/investigation-orders";
+    case "Accountant":       return "/billing";
     default:                 return "/mainpage";
   }
 };
@@ -264,9 +270,14 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/emergency/:emergencyNumber" element={<EmergencyDetails />} />
 
             {/* ── Vitals ───────────────────────────────── */}
-            <Route path="/updateVitalSheet" element={<UpdateVitalSheet />} />
-            <Route path="/vitalSheet" element={<VitalSheet />} />
-            <Route path="/vitalsView" element={<VitalsView />} />
+            {/* Vital sheets use useParams() — register both with and without the
+                UHID/date slots so a bare visit shows a "pick a patient" prompt. */}
+            <Route path="/updateVitalSheet"            element={<UpdateVitalSheet />} />
+            <Route path="/updateVitalSheet/:uhid/:date" element={<UpdateVitalSheet />} />
+            <Route path="/vitalSheet"        element={<VitalSheet />} />
+            <Route path="/vitalSheet/:uhid"  element={<VitalSheet />} />
+            <Route path="/vitalsView"        element={<VitalsView />} />
+            <Route path="/vitalsView/:uhid"  element={<VitalsView />} />
 
             {/* ── Patients Module ───────────────────────────────── */}
             <Route path="/patients" element={<PatientList />} />
@@ -358,6 +369,13 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/consent-forms" element={<ConsentFormPage />} />
             <Route path="/nurse-initial-assessment" element={<NurseInitialAssessmentPage />} />
             <Route path="/ipd-initial-assessment" element={<IPDInitialAssessmentPage />} />
+            {/* Alias — many pages link to /ipd-assessment which is the same flow */}
+            <Route path="/ipd-assessment" element={<IPDInitialAssessmentPage />} />
+            <Route path="/ipd-assessment/:uhid" element={<IPDInitialAssessmentPage />} />
+
+            {/* Investigation / Lab — used by Lab Tech, Radiologist, Doctor */}
+            <Route path="/investigation-orders" element={<InvestigationOrders />} />
+            <Route path="/investigation-master" element={<InvestigationMaster />} />
             <Route path="/doctor-assessment" element={<DoctorAssessmentPage />} />
             <Route path="/opd-assessment" element={<OPDAssessmentPage />} />
             <Route path="/doctor-patient-panel" element={<DoctorPatientPanel />} />

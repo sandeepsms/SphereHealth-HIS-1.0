@@ -110,7 +110,10 @@ function PatientsTable() {
     setGlobalFilterValue(value);
   };
 
-  const handleEdit = (rowData) => navigate(`/reception?patientId=${rowData._id}`);
+  // ReceptionConsole lives at `/reception/register` and reads `?patientId=`
+  // or `?uhid=` to preload the patient. Sending to the bare `/reception`
+  // (Dashboard) was a no-op for editing.
+  const handleEdit = (rowData) => navigate(`/reception/register?patientId=${rowData._id}`);
 
   const handleView = async (rowData) => {
     try {
@@ -216,19 +219,14 @@ function PatientsTable() {
       }, // ✅ NEW
       { separator: true },
       {
-        label: "Doctor Details",
-        icon: "pi pi-user",
-        command: () => navigate(`/doctor/${rowData.UHID}`),
-      },
-      {
         label: "OPD Bill Print",
         icon: "pi pi-print",
         command: () => navigate(`/opd/${rowData.UHID}`),
       },
       {
-        label: "Bed Management",
+        label: "Bed Visual Layout",
         icon: "pi pi-th-large",
-        command: () => navigate(`/BedManagementSingleFile/${rowData.UHID}`),
+        command: () => navigate(`/bed-visual`),
       },
     ];
 

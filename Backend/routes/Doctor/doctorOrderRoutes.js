@@ -1,6 +1,11 @@
 const router      = require("express").Router();
 const DoctorOrder = require("../../models/Doctor/DoctorOrderModel");
 const NurseNotes  = require("../../models/Nurse/NurseNotesModel");
+const { attemptAuth } = require("../../middleware/auth");
+
+// Soft-auth — every order/administer/discontinue write carries req.user
+// for the audit trail. Reads remain open for backward compat.
+router.use(attemptAuth);
 
 /* ─────────────────────────────────────────────────────
    NABH High Alert Medication detection (shared util)

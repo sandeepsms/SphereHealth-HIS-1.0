@@ -52,9 +52,11 @@ class EmergencyController {
         parseInt(limit),
         filters
       );
+      // Doctor-scope: only the logged-in doctor's own ER cases
+      const visits = scopeERByDoctor(req, result.visits || []);
       res.status(200).json({
         success: true,
-        data: result.visits,
+        data: visits,
         pagination: result.pagination,
       });
     } catch (error) {

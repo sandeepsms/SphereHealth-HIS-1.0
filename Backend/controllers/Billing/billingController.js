@@ -204,6 +204,45 @@ exports.getSummary = async (req, res) => {
   }
 };
 
+// ── GET /api/billing  — paginated bills list (Accountant/Admin) ─
+// Filters: status, visitType, paymentType, UHID, billNumber, startDate, endDate
+exports.listBills = async (req, res) => {
+  try {
+    const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+    const { page = 1, limit = 50, status, visitType, paymentType, UHID, billNumber, startDate, endDate } = req.query;
+    const query = {};
+    if (status)       query.billStatus  = status;
+    if (visitType)    query.visitType   = visitType;
+    if (paymentType)  query.paymentType = paymentType;
+    if (UHID)         query.UHID        = { $regex: UHID, $options: "i" };
+    if (billNumber)   query.billNumber  = { $regex: billNumber, $options: "i" };
+    if (startDate || endDate) {
+      query.billDate = {};
+      if (startDate) query.billDate.$gte = new Date(startDate);
+      if (endDate)   query.billDate.$lte = new Date(endDate);
+    }
+    const skip = (Math.max(1, Number(page)) - 1) * Math.max(1, Number(limit));
+    const [bills, total] = await Promise.all([
+      PatientBill.find(query)
+        .populate("patient", "fullName UHID contactNumber")
+        .populate("tpa", "tpaName")
+        .sort({ billDate: -1, createdAt: -1 })
+        .skip(skip)
+        .limit(Number(limit))
+        .lean(),
+      PatientBill.countDocuments(query),
+    ]);
+    bills.forEach(b => { if (!b.patientName) b.patientName = b.patient?.fullName || ""; });
+    return res.json({
+      success: true,
+      data: bills,
+      pagination: { total, page: Number(page), limit: Number(limit), pages: Math.ceil(total / Number(limit)) },
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
 // ── POST /api/billing/ai-suggest ──────────────────────────────
 exports.aiSuggest = async (req, res, next) => {
   try {

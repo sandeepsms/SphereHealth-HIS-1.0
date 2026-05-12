@@ -75,14 +75,14 @@ const NAV = [
     icon: "pi-desktop", color: "#0891b2", light: "#ecfeff",
     nabh: true, roles: [ADMIN, RX, DR, NR, AC, TPA],
     items: [
-      { label: "Dashboard",           icon: "pi-chart-line",        path: "/reception",            nabh: true,  badge: "LIVE",  roles: [ADMIN, RX, DR, NR] },
+      { label: "Dashboard",           icon: "pi-chart-line",        path: "/reception",            nabh: true,  badge: "LIVE",  roles: [ADMIN, RX, DR, NR, AC, TPA] },
       { label: "New Registration",    icon: "pi-user-plus",         path: "/reception/register",   nabh: true,                  roles: [ADMIN, RX] },
       // RX-flavored Patient Search & Visit History (rx-page style, slimmer)
       { label: "Patient Search",      icon: "pi-search",            path: "/patient-search",                                   roles: [RX] },
       { label: "Visit History",       icon: "pi-clock",             path: "/visit-history",                                    roles: [RX] },
       // Original Patient Search & Visit History — for other roles
       { label: "Patient Search",      icon: "pi-search",            path: "/allpatient",                                       roles: [ADMIN, DR, NR, AC, TPA] },
-      { label: "Visit History",       icon: "pi-clock",             path: "/patient-history",                                  roles: [ADMIN, DR] },
+      { label: "Visit History",       icon: "pi-clock",             path: "/patient-history",                                  roles: [ADMIN, DR, NR] },
       { label: "Appointments",        icon: "pi-calendar-plus",     path: "/appointments",         nabh: true,  badge: "NEW",   roles: [ADMIN, RX] },
       { label: "Discharge Queue",     icon: "pi-sign-out",          path: "/discharge-queue",      nabh: true,  badge: "NEW",   roles: [ADMIN, RX] },
       { label: "TPA / Insurance",     icon: "pi-shield",            path: "/tpa-cases",            nabh: true,  badge: "NEW",   roles: [ADMIN, RX, TPA, AC] },
@@ -159,11 +159,11 @@ const NAV = [
   {
     id: "vitals", label: "Vitals",
     icon: "pi-chart-line", color: "#16a34a", light: "#f0fdf4",
-    roles: [ADMIN, NR, DR, PT],
+    roles: [ADMIN, NR, DR, PT, DT],
     items: [
-      { label: "Update Vitals",  icon: "pi-pencil",    path: "/updateVitalSheet",  roles: [ADMIN, NR, PT] },
-      { label: "Vital Sheet",    icon: "pi-table",     path: "/vitalSheet",        roles: [ADMIN, NR, DR] },
-      { label: "Vitals View",    icon: "pi-chart-bar", path: "/vitalsView",        roles: [ADMIN, NR, DR] },
+      { label: "Update Vitals",  icon: "pi-pencil",    path: "/updateVitalSheet",  roles: [ADMIN, NR, PT, DT] },
+      { label: "Vital Sheet",    icon: "pi-table",     path: "/vitalSheet",        roles: [ADMIN, NR, DR, DT] },
+      { label: "Vitals View",    icon: "pi-chart-bar", path: "/vitalsView",        roles: [ADMIN, NR, DR, DT] },
     ],
   },
 
@@ -173,8 +173,8 @@ const NAV = [
     icon: "pi-box", color: "#ea580c", light: "#fff7ed",
     nabh: true, roles: [ADMIN, PH, NR, DR],
     items: [
-      { label: "MAR",              icon: "pi-table",         path: "/mar",   nabh: true, roles: [ADMIN, PH, NR] },
-      { label: "Pharmacy Indent",  icon: "pi-shopping-cart", path: "/mar",               roles: [ADMIN, PH] },
+      // MAR is the canonical record — Doctor reads it (gets to "DR" too)
+      { label: "MAR",              icon: "pi-table",         path: "/mar",   nabh: true, roles: [ADMIN, PH, NR, DR] },
     ],
   },
 
@@ -186,7 +186,6 @@ const NAV = [
     items: [
       { label: "Investigation Orders",  icon: "pi-list",   path: "/investigation-orders",  roles: [ADMIN, LB, RL, DR] },
       { label: "Investigation Master",  icon: "pi-cog",    path: "/investigation-master",  roles: [ADMIN, LB] },
-      { label: "Lab Staff",             icon: "pi-users",  path: "/lab-staff",             roles: [ADMIN] },
     ],
   },
 
@@ -199,7 +198,7 @@ const NAV = [
       // RX-flavored unified billing & payment collection (rx-page style)
       { label: "Billing & Payments",    icon: "pi-receipt", path: "/reception-billing",     roles: [RX] },
       // Full billing UIs for accountants / admin
-      { label: "Patient Bill",          icon: "pi-user",    path: "/patient-billing",       roles: [ADMIN, AC] },
+      { label: "Patient Bill",          icon: "pi-user",    path: "/patient-billing",       roles: [ADMIN, AC, TPA] },
       { label: "Bills List",            icon: "pi-file",    path: "/billing",               roles: [ADMIN, AC] },
       { label: "Billing Intelligence",  icon: "pi-bolt",    path: "/billing-intelligence",  badge: "AI",  roles: [ADMIN, AC] },
       { label: "Billing Audit Trail",   icon: "pi-list",    path: "/billing-audit-trail",                 roles: [ADMIN, AC] },

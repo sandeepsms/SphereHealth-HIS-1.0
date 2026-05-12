@@ -208,7 +208,12 @@ const AdmissionSchema = new mongoose.Schema(
       doctorCompletedAt: { type: Date, default: null },
       nurseCompletedAt:  { type: Date, default: null },
       doctorName:        { type: String, default: "" },
-      nurseName:         { type: String, default: "" } } },
+      nurseName:         { type: String, default: "" } },
+
+    // Full nurse initial-assessment payload (vitals, history, sign-off).
+    // Stored as Mixed so the NABH-required free-text + structured fields
+    // both round-trip without a deep schema declaration.
+    nurseInitialAssessment: { type: mongoose.Schema.Types.Mixed, default: {} } },
   { timestamps: true },
 );
 

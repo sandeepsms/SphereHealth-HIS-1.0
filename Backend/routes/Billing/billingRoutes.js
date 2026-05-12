@@ -2,9 +2,15 @@
 const express = require("express");
 const router = express.Router();
 const ctrl = require("../../controllers/Billing/billingController");
+const { attemptAuth } = require("../../middleware/auth");
+
+// Soft-auth — capture req.user when present so audit trail (who recorded
+// each payment) is accurate, but don't 401 on legacy unauthenticated callers.
+router.use(attemptAuth);
 
 // ── Static / non-ID routes first ─────────────────────────────
-router.get("/summary", ctrl.getSummary); // GET  /api/billing/summary
+router.get("/",        ctrl.listBills);             // GET  /api/billing?page=1&limit=50&status=&visitType=&UHID=&startDate=&endDate=
+router.get("/summary", ctrl.getSummary);            // GET  /api/billing/summary
 router.get("/collection-summary", ctrl.getCollectionSummary); // GET /api/billing/collection-summary?date=YYYY-MM-DD
 
 // ── TPA / Insurance workflow ─────────────────────────────────

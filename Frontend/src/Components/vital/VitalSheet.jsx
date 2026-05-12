@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, Link } from "react-router-dom";
 import { getPatients } from "../../Services/userService";
 import { Calendar } from "primereact/calendar";
 import { Dropdown } from "primereact/dropdown";
@@ -78,6 +78,17 @@ export default function VitalSheet() {
       setTimeRows(generateTimeSlots(slot));
     }
   }, [slot, editMode]);
+
+  // Bail out cleanly if the route had no :uhid — show a patient picker prompt.
+  if (!uhid && !editMode && !existingRecord) {
+    return (
+      <div className="p-4 text-center">
+        <h3>Pick a patient first</h3>
+        <p>The vital sheet is keyed to a UHID. Open the patient list and choose a patient to record vitals for.</p>
+        <Link to="/allpatient" className="btn btn-primary">Open Patient List</Link>
+      </div>
+    );
+  }
 
 
 

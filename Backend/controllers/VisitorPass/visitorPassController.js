@@ -29,6 +29,13 @@ exports.issuePass = handle(async (req, res) => {
   if (adm.status !== "Active")
     return res.status(400).json({ success: false, message: "Cannot issue pass for non-active admission" });
 
+  // Auto-expire stale Active passes for this admission so the max-2 check
+  // doesn't lock the patient out forever.
+  await VisitorPass.updateMany(
+    { admissionId, status: "Active", validUntil: { $lt: new Date() } },
+    { $set: { status: "Expired" } },
+  );
+
   // Enforce max 2 active passes per admission
   const activeCount = await VisitorPass.countDocuments({ admissionId, status: "Active" });
   if (activeCount >= 2)
@@ -61,6 +68,13 @@ exports.issuePass = handle(async (req, res) => {
 
 /* GET /api/visitor-passes?status=Active&admissionId=...&patientUHID=... */
 exports.listPasses = handle(async (req, res) => {
+  // Persist stale Active → Expired transitions BEFORE listing so the count
+  // and rows reflect reality (and so the max-2 issuePass guard is honest).
+  await VisitorPass.updateMany(
+    { status: "Active", validUntil: { $lt: new Date() } },
+    { $set: { status: "Expired" } },
+  );
+
   const filter = {};
   if (req.query.status)       filter.status      = req.query.status;
   if (req.query.admissionId)  filter.admissionId = req.query.admissionId;
@@ -70,14 +84,6 @@ exports.listPasses = handle(async (req, res) => {
     filter.$or = [{ patientName: q }, { attendantName: q }, { passNumber: q }, { patientUHID: q }];
   }
   const list = await VisitorPass.find(filter).sort({ createdAt: -1 }).limit(500).lean();
-
-  // Auto-expire passes whose validUntil has passed
-  const now = Date.now();
-  for (const p of list) {
-    if (p.status === "Active" && new Date(p.validUntil).getTime() < now) {
-      p.status = "Expired";
-    }
-  }
   return res.json({ success: true, count: list.length, data: list });
 });
 
