@@ -135,6 +135,7 @@ const NAV = [
       { label: "Emergency Assessment",  icon: "pi-exclamation-circle",path: "/emergency-assessment",   roles: [ADMIN, DR], nabh: true },
       { label: "Discharge Summary",     icon: "pi-sign-out",          path: "/discharge-summary",      roles: [ADMIN, DR], nabh: true },
       { label: "Consent Forms",         icon: "pi-shield",            path: "/consent-forms",          roles: [ADMIN, DR], nabh: true },
+      { label: "Medico-Legal (MLC)",    icon: "pi-shield",            path: "/mlc",                    roles: [ADMIN, DR], nabh: true },
     ],
   },
 
