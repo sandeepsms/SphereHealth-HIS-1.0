@@ -1696,13 +1696,13 @@ function NursingNotesContent({ selectedPatient }) {
           onClose={() => setConsentOrder(null)}
           onConfirm={async (hash) => {
             try {
-              const token = localStorage.getItem("his_token");
-              const headers = token ? { Authorization: `Bearer ${token}` } : {};
+              // Use the absolute endpoint (the global axios interceptor adds
+              // the bearer token). Bare `/api/...` was being resolved against
+              // the frontend host → 404 in any non-dev deployment.
               const nurseName = user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim();
               await axios.patch(
-                `/api/doctor-orders/${consentOrder._id}`,
-                { consentStatus: "Obtained", consentData: { fingerprintHash: hash, obtainedAt: new Date().toISOString(), nurseName } },
-                { headers }
+                `${API_ENDPOINTS.DOCTOR_ORDERS}/${consentOrder._id}`,
+                { consentStatus: "Obtained", consentData: { fingerprintHash: hash, obtainedAt: new Date().toISOString(), nurseName } }
               );
               toast.success("Biometric consent captured & stored");
               setConsentOrder(null);

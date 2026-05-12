@@ -626,8 +626,11 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
 
     setSaving(true);
     try {
-      const headers = { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("token")}` };
-      await axios.post(API_ENDPOINTS.DOCTOR_ORDERS, buildPayload(), { headers });
+      // Token is attached automatically by the global axios interceptor
+      // (reads `his_token`). Manual headers using the wrong key
+      // (`localStorage.getItem("token")` → null) used to send `Bearer null`
+      // and trigger a 401 + session wipe — removed.
+      await axios.post(API_ENDPOINTS.DOCTOR_ORDERS, buildPayload());
       toast.success(`${TYPE_MAP[selType]?.label} order placed`);
       resetForm();
       fetchOrders();
@@ -638,8 +641,7 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
 
   const cancelOrder = async (id) => {
     try {
-      const headers = { Authorization: `Bearer ${localStorage.getItem("token")}` };
-      await axios.delete(`${API_ENDPOINTS.DOCTOR_ORDERS}/${id}`, { headers });
+      await axios.delete(`${API_ENDPOINTS.DOCTOR_ORDERS}/${id}`);
       toast.success("Order cancelled");
       fetchOrders();
     } catch { toast.error("Cancel failed"); }
