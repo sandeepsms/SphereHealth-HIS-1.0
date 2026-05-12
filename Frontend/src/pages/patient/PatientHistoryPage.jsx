@@ -1,299 +1,544 @@
 /**
- * PatientHistoryPage.jsx
- * Full patient visit timeline — search patient → see all OPD/IPD/Emergency visits
- * Roles: Admin, Doctor, Nurse
+ * PatientHistoryPage.jsx — Full visit timeline for any patient
+ *
+ * Workflow:
+ *   1. Search by name / UHID / phone (or arrive with `?uhid=…` pre-filled)
+ *   2. Pick the patient → fetch OPD visits + IPD admissions + Emergency
+ *      visits in parallel
+ *   3. Show:
+ *      • Header card with patient identity, visit counters, last visit
+ *      • Tabs to filter the unified timeline (All / OPD / IPD / ER)
+ *      • Single chronological timeline (latest first)
+ *
+ * Uses the system rx-* design system (reception-shared.css) and drops the
+ * PrimeReact theme that made the page look alien.
  */
 
-import React, { useState, useRef } from "react";
-import { useNavigate } from "react-router-dom";
-import { InputText } from "primereact/inputtext";
-import { Button } from "primereact/button";
-import { Tag } from "primereact/tag";
-import { Toast } from "primereact/toast";
-import { ProgressSpinner } from "primereact/progressspinner";
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import axios from "axios";
+import { toast } from "react-toastify";
 import patientService from "../../Services/patient/patientService";
 import opdService from "../../Services/patient/opdService";
+import { API_ENDPOINTS } from "../../config/api";
+import "../reception/reception-shared.css";
 
-const fmtDate = (d) => d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
-const calcAge = (dob) => {
+/* ─── Formatters ─────────────────────────────────────────────── */
+const fmtDate = (d) =>
+  d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
+const fmtDateTime = (d) =>
+  d ? new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+const calcAge = (dob, fallback) => {
+  if (fallback) return `${fallback} yrs`;
   if (!dob) return "—";
-  const t = new Date(), b = new Date(dob);
-  let a = t.getFullYear() - b.getFullYear();
-  if (t.getMonth() - b.getMonth() < 0 || (t.getMonth() === b.getMonth() && t.getDate() < b.getDate())) a--;
+  const today = new Date(), b = new Date(dob);
+  if (isNaN(b)) return "—";
+  let a = today.getFullYear() - b.getFullYear();
+  if (today.getMonth() < b.getMonth() || (today.getMonth() === b.getMonth() && today.getDate() < b.getDate())) a -= 1;
   return a < 0 ? "—" : `${a} yrs`;
 };
+const initials = (name = "") =>
+  (name.trim().split(/\s+/).slice(0, 2).map(p => p[0] || "").join("") || "?").toUpperCase();
 
-const VISIT_COLORS = {
-  OPD:       { bg: "#e0f2fe", color: "#0369a1", border: "#bae6fd", icon: "pi-calendar" },
-  IPD:       { bg: "#ede9fe", color: "#5b21b6", border: "#c4b5fd", icon: "pi-bed" },
-  Emergency: { bg: "#fee2e2", color: "#991b1b", border: "#fca5a5", icon: "pi-bolt" },
+const docName = (d) => {
+  if (!d) return "—";
+  if (typeof d === "string") return d;
+  const pi = d.personalInfo || {};
+  const full = pi.fullName || [pi.firstName, pi.lastName].filter(Boolean).join(" ");
+  return full ? `Dr. ${full}` : d.name || "—";
+};
+const deptName = (d) => {
+  if (!d) return "—";
+  if (typeof d === "string") return d;
+  return d.departmentName || d.name || "—";
 };
 
+const TABS = [
+  { key: "ALL",       label: "All",       icon: "pi-history" },
+  { key: "OPD",       label: "OPD",       icon: "pi-user-plus" },
+  { key: "IPD",       label: "IPD",       icon: "pi-home" },
+  { key: "Emergency", label: "Emergency", icon: "pi-bolt" },
+];
+
+/* ─── Cross-route loaders ─────────────────────────────────────── */
+const loadAdmissions = async (patientId, uhid) => {
+  const BASE = API_ENDPOINTS.ADMISSIONS;
+  const extract = (r) => {
+    const d = r?.data?.admissions || r?.data?.data || r?.data;
+    return Array.isArray(d) ? d : null;
+  };
+  try {
+    const r = await axios.get(BASE, { params: { patientId, limit: 200 } });
+    const d = extract(r);
+    if (d) return d;
+  } catch { /* fall through */ }
+  if (uhid) {
+    try {
+      const r = await axios.get(BASE, { params: { UHID: uhid, limit: 200 } });
+      const d = extract(r);
+      if (d) return d;
+    } catch { /* fall through */ }
+  }
+  return [];
+};
+
+const loadEmergencies = async (patientId) => {
+  try {
+    const r = await axios.get(`${API_ENDPOINTS.EMERGENCY}/patient/${patientId}`);
+    const d = r?.data?.data || r?.data;
+    return Array.isArray(d) ? d : [];
+  } catch { return []; }
+};
+
+const loadOPDVisits = async (patientId) => {
+  try {
+    const r = await opdService.getPatientOPDHistory(patientId);
+    const d = r?.data?.data || r?.data;
+    return Array.isArray(d) ? d : [];
+  } catch { return []; }
+};
+
+/* ─── Page ────────────────────────────────────────────────────── */
 export default function PatientHistoryPage() {
   const navigate = useNavigate();
-  const toast = useRef(null);
+  const [params, setParams] = useSearchParams();
 
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searching, setSearching] = useState(false);
-  const [searchResults, setSearchResults] = useState([]);
-  const [searchDone, setSearchDone] = useState(false);
+  const [query, setQuery]               = useState(params.get("q") || "");
+  const [searching, setSearching]       = useState(false);
+  const [results, setResults]           = useState([]);
+  const [searchDone, setSearchDone]     = useState(false);
+  const debRef = useRef(null);
 
-  const [selectedPatient, setSelectedPatient] = useState(null);
-  const [opdHistory, setOpdHistory] = useState([]);
+  const [selected, setSelected]         = useState(null);
+  const [opd, setOpd]                   = useState([]);
+  const [adm, setAdm]                   = useState([]);
+  const [er,  setEr]                    = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [tab, setTab]                   = useState("ALL");
 
-  const doSearch = async () => {
-    if (searchQuery.trim().length < 2) return;
+  /* ── Search (debounced) ───────────────────────────────────── */
+  const runSearch = useCallback(async (q) => {
+    if (q.trim().length < 2) { setResults([]); setSearchDone(false); return; }
     setSearching(true);
-    setSearchDone(false);
-    setSelectedPatient(null);
     try {
-      const res = await patientService.searchPatients(searchQuery.trim(), 15);
-      setSearchResults(res.data || []);
+      const res = await patientService.searchPatients(q.trim(), 20);
+      setResults(res?.data || res || []);
     } catch (e) {
-      toast.current?.show({ severity: "error", summary: "Error", detail: e.message, life: 3000 });
+      toast.error(e?.message || "Search failed");
     } finally {
       setSearching(false);
       setSearchDone(true);
     }
-  };
+  }, []);
 
-  const selectPatient = async (patient) => {
-    setSelectedPatient(patient);
-    setOpdHistory([]);
+  useEffect(() => {
+    if (debRef.current) clearTimeout(debRef.current);
+    if (selected) return; // don't bug-search while viewing a patient
+    debRef.current = setTimeout(() => runSearch(query), 250);
+    return () => debRef.current && clearTimeout(debRef.current);
+  }, [query, selected, runSearch]);
+
+  /* ── Pick a patient & load full history ───────────────────── */
+  const selectPatient = useCallback(async (patient) => {
+    setSelected(patient);
+    setOpd([]); setAdm([]); setEr([]);
+    setTab("ALL");
     setLoadingHistory(true);
+    params.set("uhid", patient.UHID || "");
+    setParams(params, { replace: true });
     try {
-      const res = await opdService.getPatientOPDHistory(patient._id);
-      const list = res.data?.data || res.data || [];
-      setOpdHistory(Array.isArray(list) ? list : []);
-    } catch (e) { /* silent */ } finally {
+      const [opdList, admList, erList] = await Promise.all([
+        loadOPDVisits(patient._id),
+        loadAdmissions(patient._id, patient.UHID),
+        loadEmergencies(patient._id),
+      ]);
+      setOpd(opdList);
+      setAdm(admList);
+      setEr(erList);
+    } finally {
       setLoadingHistory(false);
     }
+  }, [params, setParams]);
+
+  /* ── Pre-load from ?uhid= query (deep link) ───────────────── */
+  useEffect(() => {
+    const uhid = params.get("uhid");
+    if (!uhid || selected) return;
+    (async () => {
+      try {
+        const { data } = await axios.get(`${API_ENDPOINTS.PATIENTS}/uhid/${uhid}`);
+        const p = data?.data || data;
+        if (p && p._id) selectPatient(p);
+      } catch { /* silent */ }
+    })();
+    // intentionally only on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const back = () => {
+    setSelected(null); setOpd([]); setAdm([]); setEr([]);
+    params.delete("uhid");
+    setParams(params, { replace: true });
   };
 
-  const totalVisits = selectedPatient
-    ? (selectedPatient.totalOPDVisits || 0) + (selectedPatient.totalIPDVisits || 0) + (selectedPatient.totalEmergencyVisits || 0)
-    : 0;
+  /* ── Build unified timeline ───────────────────────────────── */
+  const timeline = useMemo(() => {
+    const items = [];
+    opd.forEach((v) => items.push({
+      kind: "OPD",
+      date: v.visitDate || v.createdAt,
+      data: v,
+    }));
+    adm.forEach((a) => items.push({
+      kind: a.admissionType === "Day Care" || a.admissionType === "Daycare" ? "Daycare" :
+            a.admissionType === "Emergency" ? "Emergency" : "IPD",
+      date: a.admissionDate || a.admissionDateTime || a.createdAt,
+      data: a,
+    }));
+    er.forEach((e) => items.push({
+      kind: "Emergency",
+      date: e.arrivalDate || e.arrivalDateTime || e.createdAt,
+      data: e,
+    }));
+    return items
+      .filter((x) => x.date)
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
+  }, [opd, adm, er]);
+
+  const filtered = useMemo(() => {
+    if (tab === "ALL") return timeline;
+    if (tab === "IPD") return timeline.filter((x) => x.kind === "IPD" || x.kind === "Daycare");
+    if (tab === "Emergency") return timeline.filter((x) => x.kind === "Emergency");
+    return timeline.filter((x) => x.kind === tab);
+  }, [timeline, tab]);
+
+  /* ── Visit counters (from patient doc, fall back to live lists) ── */
+  const counters = useMemo(() => {
+    const p = selected || {};
+    return {
+      OPD:        p.totalOPDVisits        ?? opd.length,
+      IPD:        p.totalIPDVisits        ?? adm.filter(a => a.admissionType !== "Day Care" && a.admissionType !== "Daycare" && a.admissionType !== "Emergency").length,
+      Emergency:  p.totalEmergencyVisits  ?? Math.max(er.length, adm.filter(a => a.admissionType === "Emergency").length),
+      Daycare:    p.totalDaycareVisits    ?? adm.filter(a => a.admissionType === "Day Care" || a.admissionType === "Daycare").length,
+      Services:   p.totalServicesVisits   ?? 0,
+    };
+  }, [selected, opd, adm, er]);
+  const totalVisits = counters.OPD + counters.IPD + counters.Emergency + counters.Daycare + counters.Services;
 
   return (
-    <div style={{ maxWidth: 860, margin: "0 auto" }}>
-      <Toast ref={toast} />
-
-      {/* Header */}
-      <div style={{ background: "linear-gradient(135deg,#7c3aed,#6d28d9)", borderRadius: 14, padding: "20px 24px", marginBottom: 20, color: "#fff" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <i className="pi pi-clock" style={{ fontSize: 26 }} />
-          <div>
-            <div style={{ fontSize: 20, fontWeight: 700 }}>Patient Visit History</div>
-            <div style={{ opacity: .8, fontSize: 13 }}>Search any patient to view their complete visit timeline</div>
+    <div className="rx-page">
+      {/* ── Header ─────────────────────────────────────────────── */}
+      <div className="rx-header">
+        <div>
+          <div className="rx-header-title">
+            <i className="pi pi-history" /> Patient Visit History
+          </div>
+          <div className="rx-header-meta">
+            {selected
+              ? <>Viewing complete visit timeline for <strong>{selected.fullName}</strong></>
+              : <>Search any patient to view their complete OPD / IPD / Emergency visit timeline</>}
           </div>
         </div>
-      </div>
-
-      {/* Search */}
-      <div style={{ background: "#fff", borderRadius: 12, padding: "20px 24px", marginBottom: 20, boxShadow: "0 1px 6px rgba(0,0,0,.07)" }}>
-        <div style={{ display: "flex", gap: 10 }}>
-          <InputText value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && doSearch()}
-            placeholder="Search by Name, UHID, or Phone…" style={{ flex: 1, fontSize: 15, padding: "10px 14px" }} autoFocus />
-          <Button label={searching ? "Searching…" : "Search"} icon={searching ? "pi pi-spin pi-spinner" : "pi pi-search"}
-            onClick={doSearch} disabled={searching || searchQuery.trim().length < 2}
-            style={{ background: "#7c3aed", border: "none", padding: "10px 20px" }} />
+        <div className="rx-header-actions">
+          {selected && (
+            <button className="rx-btn-ghost" onClick={back}>
+              <i className="pi pi-arrow-left" /> Back to Search
+            </button>
+          )}
+          <button className="rx-btn-ghost" onClick={() => navigate(-1)}>
+            <i className="pi pi-times" /> Close
+          </button>
         </div>
       </div>
 
-      {/* Search Results */}
-      {searching && <div style={{ textAlign: "center", padding: 32 }}><ProgressSpinner style={{ width: 36, height: 36 }} /></div>}
+      {/* ── Search mode ───────────────────────────────────────── */}
+      {!selected && (
+        <>
+          <div className="rx-search rx-mb-12">
+            <i className="pi pi-search" />
+            <input
+              autoFocus
+              placeholder="Search by name, UHID (e.g. UH0001), or 10-digit mobile…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            {searching && <i className="pi pi-spin pi-spinner rx-spinner-info" />}
+            {query && !searching && (
+              <button className="rx-action-btn" onClick={() => setQuery("")}>
+                <i className="pi pi-times" />
+              </button>
+            )}
+          </div>
 
-      {searchDone && !searching && !selectedPatient && (
-        <div style={{ marginBottom: 16 }}>
-          {searchResults.length === 0 ? (
-            <div style={{ background: "#fff", borderRadius: 10, padding: 32, textAlign: "center", color: "#94a3b8", boxShadow: "0 1px 6px rgba(0,0,0,.06)" }}>
-              No patient found for "{searchQuery}"
+          {query.trim().length < 2 ? (
+            <div className="rx-empty">
+              <span className="rx-empty-icon">🔍</span>
+              Start typing to find a patient.
+              <div className="rx-empty-tip">Tip: minimum 2 characters — name, UHID, or mobile number.</div>
+            </div>
+          ) : searching ? (
+            <div className="rx-empty"><i className="pi pi-spin pi-spinner rx-loader-icon" /></div>
+          ) : searchDone && results.length === 0 ? (
+            <div className="rx-empty">
+              <span className="rx-empty-icon">😶</span>
+              No patient found for <strong>"{query}"</strong>
             </div>
           ) : (
-            <div>
-              <div style={{ fontSize: 13, color: "#64748b", marginBottom: 8 }}>{searchResults.length} patient(s) found — click to view history</div>
-              {searchResults.map(p => (
-                <div key={p._id} onClick={() => selectPatient(p)}
-                  style={{ background: "#fff", borderRadius: 10, padding: "14px 18px", marginBottom: 8, cursor: "pointer", boxShadow: "0 1px 6px rgba(0,0,0,.06)", border: "2px solid transparent", display: "flex", alignItems: "center", gap: 14, transition: "border-color .15s" }}
-                  onMouseEnter={e => e.currentTarget.style.borderColor = "#7c3aed"}
-                  onMouseLeave={e => e.currentTarget.style.borderColor = "transparent"}
-                >
-                  <div style={{ width: 44, height: 44, borderRadius: "50%", background: "#ede9fe", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <i className="pi pi-user" style={{ color: "#7c3aed", fontSize: 20 }} />
+            results.map((p) => (
+              <div
+                key={p._id}
+                className={`rx-mini-card ${p.gender === "Female" ? "is-female" : ""}`}
+                onClick={() => selectPatient(p)}
+              >
+                <div className="rx-mini-avatar">{initials(p.fullName)}</div>
+                <div className="rx-mini-info">
+                  <div className="rx-mini-name">
+                    {p.title} {p.fullName || "Unknown"}
+                    {p.isMLC && <span className="rx-card-stage rx-card-stage--denied">MLC</span>}
+                    {p.tpa && <span className="rx-card-stage rx-card-stage--submitted">TPA</span>}
+                    <span className="rx-mono-tag">{p.UHID}</span>
                   </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ fontWeight: 700, color: "#1e293b" }}>{p.title} {p.fullName}</span>
-                      <Tag value={p.UHID} severity="info" style={{ fontSize: 11, fontWeight: 700 }} />
-                    </div>
-                    <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
-                      {p.gender} · {calcAge(p.dateOfBirth)} · {p.contactNumber}
-                      {p.lastVisitDate && <span> · Last visit: {fmtDate(p.lastVisitDate)}</span>}
-                    </div>
+                  <div className="rx-mini-meta">
+                    <span>{p.gender || "—"}</span>
+                    <span>{calcAge(p.dateOfBirth, p.age)}</span>
+                    {p.contactNumber && <span>📱 <strong>{p.contactNumber}</strong></span>}
+                    {p.bloodGroup && p.bloodGroup !== "Unknown" && p.bloodGroup !== "Not Known" && (
+                      <span>🩸 <strong>{p.bloodGroup}</strong></span>
+                    )}
+                    {p.lastVisitDate && <span>Last: <strong>{fmtDate(p.lastVisitDate)}</strong></span>}
                   </div>
-                  <i className="pi pi-chevron-right" style={{ color: "#94a3b8" }} />
                 </div>
+                <button
+                  className="rx-action-btn rx-action-btn--primary"
+                  onClick={(e) => { e.stopPropagation(); selectPatient(p); }}
+                >
+                  <i className="pi pi-clock" /> View Timeline
+                </button>
+              </div>
+            ))
+          )}
+        </>
+      )}
+
+      {/* ── Selected patient view ─────────────────────────────── */}
+      {selected && (
+        <>
+          {/* Patient profile card */}
+          <div className="rx-detail-card rx-mb-12">
+            <div className="rx-detail-head">
+              <div className="rx-mini-avatar">{initials(selected.fullName)}</div>
+              <div className="rx-flex-1 rx-min-zero">
+                <div className="rx-detail-head-title">
+                  {selected.title} {selected.fullName}
+                  {selected.isMLC && <span className="rx-card-stage rx-card-stage--denied">MLC</span>}
+                  {selected.tpa && <span className="rx-card-stage rx-card-stage--submitted">TPA</span>}
+                </div>
+                <div className="rx-detail-head-sub">
+                  <span className="rx-mono-tag">UHID {selected.UHID}</span>
+                  &nbsp;·&nbsp;{selected.gender || "—"}
+                  &nbsp;·&nbsp;{calcAge(selected.dateOfBirth, selected.age)}
+                  {selected.contactNumber && <>&nbsp;·&nbsp;📱 {selected.contactNumber}</>}
+                  {selected.bloodGroup && selected.bloodGroup !== "Unknown" && selected.bloodGroup !== "Not Known" && (
+                    <>&nbsp;·&nbsp;🩸 {selected.bloodGroup}</>
+                  )}
+                  {selected.email && <>&nbsp;·&nbsp;{selected.email}</>}
+                </div>
+              </div>
+            </div>
+
+            <div className="rx-detail-body">
+              {/* Counter strip */}
+              <div className="rx-counter-row">
+                <CounterTile label="OPD"        value={counters.OPD}        variant="opd" />
+                <CounterTile label="IPD"        value={counters.IPD}        variant="ipd" />
+                <CounterTile label="ER"         value={counters.Emergency}  variant="er"  />
+                <CounterTile label="DAY"        value={counters.Daycare}    variant="opd" />
+                <CounterTile label="SVC"        value={counters.Services}   variant="ipd" />
+                <CounterTile label="TOTAL"      value={totalVisits}         variant="ipd" />
+              </div>
+            </div>
+          </div>
+
+          {/* Tabs */}
+          <div className="rx-tabs">
+            {TABS.map((t) => {
+              const count = t.key === "ALL" ? timeline.length :
+                            t.key === "IPD" ? timeline.filter(x => x.kind === "IPD" || x.kind === "Daycare").length :
+                            timeline.filter(x => x.kind === t.key).length;
+              return (
+                <button
+                  key={t.key}
+                  className={`rx-tab ${tab === t.key ? "rx-tab--active" : ""}`}
+                  onClick={() => setTab(t.key)}
+                >
+                  <i className={`pi ${t.icon}`} /> {t.label}
+                  <span className="rx-tab-count">{count}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Timeline */}
+          {loadingHistory ? (
+            <div className="rx-empty">
+              <i className="pi pi-spin pi-spinner rx-loader-icon" />
+              <div className="rx-mt-10">Building visit timeline…</div>
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="rx-empty">
+              <span className="rx-empty-icon">📋</span>
+              {tab === "ALL"
+                ? "No visit records on file yet."
+                : <>No <strong>{tab}</strong> visits on file.</>}
+            </div>
+          ) : (
+            <div className="rx-timeline">
+              {filtered.map((entry, idx) => (
+                <TimelineItem key={`${entry.kind}-${idx}-${entry.date}`} entry={entry} latest={idx === 0} />
               ))}
             </div>
           )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ─── Counter tile (matches PatientsTable view modal) ─────── */
+function CounterTile({ label, value, variant }) {
+  return (
+    <div className="rx-counter-tile">
+      <div className={`rx-counter-tile-value rx-counter-tile-value--${variant}`}>{value}</div>
+      <div className="rx-counter-tile-label">{label} VISITS</div>
+    </div>
+  );
+}
+
+/* ─── Single timeline entry ────────────────────────────────── */
+function TimelineItem({ entry, latest }) {
+  const k = entry.kind;
+  const cls =
+    k === "OPD"        ? "rx-tl-item--opd" :
+    k === "IPD"        ? "rx-tl-item--ipd" :
+    k === "Daycare"    ? "rx-tl-item--bill" :
+    k === "Emergency"  ? "rx-tl-item--emergency" : "";
+  const typeCls =
+    k === "OPD"        ? "rx-tl-type--opd" :
+    k === "IPD"        ? "rx-tl-type--ipd" :
+    k === "Daycare"    ? "rx-tl-type--ipd" :
+                         "rx-tl-type--emergency";
+
+  return (
+    <div className={`rx-tl-item ${cls}`}>
+      <div className="rx-tl-head">
+        <span className={`rx-tl-type ${typeCls}`}>{k}</span>
+        {latest && <span className="rx-card-stage rx-card-stage--active">Latest</span>}
+        <span className="rx-tl-date">{fmtDateTime(entry.date)}</span>
+      </div>
+      {k === "OPD"       && <OPDBody     v={entry.data} />}
+      {k === "IPD"       && <AdmBody     a={entry.data} />}
+      {k === "Daycare"   && <AdmBody     a={entry.data} />}
+      {k === "Emergency" && <ERBody      e={entry.data} />}
+    </div>
+  );
+}
+
+/* ─── Body renderers ───────────────────────────────────────── */
+function OPDBody({ v }) {
+  const dept = deptName(v.departmentId || v.department);
+  const doc  = docName(v.doctorId || v.doctor) || v.consultantName || "—";
+  const meds = v.prescribedMedications || [];
+  const vitals = v.vitals || {};
+  return (
+    <div>
+      <div className="rx-tl-meta">
+        {v.visitNumber && <><strong>{v.visitNumber}</strong> · </>}
+        {dept !== "—" && <>{dept} · </>}{doc}
+        {v.status && <> · <em>{v.status}</em></>}
+      </div>
+      {v.chiefComplaint && (
+        <div className="rx-tl-line"><span className="rx-tl-label">Complaint:</span> {v.chiefComplaint}</div>
+      )}
+      {v.provisionalDiagnosis && (
+        <div className="rx-tl-line"><span className="rx-tl-label">Diagnosis:</span> {v.provisionalDiagnosis}</div>
+      )}
+      {meds.length > 0 && (
+        <div className="rx-tl-line">
+          <span className="rx-tl-label">Medications:</span>{" "}
+          {meds.map(m => `${m.medicineName || m.name || ""} ${m.dosage || ""}`.trim()).filter(Boolean).join(" · ")}
         </div>
       )}
-
-      {/* Patient Profile + History */}
-      {selectedPatient && (
-        <div>
-          {/* Patient Card */}
-          <div style={{ background: "#fff", borderRadius: 12, padding: "20px 24px", marginBottom: 16, boxShadow: "0 1px 6px rgba(0,0,0,.07)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#ede9fe", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <i className="pi pi-user" style={{ color: "#7c3aed", fontSize: 26 }} />
-                </div>
-                <div>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: "#1e293b" }}>{selectedPatient.title} {selectedPatient.fullName}</div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
-                    <span style={{ background: "#7c3aed", color: "#fff", padding: "2px 10px", borderRadius: 20, fontSize: 13, fontWeight: 700, letterSpacing: 1 }}>{selectedPatient.UHID}</span>
-                    <span style={{ fontSize: 13, color: "#64748b" }}>{selectedPatient.gender} · {calcAge(selectedPatient.dateOfBirth)}</span>
-                    {selectedPatient.bloodGroup && <Tag value={selectedPatient.bloodGroup} severity="danger" style={{ fontSize: 11 }} />}
-                  </div>
-                  <div style={{ fontSize: 13, color: "#64748b", marginTop: 4 }}>
-                    <i className="pi pi-phone" style={{ fontSize: 11, marginRight: 4 }} />{selectedPatient.contactNumber}
-                    {selectedPatient.email && <span> · {selectedPatient.email}</span>}
-                  </div>
-                </div>
-              </div>
-              <Button label="Back to Search" icon="pi pi-arrow-left" className="p-button-outlined"
-                style={{ color: "#7c3aed", border: "1px solid #c4b5fd" }}
-                onClick={() => { setSelectedPatient(null); setOpdHistory([]); setSearchDone(false); }} />
-            </div>
-
-            {/* Visit counters */}
-            <div style={{ display: "flex", gap: 12, marginTop: 16, flexWrap: "wrap" }}>
-              {[
-                ["OPD Visits", selectedPatient.totalOPDVisits || 0, "#0369a1", "#e0f2fe"],
-                ["IPD Admissions", selectedPatient.totalIPDVisits || 0, "#5b21b6", "#ede9fe"],
-                ["Emergency", selectedPatient.totalEmergencyVisits || 0, "#991b1b", "#fee2e2"],
-                ["Total Visits", totalVisits, "#166534", "#dcfce7"],
-              ].map(([k, v, color, bg]) => (
-                <div key={k} style={{ background: bg, borderRadius: 8, padding: "10px 16px", textAlign: "center" }}>
-                  <div style={{ fontSize: 22, fontWeight: 700, color }}>{v}</div>
-                  <div style={{ fontSize: 11, color, opacity: .8 }}>{k}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* OPD History */}
-          <div style={{ background: "#fff", borderRadius: 12, padding: "20px 24px", boxShadow: "0 1px 6px rgba(0,0,0,.07)" }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: "#1e293b", marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
-              <i className="pi pi-calendar" style={{ color: "#0891b2" }} />
-              OPD Visit History
-              {!loadingHistory && <Tag value={`${opdHistory.length} visits`} severity="info" style={{ fontSize: 11 }} />}
-            </div>
-
-            {loadingHistory ? (
-              <div style={{ textAlign: "center", padding: 32 }}>
-                <ProgressSpinner style={{ width: 36, height: 36 }} />
-              </div>
-            ) : opdHistory.length === 0 ? (
-              <div style={{ textAlign: "center", padding: 24, color: "#94a3b8" }}>
-                <i className="pi pi-inbox" style={{ fontSize: 32 }} />
-                <div style={{ marginTop: 8 }}>No OPD visits on record</div>
-              </div>
-            ) : (
-              <div style={{ position: "relative" }}>
-                {/* Timeline line */}
-                <div style={{ position: "absolute", left: 23, top: 0, bottom: 0, width: 2, background: "#e2e8f0", zIndex: 0 }} />
-
-                {opdHistory.map((visit, i) => {
-                  const docName = visit.doctorId?.personalInfo
-                    ? `Dr. ${visit.doctorId.personalInfo.firstName || ""} ${visit.doctorId.personalInfo.lastName || ""}`.trim()
-                    : visit.consultantName || "—";
-                  const deptName = visit.departmentId?.departmentName || visit.department || "—";
-                  const isLatest = i === 0;
-
-                  return (
-                    <div key={visit._id} style={{ position: "relative", paddingLeft: 52, marginBottom: 16 }}>
-                      {/* Timeline dot */}
-                      <div style={{
-                        position: "absolute", left: 12, top: 14, width: 22, height: 22, borderRadius: "50%",
-                        background: isLatest ? "#0891b2" : "#e2e8f0",
-                        border: `3px solid ${isLatest ? "#0891b2" : "#cbd5e1"}`,
-                        zIndex: 1, display: "flex", alignItems: "center", justifyContent: "center"
-                      }}>
-                        {isLatest && <i className="pi pi-circle-fill" style={{ color: "#fff", fontSize: 6 }} />}
-                      </div>
-
-                      <div style={{ background: isLatest ? "#f0f9ff" : "#f8fafc", border: `1px solid ${isLatest ? "#bae6fd" : "#e2e8f0"}`, borderRadius: 10, padding: "14px 16px" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 6 }}>
-                          <div>
-                            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                              <span style={{ fontWeight: 700, color: "#0891b2", fontSize: 13 }}>{visit.visitNumber}</span>
-                              {isLatest && <Tag value="Latest" severity="success" style={{ fontSize: 10 }} />}
-                              <Tag value={`OPD #${visit.patientVisitSeq || i + 1}`} severity="info" style={{ fontSize: 10 }} />
-                            </div>
-                            <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{deptName} · {docName}</div>
-                          </div>
-                          <div style={{ textAlign: "right" }}>
-                            <div style={{ fontSize: 13, fontWeight: 600, color: "#1e293b" }}>{fmtDate(visit.visitDate)}</div>
-                            <Tag value={visit.status} severity={visit.status === "Completed" ? "success" : visit.status === "Waiting" ? "warning" : "info"} style={{ fontSize: 10 }} />
-                          </div>
-                        </div>
-
-                        <div style={{ marginTop: 10, fontSize: 13 }}>
-                          <div style={{ marginBottom: 4 }}>
-                            <strong style={{ color: "#475569" }}>Chief Complaint:</strong>{" "}
-                            <span style={{ color: "#1e293b" }}>{visit.chiefComplaint}</span>
-                          </div>
-                          {visit.provisionalDiagnosis && (
-                            <div style={{ marginBottom: 4 }}>
-                              <strong style={{ color: "#475569" }}>Diagnosis:</strong>{" "}
-                              <span style={{ color: "#0891b2" }}>{visit.provisionalDiagnosis}</span>
-                            </div>
-                          )}
-                          {visit.prescribedMedications?.length > 0 && (
-                            <div style={{ marginBottom: 4 }}>
-                              <strong style={{ color: "#475569" }}>Medications:</strong>{" "}
-                              <span style={{ color: "#1e293b" }}>{visit.prescribedMedications.map(m => `${m.medicineName} ${m.dosage || ""}`.trim()).join(" · ")}</span>
-                            </div>
-                          )}
-                          {visit.vitals && (visit.vitals.bloodPressure || visit.vitals.pulse) && (
-                            <div style={{ marginTop: 6, display: "flex", gap: 12, flexWrap: "wrap" }}>
-                              {visit.vitals.bloodPressure && <VitalChip label="BP" value={visit.vitals.bloodPressure} />}
-                              {visit.vitals.pulse && <VitalChip label="HR" value={`${visit.vitals.pulse} bpm`} />}
-                              {visit.vitals.temperature && <VitalChip label="Temp" value={`${visit.vitals.temperature}°F`} />}
-                              {visit.vitals.oxygenSaturation && <VitalChip label="SpO2" value={`${visit.vitals.oxygenSaturation}%`} />}
-                              {visit.vitals.weight && <VitalChip label="Wt" value={`${visit.vitals.weight} kg`} />}
-                            </div>
-                          )}
-                        </div>
-
-                        <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-                          <Tag value={visit.visitType} severity="secondary" style={{ fontSize: 10 }} />
-                          {visit.followUpRequired && visit.followUpDate && (
-                            <Tag value={`Follow-up: ${fmtDate(visit.followUpDate)}`} severity="warning" style={{ fontSize: 10 }} />
-                          )}
-                          {visit.vitalsStatus === "Done" && <Tag value="Vitals Done" severity="success" style={{ fontSize: 10 }} />}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+      {(vitals.bloodPressure || vitals.pulse || vitals.temperature || vitals.oxygenSaturation || vitals.weight) && (
+        <div className="rx-tl-vitals">
+          {vitals.bloodPressure   && <Vital k="BP"   v={vitals.bloodPressure} />}
+          {vitals.pulse           && <Vital k="HR"   v={`${vitals.pulse} bpm`} />}
+          {vitals.temperature     && <Vital k="Temp" v={`${vitals.temperature}°F`} />}
+          {vitals.oxygenSaturation && <Vital k="SpO2" v={`${vitals.oxygenSaturation}%`} />}
+          {vitals.weight          && <Vital k="Wt"   v={`${vitals.weight} kg`} />}
+        </div>
+      )}
+      {v.followUpRequired && v.followUpDate && (
+        <div className="rx-tl-line rx-text-warning">
+          <span className="rx-tl-label">Follow-up:</span> {fmtDate(v.followUpDate)}
         </div>
       )}
     </div>
   );
 }
 
-function VitalChip({ label, value }) {
+function AdmBody({ a }) {
+  const dept = deptName(a.department || a.departmentId);
+  const bed  = a.bedId?.bedNumber || a.bedNumber || a.bedAssigned || "—";
   return (
-    <span style={{ background: "#f1f5f9", borderRadius: 6, padding: "2px 8px", fontSize: 11, color: "#475569" }}>
-      <strong>{label}:</strong> {value}
-    </span>
+    <div>
+      <div className="rx-tl-meta">
+        {a.admissionNumber && <><strong>{a.admissionNumber}</strong> · </>}
+        {dept !== "—" && <>{dept} · </>}
+        Bed: <strong>{bed}</strong>
+        {a.attendingDoctor && <> · {a.attendingDoctor}</>}
+        {a.status && <> · <em>{a.status}</em></>}
+      </div>
+      {a.diagnosis && (
+        <div className="rx-tl-line"><span className="rx-tl-label">Diagnosis:</span> {a.diagnosis}</div>
+      )}
+      {a.dischargeDate && (
+        <div className="rx-tl-line"><span className="rx-tl-label">Discharged:</span> {fmtDateTime(a.dischargeDate)}</div>
+      )}
+      {a.estimatedCost != null && (
+        <div className="rx-tl-line"><span className="rx-tl-label">Estimated cost:</span> ₹{Number(a.estimatedCost).toLocaleString("en-IN")}</div>
+      )}
+      {a.totalCost != null && a.totalCost > 0 && (
+        <div className="rx-tl-line"><span className="rx-tl-label">Total billed:</span> ₹{Number(a.totalCost).toLocaleString("en-IN")}</div>
+      )}
+    </div>
   );
+}
+
+function ERBody({ e }) {
+  return (
+    <div>
+      <div className="rx-tl-meta">
+        {e.emergencyNumber && <><strong>{e.emergencyNumber}</strong> · </>}
+        Triage: <strong>{e.triageCategory || "—"}</strong>
+        {e.modeOfArrival && <> · Arrival: {e.modeOfArrival}</>}
+        {e.status && <> · <em>{e.status}</em></>}
+      </div>
+      {e.chiefComplaint && (
+        <div className="rx-tl-line"><span className="rx-tl-label">Complaint:</span> {e.chiefComplaint}</div>
+      )}
+      {e.provisionalDiagnosis && (
+        <div className="rx-tl-line"><span className="rx-tl-label">Diagnosis:</span> {e.provisionalDiagnosis}</div>
+      )}
+      {e.disposition && (
+        <div className="rx-tl-line"><span className="rx-tl-label">Disposition:</span> {e.disposition}</div>
+      )}
+      {e.isMLC && (
+        <div className="rx-tl-line rx-text-danger">MLC case</div>
+      )}
+    </div>
+  );
+}
+
+function Vital({ k, v }) {
+  return <span className="rx-vital-chip"><strong>{k}:</strong> {v}</span>;
 }
