@@ -185,6 +185,16 @@ class EmergencyService {
       .sort({ arrivalDate: -1 })
       .populate("patientId", "fullName UHID age gender contactNumber");
   }
+
+  // PUT /api/emergency/:emergencyNumber/triage — used by ER doctors / nurses
+  // to upgrade or downgrade triage as the patient's condition evolves.
+  async updateTriageCategory(emergencyNumber, triageCategory) {
+    return Emergency.findOneAndUpdate(
+      { emergencyNumber },
+      { triageCategory, triageTime: new Date() },
+      { new: true },
+    );
+  }
 }
 
 module.exports = new EmergencyService();
