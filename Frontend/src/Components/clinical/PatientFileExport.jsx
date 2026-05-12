@@ -49,7 +49,13 @@ export default function PatientFileExport({ patient, printRef, title = "Patient 
     return `${safe(patient?.UHID || "patient")}_${safe(patient?.fullName)}_${date}.pdf`;
   }, [patient]);
 
-  /** Print just the referenced DOM area, not the whole SPA chrome. */
+  /** Print just the referenced DOM area, not the whole SPA chrome.
+   *  In an SPA, the print region is nested deep inside #root, so a
+   *  simple `body > *:not(.pfe-printable)` CSS rule would hide the
+   *  whole tree. Instead we mark every ancestor of the print region
+   *  with `.pfe-printable-ancestor` so they remain visible during
+   *  print, and clean those classes up afterward.
+   */
   const onPrint = useCallback(() => {
     const node = printRef?.current;
     if (!node) {
@@ -57,26 +63,36 @@ export default function PatientFileExport({ patient, printRef, title = "Patient 
       return;
     }
     setBusy("print");
+    const ancestors = [];
     try {
-      // We add a body class that hides everything except .pfe-printable
-      // for the duration of the print. Style lives in patient-file-print.css.
+      // Walk from the print region up to <body>, tagging each ancestor.
+      let cur = node.parentElement;
+      while (cur && cur !== document.body) {
+        cur.classList.add("pfe-printable-ancestor");
+        ancestors.push(cur);
+        cur = cur.parentElement;
+      }
       document.body.classList.add("pfe-printing");
       node.classList.add("pfe-printable");
-      // Slight defer so the class flushes to the layout
+      // Defer so the classes flush before the browser snapshots layout
       setTimeout(() => {
         window.print();
-        // Cleanup after print dialog closes (afterprint fires reliably on
-        // modern browsers; we also add a safety timeout).
         const cleanup = () => {
           document.body.classList.remove("pfe-printing");
           node.classList.remove("pfe-printable");
+          ancestors.forEach((el) => el.classList.remove("pfe-printable-ancestor"));
           window.removeEventListener("afterprint", cleanup);
           setBusy("");
         };
         window.addEventListener("afterprint", cleanup);
-        setTimeout(cleanup, 60_000); // safety
+        // Safety net — some browsers don't fire afterprint reliably.
+        setTimeout(cleanup, 60_000);
       }, 50);
     } catch (e) {
+      // Make sure we don't leave the SPA stuck in print mode if we threw
+      document.body.classList.remove("pfe-printing");
+      node?.classList.remove("pfe-printable");
+      ancestors.forEach((el) => el.classList.remove("pfe-printable-ancestor"));
       toast.error("Print failed: " + (e?.message || "unknown"));
       setBusy("");
     }

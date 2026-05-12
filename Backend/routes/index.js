@@ -54,7 +54,10 @@ const dischargeSummaryRoutes = require("./Clinical/dischargeSummaryRoutes");
 const consentFormRoutes = require("./Clinical/consentFormRoutes");
 const nursingCarePlanRoutes = require("./Nurse/nursingCarePlanRoutes");
 const nursingAssessmentsRoutes = require("./Nurse/nursingAssessmentsRoutes");
-const aiRoutes = require("./AI/aiRoutes");
+// Path is lowercase 'ai' — uppercase 'AI' folder was a Windows
+// case-insensitive duplicate that shadowed this on case-sensitive
+// Linux deploys, shipping the old stub instead of the real Groq impl.
+const aiRoutes = require("./ai/aiRoutes");
 const marRoutes = require("./Clinical/marRoutes");
 const vitalSheetRoutes = require("./Vitals/vitalSheetRoutes");
 
