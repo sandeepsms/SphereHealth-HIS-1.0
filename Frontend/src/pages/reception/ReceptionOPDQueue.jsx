@@ -46,19 +46,35 @@ export default function ReceptionOPDQueue() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      // For today, the dedicated endpoint is faster; for other days use the paginated list.
-      let data;
-      if (date === todayISO()) {
-        ({ data } = await axios.get(`${API_ENDPOINTS.OPD}/today`));
+      // The Active tab is a live queue — patients keep waiting until someone
+      // marks them Completed, so we ignore the date filter and fetch ALL
+      // Waiting + In-Progress visits across days. Otherwise a patient seeded
+      // / registered yesterday but still Waiting silently disappears today.
+      //
+      // For Completed / Referred tabs we DO filter by date (these are
+      // per-day historical buckets the receptionist usually scans by day).
+      let visits = [];
+      if (tab === "Active") {
+        const [waitRes, inProgRes] = await Promise.all([
+          axios.get(`${API_ENDPOINTS.OPD}?limit=500&status=Waiting`),
+          axios.get(`${API_ENDPOINTS.OPD}?limit=500&status=In Progress`),
+        ]);
+        const waiting    = waitRes.data?.data || waitRes.data || [];
+        const inProgress = inProgRes.data?.data || inProgRes.data || [];
+        visits = [...waiting, ...inProgress];
+      } else if (date === todayISO()) {
+        // Completed/Referred for today — dedicated endpoint is faster.
+        const { data } = await axios.get(`${API_ENDPOINTS.OPD}/today`);
+        visits = data?.data || data || [];
       } else {
-        ({ data } = await axios.get(`${API_ENDPOINTS.OPD}?limit=500&date=${date}`));
+        const { data } = await axios.get(`${API_ENDPOINTS.OPD}?limit=500&date=${date}`);
+        visits = data?.data || data || [];
       }
-      const visits = data?.data || data || [];
       setList(visits);
     } catch (e) {
       toast.error("Could not load OPD queue");
     } finally { setLoading(false); }
-  }, [date]);
+  }, [date, tab]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -105,11 +121,23 @@ export default function ReceptionOPDQueue() {
       <div className="rx-header">
         <div>
           <div className="rx-header-title"><i className="pi pi-list" /> OPD Queue</div>
-          <div className="rx-header-meta">Live queue · Auto-refresh 30s · {filtered.length} visit{filtered.length === 1 ? "" : "s"} for {fmtDate(date)}</div>
+          <div className="rx-header-meta">
+            Live queue · Auto-refresh 30s · {filtered.length} visit{filtered.length === 1 ? "" : "s"}
+            {tab === "Active"
+              ? " · showing all currently Waiting / In-Progress patients (any date)"
+              : ` for ${fmtDate(date)}`}
+          </div>
         </div>
         <div className="rx-header-actions">
-          <input type="date" value={date} onChange={e => setDate(e.target.value)} max={todayISO()}
-                 className="rx-header-date" />
+          <input
+            type="date"
+            value={date}
+            onChange={e => setDate(e.target.value)}
+            max={todayISO()}
+            className="rx-header-date"
+            disabled={tab === "Active"}
+            title={tab === "Active" ? "Active queue ignores date — switch to Completed / Referred to pick a date" : "Pick a date"}
+          />
           <button className="rx-btn-ghost" onClick={load}><i className="pi pi-refresh" /> Refresh</button>
           <button className="rx-btn-primary" onClick={() => navigate("/reception/register?type=OPD")}>
             <i className="pi pi-plus" /> New OPD
@@ -147,7 +175,9 @@ export default function ReceptionOPDQueue() {
       ) : filtered.length === 0 ? (
         <div className="rx-empty">
           <span className="rx-empty-icon">📋</span>
-          No {tab.toLowerCase()} OPD visits {date !== todayISO() && `for ${fmtDate(date)}`}
+          {tab === "Active"
+            ? "No patients currently Waiting or In-Progress in the OPD queue."
+            : <>No {tab.toLowerCase()} OPD visits {date !== todayISO() && <>for {fmtDate(date)}</>}</>}
         </div>
       ) : groups.map(grp => (
         <div key={grp.doctor} className="rx-ward-block">
