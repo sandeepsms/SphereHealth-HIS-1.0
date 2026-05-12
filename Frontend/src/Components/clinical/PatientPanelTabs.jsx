@@ -195,7 +195,20 @@ export function NursingNotesExpandedTab({ nursingNotes = [] }) {
     ["discharge",  "📤 Discharge / SBAR"],
     ["mews",       "📊 MEWS Score"],
     ["daily",      "🗓️ Daily Assessment"],
+    ["careplan",   "💚 Care Plan"],
+    ["nutrition",  "🍎 Nutritional Assessment"],
+    ["education",  "📚 Patient Education"],
   ];
+
+  // Anything in `grouped` whose noteType isn't in ORDER (legacy / future
+  // categories) gets rendered under a generic "Other" bucket so it
+  // never silently disappears.
+  const KNOWN = new Set(ORDER.map(([k]) => k));
+  const otherKeys = Object.keys(grouped).filter((k) => !KNOWN.has(k));
+  if (otherKeys.length > 0) {
+    ORDER.push(["__other__", "🗂 Other Nursing Notes"]);
+    grouped.__other__ = otherKeys.flatMap((k) => grouped[k]);
+  }
 
   const totalShown = ORDER.reduce((acc, [k]) => acc + (grouped[k]?.length || 0), 0);
 
