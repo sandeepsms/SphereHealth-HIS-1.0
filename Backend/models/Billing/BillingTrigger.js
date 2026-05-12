@@ -17,10 +17,14 @@ const BillingTriggerSchema = new mongoose.Schema({
   totalAmount:  { type: Number, default: 0 },
 
   // ── Clinical source ─────────────────────────────────────────
+  // "Admission", "BedCharge", "Emergency" are fired by autoBillingService
+  // for registration / bed-day / ER-triage charges — without them, those
+  // events silently fail validation and patients are billed nothing.
   sourceType: {
     type: String,
     enum: ["NurseNote","DoctorNote","DoctorAssessment","MAR","InvestigationOrder",
-           "Equipment","CarePlan","Discharge","Procedure","DoctorVisit","Manual","AutoCharge"],
+           "Equipment","CarePlan","Discharge","Procedure","DoctorVisit","Manual","AutoCharge",
+           "Admission","BedCharge","Emergency"],
     required: true },
   sourceDocumentId:    { type: mongoose.Schema.Types.ObjectId },
   sourceDocumentModel: String, // "NurseNote", "DoctorNote", "MAR", etc.
