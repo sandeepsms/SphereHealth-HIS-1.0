@@ -392,16 +392,30 @@ class BillingService {
   // ── 14. Daycare → IPD conversion ──────────────────────────────
   async checkAndHandleDaycareConversion(admissionId) {
     const admission = await Admission.findById(admissionId).populate("patient");
-    if (!admission || admission.admissionType !== "DAYCARE") return null;
+    // Admission.admissionType enum is mixed-case — "Daycare" or "Day Care".
+    // The legacy "DAYCARE" string never matched, so this endpoint always
+    // short-circuited to null and the auto-conversion to IPD never fired.
+    const isDaycare = admission &&
+      ["Daycare", "Day Care"].includes(admission.admissionType);
+    if (!isDaycare) return null;
 
-    const hours = admission.totalHoursAdmitted;
-    const exceeded = hours > admission.daycareMaxHours;
+    // Derive hours since admission — `totalHoursAdmitted` is not a schema
+    // field, so compute on the fly. Default max-hours window is 24h unless
+    // the admission carries an explicit override.
+    const admittedAt = admission.admissionDate || admission.createdAt;
+    const hours = admittedAt
+      ? (Date.now() - new Date(admittedAt).getTime()) / (1000 * 60 * 60)
+      : 0;
+    const maxHours = admission.daycareMaxHours || 24;
+    const exceeded = hours > maxHours;
 
     if (exceeded && !admission.isConvertedToIPD) {
       admission.isConvertedToIPD = true;
       admission.convertedToIPDAt = new Date();
-      admission.conversionReason = `Exceeded ${admission.daycareMaxHours}hr daycare limit`;
-      admission.admissionType = "IPD";
+      admission.conversionReason = `Exceeded ${maxHours}hr daycare limit`;
+      // "Planned" is the closest valid enum value for a converted IPD stay
+      // ("IPD" itself isn't in the admissionType enum).
+      admission.admissionType = "Planned";
       await admission.save();
 
       await PatientBill.updateMany(
@@ -426,14 +440,14 @@ class BillingService {
       return {
         converted: true,
         hours,
-        message: `Patient converted to IPD after ${hours} hours`,
+        message: `Patient converted to IPD after ${hours.toFixed(1)} hours`,
       };
     }
 
     return {
       converted: false,
       hours,
-      remaining: Math.max(0, admission.daycareMaxHours - hours),
+      remaining: Math.max(0, maxHours - hours),
     };
   }
 
