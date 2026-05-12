@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const userController = require("../../controllers/User/userController");
+const { authenticate } = require("../../middleware/auth");
 
 router.post("/", userController.createUser);
 
@@ -29,7 +30,8 @@ router.get("/employee/:employeeId", userController.getUserByEmployeeId);
 
 // `/change-password` MUST be declared BEFORE the param routes — otherwise
 // Express matches `/:id` first and runs updateUser with id="change-password".
-router.put("/change-password", userController.changePassword);
+// The controller reads req.user.id, so authentication is mandatory.
+router.put("/change-password", authenticate, userController.changePassword);
 
 router.get("/:id", userController.getUserById);
 

@@ -276,7 +276,8 @@ class PatientService {
      Returns visits sorted by date desc
   ══════════════════════════════════════════════ */
   async getPatientHistory(patientId) {
-    const Admission = require("../../models/Admission/admissionModel");
+    // Admission model lives under `models/Patient/` — old path was a dead require.
+    const Admission = require("../../models/Patient/admissionModel");
 
     const [patient, admissions] = await Promise.all([
       Patient.findById(patientId)
