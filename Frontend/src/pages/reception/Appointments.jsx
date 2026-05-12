@@ -256,7 +256,13 @@ function BookAppointmentModal({ onClose, onDone, defaultDate }) {
     try {
       const doctor = doctors.find(d => d._id === doctorId);
       await axios.post(`${API_ENDPOINTS.BASE}/appointments`, {
-        patientId, UHID: uhid, patientName, patientPhone: phone,
+        // Don't send empty-string ObjectIds — Mongoose 8 throws CastError.
+        // The backend tolerates missing patientId / UHID and creates a
+        // stub Patient at check-in time.
+        patientId: patientId || undefined,
+        UHID:      uhid || undefined,
+        patientName,
+        patientPhone: phone,
         doctorId,
         doctorName: doctor?.personalInfo?.fullName || doctor?.fullName || "",
         // Doctor schema stores `department` at the ROOT (ObjectId ref), not under
