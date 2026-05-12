@@ -3,10 +3,11 @@
  * Purple/indigo theme. Tabs: Overview | Clinical Notes | Nursing Records |
  *   Vital Trends | Medications & Orders | Billing | Emergency
  */
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import axios from "axios";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
+import PatientFileExport from "../../Components/clinical/PatientFileExport";
 
 const BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
 
@@ -1679,6 +1680,9 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
   const [searchInput, setSearchInput] = useState(searchParams.get("uhid")||"");
   const [activeUhid,  setActiveUhid]  = useState(searchParams.get("uhid")||"");
   const [activeTab,   setActiveTab]   = useState("overview");
+  // Ref to the loaded-patient region — used by PatientFileExport
+  // to print / PDF / generate a QR for the currently viewed file.
+  const printAreaRef = useRef(null);
 
   const [patient,       setPatient]       = useState(null);
   const [admission,     setAdmission]     = useState(null);
@@ -1912,7 +1916,7 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
       {loading && <Spin/>}
 
       {!loading && loaded && (
-        <>
+        <div ref={printAreaRef}>
           {/* Patient strip */}
           <div style={{margin:"16px 28px 0",background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:"14px 22px",display:"flex",gap:18,alignItems:"center",flexWrap:"wrap",boxShadow:"0 2px 8px rgba(0,0,0,.05)"}}>
             <div style={{width:50,height:50,borderRadius:"50%",background:C.primaryM,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>👤</div>
@@ -1929,6 +1933,8 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
               {admission?.admissionNumber && <Badge color={C.blue} bg={C.blueL}>IPD: {admission.admissionNumber}</Badge>}
               <SBadge status={admission?.status||"Active"}/>
               {admission?.department && <span style={{fontSize:12,color:C.muted}}>{admission.department}</span>}
+              {/* Print / PDF / QR-share — applies to the currently loaded patient file */}
+              <PatientFileExport patient={patient} printRef={printAreaRef} title={`${patient?.fullName||"Patient"} — Doctor view`} />
             </div>
           </div>
 
@@ -1984,7 +1990,7 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
             </div>
           </div>
           <div style={{height:40}}/>
-        </>
+        </div>
       )}
 
       {/* Empty state */}

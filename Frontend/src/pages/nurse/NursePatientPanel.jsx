@@ -3,10 +3,11 @@
  * Teal/green theme (matches NursingNotes page). Tabs: Overview | Vital Trends | Nursing Notes |
  *   Doctor Orders | Medications | Billing | Emergency
  */
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import axios from "axios";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
+import PatientFileExport from "../../Components/clinical/PatientFileExport";
 
 const BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
 
@@ -1758,6 +1759,8 @@ function NursePatientPanelContent({ selectedAdmission }) {
   const [loading,    setLoading]    = useState(false);
   const [error,      setError]      = useState("");
   const [loaded,     setLoaded]     = useState(false);
+  // Print / PDF / QR-share target
+  const printAreaRef = useRef(null);
 
   const [patient,      setPatient]      = useState(null);
   const [admission,    setAdmission]    = useState(null);
@@ -1939,7 +1942,7 @@ function NursePatientPanelContent({ selectedAdmission }) {
 
         {/* Loaded */}
         {!loading && loaded && (
-          <>
+          <div ref={printAreaRef}>
             {/* Patient banner */}
             <div style={{background:`linear-gradient(135deg,${C.primaryL},${C.rose50})`,border:`1px solid ${C.rose200}`,borderRadius:14,padding:"16px 22px",marginBottom:16,display:"flex",alignItems:"center",gap:18,flexWrap:"wrap"}}>
               <div style={{width:52,height:52,borderRadius:"50%",background:C.primary,color:"white",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,fontWeight:700,flexShrink:0}}>
@@ -1954,10 +1957,12 @@ function NursePatientPanelContent({ selectedAdmission }) {
                   {patient?.bloodGroup && <> · 🩸 {patient.bloodGroup}</>}
                 </div>
               </div>
-              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
                 {admission?.admissionNumber && <Badge color={C.primaryD} bg={C.primaryL}>IPD: {admission.admissionNumber}</Badge>}
                 <SBadge status={admission?.status}/>
                 {admission?.department && <Badge color={C.muted} bg="#f1f5f9">{admission.department}</Badge>}
+                {/* Print / PDF / QR-share for the full nursing file view */}
+                <PatientFileExport patient={patient} printRef={printAreaRef} title={`${patName} — Nursing view`} />
               </div>
             </div>
 
@@ -2040,7 +2045,7 @@ function NursePatientPanelContent({ selectedAdmission }) {
             {activeTab==="meds"      && <MedicationsTab doctorNotes={doctorNotes} doctorOrders={doctorOrders}/>}
             {activeTab==="billing"   && <BillingTab billing={billing}/>}
             {activeTab==="emergency" && <EmergencyTab emergency={emergency}/>}
-          </>
+          </div>
         )}
       </div>
 
