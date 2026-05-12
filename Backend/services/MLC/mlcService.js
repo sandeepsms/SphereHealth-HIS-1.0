@@ -88,25 +88,38 @@ class MLCService {
         lastName:  doctorDoc.personalInfo?.lastName,
       });
       for (const cand of candidates) {
-        // Attempt to claim this prefix only if the doctor still has none
-        // AND no other doctor already owns it. Returns the updated doc on
-        // success, null on conflict — then we try the next candidate.
+        // Two failure modes possible:
+        //   (a) duplicate-key (11000) — `cand` is owned by ANOTHER doctor
+        //   (b) `claimed === null` — the filter didn't match because a
+        //       concurrent same-doctor create has already set this doctor's
+        //       prefix to something else (then our filter `mlcPrefix ∈
+        //       [null, ""]` no longer hits). We must NOT keep looping — that
+        //       would let us overwrite the just-assigned prefix with a
+        //       different candidate. Instead, re-read and reuse the winner's
+        //       prefix.
+        let duplicateKey = false;
         const claimed = await Doctor.findOneAndUpdate(
-          { _id: doctorDoc._id, mlcPrefix: { $in: [null, ""] } },
-          { mlcPrefix: cand },
+          { _id: doctorDoc._id, $or: [{ mlcPrefix: null }, { mlcPrefix: "" }, { mlcPrefix: { $exists: false } }] },
+          { $set: { mlcPrefix: cand } },
           { new: true },
         ).catch((err) => {
-          // Unique index violation → another doctor owns this prefix
-          if (err?.code === 11000) return null;
+          if (err?.code === 11000) { duplicateKey = true; return null; }
           throw err;
         });
+
         if (claimed?.mlcPrefix === cand) { prefix = cand; break; }
-        if (claimed && claimed.mlcPrefix && claimed.mlcPrefix !== cand) {
-          // Race: another concurrent MLC for this same doctor assigned a
-          // different prefix first — re-use it.
-          prefix = claimed.mlcPrefix; break;
+
+        if (!duplicateKey) {
+          // Filter-miss (NOT a duplicate-key) → another concurrent
+          // create for the SAME doctor has already pinned a prefix. Re-read
+          // and reuse it — never try another candidate.
+          const fresh = await Doctor.findById(doctorDoc._id).select("mlcPrefix").lean();
+          if (fresh?.mlcPrefix) { prefix = fresh.mlcPrefix; break; }
+          // Otherwise the doc disappeared — fail loudly.
+          throw new Error("Doctor record vanished while assigning MLR prefix");
         }
-        // Else: this candidate was already taken; loop and try the next.
+        // duplicateKey === true → this candidate is owned by a different
+        // doctor. Loop and try the next.
       }
       if (!prefix) throw new Error("Could not assign an MLR prefix for this doctor");
     }

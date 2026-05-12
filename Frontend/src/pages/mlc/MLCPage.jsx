@@ -325,8 +325,11 @@ function MLCFormModal({ existing, onClose, onSaved }) {
           setSelectedDoctor({ _id: "self", personalInfo: { fullName: user.fullName || user.firstName || "Self" } });
           return;
         }
+        // doctorService.getAllDoctors already unwraps to the raw array, so
+        // we must NOT treat it as a wrapper. Mirror the pattern used by
+        // ReceptionConsole — accept either an array or {data: [...]}.
         const r = await doctorService.getAllDoctors?.();
-        const list = r?.data?.data || r?.data || r?.doctors || [];
+        const list = Array.isArray(r) ? r : (r?.data || r?.doctors || []);
         setDoctors(Array.isArray(list) ? list : []);
         if (existing?.doctorId) {
           const d = list.find(x => String(x._id) === String(existing.doctorId?._id || existing.doctorId));
