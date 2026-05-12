@@ -53,6 +53,7 @@ const bedTransferRoutes = require("./Patient/bedTransferRoutes");
 const dischargeSummaryRoutes = require("./Clinical/dischargeSummaryRoutes");
 const consentFormRoutes = require("./Clinical/consentFormRoutes");
 const nursingCarePlanRoutes = require("./Nurse/nursingCarePlanRoutes");
+const nursingAssessmentsRoutes = require("./Nurse/nursingAssessmentsRoutes");
 const marRoutes = require("./Clinical/marRoutes");
 const vitalSheetRoutes = require("./Vitals/vitalSheetRoutes");
 
@@ -110,6 +111,7 @@ router.use("/investigation-orders", investigationOrderRoutes);
 router.use("/discharge-summary", dischargeSummaryRoutes);
 router.use("/consent-forms", consentFormRoutes);
 router.use("/nursing-care-plans", nursingCarePlanRoutes);
+router.use("/nursing-assessments", nursingAssessmentsRoutes);
 router.use("/mar", marRoutes);
 router.use("/nursing-charges", nursingChargesRoutes);
 router.use("/hospital-settings", hospitalSettingsRoutes);

@@ -1,8 +1,13 @@
 // frontend/hooks/useBilling.js
 import { useState, useCallback } from "react";
 import axios from "axios";
+import { API_ENDPOINTS } from "../config/api";
 
-const BASE = `${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api`;
+// API_ENDPOINTS.BASE already includes the `/api` segment so callers can
+// just append the resource path. Previous code used VITE_API_URL which
+// the rest of the app doesn't set — production builds were pointing at
+// localhost.
+const BASE = API_ENDPOINTS.BASE;
 
 // ═══════════════════════════════════════════════════════════════
 // useBilling Hook

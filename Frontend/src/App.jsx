@@ -178,6 +178,9 @@ const homeForRole = (role) => {
     case "Lab Technician":   return "/investigation-orders";
     case "Radiologist":      return "/investigation-orders";
     case "Accountant":       return "/billing";
+    case "Ward Boy":         return "/bed-visual";
+    case "Dietician":        return "/vitalSheet";
+    case "Physiotherapist":  return "/updateVitalSheet";
     default:                 return "/mainpage";
   }
 };

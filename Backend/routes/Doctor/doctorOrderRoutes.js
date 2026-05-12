@@ -492,6 +492,55 @@ router.post("/:id/doctor-action", async (req, res) => {
 });
 
 /* ═══════════════════════════════════════════════════
+   Telephonic-order countersign / reject (NABH MOM.4.c)
+═══════════════════════════════════════════════════ */
+/**
+ * POST /:id/countersign
+ * Body: { type: "countersign" | "reject", doneBy: String, rejectedReason?: String }
+ * Doctor either countersigns a telephonic order or rejects it. Audit trail
+ * is appended either way.
+ */
+router.post("/:id/countersign", async (req, res) => {
+  try {
+    const { type = "countersign", doneBy = "Doctor", rejectedReason } = req.body || {};
+    const order = await DoctorOrder.findById(req.params.id);
+    if (!order) return res.status(404).json({ ok: false, message: "Not found" });
+
+    const now = new Date();
+    order.telephonicData = order.telephonicData || {};
+
+    if (type === "reject") {
+      order.telephonicData.countersignStatus = "rejected";
+      order.telephonicData.rejectedAt        = now;
+      order.telephonicData.rejectedBy        = doneBy;
+      order.telephonicData.rejectedReason    = rejectedReason || "Rejected by doctor";
+      order.status = "Cancelled";
+      (order.auditLog || (order.auditLog = [])).push({
+        step: "Telephonic Order Rejected",
+        doneBy,
+        doneAt: now,
+        notes: rejectedReason || "Rejected on countersign",
+      });
+    } else {
+      order.telephonicData.countersignStatus = "countersigned";
+      order.telephonicData.countersignedAt   = now;
+      order.telephonicData.countersignedBy   = doneBy;
+      (order.auditLog || (order.auditLog = [])).push({
+        step: "Telephonic Order Countersigned",
+        doneBy,
+        doneAt: now,
+        notes: "Countersigned via Doctor Patient Panel",
+      });
+    }
+
+    await order.save();
+    return res.json({ ok: true, data: order });
+  } catch (err) {
+    return res.status(400).json({ ok: false, message: err.message });
+  }
+});
+
+/* ═══════════════════════════════════════════════════
    SEED DEMO DATA — for testing NABH compliance
 ═══════════════════════════════════════════════════ */
 /**

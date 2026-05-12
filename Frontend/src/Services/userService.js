@@ -41,8 +41,14 @@ export const RegistrationOPD = async (data) => {
 
 export const getPatients = async (data) => {
   try {
-    const response = await axios.get(`${API_BASE_URL}/patients/getAllPatients`);
-    return response.data;
+    // Backend mounts `GET /api/patients` for the paginated list. Old path
+    // `/patients/getAllPatients` triggers CastError on `/:id` route.
+    // Request a large limit so vital-sheet patient pickers see everyone.
+    const response = await axios.get(`${API_BASE_URL}/patients`, { params: { limit: 1000 } });
+    // Controller returns `{ success, data, totalPages, currentPage, totalPatients }`.
+    // Unwrap to a flat array so callers that do `.find(...)` keep working.
+    const payload = response.data;
+    return Array.isArray(payload) ? payload : (payload?.data || []);
   } catch (error) {
     console.error("Error posting get data:", error);
     throw error;

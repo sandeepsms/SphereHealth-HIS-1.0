@@ -16,11 +16,14 @@ router.get(
   "/triage/:triageCategory",
   emergencyController.getEmergenciesByTriage
 );
-router.get("/:emergencyNumber", emergencyController.getEmergencyVisitById);
+// `/patient/:patientId` MUST be BEFORE `/:emergencyNumber` — else Express
+// matches the param route first and runs getEmergencyVisitById with
+// emergencyNumber="patient" → 404.
 router.get(
   "/patient/:patientId",
   emergencyController.getPatientEmergencyHistory
 );
+router.get("/:emergencyNumber", emergencyController.getEmergencyVisitById);
 router.put("/:emergencyNumber", emergencyController.updateEmergencyVisit);
 router.delete("/:emergencyNumber", emergencyController.deleteEmergencyVisit);
 router.post(

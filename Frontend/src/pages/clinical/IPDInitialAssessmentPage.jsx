@@ -572,10 +572,10 @@ function IPDInitialAssessmentContent({ selectedPatient }) {
       const payload = buildPayload(section, sign ? "signed" : "draft");
       let res;
       if (noteId) {
-        res = await axios.put(`${API_ENDPOINTS.BASE}/doctorNotes/${noteId}`, payload);
-        if (sign) await axios.patch(`${API_ENDPOINTS.BASE}/doctorNotes/${noteId}/sign`);
+        res = await axios.put(`${API_ENDPOINTS.DOCTOR_NOTES}/${noteId}`, payload);
+        if (sign) await axios.patch(`${API_ENDPOINTS.DOCTOR_NOTES}/${noteId}/sign`);
       } else {
-        res = await axios.post(`${API_ENDPOINTS.BASE}/doctorNotes`, payload);
+        res = await axios.post(`${API_ENDPOINTS.DOCTOR_NOTES}`, payload);
         setNoteId(res.data?.data?._id || res.data?._id);
       }
       // On sign-off, mark the corresponding initial assessment flag on the admission

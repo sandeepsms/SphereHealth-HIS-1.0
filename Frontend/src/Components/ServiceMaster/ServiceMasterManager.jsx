@@ -14,6 +14,7 @@ import { InputNumber } from "primereact/inputnumber";
 import { InputSwitch } from "primereact/inputswitch";
 import { TabView, TabPanel } from "primereact/tabview";
 import { useBilling } from "../../hooks/useBilling";
+import { API_ENDPOINTS } from "../../config/api";
 
 // ── Select options ─────────────────────────────────────────────
 const CATEGORIES = [
@@ -128,9 +129,7 @@ export default function ServiceMasterManager() {
   const loadTPA = async () => {
     try {
       const { data } = await import("axios").then((m) =>
-        m.default.get(
-          `${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/tpa`,
-        ),
+        m.default.get(API_ENDPOINTS.TPA),
       );
       setTpaList(
         (data.data || []).map((t) => ({ label: t.tpaName, value: t._id })),

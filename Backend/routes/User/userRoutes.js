@@ -27,6 +27,10 @@ router.post("/hod/assign", userController.assignHOD);
 
 router.get("/employee/:employeeId", userController.getUserByEmployeeId);
 
+// `/change-password` MUST be declared BEFORE the param routes — otherwise
+// Express matches `/:id` first and runs updateUser with id="change-password".
+router.put("/change-password", userController.changePassword);
+
 router.get("/:id", userController.getUserById);
 
 router.put("/:id", userController.updateUser);
@@ -38,7 +42,5 @@ router.put("/:id/activate", userController.activateUser);
 router.put("/:id/reset-password", userController.adminResetPassword);
 
 router.patch("/:id/signature", userController.adminSetSignature);
-
-router.put("/change-password", userController.changePassword);
 
 module.exports = router;
