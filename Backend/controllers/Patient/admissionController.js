@@ -30,7 +30,12 @@ class AdmissionController {
   });
 
   getAllAdmissions = handle(async (req, res) => {
-    const result = await AdmissionService.getAllAdmissions(req.query);
+    const filters = { ...req.query };
+    // Doctor scope: only their own admitted patients (set by attachDoctorProfile)
+    if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
+      filters.attendingDoctorId = req.doctorProfile._id;
+    }
+    const result = await AdmissionService.getAllAdmissions(filters);
     return res.json({ success: true, ...result });
   });
 
@@ -40,12 +45,22 @@ class AdmissionController {
   });
 
   getActiveAdmissions = handle(async (req, res) => {
-    const admissions = await AdmissionService.getActiveAdmissions(req.query);
+    const filters = { ...req.query };
+    if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
+      filters.attendingDoctorId = req.doctorProfile._id;
+    }
+    const admissions = await AdmissionService.getActiveAdmissions(filters);
     return res.json({ success: true, data: admissions });
   });
 
   getTodayAdmissions = handle(async (req, res) => {
-    const admissions = await AdmissionService.getTodayAdmissions();
+    // Doctor scope filters in-memory because getTodayAdmissions() doesn't
+    // accept filters yet — fast enough for "today" lists.
+    let admissions = await AdmissionService.getTodayAdmissions();
+    if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
+      const docId = String(req.doctorProfile._id);
+      admissions = admissions.filter(a => String(a.attendingDoctorId) === docId);
+    }
     return res.json({ success: true, data: admissions });
   });
 

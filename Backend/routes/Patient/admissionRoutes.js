@@ -1,7 +1,11 @@
 const express = require("express");
 const router = express.Router();
 const ctrl = require("../../controllers/Patient/admissionController");
-const { authenticate, authorize } = require("../../middleware/auth");
+const { authenticate, authorize, attemptAuth, attachDoctorProfile } = require("../../middleware/auth");
+
+// Soft-auth + doctor profile resolver so list endpoints can auto-restrict
+// to "only this doctor's admitted patients" when the caller is a Doctor.
+router.use(attemptAuth, attachDoctorProfile);
 
 // ── Statistics ───────────────────────────────────────────────
 router.get("/statistics", ctrl.getAdmissionStatistics);

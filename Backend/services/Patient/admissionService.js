@@ -261,6 +261,10 @@ class AdmissionService {
         $regex: filters.attendingDoctor,
         $options: "i",
       };
+    // ObjectId-based doctor filter (used by role=Doctor auto-scope to
+    // restrict the IPD/Daycare/ER list to that doctor's own admissions).
+    if (filters.attendingDoctorId && mongoose.isValidObjectId(String(filters.attendingDoctorId)))
+      query.attendingDoctorId = new mongoose.Types.ObjectId(String(filters.attendingDoctorId));
     // Accept both ?UHID= and ?uhid= query params
     const uhidFilter = filters.UHID || filters.uhid;
     if (uhidFilter) query.UHID = { $regex: uhidFilter, $options: "i" };
@@ -344,6 +348,8 @@ class AdmissionService {
         $regex: filters.attendingDoctor,
         $options: "i",
       };
+    if (filters.attendingDoctorId && mongoose.isValidObjectId(String(filters.attendingDoctorId)))
+      query.attendingDoctorId = new mongoose.Types.ObjectId(String(filters.attendingDoctorId));
     if (filters.wardId) query.wardId = filters.wardId;
 
     const bedFilter = filters.bedId || filters.bed;

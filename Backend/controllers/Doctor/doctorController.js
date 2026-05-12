@@ -92,6 +92,31 @@ exports.getAllDoctors = async (req, res) => {
 };
 
 /* ---------------------------------- */
+/* ---------------------------------- */
+/* GET /api/doctors/me — Doctor profile for the logged-in user */
+/* ---------------------------------- */
+exports.getMyDoctorProfile = async (req, res) => {
+  try {
+    if (!req.user?.id) return res.status(401).json({ success: false, message: "Not authenticated" });
+    if (req.user.role !== "Doctor")
+      return res.status(403).json({ success: false, message: "Only doctor users have a doctor profile" });
+
+    const Doctor = require("../../models/Doctor/doctorModel");
+    const doctor = await Doctor.findOne({ loginUserId: req.user.id })
+      .populate("department", "departmentName departmentCode")
+      .lean();
+    if (!doctor) {
+      return res.status(404).json({
+        success: false,
+        message: "No linked Doctor record for this user. Ask admin to run seedRoleUsers.",
+      });
+    }
+    return res.json({ success: true, data: doctor });
+  } catch (e) {
+    return res.status(500).json({ success: false, message: e.message });
+  }
+};
+
 /* Get Doctor By ID */
 /* ---------------------------------- */
 

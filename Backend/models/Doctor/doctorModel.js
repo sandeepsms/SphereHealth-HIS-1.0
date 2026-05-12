@@ -101,6 +101,16 @@ const DoctorSchema = new mongoose.Schema(
     },
 
     isActive: { type: Boolean, default: true },
+
+    // Link to the User account that this doctor logs in with.
+    // Set by the doctor-seed script so role-based filtering on OPD / IPD /
+    // ER / Daycare can use `req.user.id` → Doctor → patients.
+    loginUserId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      index: true,
+      default: null,
+    },
   },
   { timestamps: true }
 );

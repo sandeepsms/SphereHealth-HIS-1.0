@@ -169,8 +169,8 @@ function RouteLoader() {
 const homeForRole = (role) => {
   switch (role) {
     case "Receptionist":     return "/reception";
-    case "Doctor":           return "/doctor/opd-queue";
-    case "Nurse":            return "/nurse/opd-queue";
+    case "Doctor":           return "/doctor-opd-panel";
+    case "Nurse":            return "/opd-queue";
     case "TPA Coordinator":  return "/tpa-cases";
     default:                 return "/mainpage";
   }

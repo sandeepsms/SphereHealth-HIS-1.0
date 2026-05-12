@@ -40,9 +40,13 @@ export default function LoginPage() {
   const landingPageForRole = (role) => {
     switch (role) {
       case "Receptionist":     return "/reception";
-      case "Doctor":           return "/doctor/opd-queue";
-      case "Nurse":            return "/nurse/opd-queue";
+      case "Doctor":           return "/doctor-opd-panel";
+      case "Nurse":            return "/opd-queue";
       case "TPA Coordinator":  return "/tpa-cases";
+      case "Pharmacist":       return "/mar";
+      case "Lab Technician":   return "/investigation-orders";
+      case "Radiologist":      return "/investigation-orders";
+      case "Accountant":       return "/billing";
       default:                 return "/mainpage";
     }
   };

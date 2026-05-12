@@ -1,4 +1,19 @@
 const emergencyService = require("../../services/Patient/emergencyService");
+
+/* ── Role-scope helper ───────────────────────────────────────────
+   Restrict ER list output to the logged-in doctor's own cases. ER records
+   carry `attendingDoctorId` (ObjectId) and `consultantIncharge` (name) —
+   match either so legacy rows without the ObjectId still resolve.        */
+function scopeERByDoctor(req, list) {
+  if (!(req.user?.role === "Doctor" && req.doctorProfile?._id)) return list;
+  const docId   = String(req.doctorProfile._id);
+  const docName = req.doctorProfile.personalInfo?.fullName || "";
+  return list.filter(e =>
+    String(e.attendingDoctorId || "") === docId ||
+    (docName && e.consultantIncharge && e.consultantIncharge.includes(docName))
+  );
+}
+
 class EmergencyController {
   async createEmergencyVisit(req, res) {
     try {
@@ -259,48 +274,28 @@ class EmergencyController {
 
   async getActiveEmergencies(req, res) {
     try {
-      const emergencies = await emergencyService.getActiveEmergencies();
-      res.status(200).json({
-        success: true,
-        data: emergencies,
-      });
+      const all = await emergencyService.getActiveEmergencies();
+      res.status(200).json({ success: true, data: scopeERByDoctor(req, all) });
     } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: error.message,
-      });
+      res.status(500).json({ success: false, message: error.message });
     }
   }
 
   async getEmergenciesByTriage(req, res) {
     try {
-      const emergencies = await emergencyService.getEmergenciesByTriage(
-        req.params.triageCategory
-      );
-      res.status(200).json({
-        success: true,
-        data: emergencies,
-      });
+      const all = await emergencyService.getEmergenciesByTriage(req.params.triageCategory);
+      res.status(200).json({ success: true, data: scopeERByDoctor(req, all) });
     } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: error.message,
-      });
+      res.status(500).json({ success: false, message: error.message });
     }
   }
 
   async getTodayEmergencies(req, res) {
     try {
-      const emergencies = await emergencyService.getTodayEmergencies();
-      res.status(200).json({
-        success: true,
-        data: emergencies,
-      });
+      const all = await emergencyService.getTodayEmergencies();
+      res.status(200).json({ success: true, data: scopeERByDoctor(req, all) });
     } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: error.message,
-      });
+      res.status(500).json({ success: false, message: error.message });
     }
   }
 
@@ -309,7 +304,7 @@ class EmergencyController {
       const cases = await emergencyService.getMLCCases();
       res.status(200).json({
         success: true,
-        data: cases,
+        data: scopeERByDoctor(req, cases),
       });
     } catch (error) {
       res.status(500).json({

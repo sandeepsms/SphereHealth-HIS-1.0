@@ -34,4 +34,56 @@ const authorize = (...roles) => (req, res, next) => {
 /* ── Admin only shorthand ── */
 const adminOnly = authorize("Admin");
 
-module.exports = { authenticate, authorize, adminOnly };
+/* ── Soft authentication ──
+   Try to verify the token but never block the request — if no/invalid
+   token, req.user is left undefined and the request proceeds. Use this
+   on endpoints that want to APPLY role-based filtering when a doctor is
+   logged in, but still serve broader data to reception/admin. */
+const attemptAuth = (req, _res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) return next();
+  try {
+    req.user = jwt.verify(authHeader.split(" ")[1], JWT_SECRET);
+  } catch (e) { /* ignore — leave req.user undefined */ }
+  next();
+};
+
+/* ── Resolve the doctor profile for the logged-in user ──
+   Looks up the Doctor doc whose loginUserId === req.user.id and attaches
+   it to req.doctorProfile. Used by OPD/IPD/ER list endpoints so they can
+   auto-restrict to "only this doctor's patients" when role === "Doctor".
+   No-op for non-Doctor roles. */
+const attachDoctorProfile = async (req, _res, next) => {
+  try {
+    if (req.user?.role === "Doctor" && req.user?.id) {
+      const Doctor = require("../models/Doctor/doctorModel");
+      const doc = await Doctor.findOne({ loginUserId: req.user.id })
+        .select("_id doctorId personalInfo professional department")
+        .lean();
+      if (doc) req.doctorProfile = doc;
+    }
+    next();
+  } catch (e) { next(e); }
+};
+
+/* ── Doctor-scope filter helper ──
+   Given the existing filters object (Mongo query), inject the appropriate
+   doctor predicate when the caller is a Doctor user, so list endpoints
+   only return that doctor's patients. Returns the (possibly mutated)
+   filters. NO-OP for any other role. */
+const restrictToOwnDoctorPatients = (req, filters = {}, opts = {}) => {
+  const { field = "doctorId" } = opts;
+  if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
+    filters[field] = req.doctorProfile._id;
+  }
+  return filters;
+};
+
+module.exports = {
+  authenticate,
+  authorize,
+  adminOnly,
+  attemptAuth,
+  attachDoctorProfile,
+  restrictToOwnDoctorPatients,
+};

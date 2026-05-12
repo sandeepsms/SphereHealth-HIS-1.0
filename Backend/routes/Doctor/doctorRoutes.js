@@ -1,11 +1,16 @@
 const express = require("express");
 const router = express.Router();
 const doctorController = require("../../controllers/Doctor/doctorController");
+const { authenticate } = require("../../middleware/auth");
 
 router.post("/", doctorController.createDoctor);
 router.get("/", doctorController.getAllDoctors);
 router.get("/active", doctorController.getActiveDoctors);
 router.get("/search", doctorController.searchDoctors);
+// Doctor profile for the logged-in user (role=Doctor) — returns the Doctor
+// record linked via loginUserId. Used by frontend Doctor pages to know
+// which doctor _id to scope queries to.
+router.get("/me", authenticate, doctorController.getMyDoctorProfile);
 router.get("/department/:department", doctorController.getDoctorsByDepartment);
 router.get(
   "/specialization/:specialization",

@@ -65,20 +65,25 @@ const NAV = [
   },
 
   /* ── Reception (NABH front-desk workflow) ───────────── */
+  /* Receptionist gets the full front-desk surface.
+     Admin sees everything for management.
+     Doctor/Nurse only get "Reception Dashboard" link (handy overview) and
+     "Patient Search" — they shouldn't be creating registrations, issuing
+     visitor passes, or working the discharge queue. */
   {
     id: "registration", label: "Reception",
     icon: "pi-desktop", color: "#0891b2", light: "#ecfeff",
-    nabh: true, roles: [ADMIN, RX, DR, NR],
+    nabh: true, roles: [ADMIN, RX, DR, NR, AC, TPA],
     items: [
       { label: "Dashboard",           icon: "pi-chart-line",        path: "/reception",            nabh: true,  badge: "LIVE",  roles: [ADMIN, RX, DR, NR] },
-      { label: "New Registration",    icon: "pi-user-plus",         path: "/reception/register",   nabh: true,                  roles: [ADMIN, RX, DR, NR] },
+      { label: "New Registration",    icon: "pi-user-plus",         path: "/reception/register",   nabh: true,                  roles: [ADMIN, RX] },
       // RX-flavored Patient Search & Visit History (rx-page style, slimmer)
       { label: "Patient Search",      icon: "pi-search",            path: "/patient-search",                                   roles: [RX] },
       { label: "Visit History",       icon: "pi-clock",             path: "/visit-history",                                    roles: [RX] },
       // Original Patient Search & Visit History — for other roles
       { label: "Patient Search",      icon: "pi-search",            path: "/allpatient",                                       roles: [ADMIN, DR, NR, AC, TPA] },
       { label: "Visit History",       icon: "pi-clock",             path: "/patient-history",                                  roles: [ADMIN, DR] },
-      { label: "Appointments",        icon: "pi-calendar-plus",     path: "/appointments",         nabh: true,  badge: "NEW",   roles: [ADMIN, RX, DR, NR] },
+      { label: "Appointments",        icon: "pi-calendar-plus",     path: "/appointments",         nabh: true,  badge: "NEW",   roles: [ADMIN, RX] },
       { label: "Discharge Queue",     icon: "pi-sign-out",          path: "/discharge-queue",      nabh: true,  badge: "NEW",   roles: [ADMIN, RX] },
       { label: "TPA / Insurance",     icon: "pi-shield",            path: "/tpa-cases",            nabh: true,  badge: "NEW",   roles: [ADMIN, RX, TPA, AC] },
       { label: "Visitor Passes",      icon: "pi-id-card",           path: "/visitor-passes",       nabh: true,  badge: "NEW",   roles: [ADMIN, RX] },

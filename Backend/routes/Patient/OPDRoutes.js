@@ -1,6 +1,12 @@
 const express = require("express");
 const router = express.Router();
 const opdController = require("../../controllers/Patient/OPDController");
+const { attemptAuth, attachDoctorProfile } = require("../../middleware/auth");
+
+// Soft-auth + doctorProfile resolver on all list/read endpoints so we can
+// auto-restrict OPD visibility to "only this doctor's patients" when the
+// caller is a Doctor (non-doctors keep full visibility).
+router.use(attemptAuth, attachDoctorProfile);
 
 // ── Specific non-param routes FIRST ──────────────────────────────
 router.get("/today",        opdController.getTodayVisits);

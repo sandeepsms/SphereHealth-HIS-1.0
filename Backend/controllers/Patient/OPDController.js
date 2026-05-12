@@ -27,6 +27,11 @@ class OPDController {
   async getAllOPDVisits(req, res) {
     try {
       const { page = 1, limit = 50, ...filters } = req.query;
+      // Doctor users see only their own OPD patients (set by attachDoctorProfile
+      // middleware). For nurses, reception, admin — no extra filter is applied.
+      if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
+        filters.doctorId = req.doctorProfile._id;
+      }
       const result = await opdService.getAllOPDVisits(parseInt(page), parseInt(limit), filters);
       res.status(200).json({ success: true, data: result.visits, pagination: result.pagination });
     } catch (error) {
@@ -137,7 +142,12 @@ class OPDController {
   // GET /opd/today  — optionally ?departmentId=&doctorId=&vitalsStatus=
   async getTodayVisits(req, res) {
     try {
-      const visits = await opdService.getTodayVisits(req.query);
+      const q = { ...req.query };
+      // Doctor scope: only this doctor's visits today.
+      if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
+        q.doctorId = req.doctorProfile._id;
+      }
+      const visits = await opdService.getTodayVisits(q);
       res.status(200).json({ success: true, data: visits });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
