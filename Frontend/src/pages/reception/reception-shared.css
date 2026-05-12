@@ -1151,4 +1151,116 @@
   line-height: 1.5;
 }
 
+/* ─── All-Patients directory (used by PatientsTable.jsx) ────────────── */
+.rx-table-wrap {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  overflow-x: auto;
+  margin-bottom: 12px;
+}
+.rx-table-wrap .rx-table { min-width: 1200px; }
+.rx-table-wrap .rx-table thead tr { background: #f8fafc; }
+.rx-table-wrap .rx-table th {
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  text-align: left;
+  border-bottom: 1px solid #e2e8f0;
+  white-space: nowrap;
+}
+.rx-table-wrap .rx-table tbody tr:hover { background: #f8fafc; }
+.rx-table-wrap .rx-table td {
+  vertical-align: top;
+  font-size: 12px;
+  color: #0f172a;
+}
+
+.rx-cell-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.rx-cell-name strong { font-weight: 700; color: #0f172a; }
+.rx-cell-sub {
+  font-size: 10.5px;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.rx-visit-chips {
+  display: inline-flex;
+  gap: 4px;
+}
+.rx-visit-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border-radius: 8px;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  border: 1px solid;
+}
+.rx-visit-chip-k { font-size: 9.5px; opacity: 0.75; }
+.rx-visit-chip-v { font-size: 11px; }
+.rx-visit-chip--opd { background: #ecfeff; color: #0e7490; border-color: #67e8f9; }
+.rx-visit-chip--ipd { background: #f5f3ff; color: #6d28d9; border-color: #c4b5fd; }
+.rx-visit-chip--er  { background: #fef2f2; color: #b91c1c; border-color: #fca5a5; }
+
+.rx-pager {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 4px;
+  font-size: 12px;
+}
+.rx-pager-info {
+  font-size: 11px;
+  color: #475569;
+  padding: 0 8px;
+  font-weight: 600;
+}
+
+.rx-modal-sub {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.78);
+  font-weight: 500;
+  margin-left: 6px;
+}
+
+.rx-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px 14px;
+  margin-bottom: 8px;
+}
+@media (min-width: 720px) {
+  .rx-detail-grid { grid-template-columns: repeat(3, 1fr); }
+}
+
+.rx-field {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+.rx-field--wide { grid-column: 1 / -1; }
+.rx-field-label {
+  font-size: 10px;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+.rx-field-value {
+  font-size: 13px;
+  color: #0f172a;
+  font-weight: 600;
+  word-break: break-word;
+}
+
 
