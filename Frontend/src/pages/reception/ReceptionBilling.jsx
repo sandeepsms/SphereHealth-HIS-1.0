@@ -128,7 +128,7 @@ export default function ReceptionBilling() {
           <div className="rx-header-title"><i className="pi pi-receipt" /> Billing & Payments</div>
           <div className="rx-header-meta">
             Patient bills · Cash / UPI / Card collection · Receipt printing
-            {todayCollection?.totalCollected != null && <> · Today: <strong style={{ color: "#86efac" }}>{fmtCur(todayCollection.totalCollected)}</strong></>}
+            {todayCollection?.totalCollected != null && <> · Today: <strong className="rx-text-success-light">{fmtCur(todayCollection.totalCollected)}</strong></>}
           </div>
         </div>
         <div className="rx-header-actions">
@@ -142,7 +142,7 @@ export default function ReceptionBilling() {
       </div>
 
       {/* UHID search bar */}
-      <div className="rx-search" style={{ marginBottom: 14 }}>
+      <div className="rx-search rx-mb-14">
         <i className="pi pi-id-card" />
         <input
           placeholder="Enter UHID (e.g. UH0001) and press Enter"
@@ -150,13 +150,13 @@ export default function ReceptionBilling() {
           onChange={e => setUhid(e.target.value)}
           onKeyDown={e => e.key === "Enter" && load(uhid)}
         />
-        <button className="rx-btn-primary" style={{ padding: "7px 16px" }} onClick={() => load(uhid)}>
+        <button className="rx-btn-primary rx-btn-compact" onClick={() => load(uhid)}>
           <i className="pi pi-search" /> Load
         </button>
       </div>
 
       {loading ? (
-        <div className="rx-empty"><i className="pi pi-spin pi-spinner" style={{ fontSize: 28 }} /></div>
+        <div className="rx-empty"><i className="pi pi-spin pi-spinner rx-loader-icon" /></div>
       ) : !patient ? (
         <div className="rx-empty">
           <span className="rx-empty-icon">🧾</span>
@@ -165,12 +165,12 @@ export default function ReceptionBilling() {
       ) : (
         <>
           {/* Patient summary */}
-          <div className="rx-card" style={{ marginBottom: 12 }}>
+          <div className="rx-card rx-mb-12">
             <div className="rx-card-main">
               <div className="rx-card-name">
                 {patient.fullName}
                 {patient.tpa && <span className="rx-card-stage rx-card-stage--submitted">TPA</span>}
-                {patient.paymentType && <span style={{ fontSize: 10, fontWeight: 700, color: "#0e7490", fontFamily: "DM Mono, monospace" }}>{patient.paymentType}</span>}
+                {patient.paymentType && <span className="rx-mono-tag">{patient.paymentType}</span>}
               </div>
               <div className="rx-card-meta">
                 <span>UHID: <strong>{patient.UHID}</strong></span>
@@ -200,16 +200,16 @@ export default function ReceptionBilling() {
             </div>
             <div className="rx-kpi rx-kpi--accent">
               <div className="rx-kpi-label">Collected</div>
-              <div className="rx-kpi-value" style={{ color: "#15803d" }}>{fmtCur(totals.paid)}</div>
+              <div className="rx-kpi-value rx-text-success">{fmtCur(totals.paid)}</div>
             </div>
             <div className="rx-kpi rx-kpi--accent">
               <div className="rx-kpi-label">Outstanding</div>
-              <div className="rx-kpi-value" style={{ color: totals.due > 0 ? "#b91c1c" : "#15803d" }}>{fmtCur(totals.due)}</div>
+              <div className={`rx-kpi-value ${totals.due > 0 ? "rx-text-danger" : "rx-text-success"}`}>{fmtCur(totals.due)}</div>
             </div>
           </div>
 
           {/* Two-column layout: bill list | active bill details */}
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 420px) minmax(0, 1fr)", gap: 14, alignItems: "start" }}>
+          <div className="rx-split-list">
             {/* Bills column */}
             <div>
               {bills.length === 0 ? (
@@ -221,21 +221,20 @@ export default function ReceptionBilling() {
                 const isActive = activeBill?._id === b._id;
                 const cls = STATUS_CLASS[b.billStatus] || "pending";
                 return (
-                  <div key={b._id} className="rx-bill-row"
-                       style={{ cursor: "pointer", borderColor: isActive ? "#06b6d4" : "#e2e8f0", borderWidth: isActive ? 2 : 1 }}
+                  <div key={b._id} className={`rx-bill-row ${isActive ? "rx-bill-row--active" : ""}`}
                        onClick={() => loadBill(b._id)}>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <div className="rx-min-zero">
+                      <div className="rx-bill-row-line">
                         <span className="rx-bill-num">{b.billNumber || "DRAFT"}</span>
                         <span className={`rx-card-stage rx-card-stage--${cls}`}>{b.billStatus}</span>
-                        {b.visitType && <span style={{ fontSize: 10, fontWeight: 700, color: "#475569", fontFamily: "DM Mono, monospace" }}>{b.visitType}</span>}
+                        {b.visitType && <span className="rx-mono-tag rx-mono-tag--subtle">{b.visitType}</span>}
                       </div>
                       <div className="rx-bill-amounts">
                         <span>Total: <strong>{fmtCur(b.netAmount)}</strong></span>
                         <span className="paid">Paid: <strong>{fmtCur((b.netAmount || 0) - (b.balanceAmount || 0))}</strong></span>
                         {b.balanceAmount > 0 && <span className="due">Due: <strong>{fmtCur(b.balanceAmount)}</strong></span>}
                       </div>
-                      <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 4 }}>
+                      <div className="rx-bill-row-meta">
                         Created: {fmtDate(b.createdAt)} · {(b.billItems || []).length} item{(b.billItems || []).length === 1 ? "" : "s"}
                       </div>
                     </div>
@@ -247,7 +246,7 @@ export default function ReceptionBilling() {
             {/* Active bill details */}
             <div>
               {billLoading ? (
-                <div className="rx-empty"><i className="pi pi-spin pi-spinner" style={{ fontSize: 28 }} /></div>
+                <div className="rx-empty"><i className="pi pi-spin pi-spinner rx-loader-icon" /></div>
               ) : !activeBill ? (
                 <div className="rx-empty">
                   <span className="rx-empty-icon">👉</span>
@@ -322,15 +321,15 @@ function BillDetail({ bill, onGenerate, onPay, onPrint, onRefund, onCancel }) {
   const canCancel = !isDraft && paidTotal <= 0 && !["CANCELLED", "REFUNDED"].includes(bill.billStatus);
 
   return (
-    <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12 }}>
-      <div style={{ padding: "12px 14px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", gap: 10 }}>
-        <i className="pi pi-receipt" style={{ color: "#06b6d4" }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 800, color: "#0f172a" }}>
+    <div className="rx-detail-card">
+      <div className="rx-detail-head">
+        <i className="pi pi-receipt rx-icon-info" />
+        <div className="rx-flex-1">
+          <div className="rx-detail-head-title">
             {bill.billNumber || "DRAFT BILL"}
-            <span className={`rx-card-stage rx-card-stage--${STATUS_CLASS[bill.billStatus]}`} style={{ marginLeft: 8 }}>{bill.billStatus}</span>
+            <span className={`rx-card-stage rx-card-stage--${STATUS_CLASS[bill.billStatus]} rx-ml-auto`}>{bill.billStatus}</span>
           </div>
-          <div style={{ fontSize: 11, color: "#64748b" }}>{bill.visitType || "OPD"} · {items.length} item{items.length === 1 ? "" : "s"} · Created {fmtDate(bill.createdAt)}</div>
+          <div className="rx-detail-head-sub">{bill.visitType || "OPD"} · {items.length} item{items.length === 1 ? "" : "s"} · Created {fmtDate(bill.createdAt)}</div>
         </div>
         {isDraft && (
           <button className="rx-action-btn rx-action-btn--primary" onClick={onGenerate}>
@@ -360,34 +359,32 @@ function BillDetail({ bill, onGenerate, onPay, onPrint, onRefund, onCancel }) {
       </div>
 
       {/* Items */}
-      <div style={{ padding: "10px 14px" }}>
-        <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: .5, marginBottom: 6 }}>
-          Items
-        </div>
+      <div className="rx-detail-body">
+        <div className="rx-section-label">Items</div>
         {items.length === 0 ? (
-          <div style={{ fontSize: 12, color: "#94a3b8", padding: 10 }}>No items on this bill yet.</div>
+          <div className="rx-empty-tip">No items on this bill yet.</div>
         ) : (
-          <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
+          <table className="rx-table">
             <thead>
-              <tr style={{ background: "#f8fafc", color: "#475569", textAlign: "left" }}>
-                <th style={th}>Service</th>
-                <th style={{ ...th, textAlign: "right" }}>Qty</th>
-                <th style={{ ...th, textAlign: "right" }}>Unit Price</th>
-                <th style={{ ...th, textAlign: "right" }}>Discount</th>
-                <th style={{ ...th, textAlign: "right" }}>Net</th>
+              <tr>
+                <th>Service</th>
+                <th className="right">Qty</th>
+                <th className="right">Unit Price</th>
+                <th className="right">Discount</th>
+                <th className="right">Net</th>
               </tr>
             </thead>
             <tbody>
               {items.map((it, i) => (
-                <tr key={it._id || i} style={{ borderTop: "1px solid #f1f5f9" }}>
-                  <td style={td}>
+                <tr key={it._id || i}>
+                  <td>
                     {it.serviceName || it.name}
-                    {it.appliedTariff && <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 4, fontSize: 9, fontWeight: 800, background: "#eff6ff", color: "#1d4ed8" }}>{it.appliedTariff}</span>}
+                    {it.appliedTariff && <span className="rx-tariff-pill">{it.appliedTariff}</span>}
                   </td>
-                  <td style={{ ...td, textAlign: "right" }}>{it.quantity || 1}</td>
-                  <td style={{ ...td, textAlign: "right" }}>{fmtCur(it.unitPrice)}</td>
-                  <td style={{ ...td, textAlign: "right", color: "#dc2626" }}>{it.discountPercent ? `${it.discountPercent}%` : "—"}</td>
-                  <td style={{ ...td, textAlign: "right", fontWeight: 800 }}>{fmtCur(it.netAmount)}</td>
+                  <td className="right">{it.quantity || 1}</td>
+                  <td className="right">{fmtCur(it.unitPrice)}</td>
+                  <td className="right rx-text-discount">{it.discountPercent ? `${it.discountPercent}%` : "—"}</td>
+                  <td className="right bold">{fmtCur(it.netAmount)}</td>
                 </tr>
               ))}
             </tbody>
@@ -396,41 +393,39 @@ function BillDetail({ bill, onGenerate, onPay, onPrint, onRefund, onCancel }) {
       </div>
 
       {/* Totals */}
-      <div style={{ padding: "10px 14px", borderTop: "1px solid #e2e8f0", background: "#f8fafc" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 10, fontSize: 12 }}>
+      <div className="rx-detail-totals">
+        <div className="rx-grid-fit-120">
           <div>Gross: <strong>{fmtCur(bill.grossAmount)}</strong></div>
-          <div>Discount: <strong style={{ color: "#dc2626" }}>{fmtCur(bill.totalDiscount)}</strong></div>
+          <div>Discount: <strong className="rx-text-discount">{fmtCur(bill.totalDiscount)}</strong></div>
           <div>Tax: <strong>{fmtCur(bill.taxAmount)}</strong></div>
-          <div>Net: <strong style={{ color: "#0f172a" }}>{fmtCur(bill.netAmount)}</strong></div>
-          <div>Paid: <strong style={{ color: "#15803d" }}>{fmtCur((bill.netAmount || 0) - (bill.balanceAmount || 0))}</strong></div>
-          <div>Balance: <strong style={{ color: bill.balanceAmount > 0 ? "#b91c1c" : "#15803d" }}>{fmtCur(bill.balanceAmount)}</strong></div>
+          <div>Net: <strong className="rx-text-strong">{fmtCur(bill.netAmount)}</strong></div>
+          <div>Paid: <strong className="rx-text-success">{fmtCur((bill.netAmount || 0) - (bill.balanceAmount || 0))}</strong></div>
+          <div>Balance: <strong className={bill.balanceAmount > 0 ? "rx-text-danger" : "rx-text-success"}>{fmtCur(bill.balanceAmount)}</strong></div>
         </div>
       </div>
 
       {/* Payments */}
       {payments.length > 0 && (
-        <div style={{ padding: "10px 14px", borderTop: "1px solid #e2e8f0" }}>
-          <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: .5, marginBottom: 6 }}>
-            Payments ({payments.length})
-          </div>
-          <table style={{ width: "100%", fontSize: 11, borderCollapse: "collapse" }}>
+        <div className="rx-detail-payments">
+          <div className="rx-section-label">Payments ({payments.length})</div>
+          <table className="rx-table rx-table--sm">
             <thead>
-              <tr style={{ background: "#f8fafc", color: "#475569", textAlign: "left" }}>
-                <th style={th}>Date</th>
-                <th style={th}>Mode</th>
-                <th style={th}>Txn / Ref</th>
-                <th style={th}>By</th>
-                <th style={{ ...th, textAlign: "right" }}>Amount</th>
+              <tr>
+                <th>Date</th>
+                <th>Mode</th>
+                <th>Txn / Ref</th>
+                <th>By</th>
+                <th className="right">Amount</th>
               </tr>
             </thead>
             <tbody>
               {payments.map((p, i) => (
-                <tr key={p._id || i} style={{ borderTop: "1px solid #f1f5f9" }}>
-                  <td style={td}>{fmtDateTime(p.paidAt)}</td>
-                  <td style={td}><span style={{ padding: "2px 7px", borderRadius: 4, fontSize: 10, fontWeight: 800, background: "#ecfeff", color: "#0e7490" }}>{p.paymentMode}</span></td>
-                  <td style={td}>{p.transactionId || "—"}</td>
-                  <td style={td}>{p.receivedBy || "—"}</td>
-                  <td style={{ ...td, textAlign: "right", fontWeight: 800, color: "#15803d" }}>{fmtCur(p.amount)}</td>
+                <tr key={p._id || i}>
+                  <td>{fmtDateTime(p.paidAt)}</td>
+                  <td><span className="rx-mode-pill">{p.paymentMode}</span></td>
+                  <td>{p.transactionId || "—"}</td>
+                  <td>{p.receivedBy || "—"}</td>
+                  <td className="right bold rx-text-success">{fmtCur(p.amount)}</td>
                 </tr>
               ))}
             </tbody>
@@ -440,9 +435,6 @@ function BillDetail({ bill, onGenerate, onPay, onPrint, onRefund, onCancel }) {
     </div>
   );
 }
-
-const th = { padding: "6px 8px", fontWeight: 700, fontSize: 11 };
-const td = { padding: "6px 8px" };
 
 /* ───────────────────────────────────────────────────────────── */
 
@@ -481,13 +473,13 @@ function PaymentModal({ bill, onClose, onDone }) {
   return (
     <div className="rx-modal-backdrop" onClick={onClose}>
       <div className="rx-modal" onClick={e => e.stopPropagation()}>
-        <div className="rx-modal-head" style={{ background: "linear-gradient(135deg,#065f46,#15803d)" }}>
+        <div className="rx-modal-head rx-modal-head--success">
           <i className="pi pi-wallet" />
           <span className="rx-modal-title">Collect Payment — {bill.billNumber}</span>
           <button className="rx-modal-close" onClick={onClose}>×</button>
         </div>
         <div className="rx-modal-body">
-          <div style={{ background: "#ecfdf5", border: "1px solid #86efac", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#15803d" }}>
+          <div className="rx-banner rx-banner--success">
             💰 Balance Due: <strong>{fmtCur(bill.balanceAmount)}</strong> of <strong>{fmtCur(bill.netAmount)}</strong>
           </div>
 
@@ -499,7 +491,7 @@ function PaymentModal({ bill, onClose, onDone }) {
 
           <div className="his-field-group">
             <label className="his-label">Payment Mode *</label>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6 }}>
+            <div className="rx-grid-5">
               {PAYMENT_MODES.map(m => (
                 <button key={m} type="button"
                         className={`rx-slot ${mode === m ? "rx-slot--selected" : ""}`}
@@ -518,7 +510,7 @@ function PaymentModal({ bill, onClose, onDone }) {
             </div>
           )}
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <div className="rx-grid-2">
             <div className="his-field-group">
               <label className="his-label">Received By</label>
               <input className="his-field" value={receivedBy} onChange={e => setReceivedBy(e.target.value)} placeholder="Reception staff name" />
@@ -531,8 +523,7 @@ function PaymentModal({ bill, onClose, onDone }) {
         </div>
         <div className="rx-modal-foot">
           <button className="rx-modal-btn-cancel" onClick={onClose}>Cancel</button>
-          <button className="rx-modal-btn-primary" onClick={submit} disabled={saving}
-                  style={{ background: "linear-gradient(135deg,#065f46,#15803d)" }}>
+          <button className="rx-modal-btn-primary rx-modal-btn-primary--success" onClick={submit} disabled={saving}>
             <i className={`pi ${saving ? "pi-spin pi-spinner" : "pi-check"}`} /> Record Payment
           </button>
         </div>
@@ -574,13 +565,13 @@ function RefundModal({ bill, onClose, onDone }) {
   return (
     <div className="rx-modal-backdrop" onClick={onClose}>
       <div className="rx-modal" onClick={e => e.stopPropagation()}>
-        <div className="rx-modal-head" style={{ background: "linear-gradient(135deg,#7f1d1d,#dc2626)" }}>
+        <div className="rx-modal-head rx-modal-head--danger">
           <i className="pi pi-undo" />
           <span className="rx-modal-title">Refund — {bill.billNumber}</span>
           <button className="rx-modal-close" onClick={onClose}>×</button>
         </div>
         <div className="rx-modal-body">
-          <div style={{ background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#b91c1c" }}>
+          <div className="rx-banner rx-banner--danger">
             ⚠ Already collected: <strong>{fmtCur(paid)}</strong> · Refunds are permanently logged for NABH audit.
           </div>
 
@@ -592,7 +583,7 @@ function RefundModal({ bill, onClose, onDone }) {
 
           <div className="his-field-group">
             <label className="his-label">Refund Mode</label>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6 }}>
+            <div className="rx-grid-5">
               {PAYMENT_MODES.map(m => (
                 <button key={m} type="button"
                         className={`rx-slot ${mode === m ? "rx-slot--selected" : ""}`}
@@ -607,7 +598,7 @@ function RefundModal({ bill, onClose, onDone }) {
                       placeholder="e.g. Service not rendered, duplicate charge, patient complaint…" />
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <div className="rx-grid-2">
             <div className="his-field-group">
               <label className="his-label">Refunded By</label>
               <input className="his-field" value={refundedBy} onChange={e => setRefundedBy(e.target.value)} placeholder="Reception staff name" />
@@ -622,8 +613,7 @@ function RefundModal({ bill, onClose, onDone }) {
         </div>
         <div className="rx-modal-foot">
           <button className="rx-modal-btn-cancel" onClick={onClose}>Keep Payment</button>
-          <button className="rx-modal-btn-primary" onClick={submit} disabled={saving}
-                  style={{ background: "linear-gradient(135deg,#7f1d1d,#dc2626)" }}>
+          <button className="rx-modal-btn-primary rx-modal-btn-primary--danger" onClick={submit} disabled={saving}>
             <i className={`pi ${saving ? "pi-spin pi-spinner" : "pi-undo"}`} /> Confirm Refund
           </button>
         </div>
@@ -655,13 +645,13 @@ function CancelBillModal({ bill, onClose, onDone }) {
   return (
     <div className="rx-modal-backdrop" onClick={onClose}>
       <div className="rx-modal" onClick={e => e.stopPropagation()}>
-        <div className="rx-modal-head" style={{ background: "linear-gradient(135deg,#374151,#6b7280)" }}>
+        <div className="rx-modal-head rx-modal-head--neutral">
           <i className="pi pi-ban" />
           <span className="rx-modal-title">Cancel Bill — {bill.billNumber}</span>
           <button className="rx-modal-close" onClick={onClose}>×</button>
         </div>
         <div className="rx-modal-body">
-          <div style={{ background: "#f3f4f6", border: "1px solid #d1d5db", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#374151" }}>
+          <div className="rx-banner rx-banner--neutral">
             ⚠ Cancellation is permanent. Only allowed when no payment has been collected. For collected bills, issue a refund instead.
           </div>
           <div className="his-field-group">
@@ -676,8 +666,7 @@ function CancelBillModal({ bill, onClose, onDone }) {
         </div>
         <div className="rx-modal-foot">
           <button className="rx-modal-btn-cancel" onClick={onClose}>Keep Bill</button>
-          <button className="rx-modal-btn-primary" onClick={submit} disabled={saving}
-                  style={{ background: "linear-gradient(135deg,#374151,#6b7280)" }}>
+          <button className="rx-modal-btn-primary rx-modal-btn-primary--neutral" onClick={submit} disabled={saving}>
             <i className={`pi ${saving ? "pi-spin pi-spinner" : "pi-ban"}`} /> Confirm Cancel
           </button>
         </div>

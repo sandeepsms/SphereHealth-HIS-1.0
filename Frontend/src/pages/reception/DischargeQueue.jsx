@@ -93,7 +93,7 @@ export default function DischargeQueue() {
 
       {/* List */}
       {loading ? (
-        <div className="rx-empty"><i className="pi pi-spin pi-spinner" style={{ fontSize: 28 }} /></div>
+        <div className="rx-empty"><i className="pi pi-spin pi-spinner rx-loader-icon" /></div>
       ) : filtered.length === 0 ? (
         <div className="rx-empty">
           <span className="rx-empty-icon">📋</span>
@@ -239,7 +239,7 @@ function ClearBillModal({ admission, onClose, onCleared, userName }) {
           </div>
           <div className="his-field-group">
             <label className="his-label">Payment Mode *</label>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 6 }}>
+            <div className="rx-grid-6">
               {FINAL_PAY_MODES.map(m => (
                 <button key={m} type="button"
                         className={`rx-slot ${paymentMode === m ? "rx-slot--selected" : ""}`}
@@ -256,7 +256,7 @@ function ClearBillModal({ admission, onClose, onCleared, userName }) {
                      placeholder={paymentMode === "UPI" ? "e.g. 412345678901" : "Reference / auth code"} />
             </div>
           )}
-          <div style={{ background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#c2410c" }}>
+          <div className="rx-banner rx-banner--warning">
             <strong>NABH check:</strong> Confirm payment received via the selected mode before proceeding. The payment is logged on the patient's bill ledger for audit.
           </div>
         </div>
@@ -297,11 +297,11 @@ function IssueGatePassModal({ admission, onClose, onIssued, userName }) {
           <button className="rx-modal-close" onClick={onClose}>×</button>
         </div>
         <div className="rx-modal-body">
-          <p style={{ fontSize: 13, color: "#475569", lineHeight: 1.5 }}>
+          <p className="rx-modal-para">
             This will generate a unique gate pass number, mark the admission as <strong>Discharged</strong>,
             and the patient/attendant will need this pass for hospital exit.
           </p>
-          <div style={{ background: "#ecfdf5", border: "1px solid #86efac", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#15803d" }}>
+          <div className="rx-banner rx-banner--success">
             ✓ Final bill cleared · ₹{(admission.dischargeWorkflow?.finalBillAmount || 0).toLocaleString("en-IN")}<br />
             ✓ Doctor approved · {admission.dischargeWorkflow?.doctorApprovedBy}<br />
             ✓ Bed will be released after gate pass issued

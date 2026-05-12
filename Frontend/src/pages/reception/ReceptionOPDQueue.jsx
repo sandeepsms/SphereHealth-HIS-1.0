@@ -101,7 +101,7 @@ export default function ReceptionOPDQueue() {
         </div>
         <div className="rx-header-actions">
           <input type="date" value={date} onChange={e => setDate(e.target.value)} max={todayISO()}
-                 style={{ background: "rgba(255,255,255,.12)", color: "#fff", border: "1px solid rgba(255,255,255,.2)", borderRadius: 8, padding: "6px 10px", fontFamily: "inherit", fontSize: 12 }} />
+                 className="rx-header-date" />
           <button className="rx-btn-ghost" onClick={load}><i className="pi pi-refresh" /> Refresh</button>
           <button className="rx-btn-primary" onClick={() => navigate("/reception/register?type=OPD")}>
             <i className="pi pi-plus" /> New OPD
@@ -124,7 +124,7 @@ export default function ReceptionOPDQueue() {
 
       {/* Toolbar */}
       <div className="rx-toolbar">
-        <div className="rx-search" style={{ flex: 1, marginBottom: 0 }}>
+        <div className="rx-search rx-search--inline">
           <i className="pi pi-search" />
           <input placeholder="Search by patient, UHID, visit #, doctor…" value={search} onChange={e => setSearch(e.target.value)} />
         </div>
@@ -135,7 +135,7 @@ export default function ReceptionOPDQueue() {
       </div>
 
       {loading ? (
-        <div className="rx-empty"><i className="pi pi-spin pi-spinner" style={{ fontSize: 28 }} /></div>
+        <div className="rx-empty"><i className="pi pi-spin pi-spinner rx-loader-icon" /></div>
       ) : filtered.length === 0 ? (
         <div className="rx-empty">
           <span className="rx-empty-icon">📋</span>
@@ -147,10 +147,10 @@ export default function ReceptionOPDQueue() {
             <i className="pi pi-user-edit" />
             <span>Dr. {grp.doctor}</span>
             <span className="rx-ward-count">
-              <span style={{ background: "rgba(34,197,94,.25)" }}>{grp.visits.length} pt</span>
+              <span className="rx-ward-count-grp">{grp.visits.length} pt</span>
             </span>
           </div>
-          <div style={{ padding: 10 }}>
+          <div className="rx-p-10">
             {grp.visits.map((v, idx) => <OPDRow key={v._id} v={v} idx={idx + 1} navigate={navigate} reload={load} />)}
           </div>
         </div>
@@ -170,19 +170,13 @@ function OPDRow({ v, idx, navigate, reload }) {
   const paid = v.feePaid || v.paymentStatus === "Paid";
 
   return (
-    <div className="rx-card" style={{ marginBottom: 6, padding: "10px 14px" }}>
+    <div className="rx-card rx-card--compact">
       <div className="rx-card-main">
-        <div className="rx-card-name" style={{ fontSize: 14 }}>
-          <span style={{
-            display: "inline-flex", alignItems: "center", justifyContent: "center",
-            width: 28, height: 28, borderRadius: 8,
-            background: "linear-gradient(135deg,#0891b2,#06b6d4)",
-            color: "#fff", fontSize: 12, fontWeight: 800,
-            fontFamily: "DM Mono, monospace"
-          }}>{idx}</span>
+        <div className="rx-card-name rx-card-name--sm">
+          <span className="rx-queue-pos">{idx}</span>
           {name}
           {v.hasAppointment && <span className="rx-card-stage rx-card-stage--booked">📅 Appt</span>}
-          {v.visitType && <span style={{ fontSize: 10, fontWeight: 700, color: "#0e7490", fontFamily: "DM Mono, monospace" }}>{v.visitType}</span>}
+          {v.visitType && <span className="rx-mono-tag">{v.visitType}</span>}
           {paid ? <span className="rx-card-stage rx-card-stage--cleared">FEE PAID</span>
                 : <span className="rx-card-stage rx-card-stage--pending">FEE PENDING</span>}
         </div>

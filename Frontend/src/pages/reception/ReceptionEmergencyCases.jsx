@@ -97,15 +97,14 @@ export default function ReceptionEmergencyCases() {
 
   return (
     <div className="rx-page">
-      <div className="rx-header" style={{ background: "linear-gradient(135deg,#7f1d1d,#dc2626)" }}>
+      <div className="rx-header rx-header--er">
         <div>
           <div className="rx-header-title"><i className="pi pi-bolt" /> Emergency Cases</div>
           <div className="rx-header-meta">Live triage board · Auto-refresh 30s · {filtered.length} case{filtered.length === 1 ? "" : "s"}</div>
         </div>
         <div className="rx-header-actions">
           <button className="rx-btn-ghost" onClick={load}><i className="pi pi-refresh" /> Refresh</button>
-          <button className="rx-btn-primary" onClick={() => navigate("/reception/register?type=Emergency")}
-                  style={{ background: "linear-gradient(135deg,#dc2626,#ef4444)" }}>
+          <button className="rx-btn-primary rx-btn-primary--er" onClick={() => navigate("/reception/register?type=Emergency")}>
             <i className="pi pi-plus" /> New ER Registration
           </button>
           <button className="rx-btn-ghost" onClick={() => navigate("/reception")}>
@@ -116,16 +115,18 @@ export default function ReceptionEmergencyCases() {
 
       {/* Triage KPI strip */}
       <div className="rx-kpis">
-        {TRIAGE_ORDER.map(t => (
-          <div key={t} className="rx-kpi" style={{ cursor: "pointer", borderLeft: `4px solid ${
-            t === "Critical" ? "#991b1b" : t === "Emergency" ? "#c2410c" :
-            t === "Urgent" ? "#a16207" : t === "Semi-urgent" ? "#0e7490" : "#15803d"
-          }` }} onClick={() => setTriageFilter(triageFilter === t ? "" : t)}>
-            <div className="rx-kpi-label">{t}</div>
-            <div className="rx-kpi-value">{triageCounts[t] || 0}</div>
-            {triageFilter === t && <div className="rx-kpi-sub" style={{ color: "#06b6d4" }}>✓ filtering</div>}
-          </div>
-        ))}
+        {TRIAGE_ORDER.map(t => {
+          const variant = t.toLowerCase().replace(/[^a-z]/g, "");
+          return (
+            <div key={t}
+                 className={`rx-kpi rx-kpi-tile--${variant} ${triageFilter === t ? "rx-kpi-tile--filtering" : ""}`}
+                 onClick={() => setTriageFilter(triageFilter === t ? "" : t)}>
+              <div className="rx-kpi-label">{t}</div>
+              <div className="rx-kpi-value">{triageCounts[t] || 0}</div>
+              {triageFilter === t && <div className="rx-kpi-sub rx-kpi-active">✓ filtering</div>}
+            </div>
+          );
+        })}
       </div>
 
       {/* Tabs */}
@@ -153,7 +154,7 @@ export default function ReceptionEmergencyCases() {
       </div>
 
       {loading ? (
-        <div className="rx-empty"><i className="pi pi-spin pi-spinner" style={{ fontSize: 28 }} /></div>
+        <div className="rx-empty"><i className="pi pi-spin pi-spinner rx-loader-icon" /></div>
       ) : filtered.length === 0 ? (
         <div className="rx-empty">
           <span className="rx-empty-icon">🚑</span>
@@ -188,12 +189,7 @@ function EmergencyRow({ e, navigate }) {
   };
 
   return (
-    <div className="rx-card" style={{ borderLeft: `4px solid ${
-      e.triageCategory === "Critical" ? "#991b1b" :
-      e.triageCategory === "Emergency" ? "#c2410c" :
-      e.triageCategory === "Urgent" ? "#a16207" :
-      e.triageCategory === "Semi-urgent" ? "#0e7490" : "#15803d"
-    }` }}>
+    <div className={`rx-card rx-card-stripe--${triageClass}`}>
       <div className="rx-card-main">
         <div className="rx-card-name">
           {name}
@@ -209,10 +205,10 @@ function EmergencyRow({ e, navigate }) {
           {e.arrivalMode && <span>Mode: <strong>{e.arrivalMode}</strong></span>}
           {e.consultantIncharge && <span>Doctor: <strong>{e.consultantIncharge}</strong></span>}
           {e.presentingComplaints && <span>Complaint: <strong>{e.presentingComplaints}</strong></span>}
-          {e.isMLC && e.mlcNumber && <span style={{ color: "#b91c1c" }}>MLC #: <strong>{e.mlcNumber}</strong></span>}
+          {e.isMLC && e.mlcNumber && <span className="rx-text-danger">MLC #: <strong>{e.mlcNumber}</strong></span>}
         </div>
         {(vitals.bloodPressure || vitals.pulse || vitals.oxygenSaturation || gcs) && (
-          <div className="rx-card-meta" style={{ marginTop: 6, borderTop: "1px dashed #e2e8f0", paddingTop: 6 }}>
+          <div className="rx-card-meta rx-card-divider">
             {vitals.bloodPressure && <span>BP: <strong>{vitals.bloodPressure}</strong></span>}
             {vitals.pulse && <span>Pulse: <strong>{vitals.pulse}/min</strong></span>}
             {vitals.oxygenSaturation && <span>SpO₂: <strong>{vitals.oxygenSaturation}%</strong></span>}
@@ -224,7 +220,7 @@ function EmergencyRow({ e, navigate }) {
       <div className="rx-card-actions">
         {phone && (
           <button className="rx-action-btn" onClick={sendWA} title="WhatsApp family">
-            <i className="pi pi-whatsapp" style={{ color: "#22c55e" }} />
+            <i className="pi pi-whatsapp rx-wa-icon" />
           </button>
         )}
         {uhid && (

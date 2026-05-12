@@ -125,7 +125,7 @@ export default function ReceptionVisitHistory() {
       </div>
 
       {/* UHID input */}
-      <div className="rx-search" style={{ marginBottom: 14 }}>
+      <div className="rx-search rx-mb-14">
         <i className="pi pi-id-card" />
         <input
           placeholder="Enter UHID (e.g. UH0001) and press Enter"
@@ -133,13 +133,13 @@ export default function ReceptionVisitHistory() {
           onChange={e => setUhid(e.target.value)}
           onKeyDown={e => e.key === "Enter" && load(uhid)}
         />
-        <button className="rx-btn-primary" style={{ padding: "7px 16px" }} onClick={() => load(uhid)}>
+        <button className="rx-btn-primary rx-btn-compact" onClick={() => load(uhid)}>
           <i className="pi pi-search" /> Load
         </button>
       </div>
 
       {loading ? (
-        <div className="rx-empty"><i className="pi pi-spin pi-spinner" style={{ fontSize: 28 }} /></div>
+        <div className="rx-empty"><i className="pi pi-spin pi-spinner rx-loader-icon" /></div>
       ) : !patient ? (
         <div className="rx-empty">
           <span className="rx-empty-icon">🗂️</span>
@@ -148,18 +148,18 @@ export default function ReceptionVisitHistory() {
       ) : (
         <>
           {/* Patient header */}
-          <div className="rx-card" style={{ marginBottom: 14 }}>
+          <div className="rx-card rx-mb-14">
             <div className="rx-card-main">
               <div className="rx-card-name">
                 {patient.fullName}
-                <span style={{ fontSize: 11, color: "#64748b", fontWeight: 600 }}>{patient.age}y · {patient.gender}</span>
+                <span className="rx-card-age-sex">{patient.age}y · {patient.gender}</span>
                 {patient.bloodGroup && <span className="rx-card-stage rx-card-stage--booked">🩸 {patient.bloodGroup}</span>}
               </div>
               <div className="rx-card-meta">
                 <span>UHID: <strong>{patient.UHID}</strong></span>
                 {patient.contactNumber && <span>📱 <strong>{patient.contactNumber}</strong></span>}
                 {patient.email && <span>✉ <strong>{patient.email}</strong></span>}
-                {patient.knownAllergies && <span style={{ color: "#b91c1c" }}>⚠ Allergies: <strong>{patient.knownAllergies}</strong></span>}
+                {patient.knownAllergies && <span className="rx-text-danger">⚠ Allergies: <strong>{patient.knownAllergies}</strong></span>}
               </div>
             </div>
             <div className="rx-card-actions">
@@ -195,11 +195,11 @@ export default function ReceptionVisitHistory() {
             </div>
             <div className="rx-kpi rx-kpi--accent">
               <div className="rx-kpi-label">Paid</div>
-              <div className="rx-kpi-value" style={{ color: "#15803d" }}>{fmtCur(totalPaid)}</div>
+              <div className="rx-kpi-value rx-text-success">{fmtCur(totalPaid)}</div>
             </div>
             <div className="rx-kpi rx-kpi--accent">
               <div className="rx-kpi-label">Outstanding</div>
-              <div className="rx-kpi-value" style={{ color: totalDue > 0 ? "#b91c1c" : "#15803d" }}>{fmtCur(totalDue)}</div>
+              <div className={`rx-kpi-value ${totalDue > 0 ? "rx-text-danger" : "rx-text-success"}`}>{fmtCur(totalDue)}</div>
             </div>
           </div>
 
@@ -232,7 +232,7 @@ export default function ReceptionVisitHistory() {
                     {item.isMLC && <span className="rx-card-stage rx-card-stage--denied">MLC</span>}
                     {item.triage && <span className={`rx-triage rx-triage--${(item.triage || "").toLowerCase().replace(/[^a-z]/g, "")}`}>{item.triage}</span>}
                     {item.status && <span className="rx-card-stage rx-card-stage--booked">{item.status}</span>}
-                    <span className="rx-tl-date" style={{ marginLeft: "auto" }}>{fmtDateTime(item.date)}</span>
+                    <span className="rx-tl-date rx-ml-auto">{fmtDateTime(item.date)}</span>
                   </div>
                   <div className="rx-tl-meta">
                     {item.doctor && <span>Doctor: <strong>{item.doctor}</strong></span>}

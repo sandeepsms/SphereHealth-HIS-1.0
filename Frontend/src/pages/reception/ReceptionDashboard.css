@@ -460,3 +460,48 @@
   0%   { background-position: -400px 0; }
   100% { background-position:  400px 0; }
 }
+
+/* ─── Presence header chip ─── */
+.rd-presence-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.rd-presence-row .pi-users { color: #0891b2; font-size: 14px; }
+.rd-presence-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}
+
+/* ─── Inline margin/padding tweaks (replaces inline style) ─── */
+.rd-stats--mb { margin-bottom: 14px; }
+.rd-card-body--tight { padding: 6px 14px; }
+.rd-empty--small  { padding: 12px; }
+.rd-empty--tiny   { padding: 6px; }
+.rd-stat-label--sp { margin-bottom: 8px; }
+.rd-min-zero { min-width: 0; }
+
+/* ─── Receptionist-wise collection section divider ─── */
+.rd-rx-collection {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed #e2e8f0;
+}
+
+/* ─── Floating "loading…" toast at bottom-right ─── */
+.rd-floating-loader {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  padding: 8px 14px;
+  background: #0f172a;
+  color: #fff;
+  border-radius: 8px;
+  font-size: 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.25);
+  z-index: 999;
+}
+.rd-floating-loader .pi-spinner { margin-right: 6px; }

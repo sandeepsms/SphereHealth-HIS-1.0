@@ -106,7 +106,7 @@ export default function VisitorPasses() {
       </div>
 
       {loading ? (
-        <div className="rx-empty"><i className="pi pi-spin pi-spinner" style={{ fontSize: 28 }} /></div>
+        <div className="rx-empty"><i className="pi pi-spin pi-spinner rx-loader-icon" /></div>
       ) : filtered.length === 0 ? (
         <div className="rx-empty">
           <span className="rx-empty-icon">🪪</span>
@@ -210,7 +210,7 @@ function IssuePassModal({ admissions, onClose, onIssued, userName }) {
         </div>
         <div className="rx-modal-body">
           <div className="his-field-group">
-            <label className="his-label">Select Patient (admitted) <span style={{ color:"#dc2626" }}>*</span></label>
+            <label className="his-label">Select Patient (admitted) <span className="rx-req">*</span></label>
             <select className="his-select" value={admissionId} onChange={e => setAdmissionId(e.target.value)}>
               <option value="">— Select admitted patient —</option>
               {admissions.map(a => (
@@ -220,9 +220,9 @@ function IssuePassModal({ admissions, onClose, onIssued, userName }) {
               ))}
             </select>
           </div>
-          <div className="rx-grid-2" style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+          <div className="rx-grid-2-fields">
             <div className="his-field-group">
-              <label className="his-label">Attendant Name <span style={{ color:"#dc2626" }}>*</span></label>
+              <label className="his-label">Attendant Name <span className="rx-req">*</span></label>
               <input className="his-field" value={attendantName} onChange={e => setAttendantName(e.target.value)} placeholder="Full name" />
             </div>
             <div className="his-field-group">
@@ -232,7 +232,7 @@ function IssuePassModal({ admissions, onClose, onIssued, userName }) {
               </select>
             </div>
           </div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+          <div className="rx-grid-3-fields">
             <div className="his-field-group">
               <label className="his-label">Phone</label>
               <input className="his-field" value={phone} maxLength={10} onChange={e => setPhone(e.target.value.replace(/\D/g, ""))} placeholder="10-digit" />
@@ -252,7 +252,7 @@ function IssuePassModal({ admissions, onClose, onIssued, userName }) {
             <label className="his-label">Pass Valid For (hours)</label>
             <input className="his-field" type="number" value={validHours} onChange={e => setValidHours(e.target.value)} />
           </div>
-          <div style={{ background:"#eff6ff", border:"1px solid #93c5fd", borderRadius:8, padding:"10px 14px", fontSize:12, color:"#1d4ed8" }}>
+          <div className="rx-banner rx-banner--info">
             🕐 Visiting hours: <strong>11 AM – 1 PM</strong> &amp; <strong>5 PM – 7 PM</strong>. ICU/NICU: max 1 visitor at a time, 10 min slots.
           </div>
         </div>

@@ -103,7 +103,7 @@ export default function TPACases() {
       </div>
 
       {loading ? (
-        <div className="rx-empty"><i className="pi pi-spin pi-spinner" style={{ fontSize: 28 }} /></div>
+        <div className="rx-empty"><i className="pi pi-spin pi-spinner rx-loader-icon" /></div>
       ) : filtered.length === 0 ? (
         <div className="rx-empty">
           <span className="rx-empty-icon">🛡️</span>
@@ -128,7 +128,7 @@ export default function TPACases() {
                 {bill.tpaClaimNumber && <span>Claim #: <strong>{bill.tpaClaimNumber}</strong></span>}
                 <span>Gross: <strong>{fmtCur(grossAmt)}</strong></span>
                 <span>TPA portion: <strong>{fmtCur(bill.tpaPayableAmount)}</strong></span>
-                {bill.tpaApprovedAmount > 0 && <span style={{ color:"#15803d" }}>Approved: <strong>{fmtCur(bill.tpaApprovedAmount)}</strong></span>}
+                {bill.tpaApprovedAmount > 0 && <span className="rx-text-success">Approved: <strong>{fmtCur(bill.tpaApprovedAmount)}</strong></span>}
               </div>
             </div>
             <div className="rx-card-actions">
@@ -219,7 +219,7 @@ function TPAActionModal({ bill, type, onClose, onDone }) {
                 <label className="his-label">Requested Amount (₹)</label>
                 <input className="his-field" type="number" value={requestedAmount} onChange={e => setRequestedAmount(e.target.value)} />
               </div>
-              <div style={{ background:"#eff6ff", border:"1px solid #93c5fd", borderRadius:8, padding:"10px 14px", fontSize:12, color:"#1d4ed8" }}>
+              <div className="rx-banner rx-banner--info">
                 📄 Checklist before submission: photo ID, insurance card, doctor's reasoning, estimated cost breakdown, pre-existing disease declaration.
               </div>
             </>
@@ -230,7 +230,7 @@ function TPAActionModal({ bill, type, onClose, onDone }) {
                 <label className="his-label">Approved Amount (₹)</label>
                 <input className="his-field" type="number" value={approvedAmount} onChange={e => setApprovedAmount(e.target.value)} />
               </div>
-              <div style={{ background:"#ecfdf5", border:"1px solid #86efac", borderRadius:8, padding:"10px 14px", fontSize:12, color:"#15803d" }}>
+              <div className="rx-banner rx-banner--success">
                 ✓ Patient cashless validity activated up to this amount. Settlement will happen on discharge.
               </div>
             </>
@@ -241,7 +241,7 @@ function TPAActionModal({ bill, type, onClose, onDone }) {
                 <label className="his-label">Denial Reason</label>
                 <textarea className="his-textarea" value={reason} onChange={e => setReason(e.target.value)} placeholder="e.g. Pre-existing exclusion, policy lapsed, exceeds sum insured…" rows={4} />
               </div>
-              <div style={{ background:"#fef2f2", border:"1px solid #fca5a5", borderRadius:8, padding:"10px 14px", fontSize:12, color:"#b91c1c" }}>
+              <div className="rx-banner rx-banner--danger">
                 ⚠ Patient will need to settle in cash/card. Inform patient about the denial.
               </div>
             </>

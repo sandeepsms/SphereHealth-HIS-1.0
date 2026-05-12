@@ -813,7 +813,7 @@ export default function ReceptionConsole() {
           )}
           {searchOpen && searchTerm.length >= 2 && searchResults.length === 0 && (
             <div className="rc-search-results">
-              <div className="rc-empty" style={{ padding: "16px" }}>
+              <div className="rc-empty rc-empty--compact">
                 <span className="rc-empty-icon">🔍</span>
                 No patient found for "{searchTerm}"
               </div>
@@ -828,8 +828,7 @@ export default function ReceptionConsole() {
           <div className="rc-stat rc-stat--er"><span className="rc-stat-label">ER</span><span className="rc-stat-value">{stats.er}</span></div>
         </div>
 
-        <button className="rc-new-btn" onClick={() => navigate("/reception")}
-                style={{ background: "linear-gradient(135deg, #1e293b, #0f172a)" }}
+        <button className="rc-new-btn rc-new-btn--slate" onClick={() => navigate("/reception")}
                 title="Back to Reception Dashboard">
           <i className="pi pi-arrow-left" /> Dashboard
         </button>
@@ -969,9 +968,9 @@ export default function ReceptionConsole() {
                 <div className="his-field-group">
                   <label className="his-label">
                     Pincode
-                    {pincodeLookup.loading && <span style={{ color:"#0891b2", marginLeft:6, fontSize:10 }}>⏳ looking up…</span>}
-                    {pincodeLookup.ok      && <span style={{ color:"#15803d", marginLeft:6, fontSize:10 }}>✓ found</span>}
-                    {pincodeLookup.error   && <span style={{ color:"#dc2626", marginLeft:6, fontSize:10 }}>⚠ {pincodeLookup.error}</span>}
+                    {pincodeLookup.loading && <span className="rc-pin-status rc-pin-status--loading">⏳ looking up…</span>}
+                    {pincodeLookup.ok      && <span className="rc-pin-status rc-pin-status--ok">✓ found</span>}
+                    {pincodeLookup.error   && <span className="rc-pin-status rc-pin-status--err">⚠ {pincodeLookup.error}</span>}
                   </label>
                   <input
                     className={`his-field ${pincodeLookup.ok ? "his-field--ok" : pincodeLookup.error ? "his-field--err" : ""}`}
@@ -1002,7 +1001,7 @@ export default function ReceptionConsole() {
               <div className="his-field-group">
                 <label className="his-label">
                   Local Address
-                  <span style={{ color:"#64748b", fontWeight:500, marginLeft:6, fontSize:10, textTransform:"none", letterSpacing:0 }}>
+                  <span className="rc-section-sublabel">
                     (street / house no / landmark — ask the patient verbally)
                   </span>
                 </label>
@@ -1181,7 +1180,7 @@ export default function ReceptionConsole() {
                   <div className="his-field-group">
                     <label className="his-label">
                       Expected Discharge
-                      <span style={{ color:"#64748b", fontWeight:500, marginLeft:6, fontSize:10, textTransform:"none", letterSpacing:0 }}>
+                      <span className="rc-section-sublabel">
                         (auto from stay days — editable)
                       </span>
                     </label>
@@ -1360,7 +1359,7 @@ export default function ReceptionConsole() {
                     <div className="rc-service-dropdown">
                       {filteredServices.map(s => (
                         <div key={s._id} className="rc-service-option" onMouseDown={() => addService(s)}>
-                          <span>{s.serviceName} <span style={{ color: "#94a3b8", fontFamily: "'DM Mono',monospace" }}>· {s.serviceCode}</span></span>
+                          <span>{s.serviceName} <span className="rc-service-code">· {s.serviceCode}</span></span>
                           <span className="rc-service-option-price">{fmtCur(s.price)}</span>
                         </div>
                       ))}
@@ -1378,7 +1377,7 @@ export default function ReceptionConsole() {
                       <div key={c.service._id} className="rc-cart-row">
                         <div className="rc-cart-row-name">
                           {c.service.serviceName}
-                          <span style={{ color: "#94a3b8", fontSize: 10, marginLeft: 6 }}>{c.service.serviceCode}</span>
+                          <span className="rc-service-code--inline">{c.service.serviceCode}</span>
                         </div>
                         <input className="his-field his-field--sm rc-cart-qty" type="number" min="1" value={c.qty}
                           onChange={e => updateCartQty(c.service._id, e.target.value)} />

@@ -115,24 +115,23 @@ export default function ReceptionBedView() {
 
       {/* KPI strip — clickable to filter by status */}
       <div className="rx-kpis">
-        <div className={`rx-kpi rx-kpi--accent`} style={{ cursor: "pointer" }} onClick={() => setStatusFilter("")}>
+        <div className="rx-kpi rx-kpi--accent rx-kpi-tile--filtering rx-kpi-clickable" onClick={() => setStatusFilter("")}>
           <div className="rx-kpi-label">Total Beds</div>
           <div className="rx-kpi-value">{counts.total}</div>
-          {!statusFilter && <div className="rx-kpi-sub" style={{ color: "#06b6d4" }}>✓ all</div>}
+          {!statusFilter && <div className="rx-kpi-sub rx-kpi-active">✓ all</div>}
         </div>
-        {STATUSES.map(s => (
-          <div key={s} className="rx-kpi" style={{
-            cursor: "pointer",
-            borderLeft: `4px solid ${
-              s === "Available" ? "#22c55e" : s === "Occupied" ? "#ef4444" :
-              s === "Reserved" ? "#3b82f6" : s === "Maintenance" ? "#f59e0b" : "#9ca3af"
-            }`
-          }} onClick={() => setStatusFilter(statusFilter === s ? "" : s)}>
-            <div className="rx-kpi-label">{s}</div>
-            <div className="rx-kpi-value">{counts[s] || 0}</div>
-            {statusFilter === s && <div className="rx-kpi-sub" style={{ color: "#06b6d4" }}>✓ filtering</div>}
-          </div>
-        ))}
+        {STATUSES.map(s => {
+          const variant = s.toLowerCase();
+          return (
+            <div key={s}
+                 className={`rx-kpi rx-kpi-tile--${variant} ${statusFilter === s ? "rx-kpi-tile--filtering" : ""}`}
+                 onClick={() => setStatusFilter(statusFilter === s ? "" : s)}>
+              <div className="rx-kpi-label">{s}</div>
+              <div className="rx-kpi-value">{counts[s] || 0}</div>
+              {statusFilter === s && <div className="rx-kpi-sub rx-kpi-active">✓ filtering</div>}
+            </div>
+          );
+        })}
       </div>
 
       {/* Search */}
@@ -142,7 +141,7 @@ export default function ReceptionBedView() {
       </div>
 
       {loading ? (
-        <div className="rx-empty"><i className="pi pi-spin pi-spinner" style={{ fontSize: 28 }} /></div>
+        <div className="rx-empty"><i className="pi pi-spin pi-spinner rx-loader-icon" /></div>
       ) : Object.keys(grouped).length === 0 ? (
         <div className="rx-empty">
           <span className="rx-empty-icon">🛏️</span>
@@ -150,14 +149,14 @@ export default function ReceptionBedView() {
         </div>
       ) : (
         Object.entries(grouped).map(([bldg, floors]) => (
-          <div key={bldg} style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a", margin: "8px 4px 6px", display: "flex", alignItems: "center", gap: 6 }}>
-              <i className="pi pi-building" style={{ color: "#0891b2" }} /> {bldg}
+          <div key={bldg} className="rx-mb-12">
+            <div className="rx-tree-building">
+              <i className="pi pi-building" /> {bldg}
             </div>
             {Object.entries(floors).map(([flr, wards]) => (
-              <div key={flr} style={{ marginLeft: 8, marginBottom: 8 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: "#475569", margin: "4px 0" }}>
-                  <i className="pi pi-arrow-right" style={{ fontSize: 9 }} /> {flr}
+              <div key={flr} className="rx-tree-floor">
+                <div className="rx-tree-floor-label">
+                  <i className="pi pi-arrow-right" /> {flr}
                 </div>
                 {Object.entries(wards).map(([ward, list]) => {
                   const occ = list.filter(b => b.status === "Occupied").length;
@@ -168,9 +167,9 @@ export default function ReceptionBedView() {
                         <i className="pi pi-home" />
                         <span>{ward}</span>
                         <span className="rx-ward-count">
-                          <span style={{ background: "rgba(34,197,94,.25)" }}>{avail} avail</span>
-                          <span style={{ background: "rgba(239,68,68,.25)" }}>{occ} occ</span>
-                          <span style={{ background: "rgba(255,255,255,.15)" }}>{list.length} total</span>
+                          <span className="rx-ward-count-avail">{avail} avail</span>
+                          <span className="rx-ward-count-occ">{occ} occ</span>
+                          <span className="rx-ward-count-tot">{list.length} total</span>
                         </span>
                       </div>
                       <div className="rx-bed-grid">
@@ -212,7 +211,7 @@ function BedTile({ bed, onClick }) {
           <div className="rx-bed-sub">{patientUHID || "—"} · Day {days || 1}</div>
         </>
       ) : (
-        <div className="rx-bed-sub" style={{ fontWeight: 700 }}>{bed.status}</div>
+        <div className="rx-bed-sub rx-bed-sub--strong">{bed.status}</div>
       )}
     </div>
   );
@@ -226,15 +225,13 @@ function BedDetailModal({ bed, onClose, navigate }) {
   return (
     <div className="rx-modal-backdrop" onClick={onClose}>
       <div className="rx-modal" onClick={e => e.stopPropagation()}>
-        <div className="rx-modal-head" style={{
-          background: isOcc ? "linear-gradient(135deg,#7f1d1d,#dc2626)" : "linear-gradient(135deg,#15803d,#22c55e)"
-        }}>
+        <div className={`rx-modal-head ${isOcc ? "rx-modal-head--bed-occ" : "rx-modal-head--bed-free"}`}>
           <i className="pi pi-table" />
           <span className="rx-modal-title">Bed {bed.bedNumber} — {bed.status}</span>
           <button className="rx-modal-close" onClick={onClose}>×</button>
         </div>
         <div className="rx-modal-body">
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, fontSize: 12 }}>
+          <div className="rx-grid-fit-2col">
             <div>Building: <strong>{bed.buildingName || bed.building?.buildingName || bed.building?.name || "—"}</strong></div>
             <div>Floor: <strong>{bed.floorNumber ?? bed.floor?.floorNumber ?? "—"}</strong></div>
             <div>Ward: <strong>{bed.wardName || bed.ward?.wardName || bed.ward?.name || "—"}</strong></div>
@@ -244,25 +241,25 @@ function BedDetailModal({ bed, onClose, navigate }) {
 
           {isOcc && (
             <>
-              <div style={{ borderTop: "1px solid #e2e8f0", marginTop: 10, paddingTop: 10 }}>
-                <div style={{ fontSize: 12, fontWeight: 800, color: "#0f172a", marginBottom: 6 }}>Current Occupant</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, fontSize: 12 }}>
+              <div className="rx-modal-section">
+                <div className="rx-modal-section-title">Current Occupant</div>
+                <div className="rx-grid-fit-2col">
                   <div>Name: <strong>{p.fullName}</strong></div>
                   <div>UHID: <strong>{p.UHID}</strong></div>
                   {p.age && <div>Age/Sex: <strong>{p.age}y · {p.gender || "—"}</strong></div>}
                   {p.bloodGroup && <div>Blood Group: <strong>{p.bloodGroup}</strong></div>}
-                  {p.contactNumber && <div style={{ gridColumn: "1/-1" }}>📱 <strong>{p.contactNumber}</strong></div>}
+                  {p.contactNumber && <div className="rx-grid-full-row">📱 <strong>{p.contactNumber}</strong></div>}
                 </div>
               </div>
-              <div style={{ borderTop: "1px solid #e2e8f0", marginTop: 10, paddingTop: 10 }}>
-                <div style={{ fontSize: 12, fontWeight: 800, color: "#0f172a", marginBottom: 6 }}>Admission</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, fontSize: 12 }}>
+              <div className="rx-modal-section">
+                <div className="rx-modal-section-title">Admission</div>
+                <div className="rx-grid-fit-2col">
                   {adm.admissionNumber && <div>Admission #: <strong>{adm.admissionNumber}</strong></div>}
                   {adm.admissionDate && <div>Admitted: <strong>{fmtDate(adm.admissionDate)}</strong></div>}
                   {adm.expectedDischargeDate && <div>Expected Discharge: <strong>{fmtDate(adm.expectedDischargeDate)}</strong></div>}
                   {adm.admissionDate && <div>Day: <strong>{daysBetween(adm.admissionDate) || 1}</strong></div>}
                   {adm.consultantDoctor?.fullName && <div>Doctor: <strong>{adm.consultantDoctor.fullName}</strong></div>}
-                  {adm.diagnosis && <div style={{ gridColumn: "1/-1" }}>Diagnosis: <strong>{adm.diagnosis}</strong></div>}
+                  {adm.diagnosis && <div className="rx-grid-full-row">Diagnosis: <strong>{adm.diagnosis}</strong></div>}
                 </div>
               </div>
             </>

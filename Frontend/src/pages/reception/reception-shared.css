@@ -650,3 +650,505 @@
   margin-bottom: 12px;
 }
 
+/* ════════════════════════════════════════════════════════════
+   Utility classes — semantic colors, layouts, banners, modal
+   header gradients, table styling for tabular data inside cards.
+   Used to eliminate ~200 inline style={} props across reception
+   pages so visual changes live in CSS, not JSX.
+   ════════════════════════════════════════════════════════════ */
+
+/* Text colors (semantic) */
+.rx-text-success  { color: #15803d !important; }
+.rx-text-danger   { color: #b91c1c !important; }
+.rx-text-warning  { color: #c2410c !important; }
+.rx-text-info     { color: #0e7490 !important; }
+.rx-text-primary  { color: #1d4ed8 !important; }
+.rx-text-muted    { color: #94a3b8 !important; }
+.rx-text-subtle   { color: #64748b !important; }
+.rx-text-strong   { color: #0f172a !important; }
+.rx-text-discount { color: #dc2626 !important; }
+.rx-text-success-light { color: #86efac !important; }
+
+/* Tiny monospace pill (e.g. visit-type, payment-type tags) */
+.rx-mono-tag {
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  color: #0e7490;
+}
+.rx-mono-tag--subtle { color: #475569; }
+
+/* Status badge inline pill (payment mode etc.) */
+.rx-mode-pill {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 800;
+  background: #ecfeff;
+  color: #0e7490;
+}
+.rx-tariff-pill {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 800;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+/* Info banners inside modals (success / warning / danger / neutral / info) */
+.rx-banner {
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 12px;
+}
+.rx-banner--info {
+  background: #eff6ff;
+  border: 1px solid #93c5fd;
+  color: #1d4ed8;
+}
+.rx-banner--success {
+  background: #ecfdf5;
+  border: 1px solid #86efac;
+  color: #15803d;
+}
+.rx-banner--warning {
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  color: #c2410c;
+}
+.rx-banner--danger {
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  color: #b91c1c;
+}
+.rx-banner--neutral {
+  background: #f3f4f6;
+  border: 1px solid #d1d5db;
+  color: #374151;
+}
+
+/* Modal head gradient variants */
+.rx-modal-head--success { background: linear-gradient(135deg, #065f46, #15803d) !important; }
+.rx-modal-head--danger  { background: linear-gradient(135deg, #7f1d1d, #dc2626) !important; }
+.rx-modal-head--neutral { background: linear-gradient(135deg, #374151, #6b7280) !important; }
+.rx-modal-head--er      { background: linear-gradient(135deg, #7f1d1d, #dc2626) !important; }
+.rx-modal-head--bed-occ { background: linear-gradient(135deg, #7f1d1d, #dc2626) !important; }
+.rx-modal-head--bed-free{ background: linear-gradient(135deg, #15803d, #22c55e) !important; }
+
+/* Action button color variants for danger/success-styled primary */
+.rx-modal-btn-primary--success {
+  background: linear-gradient(135deg, #065f46, #15803d) !important;
+}
+.rx-modal-btn-primary--danger {
+  background: linear-gradient(135deg, #7f1d1d, #dc2626) !important;
+}
+.rx-modal-btn-primary--neutral {
+  background: linear-gradient(135deg, #374151, #6b7280) !important;
+}
+.rx-btn-primary--er {
+  background: linear-gradient(135deg, #dc2626, #ef4444) !important;
+}
+
+/* Header gradient variants (page-level) */
+.rx-header--er  { background: linear-gradient(135deg, #7f1d1d, #dc2626) !important; }
+
+/* Simple grids */
+.rx-grid-2 { display: grid; grid-template-columns: 1fr 1fr;     gap: 10px; }
+.rx-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.rx-grid-5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.rx-grid-6 { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
+.rx-grid-fit-120 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+  font-size: 12px;
+}
+.rx-grid-fit-150 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+.rx-grid-fit-2col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  font-size: 12px;
+}
+
+/* Split layout: bills list + active bill detail (or any 2-col list/detail) */
+.rx-split-list {
+  display: grid;
+  grid-template-columns: minmax(0, 420px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+.rx-split-list--search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 14px;
+}
+
+/* Flex helpers */
+.rx-flex-center { display: flex; align-items: center; gap: 8px; }
+.rx-flex-row    { display: flex; gap: 6px; }
+.rx-flex-row-10 { display: flex; gap: 10px; }
+.rx-flex-col-6  { display: flex; flex-direction: column; gap: 6px; }
+.rx-flex-1      { flex: 1; min-width: 0; }
+.rx-min-zero    { min-width: 0; }
+
+.rx-loader-icon { font-size: 28px; }
+
+/* Tables inside bill detail / receipt views */
+.rx-table { width: 100%; font-size: 12px; border-collapse: collapse; }
+.rx-table--sm { font-size: 11px; }
+.rx-table thead tr {
+  background: #f8fafc;
+  color: #475569;
+  text-align: left;
+}
+.rx-table th, .rx-table td { padding: 6px 8px; }
+.rx-table th { font-weight: 700; font-size: 11px; }
+.rx-table tbody tr { border-top: 1px solid #f1f5f9; }
+.rx-table .right { text-align: right; }
+.rx-table .bold  { font-weight: 800; }
+
+/* Card detail section (used by BillDetail) */
+.rx-detail-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+}
+.rx-detail-head {
+  padding: 12px 14px;
+  border-bottom: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.rx-detail-head-title {
+  font-size: 14px;
+  font-weight: 800;
+  color: #0f172a;
+}
+.rx-detail-head-sub {
+  font-size: 11px;
+  color: #64748b;
+}
+.rx-detail-body  { padding: 10px 14px; }
+.rx-detail-totals {
+  padding: 10px 14px;
+  border-top: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+.rx-detail-payments {
+  padding: 10px 14px;
+  border-top: 1px solid #e2e8f0;
+}
+
+/* Section-uppercase label */
+.rx-section-label {
+  font-size: 11px;
+  font-weight: 800;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  margin-bottom: 6px;
+}
+
+/* Patient summary panel (used in PatientSearch side panel) */
+.rx-summary-panel {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 16px;
+  height: fit-content;
+  position: sticky;
+  top: 16px;
+}
+.rx-summary-head {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 10px;
+}
+.rx-summary-head .rx-mini-avatar { width: 48px; height: 48px; font-size: 16px; }
+.rx-summary-name {
+  font-size: 15px;
+  font-weight: 800;
+  color: #0f172a;
+}
+.rx-summary-meta {
+  font-size: 11px; color: #64748b;
+}
+.rx-summary-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+  font-size: 11px; color: #475569; margin-bottom: 12px;
+}
+
+/* Mini counter tiles (e.g. OPD/IPD/ER lifetime visit counters) */
+.rx-counter-tile {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px 6px;
+  text-align: center;
+}
+.rx-counter-tile-value {
+  font-size: 18px;
+  font-weight: 900;
+  font-family: 'DM Mono', monospace;
+}
+.rx-counter-tile-value--opd { color: #0e7490; }
+.rx-counter-tile-value--ipd { color: #6d28d9; }
+.rx-counter-tile-value--er  { color: #b91c1c; }
+.rx-counter-tile-label {
+  font-size: 10px; color: #64748b; font-weight: 700;
+}
+
+/* Triage / KPI tile left-borders */
+.rx-kpi-tile--critical    { border-left: 4px solid #991b1b; cursor: pointer; }
+.rx-kpi-tile--emergency   { border-left: 4px solid #c2410c; cursor: pointer; }
+.rx-kpi-tile--urgent      { border-left: 4px solid #a16207; cursor: pointer; }
+.rx-kpi-tile--semiurgent  { border-left: 4px solid #0e7490; cursor: pointer; }
+.rx-kpi-tile--nonurgent   { border-left: 4px solid #15803d; cursor: pointer; }
+.rx-kpi-tile--available   { border-left: 4px solid #22c55e; cursor: pointer; }
+.rx-kpi-tile--occupied    { border-left: 4px solid #ef4444; cursor: pointer; }
+.rx-kpi-tile--maintenance { border-left: 4px solid #f59e0b; cursor: pointer; }
+.rx-kpi-tile--reserved    { border-left: 4px solid #3b82f6; cursor: pointer; }
+.rx-kpi-tile--blocked     { border-left: 4px solid #9ca3af; cursor: pointer; }
+.rx-kpi-tile--filtering   { outline: 2px solid #06b6d4; }
+
+/* Date-picker pill on the dark header bar */
+.rx-header-date {
+  background: rgba(255,255,255,.12);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,.2);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-family: inherit;
+  font-size: 12px;
+}
+.rx-header-date::-webkit-calendar-picker-indicator { filter: invert(1); }
+
+/* Compact selectable bill row (used in ReceptionBilling) */
+.rx-bill-row { cursor: pointer; }
+.rx-bill-row--active {
+  border-color: #06b6d4;
+  border-width: 2px;
+}
+.rx-bill-row-line {
+  display: flex; align-items: center; gap: 8px;
+}
+.rx-bill-row-meta {
+  font-size: 10px; color: #94a3b8; margin-top: 4px;
+}
+
+/* WhatsApp green icon */
+.rx-wa-icon { color: #22c55e; }
+
+/* Triage stripe on emergency rows */
+.rx-card-stripe--critical    { border-left: 4px solid #991b1b; }
+.rx-card-stripe--emergency   { border-left: 4px solid #c2410c; }
+.rx-card-stripe--urgent      { border-left: 4px solid #a16207; }
+.rx-card-stripe--semiurgent  { border-left: 4px solid #0e7490; }
+.rx-card-stripe--nonurgent   { border-left: 4px solid #15803d; }
+
+.rx-card-divider {
+  margin-top: 6px;
+  border-top: 1px dashed #e2e8f0;
+  padding-top: 6px;
+}
+
+/* OPD queue position bubble */
+.rx-queue-pos {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 8px;
+  background: linear-gradient(135deg, #0891b2, #06b6d4);
+  color: #fff; font-size: 12px; font-weight: 800;
+  font-family: 'DM Mono', monospace;
+}
+
+.rx-empty-tip {
+  font-size: 11px; color: #94a3b8; margin-top: 6px;
+}
+
+/* Inline icon adjustments */
+.rx-icon-info { color: #06b6d4; }
+
+/* Discount column emphasis */
+.rx-discount-cell { color: #dc2626; }
+
+/* Pad-tight modal action wrap */
+.rx-modal-foot--padded { padding: 12px 18px; }
+
+/* Common margin/padding helpers (only the spots we hit in JSX) */
+.rx-mb-0  { margin-bottom: 0 !important; }
+.rx-mb-6  { margin-bottom: 6px; }
+.rx-mb-12 { margin-bottom: 12px; }
+.rx-mb-14 { margin-bottom: 14px; }
+.rx-mt-6  { margin-top: 6px; }
+.rx-mt-10 { margin-top: 10px; }
+.rx-ml-auto { margin-left: auto; }
+
+.rx-btn-compact { padding: 7px 16px !important; }
+
+/* Receipt-row label/value pair tweak */
+.rx-bill-amounts-row { display: flex; align-items: center; gap: 8px; }
+
+/* Action button — full width, centered (used in side-panel quick actions) */
+.rx-action-btn--block { justify-content: center; }
+
+/* Grid spans inside summary panels */
+.rx-grid-full-row { grid-column: 1 / -1; }
+
+/* Patient search results column layout (responds to whether a panel is open) */
+.rx-search-layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+.rx-search-layout--with-panel {
+  grid-template-columns: minmax(0, 1fr) 380px;
+}
+
+/* Counter tile row (3-up grid used in patient summary) */
+.rx-counter-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+/* Quick-action column */
+.rx-quick-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Loading state spinner inline color */
+.rx-spinner-info { color: #06b6d4; }
+
+/* Bed view: Building → Floor → Ward hierarchy labels */
+.rx-tree-building {
+  font-size: 13px;
+  font-weight: 800;
+  color: #0f172a;
+  margin: 8px 4px 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.rx-tree-building i { color: #0891b2; }
+.rx-tree-floor {
+  font-size: 12;
+  margin-left: 8px;
+  margin-bottom: 8px;
+}
+.rx-tree-floor-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #475569;
+  margin: 4px 0;
+}
+.rx-tree-floor-label i { font-size: 9px; }
+
+/* Ward count chips inside ward-head */
+.rx-ward-count-avail { background: rgba(34,197,94,.25); }
+.rx-ward-count-occ   { background: rgba(239,68,68,.25); }
+.rx-ward-count-tot   { background: rgba(255,255,255,.15); }
+
+/* Modal body section divider (used in bed detail) */
+.rx-modal-section {
+  border-top: 1px solid #e2e8f0;
+  margin-top: 10px;
+  padding-top: 10px;
+}
+.rx-modal-section-title {
+  font-size: 12px;
+  font-weight: 800;
+  color: #0f172a;
+  margin-bottom: 6px;
+}
+
+/* KPI sub line — "✓ filtering" indicator */
+.rx-kpi-active { color: #06b6d4; }
+.rx-kpi-clickable { cursor: pointer; }
+
+/* Lowercase mapping for KPI tile status variants */
+.rx-kpi-tile--available { border-left: 4px solid #22c55e; cursor: pointer; }
+.rx-kpi-tile--occupied  { border-left: 4px solid #ef4444; cursor: pointer; }
+.rx-kpi-tile--reserved  { border-left: 4px solid #3b82f6; cursor: pointer; }
+.rx-kpi-tile--blocked   { border-left: 4px solid #9ca3af; cursor: pointer; }
+
+/* Bed empty-state sub strong */
+.rx-bed-sub--strong { font-weight: 700; }
+
+/* Slot grid loading / empty messages */
+.rx-slot-msg {
+  padding: 14px;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+/* Modal wide (for bigger forms like booking) */
+.rx-modal--wide { max-width: 720px; }
+
+/* Inline phone-lookup group: input + button */
+.rx-input-group { display: flex; gap: 6px; }
+
+/* Read-only auto-filled field (UHID lookup) */
+.rx-field-readonly { background: #f8fafc; }
+
+/* Booking form upper grid (doctor + date side by side) */
+.rx-grid-2-wide { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+/* Section divider in big modals */
+.rx-modal-divider {
+  border-top: 1px solid #e2e8f0;
+  padding-top: 12px;
+  margin-top: 4px;
+}
+
+/* Slot time tag next to appointment patient name */
+.rx-slot-time-tag {
+  font-size: 11px;
+  margin-left: 6px;
+}
+
+/* Search bar variant inside a toolbar (no bottom margin, grows to fill) */
+.rx-search--inline { flex: 1; margin-bottom: 0; }
+
+/* Compact OPD-queue card variant */
+.rx-card--compact { margin-bottom: 6px; padding: 10px 14px; }
+.rx-card-name--sm { font-size: 14px; }
+
+/* Ward count chip — green (used by per-doctor group header) */
+.rx-ward-count-grp { background: rgba(34,197,94,.25); }
+
+/* Padding helper for grouped section bodies */
+.rx-p-10 { padding: 10px; }
+
+/* Tiny age/sex inline tag on patient cards */
+.rx-card-age-sex {
+  font-size: 11px;
+  color: #64748b;
+  font-weight: 600;
+}
+
+/* Required-field marker (for forms inside reception pages) */
+.rx-req { color: #dc2626; }
+
+/* Two/three column field grids */
+.rx-grid-3-fields { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+.rx-grid-2-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+/* Paragraph inside a modal (e.g. confirmation text) */
+.rx-modal-para {
+  font-size: 13px;
+  color: #475569;
+  line-height: 1.5;
+}
+
+

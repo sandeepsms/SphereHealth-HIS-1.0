@@ -150,9 +150,9 @@ export default function ReceptionDashboard() {
 
       {/* ── Live Receptionist Presence strip ── */}
       {isToday && presence.length > 0 && (
-        <div className="rd-presence-strip">
-          <i className="pi pi-users" style={{ color:"#0891b2", fontSize:14 }} />
-          <span style={{ fontSize:11, fontWeight:700, color:"#64748b", textTransform:"uppercase", letterSpacing:".5px" }}>
+        <div className="rd-presence-strip rd-presence-row">
+          <i className="pi pi-users" />
+          <span className="rd-presence-label">
             Active Right Now ({presence.length})
           </span>
           {presence.map(p => {
@@ -176,7 +176,7 @@ export default function ReceptionDashboard() {
       )}
 
       {/* ── Stat tiles ── */}
-      <div className="rd-stats" style={{ marginBottom: 14 }}>
+      <div className="rd-stats rd-stats--mb">
         <div className="rd-stat rd-stat--total">
           <span className="rd-stat-label">Total Collection</span>
           <span className="rd-stat-value">{fmtCur(totalCollected)}</span>
@@ -201,7 +201,7 @@ export default function ReceptionDashboard() {
             <span className="rd-card-title">Doctor Availability — Live Queue</span>
             <span className="rd-card-meta">{queues.length} doctor{queues.length !== 1 ? "s" : ""}</span>
           </div>
-          <div className="rd-card-body" style={{ padding: "6px 14px" }}>
+          <div className="rd-card-body rd-card-body--tight">
             {queues.length === 0 ? (
               <div className="rd-empty">
                 <span className="rd-empty-icon">👨‍⚕️</span>
@@ -211,7 +211,7 @@ export default function ReceptionDashboard() {
               <div key={d._id} className="rd-doc-row">
                 <div className="rd-doc-name">
                   <span className={`rd-doc-status-dot ${STATUS_DOT_CLASS[d.availability?.status] || ""}`} />
-                  <div style={{ minWidth: 0 }}>
+                  <div className="rd-min-zero">
                     <div className="rd-doc-info-name">{d.fullName}</div>
                     <div className="rd-doc-info-spec">{d.specialization} · {d.department || "—"}</div>
                     {d.availability?.note && <div className="rd-doc-info-note">📝 {d.availability.note}</div>}
@@ -328,16 +328,16 @@ export default function ReceptionDashboard() {
               </div>
             )}
             {advanceDue === 0 && tpaPending === 0 && (
-              <div className="rd-empty" style={{ padding: 12 }}>
+              <div className="rd-empty rd-empty--small">
                 <span className="rd-empty-icon">✓</span>
                 All clear — no pending dues
               </div>
             )}
 
-            <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px dashed #e2e8f0" }}>
-              <div className="rd-stat-label" style={{ marginBottom: 8 }}>RECEPTIONIST-WISE COLLECTION (today)</div>
+            <div className="rd-rx-collection">
+              <div className="rd-stat-label rd-stat-label--sp">RECEPTIONIST-WISE COLLECTION (today)</div>
               {(collection?.byReceptionist || []).length === 0 ? (
-                <div className="rd-empty" style={{ padding: 6 }}>No transactions yet</div>
+                <div className="rd-empty rd-empty--tiny">No transactions yet</div>
               ) : (collection.byReceptionist || []).map(r => (
                 <div key={r.id} className="rd-doc-rev-row">
                   <div>
@@ -355,9 +355,8 @@ export default function ReceptionDashboard() {
       </div>
 
       {loading && (
-        <div style={{ position: "fixed", bottom: 16, right: 16, padding: "8px 14px",
-                      background: "#1e293b", color: "#fff", borderRadius: 8, fontSize: 12, fontWeight: 600 }}>
-          <i className="pi pi-spin pi-spinner" style={{ marginRight: 6 }} /> Loading…
+        <div className="rd-floating-loader">
+          <i className="pi pi-spin pi-spinner" /> Loading…
         </div>
       )}
     </div>

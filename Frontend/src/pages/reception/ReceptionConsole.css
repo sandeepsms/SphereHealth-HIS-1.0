@@ -568,6 +568,42 @@
   color: #64748b;
   font-size: 13px;
 }
+.rc-empty--compact { padding: 16px; }
+
+/* Pincode lookup status text */
+.rc-pin-status {
+  margin-left: 6px;
+  font-size: 10px;
+}
+.rc-pin-status--loading { color: #0891b2; }
+.rc-pin-status--ok      { color: #15803d; }
+.rc-pin-status--err     { color: #dc2626; }
+
+/* Inline sub-label next to section title (e.g. "(prefilled)") */
+.rc-section-sublabel {
+  color: #64748b;
+  font-weight: 500;
+  margin-left: 6px;
+  font-size: 10px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* Service code tag inside the service search results */
+.rc-service-code {
+  color: #94a3b8;
+  font-family: 'DM Mono', monospace;
+}
+.rc-service-code--inline {
+  color: #94a3b8;
+  font-size: 10px;
+  margin-left: 6px;
+}
+
+/* Dashboard back-button gradient variant (slate) */
+.rc-new-btn--slate {
+  background: linear-gradient(135deg, #1e293b, #0f172a) !important;
+}
 .rc-empty-icon {
   font-size: 36px;
   display: block;

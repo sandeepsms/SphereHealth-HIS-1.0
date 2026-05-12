@@ -92,7 +92,7 @@ export default function Appointments() {
         </div>
         <div className="rx-header-actions">
           <input type="date" value={filterDate} onChange={e => setFilterDate(e.target.value)}
-                 style={{ background: "rgba(255,255,255,.12)", color: "#fff", border: "1px solid rgba(255,255,255,.2)", borderRadius: 8, padding: "6px 10px", fontFamily: "inherit", fontSize: 12 }} />
+                 className="rx-header-date" />
           <button className="rx-btn-ghost" onClick={load}><i className="pi pi-refresh" /> Refresh</button>
           <button className="rx-btn-primary" onClick={() => setShowBook(true)}>
             <i className="pi pi-plus" /> Book Appointment
@@ -117,7 +117,7 @@ export default function Appointments() {
       </div>
 
       {loading ? (
-        <div className="rx-empty"><i className="pi pi-spin pi-spinner" style={{ fontSize: 28 }} /></div>
+        <div className="rx-empty"><i className="pi pi-spin pi-spinner rx-loader-icon" /></div>
       ) : filtered.length === 0 ? (
         <div className="rx-empty">
           <span className="rx-empty-icon">📅</span>
@@ -135,7 +135,7 @@ export default function Appointments() {
               <div className="rx-card-name">
                 {apt.patientName}
                 <span className={`rx-card-stage rx-card-stage--${cls}`}>{apt.status || "Booked"}</span>
-                <span style={{ fontSize: 11, fontWeight: 700, color: "#0e7490", fontFamily: "DM Mono, monospace", marginLeft: 6 }}>
+                <span className="rx-mono-tag rx-slot-time-tag">
                   {apt.slotTime}
                 </span>
               </div>
@@ -146,15 +146,15 @@ export default function Appointments() {
                 <span>Doctor: <strong>{apt.doctorId?.personalInfo?.fullName || apt.doctorName || "—"}</strong></span>
                 <span>Date: <strong>{fmtDate(apt.appointmentDate)}</strong></span>
                 {apt.chiefComplaint && <span>Reason: <strong>{apt.chiefComplaint}</strong></span>}
-                {apt.checkedInAt && <span style={{ color: "#15803d" }}>Checked-in: <strong>{fmtDateTime(apt.checkedInAt)}</strong></span>}
-                {apt.cancelReason && <span style={{ color: "#b91c1c" }}>Reason: <strong>{apt.cancelReason}</strong></span>}
+                {apt.checkedInAt && <span className="rx-text-success">Checked-in: <strong>{fmtDateTime(apt.checkedInAt)}</strong></span>}
+                {apt.cancelReason && <span className="rx-text-danger">Reason: <strong>{apt.cancelReason}</strong></span>}
               </div>
             </div>
             <div className="rx-card-actions">
               {apt.status === "Booked" && (
                 <>
                   <button className="rx-action-btn" onClick={() => sendWhatsAppReminder(apt)} title="Send WhatsApp reminder">
-                    <i className="pi pi-whatsapp" style={{ color: "#22c55e" }} /> Remind
+                    <i className="pi pi-whatsapp rx-wa-icon" /> Remind
                   </button>
                   <button className="rx-action-btn rx-action-btn--success" onClick={() => checkIn(apt)}>
                     <i className="pi pi-sign-in" /> Check-In
@@ -276,7 +276,7 @@ function BookAppointmentModal({ onClose, onDone, defaultDate }) {
 
   return (
     <div className="rx-modal-backdrop" onClick={onClose}>
-      <div className="rx-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 720 }}>
+      <div className="rx-modal rx-modal--wide" onClick={e => e.stopPropagation()}>
         <div className="rx-modal-head">
           <i className="pi pi-calendar-plus" />
           <span className="rx-modal-title">Book Appointment</span>
@@ -284,7 +284,7 @@ function BookAppointmentModal({ onClose, onDone, defaultDate }) {
         </div>
         <div className="rx-modal-body">
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div className="rx-grid-2-wide">
             <div className="his-field-group">
               <label className="his-label">Doctor *</label>
               <select className="his-field" value={doctorId} onChange={e => { setDoctorId(e.target.value); setSelectedSlot(""); }}>
@@ -306,9 +306,9 @@ function BookAppointmentModal({ onClose, onDone, defaultDate }) {
             <div className="his-field-group">
               <label className="his-label">Available Slots</label>
               {loadingSlots ? (
-                <div style={{ padding: 14 }}><i className="pi pi-spin pi-spinner" /> Loading slots…</div>
+                <div className="rx-slot-msg"><i className="pi pi-spin pi-spinner" /> Loading slots…</div>
               ) : slots.length === 0 ? (
-                <div style={{ padding: 14, color: "#94a3b8" }}>No slots for this date</div>
+                <div className="rx-slot-msg">No slots for this date</div>
               ) : (
                 <div className="rx-slot-grid">
                   {slots.map(s => (
@@ -328,18 +328,18 @@ function BookAppointmentModal({ onClose, onDone, defaultDate }) {
             </div>
           )}
 
-          <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: 12, marginTop: 4 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div className="rx-modal-divider">
+            <div className="rx-grid-2-wide">
               <div className="his-field-group">
                 <label className="his-label">Patient Phone *</label>
-                <div style={{ display: "flex", gap: 6 }}>
+                <div className="rx-input-group">
                   <input className="his-field" value={phone} onChange={e => setPhone(e.target.value)} onBlur={lookupPatient} placeholder="10-digit mobile" />
                   <button type="button" className="rx-action-btn" onClick={lookupPatient}><i className="pi pi-search" /></button>
                 </div>
               </div>
               <div className="his-field-group">
                 <label className="his-label">UHID (auto)</label>
-                <input className="his-field" value={uhid} readOnly placeholder="Auto-filled if patient exists" style={{ background: "#f8fafc" }} />
+                <input className="his-field rx-field-readonly" value={uhid} readOnly placeholder="Auto-filled if patient exists" />
               </div>
             </div>
             <div className="his-field-group">
@@ -389,7 +389,7 @@ function CancelModal({ apt, onClose, onDone }) {
           <button className="rx-modal-close" onClick={onClose}>×</button>
         </div>
         <div className="rx-modal-body">
-          <div style={{ background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#b91c1c" }}>
+          <div className="rx-banner rx-banner--danger">
             ⚠ Cancelling will free this slot. Apt #: <strong>{apt.appointmentNumber}</strong> · Slot: <strong>{apt.slotTime}</strong>
           </div>
           <div className="his-field-group">
@@ -400,7 +400,7 @@ function CancelModal({ apt, onClose, onDone }) {
         </div>
         <div className="rx-modal-foot">
           <button className="rx-modal-btn-cancel" onClick={onClose}>Keep Appointment</button>
-          <button className="rx-modal-btn-primary" onClick={cancel} disabled={saving} style={{ background: "linear-gradient(135deg,#dc2626,#ef4444)" }}>
+          <button className="rx-modal-btn-primary rx-btn-primary--er" onClick={cancel} disabled={saving}>
             <i className={`pi ${saving ? "pi-spin pi-spinner" : "pi-times"}`} /> Confirm Cancel
           </button>
         </div>

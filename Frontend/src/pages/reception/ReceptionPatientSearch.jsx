@@ -83,7 +83,7 @@ export default function ReceptionPatientSearch() {
         </div>
       </div>
 
-      <div className="rx-search" style={{ marginBottom: 12 }}>
+      <div className="rx-search rx-mb-12">
         <i className="pi pi-search" />
         <input
           ref={inputRef}
@@ -92,28 +92,28 @@ export default function ReceptionPatientSearch() {
           onChange={e => setQ(e.target.value)}
           autoFocus
         />
-        {loading && <i className="pi pi-spin pi-spinner" style={{ color: "#06b6d4" }} />}
+        {loading && <i className="pi pi-spin pi-spinner rx-spinner-info" />}
         {q && !loading && <button className="rx-action-btn" onClick={() => setQ("")}><i className="pi pi-times" /></button>}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: selected ? "minmax(0,1fr) 380px" : "1fr", gap: 14 }}>
+      <div className={`rx-search-layout ${selected ? "rx-search-layout--with-panel" : ""}`}>
         {/* ─── Results column ───────────────────────────────── */}
         <div>
           {empty ? (
             <div className="rx-empty">
               <span className="rx-empty-icon">🔍</span>
               Start typing to search patients
-              <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 6 }}>
+              <div className="rx-empty-tip">
                 Tip: enter at least 2 characters — name, UHID number, or mobile number.
               </div>
             </div>
           ) : loading ? (
-            <div className="rx-empty"><i className="pi pi-spin pi-spinner" style={{ fontSize: 28 }} /></div>
+            <div className="rx-empty"><i className="pi pi-spin pi-spinner rx-loader-icon" /></div>
           ) : results.length === 0 ? (
             <div className="rx-empty">
               <span className="rx-empty-icon">😶</span>
               No match for <strong>"{q}"</strong>
-              <div style={{ marginTop: 10 }}>
+              <div className="rx-mt-10">
                 <button className="rx-btn-primary" onClick={() => navigate(`/reception/register?prefill=${encodeURIComponent(q)}`)}>
                   <i className="pi pi-user-plus" /> Register new patient
                 </button>
@@ -132,7 +132,7 @@ export default function ReceptionPatientSearch() {
                     {p.fullName || "Unknown"}
                     {p.isMLC && <span className="rx-card-stage rx-card-stage--denied">MLC</span>}
                     {p.tpa && <span className="rx-card-stage rx-card-stage--submitted">TPA</span>}
-                    {p.registrationType && <span style={{ fontSize: 10, fontWeight: 700, color: "#0e7490", fontFamily: "DM Mono, monospace" }}>{p.registrationType}</span>}
+                    {p.registrationType && <span className="rx-mono-tag">{p.registrationType}</span>}
                   </div>
                   <div className="rx-mini-meta">
                     <span>UHID: <strong>{p.UHID}</strong></span>
@@ -142,7 +142,7 @@ export default function ReceptionPatientSearch() {
                     {p.department && <span>Dept: <strong>{typeof p.department === "object" ? p.department.name : p.department}</strong></span>}
                   </div>
                 </div>
-                <div style={{ display: "flex", gap: 6 }}>
+                <div className="rx-flex-row">
                   <button className="rx-action-btn" onClick={(e) => { e.stopPropagation(); openFullProfile(p.UHID); }}>
                     <i className="pi pi-id-card" /> View
                   </button>
@@ -167,57 +167,54 @@ function PatientSidePanel({ patient: p, onClose, navigate }) {
     : p.address || "";
 
   return (
-    <div style={{
-      background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12,
-      padding: 16, height: "fit-content", position: "sticky", top: 16
-    }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-        <div className="rx-mini-avatar" style={{ width: 48, height: 48, fontSize: 16 }}>{initials(p.fullName)}</div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 15, fontWeight: 800, color: "#0f172a" }}>{p.fullName}</div>
-          <div style={{ fontSize: 11, color: "#64748b" }}>UHID: <strong>{p.UHID}</strong> · {ageGenderLine(p)}</div>
+    <div className="rx-summary-panel">
+      <div className="rx-summary-head">
+        <div className="rx-mini-avatar">{initials(p.fullName)}</div>
+        <div className="rx-flex-1">
+          <div className="rx-summary-name">{p.fullName}</div>
+          <div className="rx-summary-meta">UHID: <strong>{p.UHID}</strong> · {ageGenderLine(p)}</div>
         </div>
         <button className="rx-action-btn" onClick={onClose}><i className="pi pi-times" /></button>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, fontSize: 11, color: "#475569", marginBottom: 12 }}>
+      <div className="rx-summary-grid">
         {p.contactNumber && <div>📱 <strong>{p.contactNumber}</strong></div>}
         {p.email && <div>✉ <strong>{p.email}</strong></div>}
         {p.bloodGroup && <div>🩸 <strong>{p.bloodGroup}</strong></div>}
         {p.maritalStatus && <div>💍 <strong>{p.maritalStatus}</strong></div>}
-        {addr && <div style={{ gridColumn: "1/-1" }}>🏠 <strong>{addr}</strong></div>}
-        {p.knownAllergies && <div style={{ gridColumn: "1/-1", color: "#b91c1c" }}>⚠ Allergies: <strong>{p.knownAllergies}</strong></div>}
+        {addr && <div className="rx-grid-full-row">🏠 <strong>{addr}</strong></div>}
+        {p.knownAllergies && <div className="rx-grid-full-row rx-text-danger">⚠ Allergies: <strong>{p.knownAllergies}</strong></div>}
       </div>
 
       {/* Visit counters */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 12 }}>
-        <CounterTile label="OPD" value={p.totalOPDVisits || 0} color="#0e7490" />
-        <CounterTile label="IPD" value={p.totalIPDVisits || 0} color="#6d28d9" />
-        <CounterTile label="ER"  value={p.totalEmergencyVisits || 0} color="#b91c1c" />
+      <div className="rx-counter-row">
+        <CounterTile label="OPD" value={p.totalOPDVisits || 0} variant="opd" />
+        <CounterTile label="IPD" value={p.totalIPDVisits || 0} variant="ipd" />
+        <CounterTile label="ER"  value={p.totalEmergencyVisits || 0} variant="er" />
       </div>
 
       {/* Quick actions */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        <button className="rx-action-btn rx-action-btn--primary" style={{ justifyContent: "center" }}
+      <div className="rx-quick-actions">
+        <button className="rx-action-btn rx-action-btn--primary rx-action-btn--block"
                 onClick={() => navigate(`/reception/register?uhid=${p.UHID}`)}>
           <i className="pi pi-plus" /> New Visit / Registration
         </button>
-        <button className="rx-action-btn" style={{ justifyContent: "center" }}
+        <button className="rx-action-btn rx-action-btn--block"
                 onClick={() => navigate(`/visit-history/${p.UHID}`)}>
           <i className="pi pi-clock" /> View Visit History
         </button>
-        <button className="rx-action-btn" style={{ justifyContent: "center" }}
+        <button className="rx-action-btn rx-action-btn--block"
                 onClick={() => navigate(`/reception-billing/${p.UHID}`)}>
           <i className="pi pi-receipt" /> Billing & Payments
         </button>
         {p.contactNumber && (
-          <button className="rx-action-btn" style={{ justifyContent: "center" }}
+          <button className="rx-action-btn rx-action-btn--block"
                   onClick={() => {
                     const num = (p.contactNumber || "").replace(/\D/g, "");
                     const phone = num.length === 10 ? `91${num}` : num;
                     window.open(`https://wa.me/${phone}`, "_blank");
                   }}>
-            <i className="pi pi-whatsapp" style={{ color: "#22c55e" }} /> Open WhatsApp
+            <i className="pi pi-whatsapp rx-wa-icon" /> Open WhatsApp
           </button>
         )}
       </div>
@@ -225,14 +222,11 @@ function PatientSidePanel({ patient: p, onClose, navigate }) {
   );
 }
 
-function CounterTile({ label, value, color }) {
+function CounterTile({ label, value, variant }) {
   return (
-    <div style={{
-      background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8,
-      padding: "8px 6px", textAlign: "center"
-    }}>
-      <div style={{ fontSize: 18, fontWeight: 900, color, fontFamily: "DM Mono, monospace" }}>{value}</div>
-      <div style={{ fontSize: 10, color: "#64748b", fontWeight: 700 }}>{label} VISITS</div>
+    <div className="rx-counter-tile">
+      <div className={`rx-counter-tile-value rx-counter-tile-value--${variant}`}>{value}</div>
+      <div className="rx-counter-tile-label">{label} VISITS</div>
     </div>
   );
 }
