@@ -719,10 +719,17 @@ async function onOPDAssessmentSaved(opdVisit, admission, doctorName, assessmentI
 async function onAdmissionCreated(admissionDoc) {
   if (!admissionDoc?._id) return [];
   const triggers = [];
+  // Map Admission.admissionType → BillingTrigger.patientType + PatientBill.visitType
+  // enums. Both target enums use UPPERCASE values; the old "ER"/"DC" codes
+  // silently failed validation and produced ZERO triggers & ZERO bills.
   const typeCode = {
     "Planned":   "IPD",
-    "Emergency": "ER",
-    "Day Care":  "DC",
+    "Emergency": "EMERGENCY",
+    "Day Care":  "DAYCARE",
+    "Daycare":   "DAYCARE",
+    "Transfer":  "IPD",
+    "OPD":       "OPD",
+    "Services":  "OPD",
   }[admissionDoc.admissionType] || "IPD";
 
   // 1. Registration fee
@@ -768,8 +775,8 @@ async function onAdmissionCreated(admissionDoc) {
     }).catch((e) => { console.error("Admission charge trigger error:", e.message); return null; })
   );
 
-  // 3. First bed-day charge (if IPD/DC) — daily cron handles subsequent days
-  if (typeCode === "IPD" || typeCode === "DC") {
+  // 3. First bed-day charge (if IPD/Daycare) — daily cron handles subsequent days
+  if (typeCode === "IPD" || typeCode === "DAYCARE") {
     triggers.push(
       await createTrigger({
         admissionId:         admissionDoc._id,
@@ -805,7 +812,9 @@ async function onEmergencyVisitCreated(emergencyVisit, admission) {
     admissionId:         admission._id,
     patientId:           admission.patientId,
     UHID:                admission.UHID,
-    patientType:         "ER",
+    // PatientBill.visitType enum is "EMERGENCY" — "ER" silently failed
+    // validation and emergency triage was never billed.
+    patientType:         "EMERGENCY",
     serviceCode:         "ER-TRIAGE",
     serviceName:         `Emergency Triage (${emergencyVisit.triageCategory || "Yellow"})`,
     quantity:            1,
