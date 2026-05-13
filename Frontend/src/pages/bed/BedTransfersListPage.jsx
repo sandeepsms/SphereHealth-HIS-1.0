@@ -9,6 +9,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { API_ENDPOINTS } from "../../config/api";
+import authFetch from "../../utils/authFetch";
 import "../patient/patient-file.css";
 
 const STATUS_META = {
@@ -41,7 +42,7 @@ const BedTransfersListPage = () => {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetch(API_ENDPOINTS.BED_TRANSFERS)
+    authFetch(API_ENDPOINTS.BED_TRANSFERS)
       .then(r => r.json())
       .then(data => {
         if (cancelled) return;

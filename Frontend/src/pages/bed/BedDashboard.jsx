@@ -19,6 +19,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { API_ENDPOINTS } from "../../config/api";
 import useBedEvents from "../../hooks/useBedEvents";
+import authFetch from "../../utils/authFetch";
 
 const C = {
   card:     "#ffffff",
@@ -44,7 +45,7 @@ const C = {
 
 const fetchJSON = async (url) => {
   try {
-    const r = await fetch(url);
+    const r = await authFetch(url);
     const data = await r.json();
     if (Array.isArray(data)) return data;
     if (Array.isArray(data?.data)) return data.data;
@@ -168,7 +169,7 @@ const BedDashboard = () => {
   /* Expire stale reservations on-demand (P2 #10). */
   const expireStaleReservations = async () => {
     try {
-      const r = await fetch(`${API_ENDPOINTS.BEDS}/reservations/expire-stale`, { method: "POST" });
+      const r = await authFetch(`${API_ENDPOINTS.BEDS}/reservations/expire-stale`, { method: "POST" });
       const data = await r.json();
       if (data?.success) {
         setRefreshTick(t => t + 1);

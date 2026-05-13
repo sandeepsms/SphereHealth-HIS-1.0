@@ -12,6 +12,7 @@ import { Dropdown }       from "primereact/dropdown";
 import { Button }         from "primereact/button";
 import { roomService }    from "../../Services/roomService";
 import { API_ENDPOINTS }  from "../../config/api";
+import authFetch          from "../../utils/authFetch";
 
 const PATTERNS = [
   { label: "Numeric  (101-1, 101-2, …)",        value: "numeric" },
@@ -75,7 +76,7 @@ const BedBulkCreateDialog = ({ visible, onHide, onSaved }) => {
         ward:     selectedRoom.ward?._id?.$oid     || selectedRoom.ward?._id     || selectedRoom.ward,
         status,
       }));
-      const r = await fetch(API_ENDPOINTS.BEDS, {
+      const r = await authFetch(API_ENDPOINTS.BEDS, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(beds),

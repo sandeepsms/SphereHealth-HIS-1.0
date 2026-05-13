@@ -6,8 +6,17 @@
 
 import { useEffect, useRef } from "react";
 import { API_ENDPOINTS } from "../config/api";
+import { authToken } from "../utils/authFetch";
 
-const ENDPOINT = `${API_ENDPOINTS.BEDS}/events`;
+const buildEndpoint = () => {
+  // EventSource cannot set Authorization header, so we pass the
+  // JWT as a query string and the backend's `authenticate` middleware
+  // accepts ?token=... as a fallback.
+  const t = authToken();
+  return t
+    ? `${API_ENDPOINTS.BEDS}/events?token=${encodeURIComponent(t)}`
+    : `${API_ENDPOINTS.BEDS}/events`;
+};
 
 /**
  * @param {Function} onUpdate  invoked with the parsed event payload
@@ -25,7 +34,7 @@ export default function useBedEvents(onUpdate, { enabled = true } = {}) {
 
     let es;
     try {
-      es = new EventSource(ENDPOINT);
+      es = new EventSource(buildEndpoint());
     } catch (_) {
       return;
     }

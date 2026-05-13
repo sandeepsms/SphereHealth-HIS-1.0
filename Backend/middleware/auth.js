@@ -2,13 +2,23 @@ const jwt = require("jsonwebtoken");
 
 const JWT_SECRET = process.env.JWT_SECRET || "spherehealth_his_secret_2025";
 
-/* ── Verify JWT token ── */
+/* ── Verify JWT token ──
+   Supports both the Authorization: Bearer header (preferred) and
+   a `?token=` query parameter — the latter is required for
+   EventSource / SSE streams, which can't set custom headers. */
 const authenticate = (req, res, next) => {
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer "))
+  let token = null;
+
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    token = authHeader.split(" ")[1];
+  } else if (req.query && req.query.token) {
+    token = String(req.query.token);
+  }
+
+  if (!token)
     return res.status(401).json({ message: "Authentication required. Please login." });
 
-  const token = authHeader.split(" ")[1];
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
     req.user = decoded; // { id, role, employeeId }

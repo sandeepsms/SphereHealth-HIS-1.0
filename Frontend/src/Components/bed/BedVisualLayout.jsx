@@ -15,6 +15,7 @@ import { floorService } from "../../Services/floorService";
 import patientService from "../../Services/patient/patientService";
 import { doctorService } from "../../Services/doctors/doctorService";
 import useBedEvents from "../../hooks/useBedEvents";
+import authFetch    from "../../utils/authFetch";
 
 /* ─── Colors ─────────────────────────────────────────────── */
 const TEAL = "#0891b2";
@@ -3642,7 +3643,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                       shiftingNotes:  xferNotes.trim(),
                       requestedBy:    xferDoctor || "",
                     };
-                    const r = await fetch(`${import.meta.env.VITE_API_URL || ""}/api/bed-transfers`, {
+                    const r = await authFetch(`${import.meta.env.VITE_API_URL || ""}/api/bed-transfers`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify(body),

@@ -7,6 +7,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { API_ENDPOINTS } from "../../config/api";
+import authFetch from "../../utils/authFetch";
 
 const fmt = (n, unit = "") => {
   if (n == null || isNaN(n)) return "—";
@@ -30,7 +31,7 @@ const BedMonthlyReportPage = () => {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetch(`${API_ENDPOINTS.BEDS}/reports/monthly?year=${year}&month=${month}`)
+    authFetch(`${API_ENDPOINTS.BEDS}/reports/monthly?year=${year}&month=${month}`)
       .then(r => r.json())
       .then(j => { if (!cancelled) {
         if (j?.success) setData(j.data);
