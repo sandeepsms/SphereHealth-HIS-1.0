@@ -9,6 +9,9 @@ import { useDigitalSignature } from "../../hooks/useDigitalSignature";
 import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
 import SignaturePad from "../../Components/signature/SignaturePad";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
+// Roadmap follow-up — dnp-* design system for the recorded-notes timeline.
+import "../../pages/patient/patient-file.css";
+import "../doctor/note-page-redesign.css";
 import NurseOrdersPanel from "../../Components/clinical/NurseOrdersPanel";
 import TreatmentChart from "../../Components/clinical/TreatmentChart";
 import FingerprintConsentModal from "../../Components/clinical/FingerprintConsentModal";
@@ -1493,27 +1496,19 @@ function NursingNotesContent({ selectedPatient }) {
               </div>
             </div>
 
-            {/* Timeline entries */}
+            {/* Timeline entries — wrapped in pf-tint--nurse dnp-timeline */}
             {filteredNotes.length === 0 ? (
-              <div style={{ padding: '56px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
-                <div style={{ width: 72, height: 72, borderRadius: 20, background: `linear-gradient(135deg, ${C.primaryL}, ${C.greenL})`, display: 'flex', alignItems: 'center', justifyContent: 'center', border: `2px dashed ${C.primary}40` }}>
-                  <i className="pi pi-file-edit" style={{ fontSize: 28, color: C.primary }} />
-                </div>
-                <div style={{ textAlign: 'center' }}>
-                  <div style={{ fontSize: 15, fontWeight: 800, color: C.text, marginBottom: 4 }}>No nursing notes yet</div>
-                  <div style={{ fontSize: 12, color: C.muted }}>Start documenting by clicking any module above</div>
-                </div>
-                <button onClick={() => openModal('general')} style={{
-                  padding: '9px 22px', background: C.primary, color: 'white', border: 'none',
-                  borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', gap: 7,
-                  boxShadow: `0 4px 14px ${C.primary}40`,
-                }}>
-                  <i className="pi pi-plus" style={{ fontSize: 12 }} /> Add First Note
+              <div className="dnp-empty">
+                <div className="dnp-empty__icon"><i className="pi pi-file-edit" /></div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--pf-text)', marginBottom: 4 }}>No nursing notes yet</div>
+                <div style={{ fontSize: 12, color: 'var(--pf-muted)', marginBottom: 12 }}>Start documenting by clicking any module above</div>
+                <button onClick={() => openModal('general')} className="dnp-note__btn dnp-note__btn--primary">
+                  <i className="pi pi-plus" style={{ fontSize: 11 }} /> Add First Note
                 </button>
               </div>
             ) : (
-              filteredNotes.map((note, i) => {
+              <div className="dnp-timeline pf-tint--nurse">
+              {filteredNotes.map((note, i) => {
                 const ns  = NOTE_STYLE[note.noteType] || NOTE_STYLE.general;
                 const ss  = SHIFT_STYLE[note.shift] || SHIFT_STYLE.morning;
                 const mod = modDef(note.noteType);
@@ -1522,43 +1517,33 @@ function NursingNotesContent({ selectedPatient }) {
                   : "--:--";
                 return (
                   <div key={note._id || i}
-                    style={{
-                      margin: '0 16px',
-                      padding: '16px 16px 16px 0',
-                      borderBottom: i < filteredNotes.length - 1 ? `1px solid ${C.border}` : 'none',
-                      display: 'grid', gridTemplateColumns: '80px 1fr auto', gap: 16, alignItems: 'start',
-                      borderLeft: `4px solid ${ns.dot}`, paddingLeft: 16,
-                      borderRadius: 0, transition: 'background .15s, border-radius .15s',
-                    }}
-                    onMouseEnter={e => { e.currentTarget.style.background = `${ns.bg}50`; e.currentTarget.style.borderRadius = '12px'; e.currentTarget.style.margin = '2px 16px'; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderRadius = '0'; e.currentTarget.style.margin = '0 16px'; }}>
-                    {/* Time column */}
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, paddingTop: 2 }}>
-                      {/* Time badge */}
-                      <div style={{ background: `${ns.bg}`, border: `1.5px solid ${ns.dot}30`, borderRadius: 8, padding: '5px 8px', textAlign: 'center', minWidth: 62 }}>
-                        <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 800, color: ns.color, lineHeight: 1 }}>{timeStr}</div>
-                        <div style={{ fontSize: 8, fontWeight: 700, color: ns.color + 'aa', textTransform: 'uppercase', letterSpacing: '.5px', marginTop: 3 }}>
+                    className={`dnp-note dnp-note--nurse ${note.isCriticalEvent ? "dnp-note--critical" : ""}`}
+                    style={{ "--dnp-accent": ns.color, "--dnp-tint": ns.bg }}>
+                    {/* ── Time gutter ── */}
+                    <div className="dnp-note__time">
+                      <div className="dnp-note__time-pill">
+                        <div className="dnp-note__time-hh">{timeStr}</div>
+                        <span className="dnp-note__time-shift">
                           {(note.shift || 'morning').charAt(0).toUpperCase() + (note.shift || 'morning').slice(1)}
-                        </div>
+                        </span>
                       </div>
-                      {/* Timeline dot */}
-                      <div style={{ width: 10, height: 10, borderRadius: '50%', background: ns.dot, boxShadow: `0 0 0 3px ${ns.dot}30` }} />
+                      <div className="dnp-note__time-dot" />
                     </div>
 
-                    {/* Body */}
-                    <div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8, flexWrap: "wrap" }}>
-                        <span style={{ padding: "3px 10px", borderRadius: 5, fontSize: 10, fontWeight: 700, letterSpacing: ".6px", background: ns.bg, color: ns.color, display: "flex", alignItems: "center", gap: 5 }}>
+                    {/* ── Body ── */}
+                    <div className="dnp-note__body">
+                      <div className="dnp-note__badge-row">
+                        <span className="dnp-note__type-badge">
                           {mod && <i className={`pi ${mod.icon}`} style={{ fontSize: 10 }} />}
                           {mod?.label || note.noteType?.toUpperCase()}
                         </span>
                         {note.isCriticalEvent && (
-                          <span style={{ background: C.red, color: "white", padding: "2px 8px", borderRadius: 4, fontSize: 9, fontWeight: 700, letterSpacing: ".5px", display: "flex", alignItems: "center", gap: 4 }}>
+                          <span className="dnp-note__status dnp-note__status--critical">
                             <i className="pi pi-exclamation-triangle" style={{ fontSize: 9 }} /> CRITICAL EVENT
                           </span>
                         )}
                         {note.nurseName && (
-                          <span style={{ fontSize: 11, color: C.muted, fontWeight: 500 }}>{note.nurseName}</span>
+                          <span className="dnp-note__author">{note.nurseName}</span>
                         )}
                       </div>
 
@@ -1767,17 +1752,18 @@ function NursingNotesContent({ selectedPatient }) {
                     </div>
 
                     {/* Actions */}
-                    <div style={{ display: "flex", flexDirection: "column", gap: 5, alignItems: "flex-end" }}>
-                      <button style={{ padding: "4px 10px", border: `1.5px solid ${C.border}`, borderRadius: 6, background: "white", fontSize: 11, fontWeight: 600, cursor: "pointer", color: C.muted, display: "flex", alignItems: "center", gap: 4 }}>
+                    <div className="dnp-note__actions">
+                      <button className="dnp-note__btn dnp-note__btn--info">
                         <i className="pi pi-pencil" style={{ fontSize: 10 }} /> Edit
                       </button>
-                      <button style={{ padding: "4px 10px", border: `1.5px solid ${C.border}`, borderRadius: 6, background: "white", fontSize: 11, fontWeight: 600, cursor: "pointer", color: C.muted, display: "flex", alignItems: "center", gap: 4 }}>
+                      <button className="dnp-note__btn">
                         <i className="pi pi-print" style={{ fontSize: 10 }} /> Print
                       </button>
                     </div>
                   </div>
                 );
-              })
+              })}
+              </div>
             )}
           </div>
         </>

@@ -7,6 +7,10 @@ import { toast } from "react-toastify";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import PatientHeaderCard from "../../Components/clinical/PatientHeaderCard";
 import "../../Components/clinical/clinical-forms.css";
+// Roadmap follow-up — new dnp-* design system for the recorded-notes
+// timeline. Form modals + save/sign flow remain untouched.
+import "../../pages/patient/patient-file.css";
+import "./note-page-redesign.css";
 import { DoctorAssessmentContent } from "./DoctorAssessmentPage";
 import DoctorOrdersPanel from "../../Components/doctor/DoctorOrdersPanel";
 import TreatmentChart from "../../Components/clinical/TreatmentChart";
@@ -1378,23 +1382,25 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
             </div>
 
             {filteredNotes.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "56px 0", color: C.muted }}>
-                <i className="pi pi-inbox" style={{ fontSize: 32, display: "block", marginBottom: 12, color: "#cbd5e1" }} />
-                <div style={{ fontSize: 13, fontWeight: 600 }}>No doctor notes yet</div>
-                <button onClick={() => openModal("daily")} style={{ marginTop: 10, background: "none", border: "none", color: C.primary, fontWeight: 700, cursor: "pointer", fontSize: 13 }}>
-                  <i className="pi pi-plus" style={{ marginRight: 5, fontSize: 11 }} />Write first progress note
+              <div className="dnp-empty">
+                <div className="dnp-empty__icon"><i className="pi pi-inbox" /></div>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>No doctor notes yet</div>
+                <button onClick={() => openModal("daily")} className="dnp-note__btn dnp-note__btn--primary">
+                  <i className="pi pi-plus" style={{ fontSize: 11 }} />Write first progress note
                 </button>
               </div>
-            ) : dateGroups.map(([dateKey, groupNotes]) => (
-              <div key={dateKey}>
-                {/* ── Date Section Header ── */}
-                <div style={{ padding: "7px 20px", background: "linear-gradient(90deg, #f1f5f9, #f8fafc)", borderBottom: `1px solid ${C.border}`, borderTop: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 2 }}>
-                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: C.primary, flexShrink: 0 }} />
-                  <span style={{ fontSize: 12, fontWeight: 800, color: C.primary }}>{fmtDayHeader(dateKey)}</span>
-                  <span style={{ fontSize: 11, fontWeight: 600, color: C.muted, fontFamily: "monospace" }}>
+            ) : (
+            <div className="dnp-timeline pf-tint--doctor">
+            {dateGroups.map(([dateKey, groupNotes]) => (
+              <div key={dateKey} className="dnp-date-group">
+                {/* ── Date Section Header — dnp-date-header (sticky) ── */}
+                <div className="dnp-date-header">
+                  <div className="dnp-date-header__dot" />
+                  <span className="dnp-date-header__title">{fmtDayHeader(dateKey)}</span>
+                  <span className="dnp-date-header__sub">
                     {new Date(dateKey + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
                   </span>
-                  <span style={{ marginLeft: "auto", background: C.primary + "18", color: C.primary, padding: "1px 8px", borderRadius: 9, fontSize: 10, fontWeight: 700 }}>{groupNotes.length} note{groupNotes.length !== 1 ? "s" : ""}</span>
+                  <span className="dnp-date-header__count">{groupNotes.length} note{groupNotes.length !== 1 ? "s" : ""}</span>
                 </div>
 
                 {/* ── Notes in this date group ── */}
@@ -1538,44 +1544,37 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
 
                   return (
                     <div key={note._id || i}
-                      style={{
-                        margin:"0 16px", padding:"16px 16px 16px 0",
-                        borderBottom: i < groupNotes.length-1 ? `1px solid ${C.border}` : "none",
-                        display:"grid", gridTemplateColumns:"82px 1fr auto", gap:16, alignItems:"start",
-                        borderLeft:`4px solid ${ns.dot}`, paddingLeft:16,
-                        transition:"background .15s, border-radius .15s", cursor:"pointer",
-                      }}
-                      onMouseEnter={e => { e.currentTarget.style.background=`${ns.bg}50`; e.currentTarget.style.borderRadius="12px"; e.currentTarget.style.margin="2px 16px"; }}
-                      onMouseLeave={e => { e.currentTarget.style.background="transparent"; e.currentTarget.style.borderRadius="0"; e.currentTarget.style.margin="0 16px"; }}
+                      className={`dnp-note ${isSigned ? "dnp-note--signed" : "dnp-note--draft"} ${note.isCritical ? "dnp-note--critical" : ""}`}
+                      style={{ "--dnp-accent": ns.color, "--dnp-tint": ns.bg }}
                       onClick={toggleExpand}>
 
-                      {/* ── Time column ── */}
-                      <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:5, paddingTop:2 }}>
-                        <div style={{ background:ns.bg, border:`1.5px solid ${ns.dot}30`, borderRadius:8, padding:"5px 8px", textAlign:"center", minWidth:64 }}>
-                          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:800, color:ns.color, lineHeight:1 }}>{timeStr}</div>
-                          <div style={{ fontSize:8, fontWeight:700, color:ns.color+"aa", textTransform:"uppercase", letterSpacing:".5px", marginTop:3 }}>
+                      {/* ── Time gutter ── */}
+                      <div className="dnp-note__time">
+                        <div className="dnp-note__time-pill">
+                          <div className="dnp-note__time-hh">{timeStr}</div>
+                          <span className="dnp-note__time-shift">
                             {(note.shift||"morning")[0].toUpperCase()+(note.shift||"morning").slice(1)}
-                          </div>
+                          </span>
                         </div>
-                        <div style={{ width:10, height:10, borderRadius:"50%", background:ns.dot, boxShadow:`0 0 0 3px ${ns.dot}30` }} />
+                        <div className="dnp-note__time-dot" />
                       </div>
 
                       {/* ── Body ── */}
-                      <div>
+                      <div className="dnp-note__body">
                         {/* Badge row */}
-                        <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:6, flexWrap:"wrap" }}>
-                          <span style={{ padding:"3px 10px", borderRadius:5, fontSize:10, fontWeight:700, letterSpacing:".5px", background:ns.bg, color:ns.color, display:"flex", alignItems:"center", gap:5, flexShrink:0 }}>
+                        <div className="dnp-note__badge-row">
+                          <span className="dnp-note__type-badge">
                             {mod && <i className={`pi ${mod.icon}`} style={{ fontSize:10 }} />}
                             {mod?.label || "Daily Progress"}
                           </span>
-                          <span style={{ padding:"2px 8px", borderRadius:4, fontSize:9, fontWeight:700, background:isSigned?C.greenL:C.amberL, color:isSigned?C.green:C.amber, border:`1px solid ${isSigned?C.greenB:C.amberB}` }}>
+                          <span className={`dnp-note__status ${isSigned ? "dnp-note__status--signed" : "dnp-note__status--draft"}`}>
                             {isSigned ? "✓ SIGNED" : "DRAFT"}
                           </span>
-                          {note.isCritical && <span style={{ background:C.red, color:"white", padding:"2px 8px", borderRadius:4, fontSize:9, fontWeight:700 }}>⚠ CRITICAL</span>}
-                          {note.doctorName && <span style={{ fontSize:11, color:C.muted, marginLeft:2 }}>{note.doctorName}</span>}
-                          {note.doctorRegNo && <span style={{ fontSize:10, color:C.muted }}>Reg: {note.doctorRegNo}</span>}
+                          {note.isCritical && <span className="dnp-note__status dnp-note__status--critical">⚠ CRITICAL</span>}
+                          {note.doctorName && <span className="dnp-note__author">{note.doctorName}</span>}
+                          {note.doctorRegNo && <span className="dnp-note__author-reg">Reg {note.doctorRegNo}</span>}
                           {!isExpanded && summaryLine && (
-                            <span style={{ fontSize:11, color:C.muted, fontStyle:"italic", marginLeft:4, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:280 }}>— {summaryLine}{summaryLine.length>=60?"…":""}</span>
+                            <span className="dnp-note__summary">— {summaryLine}{summaryLine.length>=60?"…":""}</span>
                           )}
                         </div>
 
@@ -1585,14 +1584,14 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
 
                             {/* SOAP */}
                             {note.soap && (() => {
-                              const sf=[{k:"subjective",l:"S — Subjective",c:C.blue},{k:"objective",l:"O — Objective",c:C.teal},{k:"assessment",l:"A — Assessment",c:C.amber},{k:"plan",l:"P — Plan",c:C.green}].filter(s=>note.soap[s.k]);
+                              const sf=[{k:"subjective",l:"S — Subjective",cls:"s"},{k:"objective",l:"O — Objective",cls:"o"},{k:"assessment",l:"A — Assessment",cls:"a"},{k:"plan",l:"P — Plan",cls:"p"}].filter(s=>note.soap[s.k]);
                               if (!sf.length) return null;
                               return (
-                                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:7, marginBottom:10 }}>
+                                <div className="dnp-soap-grid">
                                   {sf.map(s=>(
-                                    <div key={s.k} style={{ padding:"8px 12px", background:"#f8fafc", borderRadius:7, borderLeft:`3px solid ${s.c}` }}>
-                                      <div style={{ fontSize:9, fontWeight:800, color:s.c, textTransform:"uppercase", letterSpacing:".6px", marginBottom:3 }}>{s.l}</div>
-                                      <div style={{ fontSize:12, color:C.text, lineHeight:1.6 }}>{note.soap[s.k]}</div>
+                                    <div key={s.k} className={`dnp-soap-cell dnp-soap-cell--${s.cls}`}>
+                                      <div className="dnp-soap-cell__head">{s.l}</div>
+                                      <div className="dnp-soap-cell__body">{note.soap[s.k]}</div>
                                     </div>
                                   ))}
                                 </div>
@@ -1601,9 +1600,9 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
 
                             {/* Top-level diagnosis */}
                             {(note.provisionalDiagnosis||note.finalDiagnosis) && (
-                              <div style={{ display:"flex", gap:12, flexWrap:"wrap", marginBottom:8, padding:"6px 10px", background:"#fffbeb", borderRadius:6, border:"1px solid #fde68a" }}>
-                                {note.provisionalDiagnosis && <span style={{ fontSize:12, color:C.text }}><b style={{ color:C.amber }}>Provisional:</b> {note.provisionalDiagnosis}</span>}
-                                {note.finalDiagnosis && <span style={{ fontSize:12, color:C.text }}><b style={{ color:C.green }}>Final:</b> {note.finalDiagnosis}</span>}
+                              <div className="dnp-dx-strip">
+                                {note.provisionalDiagnosis && <span><span className="dnp-dx-strip__label dnp-dx-strip__label--prov">Provisional:</span>{note.provisionalDiagnosis}</span>}
+                                {note.finalDiagnosis && <span><span className="dnp-dx-strip__label dnp-dx-strip__label--final">Final:</span>{note.finalDiagnosis}</span>}
                               </div>
                             )}
 
@@ -1635,12 +1634,12 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                               const vf=[{l:"BP",v:bpStr},{l:"Pulse",v:v.pulse?`${v.pulse}/min`:null},{l:"Temp",v:v.temp?`${v.temp}°F`:null},{l:"SpO₂",v:v.spo2?`${v.spo2}%`:null},{l:"RR",v:v.rr?`${v.rr}/min`:null},{l:"BSL",v:v.bsl?`${v.bsl}mg/dL`:null},{l:"GCS",v:v.gcs?String(v.gcs):null},{l:"Urine",v:v.urine?`${v.urine}mL`:null}].filter(f=>f.v);
                               if (!vf.length) return null;
                               return (
-                                <div style={{ display:"flex", gap:"5px 14px", flexWrap:"wrap", padding:"8px 12px", background:"#eff6ff", borderRadius:7, border:"1px solid #bfdbfe", marginBottom:8 }}>
-                                  <span style={{ fontSize:9, fontWeight:800, textTransform:"uppercase", color:C.blue, alignSelf:"center", minWidth:44 }}>Vitals</span>
+                                <div className="dnp-vitals-strip">
+                                  <span className="dnp-vitals-strip__heading">Vitals</span>
                                   {vf.map(f=>(
-                                    <div key={f.l} style={{ display:"flex", flexDirection:"column", gap:1 }}>
-                                      <span style={{ fontSize:9, fontWeight:700, textTransform:"uppercase", letterSpacing:".5px", color:C.muted }}>{f.l}</span>
-                                      <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, fontWeight:600, color:C.text }}>{f.v}</span>
+                                    <div key={f.l} className="dnp-vitals-strip__item">
+                                      <span className="dnp-vitals-strip__k">{f.l}</span>
+                                      <span className="dnp-vitals-strip__v">{f.v}</span>
                                     </div>
                                   ))}
                                 </div>
@@ -1789,25 +1788,21 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                       </div>
 
                       {/* ── Actions ── */}
-                      <div onClick={e => e.stopPropagation()} style={{ display:"flex", flexDirection:"column", gap:5, alignItems:"flex-end", flexShrink:0 }}>
-                        <button onClick={toggleExpand}
-                          style={{ padding:"5px 12px", border:`1.5px solid ${isExpanded?C.primary+"60":C.border}`, borderRadius:6, background:isExpanded?C.primaryL:"white", fontSize:11, fontWeight:700, cursor:"pointer", color:isExpanded?C.primary:C.muted, display:"flex", alignItems:"center", gap:5, transition:"all .15s", whiteSpace:"nowrap" }}>
+                      <div className="dnp-note__actions" onClick={e => e.stopPropagation()}>
+                        <button className={`dnp-note__btn ${isExpanded ? "dnp-note__btn--primary" : ""}`} onClick={toggleExpand}>
                           <i className={`pi ${isExpanded?"pi-times":"pi-eye"}`} style={{ fontSize:10 }} />
                           {isExpanded ? "Close" : "View"}
                         </button>
-                        <button onClick={() => printNote(note)}
-                          style={{ padding:"4px 10px", border:`1.5px solid ${C.border}`, borderRadius:6, background:"white", fontSize:11, fontWeight:600, cursor:"pointer", color:C.muted, display:"flex", alignItems:"center", gap:4 }}>
+                        <button className="dnp-note__btn" onClick={() => printNote(note)}>
                           <i className="pi pi-print" style={{ fontSize:10 }} /> Print
                         </button>
                         {!isSigned && (
-                          <button onClick={() => openEditModal(note)}
-                            style={{ padding:"4px 10px", border:`1.5px solid ${C.blueB}`, borderRadius:6, background:C.blueL, fontSize:11, fontWeight:700, cursor:"pointer", color:C.blue, display:"flex", alignItems:"center", gap:4 }}>
+                          <button className="dnp-note__btn dnp-note__btn--info" onClick={() => openEditModal(note)}>
                             <i className="pi pi-pencil" style={{ fontSize:10 }} /> Edit
                           </button>
                         )}
                         {!isSigned && (
-                          <button onClick={() => signNote(note._id)}
-                            style={{ padding:"4px 10px", border:`1.5px solid ${C.greenB}`, borderRadius:6, background:C.greenL, fontSize:11, fontWeight:700, cursor:"pointer", color:C.green, display:"flex", alignItems:"center", gap:4 }}>
+                          <button className="dnp-note__btn dnp-note__btn--ok" onClick={() => signNote(note._id)}>
                             <i className="pi pi-check" style={{ fontSize:10 }} /> Sign
                           </button>
                         )}
@@ -1817,6 +1812,8 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                 })}
               </div>
             ))}
+            </div>
+            )}
           </div>
         </>
       )}
