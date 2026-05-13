@@ -373,6 +373,390 @@
 }
 @keyframes pf-spin { to { transform: rotate(360deg); } }
 
+/* ═══════════════════════════════════════════════════════════════
+   PATIENT PANEL SHELL — used by DoctorPatientPanel + NursePatientPanel
+   Phase 2 design system. The shell renders: search header → patient
+   banner → gate banners → tab nav → tab content frame → empty/loading.
+═══════════════════════════════════════════════════════════════ */
+
+/* ── Outer chrome (search header) ────────────────────────── */
+.pf-shell {
+  min-height: 100vh;
+  background: var(--pf-bg);
+  font-family: 'DM Sans', 'Inter', system-ui, -apple-system, sans-serif;
+}
+.pf-shell__head {
+  background: linear-gradient(135deg, var(--pf-accent-d), var(--pf-accent));
+  color: #fff;
+  padding: 16px 28px;
+  display: flex; align-items: center; gap: 18px;
+  flex-wrap: wrap;
+  box-shadow: 0 4px 18px rgba(15, 23, 42, .12);
+}
+.pf-shell__title {
+  display: flex; align-items: center; gap: 12px;
+}
+.pf-shell__title-icon {
+  font-size: 24px;
+}
+.pf-shell__title-text {
+  font-size: 17px; font-weight: 800; letter-spacing: -.2px; line-height: 1.2;
+}
+.pf-shell__title-sub {
+  font-size: 11px; color: rgba(255, 255, 255, .8); margin-top: 1px;
+}
+.pf-shell__search {
+  display: flex; gap: 8px; flex: 1; max-width: 480px; margin-left: auto;
+}
+.pf-shell__search-input {
+  flex: 1;
+  padding: 9px 14px;
+  border-radius: 9px;
+  border: 1.5px solid rgba(255, 255, 255, .35);
+  background: rgba(255, 255, 255, .14);
+  color: #fff;
+  font-size: 14px; outline: none;
+  font-family: inherit; letter-spacing: .3px;
+  transition: border-color .12s;
+}
+.pf-shell__search-input::placeholder { color: rgba(255, 255, 255, .6); }
+.pf-shell__search-input:focus { border-color: rgba(255, 255, 255, .8); }
+.pf-shell__search-btn {
+  padding: 9px 20px; border-radius: 9px; border: none;
+  background: #fff; color: var(--pf-accent-d);
+  font-weight: 700; font-size: 13px; cursor: pointer;
+  white-space: nowrap;
+  transition: background .12s;
+}
+.pf-shell__search-btn:hover { background: #f1f5f9; }
+.pf-shell__search-btn:disabled {
+  background: rgba(255, 255, 255, .25); color: rgba(255, 255, 255, .85);
+  cursor: not-allowed;
+}
+
+/* Quick actions row under the head */
+.pf-shell__quick {
+  display: flex; gap: 8px;
+  padding: 0 28px 14px;
+  background: linear-gradient(135deg, var(--pf-accent-d), var(--pf-accent));
+  flex-wrap: wrap;
+}
+.pf-shell__quick-btn {
+  padding: 6px 14px; border-radius: 7px;
+  border: 1.5px solid rgba(255, 255, 255, .45);
+  background: rgba(255, 255, 255, .12);
+  color: #fff;
+  font-size: 12px; font-weight: 600;
+  cursor: pointer; transition: background .12s;
+}
+.pf-shell__quick-btn:hover { background: rgba(255, 255, 255, .22); }
+
+/* ── Body area ───────────────────────────────────────────── */
+.pf-shell__body {
+  max-width: 1280px; margin: 0 auto;
+  padding: 18px 24px 40px;
+}
+
+/* ── Patient identity strip ──────────────────────────────── */
+.pf-strip {
+  background: var(--pf-card);
+  border: 1px solid var(--pf-border);
+  border-radius: 14px;
+  padding: 14px 22px;
+  display: flex; gap: 18px; align-items: center; flex-wrap: wrap;
+  box-shadow: 0 2px 10px rgba(15, 23, 42, .04);
+  margin-bottom: 14px;
+}
+.pf-strip__avatar {
+  width: 52px; height: 52px;
+  border-radius: 14px;
+  background: var(--pf-accent);
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px; font-weight: 800;
+  flex-shrink: 0;
+}
+.pf-strip__id { flex: 1; min-width: 200px; }
+.pf-strip__name {
+  font-size: 18px; font-weight: 800; color: var(--pf-text);
+  letter-spacing: -.2px; line-height: 1.2;
+}
+.pf-strip__meta {
+  font-size: 13px; color: var(--pf-muted); margin-top: 3px;
+}
+.pf-strip__uhid {
+  color: var(--pf-accent); font-weight: 700;
+}
+.pf-strip__actions {
+  display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+}
+
+/* ── Gate banner (mandatory assessment / handover pending) ─ */
+.pf-gate {
+  border-radius: 12px;
+  padding: 14px 20px;
+  margin-bottom: 14px;
+  display: flex; align-items: flex-start; gap: 14px;
+  border: 2px solid;
+}
+.pf-gate--danger  { background: #fef2f2; border-color: #fca5a5; }
+.pf-gate--warning { background: #fff7ed; border-color: #f97316; }
+.pf-gate--ok      { background: #f0fdf4; border-color: #86efac; padding: 10px 18px; }
+.pf-gate__icon {
+  width: 44px; height: 44px;
+  border-radius: 11px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px;
+  flex-shrink: 0;
+}
+.pf-gate--danger .pf-gate__icon  { background: #fee2e2; color: #dc2626; }
+.pf-gate--warning .pf-gate__icon { background: #fed7aa; color: #ea580c; }
+.pf-gate__body { flex: 1; min-width: 0; }
+.pf-gate__title {
+  font-weight: 800; font-size: 14px; line-height: 1.3;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.pf-gate--danger  .pf-gate__title { color: #991b1b; }
+.pf-gate--warning .pf-gate__title { color: #9a3412; }
+.pf-gate--ok      .pf-gate__title { color: #15803d; font-size: 13px; margin-bottom: 0; }
+.pf-gate__tag {
+  background: currentColor;
+  color: #fff !important;
+  border-radius: 5px;
+  padding: 2px 8px;
+  font-size: 10px; font-weight: 800;
+  letter-spacing: .5px;
+}
+.pf-gate--danger  .pf-gate__tag { background: #dc2626; }
+.pf-gate--warning .pf-gate__tag { background: #ea580c; }
+.pf-gate__msg {
+  font-size: 13px; line-height: 1.55;
+  margin-bottom: 10px;
+}
+.pf-gate--danger  .pf-gate__msg { color: #7f1d1d; }
+.pf-gate--warning .pf-gate__msg { color: #7c2d12; }
+.pf-gate--ok      .pf-gate__msg { color: #14532d; margin-bottom: 0; font-weight: 600; }
+.pf-gate__btn {
+  padding: 9px 20px;
+  border-radius: 8px; border: none;
+  font-weight: 700; font-size: 12px;
+  color: #fff;
+  cursor: pointer;
+  transition: filter .12s;
+}
+.pf-gate__btn:hover { filter: brightness(1.05); }
+.pf-gate--danger  .pf-gate__btn { background: #dc2626; box-shadow: 0 4px 12px rgba(220, 38, 38, .25); }
+.pf-gate--warning .pf-gate__btn { background: #f97316; }
+
+/* ── Tab strip ───────────────────────────────────────────── */
+.pf-tabs {
+  background: var(--pf-card);
+  border: 1px solid var(--pf-border);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(15, 23, 42, .04);
+}
+.pf-tabs__bar {
+  display: flex; overflow-x: auto;
+  border-bottom: 2px solid var(--pf-border);
+  background: #fafaf9;
+  scrollbar-width: thin;
+}
+.pf-tabs__btn {
+  padding: 13px 18px;
+  border: none; background: transparent;
+  cursor: pointer;
+  font-size: 13px; font-weight: 500;
+  color: var(--pf-muted);
+  border-bottom: 3px solid transparent;
+  margin-bottom: -2px;
+  white-space: nowrap;
+  transition: color .12s, border-color .12s;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.pf-tabs__btn:hover { color: var(--pf-accent); }
+.pf-tabs__btn--active {
+  font-weight: 700;
+  color: var(--pf-accent);
+  border-bottom-color: var(--pf-accent);
+}
+.pf-tabs__count {
+  font-size: 10px;
+  background: var(--pf-accent-m);
+  color: var(--pf-accent-d);
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-weight: 700;
+  min-width: 18px; text-align: center;
+}
+.pf-tabs__btn--active .pf-tabs__count {
+  background: var(--pf-accent);
+  color: #fff;
+}
+.pf-tabs__content {
+  padding: 22px;
+  min-height: 220px;
+}
+
+/* ── Pretty action button (used on banners + headers) ────── */
+.pf-action {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: none;
+  font-size: 12px; font-weight: 700;
+  cursor: pointer;
+  transition: filter .12s, transform .12s;
+}
+.pf-action:hover { filter: brightness(1.05); }
+.pf-action:active { transform: translateY(1px); }
+.pf-action--accent { background: var(--pf-accent); color: #fff; }
+.pf-action--ghost  { background: transparent; color: var(--pf-accent); border: 1.5px solid var(--pf-accent); }
+.pf-action--quiet  { background: var(--pf-bg); color: var(--pf-text); border: 1px solid var(--pf-border); }
+.pf-action--danger { background: var(--pf-danger); color: #fff; }
+
+/* ── Empty / landing state ───────────────────────────────── */
+.pf-landing {
+  text-align: center;
+  padding: 80px 24px;
+  color: var(--pf-muted);
+}
+.pf-landing__icon {
+  width: 86px; height: 86px;
+  border-radius: 22px;
+  background: var(--pf-accent-l);
+  color: var(--pf-accent);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 44px;
+  margin: 0 auto 20px;
+}
+.pf-landing__title {
+  font-size: 20px; font-weight: 800; color: var(--pf-accent-d);
+  margin-bottom: 8px;
+}
+.pf-landing__msg {
+  font-size: 14px; max-width: 400px; margin: 0 auto;
+  line-height: 1.65;
+}
+
+/* ── Error banner ────────────────────────────────────────── */
+.pf-error {
+  background: var(--pf-danger-l);
+  border: 1px solid var(--pf-danger);
+  color: var(--pf-danger);
+  border-radius: 10px;
+  padding: 12px 16px;
+  font-size: 13px; font-weight: 600;
+  margin-bottom: 14px;
+  display: flex; align-items: center; gap: 8px;
+}
+
+/* ── Modal shell (used by bed-transfer / handover modals) ── */
+.pf-modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(15, 23, 42, .55);
+  backdrop-filter: blur(3px);
+  z-index: 2000;
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px;
+  animation: pf-fadein .15s ease-out;
+}
+@keyframes pf-fadein { from { opacity: 0; } to { opacity: 1; } }
+.pf-modal {
+  background: #fff;
+  border-radius: 16px;
+  width: 100%; max-width: 560px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, .3);
+  animation: pf-slidein .18s ease-out;
+}
+@keyframes pf-slidein { from { transform: translateY(12px); opacity: 0; } to { transform: none; opacity: 1; } }
+.pf-modal__head {
+  background: linear-gradient(135deg, var(--pf-accent-d), var(--pf-accent));
+  color: #fff;
+  padding: 16px 22px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.pf-modal__title { font-size: 16px; font-weight: 800; }
+.pf-modal__sub   { font-size: 11px; opacity: .85; margin-top: 2px; }
+.pf-modal__close {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .2);
+  border: none; color: #fff;
+  cursor: pointer;
+  font-size: 14px;
+  display: flex; align-items: center; justify-content: center;
+}
+.pf-modal__close:hover { background: rgba(255, 255, 255, .3); }
+.pf-modal__body {
+  padding: 18px 22px;
+  display: flex; flex-direction: column;
+  gap: 14px;
+}
+.pf-modal__foot {
+  padding: 0 22px 18px;
+  display: flex; gap: 10px; justify-content: flex-end;
+}
+
+/* ── Form atoms (used inside modals) ─────────────────────── */
+.pf-flabel {
+  display: block;
+  font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .6px;
+  color: var(--pf-muted);
+  margin-bottom: 6px;
+}
+.pf-flabel--required { color: var(--pf-danger); }
+.pf-input, .pf-select, .pf-textarea {
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: 1.5px solid var(--pf-border);
+  font-size: 13px;
+  outline: none;
+  font-family: inherit;
+  box-sizing: border-box;
+  transition: border-color .12s;
+  background: #fff;
+}
+.pf-input:focus, .pf-select:focus, .pf-textarea:focus {
+  border-color: var(--pf-accent);
+}
+.pf-textarea {
+  min-height: 110px;
+  resize: vertical;
+  line-height: 1.55;
+}
+.pf-input--invalid, .pf-textarea--invalid { border-color: var(--pf-danger); }
+.pf-fhint {
+  font-size: 11px; color: var(--pf-muted); margin-top: 4px;
+}
+.pf-fhint--error { color: var(--pf-danger); font-weight: 600; }
+
+/* ── Info box (workflow hint inside modals) ──────────────── */
+.pf-info-box {
+  background: #fffbeb;
+  border: 1.5px solid #fbbf24;
+  color: #92400e;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.pf-info-box--blue {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  color: #1d4ed8;
+}
+
+/* ── Spinner ─────────────────────────────────────────────── */
+.pf-spin-row {
+  display: flex; justify-content: center; padding: 48px 0;
+}
+
 /* ── Print mode — strip page chrome, render every section ── */
 @media print {
   body { background: #fff; }

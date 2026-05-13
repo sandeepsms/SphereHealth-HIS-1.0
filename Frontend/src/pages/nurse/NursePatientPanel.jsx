@@ -8,6 +8,8 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import axios from "axios";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import PatientFileExport from "../../Components/clinical/PatientFileExport";
+// Phase 2 shell — pf-* design system shared with DoctorPatientPanel.
+import PatientPanelShell from "../../Components/clinical/PatientPanelShell";
 import {
   InitialAssessmentTab,
   MLCOrDoctorNotesTab,
@@ -1905,278 +1907,219 @@ function NursePatientPanelContent({ selectedAdmission }) {
   const patName = patient?.fullName||patient?.patientName||admission?.patientName||"—";
   const uhidDisplay = patient?.UHID||patient?.uhid||admission?.UHID||uhidInput||"—";
 
-  return (
-    <div style={{minHeight:"100vh",background:C.bg,fontFamily:"'DM Sans','Inter',sans-serif"}}>
-      {/* Header */}
-      <div style={{background:`linear-gradient(135deg,${C.primaryD},${C.primary})`,padding:"16px 24px",color:"white",boxShadow:"0 2px 8px rgba(15,118,110,.3)"}}>
-        <div style={{display:"flex",alignItems:"center",gap:16,flexWrap:"wrap"}}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <span style={{fontSize:24}}>👩‍⚕️</span>
-            <div>
-              <div style={{fontSize:18,fontWeight:700,letterSpacing:"-.3px"}}>Nursing Patient Panel</div>
-              <div style={{fontSize:12,opacity:.8}}>Full Patient File — Nursing Staff</div>
+  // ── Tab dispatch
+  const renderTab = (id) => {
+    switch (id) {
+      case "overview":   return <OverviewTab patient={patient} admission={admission} nursingNotes={nursingNotes} billing={billing} doctorNotes={doctorNotes}/>;
+      case "initial":    return <InitialAssessmentTab doctorNotes={doctorNotes} nursingNotes={nursingNotes} admission={admission}/>;
+      case "mlc":        return <MLCOrDoctorNotesTab patient={patient} doctorNotes={doctorNotes}/>;
+      case "nursing":    return <NursingNotesExpandedTab nursingNotes={nursingNotes}/>;
+      case "vitals":     return <VitalChartTab nursingNotes={nursingNotes} vitalSheet={vitalSheet}/>;
+      case "io":         return <IntakeOutputChartTab nursingNotes={nursingNotes}/>;
+      case "blood":      return <BloodTransfusionRecordsTab nursingNotes={nursingNotes}/>;
+      case "rbs":        return <RBSMonitoringTab nursingNotes={nursingNotes} doctorOrders={doctorOrders}/>;
+      case "handover":   return <HandoverNotesTab patient={patient} admission={admission} doctorNotes={doctorNotes} nursingNotes={nursingNotes}/>;
+      case "orders":     return <DoctorOrdersTab doctorNotes={doctorNotes}/>;
+      case "meds":       return <MedicationsTab doctorNotes={doctorNotes} doctorOrders={doctorOrders}/>;
+      case "billing":    return <BillingTab billing={billing}/>;
+      case "emergency":  return <EmergencyTab emergency={emergency}/>;
+      default:           return null;
+    }
+  };
+
+  const tabCounts = {
+    nursing:   nursingNotes.length,
+    docnotes:  doctorNotes.length,
+    orders:    doctorNotes.flatMap((n) => n.orders || []).filter((o) => !o.nurseStatus || o.nurseStatus === "pending").length,
+    emergency: emergency.length,
+  };
+
+  // Quick actions row under the search header
+  const quickActions = admission ? [
+    { label: "❤️ Record Vitals", onClick: () => navigate("/nursing-notes") },
+    { label: "📝 Nursing Notes", onClick: () => navigate("/nursing-notes") },
+    { label: "💊 MAR",           onClick: () => navigate("/mar") },
+  ] : [];
+
+  // Gate banners: handover-pending (if any) + initial assessment gate
+  const gateBanners = (
+    <>
+      {pendingTransfer && (
+        <div className="pf-gate pf-gate--warning">
+          <div className="pf-gate__icon">🔄</div>
+          <div className="pf-gate__body">
+            <div className="pf-gate__title">
+              <span className="pf-gate__tag">Action Required</span>
+              Bed Transfer Handover Pending — Write Handover Notes to Complete
             </div>
-          </div>
-          <div style={{display:"flex",gap:8,marginLeft:"auto",alignItems:"center"}}>
-            <input value={uhidInput} onChange={e=>setUhidInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleLoad()}
-              placeholder="Enter UHID…"
-              style={{width:200,padding:"10px 14px",borderRadius:9,border:"1.5px solid rgba(255,255,255,.4)",background:"rgba(255,255,255,.15)",color:"white",fontSize:14,outline:"none",fontFamily:"inherit"}}
-            />
-            <button onClick={handleLoad} disabled={loading}
-              style={{padding:"10px 20px",borderRadius:9,border:"none",background:"white",color:C.primary,fontWeight:700,fontSize:13,cursor:loading?"not-allowed":"pointer",opacity:loading?.7:1}}>
-              {loading?"Loading…":"Load Patient"}
+            <div className="pf-gate__msg">
+              Patient is being transferred from{" "}
+              <strong>{pendingTransfer.fromBedNumber || pendingTransfer.fromBed || "current bed"}</strong> →{" "}
+              <strong>{pendingTransfer.toBedNumber || pendingTransfer.toBed || "new bed"}</strong>
+              {pendingTransfer.toWardName && <> · Ward: <strong>{pendingTransfer.toWardName}</strong></>}
+              {pendingTransfer.shiftingNotes && (
+                <div style={{ marginTop: 4, fontStyle: "italic", opacity: .85 }}>
+                  Doctor note: "{pendingTransfer.shiftingNotes.substring(0, 120)}{pendingTransfer.shiftingNotes.length > 120 ? "…" : ""}"
+                </div>
+              )}
+            </div>
+            <button className="pf-gate__btn" onClick={() => { setHandoverNotes(""); setShowHandoverModal(true); }}>
+              ✍️ Write Handover Notes
             </button>
           </div>
         </div>
-        {/* Quick actions */}
-        {loaded && admission && (
-          <div style={{display:"flex",gap:8,marginTop:14,flexWrap:"wrap"}}>
-            {[
-              {label:"❤️ Record Vitals",  path:"/nursing-notes"},
-              {label:"📝 Nursing Notes",  path:"/nursing-notes"},
-              {label:"💊 MAR",            path:"/mar"},
-            ].map(a=>(
-              <button key={a.label} onClick={()=>navigate(a.path)}
-                style={{padding:"6px 14px",borderRadius:7,border:"1.5px solid rgba(255,255,255,.5)",background:"rgba(255,255,255,.12)",color:"white",fontSize:12,fontWeight:600,cursor:"pointer"}}>
-                {a.label}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Body */}
-      <div style={{maxWidth:1280,margin:"0 auto",padding:"20px 24px"}}>
-        {error && <div style={{background:C.redL,border:`1px solid ${C.redB}`,borderRadius:10,padding:"12px 16px",color:C.red,fontSize:13,marginBottom:16}}>⚠️ {error}</div>}
-        {loading && <Spin/>}
-
-        {/* Empty state */}
-        {!loading && !loaded && !error && (
-          <Card style={{textAlign:"center",padding:"60px 24px"}}>
-            <div style={{fontSize:64,marginBottom:16}}>🔍</div>
-            <div style={{fontSize:18,fontWeight:700,color:C.primaryD,marginBottom:8}}>Search for a Patient</div>
-            <p style={{fontSize:14,color:C.muted,maxWidth:400,margin:"0 auto"}}>Enter a UHID in the search bar above and click "Load Patient" to view the full patient file.</p>
-          </Card>
-        )}
-
-        {/* Loaded */}
-        {!loading && loaded && (
-          <div ref={printAreaRef}>
-            {/* Patient banner */}
-            <div style={{background:`linear-gradient(135deg,${C.primaryL},${C.rose50})`,border:`1px solid ${C.rose200}`,borderRadius:14,padding:"16px 22px",marginBottom:16,display:"flex",alignItems:"center",gap:18,flexWrap:"wrap"}}>
-              <div style={{width:52,height:52,borderRadius:"50%",background:C.primary,color:"white",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,fontWeight:700,flexShrink:0}}>
-                {patName.charAt(0).toUpperCase()}
-              </div>
-              <div style={{flex:1,minWidth:180}}>
-                <div style={{fontSize:19,fontWeight:700,color:C.primaryD}}>{patient?.title?`${patient.title} `:""}{patName}</div>
-                <div style={{fontSize:13,color:C.muted,marginTop:2}}>
-                  UHID: <strong>{uhidDisplay}</strong>
-                  {patient?.age && <> · {patient.age} yrs</>}
-                  {patient?.gender && <> · {patient.gender}</>}
-                  {patient?.bloodGroup && <> · 🩸 {patient.bloodGroup}</>}
-                </div>
-              </div>
-              <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
-                {admission?.admissionNumber && <Badge color={C.primaryD} bg={C.primaryL}>IPD: {admission.admissionNumber}</Badge>}
-                <SBadge status={admission?.status}/>
-                {admission?.department && <Badge color={C.muted} bg="#f1f5f9">{admission.department}</Badge>}
-                {/* Complete File — opens the consolidated patient file (every model, audit feed) in a new tab */}
-                {patient?.UHID && (
-                  <button
-                    onClick={() => window.open(`/patient-file/${patient.UHID}?role=nurse`, "_blank", "noopener")}
-                    style={{padding:"6px 14px",background:C.primary,color:"#fff",border:"none",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:6}}
-                    title="Open the consolidated patient file in a new tab"
-                  >
-                    📂 Complete File
-                  </button>
-                )}
-                {/* Print / PDF / QR-share for the full nursing file view */}
-                <PatientFileExport patient={patient} printRef={printAreaRef} title={`${patName} — Nursing view`} />
-              </div>
+      )}
+      {admission && admission.initialAssessment?.nurseCompleted !== true ? (
+        <div className="pf-gate pf-gate--danger">
+          <div className="pf-gate__icon">🔒</div>
+          <div className="pf-gate__body">
+            <div className="pf-gate__title">
+              <span className="pf-gate__tag">Mandatory</span>
+              Nursing Initial Assessment not completed — NABH COP.2
             </div>
-
-            {/* ── HANDOVER REQUIRED banner (shown before assessment gate) ── */}
-            {pendingTransfer && (
-              <div style={{background:"#fff7ed",border:"2px solid #f97316",borderRadius:12,padding:"16px 20px",marginBottom:16,display:"flex",alignItems:"flex-start",gap:14}}>
-                <div style={{width:44,height:44,borderRadius:"50%",background:"#f97316",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                  <span style={{fontSize:22}}>🔄</span>
-                </div>
-                <div style={{flex:1}}>
-                  <div style={{fontWeight:800,fontSize:14,color:"#9a3412",marginBottom:4,display:"flex",alignItems:"center",gap:8}}>
-                    <span style={{background:"#f97316",color:"white",borderRadius:5,padding:"2px 8px",fontSize:11,fontWeight:700,letterSpacing:.5}}>ACTION REQUIRED</span>
-                    Bed Transfer Handover Pending — Write Handover Notes to Complete
-                  </div>
-                  <div style={{fontSize:13,color:"#7c2d12",marginBottom:10}}>
-                    Patient is being transferred from{" "}
-                    <strong>{pendingTransfer.fromBedNumber || pendingTransfer.fromBed || "current bed"}</strong> →{" "}
-                    <strong>{pendingTransfer.toBedNumber || pendingTransfer.toBed || "new bed"}</strong>
-                    {pendingTransfer.toWardName && <> · Ward: <strong>{pendingTransfer.toWardName}</strong></>}
-                    {pendingTransfer.shiftingNotes && (
-                      <div style={{marginTop:4,fontStyle:"italic",opacity:.85}}>Doctor note: "{pendingTransfer.shiftingNotes.substring(0,120)}{pendingTransfer.shiftingNotes.length>120?"…":""}"</div>
-                    )}
-                  </div>
-                  <button onClick={()=>{ setHandoverNotes(""); setShowHandoverModal(true); }}
-                    style={{padding:"8px 18px",borderRadius:8,border:"none",background:"#f97316",color:"white",fontWeight:700,fontSize:13,cursor:"pointer"}}>
-                    ✍️ Write Handover Notes
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* ── Mandatory Initial Assessment gate ── */}
-            {admission && admission.initialAssessment?.nurseCompleted !== true ? (
-              <div style={{background:"#fef2f2",border:"2px solid #fca5a5",borderRadius:12,padding:"16px 20px",marginBottom:16,display:"flex",alignItems:"flex-start",gap:14}}>
-                <div style={{width:44,height:44,borderRadius:"50%",background:"#fee2e2",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                  <i className="pi pi-lock" style={{fontSize:20,color:"#dc2626"}}/>
-                </div>
-                <div style={{flex:1}}>
-                  <div style={{fontWeight:800,fontSize:14,color:"#991b1b",marginBottom:4,display:"flex",alignItems:"center",gap:8}}>
-                    <span style={{background:"#dc2626",color:"white",borderRadius:5,padding:"2px 8px",fontSize:11,fontWeight:700,letterSpacing:.5}}>MANDATORY</span>
-                    Nursing Initial Assessment not completed — NABH COP.2
-                  </div>
-                  <div style={{fontSize:13,color:"#7f1d1d",marginBottom:10}}>All nursing documentation is locked until the Initial Assessment is completed. This is required by NABH standards before any care can be documented.</div>
-                  <button onClick={()=>navigate(`/nursing-notes?uhid=${uhidDisplay}`)}
-                    style={{padding:"8px 18px",borderRadius:8,border:"none",background:"#dc2626",color:"white",fontWeight:700,fontSize:13,cursor:"pointer"}}>
-                    📋 Write Initial Assessment
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div style={{background:"#dcfce7",border:"1.5px solid #86efac",borderRadius:10,padding:"10px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:10,fontSize:13}}>
-                <i className="pi pi-check-circle" style={{color:"#16a34a",fontSize:16}}/>
-                <span style={{color:"#14532d",fontWeight:600}}>Nursing Initial Assessment completed — all modules unlocked.</span>
-              </div>
-            )}
-
-            {/* Tab bar */}
-            <div style={{display:"flex",borderBottom:`2px solid ${C.rose100}`,marginBottom:20,overflowX:"auto",gap:0}}>
-              {TABS.map(tab=>{
-                const isActive = activeTab===tab.id;
-                return (
-                  <button key={tab.id} onClick={()=>setActiveTab(tab.id)}
-                    style={{padding:"12px 18px",fontSize:13,fontWeight:isActive?700:500,color:isActive?C.primary:C.muted,background:isActive?C.primaryL:"transparent",border:"none",borderBottom:isActive?`3px solid ${C.primary}`:"3px solid transparent",cursor:"pointer",whiteSpace:"nowrap",transition:"all .15s",borderRadius:"6px 6px 0 0",fontFamily:"inherit"}}>
-                    {tab.label}
-                    {tab.id==="nursing"   && nursingNotes.length>0 && <span style={{marginLeft:5,fontSize:10,background:C.rose200,color:C.primaryD,borderRadius:10,padding:"0 6px",fontWeight:700}}>{nursingNotes.length}</span>}
-                    {tab.id==="docnotes"  && doctorNotes.length>0 && <span style={{marginLeft:5,fontSize:10,background:C.purpleL,color:C.purple,borderRadius:10,padding:"0 6px",fontWeight:700}}>{doctorNotes.length}</span>}
-                    {tab.id==="orders"    && (() => { const p=doctorNotes.flatMap(n=>n.orders||[]).filter(o=>!o.nurseStatus||o.nurseStatus==="pending").length; return p>0?<span style={{marginLeft:5,fontSize:10,background:C.amberL,color:C.amber,borderRadius:10,padding:"0 6px",fontWeight:700}}>{p}</span>:null; })()}
-                    {tab.id==="emergency" && emergency.length>0 && <span style={{marginLeft:5,fontSize:10,background:C.redL,color:C.red,borderRadius:10,padding:"0 6px",fontWeight:700}}>{emergency.length}</span>}
-                  </button>
-                );
-              })}
+            <div className="pf-gate__msg">
+              All nursing documentation is locked until the Initial Assessment is completed.
+              This is required by NABH standards before any care can be documented.
             </div>
-
-            {/* Tab content */}
-            {activeTab==="overview"  && <OverviewTab patient={patient} admission={admission} nursingNotes={nursingNotes} billing={billing} doctorNotes={doctorNotes}/>}
-            {activeTab==="initial"   && <InitialAssessmentTab doctorNotes={doctorNotes} nursingNotes={nursingNotes} admission={admission}/>}
-            {activeTab==="mlc"       && <MLCOrDoctorNotesTab  patient={patient}      doctorNotes={doctorNotes}/>}
-            {activeTab==="nursing"   && <NursingNotesExpandedTab nursingNotes={nursingNotes}/>}
-            {activeTab==="vitals"    && <VitalChartTab        nursingNotes={nursingNotes} vitalSheet={vitalSheet}/>}
-            {activeTab==="io"        && <IntakeOutputChartTab nursingNotes={nursingNotes}/>}
-            {activeTab==="blood"     && <BloodTransfusionRecordsTab nursingNotes={nursingNotes}/>}
-            {activeTab==="rbs"       && <RBSMonitoringTab     nursingNotes={nursingNotes} doctorOrders={doctorOrders}/>}
-            {activeTab==="handover"  && <HandoverNotesTab     patient={patient} admission={admission} doctorNotes={doctorNotes} nursingNotes={nursingNotes}/>}
-            {activeTab==="orders"    && <DoctorOrdersTab doctorNotes={doctorNotes}/>}
-            {activeTab==="meds"      && <MedicationsTab doctorNotes={doctorNotes} doctorOrders={doctorOrders}/>}
-            {activeTab==="billing"   && <BillingTab billing={billing}/>}
-            {activeTab==="emergency" && <EmergencyTab emergency={emergency}/>}
-          </div>
-        )}
-      </div>
-
-      {/* ── Handover Notes Modal ── */}
-      {showHandoverModal && pendingTransfer && (
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-          <div style={{background:"white",borderRadius:16,width:"100%",maxWidth:560,boxShadow:"0 20px 60px rgba(0,0,0,.25)",overflow:"hidden"}}>
-            {/* Modal header */}
-            <div style={{background:"linear-gradient(135deg,#ea580c,#f97316)",padding:"18px 24px",color:"white"}}>
-              <div style={{fontSize:17,fontWeight:800,marginBottom:2}}>✍️ Nursing Handover Notes</div>
-              <div style={{fontSize:12,opacity:.85}}>Transfer #{pendingTransfer.transferNo || pendingTransfer._id?.slice(-6)}</div>
-            </div>
-
-            <div style={{padding:"20px 24px"}}>
-              {/* Transfer info */}
-              <div style={{background:"#fff7ed",border:"1px solid #fed7aa",borderRadius:10,padding:"12px 16px",marginBottom:16,fontSize:13}}>
-                <div style={{fontWeight:700,color:"#9a3412",marginBottom:6}}>Transfer Details</div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"6px 16px",color:"#7c2d12"}}>
-                  <div>From bed: <strong>{pendingTransfer.fromBedNumber || pendingTransfer.fromBed || "—"}</strong></div>
-                  <div>To bed: <strong>{pendingTransfer.toBedNumber || pendingTransfer.toBed || "—"}</strong></div>
-                  {pendingTransfer.toWardName && <div>Ward: <strong>{pendingTransfer.toWardName}</strong></div>}
-                  {pendingTransfer.reason && <div>Reason: <strong>{pendingTransfer.reason}</strong></div>}
-                </div>
-                {pendingTransfer.shiftingNotes && (
-                  <div style={{marginTop:8,paddingTop:8,borderTop:"1px solid #fed7aa"}}>
-                    <div style={{fontWeight:600,marginBottom:2}}>Doctor's Shifting Notes:</div>
-                    <div style={{fontStyle:"italic"}}>{pendingTransfer.shiftingNotes}</div>
-                  </div>
-                )}
-              </div>
-
-              {/* Handover notes textarea */}
-              <div style={{marginBottom:16}}>
-                <label style={{display:"block",fontWeight:700,fontSize:13,color:"#1e293b",marginBottom:6}}>
-                  Handover Notes <span style={{color:"#dc2626"}}>*</span>
-                  <span style={{fontWeight:400,color:"#64748b",marginLeft:6,fontSize:12}}>(Required to complete transfer)</span>
-                </label>
-                <textarea
-                  value={handoverNotes}
-                  onChange={e=>setHandoverNotes(e.target.value)}
-                  rows={5}
-                  placeholder="Document patient condition at handover, ongoing treatments, pending orders, any concerns, IV access, monitoring parameters..."
-                  style={{width:"100%",padding:"10px 14px",borderRadius:9,border:`2px solid ${handoverNotes.trim() ? "#86efac" : "#fca5a5"}`,fontSize:13,fontFamily:"inherit",resize:"vertical",outline:"none",boxSizing:"border-box",transition:"border-color .15s"}}
-                />
-                {!handoverNotes.trim() && (
-                  <div style={{fontSize:12,color:"#dc2626",marginTop:4}}>⚠️ Handover notes are mandatory. The bed transfer will not be completed without this.</div>
-                )}
-              </div>
-
-              {/* Info box */}
-              <div style={{background:"#eff6ff",border:"1px solid #93c5fd",borderRadius:9,padding:"10px 14px",fontSize:12,color:"#1d4ed8",marginBottom:20}}>
-                <strong>ℹ️ On completion:</strong> Patient will be officially moved to the new bed, bed records will be updated, and the transfer will be marked complete.
-              </div>
-
-              {/* Action buttons */}
-              <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
-                <button onClick={()=>{ setShowHandoverModal(false); setHandoverNotes(""); }}
-                  disabled={handoverSaving}
-                  style={{padding:"10px 20px",borderRadius:9,border:"1.5px solid #e2e8f0",background:"white",color:"#64748b",fontWeight:600,fontSize:13,cursor:"pointer"}}>
-                  Cancel
-                </button>
-                <button
-                  disabled={!handoverNotes.trim() || handoverSaving}
-                  onClick={async () => {
-                    if (!handoverNotes.trim()) return;
-                    setHandoverSaving(true);
-                    try {
-                      await axios.put(`${BASE}/bed-transfers/${pendingTransfer._id}/handover`, {
-                        handoverNotes: handoverNotes.trim(),
-                        handoverBy: "Nurse",
-                      });
-                      setPendingTransfer(null);
-                      setShowHandoverModal(false);
-                      setHandoverNotes("");
-                      // Refresh admission data to reflect new bed
-                      if (admission?._id) {
-                        const r = await axios.get(`${BASE}/admissions?uhid=${uhidDisplay}`).catch(()=>({data:[]}));
-                        const admList = Array.isArray(r.data?.admissions)?r.data.admissions:Array.isArray(r.data)?r.data:[];
-                        const adm = admList.find(a=>["active","admitted"].includes((a.status||"").toLowerCase()))||admList[0]||null;
-                        if (adm) setAdmission(adm);
-                      }
-                      alert("✅ Handover complete! Bed transfer has been finalised.");
-                    } catch(e) {
-                      alert("Failed to submit handover notes: " + (e.response?.data?.message || e.message));
-                    } finally {
-                      setHandoverSaving(false);
-                    }
-                  }}
-                  style={{padding:"10px 22px",borderRadius:9,border:"none",background: handoverNotes.trim() ? "#f97316" : "#e2e8f0",color: handoverNotes.trim() ? "white" : "#94a3b8",fontWeight:700,fontSize:13,cursor: handoverNotes.trim() && !handoverSaving ? "pointer" : "not-allowed",transition:"all .15s"}}>
-                  {handoverSaving ? "Submitting…" : "✅ Complete Handover"}
-                </button>
-              </div>
-            </div>
+            <button className="pf-gate__btn" onClick={() => navigate(`/nursing-notes?uhid=${uhidDisplay}`)}>
+              📋 Write Initial Assessment
+            </button>
           </div>
         </div>
-      )}
+      ) : admission ? (
+        <div className="pf-gate pf-gate--ok">
+          <div className="pf-gate__body">
+            <div className="pf-gate__title">✅ Nursing Initial Assessment completed — all modules unlocked</div>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+
+  // Handover modal — kept in this file because the submit handler closes over
+  // local state (admission, uhidDisplay) and refreshes admission after success.
+  const handoverModal = showHandoverModal && pendingTransfer && (
+    <div className="pf-modal-backdrop" onClick={() => !handoverSaving && setShowHandoverModal(false)}>
+      <div className="pf-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="pf-modal__head" style={{ background: "linear-gradient(135deg,#ea580c,#f97316)" }}>
+          <div>
+            <div className="pf-modal__title">✍️ Nursing Handover Notes</div>
+            <div className="pf-modal__sub">Transfer #{pendingTransfer.transferNo || pendingTransfer._id?.slice(-6)}</div>
+          </div>
+          <button className="pf-modal__close" onClick={() => setShowHandoverModal(false)} aria-label="close">✕</button>
+        </div>
+
+        <div className="pf-modal__body">
+          {/* Transfer details */}
+          <div className="pf-info-box">
+            <div style={{ fontWeight: 700, color: "#9a3412", marginBottom: 6 }}>Transfer Details</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 16px", color: "#7c2d12" }}>
+              <div>From bed: <strong>{pendingTransfer.fromBedNumber || pendingTransfer.fromBed || "—"}</strong></div>
+              <div>To bed: <strong>{pendingTransfer.toBedNumber || pendingTransfer.toBed || "—"}</strong></div>
+              {pendingTransfer.toWardName && <div>Ward: <strong>{pendingTransfer.toWardName}</strong></div>}
+              {pendingTransfer.reason && <div>Reason: <strong>{pendingTransfer.reason}</strong></div>}
+            </div>
+            {pendingTransfer.shiftingNotes && (
+              <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid #fed7aa" }}>
+                <div style={{ fontWeight: 600, marginBottom: 2 }}>Doctor's Shifting Notes:</div>
+                <div style={{ fontStyle: "italic" }}>{pendingTransfer.shiftingNotes}</div>
+              </div>
+            )}
+          </div>
+
+          {/* Handover textarea */}
+          <div>
+            <label className="pf-flabel pf-flabel--required">Handover Notes * (Required to complete transfer)</label>
+            <textarea
+              className={`pf-textarea ${handoverNotes.trim() ? "" : "pf-textarea--invalid"}`}
+              value={handoverNotes}
+              onChange={(e) => setHandoverNotes(e.target.value)}
+              placeholder="Document patient condition at handover, ongoing treatments, pending orders, any concerns, IV access, monitoring parameters..."
+            />
+            {!handoverNotes.trim() && (
+              <div className="pf-fhint pf-fhint--error">⚠️ Handover notes are mandatory. The bed transfer will not be completed without this.</div>
+            )}
+          </div>
+
+          <div className="pf-info-box pf-info-box--blue">
+            <strong>ℹ️ On completion:</strong> Patient will be officially moved to the new bed,
+            bed records will be updated, and the transfer will be marked complete.
+          </div>
+        </div>
+
+        <div className="pf-modal__foot">
+          <button
+            className="pf-action pf-action--quiet"
+            disabled={handoverSaving}
+            onClick={() => { setShowHandoverModal(false); setHandoverNotes(""); }}
+          >
+            Cancel
+          </button>
+          <button
+            className="pf-action"
+            style={{ background: handoverNotes.trim() ? "#f97316" : "#e2e8f0", color: handoverNotes.trim() ? "#fff" : "#94a3b8" }}
+            disabled={!handoverNotes.trim() || handoverSaving}
+            onClick={async () => {
+              if (!handoverNotes.trim()) return;
+              setHandoverSaving(true);
+              try {
+                await axios.put(`${BASE}/bed-transfers/${pendingTransfer._id}/handover`, {
+                  handoverNotes: handoverNotes.trim(),
+                  handoverBy: "Nurse",
+                });
+                setPendingTransfer(null);
+                setShowHandoverModal(false);
+                setHandoverNotes("");
+                // Refresh admission so the new bed appears in the strip immediately.
+                if (admission?._id) {
+                  const r = await axios.get(`${BASE}/admissions?uhid=${uhidDisplay}`).catch(() => ({ data: [] }));
+                  const admList = Array.isArray(r.data?.admissions) ? r.data.admissions : Array.isArray(r.data) ? r.data : [];
+                  const adm = admList.find((a) => ["active", "admitted"].includes((a.status || "").toLowerCase())) || admList[0] || null;
+                  if (adm) setAdmission(adm);
+                }
+                alert("✅ Handover complete! Bed transfer has been finalised.");
+              } catch (e) {
+                alert("Failed to submit handover notes: " + (e.response?.data?.message || e.message));
+              } finally {
+                setHandoverSaving(false);
+              }
+            }}
+          >
+            {handoverSaving ? "Submitting…" : "✅ Complete Handover"}
+          </button>
+        </div>
+      </div>
     </div>
+  );
+
+  return (
+    <PatientPanelShell
+      role="nurse"
+      title="Nursing Patient Panel"
+      subtitle="Full Patient File — Nursing Staff"
+      icon="👩‍⚕️"
+      searchValue={uhidInput}
+      onSearchChange={setUhidInput}
+      onSearchSubmit={handleLoad}
+      searchPlaceholder="Enter UHID…"
+      loading={loading}
+      error={error}
+      loaded={loaded}
+      patient={patient}
+      admission={admission}
+      printRef={printAreaRef}
+      quickActions={quickActions}
+      gateBanners={gateBanners}
+      tabs={TABS}
+      activeTab={activeTab}
+      onTabChange={setActiveTab}
+      tabCounts={tabCounts}
+      renderTab={renderTab}
+      modals={handoverModal}
+      emptyIcon="🔍"
+      emptyTitle="Search for a Patient"
+      emptyMsg='Enter a UHID in the search bar above and click "Load Patient" to view the full patient file.'
+    />
   );
 }
 
