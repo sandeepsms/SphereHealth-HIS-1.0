@@ -57,22 +57,25 @@ export default function PatientFileExport({ patient, printRef, title = "Patient 
    *  with `.pfe-printable-ancestor` so they remain visible during
    *  print, and clean those classes up afterward.
    */
+  // ── HIS-grade print flow ────────────────────────────────────
+  // Old approach (ancestor-walk + window.print) printed the live SPA
+  // chrome — sidebar, search header, hover-effects — and was fragile
+  // across browsers. New approach: pop open the Complete File page in
+  // print-mode (?mode=print&autoprint=1). That page is a purpose-built
+  // A4-formatted clinical document with a real letterhead, signature
+  // images, page breaks, and a footer. The popup fires window.print()
+  // itself once data lands, then closes on afterprint.
+  //
+  // The legacy ancestor-walk path is kept as a fallback when there's no
+  // UHID (e.g. unsaved patient form being rendered) — that case can't
+  // hit the API and the old behaviour is the only option.
   const onPrint = useCallback(() => {
-    const node = printRef?.current;
-    if (!node) {
+    if (!patient?.UHID) {
+      // No patient context → degrade to current-window print.
       window.print();
       return;
     }
-    // Re-entry guard — if a previous print is still cleaning up, the
-    // 60s safety timer for THIS invocation could strip classes mid-second-
-    // print and produce a blank page. Block until prior cleanup finishes.
-    if (document.body.classList.contains("pfe-printing")) {
-      toast.info("A print is already in progress — please wait");
-      return;
-    }
     setBusy("print");
-    // Audit: who hit print on whose chart, and when. (NABH AAC.7 — record
-    // disclosure trail). Fire-and-forget — never blocks the print dialog.
     if (patient?.UHID) {
       logActivity({
         uhid: patient.UHID,
@@ -82,62 +85,75 @@ export default function PatientFileExport({ patient, printRef, title = "Patient 
         summary: `Print initiated — ${title}`,
       });
     }
-    const ancestors = [];
-    try {
-      // Walk from the print region up to <body>, tagging each ancestor.
-      let cur = node.parentElement;
-      while (cur && cur !== document.body) {
-        cur.classList.add("pfe-printable-ancestor");
-        ancestors.push(cur);
-        cur = cur.parentElement;
-      }
-      document.body.classList.add("pfe-printing");
-      node.classList.add("pfe-printable");
-      // Defer so the classes flush before the browser snapshots layout
-      setTimeout(() => {
-        window.print();
-        const cleanup = () => {
-          document.body.classList.remove("pfe-printing");
-          node.classList.remove("pfe-printable");
-          ancestors.forEach((el) => el.classList.remove("pfe-printable-ancestor"));
-          window.removeEventListener("afterprint", cleanup);
-          setBusy("");
-        };
-        window.addEventListener("afterprint", cleanup);
-        // Safety net — some browsers don't fire afterprint reliably.
-        setTimeout(cleanup, 60_000);
-      }, 50);
-    } catch (e) {
-      // Make sure we don't leave the SPA stuck in print mode if we threw
-      document.body.classList.remove("pfe-printing");
-      node?.classList.remove("pfe-printable");
-      ancestors.forEach((el) => el.classList.remove("pfe-printable-ancestor"));
-      toast.error("Print failed: " + (e?.message || "unknown"));
-      setBusy("");
+    const role = /nurs/i.test(title) ? "nurse" : "doctor";
+    const win = window.open(
+      `/patient-file/${encodeURIComponent(patient.UHID)}?role=${role}&autoprint=1`,
+      "patient-file-print",
+      "noopener,width=1100,height=900,scrollbars=yes,resizable=yes"
+    );
+    // Some pop-up blockers silently return null — surface that to the user.
+    if (!win) {
+      toast.error("Pop-up blocked — please allow pop-ups for this site and click Print again");
     }
-  }, [printRef]);
+    // We don't wait for the popup; it owns its own lifecycle. Clear our
+    // local busy flag after a beat so the button is usable again.
+    setTimeout(() => setBusy(""), 1500);
+  }, [patient?.UHID, title]);
 
-  /** Render the referenced area to a downloadable PDF. */
-  const onPdf = useCallback(async () => {
+  // PDF export. Two paths:
+  //   1. Default: open the Complete File in print-mode, let the user pick
+  //      "Save as PDF" from the system print dialog. That keeps everything
+  //      vector + the hospital letterhead intact.
+  //   2. Power-user fallback: hold Shift while clicking PDF to run the
+  //      old html2pdf direct render of the printRef region. Cheaper for
+  //      single tab views.
+  const onPdf = useCallback(async (ev) => {
+    const useDirect = ev?.shiftKey;
+    if (!useDirect && patient?.UHID) {
+      // Same as Print — but the popup title hints "Save as PDF" + the
+      // generated date is in the letterhead.
+      setBusy("pdf");
+      if (patient?.UHID) {
+        logActivity({
+          uhid: patient.UHID,
+          module: "PatientFileExport",
+          action: "export",
+          area: "pdf-download",
+          summary: `PDF export popup — ${filename}`,
+        });
+      }
+      const role = /nurs/i.test(title) ? "nurse" : "doctor";
+      const win = window.open(
+        `/patient-file/${encodeURIComponent(patient.UHID)}?role=${role}&autoprint=1`,
+        "patient-file-pdf",
+        "noopener,width=1100,height=900,scrollbars=yes,resizable=yes"
+      );
+      if (!win) {
+        toast.error("Pop-up blocked — Shift-click PDF for direct download, or allow pop-ups");
+      } else {
+        toast.info("Pick \"Save as PDF\" in the print dialog");
+      }
+      setTimeout(() => setBusy(""), 1500);
+      return;
+    }
+
+    // Direct html2pdf fallback (Shift-click or no UHID).
     const node = printRef?.current;
     if (!node) {
       toast.warning("Nothing to export yet");
       return;
     }
     setBusy("pdf");
-    // Audit: PDF downloads are a NABH AAC.7 disclosure event — log them.
     if (patient?.UHID) {
       logActivity({
         uhid: patient.UHID,
         module: "PatientFileExport",
         action: "export",
-        area: "pdf-download",
-        summary: `PDF export — ${filename}`,
+        area: "pdf-download-direct",
+        summary: `Direct PDF export — ${filename}`,
       });
     }
     try {
-      // html2pdf is bundled (Frontend/package.json: "html2pdf.js": "^0.13.0").
-      // Lazy import keeps the main bundle smaller.
       const { default: html2pdf } = await import("html2pdf.js");
       await html2pdf()
         .set({
@@ -156,7 +172,7 @@ export default function PatientFileExport({ patient, printRef, title = "Patient 
     } finally {
       setBusy("");
     }
-  }, [printRef, filename]);
+  }, [patient?.UHID, title, printRef, filename]);
 
   /** Show / hide the QR modal. */
   const onShare = useCallback(() => {

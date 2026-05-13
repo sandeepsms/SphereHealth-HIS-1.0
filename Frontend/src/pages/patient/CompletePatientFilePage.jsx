@@ -469,6 +469,169 @@ function ActivityFeed({ activityLog }) {
   );
 }
 
+/* ── Print template ─────────────────────────────────────────── */
+function PrintLetterhead({ patient, currentAdmission, role }) {
+  const initials = (patient?.fullName || "P").split(/\s+/).map((s) => s[0]).slice(0, 2).join("").toUpperCase();
+  const ageDisp = patient?.age || (patient?.dateOfBirth
+    ? Math.floor((Date.now() - new Date(patient.dateOfBirth)) / (365.25 * 24 * 3600 * 1000)) + "y"
+    : "—");
+  return (
+    <header className="pf-print-letterhead">
+      <div className="pf-print-letterhead__brand">
+        <div className="pf-print-letterhead__logo">S</div>
+        <div>
+          <div className="pf-print-letterhead__hospital">SphereHealth Hospital</div>
+          <div className="pf-print-letterhead__sub">NABH Accredited · Hospital Information System</div>
+        </div>
+      </div>
+      <div className="pf-print-letterhead__doc">
+        <div className="pf-print-letterhead__doc-title">Complete Patient File</div>
+        <div className="pf-print-letterhead__doc-sub">
+          {role === "nurse" ? "Nursing View" : "Doctor View"} ·
+          Generated {new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+        </div>
+      </div>
+
+      <div className="pf-print-patient">
+        <div className="pf-print-patient__avatar">{initials}</div>
+        <div className="pf-print-patient__main">
+          <div className="pf-print-patient__name">{patient?.title ? `${patient.title} ` : ""}{patient?.fullName || "—"}</div>
+          <div className="pf-print-patient__meta">
+            <span><strong>UHID:</strong> {patient?.UHID}</span>
+            <span><strong>Age / Sex:</strong> {ageDisp} / {patient?.gender || "—"}</span>
+            {patient?.bloodGroup && <span><strong>Blood:</strong> {patient.bloodGroup}</span>}
+            {patient?.contactNumber && <span><strong>☎</strong> {patient.contactNumber}</span>}
+          </div>
+        </div>
+        <div className="pf-print-patient__adm">
+          <div><strong>IPD No.:</strong> {currentAdmission?.admissionNumber || "—"}</div>
+          <div><strong>Bed / Ward:</strong> {[currentAdmission?.bedNumber, currentAdmission?.wardName].filter(Boolean).join(" — ") || "—"}</div>
+          <div><strong>Doctor:</strong> {currentAdmission?.attendingDoctor || "—"}</div>
+          <div><strong>Admitted:</strong> {currentAdmission?.admissionDate ? fmtDT(currentAdmission.admissionDate) : "—"}</div>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+function PrintBody({ data, docInitial, nurseInitial, docOther, nurseOther }) {
+  const { currentAdmission, doctorOrders, vitals, nurseNotes,
+    consents, investigations, mlc, dischargeSummary, bills, activityLog,
+    bedTransfers, shiftHandovers, timeline } = data;
+  return (
+    <main className="pf-print-body">
+      <PrintSection title="1. Admission Summary">
+        <AdmissionSection admission={currentAdmission} />
+      </PrintSection>
+
+      <PrintSection title="2. Initial Assessment — Doctor">
+        <NoteList notes={docInitial} kind="doctor" emptyMsg="Doctor initial assessment not recorded" />
+      </PrintSection>
+
+      <PrintSection title="3. Initial Assessment — Nursing">
+        <NoteList notes={nurseInitial} kind="nurse" emptyMsg="Nursing initial assessment not recorded" />
+      </PrintSection>
+
+      <PrintSection title="4. Doctor Notes">
+        <NoteList notes={docOther} kind="doctor" emptyMsg="No doctor notes on file" />
+      </PrintSection>
+
+      <PrintSection title="5. Nursing Notes">
+        <NoteList notes={nurseOther} kind="nurse" emptyMsg="No nursing notes on file" />
+      </PrintSection>
+
+      <PrintSection title="6. Orders + MAR">
+        <OrdersSection orders={doctorOrders} />
+      </PrintSection>
+
+      <PrintSection title="7. Vital Trends">
+        <VitalsSection vitals={vitals} nurseNotes={nurseNotes} />
+      </PrintSection>
+
+      <PrintSection title="8. Investigations">
+        <InvestigationSection investigations={investigations} />
+      </PrintSection>
+
+      <PrintSection title="9. Consent Forms">
+        <ConsentSection consents={consents} />
+      </PrintSection>
+
+      {mlc?.length > 0 && (
+        <PrintSection title="10. Medico-Legal Cases">
+          <MLCSection mlc={mlc} />
+        </PrintSection>
+      )}
+
+      <PrintSection title="11. Bed Transfers + Shift Handovers">
+        {(bedTransfers?.length || 0) === 0 && (shiftHandovers?.length || 0) === 0
+          ? <Empty icon="🔄" msg="No handovers recorded" />
+          : (
+            <>
+              {bedTransfers?.map((t) => (
+                <div key={t._id} className="pf-record">
+                  <div className="pf-record__head">
+                    <span className="pf-record__title">Bed transfer — {t.fromBed} → {t.toBed}</span>
+                    <span className="pf-record__time">{fmtDT(t.createdAt)}</span>
+                    <span className={`pf-badge pf-badge--${t.status === "Complete" ? "ok" : "warn"}`}>{t.status}</span>
+                  </div>
+                  <div className="pf-record__body">
+                    {t.shiftingNotes && <p><strong>Doctor notes:</strong> {t.shiftingNotes}</p>}
+                    {t.handoverNotes && <p><strong>Nurse handover:</strong> {t.handoverNotes}</p>}
+                  </div>
+                </div>
+              ))}
+              {shiftHandovers?.map((h) => (
+                <div key={h._id} className="pf-record pf-record--nurse">
+                  <div className="pf-record__head">
+                    <span className="pf-record__title">Shift handover — {h.outgoingShift} → {h.incomingShift}</span>
+                    <span className="pf-record__time">{fmtDT(h.createdAt)}</span>
+                  </div>
+                  <div className="pf-record__body">
+                    {h.situation      && <p><strong>S:</strong> {h.situation}</p>}
+                    {h.background     && <p><strong>B:</strong> {h.background}</p>}
+                    {h.assessment     && <p><strong>A:</strong> {h.assessment}</p>}
+                    {h.recommendation && <p><strong>R:</strong> {h.recommendation}</p>}
+                  </div>
+                </div>
+              ))}
+            </>
+          )
+        }
+      </PrintSection>
+
+      <PrintSection title="12. Discharge Summary">
+        <DischargeSection dischargeSummary={dischargeSummary} />
+      </PrintSection>
+
+      <PrintSection title="13. Billing Summary">
+        <BillingSection bills={bills} />
+      </PrintSection>
+
+      <PrintSection title="14. Activity / Audit Trail (latest 50)">
+        <ActivityFeed activityLog={(activityLog || []).slice(0, 50)} />
+      </PrintSection>
+    </main>
+  );
+}
+
+function PrintSection({ title, children }) {
+  return (
+    <section className="pf-print-section">
+      <h2 className="pf-print-section__title">{title}</h2>
+      <div className="pf-print-section__body">{children}</div>
+    </section>
+  );
+}
+
+function PrintFooter() {
+  return (
+    <footer className="pf-print-footer">
+      <span>© SphereHealth Hospital · Computer-generated medical record · Verify with treating clinician</span>
+      <span>Printed on {new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
+    </footer>
+  );
+}
+
 /* ── Page ───────────────────────────────────────────────────── */
 export default function CompletePatientFilePage() {
   const { uhid } = useParams();
@@ -479,6 +642,15 @@ export default function CompletePatientFilePage() {
   const [err, setErr]   = useState("");
   const [active, setActive] = useState("admission");
 
+  // Print / PDF / "print only" rendering modes activated via query string.
+  // ?autoprint=1   → trigger window.print() right after data lands.
+  // ?mode=print    → drop SPA chrome (sticky nav, hover effects) and render
+  //                  the whole document inline, top-to-bottom, A4-ready.
+  //                  Set by the popup window the Print button opens so the
+  //                  patient panel itself stays interactive in the parent tab.
+  const autoprint = search.get("autoprint") === "1";
+  const printMode = autoprint || search.get("mode") === "print";
+
   useEffect(() => {
     let cancelled = false;
     setData(null); setErr("");
@@ -487,6 +659,19 @@ export default function CompletePatientFilePage() {
       .catch((e) => { if (!cancelled) setErr(e.response?.data?.message || e.message); });
     return () => { cancelled = true; };
   }, [uhid]);
+
+  // Fire the browser print dialog once the data is rendered. We delay a beat
+  // so React commits the DOM + any signature <img> tags get a chance to
+  // start loading. afterprint closes the popup (no-op if it's the main tab).
+  useEffect(() => {
+    if (!autoprint || !data) return;
+    const handle = setTimeout(() => {
+      window.print();
+      const close = () => { try { window.close(); } catch {} };
+      window.addEventListener("afterprint", close, { once: true });
+    }, 500);
+    return () => clearTimeout(handle);
+  }, [autoprint, data]);
 
   /* Scroll-spy for the sticky nav */
   useEffect(() => {
@@ -556,6 +741,20 @@ export default function CompletePatientFilePage() {
     { id: "timeline",      label: "Timeline",           icon: "📅", count: timeline.length },
   ];
 
+  // ── Print-mode renders a clean linear A4 document with letterhead. No
+  // sticky nav, no completeness strip, no scroll-spy. Everything visible
+  // top-to-bottom so the browser print dialog gets the entire file in one
+  // continuous stream.
+  if (printMode) {
+    return (
+      <div className={`pf-page pf-print-mode pf-tint--${role === "nurse" ? "nurse" : "doctor"}`}>
+        <PrintLetterhead patient={patient} currentAdmission={currentAdmission} role={role} />
+        <PrintBody data={data} docInitial={docInitial} nurseInitial={nurseInitial} docOther={docOther} nurseOther={nurseOther} />
+        <PrintFooter />
+      </div>
+    );
+  }
+
   return (
     <div className={`pf-page pf-tint--${role === "nurse" ? "nurse" : "doctor"}`}>
       <div className="pf-container">
@@ -564,7 +763,7 @@ export default function CompletePatientFilePage() {
           currentAdmission={currentAdmission}
           role={role}
           onBack={() => navigate(-1)}
-          onPrint={() => window.print()}
+          onPrint={() => window.open(`/patient-file/${uhid}?role=${role}&autoprint=1`, "_blank", "noopener,width=1100,height=900")}
         />
         <Completeness completeness={completeness} />
 

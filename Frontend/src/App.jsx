@@ -199,6 +199,15 @@ function AppLayout({ collapsed, setCollapsed }) {
   const isLogin    = location.pathname === "/login";
   const isBillPrint = location.pathname.startsWith("/bill-print/");
 
+  /* Complete-patient-file in print mode — strip sidebar / header so the
+   * popup window the Print button opens shows nothing but the clinical
+   * document. Triggered by ?mode=print or ?autoprint=1 on the query
+   * string. */
+  const isPatientFilePrint = location.pathname.startsWith("/patient-file/") && (
+    location.search.includes("mode=print") ||
+    location.search.includes("autoprint=1")
+  );
+
   /* Redirect unauthenticated users to login */
   if (!user && !isLogin) {
     return <Navigate to="/login" state={{ from: location }} replace />;
@@ -210,6 +219,20 @@ function AppLayout({ collapsed, setCollapsed }) {
       <Suspense fallback={<RouteLoader />}>
         <Routes>
           <Route path="/bill-print/:billId" element={<BillPrintPage />} />
+        </Routes>
+      </Suspense>
+    );
+  }
+
+  /* Patient file print mode — standalone, no chrome. Same idea as
+   * /bill-print but it's the same component (CompletePatientFilePage)
+   * just rendered without sidebar/header so the popup window prints
+   * a clean clinical document. */
+  if (isPatientFilePrint && user) {
+    return (
+      <Suspense fallback={<RouteLoader />}>
+        <Routes>
+          <Route path="/patient-file/:uhid" element={<CompletePatientFilePage />} />
         </Routes>
       </Suspense>
     );
