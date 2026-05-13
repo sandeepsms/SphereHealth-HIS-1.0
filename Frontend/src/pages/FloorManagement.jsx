@@ -1,141 +1,191 @@
-import React, { useState } from "react";
-import { Card } from "primereact/card";
-import { Button } from "primereact/button";
-import { TabView, TabPanel } from "primereact/tabview";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Toast } from "primereact/toast";
+
 import FloorList from "../Components/floor/FloorList";
 import FloorForm from "../Components/floor/FloorForm";
-import FloorCard from "../Components/floor/FloorCard";
 import BedSectionHeader from "../Components/bed/BedSectionHeader";
+import { BmStatStrip, BmCard, BmFilter, BmEmpty, BmPill, BmIconBtn } from "../Components/bed/BedPrimitives";
 import { floorService } from "../Services/floorService";
 
+const TABS = [
+  { key: "list", icon: "pi pi-list",     label: "List" },
+  { key: "card", icon: "pi pi-th-large", label: "Cards" },
+];
+
 const FloorManagement = () => {
+  const toast = useRef(null);
+  const [floors, setFloors] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [selectedFloor, setSelectedFloor] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [activeTab, setActiveTab] = useState(0);
-  const [floors, setFloors] = useState([]);
+  const [view, setView]    = useState("list");
+  const [filter, setFilter] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleEdit = (floor) => {
-    setSelectedFloor(floor);
-    setShowForm(true);
+  const loadFloors = async () => {
+    setLoading(true);
+    try {
+      const data = await floorService.getAllFloors();
+      const arr = Array.isArray(data) ? data : data?.data || data?.floors || [];
+      setFloors(arr);
+    } catch {
+      toast.current?.show({ severity: "error", summary: "Error", detail: "Failed to load floors", life: 3000 });
+    } finally { setLoading(false); }
   };
 
-  const handleAdd = () => {
-    setSelectedFloor(null);
-    setShowForm(true);
-  };
+  useEffect(() => { loadFloors(); }, [refreshKey]);
 
-  const handleSave = () => {
-    setRefreshKey((prev) => prev + 1);
-    loadFloors();
-  };
-
+  const handleEdit = (floor) => { setSelectedFloor(floor); setShowForm(true); };
+  const handleAdd  = () => { setSelectedFloor(null); setShowForm(true); };
   const handleDelete = async (floor) => {
-    if (window.confirm(`Are you sure you want to delete ${floor.floorName}?`)) {
+    if (window.confirm(`Delete floor "${floor.floorName || floor.floorNumber}"?`)) {
       try {
         await floorService.deleteFloor(floor._id);
+        toast.current?.show({ severity: "success", summary: "Deleted", detail: "Floor removed", life: 2500 });
         loadFloors();
-      } catch (error) {
-        console.error("Error deleting floor:", error);
+      } catch {
+        toast.current?.show({ severity: "error", summary: "Error", detail: "Failed to delete floor", life: 3000 });
       }
     }
   };
 
-  const loadFloors = async () => {
-    try {
-      const data = await floorService.getAllFloors();
-      setFloors(data);
-    } catch (error) {
-      console.error("Error loading floors:", error);
-    }
-  };
+  const stats = useMemo(() => {
+    const active = floors.filter(f => f.isActive !== false).length;
+    const buildings = new Set(floors.map(f => f.building?._id || f.building).filter(Boolean));
+    return [
+      { key: "total",     label: "Floors",        value: floors.length,   icon: "pi-arrows-v",     tone: "amber"  },
+      { key: "active",    label: "Active",        value: active,          icon: "pi-check-circle", tone: "green"  },
+      { key: "buildings", label: "Across",        value: buildings.size,  icon: "pi-building",     tone: "blue"   },
+    ];
+  }, [floors]);
 
-  React.useEffect(() => {
-    loadFloors();
-  }, [refreshKey]);
+  const filtered = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return floors;
+    return floors.filter(f =>
+      (f.floorName || "").toLowerCase().includes(q) ||
+      String(f.floorNumber || "").toLowerCase().includes(q) ||
+      (f.building?.buildingName || f.buildingName || "").toLowerCase().includes(q)
+    );
+  }, [floors, filter]);
 
   return (
-    <div style={{ padding: 20, background: "#f1f5f9", minHeight: "100vh" }}>
+    <div className="bm-page">
+      <Toast ref={toast} />
+
       <BedSectionHeader
         title="Floors"
-        subtitle={`${floors.length} floor${floors.length === 1 ? "" : "s"} configured`}
+        subtitle={`${floors.length} floor${floors.length === 1 ? "" : "s"} configured across ${stats[2].value} building${stats[2].value === 1 ? "" : "s"}`}
         icon="pi-arrows-v"
         actions={
-          <Button icon="pi pi-plus" label="Add New Floor"
-            onClick={handleAdd}
-            style={{
-              background: "#fff", color: "#9a3412",
-              border: "none", fontWeight: 700,
-              borderRadius: 8, padding: "7px 16px", fontSize: 12,
-              boxShadow: "0 2px 8px rgba(0,0,0,.13)",
-            }} />
+          <>
+            <div className="bm-tabs" style={{ background: "rgba(255,255,255,.15)", border: "1px solid rgba(255,255,255,.3)" }}>
+              {TABS.map(t => (
+                <button key={t.key} onClick={() => setView(t.key)}
+                  className={view === t.key ? "active" : ""}
+                  style={{
+                    color: view === t.key ? "#9a3412" : "rgba(255,255,255,.92)",
+                    background: view === t.key ? "#fff" : "transparent",
+                  }}>
+                  <i className={t.icon} /> {t.label}
+                </button>
+              ))}
+            </div>
+            <button onClick={loadFloors}
+              style={{
+                background: "rgba(255,255,255,.15)", color: "#fff",
+                border: "1.5px solid rgba(255,255,255,.4)",
+                fontWeight: 700, borderRadius: 8, padding: "7px 14px", fontSize: 12,
+                cursor: "pointer", fontFamily: "inherit",
+                display: "inline-flex", alignItems: "center", gap: 6,
+              }}>
+              <i className={`pi ${loading ? "pi-spin pi-spinner" : "pi-refresh"}`} /> Refresh
+            </button>
+            <button onClick={handleAdd}
+              style={{
+                background: "#fff", color: "#9a3412",
+                border: "none", fontWeight: 700,
+                borderRadius: 8, padding: "7px 16px", fontSize: 12,
+                boxShadow: "0 2px 8px rgba(0,0,0,.13)",
+                cursor: "pointer", fontFamily: "inherit",
+                display: "inline-flex", alignItems: "center", gap: 6,
+              }}>
+              <i className="pi pi-plus" /> Add Floor
+            </button>
+          </>
         }
       />
-      <Card className="shadow-1">
-        <TabView
-          activeIndex={activeTab}
-          onTabChange={(e) => setActiveTab(e.index)}
-          className="mt-1"
-        >
-          <TabPanel header="List View" leftIcon="pi pi-list mr-2">
-            <div className="mt-1">
-              <FloorList onEdit={handleEdit} onRefresh={refreshKey} />
-            </div>
-          </TabPanel>
 
-          <TabPanel header="Card View" leftIcon="pi pi-th-large mr-2">
-            {floors.length === 0 ? (
-              <div className="text-center p-6 mt-4">
-                <i
-                  className="pi pi-inbox mb-4"
-                  style={{
-                    fontSize: "5rem",
-                    color: "#cbd5e1",
-                  }}
-                ></i>
-                <h3 className="text-xl font-semibold text-700 mb-2">
-                  No Floors Found
-                </h3>
-                <p className="text-600 mb-4">
-                  Get started by creating your first floor
-                </p>
-                <Button
-                  label="Create First Floor"
-                  icon="pi pi-plus"
-                  onClick={handleAdd}
-                  className="p-button-primary"
-                />
-              </div>
-            ) : (
-              <div
-                className="grid mt-4"
-                style={{
-                  gap: "1.5rem",
-                }}
-              >
-                {floors.map((floor) => (
-                  <div key={floor._id} className="col-12 md:col-6 lg:col-4">
-                    <FloorCard
-                      floor={floor}
-                      onEdit={handleEdit}
-                      onDelete={handleDelete}
-                    />
+      <BmStatStrip stats={stats} />
+
+      <BmCard
+        title={view === "list" ? "Configured Floors" : "Floors — Card View"}
+        icon={view === "list" ? "pi-list" : "pi-th-large"}
+        count={filtered.length === floors.length ? floors.length : `${filtered.length}/${floors.length}`}
+        action={<BmFilter value={filter} onChange={setFilter} placeholder="Search by name / number / building…" />}
+      >
+        {loading ? (
+          <BmEmpty icon="pi-spin pi-spinner" title="Loading floors…" />
+        ) : filtered.length === 0 ? (
+          floors.length === 0 ? (
+            <BmEmpty
+              icon="pi-arrows-v"
+              title="No floors yet"
+              msg="Floors live under a building and host wards on top of them."
+              ctaLabel="Add First Floor"
+              ctaIcon="pi-plus"
+              onCta={handleAdd}
+            />
+          ) : (
+            <BmEmpty icon="pi-search" title="No matches" msg="Try a different search term." />
+          )
+        ) : view === "list" ? (
+          /* Reuse the existing FloorList behavior — it owns its
+             own fetch + table. We pass the filter through if the
+             component supports it; otherwise it ignores. */
+          <div style={{ padding: 12 }}>
+            <FloorList onEdit={handleEdit} onRefresh={refreshKey} globalFilter={filter} />
+          </div>
+        ) : (
+          <div style={{ padding: 14, display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))" }}>
+            {filtered.map(f => (
+              <div key={f._id} className="bm-grid-card bm-grid-card--orange">
+                <div className="bm-grid-card__head">
+                  <div className="bm-grid-card__icon">
+                    <i className="pi pi-arrows-v" />
                   </div>
-                ))}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="bm-grid-card__title">
+                      {f.floorName || `Floor ${f.floorNumber}`}
+                    </div>
+                    <div className="bm-grid-card__sub">
+                      {f.building?.buildingName || f.buildingName || "—"} · Floor {f.floorNumber}
+                    </div>
+                  </div>
+                  <BmPill tone={f.isActive === false ? "danger" : "ok"}>
+                    {f.isActive === false ? "Inactive" : "Active"}
+                  </BmPill>
+                </div>
+                <div className="bm-row-actions" style={{ justifyContent: "flex-end", marginTop: 4 }}>
+                  <BmIconBtn icon="pi-pencil" variant="info"   title="Edit"   onClick={() => handleEdit(f)} />
+                  <BmIconBtn icon="pi-trash"  variant="danger" title="Delete" onClick={() => handleDelete(f)} />
+                </div>
               </div>
-            )}
-          </TabPanel>
-        </TabView>
-      </Card>
+            ))}
+          </div>
+        )}
+      </BmCard>
 
       <FloorForm
         visible={showForm}
-        onHide={() => {
+        onHide={() => { setShowForm(false); setSelectedFloor(null); }}
+        floor={selectedFloor}
+        onSave={() => {
           setShowForm(false);
           setSelectedFloor(null);
+          setRefreshKey(k => k + 1);
+          toast.current?.show({ severity: "success", summary: "Saved", detail: "Floor saved", life: 2500 });
         }}
-        floor={selectedFloor}
-        onSave={handleSave}
       />
     </div>
   );

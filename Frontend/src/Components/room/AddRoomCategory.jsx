@@ -10,6 +10,7 @@ import { toast } from "react-toastify";
 
 import { roomCategoryService } from "../../Services/roomCategoryService";
 import BedSectionHeader from "../bed/BedSectionHeader";
+import { BmStatStrip, BmCard } from "../bed/BedPrimitives";
 import "primereact/resources/themes/lara-light-blue/theme.css";
 import "primereact/resources/primereact.min.css";
 import "primeicons/primeicons.css";
@@ -234,38 +235,52 @@ function AddRoomCategory() {
     </div>
   );
 
+  /* Aggregate stats — total / by classification / active */
+  const _stats = (() => {
+    const list = Array.isArray(categoryList) ? categoryList : [];
+    const active = list.filter(c => c.isActive !== false).length;
+    const byClass = new Set(list.map(c => c.classification).filter(Boolean));
+    const minRate = list.length ? Math.min(...list.map(c => c.defaultPricing?.perBedDailyRate || Infinity).filter(n => Number.isFinite(n))) : 0;
+    const maxRate = list.length ? Math.max(...list.map(c => c.defaultPricing?.perBedDailyRate || 0)) : 0;
+    return [
+      { key: "total",   label: "Categories",   value: list.length, icon: "pi-th-large",     tone: "purple" },
+      { key: "active",  label: "Active",       value: active,       icon: "pi-check-circle", tone: "green"  },
+      { key: "classes", label: "Tier classes", value: byClass.size, icon: "pi-tags",         tone: "blue"   },
+      { key: "rates",   label: "Daily rate range", value: list.length ? `₹${minRate}-${maxRate}` : "—", icon: "pi-dollar", tone: "amber" },
+    ];
+  })();
+
   return (
-    <div
-      style={{
-        padding: "20px",
-        backgroundColor: "#f5f5f5",
-        minHeight: "100vh",
-      }}
-    >
+    <div className="bm-page">
       <BedSectionHeader
         title="Room Categories"
         subtitle="Pricing tiers + amenities — Economy, Standard, Premium, Deluxe, VIP"
         icon="pi-th-large"
       />
 
+      <BmStatStrip stats={_stats} />
+
       {/* Add/Edit Form */}
       <div
+        className="bm-card"
         style={{
-          backgroundColor: "white",
-          borderRadius: "8px",
-          padding: "30px",
-          boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
-          marginBottom: "30px",
+          padding: "24px 28px",
+          marginBottom: 18,
         }}
       >
         <h2
           style={{
-            fontSize: "22px",
-            fontWeight: 600,
-            color: "#2c3e50",
-            marginBottom: "25px",
+            fontSize: "16px",
+            fontWeight: 800,
+            color: "#0f172a",
+            marginBottom: "18px",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            letterSpacing: ".2px",
           }}
         >
+          <i className={`pi ${editing ? "pi-pencil" : "pi-plus-circle"}`} style={{ color: "#db2777" }} />
           {editing ? "Edit Room Category" : "Add New Room Category"}
         </h2>
 

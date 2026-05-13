@@ -1155,11 +1155,11 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       <div
         style={{
           background: "#fff",
-          borderRadius: 16,
-          border: "1px solid #e2e8f0",
-          padding: "16px 20px",
-          marginBottom: 20,
-          boxShadow: "0 2px 12px rgba(0,0,0,.06)",
+          borderRadius: 14,
+          border: "1.5px solid #e2e8f0",
+          padding: "12px 16px",
+          marginBottom: 16,
+          boxShadow: "0 2px 10px rgba(15,23,42,.04)",
         }}
       >
         <div
@@ -1167,52 +1167,46 @@ const BedVisualLayout = ({ onRefreshParent }) => {
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            marginBottom: 14,
+            marginBottom: 10,
             flexWrap: "wrap",
             gap: 10,
           }}
         >
-          <h3
+          <div
             style={{
-              margin: 0,
-              fontSize: 14,
-              fontWeight: 700,
-              color: "#0f172a",
               display: "flex",
               alignItems: "center",
-              gap: 8,
+              gap: 7,
+              fontSize: 11,
+              fontWeight: 800,
+              color: "#475569",
+              textTransform: "uppercase",
+              letterSpacing: ".5px",
             }}
           >
-            <i className="pi pi-filter" style={{ color: TEAL }} /> Filter Beds
-          </h3>
-          <div style={{ display: "flex", gap: 10 }}>
-            <Button
-              label="Refresh"
-              icon="pi pi-refresh"
-              onClick={fetchBeds}
-              loading={busy}
-              className="p-button-sm p-button-outlined"
-              style={{
-                borderColor: TEAL,
-                color: TEAL,
-                borderRadius: 8,
-                fontSize: 12,
-              }}
-            />
-            <Button
-              label="Clear"
-              icon="pi pi-filter-slash"
-              onClick={() => {
-                setFBldg(null);
-                setFFloor(null);
-                setFWard(null);
-                setFRoom(null);
-                setFSearch("");
-              }}
-              className="p-button-sm p-button-text"
-              style={{ color: "#64748b" }}
-            />
+            <i className="pi pi-filter" style={{ color: TEAL, fontSize: 12 }} />
+            Filters
           </div>
+          <button
+            onClick={() => {
+              setFBldg(null);
+              setFFloor(null);
+              setFWard(null);
+              setFRoom(null);
+              setFSearch("");
+            }}
+            style={{
+              background: "transparent", color: "#64748b",
+              border: "1.5px solid #e2e8f0", borderRadius: 999,
+              padding: "4px 12px", fontSize: 11, fontWeight: 700,
+              cursor: "pointer", fontFamily: "inherit",
+              display: "inline-flex", alignItems: "center", gap: 5,
+            }}
+            title="Clear all filters"
+          >
+            <i className="pi pi-filter-slash" style={{ fontSize: 10 }} />
+            Clear
+          </button>
         </div>
         <div
           style={{

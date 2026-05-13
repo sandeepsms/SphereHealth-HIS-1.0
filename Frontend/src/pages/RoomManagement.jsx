@@ -1,18 +1,16 @@
-import React, { useEffect, useRef, useState } from "react";
-import { Button } from "primereact/button";
-import { Card } from "primereact/card";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Toast } from "primereact/toast";
 import { ConfirmDialog } from "primereact/confirmdialog";
-import { InputText } from "primereact/inputtext";
 
 import RoomForm from "../Components/room/RoomForm";
 import RoomList from "../Components/room/RoomList";
 import RoomVisualLayout from "../Components/room/Roomvisuallayout";
 import BedSectionHeader from "../Components/bed/BedSectionHeader";
+import { BmStatStrip, BmCard, BmFilter, BmEmpty } from "../Components/bed/BedPrimitives";
 import { roomService } from "../Services/roomService";
 
 const TABS = [
-  { key: "table", icon: "pi pi-table", label: "Table View" },
+  { key: "table",  icon: "pi pi-table",   label: "Table View" },
   { key: "visual", icon: "pi pi-sitemap", label: "Visual Layout" },
 ];
 
@@ -20,108 +18,125 @@ const RoomManagement = () => {
   const toast = useRef(null);
   const [viewMode, setViewMode] = useState("table");
   const [showForm, setShowForm] = useState(false);
-  const [selRoom, setSelRoom] = useState(null);
-  const [refresh, setRefresh] = useState(0);
-  const [globalFilter, setGlobalFilter] = useState("");
+  const [selRoom, setSelRoom]   = useState(null);
+  const [refresh, setRefresh]   = useState(0);
+  const [filter, setFilter]     = useState("");
+  const [rooms, setRooms]       = useState([]);
+  const [loadingStats, setLoadingStats] = useState(false);
 
-  const handleEdit = (room) => {
-    setSelRoom(room);
-    setShowForm(true);
-  };
+  /* Aggregates snapshot — keeps RoomList free to render its own
+     fetch+table while the page header shows totals. */
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingStats(true);
+    roomService.getAllRooms()
+      .then(d => {
+        if (cancelled) return;
+        const arr = Array.isArray(d) ? d : d?.data || d?.rooms || [];
+        setRooms(arr);
+      })
+      .catch(() => { if (!cancelled) setRooms([]); })
+      .finally(() => { if (!cancelled) setLoadingStats(false); });
+    return () => { cancelled = true; };
+  }, [refresh]);
+
+  const stats = useMemo(() => {
+    const totalBeds     = rooms.reduce((s, r) => s + (Number(r.totalBeds)     || 0), 0);
+    const availableBeds = rooms.reduce((s, r) => s + (Number(r.availableBeds) || 0), 0);
+    const occupiedBeds  = rooms.reduce((s, r) => s + (Number(r.occupiedBeds)  || 0), 0);
+    const active        = rooms.filter(r => r.isActive !== false).length;
+    return [
+      { key: "total",     label: "Rooms",          value: rooms.length,  icon: "pi-box",          tone: "purple" },
+      { key: "active",    label: "Active",         value: active,        icon: "pi-check-circle", tone: "green"  },
+      { key: "beds",      label: "Beds (sum)",     value: totalBeds,     icon: "pi-th-large",     tone: "blue"   },
+      { key: "occupied",  label: "Occupied beds",  value: occupiedBeds,  icon: "pi-user",         tone: "red"    },
+      { key: "available", label: "Available beds", value: availableBeds, icon: "pi-bookmark",     tone: "amber"  },
+    ];
+  }, [rooms]);
+
+  const handleEdit = (room) => { setSelRoom(room); setShowForm(true); };
   const handleSave = () => {
-    setShowForm(false);
-    setSelRoom(null);
-    setRefresh((r) => r + 1);
-    toast.current?.show({
-      severity: "success",
-      summary: "Success",
-      detail: "Room saved successfully",
-      life: 3000,
-    });
+    setShowForm(false); setSelRoom(null);
+    setRefresh(r => r + 1);
+    toast.current?.show({ severity: "success", summary: "Saved", detail: "Room saved", life: 2500 });
   };
 
   return (
-    <div style={{ padding: 20, background: "#f1f5f9", minHeight: "100vh" }}>
+    <div className="bm-page">
       <Toast ref={toast} />
       <ConfirmDialog />
 
       <BedSectionHeader
         title="Rooms"
-        subtitle="Configure rooms under each ward — table / visual views"
+        subtitle={`${rooms.length} room${rooms.length === 1 ? "" : "s"} · sit between a ward and the beds inside`}
         icon="pi-box"
         actions={
           <>
-            <div style={{ display: "flex", background: "rgba(255,255,255,.15)", borderRadius: 9, padding: 3, gap: 3 }}>
-              {TABS.map(({ key, icon, label }) => {
-                const active = viewMode === key;
-                return (
-                  <button key={key} onClick={() => setViewMode(key)}
-                    style={{
-                      display: "flex", alignItems: "center", gap: 6,
-                      padding: "6px 13px", borderRadius: 6, border: "none",
-                      cursor: "pointer", fontSize: 12, fontWeight: 700,
-                      background: active ? "#fff" : "transparent",
-                      color: active ? "#5b21b6" : "rgba(255,255,255,.9)",
-                      fontFamily: "inherit",
-                    }}>
-                    <i className={icon} style={{ fontSize: 12 }} /> {label}
-                  </button>
-                );
-              })}
-            </div>
-
-            {viewMode === "table" && (
-              <span style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
-                <i className="pi pi-search" style={{ position: "absolute", left: 10, color: "rgba(255,255,255,.7)", fontSize: 12, zIndex: 1 }} />
-                <InputText placeholder="Search rooms…" value={globalFilter}
-                  onChange={(e) => setGlobalFilter(e.target.value)}
+            <div className="bm-tabs" style={{ background: "rgba(255,255,255,.15)", border: "1px solid rgba(255,255,255,.3)" }}>
+              {TABS.map(t => (
+                <button key={t.key}
+                  onClick={() => setViewMode(t.key)}
+                  className={viewMode === t.key ? "active" : ""}
                   style={{
-                    paddingLeft: 30, width: 190,
-                    background: "rgba(255,255,255,.18)",
-                    border: "1px solid rgba(255,255,255,.3)",
-                    borderRadius: 8, color: "#fff", fontSize: 12,
-                  }} />
-              </span>
-            )}
-
-            <Button icon="pi pi-plus" label="Add Room"
-              onClick={() => { setSelRoom(null); setShowForm(true); }}
+                    color: viewMode === t.key ? "#5b21b6" : "rgba(255,255,255,.92)",
+                    background: viewMode === t.key ? "#fff" : "transparent",
+                  }}>
+                  <i className={t.icon} /> {t.label}
+                </button>
+              ))}
+            </div>
+            <button onClick={() => setRefresh(r => r + 1)}
+              style={{
+                background: "rgba(255,255,255,.15)", color: "#fff",
+                border: "1.5px solid rgba(255,255,255,.4)",
+                fontWeight: 700, borderRadius: 8, padding: "7px 14px", fontSize: 12,
+                cursor: "pointer", fontFamily: "inherit",
+                display: "inline-flex", alignItems: "center", gap: 6,
+              }}>
+              <i className={`pi ${loadingStats ? "pi-spin pi-spinner" : "pi-refresh"}`} /> Refresh
+            </button>
+            <button onClick={() => { setSelRoom(null); setShowForm(true); }}
               style={{
                 background: "#fff", color: "#5b21b6",
                 border: "none", fontWeight: 700,
                 borderRadius: 8, padding: "7px 16px", fontSize: 12,
                 boxShadow: "0 2px 8px rgba(0,0,0,.13)",
-              }} />
+                cursor: "pointer", fontFamily: "inherit",
+                display: "inline-flex", alignItems: "center", gap: 6,
+              }}>
+              <i className="pi pi-plus" /> Add Room
+            </button>
           </>
         }
       />
 
-      {/* ── TABLE VIEW ── */}
+      <BmStatStrip stats={stats} />
+
       {viewMode === "table" && (
-        <Card
-          style={{ borderRadius: 12, boxShadow: "0 2px 12px rgba(0,0,0,.07)" }}
+        <BmCard
+          title="Configured Rooms"
+          icon="pi-box"
+          count={rooms.length}
+          action={<BmFilter value={filter} onChange={setFilter} placeholder="Search rooms by name / code / ward…" />}
         >
-          <RoomList
-            onEdit={handleEdit}
-            onRefresh={refresh}
-            globalFilter={globalFilter}
-          />
-        </Card>
+          <div style={{ padding: 12 }}>
+            <RoomList onEdit={handleEdit} onRefresh={refresh} globalFilter={filter} />
+          </div>
+        </BmCard>
       )}
 
-      {/* ── VISUAL LAYOUT ── */}
       {viewMode === "visual" && (
-        <RoomVisualLayout onEdit={handleEdit} onRefresh={refresh} />
+        <BmCard title="Visual Layout" icon="pi-sitemap" count={rooms.length}>
+          <div style={{ padding: 12 }}>
+            <RoomVisualLayout onEdit={handleEdit} onRefresh={refresh} />
+          </div>
+        </BmCard>
       )}
 
-      {/* ── FORM DIALOG ── */}
       <RoomForm
         visible={showForm}
         room={selRoom}
-        onHide={() => {
-          setShowForm(false);
-          setSelRoom(null);
-        }}
+        onHide={() => { setShowForm(false); setSelRoom(null); }}
         onSave={handleSave}
       />
     </div>
