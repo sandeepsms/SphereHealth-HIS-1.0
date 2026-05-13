@@ -11,6 +11,7 @@ import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
+import { openPrint } from "../../Components/print/openPrint";
 import { useAuth } from "../../context/AuthContext";
 import WhatsAppButton from "../../Components/whatsapp/WhatsAppButton";
 import "./reception-shared.css";
@@ -151,9 +152,19 @@ export default function DischargeQueue() {
                   <i className="pi pi-id-card" /> Issue Gate Pass
                 </button>
               )}
+              {(w.stage === "BillCleared" || w.stage === "Completed") && (
+                <button className="rx-action-btn" onClick={() => printDischargeSummary(adm)}>
+                  <i className="pi pi-file" /> Discharge Summary
+                </button>
+              )}
+              {(w.stage === "BillCleared" || w.stage === "Completed") && (
+                <button className="rx-action-btn" onClick={() => printFinalBill(adm)}>
+                  <i className="pi pi-receipt" /> Final Bill
+                </button>
+              )}
               {w.stage === "Completed" && (
                 <button className="rx-action-btn" onClick={() => printGatePass(adm)}>
-                  <i className="pi pi-print" /> Print Gate Pass
+                  <i className="pi pi-print" /> Gate Pass
                 </button>
               )}
               {adm.patientId?.contactNumber && (
@@ -333,6 +344,60 @@ function IssueGatePassModal({ admission, onClose, onIssued, userName }) {
 }
 
 /* ─────────── Print Gate Pass ─────────── */
+/* Wired to the unified print system — discharge summary + final bill. */
+function printDischargeSummary(adm) {
+  const p = adm.patientId || {};
+  const w = adm.dischargeWorkflow || {};
+  openPrint("discharge-summary", {
+    summaryNo:      w.summaryNumber || `DS-${(adm.ipdNo || "").replace(/[^A-Z0-9]/gi, "")}`,
+    patientName:    adm.patientName,
+    uhid:           adm.UHID,
+    ipdNo:          adm.ipdNo,
+    age:            p.age,
+    gender:         p.gender,
+    admissionDate:  adm.admissionDate,
+    dischargeDate:  w.dischargedAt || new Date().toISOString(),
+    totalDays:      adm.totalDays,
+    consultantName: adm.attendingDoctor || w.doctorApprovedBy,
+    bedNumber:      adm.bedNumber,
+    wardName:       adm.wardName,
+    dischargeType:  w.dischargeType || "Normal",
+    finalDiagnosis: adm.finalDiagnosis || adm.diagnosis,
+    chiefComplaints: adm.chiefComplaints,
+    conditionOnDischarge: w.conditionOnDischarge,
+    dischargeMeds:  adm.dischargeMeds || [],
+    advice:         adm.dischargeAdvice ? String(adm.dischargeAdvice).split("\n").filter(Boolean) : [],
+    followUpDate:   adm.followUpDate,
+    followUpDoctor: adm.attendingDoctor,
+  });
+}
+
+function printFinalBill(adm) {
+  const p = adm.patientId || {};
+  const w = adm.dischargeWorkflow || {};
+  openPrint("final-bill", {
+    billNo:         w.billNumber,
+    patientName:    adm.patientName,
+    uhid:           adm.UHID,
+    ipdNo:          adm.ipdNo,
+    age:            p.age,
+    gender:         p.gender,
+    admissionDate:  adm.admissionDate,
+    dischargeDate:  w.dischargedAt || new Date().toISOString(),
+    totalDays:      adm.totalDays,
+    consultantName: adm.attendingDoctor,
+    bedNumber:      adm.bedNumber,
+    wardName:       adm.wardName,
+    finalDiagnosis: adm.finalDiagnosis || adm.diagnosis,
+    tpaName:        adm.tpaName || (adm.scheme === "Cashless" ? "TPA" : "Self-paying"),
+    items:          w.billItems || adm.billItems || [],
+    discount:       w.discount,
+    tax:            w.tax,
+    advanceReceived:w.advanceReceived,
+    payments:       w.payments || [],
+  });
+}
+
 function printGatePass(admission) {
   const w = admission.dischargeWorkflow || {};
   const html = `<!doctype html><html><head><meta charset="utf-8"/>

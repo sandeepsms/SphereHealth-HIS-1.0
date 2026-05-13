@@ -9,6 +9,7 @@ import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
+import { openPrint } from "../../Components/print/openPrint";
 import "./reception-shared.css";
 import "../../Components/clinical/clinical-forms.css";
 
@@ -33,6 +34,40 @@ const STATUS_CLASS = {
   PARTIAL_APPROVED: "submitted",
   REJECTED:         "denied",
 };
+
+/* Print the TPA pre-authorization letter via the unified print system. */
+function printTPAAuth(bill) {
+  const p = bill.patientId || {};
+  const a = bill.admissionId || {};
+  openPrint("tpa-authorization", {
+    requestNo:           bill.tpaClaimNumber || bill.billNumber,
+    date:                bill.tpaSubmittedAt || new Date().toISOString(),
+    patientName:         p.fullName || bill.patientName,
+    uhid:                p.UHID || bill.UHID,
+    ipdNo:               a.ipdNo || bill.ipdNo,
+    age:                 p.age,
+    gender:              p.gender,
+    policyNo:            bill.tpaPolicyNumber,
+    tpaName:             bill.tpaName,
+    tpaAddress:          bill.tpaAddress,
+    insurerName:         bill.insurerName,
+    corporateName:       bill.corporateName,
+    tpaCardNo:           bill.tpaCardNumber,
+    admissionDate:       a.admissionDate || bill.admissionDate,
+    provisionalDiagnosis: a.provisionalDiagnosis || bill.diagnosis,
+    icd10:               a.icd10,
+    icd10Desc:           a.icd10Description,
+    proposedProcedure:   bill.proposedProcedure,
+    treatmentLine:       bill.treatmentLine || "Medical",
+    pastHistory:         a.medicalHistory,
+    comorbidities:       a.comorbidities,
+    preExisting:         a.preExistingConditions,
+    totalEstimated:      bill.tpaPayableAmount || bill.netAmount,
+    doctorName:          bill.consultantName || a.attendingDoctor,
+    doctorReg:           bill.consultantRegNo,
+    doctorQualifications: bill.consultantQualifications,
+  });
+}
 
 export default function TPACases() {
   const navigate = useNavigate();
@@ -150,6 +185,9 @@ export default function TPACases() {
                   </button>
                 </>
               )}
+              <button className="rx-action-btn" onClick={() => printTPAAuth(bill)}>
+                <i className="pi pi-print" /> Print TPA Letter
+              </button>
             </div>
           </div>
         );

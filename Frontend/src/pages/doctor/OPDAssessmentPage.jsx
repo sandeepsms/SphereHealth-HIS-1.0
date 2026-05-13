@@ -11,6 +11,7 @@ import { useSearchParams, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-toastify";
 import API_ENDPOINTS from "../../config/api";
+import { openPrint } from "../../Components/print/openPrint";
 import FingerprintConsentModal from "../../Components/clinical/FingerprintConsentModal";
 import { useHospitalSettings } from "../../context/HospitalSettingsContext";
 import { useAutoSave } from "../../hooks/useAutoSave";
@@ -307,358 +308,48 @@ export default function OPDAssessmentPage() {
     toast.success("Procedure added");
   };
 
-  /* ── OPD Paper Print ────────────────────────────────────────── */
+  /* ── OPD Paper Print ──
+   * Rewired to the unified print system. The CSS-driven OPD Prescription
+   * printable pulls header / footer from Hospital Settings, supports the
+   * paper-size selector (A4 / Half-A4 / A5), and handles the same fields. */
   const handlePrint = () => {
-    const now     = new Date();
-    const dateStr = now.toLocaleDateString("en-IN", { weekday: "long", day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" });
-    const shortDate = now.toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" });
-    const timeStr = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+    const v   = visit || {};
+    const vit = v.vitals || {};
     const docUser = (() => { try { return JSON.parse(localStorage.getItem("his_user") || "{}"); } catch { return {}; } })();
-
-    const ink  = hs.printHeaderColor || "#1a3c6e";
-    const v    = visit || {};
-    const vit  = v.vitals || {};
-
-    const addr1   = [hs.addressLine1, hs.addressLine2].filter(Boolean).join(", ");
-    const addr2   = [hs.city, hs.state, hs.pincode].filter(Boolean).join(", ");
-    const phone   = [hs.phone1, hs.phone2].filter(Boolean).join(" / ");
-
-    const drName  = v.consultantName || docUser?.fullName || docUser?.name || "Consultant";
-    const drQual  = docUser?.qualification || "";
-    const drReg   = docUser?.registrationNo || "";
-    const dept    = v.department || docUser?.department || "";
-    const dxProv  = soap.provisionalDiagnosis?.trim();
-    const dxFin   = soap.finalDiagnosis?.trim();
-    const allergy = v.allergies || v.allergy || "No Known Allergy";
-
-    /* ── vitals row ── */
-    const vitCells = [
-      ["B.P.",   vit.bloodPressure],
-      ["Pulse",  vit.pulse           ? `${vit.pulse} /min`    : null],
-      ["Temp",   vit.temperature     ? `${vit.temperature} °F`: null],
-      ["SpO2",   vit.oxygenSaturation? `${vit.oxygenSaturation}%` : null],
-      ["Weight", vit.weight          ? `${vit.weight} kg`     : null],
-      ["BMI",    vit.bmi             ? String(vit.bmi)         : null],
-      ["RR",     vit.respiratoryRate ? `${vit.respiratoryRate}/min` : null],
-    ].filter(([, v]) => v);
-
-    const vitalsRow = vitCells.length
-      ? vitCells.map(([l, val]) =>
-          `<td style="padding:5px 10px;border:1px solid #ccc;text-align:center">
-             <div style="font-size:7.5pt;color:#555;margin-bottom:1px">${l}</div>
-             <div style="font-size:11pt;font-weight:bold">${val}</div>
-           </td>`).join("")
-      : `<td style="padding:6px;font-size:9pt;color:#888;border:1px solid #ccc;font-style:italic">Not yet recorded</td>`;
-
-    /* ── medicines table rows ── */
-    const medRows = meds.length
-      ? meds.map((m, i) => {
-          const name    = m.name || m.medicineName || "";
-          const generic = m.genericName ? `<br><span style="font-size:8pt;color:#555">(${m.genericName})</span>` : "";
-          const qty     = m.quantity    ? ` (${m.quantity})` : "";
-          return `<tr style="${i % 2 === 1 ? "background:#f9f9f9" : ""}">
-            <td style="padding:5px 8px;border:1px solid #ccc;text-align:center;width:28pt">${i + 1}</td>
-            <td style="padding:5px 8px;border:1px solid #ccc;font-weight:600">
-              ${name}${qty}${generic}
-            </td>
-            <td style="padding:5px 8px;border:1px solid #ccc;text-align:center">${m.frequency || "—"}</td>
-            <td style="padding:5px 8px;border:1px solid #ccc;text-align:center">${m.dose || "—"}</td>
-            <td style="padding:5px 8px;border:1px solid #ccc;text-align:center">${m.route || "Oral"}</td>
-            <td style="padding:5px 8px;border:1px solid #ccc;text-align:center">${m.duration ? m.duration + " days" : "—"}</td>
-          </tr>`;
-        }).join("")
-      : `<tr><td colspan="6" style="padding:8px;border:1px solid #ccc;color:#aaa;font-style:italic;text-align:center">No medications prescribed</td></tr>`;
-
-    /* ── investigations list ── */
-    const invList = invests.length
-      ? invests.map((inv, i) => {
-          const name = inv.name || inv.testName || "";
-          const stat = inv.urgency === "STAT"
-            ? ` <span style="font-size:7pt;font-weight:bold;color:#c00;border:1px solid #c00;padding:0 4px">STAT</span>`
-            : "";
-          const note = inv.instructions ? ` <span style="font-size:8.5pt;color:#555">(${inv.instructions})</span>` : "";
-          return `<tr>
-            <td style="padding:4px 6px;border:1px solid #ccc;text-align:center;width:28pt">${i + 1}</td>
-            <td style="padding:4px 8px;border:1px solid #ccc">${name}${stat}${note}</td>
-          </tr>`;
-        }).join("")
-      : "";
-
-    /* ── clinical sections ── */
-    const sections = [
-      ["History of Present Illness", v.chiefComplaint || soap.subjectiveNote],
-      ["Physical Examination",       [soap.generalExamination, soap.systemicExamination, soap.objectiveNote].filter(Boolean).join("\n")],
-      ["Assessment / Impression",    soap.assessmentNote],
-      ["Plan",                       soap.planNote],
-    ].filter(([, val]) => val?.trim());
-
-    const clinicalSections = sections.map(([heading, content]) => `
-      <p style="font-weight:bold;font-size:10.5pt;margin:12px 0 3px;text-decoration:underline">${heading}</p>
-      <p style="font-size:10.5pt;line-height:1.65;white-space:pre-line;margin:0">${content}</p>
-    `).join("");
-
-    const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>OPD Consultation — ${v.patientName || "Patient"}</title>
-<style>
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body {
-    font-family: Arial, 'Helvetica Neue', sans-serif;
-    font-size: 10pt;
-    color: #111;
-    background: #fff;
-    padding: 20px 24px;
-  }
-  @media print {
-    body { print-color-adjust: exact; -webkit-print-color-adjust: exact; padding: 0; }
-    @page { size: A4 portrait; margin: 10mm 14mm 14mm; }
-    .nb  { page-break-inside: avoid; }
-  }
-  table { border-collapse: collapse; }
-  .full { width: 100%; }
-  .sec-head {
-    font-size: 10.5pt;
-    font-weight: bold;
-    text-decoration: underline;
-    margin: 12px 0 3px;
-  }
-</style>
-</head>
-<body>
-
-<!-- ══════════════════════════════════════════
-  LETTERHEAD
-══════════════════════════════════════════ -->
-<table class="full" style="margin-bottom:8px">
-<tr>
-  <td style="vertical-align:top">
-    ${hs.showLogoInPrint && hs.logo
-      ? `<img src="${hs.logo}" style="height:60px;object-fit:contain;display:block;margin-bottom:5px" alt="logo">`
-      : ""}
-    <div style="font-size:17pt;font-weight:bold;color:${ink};line-height:1.1">
-      ${hs.hospitalName || "Hospital"}
-    </div>
-    ${hs.showTaglineInPrint && hs.tagline
-      ? `<div style="font-size:8.5pt;color:#555;margin-top:2px">${hs.tagline}</div>`
-      : ""}
-    ${addr1 ? `<div style="font-size:8pt;color:#444;margin-top:4px">${addr1}</div>` : ""}
-    ${addr2 ? `<div style="font-size:8pt;color:#444">${addr2}</div>` : ""}
-    ${phone  ? `<div style="font-size:8pt;color:#444">T: ${phone}</div>` : ""}
-    ${hs.email ? `<div style="font-size:8pt;color:#444">E: ${hs.email}</div>` : ""}
-  </td>
-  <td style="text-align:right;vertical-align:top">
-    <div style="font-size:8.5pt;color:#555;margin-bottom:6px">Page 1 of 1</div>
-    ${hs.nabh ? `<div style="margin-bottom:4px"><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='22'%3E%3Crect width='48' height='22' rx='3' fill='%23155724'/%3E%3Ctext x='24' y='15' text-anchor='middle' fill='white' font-family='Arial' font-size='10' font-weight='bold'%3ENABH%3C/text%3E%3C/svg%3E" style="height:22px" alt="NABH"></div>` : ""}
-    ${hs.nabl ? `<div style="margin-bottom:4px"><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='22'%3E%3Crect width='48' height='22' rx='3' fill='%231e3a8a'/%3E%3Ctext x='24' y='15' text-anchor='middle' fill='white' font-family='Arial' font-size='10' font-weight='bold'%3ENABL%3C/text%3E%3C/svg%3E" style="height:22px" alt="NABL"></div>` : ""}
-    ${hs.registrationNo ? `<div style="font-size:7.5pt;color:#666;margin-top:4px">Reg No: ${hs.registrationNo}</div>` : ""}
-  </td>
-</tr>
-</table>
-
-<hr style="border:none;border-top:2px solid ${ink};margin-bottom:8px">
-
-<!-- ══════════════════════════════════════════
-  PATIENT INFO GRID
-══════════════════════════════════════════ -->
-<table class="full nb" style="font-size:9.5pt;margin-bottom:2px">
-<tr>
-  <td style="width:50%;padding:2px 0">
-    <span style="color:#444">Patient Name:</span>
-    <strong>&nbsp;${v.patientName || "—"}</strong>
-  </td>
-  <td style="padding:2px 0">
-    <span style="color:#444">Location:</span>
-    <strong>&nbsp;${hs.city || "—"}</strong>
-  </td>
-</tr>
-<tr>
-  <td style="padding:2px 0">
-    <span style="color:#444">Age / Sex:</span>
-    <strong>&nbsp;${[v.age ? v.age + " year(s)" : null, v.gender].filter(Boolean).join(" / ") || "—"}</strong>
-  </td>
-  <td style="padding:2px 0">
-    <span style="color:#444">Date:</span>
-    <strong>&nbsp;${dateStr}</strong>
-  </td>
-</tr>
-<tr>
-  <td style="padding:2px 0">
-    <span style="color:#444">UHID / Visit No.:</span>
-    <strong>&nbsp;${v.UHID || uhid || "—"} / ${visitNumber || "—"}</strong>
-  </td>
-  <td style="padding:2px 0">
-    <span style="color:#444">Token No.:</span>
-    <strong>&nbsp;${v.tokenNumber ? "#" + v.tokenNumber : "—"}</strong>
-  </td>
-</tr>
-<tr>
-  <td style="padding:2px 0">
-    <span style="color:#444">Doctor Name:</span>
-    <strong>&nbsp;${drName}</strong>
-  </td>
-  <td style="padding:2px 0">
-    <span style="color:#444">Referred By:</span>
-    <strong>&nbsp;${v.referredBy || "SELF"}</strong>
-  </td>
-</tr>
-<tr>
-  <td style="padding:2px 0">
-    <span style="color:#444">Department:</span>
-    <strong>&nbsp;${dept || "—"}</strong>
-  </td>
-  <td style="padding:2px 0">
-    <span style="color:#444">Speciality:</span>
-    <strong>&nbsp;${dept || "—"}</strong>
-  </td>
-</tr>
-<tr>
-  <td style="padding:2px 0">
-    <span style="color:#444">Contact:</span>
-    <strong>&nbsp;${v.contactNumber || "—"}</strong>
-  </td>
-  <td style="padding:2px 0">
-    <span style="color:#444">Payment:</span>
-    <strong>&nbsp;${v.paymentType || "General"}</strong>
-  </td>
-</tr>
-</table>
-
-<hr style="border:none;border-top:1px solid #bbb;margin:8px 0">
-
-<!-- ══════════════════════════════════════════
-  ALLERGY
-══════════════════════════════════════════ -->
-<p class="nb" style="font-size:10pt;margin-bottom:8px">
-  <strong>Allergy:</strong> ${allergy}
-</p>
-
-<!-- ══════════════════════════════════════════
-  VITALS
-══════════════════════════════════════════ -->
-${vitCells.length ? `
-<p class="sec-head">Vitals</p>
-<table class="nb" style="margin-bottom:8px"><tr>${vitalsRow}</tr></table>
-` : ""}
-
-<!-- ══════════════════════════════════════════
-  DIAGNOSIS
-══════════════════════════════════════════ -->
-${(dxProv || dxFin) ? `
-<p class="sec-head">Diagnosis</p>
-<table class="full nb" style="margin-bottom:6px">
-<tr>
-  ${dxProv ? `<td style="padding:4px 0;width:50%"><span style="color:#444;font-size:9pt">Provisional:</span> <strong>${dxProv}</strong></td>` : "<td></td>"}
-  ${dxFin  ? `<td style="padding:4px 0"><span style="color:#444;font-size:9pt">Final:</span> <strong>${dxFin}</strong></td>` : "<td></td>"}
-</tr>
-</table>` : ""}
-
-<!-- ══════════════════════════════════════════
-  CLINICAL SECTIONS (History, Examination, etc.)
-══════════════════════════════════════════ -->
-<div class="nb">${clinicalSections}</div>
-
-<!-- ══════════════════════════════════════════
-  MEDICINE ADVISED
-══════════════════════════════════════════ -->
-<p class="sec-head" style="margin-top:14px">Medicine Advised</p>
-<table class="full nb" style="margin-bottom:8px">
-  <tr style="background:${ink};color:#fff">
-    <th style="padding:5px 8px;border:1px solid #999;font-size:9pt;text-align:center;width:28pt">Sno</th>
-    <th style="padding:5px 8px;border:1px solid #999;font-size:9pt;text-align:left">Medicine</th>
-    <th style="padding:5px 8px;border:1px solid #999;font-size:9pt;text-align:center">Schedule</th>
-    <th style="padding:5px 8px;border:1px solid #999;font-size:9pt;text-align:center">Instruction</th>
-    <th style="padding:5px 8px;border:1px solid #999;font-size:9pt;text-align:center">Route</th>
-    <th style="padding:5px 8px;border:1px solid #999;font-size:9pt;text-align:center">Days</th>
-  </tr>
-  ${medRows}
-</table>
-
-<!-- ══════════════════════════════════════════
-  INVESTIGATIONS
-══════════════════════════════════════════ -->
-${invests.length ? `
-<p class="sec-head">Investigations</p>
-<table class="full nb" style="margin-bottom:8px">
-  <tr style="background:${ink};color:#fff">
-    <th style="padding:5px 8px;border:1px solid #999;font-size:9pt;text-align:center;width:28pt">Sno</th>
-    <th style="padding:5px 8px;border:1px solid #999;font-size:9pt;text-align:left">Test / Investigation</th>
-  </tr>
-  ${invList}
-</table>` : ""}
-
-<!-- ══════════════════════════════════════════
-  ADVICE
-══════════════════════════════════════════ -->
-${(soap.advice || soap.followUpDate || soap.doctorNotes) ? `
-<p class="sec-head">Advice</p>
-<div class="nb" style="font-size:10.5pt;line-height:1.7;white-space:pre-line;margin-bottom:6px">
-  ${[soap.advice, soap.doctorNotes].filter(Boolean).join("\n")}
-</div>
-${soap.followUpDate ? `
-<p style="font-size:10pt;margin-top:4px">
-  <strong>Review After:</strong>
-  ${new Date(soap.followUpDate).toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" })}
-</p>` : ""}` : ""}
-
-<!-- ══════════════════════════════════════════
-  SIGNATURE
-══════════════════════════════════════════ -->
-<table class="full nb" style="margin-top:30px">
-<tr>
-  <td style="vertical-align:bottom;font-size:8pt;color:#aaa;font-style:italic">
-    This is a computer generated prescription.
-  </td>
-  <td style="width:180pt;text-align:right;vertical-align:bottom">
-    <div style="height:52pt"></div>
-    <div style="border-top:1px solid #333;padding-top:5px;text-align:center">
-      <strong style="font-size:11pt">${drName}</strong><br>
-      ${dept ? `<span style="font-size:9pt">Consultant - ${dept}</span><br>` : ""}
-      ${drQual ? `<span style="font-size:9pt">${drQual}</span><br>` : ""}
-      ${drReg  ? `<span style="font-size:8.5pt;color:#555">State Registration No. :${drReg}</span>` : ""}
-    </div>
-  </td>
-</tr>
-</table>
-
-<!-- ══════════════════════════════════════════
-  FOOTER
-══════════════════════════════════════════ -->
-<hr style="border:none;border-top:1px solid #bbb;margin-top:16px">
-<table class="full" style="margin-top:5px">
-<tr>
-  <td style="vertical-align:top;font-size:7.5pt;color:#444;width:55%">
-    <strong>${hs.hospitalName || ""}</strong><br>
-    ${[addr1, addr2].filter(Boolean).join(", ")}<br>
-    ${phone ? `T: ${phone}` : ""}
-    ${hs.email ? `&nbsp; E: ${hs.email}` : ""}
-    ${hs.website ? `<br>${hs.website}` : ""}
-    ${hs.gstin ? `<br>GSTIN: ${hs.gstin}` : ""}
-  </td>
-  <td style="vertical-align:top;text-align:right;font-size:7.5pt;color:#444">
-    ${hs.billFooterNote ? `<em>${hs.billFooterNote}</em><br>` : ""}
-    <span style="color:#999">Printed: ${shortDate}, ${timeStr}</span>
-  </td>
-</tr>
-</table>
-
-<script>
-  window.onload = function() {
-    window.print();
-    window.onafterprint = function() { window.close(); };
-  };
-</script>
-</body>
-</html>`;
-
-    const win = window.open("", "_blank", "width=900,height=800");
-    if (!win) {
-      toast.warn("Allow popups for this site to enable printing");
-      return;
-    }
-    win.document.write(html);
-    win.document.close();
+    const drName = v.consultantName || docUser?.fullName || docUser?.name || "Consultant";
+    openPrint("opd-prescription", {
+      rxNo:         v.visitNumber,
+      patientName:  v.patientName || v.UHID,
+      uhid:         v.UHID,
+      age:          v.age,
+      gender:       v.gender,
+      mobile:       v.contactNumber || v.mobile,
+      doctorName:   drName,
+      doctorReg:    docUser?.registrationNo || "",
+      department:   v.department || docUser?.department || "",
+      visitDate:    v.visitDate || new Date().toISOString(),
+      vitals: {
+        bp:     vit.bloodPressure,
+        pulse:  vit.pulse,
+        temp:   vit.temperature,
+        spo2:   vit.oxygenSaturation,
+        rr:     vit.respiratoryRate,
+        weight: vit.weight,
+        height: vit.height,
+        bmi:    vit.bmi,
+      },
+      chiefComplaints: v.chiefComplaint || soap.subjectiveNote,
+      history:        soap.objectiveNote,
+      provisionalDx:  soap.provisionalDiagnosis,
+      diagnosis:      soap.finalDiagnosis,
+      icd10:          soap.icd10,
+      icd10Desc:      soap.icd10Description,
+      drugs:          medications || [],
+      investigations: investigations || [],
+      advice:         soap.advice ? String(soap.advice).split("\n").filter(Boolean) : [],
+      followUpDate:   soap.followUpDate,
+      followUpNotes:  soap.doctorNotes,
+    });
   };
 
   const vitals = visit?.vitals || {};

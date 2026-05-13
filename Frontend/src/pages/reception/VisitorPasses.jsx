@@ -8,6 +8,7 @@ import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
+import { openPrint } from "../../Components/print/openPrint";
 import { useAuth } from "../../context/AuthContext";
 import "./reception-shared.css";
 import "../../Components/clinical/clinical-forms.css";
@@ -280,47 +281,23 @@ const esc = (s) => String(s == null ? "" : s)
   .replace(/"/g, "&quot;")
   .replace(/'/g, "&#39;");
 
+/* Rewired through the unified CSS-driven print system so the visitor
+ * pass picks up the hospital header/footer + paper-size selector. */
 function printPass(p) {
-  const html = `<!doctype html><html><head><meta charset="utf-8"/>
-    <title>Visitor Pass ${esc(p.passNumber)}</title>
-    <style>
-      *{box-sizing:border-box;font-family:'DM Sans',Arial,sans-serif}
-      body{margin:0;padding:0;color:#0f172a;background:#fff}
-      .pass{max-width:340px;margin:20px auto;border:3px solid #7c3aed;border-radius:14px;overflow:hidden}
-      .hd{padding:14px;background:linear-gradient(135deg,#7c3aed,#a855f7);color:#fff;text-align:center}
-      .hd-title{font-size:18px;font-weight:900;margin:0}
-      .hd-sub{font-size:10px;opacity:.85;margin-top:2px}
-      .body{padding:18px}
-      .pass-no{font-size:24px;font-weight:900;text-align:center;letter-spacing:2px;color:#7c3aed;font-family:'DM Mono',monospace;margin:6px 0 14px}
-      table{width:100%;border-collapse:collapse;font-size:12px}
-      td{padding:5px 0}
-      td.lbl{color:#64748b;width:42%}
-      td.val{font-weight:700}
-      .hours{margin-top:12px;padding:8px 10px;background:#eff6ff;border:1px solid #93c5fd;border-radius:6px;font-size:10px;color:#1d4ed8}
-      .footer{margin-top:14px;padding-top:10px;border-top:1px dashed #cbd5e1;font-size:9px;color:#94a3b8;text-align:center}
-      @media print{body{padding:0}}
-    </style></head><body><div class="pass">
-      <div class="hd">
-        <div class="hd-title">VISITOR PASS</div>
-        <div class="hd-sub">SphereHealth Hospital</div>
-      </div>
-      <div class="body">
-        <div class="pass-no">${esc(p.passNumber)}</div>
-        <table>
-          <tr><td class="lbl">Patient</td><td class="val">${esc(p.patientName)}</td></tr>
-          <tr><td class="lbl">UHID / Bed</td><td class="val">${esc(p.patientUHID || "—")} / ${esc(p.bedNumber || "—")}</td></tr>
-          <tr><td class="lbl">Visitor</td><td class="val">${esc(p.attendantName)}</td></tr>
-          <tr><td class="lbl">Relation</td><td class="val">${esc(p.attendantRelation)}</td></tr>
-          ${p.attendantPhone ? `<tr><td class="lbl">Phone</td><td class="val">${esc(p.attendantPhone)}</td></tr>` : ""}
-          ${p.idProofType ? `<tr><td class="lbl">${esc(p.idProofType)}</td><td class="val">${esc(p.idProofNumber || "—")}</td></tr>` : ""}
-          <tr><td class="lbl">Valid Until</td><td class="val">${esc(new Date(p.validUntil).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }))}</td></tr>
-        </table>
-        <div class="hours">🕐 Visiting Hours: 11 AM – 1 PM, 5 PM – 7 PM<br/>ICU/NICU: 1 visitor, 10 min slots only</div>
-        <div class="footer">Present at gate · Return at hospital exit · Lost passes ₹100 fine</div>
-      </div>
-    </div></body></html>`;
-  const w = window.open("", "_blank", "width=400,height=600");
-  if (!w) return;
-  w.document.write(html); w.document.close();
-  w.onload = () => setTimeout(() => w.print(), 200);
+  openPrint("visitor-pass", {
+    passNo:        p.passNumber,
+    patientName:   p.patientName,
+    uhid:          p.patientUHID,
+    bedNumber:     p.bedNumber,
+    wardName:      p.wardName,
+    floorNumber:   p.floorNumber,
+    buildingName:  p.buildingName,
+    issuedAt:      p.issuedAt || p.createdAt,
+    validTill:     p.validUntil,
+    visitorName:   p.attendantName,
+    relation:      p.attendantRelation,
+    mobile:        p.attendantPhone,
+    idType:        p.idProofType,
+    idNumber:      p.idProofNumber,
+  });
 }

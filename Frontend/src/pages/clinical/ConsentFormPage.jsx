@@ -7,6 +7,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
+import { openPrint } from "../../Components/print/openPrint";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import { useAutoSave } from "../../hooks/useAutoSave";
@@ -512,32 +513,38 @@ function EditableList({ items, setItems, placeholder, color }) {
 /* ── Print view ── */
 function ConsentPrintView({ data, type, onClose }) {
   const printRef = useRef();
+  /* Rewired to the unified print system. The form-type key maps the
+   * UI tab to one of the 7 templates inside our ConsentForm printable
+   * (admission / surgical / anesthesia / hiv / dnr / procedure / autopsy). */
   const handlePrint = () => {
-    const w = window.open("", "_blank");
-    w.document.write(`
-      <html><head><title>Consent Form</title>
-      <style>
-        body { font-family: 'Times New Roman', serif; margin: 30px; font-size: 13px; color: #000; }
-        h1 { font-size: 17px; text-align: center; margin-bottom: 4px; }
-        h2 { font-size: 13px; text-align: center; color: #444; margin-bottom: 20px; }
-        .section { margin-bottom: 16px; }
-        .section-title { font-weight: bold; text-decoration: underline; margin-bottom: 6px; font-size: 13px; }
-        .row { display: flex; gap: 20px; margin-bottom: 6px; }
-        .field { flex: 1; border-bottom: 1px solid #000; min-width: 120px; padding-bottom: 2px; }
-        .field-label { font-size: 11px; color: #555; margin-bottom: 2px; }
-        ul { margin: 4px 0 0 16px; padding: 0; }
-        ul li { margin-bottom: 3px; }
-        .sig-row { display: flex; gap: 40px; margin-top: 30px; }
-        .sig-box { flex: 1; border-top: 1px solid #000; padding-top: 4px; font-size: 11px; color: #555; }
-        .nabh { font-size: 11px; color: #666; text-align: right; }
-        .hospital { text-align: center; font-size: 11px; color: #555; margin-bottom: 10px; }
-        hr { border: none; border-top: 1px solid #999; margin: 12px 0; }
-      </style></head><body>
-      ${printRef.current?.innerHTML || ""}
-      </body></html>
-    `);
-    w.document.close();
-    w.print();
+    const cat = type?.key || type?.code || "";
+    const formType =
+      /surgical|surg|operation|or/i.test(cat) ? "surgical" :
+      /anesth/i.test(cat)                     ? "anesthesia" :
+      /hiv/i.test(cat)                        ? "hiv" :
+      /dnr|do.?not.?resuscitate/i.test(cat)   ? "dnr" :
+      /autopsy|post.?mortem/i.test(cat)       ? "autopsy" :
+      /procedure|investigation/i.test(cat)    ? "procedure" :
+                                                "admission";
+    openPrint("consent-form", {
+      consentNo:        data.consentNumber || data.consentId,
+      formType,
+      patientName:      data.patientName,
+      uhid:             data.uhid,
+      age:              data.age,
+      gender:           data.gender,
+      ipdNo:            data.ipdNo,
+      bedNumber:        data.bedNumber,
+      wardName:         data.wardName,
+      consultantName:   data.consultantName || data.doctorName,
+      procedure:        data.procedureName || data.investigationName,
+      additionalRisks:  data.risks,
+      language:         data.language,
+      counsellor:       data.counsellor,
+      signatoryName:    data.signedBy,
+      signatoryRelation:data.relationToPatient,
+      witnessName:      data.witnessName,
+    });
   };
 
   return (

@@ -8,6 +8,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
+import { openPrint } from "../../Components/print/openPrint";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import { useAutoSave } from "../../hooks/useAutoSave";
@@ -424,36 +425,39 @@ function ProcRow({ proc, idx, onChange, onRemove }) {
 
 /* ── Print Modal ── */
 function PrintModal({ data, dept, onClose }) {
+  /* Wired to the unified print system — picks up the hospital
+   * header/footer + paper-size selector automatically. */
   const handlePrint = () => {
-    const w = window.open("", "_blank");
-    const content = document.getElementById("ds-print-content")?.innerHTML || "";
-    w.document.write(`
-      <html><head><title>Discharge Summary</title>
-      <style>
-        * { box-sizing: border-box; }
-        body { font-family: Arial, sans-serif; margin: 20px; font-size: 12px; color: #000; }
-        h1 { font-size: 16px; text-align: center; margin: 0; }
-        .hosp { text-align: center; font-size: 11px; color: #444; margin-bottom: 3px; }
-        .divider { border: none; border-top: 2px solid ${dept?.color || "#333"}; margin: 8px 0; }
-        .section { margin-bottom: 14px; }
-        .section-title { font-weight: bold; font-size: 12px; background: #f3f4f6; padding: 4px 8px; border-left: 3px solid ${dept?.color || "#333"}; margin-bottom: 6px; }
-        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; margin-bottom: 8px; }
-        .grid-4 { display: grid; grid-template-columns: repeat(4,1fr); gap: 6px 12px; margin-bottom: 8px; }
-        .field-label { font-size: 10px; color: #666; font-weight: bold; }
-        .field-value { border-bottom: 1px solid #ccc; padding-bottom: 2px; min-height: 18px; }
-        table { width: 100%; border-collapse: collapse; font-size: 11px; }
-        th { background: ${dept?.color || "#333"}22; padding: 4px 6px; font-weight: bold; text-align: left; border: 1px solid #ddd; }
-        td { padding: 3px 6px; border: 1px solid #ddd; }
-        .sig-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-top: 20px; }
-        .sig-box { border-top: 1.5px solid #000; padding-top: 5px; font-size: 10px; color: #555; }
-        .warn-box { background: #fff3cd; border: 1px solid #ffc107; padding: 8px; border-radius: 4px; font-size: 11px; }
-        ul { margin: 4px 0 0 16px; padding: 0; }
-        li { margin-bottom: 2px; }
-        @media print { body { margin: 10px; } }
-      </style></head><body>${content}</body></html>
-    `);
-    w.document.close();
-    w.print();
+    openPrint("discharge-summary", {
+      summaryNo:           data.summaryNumber,
+      patientName:         data.patientName,
+      uhid:                data.UHID,
+      ipdNo:               data.ipdNo,
+      age:                 data.age,
+      gender:              data.gender,
+      admissionDate:       data.admissionDate,
+      dischargeDate:       data.dischargeDate || new Date().toISOString(),
+      totalDays:           data.totalDays,
+      consultantName:      data.consultantName,
+      bedNumber:           data.bedNumber,
+      wardName:            data.wardName,
+      dischargeType:       data.dischargeType || "Normal",
+      finalDiagnosis:      data.finalDiagnosis,
+      icd10:               data.icd10,
+      icd10Desc:           data.icd10Desc,
+      secondaryDiagnoses:  data.secondaryDiagnoses,
+      chiefComplaints:     data.chiefComplaints,
+      courseOfStay:        data.courseOfStay || data.hospitalCourse,
+      proceduresDone:      data.procedures || data.proceduresDone,
+      investigationsSummary: data.investigationsSummary || data.keyInvestigations,
+      conditionOnDischarge: data.conditionOnDischarge,
+      dischargeMeds:       data.dischargeMeds || data.medications || [],
+      advice:              data.dischargeAdvice ? String(data.dischargeAdvice).split("\n").filter(Boolean) : [],
+      dietAdvice:          data.dietAdvice,
+      followUpDate:        data.followUpDate,
+      followUpDoctor:      data.followUpDoctor || data.consultantName,
+      warningSigns:        data.warningSigns,
+    });
   };
 
   return (
