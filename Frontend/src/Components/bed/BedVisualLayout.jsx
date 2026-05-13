@@ -56,6 +56,14 @@ const PRECAUTION_LEVEL_TINT = {
   Strict:   "#dc2626",       // red stripe — strict isolation
 };
 
+// ── Housekeeping state styles (P1 #5) ──
+const HK_STYLE = {
+  CleaningPending:    { bg: "#fef3c7", color: "#92400e", border: "#fcd34d", icon: "pi-clock",       label: "Cleaning Pending" },
+  CleaningInProgress: { bg: "#dbeafe", color: "#1e40af", border: "#93c5fd", icon: "pi-spin pi-spinner", label: "Cleaning In Progress" },
+  CleaningDone:       { bg: "#dcfce7", color: "#15803d", border: "#bbf7d0", icon: "pi-check",       label: "Cleaning Done" },
+  Inspected:          { bg: "#ede9fe", color: "#5b21b6", border: "#c4b5fd", icon: "pi-verified",    label: "Inspected" },
+};
+
 const DEPTS = [
   "Cardiology",
   "Neurology",
@@ -1440,6 +1448,11 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                           ? bed.isolationFlags.filter(f => ISOLATION_STYLE[f])
                           : [];
                         const precStripe = PRECAUTION_LEVEL_TINT[bed.precautionLevel || "Standard"];
+                        // ── Housekeeping state ──
+                        const hkState = bed.housekeeping?.state;
+                        const hk = hkState && hkState !== "Idle" ? HK_STYLE[hkState] : null;
+                        // ── Equipment manifest ──
+                        const equipment = Array.isArray(bed.equipment) ? bed.equipment : [];
 
                         return (
                           <div
@@ -1552,6 +1565,51 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                                     </span>
                                   );
                                 })}
+                              </div>
+                            )}
+
+                            {/* ── Housekeeping state badge (P1 #5) ── */}
+                            {hk && (
+                              <div style={{ marginTop: 6 }}>
+                                <span style={{
+                                  display: "inline-flex", alignItems: "center", gap: 4,
+                                  padding: "2px 8px", borderRadius: 999,
+                                  fontSize: 10, fontWeight: 700,
+                                  background: hk.bg, color: hk.color,
+                                  border: `1px solid ${hk.border}`,
+                                  letterSpacing: ".3px",
+                                }}>
+                                  <i className={`pi ${hk.icon}`} style={{ fontSize: 9 }} />
+                                  {hk.label}
+                                </span>
+                              </div>
+                            )}
+
+                            {/* ── Equipment chip (P2 #12) ── */}
+                            {equipment.length > 0 && (
+                              <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 4 }}
+                                   title={equipment.map(e => e.label || e.type).join(", ")}>
+                                {equipment.slice(0, 3).map((eq, i) => (
+                                  <span key={eq._id || i} style={{
+                                    display: "inline-flex", alignItems: "center", gap: 3,
+                                    padding: "2px 7px", borderRadius: 6,
+                                    fontSize: 10, fontWeight: 700,
+                                    background: "#f1f5f9", color: "#475569",
+                                    border: "1px solid #cbd5e1",
+                                  }}>
+                                    <i className="pi pi-cog" style={{ fontSize: 9 }} />
+                                    {eq.label || eq.type}
+                                  </span>
+                                ))}
+                                {equipment.length > 3 && (
+                                  <span style={{
+                                    padding: "2px 7px", borderRadius: 6,
+                                    fontSize: 10, fontWeight: 700, color: "#64748b",
+                                    background: "#f8fafc", border: "1px dashed #cbd5e1",
+                                  }}>
+                                    +{equipment.length - 3} more
+                                  </span>
+                                )}
                               </div>
                             )}
 

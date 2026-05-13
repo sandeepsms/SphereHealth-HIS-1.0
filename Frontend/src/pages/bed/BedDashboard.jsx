@@ -125,6 +125,21 @@ const BedDashboard = () => {
     // Pending transfer handovers
     const pendingTransfers = transfers.filter(t => t.status === "PendingHandover");
 
+    // Housekeeping queue (beds awaiting / undergoing cleaning) + SLA
+    const housekeepingQueue = beds
+      .filter(b => ["CleaningPending", "CleaningInProgress", "CleaningDone"].includes(b.housekeeping?.state))
+      .map(b => {
+        const started = b.housekeeping?.startedAt ? new Date(b.housekeeping.startedAt).getTime() : null;
+        const ageMin  = started ? Math.round((Date.now() - started) / 60000) : null;
+        return { ...b, _hkAgeMin: ageMin };
+      })
+      .sort((a, b) => (b._hkAgeMin || 0) - (a._hkAgeMin || 0));
+
+    // Stale reservations — Reserved beds past reservedUntil
+    const staleReservations = beds.filter(b =>
+      b.status === "Reserved" && b.reservedUntil && new Date(b.reservedUntil) < new Date()
+    );
+
     // Occupancy by ward
     const byWard = {};
     beds.forEach(b => {
@@ -140,9 +155,20 @@ const BedDashboard = () => {
     return {
       total, occupied, available, maintenance, blocked, reserved, occupancyPct,
       alos, expectedToday, isolationCount, isolationByFlag, pendingTransfers,
-      wardRows,
+      wardRows, housekeepingQueue, staleReservations,
     };
   }, [beds, admissions, transfers]);
+
+  /* Expire stale reservations on-demand (P2 #10). */
+  const expireStaleReservations = async () => {
+    try {
+      const r = await fetch(`${API_ENDPOINTS.BEDS}/reservations/expire-stale`, { method: "POST" });
+      const data = await r.json();
+      if (data?.success) {
+        setRefreshTick(t => t + 1);
+      }
+    } catch { /* silent */ }
+  };
 
   return (
     <div style={{ padding: "20px 28px", fontFamily: "'DM Sans', sans-serif", background: C.bg, minHeight: "100vh" }}>
@@ -262,6 +288,66 @@ const BedDashboard = () => {
             </div>
           )}
         </Panel>
+
+        {/* Housekeeping queue (P1 #5) */}
+        <Panel title={`Housekeeping Queue (${kpis.housekeepingQueue.length})`} icon="pi-bookmark-fill" color={C.amber}>
+          {kpis.housekeepingQueue.length === 0 ? <Empty msg="No beds awaiting cleaning" /> : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {kpis.housekeepingQueue.slice(0, 8).map(b => {
+                const state = b.housekeeping?.state || "—";
+                const sla   = b._hkAgeMin;
+                const slaBreached = sla != null && sla > 30;
+                return (
+                  <div key={b._id} style={{
+                    padding: "8px 12px",
+                    background: slaBreached ? C.redL : C.amberL,
+                    borderRadius: 8,
+                    border: `1px solid ${slaBreached ? C.red : C.amber}30`,
+                    display: "flex", alignItems: "center", gap: 10,
+                  }}>
+                    <i className={`pi ${state === "CleaningInProgress" ? "pi-spin pi-spinner" : "pi-bookmark-fill"}`} style={{ fontSize: 12, color: slaBreached ? C.red : C.amber }} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>
+                        Bed {b.bedNumber} · {b.wardName || "—"}
+                      </div>
+                      <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>
+                        {state} {sla != null ? `· ${sla} min ago` : ""} {slaBreached ? "· SLA breached" : ""}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Panel>
+
+        {/* Stale reservations (P2 #10) */}
+        <Panel
+          title={`Stale Reservations (${kpis.staleReservations.length})`}
+          icon="pi-clock"
+          color={C.pink}
+          action={kpis.staleReservations.length > 0 ? (
+            <button onClick={expireStaleReservations}
+              style={{ background: C.pink, color: "white", border: "none", borderRadius: 6, padding: "4px 10px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>
+              Expire all
+            </button>
+          ) : null}
+        >
+          {kpis.staleReservations.length === 0 ? <Empty msg="No expired holds" /> : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {kpis.staleReservations.slice(0, 6).map(b => (
+                <div key={b._id} style={{ padding: "8px 12px", background: C.pinkL, borderRadius: 8, border: `1px solid ${C.pink}30` }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>
+                    Bed {b.bedNumber} · {b.wardName || "—"}
+                  </div>
+                  <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>
+                    Held by {b.reservedBy || "—"} · expired {b.reservedUntil ? new Date(b.reservedUntil).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—"}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
       </div>
     </div>
   );
@@ -281,11 +367,12 @@ const Kpi = ({ label, value, sub, color, bg, icon }) => (
   </div>
 );
 
-const Panel = ({ title, icon, color, children }) => (
+const Panel = ({ title, icon, color, action, children }) => (
   <div style={{ background: "white", border: "1.5px solid #e2e8f0", borderRadius: 12, overflow: "hidden" }}>
     <div style={{ background: "#f8fafc", padding: "11px 16px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", gap: 8 }}>
       <i className={`pi ${icon}`} style={{ fontSize: 14, color }} />
-      <span style={{ fontSize: 13, fontWeight: 800, color: "#0f172a" }}>{title}</span>
+      <span style={{ fontSize: 13, fontWeight: 800, color: "#0f172a", flex: 1 }}>{title}</span>
+      {action}
     </div>
     <div style={{ padding: 14 }}>{children}</div>
   </div>

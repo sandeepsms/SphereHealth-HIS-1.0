@@ -79,6 +79,11 @@ class BedService {
   }
 
   async dischargeBed(bedId, dischargeDate) {
+    // On discharge we mark the bed Available AND queue it for
+    // housekeeping cleaning. The dashboard's "beds in cleaning"
+    // panel + SLA timer keys off `housekeeping.state` and
+    // `housekeeping.startedAt`. Cleaning workflow:
+    //   CleaningPending → CleaningInProgress → CleaningDone → Idle
     const bed = await Bed.findByIdAndUpdate(
       bedId,
       {
@@ -87,12 +92,81 @@ class BedService {
           patient: null,
           currentAdmission: null,
           "currentBooking.actualDischargeDate": dischargeDate || new Date(),
+          "housekeeping.state":      "CleaningPending",
+          "housekeeping.startedAt":  new Date(),
+          "housekeeping.finishedAt": null,
+          "housekeeping.assignedTo": "",
         },
       },
       { new: true },
     );
     if (!bed) throw new Error("Bed not found");
     return bed;
+  }
+
+  /* ── Housekeeping (NABH IPC.6 turnover audit) ──
+       Transitions housekeeping.state and stamps timestamps. When
+       state advances to "CleaningDone" or "Inspected", finishedAt
+       is set so dashboards can compute discharge → next-occupancy
+       turnaround time. */
+  async updateHousekeeping(bedId, { state, assignedTo }) {
+    const allowed = ["Idle", "CleaningPending", "CleaningInProgress", "CleaningDone", "Inspected"];
+    if (!allowed.includes(state)) {
+      throw new Error(`Invalid housekeeping state: ${state}`);
+    }
+    const set = { "housekeeping.state": state };
+    if (assignedTo !== undefined) set["housekeeping.assignedTo"] = assignedTo;
+
+    if (state === "CleaningInProgress") set["housekeeping.startedAt"]  = new Date();
+    if (state === "CleaningDone" || state === "Inspected") set["housekeeping.finishedAt"] = new Date();
+    if (state === "Idle") {
+      set["housekeeping.startedAt"]  = null;
+      set["housekeeping.finishedAt"] = null;
+      set["housekeeping.assignedTo"] = "";
+    }
+
+    const bed = await Bed.findByIdAndUpdate(bedId, { $set: set }, { new: true });
+    if (!bed) throw new Error("Bed not found");
+    return bed;
+  }
+
+  /* ── Get all beds currently in the housekeeping queue ── */
+  async getHousekeepingQueue() {
+    return Bed.find({
+      isActive: true,
+      "housekeeping.state": { $in: ["CleaningPending", "CleaningInProgress", "CleaningDone"] },
+    })
+      .sort({ "housekeeping.startedAt": 1 })   // oldest first — SLA top of list
+      .lean();
+  }
+
+  /* ── Reservation auto-expiry (P2 #10) ──
+       Finds beds whose Reserved hold has passed `reservedUntil` and
+       flips them back to Available. Returns the count + the bed
+       numbers that were freed (useful for the dashboard toast). */
+  async expireStaleReservations() {
+    const now = new Date();
+    const stale = await Bed.find({
+      status: "Reserved",
+      isActive: true,
+      reservedUntil: { $ne: null, $lt: now },
+    }).select("_id bedNumber wardName reservedBy reservedUntil").lean();
+
+    if (stale.length === 0) return { expired: 0, beds: [] };
+
+    const ids = stale.map(b => b._id);
+    await Bed.updateMany(
+      { _id: { $in: ids } },
+      {
+        $set: {
+          status: "Available",
+          reservedUntil: null,
+          reservedBy: "",
+          reservationReason: "",
+        },
+      },
+    );
+    return { expired: stale.length, beds: stale };
   }
 
   async estimateCharges(bedId) {

@@ -100,7 +100,7 @@ const BedSchema = new mongoose.Schema(
     isolationEndsAt:    { type: Date, default: null },
     isolationNotes:     { type: String, default: "" },
 
-    // ── Housekeeping sub-status (P1 #5 — placeholder, batch 2 wires UI) ──
+    // ── Housekeeping sub-status (NABH IPC.6 turnover audit) ──
     // status: "Maintenance" stays the primary bucket; this finer-grained
     // state lets the dashboard show cleaning queue + SLA timer.
     housekeeping: {
@@ -112,6 +112,35 @@ const BedSchema = new mongoose.Schema(
       startedAt:  { type: Date, default: null },
       finishedAt: { type: Date, default: null },
       assignedTo: { type: String, default: "" },
+    },
+
+    // ── Reservation auto-expiry (P2 #10) ──
+    // When set, a stale Reserved bed auto-flips back to Available
+    // either via the /bedss/reservations/expire-stale endpoint
+    // (cron-callable) or a manual sweep from the dashboard.
+    reservedUntil: { type: Date, default: null },
+    reservedBy:    { type: String, default: "" },
+    reservationReason: { type: String, default: "" },
+
+    // ── Equipment manifest (P2 #12) ──
+    // Tracks fixed equipment attached to this bed. Drives both bed
+    // pricing (per-day surcharges) and audit ("kahan kaunsa ventilator
+    // hai"). Free-form for now; later we'll link to a typed Asset model.
+    equipment: {
+      type: [
+        new mongoose.Schema(
+          {
+            type:        { type: String, required: true },   // e.g. "Ventilator"
+            label:       { type: String, default: "" },      // user-visible name
+            serialNo:    { type: String, default: "" },
+            lastService: { type: Date,   default: null },
+            dailyCharge: { type: Number, default: 0 },
+            notes:       { type: String, default: "" },
+          },
+          { _id: true, timestamps: false },
+        ),
+      ],
+      default: [],
     },
   },
   {

@@ -18,4 +18,14 @@ router.patch("/:id/status", BedController.updateBedStatus);
 router.get("/room/:roomId/capacity", BedController.checkRoomCapacity);
 router.get("/ward/:wardId/capacity", BedController.checkWardCapacity);
 
+// Housekeeping queue + state transitions
+router.get("/housekeeping/queue",    BedController.getHousekeepingQueue);
+router.patch("/:id/housekeeping",    BedController.updateHousekeeping);
+
+// Reservation auto-expiry (callable on-demand; cron-friendly)
+router.post("/reservations/expire-stale", BedController.expireStaleReservations);
+
+// Predictive LOS (rule-based stub for now)
+router.get("/predict/los", BedController.predictLOS);
+
 module.exports = router;

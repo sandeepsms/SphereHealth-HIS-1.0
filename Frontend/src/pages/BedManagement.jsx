@@ -9,6 +9,7 @@ import { Tag } from "primereact/tag";
 import { Toast } from "primereact/toast";
 
 import BedForm from "../Components/bed/BedForm";
+import BedBulkCreateDialog from "../Components/bed/BedBulkCreateDialog";
 import BedStats from "../Components/bed/BedStats";
 import BedVisualLayout from "../Components/bed/BedVisualLayout";
 import { bedService } from "../Services/bedService";
@@ -22,6 +23,7 @@ const BedManagement = () => {
   const [globalFilter, setGlobalFilter] = useState("");
   const [viewMode, setViewMode] = useState("table"); // "table" | "visual" | "stats"
   const [showForm, setShowForm] = useState(false);
+  const [showBulk, setShowBulk] = useState(false);
   const [selectedBed, setSelectedBed] = useState(null);
 
   useEffect(() => {
@@ -250,6 +252,19 @@ const BedManagement = () => {
             </span>
           )}
           <Button
+            icon="pi pi-clone"
+            label="Bulk Create"
+            onClick={() => setShowBulk(true)}
+            style={{
+              background: "rgba(255,255,255,.15)",
+              color: "#fff",
+              border: "1.5px solid rgba(255,255,255,.45)",
+              fontWeight: 700,
+              borderRadius: 8,
+              padding: "8px 16px",
+            }}
+          />
+          <Button
             icon="pi pi-plus"
             label="Add New Bed"
             onClick={() => {
@@ -324,6 +339,22 @@ const BedManagement = () => {
           setSelectedBed(null);
         }}
         onSave={handleSave}
+      />
+
+      {/* ══ BULK CREATE DIALOG (P2 #9) ══════════════════════════════════ */}
+      <BedBulkCreateDialog
+        visible={showBulk}
+        onHide={() => setShowBulk(false)}
+        onSaved={async (count) => {
+          setShowBulk(false);
+          await loadBeds();
+          toast.current?.show({
+            severity: "success",
+            summary: "Bulk create",
+            detail: `${count} bed(s) created`,
+            life: 3000,
+          });
+        }}
       />
     </div>
   );

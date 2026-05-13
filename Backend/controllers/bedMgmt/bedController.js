@@ -1,4 +1,5 @@
 const BedService = require("../../services/bedMgmt/bedService");
+const { predictLOS } = require("../../services/bedMgmt/losPredictionService");
 
 class BedController {
   async createBeds(req, res) {
@@ -176,6 +177,54 @@ class BedController {
         success: false,
         message: error.message,
       });
+    }
+  }
+
+  /* ── Housekeeping (NABH IPC.6) ── */
+  async updateHousekeeping(req, res) {
+    try {
+      const bed = await BedService.updateHousekeeping(req.params.id, req.body);
+      res.json({ success: true, data: bed });
+    } catch (error) {
+      res.status(400).json({ success: false, message: error.message });
+    }
+  }
+
+  async getHousekeepingQueue(req, res) {
+    try {
+      const beds = await BedService.getHousekeepingQueue();
+      res.json({ success: true, count: beds.length, data: beds });
+    } catch (error) {
+      res.status(400).json({ success: false, message: error.message });
+    }
+  }
+
+  /* ── Reservation auto-expiry (P2 #10) ── */
+  async expireStaleReservations(req, res) {
+    try {
+      const result = await BedService.expireStaleReservations();
+      res.json({ success: true, ...result });
+    } catch (error) {
+      res.status(400).json({ success: false, message: error.message });
+    }
+  }
+
+  /* ── Predictive LOS (P2 #11) ──
+       Query: ?diagnosis=...&age=...&department=...&isCritical=true
+       Returns median days + basis. Rule-based for now; same shape
+       when we plug in an ML model later. */
+  predictLOS(req, res) {
+    try {
+      const { diagnosis = "", age = 0, department = "", isCritical } = req.query;
+      const result = predictLOS({
+        diagnosis,
+        age: Number(age),
+        department,
+        isCritical: isCritical === "true" || isCritical === true,
+      });
+      res.json({ success: true, data: result });
+    } catch (error) {
+      res.status(400).json({ success: false, message: error.message });
     }
   }
 
