@@ -839,6 +839,68 @@ async function onEmergencyVisitCreated(emergencyVisit, admission) {
   });
 }
 
+/**
+ * Daily bed-charge accrual.
+ *
+ * For every IPD / Day-Care admission that is still Active, fire a
+ * BED-DAY-* trigger with dailyDedup. The dedup logic inside
+ * createTrigger() ensures the same admission cannot be charged more
+ * than once per calendar day, so this is safe to call repeatedly
+ * (e.g. every 6 hours).
+ *
+ * Returns { active, fired, skipped } counts.
+ */
+async function runDailyBedChargeAccrual() {
+  const active = await Admission.find({
+    status: "Active",
+    admissionType: { $in: ["Planned", "Emergency", "Day Care", "Daycare", "Transfer"] },
+  }).lean();
+
+  const typeMap = {
+    Planned:   "IPD",
+    Emergency: "EMERGENCY",
+    "Day Care":"DAYCARE",
+    Daycare:   "DAYCARE",
+    Transfer:  "IPD",
+  };
+
+  let fired = 0, skipped = 0, errors = 0;
+  for (const adm of active) {
+    const typeCode = typeMap[adm.admissionType] || "IPD";
+    if (typeCode !== "IPD" && typeCode !== "DAYCARE") continue;
+
+    const startMs = new Date(adm.admissionDate || adm.createdAt).getTime();
+    const dayN = Math.max(1, Math.floor((Date.now() - startMs) / 86400000) + 1);
+
+    try {
+      const r = await createTrigger({
+        admissionId:         adm._id,
+        patientId:           adm.patientId,
+        UHID:                adm.UHID,
+        patientType:         typeCode,
+        serviceCode:         `BED-DAY-${typeCode}`,
+        serviceName:         `${typeCode} Bed Charge (Day ${dayN})`,
+        quantity:            1,
+        sourceType:          "BedCharge",
+        sourceDocumentId:    adm._id,
+        sourceDocumentModel: "Admission",
+        orderedBy:           "System",
+        orderedByRole:       "System",
+        orderDetails:        `Auto daily bed accrual — Day ${dayN}`,
+        autoCharge:          true,
+        dailyDedup:          true,
+        department:          adm.department,
+      });
+      if (r?.skipped) skipped++;
+      else if (r?.trigger) fired++;
+    } catch (e) {
+      errors++;
+      console.error(`[daily-accrual] admission ${adm._id}:`, e.message);
+    }
+  }
+  return { active: active.length, fired, skipped, errors, at: new Date() };
+}
+
 module.exports = {
   onNurseNoteSaved,
   onDoctorNoteSaved,
@@ -857,4 +919,6 @@ module.exports = {
   // Admission/ER handlers
   onAdmissionCreated,
   onEmergencyVisitCreated,
+  // Daily accrual (callable from cron + admin endpoint)
+  runDailyBedChargeAccrual,
 };

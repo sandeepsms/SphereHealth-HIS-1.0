@@ -164,4 +164,7 @@ router.use("/appointments",     require("./Appointment/appointmentRoutes"));
 // Medico-Legal Cases — MLC reports + auto-generated MLR numbers per doctor
 router.use("/mlc",              require("./MLC/mlcRoutes"));
 
+// Admin operational endpoints — daily accrual, etc.
+router.use("/admin-ops",        require("./Admin/adminOpsRoutes"));
+
 module.exports = router;

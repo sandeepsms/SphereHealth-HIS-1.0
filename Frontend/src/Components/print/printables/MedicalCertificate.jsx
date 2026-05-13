@@ -6,34 +6,64 @@
 import React from "react";
 import PrintShell from "../PrintShell";
 
+const _fmt = (d) =>
+  d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
+
 const CERT_TEXT = {
   sickness: (d) =>
     `This is to certify that ${d.patientName || "the patient"} (${d.age || "—"}Y / ${d.gender || "—"}, UHID ${d.uhid || "—"}) ` +
     `was under my care for ${d.diagnosis || "the condition mentioned below"} and was advised rest from ` +
-    `${d.fromDate ? new Date(d.fromDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—"} ` +
-    `to ${d.toDate ? new Date(d.toDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—"} ` +
-    `(${d.days || "—"} day${d.days === 1 ? "" : "s"}).`,
+    `${_fmt(d.fromDate)} to ${_fmt(d.toDate)} (${d.days || "—"} day${d.days === 1 ? "" : "s"}).`,
   fitness: (d) =>
     `This is to certify that ${d.patientName || "the patient"} (${d.age || "—"}Y / ${d.gender || "—"}, UHID ${d.uhid || "—"}) ` +
     `has been examined by me and is found medically fit ${d.fitnessPurpose ? `for ${d.fitnessPurpose}` : "for normal duties"} ` +
-    `as on ${d.examDate ? new Date(d.examDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
-      : new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}.`,
+    `as on ${_fmt(d.examDate || new Date())}.`,
   leave: (d) =>
     `This is to certify that ${d.patientName || "the patient"} (${d.age || "—"}Y / ${d.gender || "—"}, UHID ${d.uhid || "—"}) ` +
-    `was admitted under my care from ${d.fromDate ? new Date(d.fromDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—"} ` +
-    `to ${d.toDate ? new Date(d.toDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—"} ` +
+    `was admitted under my care from ${_fmt(d.fromDate)} to ${_fmt(d.toDate)} ` +
     `for ${d.diagnosis || "treatment"} and requires further rest of ${d.restDays || "—"} day(s) post-discharge.`,
   disability: (d) =>
     `This is to certify that ${d.patientName || "the patient"} (${d.age || "—"}Y / ${d.gender || "—"}, UHID ${d.uhid || "—"}) ` +
     `is suffering from ${d.diagnosis || "the condition specified below"} and has a permanent disability of ${d.disabilityPct || "—"}% ` +
-    `as assessed on ${d.examDate ? new Date(d.examDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—"}.`,
+    `as assessed on ${_fmt(d.examDate)}.`,
+  // ── New variants ───────────────────────────────────────────────
+  emergency: (d) =>
+    `This is to certify that ${d.patientName || "the patient"} (${d.age || "—"}Y / ${d.gender || "—"}, UHID ${d.uhid || "—"}) ` +
+    `attended the Emergency Department of this hospital on ${_fmt(d.examDate || d.fromDate || new Date())} ` +
+    `${d.arrivalTime ? `at ${d.arrivalTime} ` : ""}` +
+    `with complaints of ${d.complaints || d.diagnosis || "an acute medical condition"} ` +
+    `and received immediate medical attention. ${d.treatment ? `Initial treatment given: ${d.treatment}.` : ""} ` +
+    `The patient was ${d.dispositionText || "advised follow-up consultation in the OPD"}.`,
+  "healthy-now": (d) =>
+    `This is to certify that ${d.patientName || "the patient"} (${d.age || "—"}Y / ${d.gender || "—"}, UHID ${d.uhid || "—"}) ` +
+    `was under my care for ${d.diagnosis || "the condition mentioned below"} ` +
+    `from ${_fmt(d.fromDate)} to ${_fmt(d.toDate)} and has now fully recovered. ` +
+    `Following clinical re-examination on ${_fmt(d.examDate || new Date())}, the patient is found medically fit ` +
+    `to resume ${d.fitnessPurpose || "normal duties / school / work"} with effect from ${_fmt(d.resumeDate || new Date())}.`,
+  "sick-leave": (d) =>
+    `This is to certify that ${d.patientName || "the patient"} (${d.age || "—"}Y / ${d.gender || "—"}, UHID ${d.uhid || "—"}) ` +
+    `is suffering from ${d.diagnosis || "the condition mentioned below"} and is advised sick leave / rest from ` +
+    `${_fmt(d.fromDate)} to ${_fmt(d.toDate)} (total ${d.days || "—"} day${d.days === 1 ? "" : "s"}). ` +
+    `The patient is expected to resume duties on or after ${_fmt(d.resumeDate || d.toDate)}, subject to clinical improvement.`,
+  "extending-leave": (d) =>
+    `This is to certify that ${d.patientName || "the patient"} (${d.age || "—"}Y / ${d.gender || "—"}, UHID ${d.uhid || "—"}) ` +
+    `was previously issued a medical leave certificate ${d.previousCertNo ? `(Ref: ${d.previousCertNo}) ` : ""}` +
+    `for the period ${_fmt(d.previousFromDate)} to ${_fmt(d.previousToDate)}. ` +
+    `On clinical re-examination on ${_fmt(d.examDate || new Date())}, the patient still requires further rest ` +
+    `for ${d.diagnosis || "ongoing treatment"}. The leave is hereby extended from ${_fmt(d.fromDate)} ` +
+    `to ${_fmt(d.toDate)} (additional ${d.days || "—"} day${d.days === 1 ? "" : "s"}). ` +
+    `The patient is expected to resume duties on or after ${_fmt(d.resumeDate || d.toDate)}.`,
 };
 
 const CERT_TITLE = {
-  sickness:   "Medical Sickness Certificate",
-  fitness:    "Medical Fitness Certificate",
-  leave:      "Medical Leave Certificate",
-  disability: "Medical Disability Certificate",
+  sickness:          "Medical Sickness Certificate",
+  fitness:           "Medical Fitness Certificate",
+  leave:             "Medical Leave Certificate",
+  disability:        "Medical Disability Certificate",
+  emergency:         "Emergency Attendance Certificate",
+  "healthy-now":     "Fitness-to-Resume (Recovery) Certificate",
+  "sick-leave":      "Sick-Leave Certificate",
+  "extending-leave": "Extension of Medical Leave Certificate",
 };
 
 const MedicalCertificate = ({ settings, receipt = {} }) => {
@@ -93,11 +123,26 @@ const MedicalCertificate = ({ settings, receipt = {} }) => {
           </p>
         )}
 
-        {kind === "sickness" && (
+        {(kind === "sickness" || kind === "sick-leave" || kind === "extending-leave") && (
           <p style={{ margin: "0 0 12px", fontStyle: "italic" }}>
             The patient is hereby advised rest and is expected to resume normal duties on or after
-            <strong> {r.resumeDate ? new Date(r.resumeDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—"}</strong>,
+            <strong> {_fmt(r.resumeDate || r.toDate)}</strong>,
             subject to clinical improvement.
+          </p>
+        )}
+
+        {kind === "emergency" && r.dispositionText && (
+          <p style={{ margin: "0 0 12px" }}>
+            <strong>Disposition:</strong> {r.dispositionText}
+            {r.referredTo && <span className="muted"> · Referred to: {r.referredTo}</span>}
+          </p>
+        )}
+
+        {kind === "healthy-now" && (
+          <p style={{ margin: "0 0 12px", fontStyle: "italic" }}>
+            The patient is found medically fit and may resume {r.fitnessPurpose || "normal duties / school / work"}
+            <strong> on or after {_fmt(r.resumeDate || new Date())}</strong> without restrictions, unless
+            otherwise specified in the remarks above.
           </p>
         )}
 
