@@ -145,89 +145,161 @@ function OverviewTab({patient,admission,nursingNotes=[],billing,doctorNotes=[]})
   const latestVN = nursingNotes.find(n=>n.vitals && (n.vitals.bp||n.vitals.pulse||n.vitals.temp));
   const lv = latestVN?.vitals||{};
   const todayOrders = doctorNotes.flatMap(n=>n.orders||[]).filter(o=>!o.nurseStatus||o.nurseStatus==="pending");
+  const hasAllergy = patient?.knownAllergies && !["NKDA","None","—",""].includes(patient.knownAllergies);
+
+  // Same vital classifier as Doctor panel — green/amber/red tile tints.
+  const vitalState = (k, v) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return "neutral";
+    if (k === "pulse") return (n < 50 || n > 120) ? "danger" : (n < 60 || n > 100) ? "warn" : "ok";
+    if (k === "temp")  return (n >= 101)            ? "danger" : (n >= 99.5)         ? "warn" : "ok";
+    if (k === "spo2")  return (n < 90)              ? "danger" : (n < 95)            ? "warn" : "ok";
+    if (k === "rr")    return (n < 10 || n > 24)    ? "danger" : (n < 12 || n > 20)  ? "warn" : "ok";
+    if (k === "bp_sys") return (n < 90 || n > 160)  ? "danger" : (n < 100 || n > 140) ? "warn" : "ok";
+    return "neutral";
+  };
+  const bpSys = lv.bp?.systolic;
 
   return (
-    <div style={{display:"flex",flexDirection:"column",gap:20}}>
+    <div className="pf-tint--nurse" style={{display:"flex",flexDirection:"column",gap:16}}>
       {/* Allergy alert */}
-      {patient?.knownAllergies && !["NKDA","None","—"].includes(patient.knownAllergies) && (
-        <div style={{padding:"12px 18px",background:C.redL,border:`2px solid ${C.red}`,borderRadius:10,fontWeight:700,fontSize:13,color:C.red,display:"flex",gap:10,alignItems:"center"}}>
-          ⚠️ ALLERGIES: {patient.knownAllergies}
+      {hasAllergy && (
+        <div className="pf-alert pf-alert--danger">
+          <span className="pf-alert__icon">⚠️</span>
+          <div className="pf-alert__body">
+            <div className="pf-alert__title">Known Allergies</div>
+            <div className="pf-alert__msg">{patient.knownAllergies}</div>
+          </div>
         </div>
       )}
 
-      {/* Stats row */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:14}}>
+      {/* Quick stats */}
+      <div className="pf-stats-grid">
         {[
-          {label:"Nursing Notes",  val:nursingNotes.length,          icon:"📝",  color:C.primary, bg:C.primaryL},
-          {label:"Pending Orders", val:todayOrders.length,           icon:"⏳",  color:C.amber,   bg:C.amberL},
-          {label:"Doctor Notes",   val:doctorNotes.length,           icon:"🩺",  color:C.purple,  bg:C.purpleL},
-          {label:"Balance Due",    val:billing?fmtCur(billing.balanceAmount):"—", icon:"💰", color:C.green, bg:C.greenL},
-        ].map(s=>(
-          <div key={s.label} style={{background:s.bg,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 18px",display:"flex",gap:12,alignItems:"center"}}>
-            <span style={{fontSize:26}}>{s.icon}</span>
-            <div>
-              <div style={{fontSize:11,color:C.muted,fontWeight:600,letterSpacing:".3px"}}>{s.label}</div>
-              <div style={{fontSize:20,fontWeight:800,color:s.color}}>{s.val}</div>
+          {label:"Nursing Notes",  val: nursingNotes.length,                        icon:"📝", tint:"primary"},
+          {label:"Pending Orders", val: todayOrders.length,                         icon:"⏳", tint: todayOrders.length > 0 ? "warn" : "neutral"},
+          {label:"Doctor Notes",   val: doctorNotes.length,                         icon:"🩺", tint:"info"},
+          {label:"Balance Due",    val: billing ? fmtCur(billing.balanceAmount) : "—", icon:"💰", tint: billing?.balanceAmount > 0 ? "warn" : "ok"},
+        ].map(s => (
+          <div key={s.label} className={`pf-stat-card pf-stat-card--${s.tint}`}>
+            <div className="pf-stat-card__icon">{s.icon}</div>
+            <div className="pf-stat-card__body">
+              <div className="pf-stat-card__label">{s.label}</div>
+              <div className="pf-stat-card__val">{s.val}</div>
             </div>
           </div>
         ))}
       </div>
 
-      {/* Patient + Admission cards */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
-        <Card title="👤 Patient Demographics">
-          <InfoRow label="Full Name"     value={`${patient?.title||""} ${patient?.fullName||patient?.patientName||""}`.trim()}/>
-          <InfoRow label="UHID"          value={patient?.UHID||patient?.uhid}/>
-          <InfoRow label="Age / Gender"  value={`${patient?.age||"—"} yrs / ${patient?.gender||"—"}`}/>
-          <InfoRow label="Blood Group"   value={patient?.bloodGroup}/>
-          <InfoRow label="Contact"       value={patient?.contactNumber||patient?.phone}/>
-          <InfoRow label="Payment Type"  value={patient?.paymentType}/>
-        </Card>
-        <Card title="🏥 Admission">
-          <InfoRow label="Admission No." value={admission?.admissionNumber}/>
-          <InfoRow label="Type"          value={admission?.admissionType}/>
-          <InfoRow label="Doctor"        value={admission?.attendingDoctor}/>
-          <InfoRow label="Department"    value={admission?.department}/>
-          <InfoRow label="Bed / Ward"    value={admission?.bedNumber||admission?.ward}/>
-          <InfoRow label="Admitted"      value={fmtDate(admission?.admissionDate)}/>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6}}>
-            <span style={{fontSize:13,color:C.muted,minWidth:130}}>Status</span>
-            <SBadge status={admission?.status}/>
+      {/* Demographics + Admission */}
+      <div className="pf-overview-grid">
+        <div className="pf-info-card">
+          <div className="pf-info-card__head">
+            <span className="pf-info-card__icon">👤</span>
+            <span className="pf-info-card__title">Patient Demographics</span>
           </div>
-        </Card>
+          <div className="pf-info-card__body">
+            {[
+              ["Full Name",    `${patient?.title || ""} ${patient?.fullName || patient?.patientName || ""}`.trim() || "—"],
+              ["UHID",         patient?.UHID || patient?.uhid],
+              ["Age / Gender", `${patient?.age || "—"} yrs / ${patient?.gender || "—"}`],
+              ["Blood Group",  patient?.bloodGroup],
+              ["Contact",      patient?.contactNumber || patient?.phone],
+              ["Payment Type", patient?.paymentType],
+            ].map(([l, v]) => (
+              <div key={l} className="pf-info-card__row">
+                <span className="pf-info-card__row-label">{l}</span>
+                <span className="pf-info-card__row-value">{v || "—"}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="pf-info-card">
+          <div className="pf-info-card__head">
+            <span className="pf-info-card__icon">🏥</span>
+            <span className="pf-info-card__title">Admission</span>
+          </div>
+          <div className="pf-info-card__body">
+            {[
+              ["Admission No.", admission?.admissionNumber],
+              ["Type",          admission?.admissionType],
+              ["Doctor",        admission?.attendingDoctor],
+              ["Department",    admission?.department],
+              ["Bed / Ward",    [admission?.bedNumber, admission?.wardName || admission?.ward].filter(Boolean).join(" — ")],
+              ["Admitted",      fmtDate(admission?.admissionDate)],
+            ].map(([l, v]) => (
+              <div key={l} className="pf-info-card__row">
+                <span className="pf-info-card__row-label">{l}</span>
+                <span className="pf-info-card__row-value">{v || "—"}</span>
+              </div>
+            ))}
+            <div className="pf-info-card__row">
+              <span className="pf-info-card__row-label">Status</span>
+              <span className="pf-info-card__row-value"><SBadge status={admission?.status}/></span>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Latest vitals */}
       {latestVN && (
-        <Card title={`💓 Latest Vitals — ${fmtDT(latestVN.createdAt)}`}>
-          <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
-            <VCard label="BP"    value={bpStr(lv.bp)}               color={C.red}/>
-            {lv.pulse && <VCard label="Pulse" value={lv.pulse}  unit=" bpm" color={isAbn("pulse",lv.pulse)?C.red:C.green}/>}
-            {lv.temp  && <VCard label="Temp"  value={lv.temp}   unit="°F"   color={isAbn("temp",lv.temp)?C.red:C.green}/>}
-            {lv.spo2  && <VCard label="SpO₂" value={lv.spo2}   unit="%"    color={isAbn("spo2",lv.spo2)?C.red:C.green}/>}
-            {lv.rr    && <VCard label="RR"    value={lv.rr}     unit="/min" color={isAbn("rr",lv.rr)?C.red:C.green}/>}
-            {lv.bsl   && <VCard label="BSL"   value={lv.bsl}   unit=" mg/dL" color={C.amber}/>}
-            {lv.gcs   && <VCard label="GCS"   value={String(lv.gcs)} color={C.blue}/>}
+        <div className="pf-vitals-block">
+          <div className="pf-vitals-block__head">
+            <span style={{fontSize:18}}>💓</span>
+            <span className="pf-vitals-block__title">Latest Vitals</span>
+            <span className="pf-vitals-block__time">{fmtDT(latestVN.createdAt)}</span>
           </div>
-          {latestVN.nurseName && <div style={{marginTop:8,fontSize:11,color:C.muted}}>Recorded by: {latestVN.nurseName}</div>}
-        </Card>
+          <div className="pf-vitals-block__body">
+            {[
+              {label:"BP",    value: bpStr(lv.bp),                    unit:" mmHg",  state: vitalState("bp_sys", bpSys)},
+              {label:"Pulse", value: lv.pulse,                        unit:" bpm",   state: vitalState("pulse", lv.pulse)},
+              {label:"Temp",  value: lv.temp,                         unit:" °F",    state: vitalState("temp", lv.temp)},
+              {label:"SpO₂",  value: lv.spo2,                         unit:" %",     state: vitalState("spo2", lv.spo2)},
+              {label:"RR",    value: lv.rr,                           unit:" /min",  state: vitalState("rr", lv.rr)},
+              {label:"BSL",   value: lv.bsl,                          unit:" mg/dL", state: "warn"},
+              {label:"GCS",   value: lv.gcs ? String(lv.gcs) : null,  unit:"",       state: "neutral"},
+            ].filter(t => t.value != null && t.value !== "" && t.value !== "—" && t.value !== "—/—").map(t => (
+              <div key={t.label} className={`pf-vital-tile pf-vital-tile--${t.state}`}>
+                <div className="pf-vital-tile__label">{t.label}</div>
+                <div className="pf-vital-tile__val">{t.value}<span className="pf-vital-tile__unit">{t.unit}</span></div>
+              </div>
+            ))}
+          </div>
+          {latestVN.nurseName && (
+            <div className="pf-vitals-block__foot">Recorded by <strong>{latestVN.nurseName}</strong></div>
+          )}
+        </div>
       )}
 
       {/* Pending orders quick view */}
-      {todayOrders.length>0 && (
-        <Card title={`⏳ Pending Doctor Orders (${todayOrders.length})`} titleColor={C.amber} titleBg={C.amberL}>
-          <div style={{display:"flex",flexDirection:"column",gap:6}}>
-            {todayOrders.slice(0,5).map((o,i)=>(
-              <div key={i} style={{display:"flex",gap:10,alignItems:"center",padding:"8px 12px",background:"#f8fafc",borderRadius:8,border:`1px solid ${C.border}`}}>
-                <span style={{fontSize:16}}>{o.type==="medication"?"💊":o.type==="iv_fluid"?"💧":"📋"}</span>
-                <span style={{flex:1,fontSize:13,color:C.text}}>{o.instruction||"—"}</span>
-                {o.route && <Badge color={C.teal} bg={C.tealL}>{o.route}</Badge>}
-                {o.frequency && <Badge color={C.muted} bg="#f1f5f9">{o.frequency}</Badge>}
-              </div>
-            ))}
-            {todayOrders.length>5 && <div style={{fontSize:12,color:C.muted,textAlign:"center"}}>+{todayOrders.length-5} more orders</div>}
+      {todayOrders.length > 0 && (
+        <div className="pf-info-card">
+          <div className="pf-info-card__head" style={{background:"linear-gradient(180deg,#fef3c7 0%,transparent 100%)"}}>
+            <span className="pf-info-card__icon" style={{background:"#d97706"}}>⏳</span>
+            <span className="pf-info-card__title" style={{color:"#92400e"}}>Pending Doctor Orders</span>
+            <span className="pf-badge pf-badge--warn" style={{marginLeft:"auto"}}>{todayOrders.length}</span>
           </div>
-        </Card>
+          <div className="pf-info-card__body">
+            <div className="pf-order-list">
+              {todayOrders.slice(0, 5).map((o, i) => (
+                <div key={i} className="pf-order-row">
+                  <span className="pf-order-row__icon">
+                    {o.type === "medication" ? "💊" : o.type === "iv_fluid" ? "💧" : "📋"}
+                  </span>
+                  <span className="pf-order-row__text">{o.instruction || "—"}</span>
+                  {o.route && <span className="pf-badge pf-badge--info">{o.route}</span>}
+                  {o.frequency && <span className="pf-badge pf-badge--neutral">{o.frequency}</span>}
+                </div>
+              ))}
+              {todayOrders.length > 5 && (
+                <div style={{fontSize: 12, color: C.muted, textAlign: "center", padding: 6}}>
+                  +{todayOrders.length - 5} more orders
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

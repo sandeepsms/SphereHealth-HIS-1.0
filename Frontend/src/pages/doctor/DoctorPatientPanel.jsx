@@ -160,135 +160,192 @@ function OverviewTab({patient, admission, opdVisits=[], billing, doctorNotes=[],
   // Latest vitals from nursing notes
   const latestVitalNote = nursingNotes.find(n=>n.vitals && Object.values(n.vitals).some(v=>v));
   const lv = latestVitalNote?.vitals||{};
+  const hasAllergy = patient?.knownAllergies && !["NKDA","None","—",""].includes(patient.knownAllergies);
+
+  // Vital state classifier — drives green/amber/red tile tints.
+  // Thresholds are conservative; "warn" gives a yellow halo before "danger" goes red.
+  const vitalState = (k, v) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return "neutral";
+    if (k === "pulse") return (n < 50 || n > 120) ? "danger" : (n < 60 || n > 100) ? "warn" : "ok";
+    if (k === "temp")  return (n >= 101)            ? "danger" : (n >= 99.5)         ? "warn" : "ok";
+    if (k === "spo2")  return (n < 90)              ? "danger" : (n < 95)            ? "warn" : "ok";
+    if (k === "rr")    return (n < 10 || n > 24)    ? "danger" : (n < 12 || n > 20)  ? "warn" : "ok";
+    if (k === "bp_sys") return (n < 90 || n > 160)  ? "danger" : (n < 100 || n > 140) ? "warn" : "ok";
+    return "neutral";
+  };
+  const bpSys = lv.bp?.systolic;
 
   return (
-    <div style={{display:"flex",flexDirection:"column",gap:20}}>
+    <div className="pf-tint--doctor" style={{display:"flex",flexDirection:"column",gap:16}}>
       {/* Allergy alert */}
-      {patient?.knownAllergies && patient.knownAllergies !== "NKDA" && patient.knownAllergies !== "None" && (
-        <div style={{padding:"12px 18px",background:C.redL,border:`2px solid ${C.red}`,borderRadius:10,fontSize:13,color:C.red,fontWeight:700,display:"flex",gap:10,alignItems:"center"}}>
-          ⚠️ KNOWN ALLERGIES: {patient.knownAllergies}
+      {hasAllergy && (
+        <div className="pf-alert pf-alert--danger">
+          <span className="pf-alert__icon">⚠️</span>
+          <div className="pf-alert__body">
+            <div className="pf-alert__title">Known Allergies</div>
+            <div className="pf-alert__msg">{patient.knownAllergies}</div>
+          </div>
         </div>
       )}
 
       {/* Pending bed transfer alert */}
       {pendingTransfer && (
-        <div style={{padding:"14px 18px",background:"#fffbeb",border:"2px solid #f59e0b",borderRadius:12,display:"flex",alignItems:"flex-start",gap:14}}>
-          <div style={{fontSize:26,flexShrink:0}}>🔄</div>
-          <div style={{flex:1}}>
-            <div style={{fontWeight:800,fontSize:14,color:"#92400e"}}>
-              Bed Transfer Pending — Awaiting Nurse Handover
-            </div>
-            <div style={{fontSize:12,color:"#a16207",marginTop:4,lineHeight:1.5}}>
-              Transfer initiated to <strong>{pendingTransfer.toBedNumber}</strong> ({pendingTransfer.toWardName}).
+        <div className="pf-alert pf-alert--warn">
+          <span className="pf-alert__icon">🔄</span>
+          <div className="pf-alert__body">
+            <div className="pf-alert__title">Bed Transfer Pending — Awaiting Nurse Handover</div>
+            <div className="pf-alert__msg">
+              Transfer initiated to <strong>{pendingTransfer.toBedNumber}</strong>{pendingTransfer.toWardName ? ` (${pendingTransfer.toWardName})` : ""}.
               Nurse must write handover notes to complete this transfer.
             </div>
-            <div style={{fontSize:11,color:"#a16207",marginTop:6,fontStyle:"italic"}}>
-              Shifting Notes: "{pendingTransfer.shiftingNotes?.slice(0,120)}{pendingTransfer.shiftingNotes?.length>120?"…":""}"
-            </div>
+            {pendingTransfer.shiftingNotes && (
+              <div className="pf-alert__note">
+                Shifting Notes: "{pendingTransfer.shiftingNotes.slice(0, 120)}{pendingTransfer.shiftingNotes.length > 120 ? "…" : ""}"
+              </div>
+            )}
           </div>
-          <button onClick={()=>onCancelTransfer&&onCancelTransfer(pendingTransfer._id)}
-            style={{padding:"7px 14px",background:"#fef3c7",color:"#92400e",border:"1.5px solid #fbbf24",borderRadius:7,fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0}}>
-            Cancel Transfer
+          <button className="pf-alert__btn" onClick={() => onCancelTransfer?.(pendingTransfer._id)}>
+            Cancel
           </button>
         </div>
       )}
 
       {/* Quick stats */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:14}}>
+      <div className="pf-stats-grid">
         {[
-          {label:"Doctor Notes",   val:doctorNotes.length,  icon:"🩺", color:C.primary, bg:C.primaryL},
-          {label:"Signed Notes",   val:signed,               icon:"✅", color:C.green,   bg:C.greenL},
-          {label:"Draft Notes",    val:drafts,               icon:"📝", color:C.amber,   bg:C.amberL},
-          {label:"Critical Events",val:critical,             icon:"⚠️", color:C.red,     bg:C.redL},
-          {label:"Nursing Notes",  val:nurseCount,           icon:"👩‍⚕️", color:C.pink,    bg:C.pinkL},
-          {label:"OPD Visits",     val:opdVisits.length,     icon:"📅", color:C.blue,    bg:C.blueL},
-        ].map(s=>(
-          <div key={s.label} style={{background:s.bg,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 18px",display:"flex",gap:12,alignItems:"center"}}>
-            <span style={{fontSize:26}}>{s.icon}</span>
-            <div>
-              <div style={{fontSize:11,color:C.muted,fontWeight:600,letterSpacing:".3px"}}>{s.label}</div>
-              <div style={{fontSize:22,fontWeight:800,color:s.color}}>{s.val}</div>
+          {label:"Doctor Notes",    val: doctorNotes.length,  icon:"🩺", tint:"primary"},
+          {label:"Signed Notes",    val: signed,              icon:"✅", tint:"ok"},
+          {label:"Draft Notes",     val: drafts,              icon:"📝", tint:"warn"},
+          {label:"Critical Events", val: critical,            icon:"⚠️", tint:"danger"},
+          {label:"Nursing Notes",   val: nurseCount,          icon:"👩‍⚕️", tint:"info"},
+          {label:"OPD Visits",      val: opdVisits.length,    icon:"📅", tint:"neutral"},
+        ].map(s => (
+          <div key={s.label} className={`pf-stat-card pf-stat-card--${s.tint}`}>
+            <div className="pf-stat-card__icon">{s.icon}</div>
+            <div className="pf-stat-card__body">
+              <div className="pf-stat-card__label">{s.label}</div>
+              <div className="pf-stat-card__val">{s.val}</div>
             </div>
           </div>
         ))}
       </div>
 
       {/* Demographics + Admission */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
-        <Card title="👤 Patient Demographics">
-          <InfoRow label="Full Name"      value={`${patient?.title||""} ${patient?.fullName||patient?.patientName||""}`.trim()}/>
-          <InfoRow label="UHID"           value={patient?.UHID||patient?.uhid}/>
-          <InfoRow label="Age / Gender"   value={`${patient?.age||"—"} yrs / ${patient?.gender||"—"}`}/>
-          <InfoRow label="Date of Birth"  value={fmtDate(patient?.dateOfBirth)}/>
-          <InfoRow label="Blood Group"    value={patient?.bloodGroup}/>
-          <InfoRow label="Contact"        value={patient?.contactNumber||patient?.phone}/>
-          <InfoRow label="Payment Type"   value={patient?.paymentType}/>
-        </Card>
-        <Card title="🏥 Admission Details">
-          <InfoRow label="IPD / Adm No."  value={admission?.admissionNumber}/>
-          <InfoRow label="Type"           value={admission?.admissionType}/>
-          <InfoRow label="Attending Dr."  value={admission?.attendingDoctor}/>
-          <InfoRow label="Department"     value={admission?.department}/>
-          <InfoRow label="Bed / Ward"     value={[admission?.bedNumber, admission?.wardName||admission?.ward].filter(Boolean).join(" — ") || "—"}/>
-          <InfoRow label="Admitted"       value={fmtDate(admission?.admissionDate)}/>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginTop:8}}>
-            <span style={{fontSize:13,color:C.muted,minWidth:130}}>Status</span>
-            <SBadge status={admission?.status}/>
+      <div className="pf-overview-grid">
+        <div className="pf-info-card">
+          <div className="pf-info-card__head">
+            <span className="pf-info-card__icon">👤</span>
+            <span className="pf-info-card__title">Patient Demographics</span>
           </div>
-          {["active","admitted"].includes((admission?.status||"").toLowerCase()) && onShiftBed && !pendingTransfer && (
-            <button onClick={onShiftBed}
-              style={{marginTop:14,width:"100%",padding:"9px",background:C.primaryL,color:C.primary,border:`1.5px solid ${C.primaryM}`,borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:7,transition:"all .2s"}}
-              onMouseEnter={e=>{e.currentTarget.style.background=C.primaryM;}}
-              onMouseLeave={e=>{e.currentTarget.style.background=C.primaryL;}}>
-              🔄 Shift Bed
-            </button>
-          )}
-          {pendingTransfer && (
-            <div style={{marginTop:10,padding:"7px 10px",background:"#fffbeb",border:"1.5px solid #fbbf24",borderRadius:7,fontSize:11,color:"#92400e",fontWeight:700}}>
-              🔄 Transfer pending → {pendingTransfer.toBedNumber}
+          <div className="pf-info-card__body">
+            {[
+              ["Full Name",     `${patient?.title || ""} ${patient?.fullName || patient?.patientName || ""}`.trim() || "—"],
+              ["UHID",          patient?.UHID || patient?.uhid],
+              ["Age / Gender",  `${patient?.age || "—"} yrs / ${patient?.gender || "—"}`],
+              ["Date of Birth", fmtDate(patient?.dateOfBirth)],
+              ["Blood Group",   patient?.bloodGroup],
+              ["Contact",       patient?.contactNumber || patient?.phone],
+              ["Payment Type",  patient?.paymentType],
+            ].map(([l, v]) => (
+              <div key={l} className="pf-info-card__row">
+                <span className="pf-info-card__row-label">{l}</span>
+                <span className="pf-info-card__row-value">{v || "—"}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="pf-info-card">
+          <div className="pf-info-card__head">
+            <span className="pf-info-card__icon">🏥</span>
+            <span className="pf-info-card__title">Admission Details</span>
+          </div>
+          <div className="pf-info-card__body">
+            {[
+              ["IPD / Adm No.", admission?.admissionNumber],
+              ["Type",          admission?.admissionType],
+              ["Attending Dr.", admission?.attendingDoctor],
+              ["Department",    admission?.department],
+              ["Bed / Ward",    [admission?.bedNumber, admission?.wardName || admission?.ward].filter(Boolean).join(" — ")],
+              ["Admitted",      fmtDate(admission?.admissionDate)],
+            ].map(([l, v]) => (
+              <div key={l} className="pf-info-card__row">
+                <span className="pf-info-card__row-label">{l}</span>
+                <span className="pf-info-card__row-value">{v || "—"}</span>
+              </div>
+            ))}
+            <div className="pf-info-card__row">
+              <span className="pf-info-card__row-label">Status</span>
+              <span className="pf-info-card__row-value"><SBadge status={admission?.status}/></span>
             </div>
-          )}
-        </Card>
+            {["active","admitted"].includes((admission?.status || "").toLowerCase()) && onShiftBed && !pendingTransfer && (
+              <button className="pf-info-card__action" onClick={onShiftBed}>🔄 Shift Bed</button>
+            )}
+            {pendingTransfer && (
+              <div className="pf-alert pf-alert--warn" style={{marginTop:12,padding:"8px 12px"}}>
+                <span className="pf-alert__icon" style={{fontSize:16}}>🔄</span>
+                <div className="pf-alert__body">
+                  <div className="pf-alert__msg" style={{fontWeight:700}}>Transfer pending → {pendingTransfer.toBedNumber}</div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Latest vitals snapshot */}
       {latestVitalNote && (
-        <Card title={`💓 Latest Vitals — ${fmtDT(latestVitalNote.createdAt)}`}>
-          <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
+        <div className="pf-vitals-block">
+          <div className="pf-vitals-block__head">
+            <span style={{fontSize:18}}>💓</span>
+            <span className="pf-vitals-block__title">Latest Vitals</span>
+            <span className="pf-vitals-block__time">{fmtDT(latestVitalNote.createdAt)}</span>
+          </div>
+          <div className="pf-vitals-block__body">
             {[
-              {label:"BP",     value: bpStr(lv.bp),                    color: C.red},
-              {label:"Pulse",  value: lv.pulse ? `${lv.pulse} /min` : null, color: Number(lv.pulse)>100||Number(lv.pulse)<60 ? C.red : C.green},
-              {label:"Temp",   value: lv.temp  ? `${lv.temp}°F`    : null, color: Number(lv.temp)>99.5 ? C.red : C.green},
-              {label:"SpO₂",  value: lv.spo2  ? `${lv.spo2}%`     : null, color: Number(lv.spo2)<95 ? C.red : C.green},
-              {label:"RR",     value: lv.rr    ? `${lv.rr}/min`    : null, color: Number(lv.rr)>20||Number(lv.rr)<12 ? C.red : C.green},
-              {label:"BSL",    value: lv.bsl   ? `${lv.bsl}mg/dL`  : null, color: C.text},
-              {label:"GCS",    value: lv.gcs   ? String(lv.gcs)    : null, color: C.text},
-            ].filter(f=>f.value).map(f=>(
-              <div key={f.label} style={{background:"#f8fafc",border:`1px solid ${C.border}`,borderRadius:10,padding:"12px 16px",textAlign:"center",minWidth:80}}>
-                <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".5px",marginBottom:4}}>{f.label}</div>
-                <div style={{fontSize:17,fontWeight:800,color:f.color}}>{f.value}</div>
+              {label:"BP",    value: bpStr(lv.bp),                                   unit:" mmHg",  state: vitalState("bp_sys", bpSys)},
+              {label:"Pulse", value: lv.pulse,                                       unit:" bpm",   state: vitalState("pulse", lv.pulse)},
+              {label:"Temp",  value: lv.temp,                                        unit:" °F",    state: vitalState("temp", lv.temp)},
+              {label:"SpO₂",  value: lv.spo2,                                        unit:" %",     state: vitalState("spo2", lv.spo2)},
+              {label:"RR",    value: lv.rr,                                          unit:" /min",  state: vitalState("rr", lv.rr)},
+              {label:"BSL",   value: lv.bsl,                                         unit:" mg/dL", state: "neutral"},
+              {label:"GCS",   value: lv.gcs ? String(lv.gcs) : null,                 unit:"",       state: "neutral"},
+            ].filter(t => t.value != null && t.value !== "" && t.value !== "—" && t.value !== "—/—").map(t => (
+              <div key={t.label} className={`pf-vital-tile pf-vital-tile--${t.state}`}>
+                <div className="pf-vital-tile__label">{t.label}</div>
+                <div className="pf-vital-tile__val">{t.value}<span className="pf-vital-tile__unit">{t.unit}</span></div>
               </div>
             ))}
           </div>
-        </Card>
+          {latestVitalNote.nurseName && (
+            <div className="pf-vitals-block__foot">Recorded by <strong>{latestVitalNote.nurseName}</strong></div>
+          )}
+        </div>
       )}
 
       {/* Recent OPD visits */}
       {opdVisits.length > 0 && (
-        <Card title="📅 Recent OPD Visits">
-          {opdVisits.slice(0,5).map((v,i)=>(
-            <div key={i} style={{padding:"10px 14px",borderRadius:8,border:`1px solid ${C.border}`,background:C.bg,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
-              <div>
-                <div style={{fontWeight:700,fontSize:13,color:C.text}}>{v?.visitNumber||v?._id?.slice(-6)||"—"}</div>
-                <div style={{fontSize:12,color:C.muted,marginTop:2}}>{v?.chiefComplaint||"—"}</div>
+        <div className="pf-info-card">
+          <div className="pf-info-card__head">
+            <span className="pf-info-card__icon">📅</span>
+            <span className="pf-info-card__title">Recent OPD Visits</span>
+          </div>
+          <div className="pf-info-card__body">
+            {opdVisits.slice(0, 5).map((v, i) => (
+              <div key={i} className="pf-order-row" style={{marginBottom: 6}}>
+                <div style={{flex: 1}}>
+                  <div style={{fontWeight: 700, fontSize: 13, color: C.text}}>{v?.visitNumber || v?._id?.slice(-6) || "—"}</div>
+                  <div style={{fontSize: 12, color: C.muted, marginTop: 2}}>{v?.chiefComplaint || "—"}</div>
+                </div>
+                <div style={{textAlign: "right", display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end"}}>
+                  <span style={{fontSize: 11, color: C.muted}}>{fmtDate(v?.visitDate)}</span>
+                  <SBadge status={v?.status}/>
+                </div>
               </div>
-              <div style={{textAlign:"right"}}>
-                <div style={{fontSize:12,color:C.muted}}>{fmtDate(v?.visitDate)}</div>
-                <SBadge status={v?.status}/>
-              </div>
-            </div>
-          ))}
-        </Card>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );

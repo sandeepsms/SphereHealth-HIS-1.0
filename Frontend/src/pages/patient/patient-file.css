@@ -752,6 +752,275 @@
   color: #1d4ed8;
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   OVERVIEW TAB primitives — used by DoctorPatientPanel +
+   NursePatientPanel OverviewTab. Replaces the inline-styled stat
+   tiles and "Latest Vitals" cards with proper CSS classes.
+═══════════════════════════════════════════════════════════════ */
+
+/* Top-level alert (allergy / bed-transfer pending) */
+.pf-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 13px 18px;
+  border-radius: 12px;
+  border: 2px solid;
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 4px;
+}
+.pf-alert--danger  { background: var(--pf-danger-l); border-color: var(--pf-danger); color: var(--pf-danger); }
+.pf-alert--warn    { background: var(--pf-warn-l);   border-color: var(--pf-warn);   color: var(--pf-warn); }
+.pf-alert--info    { background: var(--pf-info-l);   border-color: var(--pf-info);   color: var(--pf-info); }
+.pf-alert__icon { font-size: 22px; flex-shrink: 0; line-height: 1; padding-top: 2px; }
+.pf-alert__body { flex: 1; min-width: 0; }
+.pf-alert__title { font-weight: 800; font-size: 14px; margin-bottom: 3px; }
+.pf-alert__msg   { font-size: 12.5px; opacity: .85; }
+.pf-alert__note  { font-size: 11.5px; font-style: italic; opacity: .75; margin-top: 4px; }
+.pf-alert__btn {
+  flex-shrink: 0;
+  padding: 7px 14px;
+  border-radius: 7px;
+  border: 1.5px solid currentColor;
+  background: rgba(255, 255, 255, .65);
+  color: inherit;
+  font-size: 12px; font-weight: 700;
+  cursor: pointer; transition: background .12s;
+}
+.pf-alert__btn:hover { background: #fff; }
+
+/* Stat-card grid — quick "Doctor Notes 3 · Signed 3 · ..." row */
+.pf-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+}
+.pf-stat-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  border-radius: 14px;
+  background: var(--pf-card);
+  border: 1px solid var(--pf-border);
+  box-shadow: 0 2px 10px rgba(15, 23, 42, .03);
+  transition: transform .15s, box-shadow .15s;
+}
+.pf-stat-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(15, 23, 42, .07);
+}
+.pf-stat-card__icon {
+  width: 44px; height: 44px;
+  border-radius: 12px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px;
+  flex-shrink: 0;
+}
+.pf-stat-card__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pf-stat-card__label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--pf-muted);
+  line-height: 1.2;
+}
+.pf-stat-card__val {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.3px;
+  line-height: 1.1;
+  word-break: break-word;
+}
+/* Tint variants */
+.pf-stat-card--primary { }
+.pf-stat-card--primary .pf-stat-card__icon { background: var(--pf-accent-l); color: var(--pf-accent); }
+.pf-stat-card--primary .pf-stat-card__val  { color: var(--pf-accent-d); }
+
+.pf-stat-card--ok      { }
+.pf-stat-card--ok .pf-stat-card__icon { background: var(--pf-ok-l); color: var(--pf-ok); }
+.pf-stat-card--ok .pf-stat-card__val  { color: var(--pf-ok); }
+
+.pf-stat-card--warn    { }
+.pf-stat-card--warn .pf-stat-card__icon { background: var(--pf-warn-l); color: var(--pf-warn); }
+.pf-stat-card--warn .pf-stat-card__val  { color: var(--pf-warn); }
+
+.pf-stat-card--danger  { }
+.pf-stat-card--danger .pf-stat-card__icon { background: var(--pf-danger-l); color: var(--pf-danger); }
+.pf-stat-card--danger .pf-stat-card__val  { color: var(--pf-danger); }
+
+.pf-stat-card--info    { }
+.pf-stat-card--info .pf-stat-card__icon { background: var(--pf-info-l); color: var(--pf-info); }
+.pf-stat-card--info .pf-stat-card__val  { color: var(--pf-info); }
+
+.pf-stat-card--neutral { }
+.pf-stat-card--neutral .pf-stat-card__icon { background: #f1f5f9; color: #475569; }
+.pf-stat-card--neutral .pf-stat-card__val  { color: #1e293b; }
+
+/* Overview's Demographics + Admission two-column */
+.pf-overview-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+@media (max-width: 900px) { .pf-overview-grid { grid-template-columns: 1fr; } }
+
+.pf-info-card {
+  background: var(--pf-card);
+  border: 1px solid var(--pf-border);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(15, 23, 42, .03);
+}
+.pf-info-card__head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px 18px;
+  border-bottom: 1px solid var(--pf-border);
+  background: linear-gradient(180deg, var(--pf-accent-l) 0%, transparent 100%);
+}
+.pf-info-card__icon {
+  font-size: 16px;
+  width: 26px; height: 26px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--pf-accent);
+  color: #fff;
+  border-radius: 7px;
+  flex-shrink: 0;
+}
+.pf-info-card__title {
+  font-size: 13.5px;
+  font-weight: 800;
+  color: var(--pf-accent-d);
+  letter-spacing: -0.2px;
+}
+.pf-info-card__body { padding: 14px 18px; }
+.pf-info-card__row {
+  display: flex; align-items: baseline;
+  gap: 12px;
+  padding: 5px 0;
+  font-size: 13px;
+  border-bottom: 1px dashed transparent;
+}
+.pf-info-card__row + .pf-info-card__row { border-top: 1px dashed #f1f5f9; }
+.pf-info-card__row-label {
+  color: var(--pf-muted);
+  min-width: 130px;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.pf-info-card__row-value {
+  color: var(--pf-text);
+  font-weight: 600;
+  word-break: break-word;
+}
+.pf-info-card__action {
+  width: 100%;
+  margin-top: 14px;
+  padding: 10px;
+  background: var(--pf-accent-l);
+  color: var(--pf-accent-d);
+  border: 1.5px solid var(--pf-accent-m);
+  border-radius: 9px;
+  font-size: 12px; font-weight: 700;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  transition: background .12s;
+}
+.pf-info-card__action:hover { background: var(--pf-accent-m); }
+
+/* Latest Vitals strip — proper tiles with abnormal-state highlight */
+.pf-vitals-block {
+  background: var(--pf-card);
+  border: 1px solid var(--pf-border);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(15, 23, 42, .03);
+}
+.pf-vitals-block__head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px 18px;
+  border-bottom: 1px solid var(--pf-border);
+  background: linear-gradient(180deg, #fef2f2 0%, transparent 100%);
+}
+.pf-vitals-block__title {
+  font-size: 13.5px;
+  font-weight: 800;
+  color: var(--pf-danger);
+}
+.pf-vitals-block__time {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--pf-muted);
+  font-family: "JetBrains Mono", "DM Mono", monospace;
+}
+.pf-vitals-block__body {
+  padding: 14px 18px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 10px;
+}
+.pf-vital-tile {
+  background: #f8fafc;
+  border: 1.5px solid var(--pf-border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  text-align: center;
+  position: relative;
+  transition: transform .12s, box-shadow .12s;
+}
+.pf-vital-tile:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(15, 23, 42, .06); }
+.pf-vital-tile__label {
+  font-size: 10.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--pf-muted);
+  margin-bottom: 6px;
+}
+.pf-vital-tile__val {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.4px;
+  font-family: "JetBrains Mono", "DM Mono", monospace;
+  line-height: 1.1;
+  color: var(--pf-text);
+}
+.pf-vital-tile__unit {
+  font-size: 11px; color: var(--pf-muted);
+  font-family: inherit;
+  margin-left: 3px;
+}
+.pf-vital-tile--ok       { border-color: var(--pf-ok);     background: #f0fdf4; }
+.pf-vital-tile--ok      .pf-vital-tile__val { color: var(--pf-ok); }
+.pf-vital-tile--warn     { border-color: var(--pf-warn);   background: #fff7ed; }
+.pf-vital-tile--warn    .pf-vital-tile__val { color: var(--pf-warn); }
+.pf-vital-tile--danger   { border-color: var(--pf-danger); background: #fef2f2; }
+.pf-vital-tile--danger  .pf-vital-tile__val { color: var(--pf-danger); }
+.pf-vitals-block__foot {
+  padding: 8px 18px;
+  font-size: 11px;
+  color: var(--pf-muted);
+  border-top: 1px dashed var(--pf-border);
+  background: #fafbfc;
+}
+
+/* Pending orders list (nurse Overview) */
+.pf-order-list {
+  display: flex; flex-direction: column;
+  gap: 6px;
+}
+.pf-order-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 13px;
+  background: #f8fafc;
+  border: 1px solid var(--pf-border);
+  border-radius: 10px;
+}
+.pf-order-row__icon { font-size: 18px; }
+.pf-order-row__text { flex: 1; font-size: 13px; color: var(--pf-text); word-break: break-word; }
+
 /* ── Spinner ─────────────────────────────────────────────── */
 .pf-spin-row {
   display: flex; justify-content: center; padding: 48px 0;
