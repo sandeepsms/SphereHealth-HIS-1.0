@@ -440,7 +440,11 @@ function DoctorNotesContent({ selectedPatient }) {
       icd10Code: diag.icd10Code, icd10Description: diag.icd10Description,
       investigations: invx ? invx.split(",").map(s => s.trim()).filter(Boolean) : [],
       orders: orders.map(o => ({
-        type: ["medication","iv_fluid","procedure","diet","other"].includes(o.type) ? o.type : "other",
+        // FIX (audit P12-B1): the legacy whitelist coerced `infusion` and
+        // `investigation` to "other", silently losing the categorisation
+        // downstream (treatment chart, nurse MAR, billing). Whitelist
+        // now matches the <select> options at line 2324.
+        type: ["medication","iv_fluid","infusion","procedure","investigation","diet","nursing","other"].includes(o.type) ? o.type : "other",
         instruction: o.instruction, route: o.route || "", frequency: o.frequency || "",
         duration: o.duration || "", notes: o.notes || "",
       })),

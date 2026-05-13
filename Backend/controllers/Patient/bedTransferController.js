@@ -193,8 +193,14 @@ exports.cancelTransfer = async (req, res) => {
       });
     }
 
-    // Release the reserved bed back to Available
-    await Bed.findByIdAndUpdate(transfer.toBedId, { status: "Available" });
+    // FIX (audit P11-B4): only release the bed if it's still Reserved by
+    // THIS transfer. Otherwise we'd flip an Occupied bed (admin manually
+    // reassigned to another patient between initiate + cancel) back to
+    // Available, double-allocating it.
+    await Bed.findOneAndUpdate(
+      { _id: transfer.toBedId, status: "Reserved" },
+      { $set: { status: "Available" } },
+    );
 
     transfer.status = "Cancelled";
     await transfer.save();

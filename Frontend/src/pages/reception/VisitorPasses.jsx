@@ -268,9 +268,21 @@ function IssuePassModal({ admissions, onClose, onIssued, userName }) {
 }
 
 /* ─────────── Print Pass ─────────── */
+// FIX (audit P8-B5): HTML-escape every user-controlled value before
+// concatenating into the print-window markup. The legacy template did
+// raw interpolation — an attendant name like `<script>alert(1)</script>`
+// or a patient name containing `<` would either execute or break the
+// print. Tiny inline escaper avoids pulling a dependency.
+const esc = (s) => String(s == null ? "" : s)
+  .replace(/&/g, "&amp;")
+  .replace(/</g, "&lt;")
+  .replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;")
+  .replace(/'/g, "&#39;");
+
 function printPass(p) {
   const html = `<!doctype html><html><head><meta charset="utf-8"/>
-    <title>Visitor Pass ${p.passNumber}</title>
+    <title>Visitor Pass ${esc(p.passNumber)}</title>
     <style>
       *{box-sizing:border-box;font-family:'DM Sans',Arial,sans-serif}
       body{margin:0;padding:0;color:#0f172a;background:#fff}
@@ -293,15 +305,15 @@ function printPass(p) {
         <div class="hd-sub">SphereHealth Hospital</div>
       </div>
       <div class="body">
-        <div class="pass-no">${p.passNumber}</div>
+        <div class="pass-no">${esc(p.passNumber)}</div>
         <table>
-          <tr><td class="lbl">Patient</td><td class="val">${p.patientName}</td></tr>
-          <tr><td class="lbl">UHID / Bed</td><td class="val">${p.patientUHID || "—"} / ${p.bedNumber || "—"}</td></tr>
-          <tr><td class="lbl">Visitor</td><td class="val">${p.attendantName}</td></tr>
-          <tr><td class="lbl">Relation</td><td class="val">${p.attendantRelation}</td></tr>
-          ${p.attendantPhone ? `<tr><td class="lbl">Phone</td><td class="val">${p.attendantPhone}</td></tr>` : ""}
-          ${p.idProofType ? `<tr><td class="lbl">${p.idProofType}</td><td class="val">${p.idProofNumber || "—"}</td></tr>` : ""}
-          <tr><td class="lbl">Valid Until</td><td class="val">${new Date(p.validUntil).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</td></tr>
+          <tr><td class="lbl">Patient</td><td class="val">${esc(p.patientName)}</td></tr>
+          <tr><td class="lbl">UHID / Bed</td><td class="val">${esc(p.patientUHID || "—")} / ${esc(p.bedNumber || "—")}</td></tr>
+          <tr><td class="lbl">Visitor</td><td class="val">${esc(p.attendantName)}</td></tr>
+          <tr><td class="lbl">Relation</td><td class="val">${esc(p.attendantRelation)}</td></tr>
+          ${p.attendantPhone ? `<tr><td class="lbl">Phone</td><td class="val">${esc(p.attendantPhone)}</td></tr>` : ""}
+          ${p.idProofType ? `<tr><td class="lbl">${esc(p.idProofType)}</td><td class="val">${esc(p.idProofNumber || "—")}</td></tr>` : ""}
+          <tr><td class="lbl">Valid Until</td><td class="val">${esc(new Date(p.validUntil).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }))}</td></tr>
         </table>
         <div class="hours">🕐 Visiting Hours: 11 AM – 1 PM, 5 PM – 7 PM<br/>ICU/NICU: 1 visitor, 10 min slots only</div>
         <div class="footer">Present at gate · Return at hospital exit · Lost passes ₹100 fine</div>

@@ -300,7 +300,14 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
       await axios.post(`${API_ENDPOINTS.DOCTOR_ORDERS}/${order._id}/administer`, {
         scheduledTime: sched,
         status: f.status,
-        givenAt: f.status === "given" ? `${new Date().toISOString().split("T")[0]}T${f.givenAt}` : undefined,
+        // FIX (audit P15-B1): the legacy code hard-coded today's ISO
+        // date, so a STAT recorded while viewing yesterday's MAR landed
+        // on TODAY's chart and vanished from the day it was meant to
+        // belong to. Use `marDate` (the day actually displayed) to stamp
+        // the date portion. `f.givenAt` is HH:MM from the input.
+        givenAt: f.status === "given"
+          ? `${(marDate || new Date()).toISOString().split("T")[0]}T${f.givenAt}`
+          : undefined,
         givenBy: nurseName,
         doseGiven: f.doseGiven,
         routeUsed: f.routeUsed,

@@ -1,15 +1,17 @@
 const VisitorPass = require("../../models/VisitorPass/visitorPassModel");
 const Admission   = require("../../models/Patient/admissionModel");
+const { nextSequence } = require("../../utils/counter");
 
 const handle = (fn) => async (req, res) => {
   try { return await fn(req, res); }
   catch (e) { res.status(e.statusCode || 500).json({ success: false, message: e.message }); }
 };
 
+// Atomic pass-number via shared Counter (replaces countDocuments race).
 async function nextPassNumber() {
   const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-  const count   = await VisitorPass.countDocuments({ passNumber: { $regex: `^VP-${dateStr}-` } });
-  return `VP-${dateStr}-${String(count + 1).padStart(4, "0")}`;
+  const seq     = await nextSequence(`visitorpass:${dateStr}`);
+  return `VP-${dateStr}-${String(seq).padStart(4, "0")}`;
 }
 
 /* POST /api/visitor-passes
@@ -23,6 +25,13 @@ exports.issuePass = handle(async (req, res) => {
 
   if (!admissionId || !attendantName || !attendantRelation || !issuedBy)
     return res.status(400).json({ success: false, message: "admissionId, attendantName, attendantRelation, issuedBy required" });
+
+  // FIX (audit P8-B3): reject negative / non-numeric validHours before
+  // computing validUntil — old code created already-expired passes.
+  const hours = Number(validHours);
+  if (!Number.isFinite(hours) || hours <= 0 || hours > 24 * 30) {
+    return res.status(400).json({ success: false, message: "validHours must be a positive number ≤ 720 (30 days)" });
+  }
 
   const adm = await Admission.findById(admissionId).populate("patientId", "fullName UHID").lean();
   if (!adm) return res.status(404).json({ success: false, message: "Admission not found" });
@@ -42,7 +51,7 @@ exports.issuePass = handle(async (req, res) => {
     return res.status(400).json({ success: false, message: "Maximum 2 active passes per patient. Revoke an existing pass first." });
 
   const validFrom  = new Date();
-  const validUntil = new Date(validFrom.getTime() + Number(validHours) * 60 * 60 * 1000);
+  const validUntil = new Date(validFrom.getTime() + hours * 60 * 60 * 1000);
 
   const pass = await VisitorPass.create({
     passNumber:    await nextPassNumber(),
@@ -91,6 +100,11 @@ exports.listPasses = handle(async (req, res) => {
 exports.returnPass = handle(async (req, res) => {
   const p = await VisitorPass.findById(req.params.id);
   if (!p) return res.status(404).json({ success: false, message: "Pass not found" });
+  // FIX (audit P8-B4): block flipping an already-terminal pass (Revoked /
+  // Returned / Expired) back to Returned. Only Active passes can be returned.
+  if (p.status !== "Active") {
+    return res.status(409).json({ success: false, message: `Pass is already ${p.status}` });
+  }
   p.status     = "Returned";
   p.returnedAt = new Date();
   await p.save();
@@ -101,6 +115,11 @@ exports.returnPass = handle(async (req, res) => {
 exports.revokePass = handle(async (req, res) => {
   const p = await VisitorPass.findById(req.params.id);
   if (!p) return res.status(404).json({ success: false, message: "Pass not found" });
+  // FIX (audit P8-B4): same status guard as return — only an Active pass
+  // can be revoked. Prevents flipping Returned passes to Revoked.
+  if (p.status !== "Active") {
+    return res.status(409).json({ success: false, message: `Pass is already ${p.status}` });
+  }
   p.status        = "Revoked";
   p.revokedAt     = new Date();
   p.revokedReason = req.body.reason || "";

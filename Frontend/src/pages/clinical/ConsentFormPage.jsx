@@ -875,13 +875,10 @@ function ConsentFormPageContent({ selectedPatient }) {
       fetchSavedForms();
       openPreview();
     } catch (err) {
-      if (err.response?.status === 404) {
-        toast.success("Consent recorded (preview mode)");
-        clearDraft();
-        openPreview();
-      } else {
-        toast.error(err.response?.data?.message || "Save failed");
-      }
+      // FIX (audit P18-B4): the legacy 404-swallow lied to the user
+      // about a successful save when the backend route was misrouted /
+      // broken. Real failures must surface — no more silent data loss.
+      toast.error(err.response?.data?.message || `Save failed (${err.response?.status || "network"})`);
     } finally {
       setSaving(false);
     }

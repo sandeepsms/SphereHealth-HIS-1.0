@@ -111,13 +111,18 @@ export function MLCOrDoctorNotesTab({ patient, doctorNotes = [] }) {
   const [loading, setLoading]   = useState(false);
   const uhid = patient?.UHID;
 
+  // FIX (audit P27-B1): cancel late stale fetches on rapid UHID changes
+  // so the prior patient's MLC list doesn't flash into the new patient's
+  // panel.
   useEffect(() => {
     if (!uhid) return;
+    let cancelled = false;
     setLoading(true);
     axios.get(`${API_ENDPOINTS.MLC}?UHID=${encodeURIComponent(uhid)}&limit=50`)
-      .then((r) => setMlcList(r.data?.data || []))
-      .catch(() => setMlcList([]))
-      .finally(() => setLoading(false));
+      .then((r) => { if (!cancelled) setMlcList(r.data?.data || []); })
+      .catch(() => { if (!cancelled) setMlcList([]); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, [uhid]);
 
   const hasMLC = mlcList.length > 0;
@@ -276,7 +281,19 @@ export function VitalChartTab({ nursingNotes = [], vitalSheet = [] }) {
       gcs:  v.glasgowComaScale || v.gcs,
       src:  "Vital Sheet",
     }));
-    return [...vNotes, ...vsRows].sort((a, b) => new Date(b.when) - new Date(a.when));
+    // FIX (audit P27-B5): de-dupe nursing-note vitals against vital-sheet
+    // entries that landed at the same minute (some nursing flows write
+    // both). Key on minute-precision timestamp + recorder name.
+    const merged = [...vNotes, ...vsRows];
+    const seen = new Set();
+    const deduped = merged.filter((r) => {
+      const minute = r.when ? new Date(r.when).toISOString().slice(0, 16) : "";
+      const key = `${minute}|${r.by}|${r.bp || ""}|${r.pulse || ""}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    return deduped.sort((a, b) => new Date(b.when) - new Date(a.when));
   }, [nursingNotes, vitalSheet]);
 
   return (
@@ -676,11 +693,13 @@ export function HandoverNotesTab({ patient, admission, doctorNotes = [], nursing
 
   useEffect(() => {
     if (!admissionId) { setTransfers([]); return; }
+    let cancelled = false;
     setLoadingTx(true);
     axios.get(`${API_ENDPOINTS.BASE}/bed-transfers?admissionId=${admissionId}`)
-      .then((r) => setTransfers(r.data?.data || r.data?.transfers || []))
-      .catch(() => setTransfers([]))
-      .finally(() => setLoadingTx(false));
+      .then((r) => { if (!cancelled) setTransfers(r.data?.data || r.data?.transfers || []); })
+      .catch(() => { if (!cancelled) setTransfers([]); })
+      .finally(() => { if (!cancelled) setLoadingTx(false); });
+    return () => { cancelled = true; };
   }, [admissionId]);
 
   /* ── Classify nursing handovers ───────────────────────────────── */
@@ -989,12 +1008,23 @@ function renderValue(v) {
 function renderObj(o) {
   return Object.entries(o)
     .filter(([k, val]) => val != null && val !== "" && k !== "_id")
-    .map(([k, val]) => (
-      <span key={k} className="ppt-sub-kv">
-        <span className="ppt-sub-k">{prettyKey(k)}:</span>{" "}
-        <span className="ppt-sub-v">{typeof val === "object" ? JSON.stringify(val) : String(val)}</span>
-      </span>
-    ));
+    .map(([k, val]) => {
+      let display;
+      // FIX (audit P27-B2): wrap JSON.stringify in try/catch — Mongoose
+      // populated docs can contain circular references that would crash
+      // the tab. On failure, fall back to a safe placeholder.
+      try {
+        display = typeof val === "object" ? JSON.stringify(val) : String(val);
+      } catch {
+        display = "[object]";
+      }
+      return (
+        <span key={k} className="ppt-sub-kv">
+          <span className="ppt-sub-k">{prettyKey(k)}:</span>{" "}
+          <span className="ppt-sub-v">{display}</span>
+        </span>
+      );
+    });
 }
 
 function prettyKey(k) {

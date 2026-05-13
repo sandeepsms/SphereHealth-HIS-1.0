@@ -201,6 +201,21 @@ class InvestigationOrderService {
       item.resultEnteredAt = now;
     }
 
+    // FIX (audit P16-B4): advance the parent order's state machine when
+    // results land. Order moves to IN_PROGRESS the first time any result
+    // is entered; only flips to COMPLETED when EVERY item is completed
+    // (so dashboards reflect mid-run orders, and we don't lie about
+    // status when some items are still pending).
+    const allItemsDone = order.items.every(
+      (i) => i.resultStatus === "COMPLETED" || i.resultStatus === "VERIFIED",
+    );
+    if (allItemsDone) {
+      order.orderStatus = "COMPLETED";
+      order.completedAt = now;
+    } else if (order.orderStatus === "PENDING" || order.orderStatus === "SAMPLE_COLLECTED") {
+      order.orderStatus = "IN_PROGRESS";
+    }
+
     order.actionLog.push({
       action: "RESULTS_ENTERED",
       performedBy: enteredBy || "Lab Technician",
@@ -257,7 +272,20 @@ class InvestigationOrderService {
       item.verifiedAt = now;
     }
 
-    order.orderStatus = "COMPLETED";
+    // FIX (audit P16-B11): only flip the order to COMPLETED when EVERY
+    // item is verified. Previously this flipped even when other items
+    // were still PENDING, masking the true status.
+    const allDone = order.items.every(
+      (i) => i.resultStatus === "VERIFIED" || i.resultStatus === "COMPLETED",
+    );
+    const allVerified = order.items.every((i) => i.resultStatus === "VERIFIED");
+    if (allVerified) {
+      order.orderStatus = "COMPLETED";
+      order.completedAt = now;
+    } else if (allDone) {
+      // Mixed — some VERIFIED, some still entered-not-verified
+      order.orderStatus = "IN_PROGRESS";
+    }
     order.actionLog.push({
       action: "RESULTS_VERIFIED",
       performedBy: verifiedBy || "Pathologist",
@@ -362,6 +390,19 @@ class InvestigationOrderService {
     });
 
     await order.save();
+
+    // FIX (audit P16-B9): addTest never fired the billing hook so
+    // post-order test additions were never billed. Now triggers
+    // onInvestigationOrdered for the new line item.
+    try {
+      const autoBilling = require("../Billing/autoBillingService");
+      if (typeof autoBilling.onInvestigationItemAdded === "function") {
+        autoBilling.onInvestigationItemAdded(order, inv, pricing).catch(() => {});
+      } else if (typeof autoBilling.onInvestigationOrdered === "function") {
+        autoBilling.onInvestigationOrdered(order).catch(() => {});
+      }
+    } catch { /* auto-billing not wired in this env */ }
+
     return this._populate(order._id);
   }
 
@@ -380,7 +421,10 @@ class InvestigationOrderService {
           createdAt: { $gte: today },
         }),
         InvestigationOrder.countDocuments({
-          priority: "URGENT",
+          // FIX (audit P16-B5): include STAT in the urgent count —
+          // legacy dashboard hid every STAT order. STAT is more urgent
+          // than URGENT, must always surface.
+          priority: { $in: ["URGENT", "STAT"] },
           orderStatus: { $nin: ["COMPLETED", "CANCELLED"] },
         }),
       ]);

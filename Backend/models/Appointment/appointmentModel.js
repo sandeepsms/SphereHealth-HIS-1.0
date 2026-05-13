@@ -51,7 +51,18 @@ const AppointmentSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-AppointmentSchema.index({ doctorId: 1, appointmentDate: 1, slotTime: 1 });
+// FIX (audit P9-B2): slot conflict race — the old index was non-unique,
+// so two concurrent bookings for the same (doctor, date, time) both
+// succeeded. Partial unique index now lets DB enforce one booking per
+// slot, EXCEPT when the prior appointment is Cancelled or NoShow (those
+// don't block re-booking).
+AppointmentSchema.index(
+  { doctorId: 1, appointmentDate: 1, slotTime: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { status: { $nin: ["Cancelled", "NoShow"] } },
+  },
+);
 AppointmentSchema.index({ appointmentDate: 1, status: 1 });
 
 // Use `pre("validate")` (not `pre("save")`) so the auto-generated number is

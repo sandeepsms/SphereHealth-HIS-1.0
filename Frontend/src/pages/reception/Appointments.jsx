@@ -11,7 +11,14 @@ import { API_ENDPOINTS } from "../../config/api";
 import "./reception-shared.css";
 import "../../Components/clinical/clinical-forms.css";
 
-const todayISO = () => new Date().toISOString().slice(0, 10);
+// FIX (audit P9-B7): `toISOString().slice(0,10)` returns the UTC date, so
+// late-evening IST users see tomorrow as the min and can't book same-day.
+// Build the local-date string instead.
+const todayISO = () => {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
 
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";

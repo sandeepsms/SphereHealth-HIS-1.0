@@ -132,14 +132,27 @@ exports.checkIn = handle(async (req, res) => {
   // patient (just name + phone). OPDService requires a real Patient _id —
   // create a stub Patient record so the check-in doesn't fail.
   if (!apt.patientId) {
-    const stub = await Patient.create({
-      fullName:        apt.patientName,
-      gender:          "Other",     // unknown at booking time
-      contactNumber:   apt.patientPhone,
-      paymentType:     "Cash",
-      registrationType: "OPD",
-      hasAppointment:  true,
-    });
+    // FIX (audit P9-B3): the stub must pass every required check on the
+    // Patient model. Reusing an existing patient by phone first prevents
+    // duplicate UHID issuance for the same person. Defaulting the rest
+    // to safe enum values prevents create-time validation 500s.
+    let stub = apt.patientPhone
+      ? await Patient.findOne({ contactNumber: apt.patientPhone, isActive: true })
+      : null;
+    if (!stub) {
+      stub = await Patient.create({
+        fullName:        apt.patientName,
+        title:           "Mr.",
+        gender:          "Other",
+        dateOfBirth:     undefined,
+        age:             undefined,
+        contactNumber:   apt.patientPhone || "0000000000",
+        paymentType:     "Cash",
+        registrationType: "OPD",
+        bloodGroup:      "Unknown",
+        hasAppointment:  true,
+      });
+    }
     apt.patientId = stub._id;
     apt.UHID      = stub.UHID;
   }
@@ -187,6 +200,15 @@ exports.checkIn = handle(async (req, res) => {
 exports.cancel = handle(async (req, res) => {
   const apt = await Appointment.findById(req.params.id);
   if (!apt) return res.status(404).json({ success: false, message: "Appointment not found" });
+  // FIX (audit P9-B5): block cancel of a CheckedIn / Completed appointment —
+  // that would orphan the linked OPD visit and confuse downstream billing.
+  // Cancel is only legal from Booked / Confirmed / NoShow states.
+  if (!["Booked", "Confirmed", "NoShow"].includes(apt.status)) {
+    return res.status(409).json({
+      success: false,
+      message: `Cannot cancel a ${apt.status} appointment`,
+    });
+  }
   apt.status       = "Cancelled";
   apt.cancelledAt  = new Date();
   apt.cancelReason = req.body.reason || "";

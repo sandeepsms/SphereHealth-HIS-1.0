@@ -1,9 +1,12 @@
 // services/Nurse/nurseNotesService.js
 
 const mongoose = require("mongoose");
-const NurseNotes = require("../../models/Nurse/nurseNotesModel");
-const NurseStaff = require("../../models/Nurse/nurseStaffModel");
-const DoctorNotes = require("../../models/Doctor/doctorNotesModel");
+// FIX (audit P13-B1): actual filenames are PascalCase (NurseNotesModel,
+// NurseStaffModel, DoctorNotesModel). Windows-case-insensitive lookups
+// hid this, but Linux production would 404 these requires at boot.
+const NurseNotes = require("../../models/Nurse/NurseNotesModel");
+const NurseStaff = require("../../models/Nurse/NurseStaffModel");
+const DoctorNotes = require("../../models/Doctor/DoctorNotesModel");
 const Patient = require("../../models/Patient/patientModel");
 const TreatmentChart = require("../../models/Doctor/treatmentChartModel");
 
@@ -231,7 +234,11 @@ const updateNurseNote = async (id, data, nurseUserId) => {
     e.statusCode = 400;
     throw e;
   }
-  if (note.nurse.toString() !== nurseUserId.toString()) {
+  // FIX (audit P13-B3): note.nurse can legitimately be null (NurseStaff
+  // lookup may have failed on create). Skip the auth comparison when no
+  // owner is recorded — any authenticated nurse can edit an unowned note,
+  // which matches existing behaviour for legacy data.
+  if (note.nurse && nurseUserId && note.nurse.toString() !== nurseUserId.toString()) {
     const e = new Error("Not authorised");
     e.statusCode = 403;
     throw e;
@@ -330,13 +337,61 @@ const deleteNurseNote = async (id, nurseUserId) => {
     e.statusCode = 400;
     throw e;
   }
-  if (note.nurse.toString() !== nurseUserId.toString()) {
+  // FIX (audit P13-B3): allow null-owner notes through (legacy data).
+  if (note.nurse && nurseUserId && note.nurse.toString() !== nurseUserId.toString()) {
     const e = new Error("Not authorised");
     e.statusCode = 403;
     throw e;
   }
   await note.deleteOne();
   return true;
+};
+
+/* ─────────────────────────────────────────────────────────────
+   Blood transfusion helpers (audit P13-B2 — controller references
+   these but they didn't exist in the legacy service, so the two
+   PATCH endpoints always threw TypeError).
+───────────────────────────────────────────────────────────── */
+const addBloodMonitoringEntry = async (noteId, entry) => {
+  const note = await NurseNotes.findById(noteId);
+  if (!note) throw new Error("Nurse note not found");
+  // Persist the monitoring entry under noteData.bloodTransfusion.monitoring[]
+  const path = (note.noteData && note.noteData.bloodTransfusion) || {};
+  const monitoring = Array.isArray(path.monitoring) ? path.monitoring : [];
+  monitoring.push({
+    at: entry?.at || new Date(),
+    pulse: entry?.pulse,
+    bp:    entry?.bp,
+    temp:  entry?.temp,
+    spo2:  entry?.spo2,
+    rr:    entry?.rr,
+    observation: entry?.observation || "",
+    reaction:    entry?.reaction    || "",
+    recordedBy:  entry?.recordedBy  || "",
+  });
+  note.noteData = {
+    ...note.noteData,
+    bloodTransfusion: { ...path, monitoring },
+  };
+  note.markModified("noteData");
+  return note.save();
+};
+
+const updateBloodTransfusionStatus = async (noteId, status, notes = "") => {
+  const note = await NurseNotes.findById(noteId);
+  if (!note) throw new Error("Nurse note not found");
+  const path = (note.noteData && note.noteData.bloodTransfusion) || {};
+  note.noteData = {
+    ...note.noteData,
+    bloodTransfusion: {
+      ...path,
+      status,
+      statusNotes: notes,
+      statusUpdatedAt: new Date(),
+    },
+  };
+  note.markModified("noteData");
+  return note.save();
 };
 
 /* ─────────────────────────────────────────────────────────────
@@ -359,4 +414,6 @@ module.exports = {
   updateNurseNote,
   confirmSingleOrder,
   deleteNurseNote,
+  addBloodMonitoringEntry,
+  updateBloodTransfusionStatus,
 };

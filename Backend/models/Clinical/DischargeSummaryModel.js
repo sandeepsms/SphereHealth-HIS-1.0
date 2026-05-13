@@ -85,6 +85,25 @@ const DischargeSummarySchema = new mongoose.Schema(
       enum: ["Stable", "Improved", "Unchanged", "Deteriorated", "Critical", "LAMA", "Expired"],
       default: "Stable" },
     totalDaysAdmitted: { type: Number, default: 0 },
+    // FIX (audit P17-B5): NABH required fields that were missing entirely.
+    // dischargeType is mandatory per NABH COP.7 — captures the legal mode
+    // of departure (Routine, LAMA, DAMA, Absconded, Referral, Death).
+    dischargeType: {
+      type: String,
+      enum: ["Routine", "LAMA", "DAMA", "Absconded", "Referral", "Death"],
+      default: "Routine",
+    },
+    timeOfDischarge: { type: String, trim: true, default: "" },  // free-text "HH:MM"
+    // Death-related fields (only used when conditionOnDischarge === "Expired"
+    // or dischargeType === "Death")
+    deathDate:       { type: Date,   default: null },
+    deathTime:       { type: String, trim: true, default: "" },
+    causeOfDeath:    { type: String, trim: true, default: "" },
+    immediateCauseOfDeath: { type: String, trim: true, default: "" },
+    antecedentCauseOfDeath:{ type: String, trim: true, default: "" },
+    // Snapshot the active MLR number at finalize-time so historical prints
+    // keep the stamp even if MLC is later closed (audit P17-B7).
+    mlrNumberSnapshot: { type: String, trim: true, default: "" },
 
     // ── Discharge Instructions ───────────────────────────────
     medicationsOnDischarge: [MedicationOnDischargeSchema],

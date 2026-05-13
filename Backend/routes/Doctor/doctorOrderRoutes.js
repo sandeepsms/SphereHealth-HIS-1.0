@@ -105,10 +105,31 @@ router.get("/:id", async (req, res) => {
 });
 
 // PATCH /:id — general update (status, consent, nurseNotes, stopReason, etc.)
+//
+// FIX (audit P14-B7): legacy PATCH was a wide-open `$set: req.body` —
+// any caller could overwrite hamFlag / twoNurseRequired / orderedBy /
+// administrationRecord / auditLog directly, bypassing every safeguard.
+// Now whitelisted to fields the workflow genuinely needs to mutate from
+// the generic PATCH path. Other changes go through dedicated endpoints
+// (administer / rate-change / step / stop) that enforce business rules.
+const PATCH_ALLOWED = new Set([
+  "status", "stopReason", "stoppedAt", "stoppedBy",
+  "nurseNotes", "consentObtained", "consentNotes",
+  "currentRate", "rateUnit", "infusionStartedAt", "infusionEndedAt",
+  "holdUntil", "holdReason", "delayReason",
+  "remarks", "priority",
+]);
 router.patch("/:id", async (req, res) => {
   try {
+    const safe = {};
+    for (const [k, v] of Object.entries(req.body || {})) {
+      if (PATCH_ALLOWED.has(k)) safe[k] = v;
+    }
+    if (Object.keys(safe).length === 0) {
+      return res.status(400).json({ ok: false, message: "No allowed fields to update — use the dedicated /administer or /rate-change endpoints" });
+    }
     const order = await DoctorOrder.findByIdAndUpdate(
-      req.params.id, { $set: req.body }, { new: true, runValidators: true }
+      req.params.id, { $set: safe }, { new: true, runValidators: true }
     );
     if (!order) return res.status(404).json({ ok: false, message: "Not found" });
     res.json({ ok: true, data: order });

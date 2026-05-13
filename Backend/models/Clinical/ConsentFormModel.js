@@ -52,9 +52,13 @@ const ConsentFormSchema = new mongoose.Schema(
     interpreterName: { type: String, trim: true },
 
     // ── Consent Giver ────────────────────────────────────────
+    // FIX (audit P18-B1): enum was missing RELATIVE / LEGAL_REP that the
+    // frontend <select> offers, so those values silently failed save and
+    // the user was told "preview mode" instead of a real error. Now
+    // accepts every option the UI exposes.
     consentGivenBy: {
       type: String,
-      enum: ["SELF", "GUARDIAN", "SPOUSE", "PARENT", "SIBLING", "OTHER"],
+      enum: ["SELF", "GUARDIAN", "SPOUSE", "PARENT", "SIBLING", "RELATIVE", "LEGAL_REP", "OTHER"],
       default: "SELF" },
     guardianName: { type: String, trim: true },
     guardianRelation: { type: String, trim: true },

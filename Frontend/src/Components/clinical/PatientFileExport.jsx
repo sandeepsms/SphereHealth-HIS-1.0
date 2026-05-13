@@ -143,7 +143,23 @@ export default function PatientFileExport({ patient, printRef, title = "Patient 
   const onCopy = useCallback(async () => {
     if (!shareUrl) return;
     try {
-      await navigator.clipboard.writeText(shareUrl);
+      // FIX (audit P28-B4): `navigator.clipboard` is undefined on plain
+      // HTTP intranet contexts (typical hospital LAN). Fall back to a
+      // hidden textarea + document.execCommand("copy") which works
+      // everywhere.
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(shareUrl);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = shareUrl;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.focus(); ta.select();
+        const ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+        if (!ok) throw new Error("execCommand copy returned false");
+      }
       toast.success("Link copied — share via WhatsApp / SMS");
     } catch {
       toast.error("Could not access clipboard — please copy manually");
@@ -177,7 +193,18 @@ export default function PatientFileExport({ patient, printRef, title = "Patient 
             <div className="pfe-modal-body">
               <div className="pfe-qr-card">
                 {qrSrc ? (
-                  <img src={qrSrc} alt={`QR for ${patient.fullName} (${patient.UHID})`} className="pfe-qr-img" />
+                  <img
+                    src={qrSrc}
+                    alt={`QR for ${patient.fullName} (${patient.UHID})`}
+                    className="pfe-qr-img"
+                    onError={(e) => {
+                      // FIX (audit P28-B3): graceful failure if the external
+                      // QR API is unreachable (firewall / offline). Swap to
+                      // a fallback message instead of a broken image icon.
+                      e.currentTarget.outerHTML =
+                        '<div class="pfe-qr-placeholder">QR service unreachable — share the link below directly.</div>';
+                    }}
+                  />
                 ) : (
                   <div className="pfe-qr-placeholder">No UHID — cannot build a sharable link.</div>
                 )}
