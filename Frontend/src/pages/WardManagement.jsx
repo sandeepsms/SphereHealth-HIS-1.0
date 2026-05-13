@@ -19,46 +19,31 @@ const WardManagement = () => {
   const toast = React.useRef(null);
 
   useEffect(() => {
-    console.log("Component mounted, loading wards...");
     loadWards();
   }, []);
 
   const loadWards = async () => {
     setLoading(true);
     try {
-      console.log("Fetching wards from API...");
       const data = await wardService.getAllWards();
-      console.log("Raw API response:", data);
 
       let wardsArray = [];
-
-      // Handle different response formats
       if (Array.isArray(data)) {
         wardsArray = data;
       } else if (data && Array.isArray(data.data)) {
         wardsArray = data.data;
       } else if (data && Array.isArray(data.wards)) {
         wardsArray = data.wards;
-      } else {
-        console.warn("Unexpected data format:", data);
       }
 
-      console.log("Processed wards array:", wardsArray);
-      console.log("Total wards found:", wardsArray.length);
-
       // Map the data to extract populated fields
-      const mappedWards = wardsArray.map((ward) => {
-        console.log("Processing ward:", ward);
-        return {
-          ...ward,
-          buildingName:
-            ward.building?.buildingName || ward.buildingName || "N/A",
-          floorName: ward.floor?.floorName || ward.floorName || "N/A",
-          floorNumber: ward.floor?.floorNumber || ward.floorNumber || "N/A",
-        };
-      });
+      const mappedWards = wardsArray.map((ward) => ({
+        ...ward,
+        buildingName: ward.building?.buildingName || ward.buildingName || "N/A",
+        floorName: ward.floor?.floorName || ward.floorName || "N/A",
+        floorNumber: ward.floor?.floorNumber || ward.floorNumber || "N/A",
+      }));
 
-      console.log("Mapped wards:", mappedWards);
       setWards(mappedWards);
 
       if (mappedWards.length > 0) {
@@ -70,8 +55,6 @@ const WardManagement = () => {
         });
       }
     } catch (error) {
-      console.error("Error loading wards:", error);
-      console.error("Error details:", error.response?.data);
       setWards([]);
       toast.current?.show({
         severity: "error",
@@ -85,7 +68,6 @@ const WardManagement = () => {
   };
 
   const handleEdit = (ward) => {
-    console.log("Editing ward:", ward);
     setSelectedWard(ward);
     setShowForm(true);
   };
@@ -97,7 +79,6 @@ const WardManagement = () => {
       icon: "pi pi-exclamation-triangle",
       accept: async () => {
         try {
-          console.log("Deleting ward:", ward._id);
           await wardService.deleteWard(ward._id);
           toast.current?.show({
             severity: "success",
@@ -107,7 +88,6 @@ const WardManagement = () => {
           });
           loadWards();
         } catch (error) {
-          console.error("Error deleting ward:", error);
           toast.current?.show({
             severity: "error",
             summary: "Error",
@@ -120,10 +100,9 @@ const WardManagement = () => {
   };
 
   const handleSave = () => {
-    console.log("Ward saved, reloading wards...");
     setShowForm(false);
     setSelectedWard(null);
-    loadWards(); // Reload wards
+    loadWards();
     toast.current?.show({
       severity: "success",
       summary: "Success",
@@ -133,7 +112,6 @@ const WardManagement = () => {
   };
 
   const handleFormHide = () => {
-    console.log("Form hidden");
     setShowForm(false);
     setSelectedWard(null);
   };

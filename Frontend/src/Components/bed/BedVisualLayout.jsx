@@ -34,6 +34,28 @@ const STATUS_BG = {
   Blocked: { bg: "#f3f4f6", color: "#374151" },
 };
 
+// ── Isolation / Precaution colors (NABH IPC.6) ──
+// Surfaced as small badges + a left-edge stripe on the bed card.
+// Keys match Bed.isolationFlags enum on the backend.
+const ISOLATION_STYLE = {
+  Contact:     { bg: "#fef3c7", color: "#92400e", border: "#fcd34d", icon: "pi-hand-paper" },
+  Droplet:     { bg: "#dbeafe", color: "#1e40af", border: "#93c5fd", icon: "pi-cloud" },
+  Airborne:    { bg: "#fee2e2", color: "#991b1b", border: "#fca5a5", icon: "pi-wind" },
+  Neutropenic: { bg: "#ede9fe", color: "#5b21b6", border: "#c4b5fd", icon: "pi-shield" },
+  MRSA:        { bg: "#fee2e2", color: "#991b1b", border: "#fca5a5", icon: "pi-exclamation-triangle" },
+  COVID:       { bg: "#fee2e2", color: "#7f1d1d", border: "#f87171", icon: "pi-virus" },
+  TB:          { bg: "#ffedd5", color: "#9a3412", border: "#fdba74", icon: "pi-exclamation-circle" },
+  VRE:         { bg: "#fae8ff", color: "#86198f", border: "#f0abfc", icon: "pi-exclamation-triangle" },
+  CRE:         { bg: "#fce7f3", color: "#9d174d", border: "#f9a8d4", icon: "pi-exclamation-triangle" },
+  "C.diff":    { bg: "#fef9c3", color: "#854d0e", border: "#fde047", icon: "pi-exclamation-triangle" },
+  Reverse:     { bg: "#ccfbf1", color: "#115e59", border: "#5eead4", icon: "pi-shield" },
+};
+const PRECAUTION_LEVEL_TINT = {
+  Standard: null,            // no stripe
+  Enhanced: "#f59e0b",       // amber stripe along the top of the card
+  Strict:   "#dc2626",       // red stripe — strict isolation
+};
+
 const DEPTS = [
   "Cardiology",
   "Neurology",
@@ -1413,13 +1435,21 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                             )
                           : null;
 
+                        // ── Isolation / precaution display ──
+                        const flags = Array.isArray(bed.isolationFlags)
+                          ? bed.isolationFlags.filter(f => ISOLATION_STYLE[f])
+                          : [];
+                        const precStripe = PRECAUTION_LEVEL_TINT[bed.precautionLevel || "Standard"];
+
                         return (
                           <div
                             key={bed._id}
                             onClick={() => handleBedClick(bed)}
+                            title={flags.length ? `Isolation: ${flags.join(", ")}${bed.isolationNotes ? " — " + bed.isolationNotes : ""}` : undefined}
                             style={{
                               border: "1px solid #e2e8f0",
                               borderLeft: `4px solid ${col}`,
+                              borderTop: precStripe ? `3px solid ${precStripe}` : "1px solid #e2e8f0",
                               borderRadius: 12,
                               background: avail
                                 ? "#f9fafb"
@@ -1429,6 +1459,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                               cursor: avail || occ ? "pointer" : "default",
                               padding: "14px 16px",
                               transition: "all .2s",
+                              position: "relative",
                             }}
                             onMouseEnter={(e) => {
                               if (avail || occ) {
@@ -1495,6 +1526,34 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                                 {bed.status}
                               </span>
                             </div>
+
+                            {/* ── Isolation / precaution badges ── */}
+                            {flags.length > 0 && (
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
+                                {flags.map(f => {
+                                  const s = ISOLATION_STYLE[f];
+                                  return (
+                                    <span key={f}
+                                      style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: 3,
+                                        padding: "2px 7px",
+                                        borderRadius: 999,
+                                        fontSize: 10,
+                                        fontWeight: 700,
+                                        background: s.bg,
+                                        color: s.color,
+                                        border: `1px solid ${s.border}`,
+                                        letterSpacing: ".3px",
+                                      }}>
+                                      <i className={`pi ${s.icon}`} style={{ fontSize: 9 }} />
+                                      {f}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            )}
 
                             {occ && pName && (
                               <div

@@ -68,6 +68,51 @@ const BedSchema = new mongoose.Schema(
       default: true,
     },
     notes: String,
+
+    // ── Infection Prevention & Control (NABH IPC.6) ──
+    // Multiple flags can co-exist on a single bed (e.g. MRSA + Contact).
+    // Visual layout surfaces these as colored rings; admission flow
+    // warns the receptionist when an isolation bed is being assigned.
+    isolationFlags: {
+      type: [String],
+      default: [],
+      enum: [
+        "Contact",
+        "Droplet",
+        "Airborne",
+        "Neutropenic",
+        "MRSA",
+        "COVID",
+        "TB",
+        "VRE",
+        "CRE",
+        "C.diff",
+        "Reverse",
+      ],
+    },
+    // Optional summary level used for at-a-glance filtering
+    precautionLevel: {
+      type: String,
+      enum: ["Standard", "Enhanced", "Strict"],
+      default: "Standard",
+    },
+    isolationStartedAt: { type: Date, default: null },
+    isolationEndsAt:    { type: Date, default: null },
+    isolationNotes:     { type: String, default: "" },
+
+    // ── Housekeeping sub-status (P1 #5 — placeholder, batch 2 wires UI) ──
+    // status: "Maintenance" stays the primary bucket; this finer-grained
+    // state lets the dashboard show cleaning queue + SLA timer.
+    housekeeping: {
+      state: {
+        type: String,
+        enum: ["Idle", "CleaningPending", "CleaningInProgress", "CleaningDone", "Inspected"],
+        default: "Idle",
+      },
+      startedAt:  { type: Date, default: null },
+      finishedAt: { type: Date, default: null },
+      assignedTo: { type: String, default: "" },
+    },
   },
   {
     timestamps: true,

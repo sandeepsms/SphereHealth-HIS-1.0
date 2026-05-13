@@ -112,14 +112,21 @@ const NAV = [
     icon: "pi-table", color: "#475569", light: "#f8fafc",
     roles: [ADMIN, RX, NR, WB],
     items: [
-      // RX-flavored read-only visual layout (no admit / transfer / discharge)
-      { label: "Bed Visual Layout",  icon: "pi-eye",       path: "/reception-beds", roles: [RX] },
-      // Full clinical version
-      { label: "Bed Visual Layout",  icon: "pi-eye",       path: "/bed-visual",   roles: [ADMIN, NR, WB] },
-      { label: "Manage Beds",        icon: "pi-list",      path: "/beds",         roles: [ADMIN, NR] },
-      { label: "Wards",              icon: "pi-home",      path: "/wards",        roles: [ADMIN, NR] },
-      { label: "Rooms",              icon: "pi-box",       path: "/rooms",        roles: [ADMIN] },
-      { label: "Room Category",      icon: "pi-th-large",  path: "/roomcategory", roles: [ADMIN] },
+      // ── Operational (everyone in group sees these) ──
+      { label: "Dashboard",          icon: "pi-chart-bar", path: "/bed-dashboard",  badge: "NEW", roles: [ADMIN, NR, WB] },
+      // Single role-aware Live Bed Map; RX sees read-only mode on the same route
+      { label: "Live Bed Map",       icon: "pi-eye",       path: "/bed-visual",     roles: [ADMIN, RX, NR, WB] },
+      { label: "Bed Transfers",      icon: "pi-arrows-h",  path: "/bed-transfers",  badge: "NEW", roles: [ADMIN, DR, NR] },
+      { label: "Manage Beds",        icon: "pi-list",      path: "/beds",           roles: [ADMIN, NR] },
+      // ── Setup & Hierarchy (admin only) ──
+      // These were previously scattered: Wards/Rooms/RoomCategory here,
+      // Buildings/Floors in Settings. Consolidated into one group so the
+      // full Building → Floor → Ward → Room → Bed hierarchy lives together.
+      { label: "Wards",              icon: "pi-home",      path: "/wards",          roles: [ADMIN, NR] },
+      { label: "Rooms",              icon: "pi-box",       path: "/rooms",          roles: [ADMIN] },
+      { label: "Room Categories",    icon: "pi-th-large",  path: "/roomcategory",   roles: [ADMIN] },
+      { label: "Floors",             icon: "pi-arrows-v",  path: "/floors",         roles: [ADMIN] },
+      { label: "Buildings",          icon: "pi-building",  path: "/buildings",      roles: [ADMIN] },
     ],
   },
 
@@ -220,10 +227,8 @@ const NAV = [
       { label: "Doctor Management",  icon: "pi-user-edit",  path: "/doctors" },
       { label: "User Management",    icon: "pi-users",      path: "/admin/users" },
       { label: "Hospital Charges",   icon: "pi-dollar",     path: "/hospital-charges" },
-      { label: "Buildings",          icon: "pi-building",   path: "/buildings" },
-      { label: "Floors",             icon: "pi-arrows-v",   path: "/floors" },
-      { label: "Rooms",              icon: "pi-box",        path: "/rooms" },
-      { label: "Room Category",      icon: "pi-th-large",   path: "/roomcategory" },
+      // Buildings / Floors / Rooms / Room Categories moved to Bed Management
+      // so the full bed hierarchy lives in one place.
     ],
   },
 ];

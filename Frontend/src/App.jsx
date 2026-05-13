@@ -40,6 +40,8 @@ const WardManagement = lazy(() => import("./pages/WardManagement"));
 const BuildingManagement = lazy(() => import("./pages/BuildingManagement"));
 const FloorManagement = lazy(() => import("./pages/FloorManagement"));
 const BedVisualLayout = lazy(() => import("./Components/bed/BedVisualLayout"));
+const BedDashboard = lazy(() => import("./pages/bed/BedDashboard"));
+const BedTransfersListPage = lazy(() => import("./pages/bed/BedTransfersListPage"));
 
 // Patients
 const PatientList = lazy(() => import("./pages/patient/PatientList"));
@@ -325,6 +327,8 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/department" element={<DepartmentManagement />} />
 
             {/* ── Bed Management ────────────────────────────────── */}
+            <Route path="/bed-dashboard" element={<BedDashboard />} />
+            <Route path="/bed-transfers" element={<BedTransfersListPage />} />
             <Route path="/beds" element={<BedManagement />} />
             <Route path="/bed-visual" element={<BedVisualLayout />} />
             <Route path="/rooms" element={<RoomManagement />} />
