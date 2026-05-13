@@ -41,6 +41,8 @@ const BuildingManagement = lazy(() => import("./pages/BuildingManagement"));
 const FloorManagement = lazy(() => import("./pages/FloorManagement"));
 const BedVisualLayout = lazy(() => import("./Components/bed/BedVisualLayout"));
 const BedDashboard = lazy(() => import("./pages/bed/BedDashboard"));
+const PrintRouterPage = lazy(() => import("./pages/print/PrintRouterPage"));
+const PrintGalleryPage = lazy(() => import("./pages/print/PrintGalleryPage"));
 const BedTransfersListPage = lazy(() => import("./pages/bed/BedTransfersListPage"));
 const BedMonthlyReportPage = lazy(() => import("./pages/bed/BedMonthlyReportPage"));
 
@@ -201,6 +203,7 @@ function AppLayout({ collapsed, setCollapsed }) {
 
   const isLogin    = location.pathname === "/login";
   const isBillPrint = location.pathname.startsWith("/bill-print/");
+  const isPrintable = location.pathname.startsWith("/print/");
 
   /* Complete-patient-file in print mode — strip sidebar / header so the
    * popup window the Print button opens shows nothing but the clinical
@@ -222,6 +225,19 @@ function AppLayout({ collapsed, setCollapsed }) {
       <Suspense fallback={<RouteLoader />}>
         <Routes>
           <Route path="/bill-print/:billId" element={<BillPrintPage />} />
+        </Routes>
+      </Suspense>
+    );
+  }
+
+  /* Unified /print/<slug> printables — opens in a popup window with
+   * paper-size toolbar, no app chrome. Driven by PrintRouterPage which
+   * dispatches to the registered printable component. */
+  if (isPrintable && user) {
+    return (
+      <Suspense fallback={<RouteLoader />}>
+        <Routes>
+          <Route path="/print/:slug" element={<PrintRouterPage />} />
         </Routes>
       </Suspense>
     );
@@ -329,6 +345,7 @@ function AppLayout({ collapsed, setCollapsed }) {
 
             {/* ── Bed Management ────────────────────────────────── */}
             <Route path="/bed-dashboard" element={<BedDashboard />} />
+            <Route path="/print-gallery" element={<PrintGalleryPage />} />
             <Route path="/bed-transfers" element={<BedTransfersListPage />} />
             <Route path="/bed-reports/monthly" element={<BedMonthlyReportPage />} />
             <Route path="/beds" element={<BedManagement />} />

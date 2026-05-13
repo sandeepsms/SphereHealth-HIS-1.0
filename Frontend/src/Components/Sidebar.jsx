@@ -226,6 +226,7 @@ const NAV = [
     roles: [ADMIN],   // Admin only
     items: [
       { label: "Hospital Settings",  icon: "pi-building",   path: "/hospital-settings", badge: "NEW" },
+      { label: "Print Templates",    icon: "pi-print",      path: "/print-gallery",     badge: "NEW" },
       { label: "Department",         icon: "pi-sitemap",    path: "/department" },
       { label: "Doctor Management",  icon: "pi-user-edit",  path: "/doctors" },
       { label: "User Management",    icon: "pi-users",      path: "/admin/users" },

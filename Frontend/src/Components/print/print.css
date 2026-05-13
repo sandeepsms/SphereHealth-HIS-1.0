@@ -1,0 +1,396 @@
+/* ════════════════════════════════════════════════════════════════
+   Unified printable styling for SphereHealth HIS.
+
+   Loaded into the popup window (NOT the SPA) by printDocument().
+   The popup contains: hospital header → document body → footer.
+
+   Paper size is driven by `data-paper="a4" | "a5" | "half-a4"` on
+   <html>. We render two physical sizes:
+     - a4       = standard 210 × 297 mm
+     - half-a4  = 210 × 148.5 mm (landscape half-fold receipts)
+     - a5       = 148 × 210 mm (small printers — same as half-a4 but portrait)
+
+   Class vocabulary is `pr-*` so it never collides with any of the
+   app's existing design systems (pf-*, dnp-*, bm-*).
+═══════════════════════════════════════════════════════════════ */
+
+/* ── Page rules — one rule per paper size ── */
+html[data-paper="a4"]      { --pr-page-width: 210mm; }
+html[data-paper="a5"]      { --pr-page-width: 148mm; }
+html[data-paper="half-a4"] { --pr-page-width: 210mm; }
+
+@page                       { margin: 12mm; }
+@media print {
+  html[data-paper="a4"] @page      { size: A4 portrait;     margin: 12mm; }
+  html[data-paper="a5"] @page      { size: A5 portrait;     margin: 8mm; }
+  html[data-paper="half-a4"] @page { size: 210mm 148.5mm;  margin: 8mm 12mm; }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: #f1f5f9;
+  font-family: 'Inter', 'Segoe UI', Tahoma, sans-serif;
+  color: #0f172a;
+  font-size: 12px;
+  line-height: 1.45;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+/* On-screen container that mimics the printed page */
+.pr-page {
+  width: var(--pr-page-width, 210mm);
+  min-height: calc(var(--pr-page-width, 210mm) * 1.414);
+  margin: 14px auto;
+  background: white;
+  padding: 14mm;
+  box-shadow: 0 10px 36px rgba(15,23,42,.12);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+html[data-paper="half-a4"] .pr-page {
+  min-height: 148.5mm;
+  padding: 8mm 12mm;
+}
+html[data-paper="a5"] .pr-page {
+  width: 148mm;
+  min-height: 210mm;
+  padding: 8mm;
+}
+
+@media print {
+  body { background: white; }
+  .pr-page {
+    box-shadow: none;
+    margin: 0 auto;
+    padding: 0;     /* @page margin handles this */
+  }
+  .pr-no-print { display: none !important; }
+  .pr-page-break { page-break-after: always; }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   Hospital header — pulled from /api/hospital-settings
+════════════════════════════════════════════════════════════════ */
+.pr-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding-bottom: 10px;
+  border-bottom: 2px solid var(--pr-header-color, #1e293b);
+  margin-bottom: 14px;
+}
+.pr-header__logo {
+  height: 60px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.pr-header__body { flex: 1; min-width: 0; }
+.pr-header__name {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: .3px;
+  color: var(--pr-header-color, #0f172a);
+  margin: 0 0 2px 0;
+}
+.pr-header__tagline {
+  font-size: 11px;
+  color: #475569;
+  font-style: italic;
+  margin: 0 0 6px 0;
+}
+.pr-header__addr {
+  font-size: 11px;
+  color: #334155;
+  line-height: 1.4;
+}
+.pr-header__meta {
+  text-align: right;
+  font-size: 10.5px;
+  color: #475569;
+  line-height: 1.5;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.pr-header__meta strong { color: #0f172a; }
+.pr-accred {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .5px;
+  border: 1.5px solid currentColor;
+  text-transform: uppercase;
+  margin-left: 4px;
+}
+.pr-accred--nabh { color: #0e7490; }
+.pr-accred--nabl { color: #7c3aed; }
+
+/* ════════════════════════════════════════════════════════════════
+   Document title bar (under the header)
+════════════════════════════════════════════════════════════════ */
+.pr-title-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 6px 0 12px;
+  padding: 8px 14px;
+  background: var(--pr-accent-color, #1d4ed8);
+  color: white;
+  border-radius: 6px;
+}
+.pr-title-bar__title {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+}
+.pr-title-bar__no {
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(255,255,255,.18);
+  padding: 3px 10px;
+  border-radius: 4px;
+  letter-spacing: .3px;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   Patient + date strip
+════════════════════════════════════════════════════════════════ */
+.pr-info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 6px 18px;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  margin-bottom: 14px;
+}
+.pr-info-grid__item { font-size: 11px; }
+.pr-info-grid__lbl {
+  color: #64748b;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 9px;
+  letter-spacing: .5px;
+  margin-bottom: 1px;
+}
+.pr-info-grid__val { color: #0f172a; font-weight: 700; }
+
+/* ════════════════════════════════════════════════════════════════
+   Tables — receipts, prescriptions, item lists
+════════════════════════════════════════════════════════════════ */
+.pr-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 6px 0 12px;
+  font-size: 11.5px;
+}
+.pr-table thead th {
+  background: var(--pr-accent-color, #1d4ed8);
+  color: white;
+  padding: 8px 10px;
+  text-align: left;
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 9.5px;
+  letter-spacing: .4px;
+}
+.pr-table thead th.right { text-align: right; }
+.pr-table thead th.center { text-align: center; }
+.pr-table tbody td {
+  padding: 7px 10px;
+  border-bottom: 1px solid #e2e8f0;
+  vertical-align: top;
+}
+.pr-table tbody tr:nth-child(odd) td { background: #f8fafc; }
+.pr-table tbody td.right { text-align: right; font-variant-numeric: tabular-nums; }
+.pr-table tbody td.center { text-align: center; }
+.pr-table tbody td.muted { color: #64748b; }
+.pr-table tfoot td {
+  padding: 8px 10px;
+  font-weight: 700;
+  border-top: 2px solid #cbd5e1;
+}
+.pr-table .pr-row-total td {
+  background: var(--pr-accent-color, #1d4ed8) !important;
+  color: white !important;
+  font-weight: 800;
+}
+.pr-table .pr-row-total td.right { font-size: 13px; }
+
+/* Totals stack (right-aligned summary box) */
+.pr-totals {
+  width: 280px;
+  margin-left: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+.pr-totals__row {
+  display: flex;
+  justify-content: space-between;
+  padding: 5px 12px;
+  font-size: 11.5px;
+  border-bottom: 1px solid #e2e8f0;
+}
+.pr-totals__row:last-child { border-bottom: 0; }
+.pr-totals__row--grand {
+  background: var(--pr-accent-color, #1d4ed8);
+  color: white;
+  font-weight: 800;
+  font-size: 13.5px;
+}
+.pr-totals__lbl { color: #475569; }
+.pr-totals__row--grand .pr-totals__lbl { color: white; }
+.pr-totals__val { font-variant-numeric: tabular-nums; font-weight: 700; }
+
+/* ════════════════════════════════════════════════════════════════
+   Section block (used for SOAP, diagnosis, prescription items)
+════════════════════════════════════════════════════════════════ */
+.pr-section {
+  margin-bottom: 12px;
+  break-inside: avoid;
+}
+.pr-section__title {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--pr-accent-color, #1d4ed8);
+  border-bottom: 1.5px solid currentColor;
+  padding-bottom: 3px;
+  margin-bottom: 6px;
+}
+.pr-section__body { font-size: 11.5px; color: #1e293b; }
+.pr-kv { display: grid; grid-template-columns: 130px 1fr; gap: 4px 12px; }
+.pr-kv dt { font-weight: 600; color: #475569; font-size: 11px; }
+.pr-kv dd { margin: 0; }
+
+/* Amount-in-words line under tables */
+.pr-amount-words {
+  background: #fef9c3;
+  border: 1px dashed #facc15;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #713f12;
+  margin: 0 0 12px;
+}
+.pr-amount-words strong { letter-spacing: .3px; }
+
+/* Payment-method chip */
+.pr-paymethod {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  border: 1.5px solid currentColor;
+}
+.pr-paymethod--cash { color: #15803d; background: #dcfce7; border-color: #86efac; }
+.pr-paymethod--upi  { color: #5b21b6; background: #ede9fe; border-color: #c4b5fd; }
+.pr-paymethod--card { color: #1e40af; background: #dbeafe; border-color: #93c5fd; }
+.pr-paymethod--net  { color: #0e7490; background: #cffafe; border-color: #5eead4; }
+.pr-paymethod--chq  { color: #92400e; background: #fef3c7; border-color: #fde68a; }
+
+/* ════════════════════════════════════════════════════════════════
+   Footer — bank details, signature, terms
+════════════════════════════════════════════════════════════════ */
+.pr-footer {
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1.5px solid #e2e8f0;
+}
+.pr-bank {
+  background: #f8fafc;
+  border-left: 3px solid var(--pr-accent-color, #1d4ed8);
+  padding: 6px 12px;
+  margin-bottom: 10px;
+  font-size: 10px;
+  color: #334155;
+}
+.pr-bank strong { color: #0f172a; }
+.pr-signatures {
+  display: flex;
+  justify-content: space-between;
+  margin: 16px 0 8px;
+  font-size: 10.5px;
+}
+.pr-sig {
+  text-align: center;
+  width: 36%;
+}
+.pr-sig__line {
+  border-top: 1px solid #94a3b8;
+  margin-top: 36px;
+  padding-top: 4px;
+  font-weight: 700;
+  color: #475569;
+  font-size: 10px;
+  letter-spacing: .4px;
+}
+.pr-terms {
+  font-size: 9.5px;
+  color: #64748b;
+  text-align: center;
+  margin: 6px 0 0;
+  line-height: 1.4;
+}
+.pr-terms div + div { margin-top: 1px; }
+.pr-footer__note {
+  text-align: center;
+  font-size: 11px;
+  font-style: italic;
+  color: #475569;
+  margin-bottom: 6px;
+}
+
+/* On-screen control bar (Print + paper picker) — hidden in @media print */
+.pr-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: linear-gradient(135deg, #0f172a, #1e293b);
+  color: white;
+  padding: 10px 18px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 4px 16px rgba(15,23,42,.18);
+}
+.pr-toolbar__title {
+  font-weight: 800;
+  font-size: 13px;
+  letter-spacing: .3px;
+  flex: 1;
+}
+.pr-toolbar select,
+.pr-toolbar button {
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 7px;
+  padding: 6px 14px;
+  border: 1.5px solid rgba(255,255,255,.3);
+  background: rgba(255,255,255,.12);
+  color: white;
+  cursor: pointer;
+}
+.pr-toolbar button.primary {
+  background: white;
+  color: #0f172a;
+  border-color: white;
+}
+.pr-toolbar button:hover { filter: brightness(1.1); }

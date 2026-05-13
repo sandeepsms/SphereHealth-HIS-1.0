@@ -23,6 +23,7 @@ export const API_ENDPOINTS = {
   // sides aligned so the route works on case-sensitive Linux deployments.
   TPASERVICEBILL: `${API_BASE_URL}/servicebilldata/addbill`,
   HOSPITAL_CHARGES: `${API_BASE_URL}/hospital-charges`,
+  HOSPITAL_SETTINGS: `${API_BASE_URL}/hospital-settings`,
 
   // ── Bed Management ────────────────────────────────────────────
   BEDS: `${API_BASE_URL}/bedss`,
