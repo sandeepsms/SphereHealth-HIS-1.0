@@ -18,7 +18,6 @@ const WardSchema = new mongoose.Schema(
     wardCode: {
       type: String,
       required: true,
-      unique: true,
       uppercase: true,
       trim: true,
     },
@@ -45,6 +44,11 @@ const WardSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// WardSchema.index({ building: 1, floor: 1 });
-// WardSchema.index({ wardCode: 1 });
-module.exports = mongoose.model("Ward", WardSchema);
+WardSchema.index(
+  { wardCode: 1 },
+  { unique: true, partialFilterExpression: { isActive: true } },
+);
+
+module.exports =
+  mongoose.models.Ward ||
+  mongoose.model("Ward", WardSchema);

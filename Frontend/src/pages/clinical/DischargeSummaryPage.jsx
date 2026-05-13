@@ -786,13 +786,20 @@ function DischargeSummaryPageContent({ selectedPatient }) {
 
   const openPrint = () => setPrintData({ ...form, medications, investigations, procedures });
 
+  const [lastSavedId, setLastSavedId] = useState(null);
+  const [finalizing, setFinalizing]   = useState(false);
+
   const handleSave = async () => {
     if (!form.UHID) { toast.warn("Load a patient first"); return; }
     setSaving(true);
     try {
       const payload = { ...form, deptTemplate: selectedDept?.key, medications, investigations, procedures };
-      await axios.post(API, payload, { headers });
-      toast.success("Discharge summary saved");
+      const r = await axios.post(API, payload, { headers });
+      // Capture the freshly-created summary _id so the Finalize button
+      // knows which document to flip + which admission to discharge.
+      const newId = r?.data?.data?._id || r?.data?._id || null;
+      if (newId) setLastSavedId(newId);
+      toast.success("Discharge summary saved as DRAFT — click Finalize to discharge");
       clearDraft();
       openPrint();
     } catch (err) {
@@ -804,6 +811,31 @@ function DischargeSummaryPageContent({ selectedPatient }) {
         toast.error(err.response?.data?.message || "Save failed");
       }
     } finally { setSaving(false); }
+  };
+
+  // FIX (audit P17): the Finalize button was missing. Without it, the
+  // admission stayed "Admitted" forever and the bed was never released.
+  // This calls PATCH /api/discharge-summary/:id/finalize which the
+  // backend now wires through to:
+  //   • DischargeSummary.status = "finalized"
+  //   • Admission.status        = "Discharged"
+  //   • Bed.status               = "Available" (with patient/currentAdmission cleared)
+  const handleFinalize = async () => {
+    if (!lastSavedId) {
+      toast.warn("Save the summary as a draft first, then click Finalize");
+      return;
+    }
+    if (!window.confirm("Finalize this discharge summary?\n\nThis will:\n  • Mark the admission as Discharged\n  • Release the bed back to Available\n  • Lock the summary against further edits")) return;
+
+    setFinalizing(true);
+    try {
+      const finalizedByName = user?.fullName || form.doctorName || "Doctor";
+      await axios.patch(`${API}/${lastSavedId}/finalize`, { finalizedByName }, { headers });
+      toast.success("Discharge finalized — patient discharged, bed released");
+      // Stay on the page in read-only "finalized" mode; the user can still print
+    } catch (err) {
+      toast.error(err.response?.data?.message || "Finalize failed");
+    } finally { setFinalizing(false); }
   };
 
   const color = selectedDept?.color || C.blue;
@@ -1188,8 +1220,12 @@ function DischargeSummaryPageContent({ selectedPatient }) {
               <button onClick={openPrint} style={{ padding: "9px 20px", borderRadius: 8, border: `1.5px solid ${color}`, background: "white", color, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
                 <i className="pi pi-eye" style={{ marginRight: 6 }} />Preview
               </button>
-              <button onClick={handleSave} disabled={saving} style={{ padding: "9px 24px", borderRadius: 8, border: "none", background: saving ? C.muted : color, color: "white", fontWeight: 700, fontSize: 13, cursor: saving ? "not-allowed" : "pointer" }}>
-                {saving ? "Saving…" : <><i className="pi pi-save" style={{ marginRight: 6 }} />Save & Print</>}
+              <button onClick={handleSave} disabled={saving || finalizing} style={{ padding: "9px 24px", borderRadius: 8, border: "none", background: saving ? C.muted : color, color: "white", fontWeight: 700, fontSize: 13, cursor: saving ? "not-allowed" : "pointer" }}>
+                {saving ? "Saving…" : <><i className="pi pi-save" style={{ marginRight: 6 }} />Save Draft</>}
+              </button>
+              <button onClick={handleFinalize} disabled={finalizing || saving || !lastSavedId} style={{ padding: "9px 24px", borderRadius: 8, border: "none", background: finalizing ? C.muted : "#15803d", color: "white", fontWeight: 700, fontSize: 13, cursor: finalizing || !lastSavedId ? "not-allowed" : "pointer", opacity: !lastSavedId ? 0.55 : 1 }}
+                      title={lastSavedId ? "Finalize, discharge patient, release bed" : "Save the draft first"}>
+                {finalizing ? "Finalizing…" : <><i className="pi pi-check" style={{ marginRight: 6 }} />Finalize &amp; Discharge</>}
               </button>
             </div>
           </div>

@@ -47,17 +47,28 @@ const BedTransferSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Auto-generate transferNo before first save
-BedTransferSchema.pre("save", async function (next) {
+// Atomic transferNo via shared Counter.
+const { nextSequence: nextSeqBT } = require("../../utils/counter");
+
+BedTransferSchema.pre("validate", async function (next) {
   if (this.isNew && !this.transferNo) {
-    const year = new Date().getFullYear();
-    const count = await this.constructor.countDocuments({});
-    this.transferNo = `BT-${year}-${String(count + 1).padStart(4, "0")}`;
+    try {
+      const year = new Date().getFullYear();
+      const seq  = await nextSeqBT(`bedtransfer:${year}`);
+      this.transferNo = `BT-${year}-${String(seq).padStart(4, "0")}`;
+    } catch (err) {
+      return next(err);
+    }
   }
   next();
 });
 
 BedTransferSchema.index({ admissionId: 1, status: 1 });
+// Prevent two concurrent PendingHandover transfers per admission.
+BedTransferSchema.index(
+  { admissionId: 1 },
+  { unique: true, partialFilterExpression: { status: "PendingHandover" } },
+);
 
 module.exports =
   mongoose.models.BedTransfer ||

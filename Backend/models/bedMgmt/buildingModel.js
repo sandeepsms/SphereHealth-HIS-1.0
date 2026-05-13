@@ -2,11 +2,12 @@ const mongoose = require("mongoose");
 
 const BuildingSchema = new mongoose.Schema(
   {
-    buildingName: { type: String, required: true, unique: true, trim: true },
+    // Uniqueness enforced via partial indexes below — only across ACTIVE
+    // buildings, so soft-deleted ones can be re-created.
+    buildingName: { type: String, required: true, trim: true },
     buildingCode: {
       type: String,
       required: true,
-      unique: true,
       uppercase: true,
       trim: true,
     },
@@ -19,7 +20,15 @@ const BuildingSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// BuildingSchema.index({ buildingCode: 1 });
-// BuildingSchema.index({ isActive: 1 });
+BuildingSchema.index(
+  { buildingCode: 1 },
+  { unique: true, partialFilterExpression: { isActive: true } },
+);
+BuildingSchema.index(
+  { buildingName: 1 },
+  { unique: true, partialFilterExpression: { isActive: true } },
+);
 
-module.exports = mongoose.model("Building", BuildingSchema);
+module.exports =
+  mongoose.models.Building ||
+  mongoose.model("Building", BuildingSchema);

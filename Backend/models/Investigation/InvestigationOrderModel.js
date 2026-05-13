@@ -193,16 +193,15 @@ const InvestigationOrderSchema = new mongoose.Schema(
   },
 );
 
+// Atomic order number via shared Counter.
+const { nextSequence: nextSeqInv } = require("../../utils/counter");
+
 // Auto order number + totals
 InvestigationOrderSchema.pre("save", async function (next) {
   if (!this.orderNumber) {
-    const today = new Date();
-    const dateStr = today.toISOString().slice(0, 10).replace(/-/g, "");
-    const prefix = `INV-${dateStr}-`;
-    const count = await mongoose.model("InvestigationOrder").countDocuments({
-      orderNumber: { $regex: `^${prefix}` },
-    });
-    this.orderNumber = `${prefix}${String(count + 1).padStart(4, "0")}`;
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    const seq     = await nextSeqInv(`investigation:${dateStr}`);
+    this.orderNumber = `INV-${dateStr}-${String(seq).padStart(4, "0")}`;
   }
 
   this.totalAmount = this.items.reduce((s, i) => s + (i.chargedPrice || 0), 0);

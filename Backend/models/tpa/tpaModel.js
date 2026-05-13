@@ -64,7 +64,8 @@ const TPASchema = new mongoose.Schema(
     tpaCode: {
       type: String,
       required: [true, "TPA code is required"],
-      unique: true,
+      // Uniqueness enforced via partial index at bottom — only across
+      // ACTIVE TPAs, so soft-deleted codes can be re-issued.
       uppercase: true,
       trim: true,
       minlength: [2, "TPA code must be at least 2 characters"],
@@ -132,6 +133,11 @@ const TPASchema = new mongoose.Schema(
 TPASchema.index({ isActive: 1 });
 TPASchema.index({ tpaName: 1 });
 TPASchema.index({ "roomCharges.roomCategory": 1 });
+// Partial unique on tpaCode — only across ACTIVE TPAs (Audit-Pass-7 fix).
+TPASchema.index(
+  { tpaCode: 1 },
+  { unique: true, partialFilterExpression: { isActive: true } },
+);
 
 // Pre-save middleware to ensure tpaCode is uppercase
 TPASchema.pre("save", function (next) {

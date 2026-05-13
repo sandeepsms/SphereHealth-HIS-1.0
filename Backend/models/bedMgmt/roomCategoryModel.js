@@ -4,17 +4,17 @@ const mongoose = require("mongoose");
 const RoomCategorySchema = new mongoose.Schema(
   {
     // ========== BASIC INFO ==========
+    // Uniqueness enforced via partial indexes at bottom — only across
+    // ACTIVE categories, so soft-deleted ones can be re-created.
     categoryName: {
       type: String,
       required: [true, "Category name is required"],
-      unique: true,
       trim: true,
     },
 
     categoryCode: {
       type: String,
       required: [true, "Category code is required"],
-      unique: true,
       uppercase: true,
       trim: true,
     },
@@ -214,4 +214,15 @@ RoomCategorySchema.pre("save", function (next) {
   next();
 });
 
-module.exports = mongoose.model("RoomCategoryModel", RoomCategorySchema);
+RoomCategorySchema.index(
+  { categoryName: 1 },
+  { unique: true, partialFilterExpression: { isActive: true } },
+);
+RoomCategorySchema.index(
+  { categoryCode: 1 },
+  { unique: true, partialFilterExpression: { isActive: true } },
+);
+
+module.exports =
+  mongoose.models.RoomCategoryModel ||
+  mongoose.model("RoomCategoryModel", RoomCategorySchema);

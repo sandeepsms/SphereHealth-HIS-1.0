@@ -12,18 +12,41 @@ const formatDate = (date) => {
 };
 
 // ── Resolve nurse name from ID ────────────────────────
-const resolveNurse = async (nurseId) => {
-  if (!nurseId) return { id: null, name: "" };
+// Resolve nurse from either an ObjectId, a staffId string, or a free-text
+// name. The legacy implementation only handled ObjectIds, so when the
+// frontend sent a plain name (the actual UI) the lookup silently failed
+// and `recordedBy: null, nurseName: ""` was written — every vital lost
+// its audit trail (audit P20). New behaviour:
+//   • ObjectId    → findById
+//   • staffId/name → findOne match + fall through to using the raw
+//                    string as `nurseName` if no NurseStaff row exists
+const mongoose = require("mongoose");
+const resolveNurse = async (input) => {
+  if (!input) return { id: null, name: "" };
   try {
-    const nurse = await NurseStaff.findById(nurseId)
-      .select("personalInfo.fullName staffId")
-      .lean();
+    let nurse = null;
+    if (mongoose.isValidObjectId(input)) {
+      nurse = await NurseStaff.findById(input)
+        .select("personalInfo.fullName staffId")
+        .lean();
+    } else {
+      // Try staffId / name lookup
+      const trimmed = String(input).trim();
+      nurse = await NurseStaff.findOne({
+        $or: [
+          { staffId: trimmed },
+          { "personalInfo.fullName": trimmed },
+        ],
+      }).select("personalInfo.fullName staffId").lean();
+    }
     return {
-      id: nurse?._id || null,
-      name: nurse?.personalInfo?.fullName || "",
+      id:   nurse?._id || null,
+      // Always preserve the input as `name` so the audit trail isn't lost
+      // even if no NurseStaff row matched.
+      name: nurse?.personalInfo?.fullName || String(input).trim(),
     };
   } catch (_) {
-    return { id: null, name: "" };
+    return { id: null, name: String(input || "").trim() };
   }
 };
 

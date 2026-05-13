@@ -1,4 +1,5 @@
 const AdmissionService = require("../../services/Patient/admissionService");
+const { nextSequence } = require("../../utils/counter");
 
 const handle = (fn) => async (req, res) => {
   try {
@@ -631,10 +632,13 @@ class AdmissionController {
         message: `Gate pass already issued (${adm.dischargeWorkflow.gatePassNumber || "—"})`,
       });
     }
-    // Generate gate-pass number: GP-YYYYMMDD-XXXX
+    // Generate gate-pass number: GP-YYYYMMDD-XXXX via atomic Counter
+    // (replaces the legacy countDocuments race that produced duplicates).
+    // The two lines below are kept for backward-compat name shadowing; the
+    // actual value comes from `nextSequence`.
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-    const seq = await Admission.countDocuments({ "dischargeWorkflow.gatePassNumber": { $regex: `^GP-${dateStr}-` } });
-    const passNumber = `GP-${dateStr}-${String(seq + 1).padStart(4, "0")}`;
+    const seq = await nextSequence(`gatepass:${dateStr}`);
+    const passNumber = `GP-${dateStr}-${String(seq).padStart(4, "0")}`;
     adm.dischargeWorkflow.stage             = "Completed";
     adm.dischargeWorkflow.gatePassNumber    = passNumber;
     adm.dischargeWorkflow.gatePassIssuedAt  = new Date();

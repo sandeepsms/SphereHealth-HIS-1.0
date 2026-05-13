@@ -60,14 +60,16 @@ AppointmentSchema.index({ appointmentDate: 1, status: 1 });
 // FIRST, sees the empty path, and rejects the doc with
 // "Appointment validation failed: appointmentNumber: Path `appointmentNumber`
 // is required." which broke every appointment booking.
+// Atomic sequence via shared Counter — replaces the countDocuments race
+// that was producing duplicate APT numbers under concurrent bookings.
+const { nextSequence: nextSeqApt } = require("../../utils/counter");
+
 AppointmentSchema.pre("validate", async function (next) {
   if (this.isNew && !this.appointmentNumber) {
     try {
-      const date  = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-      const count = await mongoose.model("Appointment").countDocuments({
-        appointmentNumber: { $regex: `^APT-${date}-` },
-      });
-      this.appointmentNumber = `APT-${date}-${String(count + 1).padStart(4, "0")}`;
+      const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+      const seq  = await nextSeqApt(`appointment:${date}`);
+      this.appointmentNumber = `APT-${date}-${String(seq).padStart(4, "0")}`;
     } catch (err) {
       return next(err);
     }

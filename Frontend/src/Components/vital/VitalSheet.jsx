@@ -404,17 +404,25 @@ export default function VitalSheet() {
                         const safe = makeSafeId(v.name);
                         const val = row?.values?.[safe];
 
+                        // FIX (audit P20): the old logic preferred `oldVal`
+                        // unconditionally when a previous value existed,
+                        // making corrections impossible — typos became
+                        // permanent. New behavior: the FRESH input from
+                        // the form wins. Only fall back to oldVal when the
+                        // user has explicitly cleared the field (empty
+                        // string + undefined).
                         const oldVal = existingRecord?.tableData
                           ?.find(r => r.time === time)
                           ?.values?.[v.name];
 
-                        if (oldVal) {
-                          acc[v.name] = oldVal;
-                        } else if (val !== "" && val !== undefined) {
+                        const hasFreshInput = val !== "" && val !== undefined && val !== null;
+                        if (hasFreshInput) {
                           acc[v.name] = {
                             value: Number(val),
-                            unit: v.unit,
+                            unit:  v.unit,
                           };
+                        } else if (oldVal != null) {
+                          acc[v.name] = oldVal;
                         }
 
                         return acc;
@@ -428,7 +436,13 @@ export default function VitalSheet() {
                       return {
                         time,
                         notes: row.notes || "",
-                        nurse: row.nurse || "",
+                        // Backend's resolveNurse now accepts staffId/name
+                        // strings (audit P20 fix) — populate BOTH the legacy
+                        // `nurse` field and the canonical `recordedBy` so
+                        // either is found by the service.
+                        nurse:      row.nurse || "",
+                        recordedBy: row.nurse || "",
+                        nurseName:  row.nurse || "",
                         values: rowValues,
                       };
                     }
@@ -523,12 +537,13 @@ export default function VitalSheet() {
                                       },
                                     });
                                   }}
-                                  disabled={
-                                    editMode &&
-                                    existingRecord?.tableData?.some(
-                                      r => r.time === time && r.values?.[v.name]?.value !== undefined
-                                    )
-                                  }
+                                  /* FIX (audit P20): removed the edit-lock —
+                                     it made every previously-recorded vital
+                                     permanently uneditable, so typos were
+                                     locked in forever. Vitals must be
+                                     correctable per NABH amendment policy
+                                     (an audit trail is the right answer, not
+                                     a hard lock at the UI layer). */
                                 />
 
                               )}

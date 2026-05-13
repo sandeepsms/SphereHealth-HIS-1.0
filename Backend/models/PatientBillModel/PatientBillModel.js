@@ -91,7 +91,9 @@ const PaymentSchema = new mongoose.Schema(
 const PatientBillSchema = new mongoose.Schema(
   {
     // BILL-2026-000001 (auto-generated)
-    billNumber: { type: String, unique: true },
+    // sparse so multiple DRAFT bills (no billNumber yet) don't collide on
+    // the unique index. Only finalised bills get a billNumber.
+    billNumber: { type: String, unique: true, sparse: true },
 
     patient: {
       type: mongoose.Schema.Types.ObjectId,
@@ -170,13 +172,17 @@ const PatientBillSchema = new mongoose.Schema(
     toObject: { virtuals: true } },
 );
 
+// Atomic bill-number sequence via shared Counter (replaces race-prone
+// countDocuments). Generator stays in pre("save") — billNumber isn't
+// `required`, so validation order is irrelevant here.
+const { nextSequence: nextSeqBill } = require("../../utils/counter");
+
 // ── Pre-save: bill number + recalculate all totals ─────────────
 PatientBillSchema.pre("save", async function (next) {
-  // Auto bill number
   if (this.isNew && !this.billNumber) {
-    const count = await this.constructor.countDocuments();
     const year = new Date().getFullYear();
-    this.billNumber = `BILL-${year}-${String(count + 1).padStart(6, "0")}`;
+    const seq  = await nextSeqBill(`bill:${year}`);
+    this.billNumber = `BILL-${year}-${String(seq).padStart(6, "0")}`;
   }
 
   // Recalculate totals from items

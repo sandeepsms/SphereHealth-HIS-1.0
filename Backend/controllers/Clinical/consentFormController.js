@@ -10,10 +10,26 @@ const handle = (fn) => async (req, res) => {
   }
 };
 
+// Build a single audit-trail row from the request — captures actor,
+// timestamp, IP, user-agent and an optional reason (NABH PRE.3/PRE.4).
+const auditEntry = (req, action, reason = "") => ({
+  action,
+  at:        new Date(),
+  byName:    req.user?.fullName || req.body?.actorName || "",
+  byRole:    req.user?.role     || req.body?.actorRole || "",
+  byUserId:  req.user?.id       || null,
+  ip:        (req.headers["x-forwarded-for"] || req.ip || "").toString().split(",")[0].trim(),
+  userAgent: (req.headers["user-agent"] || "").slice(0, 200),
+  reason,
+});
+
 class ConsentFormController {
   // POST /api/consent-forms
   create = handle(async (req, res) => {
-    const form = await ConsentForm.create(req.body);
+    const form = await ConsentForm.create({
+      ...req.body,
+      auditTrail: [auditEntry(req, "CREATED")],
+    });
     return res.status(201).json({ success: true, data: form });
   });
 
@@ -56,12 +72,17 @@ class ConsentFormController {
     const form = await ConsentForm.findByIdAndUpdate(
       req.params.id,
       {
-        status: "SIGNED",
-        patientAcknowledged: true,
-        signedAt: new Date(),
-        ...(guardianName && { guardianName }),
-        ...(guardianRelation && { guardianRelation }),
-        ...(witnessName && { witnessName }),
+        $set: {
+          status: "SIGNED",
+          patientAcknowledged: true,
+          signedAt: new Date(),
+          signedByName: req.user?.fullName || req.body?.actorName || "",
+          signedByRole: req.user?.role     || req.body?.actorRole || "",
+          ...(guardianName && { guardianName }),
+          ...(guardianRelation && { guardianRelation }),
+          ...(witnessName && { witnessName }),
+        },
+        $push: { auditTrail: auditEntry(req, "SIGNED") },
       },
       { new: true }
     );
@@ -74,7 +95,15 @@ class ConsentFormController {
     const { refusalReason } = req.body;
     const form = await ConsentForm.findByIdAndUpdate(
       req.params.id,
-      { status: "REFUSED", refusalReason: refusalReason || "" },
+      {
+        $set: {
+          status: "REFUSED",
+          refusalReason: refusalReason || "",
+          refusedAt: new Date(),
+          refusedByName: req.user?.fullName || req.body?.actorName || "",
+        },
+        $push: { auditTrail: auditEntry(req, "REFUSED", refusalReason || "") },
+      },
       { new: true }
     );
     if (!form) return res.status(404).json({ success: false, message: "Consent form not found" });
@@ -86,7 +115,15 @@ class ConsentFormController {
     const { revokedReason } = req.body;
     const form = await ConsentForm.findByIdAndUpdate(
       req.params.id,
-      { status: "REVOKED", revokedReason, revokedAt: new Date() },
+      {
+        $set: {
+          status: "REVOKED",
+          revokedReason,
+          revokedAt: new Date(),
+          revokedByName: req.user?.fullName || req.body?.actorName || "",
+        },
+        $push: { auditTrail: auditEntry(req, "REVOKED", revokedReason || "") },
+      },
       { new: true }
     );
     if (!form) return res.status(404).json({ success: false, message: "Consent form not found" });

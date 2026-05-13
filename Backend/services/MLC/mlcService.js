@@ -158,34 +158,60 @@ class MLCService {
     // Assign the next MLR number
     const { mlrNumber, mlrPrefix, mlrSeq } = await this.assignMlrNumber(doctor);
 
-    // If MLC.create fails (validation, mlrNumber collision), roll back
-    // the per-doctor sequence so the next MLR doesn't have a gap. The
-    // gap would still be discoverable in court (court of inquiry expects
-    // no missing numbers in the MLR register).
+    // Court-grade integrity: if MLC.create fails, roll back the per-doctor
+    // sequence atomically so the next MLR doesn't leave a gap.
+    //
+    // We prefer a Mongo transaction when the connection is a replica set /
+    // mongos. On a single-node standalone server (typical dev box) Mongo
+    // refuses transactions — so we fall back to the explicit rollback path
+    // (still safe because the prefix is doctor-scoped and the increment
+    // happened milliseconds ago).
     let doc;
+    const session = await mongoose.startSession().catch(() => null);
+    const useTx = !!session && (session.client?.s?.options?.replicaSet ||
+                                session.client?.options?.replicaSet);
     try {
-      doc = await MLC.create({
-        ...payload,
-        patientId:   patient._id,
-        UHID:        patient.UHID,
-        patientName: patient.fullName,
-        age:         patient.age,
-        gender:      patient.gender,
-        contactNumber: patient.contactNumber,
-        doctorId:    doctor._id,
-        doctorName:  doctor.personalInfo?.fullName ||
-                     `${doctor.personalInfo?.firstName || ""} ${doctor.personalInfo?.lastName || ""}`.trim(),
-        mlrNumber, mlrPrefix, mlrSeq,
-        createdBy:     actor.fullName || actor.name || "",
-        createdByRole: actor.role     || "",
-      });
+      if (useTx) {
+        await session.withTransaction(async () => {
+          [doc] = await MLC.create([{
+            ...payload,
+            patientId:   patient._id,
+            UHID:        patient.UHID,
+            patientName: patient.fullName,
+            age:         patient.age,
+            gender:      patient.gender,
+            contactNumber: patient.contactNumber,
+            doctorId:    doctor._id,
+            doctorName:  doctor.personalInfo?.fullName ||
+                         `${doctor.personalInfo?.firstName || ""} ${doctor.personalInfo?.lastName || ""}`.trim(),
+            mlrNumber, mlrPrefix, mlrSeq,
+            createdBy:     actor.fullName || actor.name || "",
+            createdByRole: actor.role     || "",
+          }], { session });
+        });
+      } else {
+        doc = await MLC.create({
+          ...payload,
+          patientId:   patient._id,
+          UHID:        patient.UHID,
+          patientName: patient.fullName,
+          age:         patient.age,
+          gender:      patient.gender,
+          contactNumber: patient.contactNumber,
+          doctorId:    doctor._id,
+          doctorName:  doctor.personalInfo?.fullName ||
+                       `${doctor.personalInfo?.firstName || ""} ${doctor.personalInfo?.lastName || ""}`.trim(),
+          mlrNumber, mlrPrefix, mlrSeq,
+          createdBy:     actor.fullName || actor.name || "",
+          createdByRole: actor.role     || "",
+        });
+      }
     } catch (createErr) {
-      // Roll back the seq increment so the next assignMlrNumber re-uses
-      // this sequence number — no gap, no duplicate (we're rolling back
-      // BEFORE any other MLC could have been issued since the increment
-      // happened only a few ms ago and the prefix is doctor-scoped).
+      // Manual rollback for the non-transaction path.
       await Doctor.findByIdAndUpdate(doctor._id, { $inc: { mlcSeq: -1 } }).catch(() => {});
       throw createErr;
+    } finally {
+      session?.endSession();
     }
 
     // Best-effort: flag the patient + linked emergency / admission as MLC

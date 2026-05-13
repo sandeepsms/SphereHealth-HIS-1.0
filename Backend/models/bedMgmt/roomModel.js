@@ -32,7 +32,6 @@ const RoomSchema = new mongoose.Schema(
     roomCode: {
       type: String,
       required: false,
-      unique: true,
       uppercase: true,
     },
     roomCategory: {
@@ -78,6 +77,11 @@ RoomSchema.index({ building: 1, floor: 1 });
 RoomSchema.index({ floor: 1, roomNumber: 1 });
 RoomSchema.index({ ward: 1 });
 RoomSchema.index({ roomCategory: 1, status: 1 });
+// Partial unique on roomCode — only across active rooms.
+RoomSchema.index(
+  { roomCode: 1 },
+  { unique: true, partialFilterExpression: { isActive: true, roomCode: { $type: "string" } } },
+);
 
 RoomSchema.virtual("occupancyRate").get(function () {
   if (this.totalBeds === 0) return 0;
@@ -108,4 +112,6 @@ RoomSchema.pre("save", async function (next) {
   next();
 });
 
-module.exports = mongoose.model("Room", RoomSchema);
+module.exports =
+  mongoose.models.Room ||
+  mongoose.model("Room", RoomSchema);

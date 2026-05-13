@@ -65,8 +65,18 @@ const vitalSheetRoutes = require("./Vitals/vitalSheetRoutes");
 // ROUTE REGISTRATION
 // ═════════════════════════════════════════════════════════════
 
-// Auth & Users
+// ── Auth shim ────────────────────────────────────────────────
+// `/auth/*` is the only public surface (login, register, forgot-password).
+// Every other mount below this line gets `authenticate` as a baseline so
+// no controller is reachable by anonymous traffic. Individual routes can
+// still demand specific roles via `authorize(...)`.
+const { authenticate } = require("../middleware/auth");
+
 router.use("/auth", authRoutes);
+
+// ── Everything below requires a valid JWT ────────────────────
+router.use(authenticate);
+
 router.use("/users", userRoutes);
 
 // Bed Management

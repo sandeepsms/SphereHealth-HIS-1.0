@@ -80,15 +80,35 @@ class DischargeSummaryController {
     );
     if (!summary) return res.status(404).json({ success: false, message: "Discharge summary not found" });
 
-    // Also update the admission record status
+    // Also update the admission record status AND release the bed.
+    // Audit-Pass-17 found the bed was never released on finalize — the bed
+    // stayed Occupied forever, blocking new admissions. Now we free it
+    // atomically (Available + clear patient + clear currentAdmission).
     if (summary.admissionId) {
-      await Admission.findByIdAndUpdate(summary.admissionId, {
-        status: "Discharged",
-        actualDischargeDate: summary.dischargeDate || new Date(),
-        conditionOnDischarge: summary.conditionOnDischarge,
-        dischargeSummary: summary._id.toString(),
-        followUpInstructions: summary.followUpInstructions,
-      });
+      const admission = await Admission.findByIdAndUpdate(
+        summary.admissionId,
+        {
+          status: "Discharged",
+          actualDischargeDate: summary.dischargeDate || new Date(),
+          conditionOnDischarge: summary.conditionOnDischarge,
+          dischargeSummary: summary._id.toString(),
+          followUpInstructions: summary.followUpInstructions,
+        },
+        { new: true },
+      );
+      if (admission?.bedId) {
+        try {
+          const Bed = require("../../models/bedMgmt/bedsModel");
+          await Bed.findByIdAndUpdate(admission.bedId, {
+            $set: {
+              status: "Available",
+              patient: null,
+              currentAdmission: null,
+              lastDischargedAt: new Date(),
+            },
+          });
+        } catch (e) { /* non-fatal — surface in admin alerts */ }
+      }
     }
 
     return res.json({ success: true, data: summary, message: "Discharge summary finalized" });

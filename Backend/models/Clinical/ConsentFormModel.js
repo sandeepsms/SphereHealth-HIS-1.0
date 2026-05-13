@@ -77,12 +77,32 @@ const ConsentFormSchema = new mongoose.Schema(
       type: String,
       enum: ["PENDING", "SIGNED", "REFUSED", "REVOKED"],
       default: "PENDING" },
-    signedAt: { type: Date },
+    signedAt:      { type: Date },
+    signedByName:  { type: String, trim: true, default: "" },
+    signedByRole:  { type: String, trim: true, default: "" },
     refusalReason: { type: String },
-    revokedAt: { type: Date },
+    refusedAt:     { type: Date },
+    refusedByName: { type: String, trim: true, default: "" },
+    revokedAt:     { type: Date },
     revokedReason: { type: String },
+    revokedByName: { type: String, trim: true, default: "" },
 
     additionalNotes: { type: String },
+
+    // ── Audit trail (NABH PRE.3 / PRE.4) ─────────────────────
+    // Every state transition (sign / refuse / revoke / amend) appends an
+    // immutable entry — captures who, when, IP, and any free-text reason.
+    auditTrail: [{
+      _id:        false,
+      action:     { type: String, enum: ["CREATED", "UPDATED", "SIGNED", "REFUSED", "REVOKED", "PRINTED"], required: true },
+      at:         { type: Date, default: Date.now },
+      byName:     { type: String, default: "" },
+      byRole:     { type: String, default: "" },
+      byUserId:   { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+      ip:         { type: String, default: "" },
+      userAgent:  { type: String, default: "" },
+      reason:     { type: String, default: "" },
+    }],
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" },
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" } },

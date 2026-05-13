@@ -76,7 +76,11 @@ const BedSchema = new mongoose.Schema(
   },
 );
 
-BedSchema.index({ room: 1, bedNumber: 1 }, { unique: true });
+// Partial filter so soft-deleted beds (isActive=false) can be re-created.
+BedSchema.index(
+  { room: 1, bedNumber: 1 },
+  { unique: true, partialFilterExpression: { isActive: true } },
+);
 BedSchema.index({ ward: 1, status: 1 });
 BedSchema.index({ building: 1, floor: 1 });
 BedSchema.index({ patient: 1 }, { sparse: true });
