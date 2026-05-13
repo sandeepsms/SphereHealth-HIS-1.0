@@ -28,4 +28,12 @@ router.post("/reservations/expire-stale", BedController.expireStaleReservations)
 // Predictive LOS (rule-based stub for now)
 router.get("/predict/los", BedController.predictLOS);
 
+// Real-time event stream (Server-Sent Events) — used by Live Bed Map
+// and Dashboard for instant refresh on bed mutations.
+router.get("/events", BedController.streamBedEvents);
+
+// NABH MOI.2 monthly bed-utilization report (P3 #16)
+const BedReport = require("../../controllers/bedMgmt/bedReportController");
+router.get("/reports/monthly", BedReport.getMonthlyReport);
+
 module.exports = router;

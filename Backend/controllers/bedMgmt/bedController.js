@@ -1,5 +1,6 @@
 const BedService = require("../../services/bedMgmt/bedService");
 const { predictLOS } = require("../../services/bedMgmt/losPredictionService");
+const bedBus = require("../../services/bedMgmt/bedEventBus");
 
 class BedController {
   async createBeds(req, res) {
@@ -207,6 +208,36 @@ class BedController {
     } catch (error) {
       res.status(400).json({ success: false, message: error.message });
     }
+  }
+
+  /* ── Real-time bed status feed (P3 #15 — Server-Sent Events) ──
+       GET /api/bedss/events
+       Holds the HTTP connection open and streams "bed-update" events
+       whenever the bus emits. Browser EventSource auto-reconnects on
+       disconnect. No payload needed beyond the event kind — the
+       client refetches /bedss on receipt. */
+  streamBedEvents(req, res) {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");   // nginx — don't buffer SSE
+    res.flushHeaders?.();
+
+    // Friendly hello so the EventSource readyState flips to OPEN
+    res.write(`event: hello\ndata: ${JSON.stringify({ ok: true, subs: bedBus.subscriberCount() + 1 })}\n\n`);
+
+    const unsubscribe = bedBus.subscribe(res);
+
+    // Keepalive comment every 25 s — keeps proxies / load balancers
+    // from cutting an idle connection. SSE comments start with `:`.
+    const keepalive = setInterval(() => {
+      try { res.write(`: keepalive ${Date.now()}\n\n`); } catch (_) {}
+    }, 25_000);
+
+    req.on("close", () => {
+      clearInterval(keepalive);
+      unsubscribe();
+    });
   }
 
   /* ── Predictive LOS (P2 #11) ──

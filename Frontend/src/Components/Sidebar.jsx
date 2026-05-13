@@ -117,6 +117,7 @@ const NAV = [
       // Single role-aware Live Bed Map; RX sees read-only mode on the same route
       { label: "Live Bed Map",       icon: "pi-eye",       path: "/bed-visual",     roles: [ADMIN, RX, NR, WB] },
       { label: "Bed Transfers",      icon: "pi-arrows-h",  path: "/bed-transfers",  badge: "NEW", roles: [ADMIN, DR, NR] },
+      { label: "Monthly Report",     icon: "pi-file-pdf",  path: "/bed-reports/monthly", badge: "NEW", roles: [ADMIN, NR] },
       { label: "Manage Beds",        icon: "pi-list",      path: "/beds",           roles: [ADMIN, NR] },
       // ── Setup & Hierarchy (admin only) ──
       // These were previously scattered: Wards/Rooms/RoomCategory here,

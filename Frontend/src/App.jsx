@@ -42,6 +42,7 @@ const FloorManagement = lazy(() => import("./pages/FloorManagement"));
 const BedVisualLayout = lazy(() => import("./Components/bed/BedVisualLayout"));
 const BedDashboard = lazy(() => import("./pages/bed/BedDashboard"));
 const BedTransfersListPage = lazy(() => import("./pages/bed/BedTransfersListPage"));
+const BedMonthlyReportPage = lazy(() => import("./pages/bed/BedMonthlyReportPage"));
 
 // Patients
 const PatientList = lazy(() => import("./pages/patient/PatientList"));
@@ -329,6 +330,7 @@ function AppLayout({ collapsed, setCollapsed }) {
             {/* ── Bed Management ────────────────────────────────── */}
             <Route path="/bed-dashboard" element={<BedDashboard />} />
             <Route path="/bed-transfers" element={<BedTransfersListPage />} />
+            <Route path="/bed-reports/monthly" element={<BedMonthlyReportPage />} />
             <Route path="/beds" element={<BedManagement />} />
             <Route path="/bed-visual" element={<BedVisualLayout />} />
             <Route path="/rooms" element={<RoomManagement />} />

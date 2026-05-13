@@ -1,9 +1,11 @@
 const Bed = require("../../models/bedMgmt/bedsModel");
+const bus = require("./bedEventBus");
 
 class BedService {
   async createBeds(data) {
     const bedsData = Array.isArray(data) ? data : [data];
     const created = await Bed.insertMany(bedsData);
+    bus.emit("bed-update", { kind: "created", count: created.length });
     return { created: created.length, beds: created };
   }
 
@@ -75,6 +77,7 @@ class BedService {
       { new: true },
     );
     if (!bed) throw new Error("Bed not available for booking");
+    bus.emit("bed-update", { kind: "booked", bedId });
     return bed;
   }
 
@@ -101,6 +104,7 @@ class BedService {
       { new: true },
     );
     if (!bed) throw new Error("Bed not found");
+    bus.emit("bed-update", { kind: "discharged", bedId });
     return bed;
   }
 
@@ -127,6 +131,7 @@ class BedService {
 
     const bed = await Bed.findByIdAndUpdate(bedId, { $set: set }, { new: true });
     if (!bed) throw new Error("Bed not found");
+    bus.emit("bed-update", { kind: "housekeeping", bedId, state });
     return bed;
   }
 
@@ -166,6 +171,7 @@ class BedService {
         },
       },
     );
+    bus.emit("bed-update", { kind: "reservations-expired", count: stale.length });
     return { expired: stale.length, beds: stale };
   }
 
@@ -228,6 +234,7 @@ class BedService {
       { new: true },
     );
     if (!bed) throw new Error("Bed not found");
+    bus.emit("bed-update", { kind: "status", bedId });
     return bed;
   }
 
@@ -243,6 +250,7 @@ class BedService {
       { new: true, runValidators: true },
     );
     if (!bed) throw new Error("Bed not found");
+    bus.emit("bed-update", { kind: "updated", bedId });
     return bed;
   }
 
@@ -253,6 +261,7 @@ class BedService {
       { new: true },
     );
     if (!bed) throw new Error("Bed not found");
+    bus.emit("bed-update", { kind: "deleted", bedId });
     return bed;
   }
 

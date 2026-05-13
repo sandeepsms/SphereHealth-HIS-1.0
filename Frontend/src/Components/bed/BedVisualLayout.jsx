@@ -14,6 +14,7 @@ import { buildingService } from "../../Services/buildingService";
 import { floorService } from "../../Services/floorService";
 import patientService from "../../Services/patient/patientService";
 import { doctorService } from "../../Services/doctors/doctorService";
+import useBedEvents from "../../hooks/useBedEvents";
 
 /* ─── Colors ─────────────────────────────────────────────── */
 const TEAL = "#0891b2";
@@ -260,6 +261,18 @@ const BedVisualLayout = ({ onRefreshParent }) => {
   const [detailPatient, setDetailPatient] = useState(null);
   const [detailLoading, setDetailLoad] = useState(false);
 
+  // ── Drag-drop transfer (P2 #8) ──
+  // Drag an occupied bed onto any Available bed → opens a transfer
+  // dialog pre-filled with from/to. POSTs /api/bed-transfers using
+  // the same 2-stage workflow already exposed via BedTransfersListPage.
+  const [dragSrcBed, setDragSrcBed]   = useState(null);   // {_id, ...}
+  const [dragOverBedId, setDragOverBedId] = useState(null);
+  const [xferDialog, setXferDialog]   = useState(null);   // { from, to } | null
+  const [xferReason, setXferReason]   = useState("");
+  const [xferNotes,  setXferNotes]    = useState("");
+  const [xferDoctor, setXferDoctor]   = useState("");
+  const [xferSaving, setXferSaving]   = useState(false);
+
   const [editModal, setEditModal] = useState(false);
   const [editAdm, setEditAdm] = useState(null);
   const [editForm, setEditForm] = useState({});
@@ -422,6 +435,15 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       setBusy(false);
     }
   };
+
+  // ── Real-time refresh (P3 #15, SSE) ──
+  // Debounce burst events (e.g. bulk-create fires N) into one refetch
+  // ~400ms after the last update so we don't slam /bedss.
+  const _refetchTimer = useRef(null);
+  useBedEvents(() => {
+    if (_refetchTimer.current) clearTimeout(_refetchTimer.current);
+    _refetchTimer.current = setTimeout(() => { fetchBeds(); }, 400);
+  });
 
   const doFilter = () => {
     let list = [...beds];
@@ -1454,28 +1476,80 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                         // ── Equipment manifest ──
                         const equipment = Array.isArray(bed.equipment) ? bed.equipment : [];
 
+                        // ── Drag-drop transfer state (P2 #8) ──
+                        const isDragSource = dragSrcBed && getId(dragSrcBed._id) === getId(bed._id);
+                        const isDropTarget = dragOverBedId === getId(bed._id) && avail && dragSrcBed && getId(dragSrcBed._id) !== getId(bed._id);
+                        const canDrag = occ;                  // only occupied beds are draggable
+                        const canDrop = avail && dragSrcBed;  // only available beds accept a drop
+
                         return (
                           <div
                             key={bed._id}
+                            draggable={canDrag}
+                            onDragStart={(e) => {
+                              if (!canDrag) return;
+                              setDragSrcBed(bed);
+                              e.dataTransfer.effectAllowed = "move";
+                              try { e.dataTransfer.setData("text/plain", String(bed._id)); } catch (_) {}
+                            }}
+                            onDragEnd={() => {
+                              setDragSrcBed(null);
+                              setDragOverBedId(null);
+                            }}
+                            onDragOver={(e) => {
+                              if (!canDrop) return;
+                              e.preventDefault();
+                              e.dataTransfer.dropEffect = "move";
+                            }}
+                            onDragEnter={(e) => {
+                              if (!canDrop) return;
+                              e.preventDefault();
+                              setDragOverBedId(getId(bed._id));
+                            }}
+                            onDragLeave={() => {
+                              if (dragOverBedId === getId(bed._id)) setDragOverBedId(null);
+                            }}
+                            onDrop={(e) => {
+                              if (!canDrop) return;
+                              e.preventDefault();
+                              setDragOverBedId(null);
+                              setXferDialog({ from: dragSrcBed, to: bed });
+                              setXferReason("");
+                              setXferNotes("");
+                              setXferDoctor("");
+                              setDragSrcBed(null);
+                            }}
                             onClick={() => handleBedClick(bed)}
-                            title={flags.length ? `Isolation: ${flags.join(", ")}${bed.isolationNotes ? " — " + bed.isolationNotes : ""}` : undefined}
+                            title={
+                              isDropTarget
+                                ? `Drop to transfer patient here`
+                                : flags.length
+                                  ? `Isolation: ${flags.join(", ")}${bed.isolationNotes ? " — " + bed.isolationNotes : ""}`
+                                  : canDrag
+                                    ? "Drag this card onto an Available bed to transfer the patient"
+                                    : undefined
+                            }
                             style={{
-                              border: "1px solid #e2e8f0",
+                              border: isDropTarget ? "2px dashed #16a34a" : "1px solid #e2e8f0",
                               borderLeft: `4px solid ${col}`,
-                              borderTop: precStripe ? `3px solid ${precStripe}` : "1px solid #e2e8f0",
+                              borderTop: precStripe ? `3px solid ${precStripe}` : (isDropTarget ? "2px dashed #16a34a" : "1px solid #e2e8f0"),
                               borderRadius: 12,
-                              background: avail
-                                ? "#f9fafb"
-                                : occ
-                                  ? "#fff"
-                                  : "#fafafa",
-                              cursor: avail || occ ? "pointer" : "default",
+                              background: isDropTarget
+                                ? "#f0fdf4"
+                                : avail
+                                  ? "#f9fafb"
+                                  : occ
+                                    ? "#fff"
+                                    : "#fafafa",
+                              cursor: canDrag ? "grab" : (avail || occ ? "pointer" : "default"),
+                              opacity: isDragSource ? 0.5 : 1,
                               padding: "14px 16px",
                               transition: "all .2s",
                               position: "relative",
+                              boxShadow: isDropTarget ? "0 0 0 4px rgba(34,197,94,.15), 0 8px 24px rgba(34,197,94,.18)" : undefined,
                             }}
                             onMouseEnter={(e) => {
-                              if (avail || occ) {
+                              if ((avail || occ) && !isDropTarget) {
                                 e.currentTarget.style.transform =
                                   "translateY(-3px)";
                                 e.currentTarget.style.boxShadow =
@@ -1483,8 +1557,10 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                               }
                             }}
                             onMouseLeave={(e) => {
-                              e.currentTarget.style.transform = "none";
-                              e.currentTarget.style.boxShadow = "none";
+                              if (!isDropTarget) {
+                                e.currentTarget.style.transform = "none";
+                                e.currentTarget.style.boxShadow = "none";
+                              }
                             }}
                           >
                             {/* ✅ Top row with Font Awesome bed icon */}
@@ -3440,6 +3516,164 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               </div>
             );
           })()}
+        </Dialog>
+      )}
+
+      {/* ── Drag-drop Transfer Dialog (P2 #8) ──
+          Opens when an Occupied bed is dragged onto an Available bed.
+          POSTs to /api/bed-transfers (status=PendingHandover) and
+          refreshes the layout. Nurse completes the handover from
+          BedTransfersListPage (or the patient file). */}
+      {xferDialog && (
+        <Dialog
+          header={
+            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <i className="pi pi-arrows-h" />
+              <span>Transfer Patient</span>
+            </span>
+          }
+          visible={!!xferDialog}
+          modal
+          onHide={() => setXferDialog(null)}
+          style={{ width: 520 }}
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {/* From → To summary */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 10, alignItems: "center" }}>
+              <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "10px 12px" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#991b1b", textTransform: "uppercase", letterSpacing: ".5px" }}>From</div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: "#0f172a", marginTop: 4 }}>
+                  Bed {xferDialog.from.bedNumber}
+                </div>
+                <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
+                  {xferDialog.from.wardName || "—"} · {xferDialog.from.roomNumber || "—"}
+                </div>
+                {(() => {
+                  const pn = resolvePatientName(xferDialog.from.currentAdmission);
+                  return pn ? (
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "#991b1b", marginTop: 6 }}>
+                      <i className="pi pi-user" style={{ fontSize: 10, marginRight: 4 }} />
+                      {pn}
+                    </div>
+                  ) : null;
+                })()}
+              </div>
+              <i className="pi pi-arrow-right" style={{ fontSize: 18, color: "#94a3b8" }} />
+              <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "10px 12px" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#15803d", textTransform: "uppercase", letterSpacing: ".5px" }}>To</div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: "#0f172a", marginTop: 4 }}>
+                  Bed {xferDialog.to.bedNumber}
+                </div>
+                <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
+                  {xferDialog.to.wardName || "—"} · {xferDialog.to.roomNumber || "—"}
+                </div>
+              </div>
+            </div>
+
+            {/* Reason */}
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 5 }}>
+                Reason for transfer
+              </div>
+              <Dropdown
+                value={xferReason}
+                options={[
+                  "Clinical upgrade (ICU)",
+                  "Clinical downgrade (Ward)",
+                  "Isolation precaution",
+                  "Patient request",
+                  "Bed unavailable in original ward",
+                  "Equipment availability",
+                  "Other",
+                ].map(v => ({ label: v, value: v }))}
+                onChange={(e) => setXferReason(e.value)}
+                placeholder="Select a reason"
+                style={{ width: "100%" }}
+              />
+            </div>
+
+            {/* Doctor */}
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 5 }}>
+                Requested by (doctor)
+              </div>
+              <InputText value={xferDoctor} onChange={(e) => setXferDoctor(e.target.value)}
+                placeholder="Doctor name" style={{ width: "100%" }} />
+            </div>
+
+            {/* Shifting notes — required */}
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 5 }}>
+                Shifting notes <span style={{ color: "#dc2626" }}>*</span>
+              </div>
+              <InputTextarea rows={3} value={xferNotes} onChange={(e) => setXferNotes(e.target.value)}
+                placeholder="Why is this transfer needed? Any precautions / handover instructions for the nurse?"
+                style={{ width: "100%" }} />
+            </div>
+
+            {/* Actions */}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+              <Button label="Cancel" className="p-button-text" onClick={() => setXferDialog(null)} disabled={xferSaving} />
+              <Button
+                label={xferSaving ? "Initiating…" : "Initiate Transfer"}
+                icon={xferSaving ? "pi pi-spin pi-spinner" : "pi pi-check"}
+                disabled={xferSaving || !xferNotes.trim()}
+                onClick={async () => {
+                  if (!xferNotes.trim()) return;
+                  setXferSaving(true);
+                  try {
+                    const fromBed = xferDialog.from;
+                    const toBed   = xferDialog.to;
+                    const admId   = getId(fromBed.currentAdmission);
+                    const patient = fromBed.currentAdmission?.patientId || {};
+                    const body = {
+                      UHID:            patient.UHID || fromBed.currentAdmission?.UHID || "",
+                      admissionId:    admId,
+                      patientName:    patient.fullName || resolvePatientName(fromBed.currentAdmission) || "",
+                      fromBedId:      getId(fromBed._id),
+                      fromBedNumber:  fromBed.bedNumber,
+                      fromWardName:   fromBed.wardName || "",
+                      fromRoomNumber: fromBed.roomNumber || "",
+                      toBedId:        getId(toBed._id),
+                      toBedNumber:    toBed.bedNumber,
+                      toWardName:     toBed.wardName || "",
+                      toRoomNumber:   toBed.roomNumber || "",
+                      reason:         xferReason,
+                      shiftingNotes:  xferNotes.trim(),
+                      requestedBy:    xferDoctor || "",
+                    };
+                    const r = await fetch(`${import.meta.env.VITE_API_URL || ""}/api/bed-transfers`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify(body),
+                    });
+                    const data = await r.json();
+                    if (!r.ok || data?.success === false) {
+                      throw new Error(data?.message || "Transfer failed");
+                    }
+                    toast.current?.show({
+                      severity: "success",
+                      summary: "Transfer initiated",
+                      detail: `Bed ${fromBed.bedNumber} → ${toBed.bedNumber}. Awaiting nurse handover.`,
+                      life: 4000,
+                    });
+                    setXferDialog(null);
+                    await fetchBeds();   // refresh layout
+                  } catch (e) {
+                    toast.current?.show({
+                      severity: "error",
+                      summary: "Transfer failed",
+                      detail: e.message || "Could not initiate transfer",
+                      life: 4500,
+                    });
+                  } finally {
+                    setXferSaving(false);
+                  }
+                }}
+                style={{ background: "#7c3aed", borderColor: "#7c3aed" }}
+              />
+            </div>
+          </div>
         </Dialog>
       )}
     </div>

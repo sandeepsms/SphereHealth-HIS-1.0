@@ -18,6 +18,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { API_ENDPOINTS } from "../../config/api";
+import useBedEvents from "../../hooks/useBedEvents";
 
 const C = {
   card:     "#ffffff",
@@ -90,6 +91,11 @@ const BedDashboard = () => {
     }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [refreshTick]);
+
+  // ── Real-time refresh (P3 #15) ──
+  // SSE subscription — every bed mutation server-side triggers a
+  // refetch here so the dashboard stays in sync without polling.
+  useBedEvents(() => setRefreshTick(t => t + 1));
 
   // ── Aggregations ────────────────────────────────────────────────
   const kpis = useMemo(() => {
