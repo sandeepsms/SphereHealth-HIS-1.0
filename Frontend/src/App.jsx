@@ -116,6 +116,7 @@ const NurseOPDQueuePage = lazy(() => import("./pages/nurse/NurseOPDQueuePage"));
 const NursePatientPanel = lazy(() => import("./pages/nurse/NursePatientPanel"));
 const DoctorOPDPanelPage = lazy(() => import("./pages/doctor/DoctorOPDPanelPage"));
 const PatientHistoryPage = lazy(() => import("./pages/patient/PatientHistoryPage"));
+const CompletePatientFilePage = lazy(() => import("./pages/patient/CompletePatientFilePage"));
 const MARPage = lazy(() => import("./pages/clinical/MARPage"));
 const DischargeSummaryPage = lazy(() => import("./pages/clinical/DischargeSummaryPage"));
 const ConsentFormPage = lazy(() => import("./pages/clinical/ConsentFormPage"));
@@ -371,6 +372,8 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/nurse-patient-panel" element={<NursePatientPanel />} />
             <Route path="/doctor-opd-panel" element={<DoctorOPDPanelPage />} />
             <Route path="/patient-history" element={<PatientHistoryPage />} />
+            {/* Complete patient file — one page with every clinical record + UI audit feed. */}
+            <Route path="/patient-file/:uhid" element={<CompletePatientFilePage />} />
             <Route path="/mar" element={<MARPage />} />
             <Route path="/discharge-summary" element={<DischargeSummaryPage />} />
             <Route path="/consent-forms" element={<ConsentFormPage />} />

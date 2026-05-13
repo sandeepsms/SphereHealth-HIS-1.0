@@ -77,6 +77,14 @@ router.use("/auth", authRoutes);
 // ── Everything below requires a valid JWT ────────────────────
 router.use(authenticate);
 
+// ── Patient-file activity audit (auto-capture POST/PUT/PATCH/DELETE) ─
+// Mounted right after authenticate so req.user is populated and BEFORE
+// any feature router so every mutating call gets a chance to be logged
+// to PatientActivityLog. Failures are async + soft — they never block
+// the original request.
+const activityLogger = require("../services/Clinical/activityLogger");
+router.use(activityLogger.middleware());
+
 router.use("/users", userRoutes);
 
 // Bed Management
@@ -131,6 +139,9 @@ router.use("/mar", marRoutes);
 router.use("/nursing-charges", nursingChargesRoutes);
 router.use("/hospital-settings", hospitalSettingsRoutes);
 router.use("/vitalsheet", vitalSheetRoutes);
+
+// ── Patient File — Complete aggregator + activity feed ───────
+router.use("/patient-file",     require("./Clinical/patientFileRoutes"));
 
 // Live presence (who's serving whom)
 router.use("/presence",         require("./Presence/presenceRoutes"));

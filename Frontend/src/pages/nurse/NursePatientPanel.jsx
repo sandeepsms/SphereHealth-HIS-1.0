@@ -1980,6 +1980,16 @@ function NursePatientPanelContent({ selectedAdmission }) {
                 {admission?.admissionNumber && <Badge color={C.primaryD} bg={C.primaryL}>IPD: {admission.admissionNumber}</Badge>}
                 <SBadge status={admission?.status}/>
                 {admission?.department && <Badge color={C.muted} bg="#f1f5f9">{admission.department}</Badge>}
+                {/* Complete File — opens the consolidated patient file (every model, audit feed) in a new tab */}
+                {patient?.UHID && (
+                  <button
+                    onClick={() => window.open(`/patient-file/${patient.UHID}?role=nurse`, "_blank", "noopener")}
+                    style={{padding:"6px 14px",background:C.primary,color:"#fff",border:"none",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:6}}
+                    title="Open the consolidated patient file in a new tab"
+                  >
+                    📂 Complete File
+                  </button>
+                )}
                 {/* Print / PDF / QR-share for the full nursing file view */}
                 <PatientFileExport patient={patient} printRef={printAreaRef} title={`${patName} — Nursing view`} />
               </div>

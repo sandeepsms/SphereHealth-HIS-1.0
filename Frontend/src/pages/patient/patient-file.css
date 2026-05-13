@@ -1,0 +1,388 @@
+/* ═══════════════════════════════════════════════════════════════
+   patient-file.css — pf-* namespace
+   Design system for the Complete Patient File experience.
+   Used by CompletePatientFilePage.jsx and (in phase 2) by the
+   redesigned Doctor + Nurse patient panels.
+
+   Principles:
+   • All layout / colours live here — JSX stays declarative.
+   • Print-first: every section is A4-printable without media-query
+     gymnastics; a dedicated @media print block strips chrome.
+   • Role tinting: pf-tint--doctor / pf-tint--nurse swap accent
+     colours without touching structure.
+═══════════════════════════════════════════════════════════════ */
+
+:root {
+  --pf-bg:        #f4f6fb;
+  --pf-card:      #ffffff;
+  --pf-text:      #0f172a;
+  --pf-muted:     #64748b;
+  --pf-border:    #e2e8f0;
+  --pf-border-2:  #cbd5e1;
+  --pf-accent:    #4f46e5;
+  --pf-accent-d:  #312e81;
+  --pf-accent-l:  #eef2ff;
+  --pf-accent-m:  #c7d2fe;
+  --pf-ok:        #059669;
+  --pf-ok-l:      #d1fae5;
+  --pf-warn:      #d97706;
+  --pf-warn-l:    #fef3c7;
+  --pf-danger:    #dc2626;
+  --pf-danger-l:  #fee2e2;
+  --pf-info:      #0369a1;
+  --pf-info-l:    #e0f2fe;
+}
+
+.pf-tint--doctor {
+  --pf-accent:   #7c3aed;
+  --pf-accent-d: #4c1d95;
+  --pf-accent-l: #f5f3ff;
+  --pf-accent-m: #ddd6fe;
+}
+.pf-tint--nurse {
+  --pf-accent:   #0d9488;
+  --pf-accent-d: #115e59;
+  --pf-accent-l: #f0fdfa;
+  --pf-accent-m: #99f6e4;
+}
+
+/* ── Page shell ──────────────────────────────────────────── */
+.pf-page {
+  min-height: 100vh;
+  background: var(--pf-bg);
+  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+  color: var(--pf-text);
+  padding: 16px;
+}
+
+.pf-container { max-width: 1280px; margin: 0 auto; }
+
+/* ── Header banner ───────────────────────────────────────── */
+.pf-banner {
+  background: linear-gradient(135deg, var(--pf-accent-d), var(--pf-accent));
+  color: #fff;
+  border-radius: 14px;
+  padding: 22px 26px;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, .08);
+  margin-bottom: 18px;
+}
+.pf-banner__id {
+  display: flex; align-items: center; gap: 14px;
+}
+.pf-banner__avatar {
+  width: 54px; height: 54px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, .15);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px; font-weight: 800;
+  border: 1px solid rgba(255, 255, 255, .2);
+}
+.pf-banner__name {
+  font-size: 20px; font-weight: 800; line-height: 1.2;
+  letter-spacing: -.01em;
+}
+.pf-banner__sub {
+  font-size: 12px; color: rgba(255, 255, 255, .8);
+  margin-top: 2px;
+}
+.pf-banner__stats {
+  display: flex; gap: 18px; flex-wrap: wrap; align-items: center;
+}
+.pf-banner__stat {
+  display: flex; flex-direction: column; gap: 2px;
+}
+.pf-banner__stat-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .8px;
+  font-weight: 700; color: rgba(255, 255, 255, .65);
+}
+.pf-banner__stat-val {
+  font-size: 14px; font-weight: 800; color: #fff;
+}
+.pf-banner__actions {
+  display: flex; gap: 8px; flex-wrap: wrap;
+}
+.pf-banner__btn {
+  background: rgba(255, 255, 255, .12);
+  border: 1px solid rgba(255, 255, 255, .25);
+  color: #fff;
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 12px; font-weight: 700;
+  cursor: pointer; transition: background .15s ease;
+}
+.pf-banner__btn:hover { background: rgba(255, 255, 255, .22); }
+.pf-banner__btn--solid {
+  background: #fff; color: var(--pf-accent-d);
+}
+.pf-banner__btn--solid:hover { background: #f1f5f9; }
+
+/* ── Completeness strip ──────────────────────────────────── */
+.pf-completeness {
+  background: var(--pf-card);
+  border: 1px solid var(--pf-border);
+  border-radius: 12px;
+  padding: 14px 18px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.pf-completeness__item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12px; font-weight: 600;
+  background: var(--pf-bg);
+  border: 1px solid var(--pf-border);
+}
+.pf-completeness__item--ok    { background: var(--pf-ok-l);    color: var(--pf-ok);    border-color: var(--pf-ok); }
+.pf-completeness__item--warn  { background: var(--pf-warn-l);  color: var(--pf-warn);  border-color: var(--pf-warn); }
+.pf-completeness__dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: currentColor;
+}
+
+/* ── Layout: section grid ────────────────────────────────── */
+.pf-grid {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 18px;
+  align-items: flex-start;
+}
+@media (max-width: 900px) { .pf-grid { grid-template-columns: 1fr; } }
+
+/* ── Sticky section nav ──────────────────────────────────── */
+.pf-nav {
+  position: sticky; top: 12px;
+  background: var(--pf-card);
+  border: 1px solid var(--pf-border);
+  border-radius: 12px;
+  padding: 8px;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+}
+.pf-nav__title {
+  font-size: 10px; font-weight: 800; text-transform: uppercase;
+  letter-spacing: .8px;
+  color: var(--pf-muted);
+  padding: 10px 12px 6px;
+}
+.pf-nav__link {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  font-size: 12px; font-weight: 600;
+  color: var(--pf-text);
+  cursor: pointer;
+  user-select: none;
+  transition: background .12s ease;
+  border: none; background: none; width: 100%; text-align: left;
+}
+.pf-nav__link:hover { background: var(--pf-accent-l); color: var(--pf-accent-d); }
+.pf-nav__link--active {
+  background: var(--pf-accent);
+  color: #fff;
+}
+.pf-nav__link--active:hover { background: var(--pf-accent-d); color: #fff; }
+.pf-nav__badge {
+  margin-left: auto;
+  background: rgba(0, 0, 0, .08);
+  color: inherit;
+  padding: 1px 7px; border-radius: 999px;
+  font-size: 10px; font-weight: 700;
+  min-width: 18px; text-align: center;
+}
+.pf-nav__link--active .pf-nav__badge { background: rgba(255, 255, 255, .25); }
+
+/* ── Section card ────────────────────────────────────────── */
+.pf-section {
+  background: var(--pf-card);
+  border: 1px solid var(--pf-border);
+  border-radius: 14px;
+  margin-bottom: 16px;
+  overflow: hidden;
+  scroll-margin-top: 16px;
+}
+.pf-section__head {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 18px;
+  background: linear-gradient(180deg, var(--pf-accent-l) 0%, transparent 100%);
+  border-bottom: 1px solid var(--pf-border);
+}
+.pf-section__icon {
+  width: 32px; height: 32px;
+  border-radius: 9px;
+  background: var(--pf-accent);
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.pf-section__title {
+  font-size: 15px; font-weight: 800; color: var(--pf-accent-d);
+  line-height: 1.2;
+}
+.pf-section__sub {
+  font-size: 11px; color: var(--pf-muted); font-weight: 500;
+  margin-top: 1px;
+}
+.pf-section__count {
+  margin-left: auto;
+  background: var(--pf-accent);
+  color: #fff;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px; font-weight: 700;
+}
+.pf-section__body { padding: 16px 18px; }
+
+/* ── Two-column detail grid ──────────────────────────────── */
+.pf-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px 22px;
+}
+.pf-field {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--pf-border);
+}
+.pf-field__label {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .5px; color: var(--pf-muted);
+}
+.pf-field__value {
+  font-size: 13px; color: var(--pf-text); font-weight: 600;
+  word-break: break-word;
+}
+.pf-field--wide { grid-column: 1 / -1; }
+
+/* ── Note / record card (inside a section) ───────────────── */
+.pf-record {
+  background: var(--pf-bg);
+  border: 1px solid var(--pf-border);
+  border-left: 4px solid var(--pf-accent);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+.pf-record__head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.pf-record__title {
+  font-size: 13px; font-weight: 700; color: var(--pf-accent-d);
+}
+.pf-record__time {
+  font-size: 11px; color: var(--pf-muted); font-family: 'JetBrains Mono', monospace;
+}
+.pf-record__body { font-size: 12px; line-height: 1.55; color: var(--pf-text); }
+.pf-record__body p { margin: 0 0 6px; }
+
+.pf-record--doctor  { border-left-color: #7c3aed; }
+.pf-record--nurse   { border-left-color: #0d9488; }
+.pf-record--order   { border-left-color: #d97706; }
+.pf-record--consent { border-left-color: #db2777; }
+.pf-record--mlc     { border-left-color: #dc2626; }
+.pf-record--bill    { border-left-color: #0369a1; }
+.pf-record--audit   { border-left-color: #64748b; }
+
+/* ── Badge / chip ─────────────────────────────────────────── */
+.pf-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 10px; font-weight: 800; text-transform: uppercase;
+  letter-spacing: .4px;
+}
+.pf-badge--ok      { background: var(--pf-ok-l);      color: var(--pf-ok); }
+.pf-badge--warn    { background: var(--pf-warn-l);    color: var(--pf-warn); }
+.pf-badge--danger  { background: var(--pf-danger-l);  color: var(--pf-danger); }
+.pf-badge--info    { background: var(--pf-info-l);    color: var(--pf-info); }
+.pf-badge--neutral { background: var(--pf-bg);        color: var(--pf-muted); border: 1px solid var(--pf-border); }
+
+/* ── Table (used in vitals / orders / billing) ───────────── */
+.pf-table {
+  width: 100%; border-collapse: collapse;
+  font-size: 12px;
+}
+.pf-table th, .pf-table td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--pf-border);
+}
+.pf-table th {
+  background: var(--pf-accent-l);
+  font-weight: 700; color: var(--pf-accent-d);
+  font-size: 11px; text-transform: uppercase; letter-spacing: .4px;
+}
+.pf-table tbody tr:hover { background: var(--pf-bg); }
+.pf-table--compact th, .pf-table--compact td { padding: 5px 8px; font-size: 11px; }
+
+/* ── Timeline (right-aligned event feed) ─────────────────── */
+.pf-timeline { position: relative; padding-left: 22px; }
+.pf-timeline::before {
+  content: ""; position: absolute; left: 7px; top: 0; bottom: 0;
+  width: 2px; background: var(--pf-border);
+}
+.pf-timeline__item {
+  position: relative;
+  padding: 8px 0 10px;
+}
+.pf-timeline__dot {
+  position: absolute; left: -22px; top: 12px;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--pf-accent);
+  border: 3px solid var(--pf-card);
+  box-shadow: 0 0 0 1px var(--pf-border);
+}
+.pf-timeline__time {
+  font-size: 10px; font-family: 'JetBrains Mono', monospace;
+  color: var(--pf-muted); margin-bottom: 2px;
+}
+.pf-timeline__label {
+  font-size: 12px; font-weight: 600; color: var(--pf-text);
+}
+.pf-timeline__kind {
+  font-size: 10px; color: var(--pf-muted); margin-left: 6px;
+  text-transform: uppercase; letter-spacing: .4px;
+}
+
+/* ── Empty state ─────────────────────────────────────────── */
+.pf-empty {
+  text-align: center;
+  padding: 36px 20px;
+  color: var(--pf-muted);
+  font-size: 13px;
+}
+.pf-empty__icon { font-size: 32px; margin-bottom: 8px; }
+
+/* ── Loader ──────────────────────────────────────────────── */
+.pf-loading {
+  display: flex; justify-content: center; padding: 48px;
+}
+.pf-spinner {
+  width: 32px; height: 32px;
+  border: 3px solid var(--pf-accent-l);
+  border-top-color: var(--pf-accent);
+  border-radius: 50%;
+  animation: pf-spin .7s linear infinite;
+}
+@keyframes pf-spin { to { transform: rotate(360deg); } }
+
+/* ── Print mode — strip page chrome, render every section ── */
+@media print {
+  body { background: #fff; }
+  .pf-page { padding: 0; background: #fff; }
+  .pf-banner { box-shadow: none; border-radius: 0; }
+  .pf-banner__actions, .pf-banner__btn { display: none !important; }
+  .pf-nav { display: none !important; }
+  .pf-grid { display: block; }
+  .pf-section { break-inside: avoid; page-break-inside: avoid; }
+  .pf-section__head { background: #f5f5f5; }
+  .pf-banner { background: #1e293b; color: #fff; }
+  .pf-record:hover, .pf-table tbody tr:hover { background: transparent; }
+}

@@ -1959,6 +1959,16 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
               {admission?.admissionNumber && <Badge color={C.blue} bg={C.blueL}>IPD: {admission.admissionNumber}</Badge>}
               <SBadge status={admission?.status||"Active"}/>
               {admission?.department && <span style={{fontSize:12,color:C.muted}}>{admission.department}</span>}
+              {/* Complete File — single-page view that pulls every record from every model */}
+              {patient?.UHID && (
+                <button
+                  onClick={() => window.open(`/patient-file/${patient.UHID}?role=doctor`, "_blank", "noopener")}
+                  style={{padding:"6px 14px",background:C.primary,color:"#fff",border:"none",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:6}}
+                  title="Open the consolidated patient file in a new tab"
+                >
+                  📂 Complete File
+                </button>
+              )}
               {/* Print / PDF / QR-share — applies to the currently loaded patient file */}
               <PatientFileExport patient={patient} printRef={printAreaRef} title={`${patient?.fullName||"Patient"} — Doctor view`} />
             </div>
