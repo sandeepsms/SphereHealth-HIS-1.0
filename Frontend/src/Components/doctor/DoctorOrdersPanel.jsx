@@ -29,6 +29,44 @@ const C = {
   lime: "#65a30d", limeL: "#f7fee7", limeB: "#d9f99d",
 };
 
+/* ── Order types (12 NABH-compliant categories) ─────────────────
+ * Restored 2026-05-13: the 768830a CSS refactor accidentally dropped
+ * ORDER_TYPES / TYPE_MAP / STEPS, which crashed every Doctor Notes
+ * load with "ORDER_TYPES is not defined" and produced a blank screen.
+ */
+const ORDER_TYPES = [
+  { id: "Medication",      label: "Medication",          icon: "pi-tablets",        color: C.purple,  bg: C.purpleL, border: C.purpleB },
+  { id: "IV_Fluid",        label: "IV Fluid",            icon: "pi-inbox",          color: C.blue,    bg: C.blueL,   border: C.blueB   },
+  { id: "Lab",             label: "Lab Investigation",   icon: "pi-search",         color: C.teal,    bg: C.tealL,   border: C.tealB   },
+  { id: "Radiology",       label: "Imaging / Radiology", icon: "pi-eye",            color: C.indigo,  bg: C.indigoL, border: "#a5b4fc" },
+  { id: "Procedure",       label: "Procedure",           icon: "pi-cog",            color: C.orange,  bg: C.orangeL, border: C.orangeB },
+  { id: "BloodTransfusion",label: "Blood Transfusion",   icon: "pi-heart",          color: C.red,     bg: C.redL,    border: C.redB    },
+  { id: "Diet",            label: "Diet / Nutrition",    icon: "pi-star",           color: C.green,   bg: C.greenL,  border: C.greenB  },
+  { id: "Oxygen",          label: "Oxygen Therapy",      icon: "pi-cloud",          color: C.cyan,    bg: C.cyanL,   border: C.cyanB   },
+  { id: "Physiotherapy",   label: "Physiotherapy",       icon: "pi-user",           color: C.lime,    bg: C.limeL,   border: C.limeB   },
+  { id: "Activity",        label: "Activity / Mobility", icon: "pi-arrows-alt",     color: C.amber,   bg: C.amberL,  border: C.amberB  },
+  { id: "Nursing",         label: "Nursing Care",        icon: "pi-heart-fill",     color: C.pink,    bg: C.pinkL,   border: C.pinkB   },
+  { id: "Consultation",    label: "Consultation Request",icon: "pi-users",          color: C.slate,   bg: "#f1f5f9", border: "#cbd5e1" },
+];
+
+const TYPE_MAP = Object.fromEntries(ORDER_TYPES.map(t => [t.id, t]));
+
+/* ── Step definitions per order type (mirrors NurseOrdersPanel) ── */
+const STEPS = {
+  Medication:       ["Prepared", "Administered"],
+  IV_Fluid:         ["Prepared", "Line Checked", "Infusion Started", "Completed"],
+  Lab:              ["Sample Collected", "Sample Sent", "Report Received"],
+  Radiology:        ["Scheduled", "Patient Sent", "Scan Done", "Report Received"],
+  Procedure:        ["Consent Taken", "Patient Prepped", "Procedure Done", "Patient Returned"],
+  BloodTransfusion: ["Cross-Match Verified", "Blood Issued", "Transfusion Started", "Transfusion Completed"],
+  Diet:             ["Ordered", "Prepared", "Delivered"],
+  Oxygen:           ["Equipment Set", "O₂ Started", "Target Achieved"],
+  Physiotherapy:    ["Scheduled", "Session Started", "Session Completed"],
+  Activity:         ["Instructed", "Started", "Goal Met"],
+  Nursing:          ["Acknowledged", "In Progress", "Done"],
+  Consultation:     ["Referral Sent", "Consultant Informed", "Consultation Done", "Advice Received"],
+};
+
 /* ── Priority colours ── */
 const PRIO = {
   STAT:    { bg: C.redL,   color: C.red,   label: "STAT"    },

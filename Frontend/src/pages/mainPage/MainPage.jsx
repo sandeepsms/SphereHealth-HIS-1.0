@@ -295,8 +295,12 @@ export default function MainPage() {
             gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
             gap: 10,
           }}>
-            {modules.map(m => (
-              <button key={m.path} onClick={() => navigate(m.path)}
+            {modules.map((m, i) => (
+              // FIX: duplicate-key warning — many module tiles share the same
+              // path ("/reception" for OPD / IPD / Emergency / Daycare entry
+              // points). Compose the key from label + index so each tile is
+              // uniquely identified to React.
+              <button key={`${m.label}-${i}`} onClick={() => navigate(m.path)}
                 style={{
                   display: "flex", alignItems: "center", gap: 10,
                   padding: "12px 14px", border: `1.5px solid ${m.color}30`,
@@ -345,8 +349,8 @@ export default function MainPage() {
               { label: "Nursing Notes",      icon: "pi-pencil",                 path: "/nursing-notes",            color: C.pink,   desc: "All nursing assessments & notes" },
               { label: "MAR",                icon: "pi-list-check",             path: "/mar",                      color: C.amber,  desc: "Medication administration" },
               { label: "Handover Notes",     icon: "pi-arrow-right-arrow-left", path: "/nursing-handover-notes",   color: C.teal,   desc: "Shift handover documentation" },
-            ].map(item => (
-              <button key={item.path} onClick={() => navigate(item.path)}
+            ].map((item, i) => (
+              <button key={`${item.label}-${i}`} onClick={() => navigate(item.path)}
                 style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px",
                   border: `1.5px solid ${item.color}25`, borderRadius: 10, background: "white",
                   cursor: "pointer", fontFamily: "'DM Sans',sans-serif", textAlign: "left", transition: "all .2s" }}
@@ -605,8 +609,8 @@ export default function MainPage() {
               <span style={{ fontSize: 10, color: "#64748b" }}>Tell us what else to add here</span>
             </div>
             <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 6 }}>
-              {quickAccess.map(item => (
-                <button key={item.path}
+              {quickAccess.map((item, i) => (
+                <button key={`${item.label}-${i}`}
                   onClick={() => { navigate(item.path); setQaOpen(false); }}
                   style={{
                     display: "flex", alignItems: "center", gap: 12,
