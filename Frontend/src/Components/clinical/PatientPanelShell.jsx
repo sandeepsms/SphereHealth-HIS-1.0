@@ -37,14 +37,15 @@
  *   />
  */
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useMemo, Suspense } from "react";
 import PatientFileExport from "./PatientFileExport";
 import { useBoundLogger } from "../../utils/activityLogger";
+import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../hooks/useTheme";
 import { useDensity } from "../../hooks/useDensity";
 import { useIdleLock } from "../../hooks/useIdleLock";
 import { useLiveUpdates } from "../../hooks/useLiveUpdates";
-import { IdleLockOverlay, PinnedVitals } from "../safety/SafetyComponents";
+import { IdleLockOverlay, PinnedVitals, BreakGlassModal, SurgicalChecklistModal } from "../safety/SafetyComponents";
 import "../../pages/patient/patient-file.css";
 
 // NOTE: This shell deliberately does NOT wrap in ClinicalLayout — the
@@ -84,6 +85,7 @@ export default function PatientPanelShell({
   admission = null,
   printRef = null,
   quickActions = [],
+  surgicalChecklistEligible = false,
   stripActions = null,
   gateBanners = null,
   tabs = [],
@@ -118,6 +120,52 @@ export default function PatientPanelShell({
   // ── Roadmap G27: derive vitals for the pinned strip. Latest record
   // from the patient passed in (panels already compute one).
   const pinnedVitals = patient?.latestVitals || admission?.latestVitals || null;
+
+  // ── Roadmap D14: Break-glass gate. If the logged-in user is NOT the
+  // attending doctor (or in the treating team) for this patient, render
+  // a justification modal before showing the chart. Once the user
+  // submits a reason, we remember it for the session (per UHID) so the
+  // modal doesn't keep popping up while the user is actively reviewing.
+  const { user } = useAuth() || {};
+  const isPrivilegedRole = ["Admin", "MedicalSuperintendent", "QualityCoordinator"].includes(user?.role);
+  const treatingTeam = useMemo(() => {
+    if (!admission) return [];
+    const list = [
+      admission.attendingDoctor,
+      admission.attendingDoctorName,
+      ...(Array.isArray(admission.consultants) ? admission.consultants : []),
+      admission.admittedBy,
+      admission.createdByName,
+    ].filter(Boolean).map((s) => String(s).toLowerCase().trim());
+    return list;
+  }, [admission]);
+  const currentUserName = (user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`).trim().toLowerCase();
+  const isOnTreatingTeam = !!currentUserName && treatingTeam.some((n) => n.includes(currentUserName) || currentUserName.includes(n));
+  const needsBreakGlass = !!patient?.UHID && !isPrivilegedRole && !isOnTreatingTeam && (admission?.attendingDoctor || treatingTeam.length > 0);
+
+  const [breakGlassAcked, setBreakGlassAcked] = useState(false);
+  // Reset the ack flag whenever the patient changes — each new chart load
+  // requires its own justification.
+  useEffect(() => {
+    setBreakGlassAcked(false);
+    try {
+      // Survive page refresh within the same browser session.
+      if (patient?.UHID && sessionStorage.getItem(`break-glass:${patient.UHID}`)) {
+        setBreakGlassAcked(true);
+      }
+    } catch {}
+  }, [patient?.UHID]);
+  const handleBreakGlassAllow = (reason) => {
+    setBreakGlassAcked(true);
+    try { sessionStorage.setItem(`break-glass:${patient.UHID}`, reason || "1"); } catch {}
+  };
+
+  // ── Roadmap A4: WHO Surgical Safety Checklist. Caller (panel) supplies
+  // `surgicalChecklistTrigger` — usually derived from "does the patient
+  // have an active Procedure order today?". If true, we offer a Start
+  // Checklist button in the strip; clicking opens the 3-phase modal.
+  const [showSSC, setShowSSC] = useState(false);
+  const sscProcedureId = patient?.activeProcedureId || admission?.activeProcedureId || null;
 
   // ── Auto-instrument the panel: every meaningful UI event from the shell
   // flows into PatientActivityLog. This is the catch-net the user asked for:
@@ -292,6 +340,17 @@ export default function PatientPanelShell({
                     printRef={printRef}
                     title={`${patName} — ${role === "nurse" ? "Nursing" : "Doctor"} view`}
                   />
+                  {/* Roadmap A4 — surgical checklist launcher, only when there's
+                      an active procedure on this admission. */}
+                  {surgicalChecklistEligible && (
+                    <button
+                      className="pf-action pf-action--ghost"
+                      onClick={() => setShowSSC(true)}
+                      title="WHO Surgical Safety Checklist (Sign In / Time Out / Sign Out)"
+                    >
+                      ⚕ Surgical Checklist
+                    </button>
+                  )}
                   {/* Caller-supplied extra actions (e.g. doctor's "Shift Bed") */}
                   {stripActions}
                 </div>
@@ -337,7 +396,14 @@ export default function PatientPanelShell({
                   aria-labelledby={`tab-${activeTab}`}
                   tabIndex={0}
                 >
-                  {renderTab(activeTab)}
+                  {/* Roadmap E17 — Suspense boundary so any tab the caller
+                      returns via React.lazy() can stream in without
+                      blocking the rest of the panel. The fallback is a
+                      lightweight pf-spinner so the user sees motion while
+                      a tab chunk arrives over the wire. */}
+                  <Suspense fallback={<div className="pf-spin-row"><div className="pf-spinner" /></div>}>
+                    {renderTab(activeTab)}
+                  </Suspense>
                 </div>
               </div>
             </div>
@@ -346,6 +412,31 @@ export default function PatientPanelShell({
 
         {/* Role-specific modals rendered at the end so they overlay everything */}
         {modals}
+
+        {/* Roadmap D14 — break-glass justification when non-attending opens the chart.
+            Rendered after the body so the modal stacks above content but visitor is
+            still gently blocked: the body renders behind a slight backdrop until the
+            user submits a reason. */}
+        {loaded && needsBreakGlass && !breakGlassAcked && (
+          <BreakGlassModal
+            patient={patient}
+            onAllow={handleBreakGlassAllow}
+            onCancel={() => {
+              // Sending the user back home if they refuse to justify access.
+              try { window.history.back(); } catch {}
+            }}
+          />
+        )}
+
+        {/* Roadmap A4 — WHO Surgical Safety Checklist modal */}
+        {showSSC && patient && (
+          <SurgicalChecklistModal
+            patient={patient}
+            procedureId={sscProcedureId}
+            onClose={() => setShowSSC(false)}
+            onComplete={() => activity.submit("surgical-checklist.complete", { summary: "WHO Surgical Safety Checklist completed" })}
+          />
+        )}
 
         {/* Roadmap D15 — full-screen idle lock overlay */}
         {locked && <IdleLockOverlay onUnlock={unlock} />}

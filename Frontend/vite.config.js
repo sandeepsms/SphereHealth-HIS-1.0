@@ -12,6 +12,14 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
+          // Roadmap E17 — group all clinical tab files under a single
+          // browser-cacheable chunk. Tab files placed under
+          // src/Components/clinical/tabs/ will get split into this chunk
+          // automatically when they're React.lazy()-imported.
+          if (id.includes('/Components/clinical/tabs/')) return 'panel-tabs'
+          // Safety / safety components — small, infrequent, separate chunk
+          if (id.includes('/Components/safety/')) return 'panel-safety'
+
           if (!id.includes('node_modules')) return undefined
 
           // ── React core ────────────────────────────────────

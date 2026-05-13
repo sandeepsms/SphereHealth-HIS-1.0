@@ -152,6 +152,9 @@ router.use("/live-updates",     require("./Clinical/liveUpdatesRoutes"));
 // ── Roadmap D16: per-action 2FA (OTP gate) ───────────────────
 router.use("/2fa",              require("./Clinical/twoFactorRoutes"));
 
+// ── Roadmap A2: Medication Reconciliation (NABH MOM.4d) ──────
+router.use("/med-reconciliation", require("./Clinical/medReconciliationRoutes"));
+
 // Live presence (who's serving whom)
 router.use("/presence",         require("./Presence/presenceRoutes"));
 // NABH visitor management

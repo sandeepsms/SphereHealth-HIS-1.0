@@ -279,6 +279,31 @@ exports.getFhirBundle = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────────────────────
+// GET /api/patient-file/:uhid/sign-status
+// Returns the current PAdES-LTV signing configuration state so the
+// front-end can render an accurate "digitally signed" badge on the
+// print template. (Roadmap F22.)
+// ─────────────────────────────────────────────────────────────
+exports.signStatus = async (req, res) => {
+  try {
+    const { SIG_STATUS, signPdfPades, renderSignatureLine } = require("../../services/Clinical/padesSigner");
+    // Dry-run with an empty buffer — exercises the config check + status
+    // without actually signing anything.
+    const probe = await signPdfPades(Buffer.from("dry-run"), {});
+    return res.json({
+      success: true,
+      configured: probe.status !== SIG_STATUS.NONE,
+      status: probe.status,
+      signedBy: probe.signedBy,
+      line: renderSignatureLine(probe),
+      hint: probe.error,
+    });
+  } catch (e) {
+    return res.status(500).json({ success: false, message: e.message });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────
 // GET /api/patient-file/:uhid/audit-verify
 // Walks the activity-log chain for the patient and reports any
 // rows whose stored rowHash disagrees with a recomputed hash —

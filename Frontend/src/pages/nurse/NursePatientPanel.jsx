@@ -3,7 +3,9 @@
  * Teal/green theme (matches NursingNotes page). Tabs: Overview | Vital Trends | Nursing Notes |
  *   Doctor Orders | Medications | Billing | Emergency
  */
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, lazy } from "react";
+// Roadmap E17 + A2 — Med Reconciliation tab is lazy-loaded.
+const MedReconciliationTab = lazy(() => import("../../Components/clinical/tabs/MedReconciliationTab"));
 import { useNavigate, useSearchParams } from "react-router-dom";
 import axios from "axios";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
@@ -55,6 +57,7 @@ const TABS = [
   { id:"handover",   label:"🔄 Handover Notes"       },
   { id:"orders",     label:"📋 Doctor Orders"        },
   { id:"meds",       label:"💊 Medications"          },
+  { id:"medrecon",   label:"⚖ Med Reconciliation"   },
   { id:"billing",    label:"💰 Billing"              },
   { id:"emergency",  label:"🚨 Emergency"            },
 ];
@@ -2030,6 +2033,7 @@ function NursePatientPanelContent({ selectedAdmission }) {
       case "handover":   return <HandoverNotesTab patient={patient} admission={admission} doctorNotes={doctorNotes} nursingNotes={nursingNotes}/>;
       case "orders":     return <DoctorOrdersTab doctorNotes={doctorNotes}/>;
       case "meds":       return <MedicationsTab doctorNotes={doctorNotes} doctorOrders={doctorOrders}/>;
+      case "medrecon":   return <MedReconciliationTab admission={admission} patient={patient}/>;
       case "billing":    return <BillingTab billing={billing}/>;
       case "emergency":  return <EmergencyTab emergency={emergency}/>;
       default:           return null;
@@ -2244,6 +2248,10 @@ function NursePatientPanelContent({ selectedAdmission }) {
       admission={admission}
       printRef={printAreaRef}
       quickActions={quickActions}
+      surgicalChecklistEligible={(doctorOrders || []).some(
+        (o) => (o.orderType || "").toLowerCase().includes("procedure")
+            && !["Completed","Cancelled","Stopped"].includes(o.status)
+      )}
       gateBanners={gateBanners}
       tabs={TABS}
       activeTab={activeTab}

@@ -3,7 +3,9 @@
  * Purple/indigo theme. Tabs: Overview | Clinical Notes | Nursing Records |
  *   Vital Trends | Medications & Orders | Billing | Emergency
  */
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, lazy } from "react";
+// Roadmap E17 + A2 — Med Reconciliation tab is lazy-loaded (panel-tabs chunk).
+const MedReconciliationTab = lazy(() => import("../../Components/clinical/tabs/MedReconciliationTab"));
 import { useSearchParams, useNavigate } from "react-router-dom";
 import axios from "axios";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
@@ -65,6 +67,7 @@ const TABS = [
   { id:"treatment",  label:"💉 Treatment Chart"      },
   { id:"orders",     label:"📋 Orders"               },
   { id:"meds",       label:"💊 Medications"          },
+  { id:"medrecon",   label:"⚖ Med Reconciliation"   },
   { id:"billing",    label:"💰 Billing"              },
   { id:"emergency",  label:"🚨 Emergency"            },
 ];
@@ -2088,6 +2091,7 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
       case "rbs":        return <RBSMonitoringTab nursingNotes={nursingNotes} doctorOrders={doctorOrders}/>;
       case "handover":   return <HandoverNotesTab patient={patient} admission={admission} doctorNotes={doctorNotes} nursingNotes={nursingNotes}/>;
       case "meds":       return <MedicationsTab doctorNotes={doctorNotes} doctorOrders={doctorOrders}/>;
+      case "medrecon":   return <MedReconciliationTab admission={admission} patient={patient}/>;
       case "treatment":  return <TreatmentChartTab doctorOrders={doctorOrders} doctorNotes={doctorNotes}/>;
       case "orders":     return <OrdersTab doctorNotes={doctorNotes}/>;
       case "billing":    return <BillingTab billing={billing}/>;
@@ -2267,6 +2271,10 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
       admission={admission}
       printRef={printAreaRef}
       stripActions={stripActions}
+      surgicalChecklistEligible={(doctorOrders || []).some(
+        (o) => (o.orderType || "").toLowerCase().includes("procedure")
+            && !["Completed","Cancelled","Stopped"].includes(o.status)
+      )}
       gateBanners={gateBanners}
       tabs={TABS}
       activeTab={activeTab}

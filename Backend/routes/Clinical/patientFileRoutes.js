@@ -17,4 +17,7 @@ router.get("/:uhid/fhir-bundle", ctrl.getFhirBundle);
 // Audit chain verifier (NABH AAC.7 / ISO 27001)
 router.get("/:uhid/audit-verify", ctrl.verifyAuditChain);
 
+// PAdES signature configuration probe (Roadmap F22)
+router.get("/:uhid/sign-status",  ctrl.signStatus);
+
 module.exports = router;
