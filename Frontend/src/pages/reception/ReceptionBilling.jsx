@@ -20,6 +20,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
+import { openPrint } from "../../Components/print/openPrint";
 import "./reception-shared.css";
 
 const fmtCur  = (n) => `₹${(Number(n) || 0).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
@@ -101,12 +102,34 @@ export default function ReceptionBilling() {
     }
   };
 
+  /* Open the unified printable system (CSS-driven, paper-size picker,
+   * header/footer auto-pulled from Hospital Settings). The legacy
+   * receiptHTML() path below is kept as a fallback if anyone needs it
+   * but new code should always go through openPrint(). */
   const printReceipt = (bill) => {
-    const w = window.open("", "_blank");
-    if (!w) return toast.error("Allow pop-ups to print");
-    w.document.write(receiptHTML(bill, patient));
-    w.document.close();
-    setTimeout(() => w.print(), 300);
+    const items = (bill.billItems || []).map(it => ({
+      name: it.serviceName || it.name,
+      description: it.description,
+      qty:  it.quantity || 1,
+      rate: it.unitPrice,
+      amount: it.netAmount,
+    }));
+    const lastPay = (bill.payments || []).slice(-1)[0];
+    openPrint("opd-receipt", {
+      receiptNo:   bill.billNumber,
+      patientName: patient?.fullName,
+      uhid:        patient?.UHID,
+      age:         patient?.age,
+      gender:      patient?.gender,
+      doctorName:  bill.doctorName || bill.consultantName,
+      department:  bill.department,
+      visitDate:   bill.createdAt,
+      items,
+      discount:    bill.discountAmount,
+      tax:         bill.taxAmount,
+      paymentMethod: lastPay?.paymentMode,
+      paymentRef:    lastPay?.transactionId,
+    });
   };
 
   const totals = useMemo(() => {
