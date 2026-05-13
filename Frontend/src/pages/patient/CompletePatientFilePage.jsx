@@ -623,11 +623,26 @@ function PrintSection({ title, children }) {
   );
 }
 
-function PrintFooter() {
+function PrintFooter({ uhid, role }) {
+  // Roadmap F23 — per-page QR back-link. The browser repeats this footer
+  // via @page running-element on every printed page, so any single page
+  // photographed in isolation still links back to the live source.
+  const qrUrl = uhid
+    ? `https://api.qrserver.com/v1/create-qr-code/?size=80x80&margin=2&data=${encodeURIComponent(
+        `${typeof window !== "undefined" ? window.location.origin : ""}/patient-file/${uhid}?role=${role}`
+      )}`
+    : null;
   return (
     <footer className="pf-print-footer">
-      <span>© SphereHealth Hospital · Computer-generated medical record · Verify with treating clinician</span>
-      <span>Printed on {new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
+      {qrUrl && <img src={qrUrl} alt={`Verify online — UHID ${uhid}`} className="pf-print-footer__qr" />}
+      <div style={{ flex: 1 }}>
+        <div>© SphereHealth Hospital · Computer-generated medical record · NABH AAC.7</div>
+        <div style={{ fontSize: 9, opacity: .7, marginTop: 2 }}>
+          PDF/A-2b archival — embed fonts via printer. Verify printed copy by scanning QR or visiting
+          /patient-file/{uhid}
+        </div>
+      </div>
+      <span>Printed {new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
     </footer>
   );
 }
@@ -750,7 +765,7 @@ export default function CompletePatientFilePage() {
       <div className={`pf-page pf-print-mode pf-tint--${role === "nurse" ? "nurse" : "doctor"}`}>
         <PrintLetterhead patient={patient} currentAdmission={currentAdmission} role={role} />
         <PrintBody data={data} docInitial={docInitial} nurseInitial={nurseInitial} docOther={docOther} nurseOther={nurseOther} />
-        <PrintFooter />
+        <PrintFooter uhid={uhid} role={role} />
       </div>
     );
   }

@@ -212,6 +212,106 @@ exports.getCompleteFile = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────────────────────
+// GET /api/patient-file/:uhid/fhir-bundle
+// Emits the patient's complete file as an HL7 FHIR R5 Bundle for
+// interop with ABDM / downstream EMRs. Reuses getCompleteFile's
+// resolver internally; output is a sibling endpoint.
+// ─────────────────────────────────────────────────────────────
+exports.getFhirBundle = async (req, res) => {
+  try {
+    const UHID = String(req.params.uhid || "").toUpperCase();
+    if (!UHID) return res.status(400).json({ success: false, message: "UHID required" });
+
+    const patient = await Patient.findOne({ UHID }).lean();
+    if (!patient) return res.status(404).json({ success: false, message: "Patient not found" });
+
+    const [admissions, doctorNotes, nurseNotes, doctorOrders, vitals,
+           consents, investigations, dischargeSummary] = await Promise.all([
+      safe("admissions",       () => Admission.find({ UHID }).sort({ admissionDate: -1 }).lean()),
+      safe("doctorNotes",      () => DoctorNotes.find({ patientUHID: UHID }).sort({ visitDate: -1 }).lean()),
+      safe("nurseNotes",       () => NurseNotes.find({ patientUHID: UHID }).sort({ createdAt: -1 }).lean()),
+      safe("doctorOrders",     () => DoctorOrder.find({ UHID }).sort({ orderedAt: -1 }).lean()),
+      safe("vitals",           () => VitalSheet ? VitalSheet.find({ UHID }).sort({ recordedAt: -1 }).lean() : []),
+      safe("consents",         () => ConsentForm.find({ UHID }).sort({ createdAt: -1 }).lean()),
+      safe("investigations",   () => InvestigationOrder.find({ UHID }).sort({ createdAt: -1 }).lean()),
+      safe("dischargeSummary", () => DischargeSummary.find({ UHID }).sort({ createdAt: -1 }).lean()),
+    ]);
+
+    const currentAdmission = admissions.find((a) => a.status === "Active") || admissions[0] || null;
+    let hospital = {};
+    try {
+      const HospitalSettings = require("../../models/hospitalSettingsModel");
+      hospital = (await HospitalSettings.findOne({}).lean()) || {};
+    } catch { /* no hospital settings model, leave empty */ }
+
+    const { buildBundle } = require("../../services/Clinical/fhirExporter");
+    const bundle = buildBundle({
+      patient, currentAdmission, doctorNotes, nurseNotes, doctorOrders, vitals,
+      consents, investigations, dischargeSummary,
+    }, hospital);
+
+    // Audit the disclosure event
+    try {
+      const activityLogger = require("../../services/Clinical/activityLogger");
+      const u = req.user || {};
+      activityLogger.log({
+        UHID,
+        module: "PatientFile.FHIR",
+        action: "export",
+        area: "fhir-bundle",
+        summary: `FHIR R5 bundle exported (${bundle.entry?.length || 0} resources)`,
+        userId: u._id || u.id || null,
+        userName: u.fullName || "",
+        userRole: u.role || "",
+        httpMethod: req.method, httpPath: req.originalUrl,
+        ip: req.ip, userAgent: req.headers["user-agent"] || "",
+        tags: ["disclosure", "fhir"],
+        isFlagged: true,
+      }).catch(() => {});
+    } catch { /* audit best effort */ }
+
+    res.setHeader("Content-Type", "application/fhir+json");
+    return res.json(bundle);
+  } catch (e) {
+    console.error("[patientFile] getFhirBundle error:", e);
+    return res.status(500).json({ success: false, message: e.message });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────
+// GET /api/patient-file/:uhid/audit-verify
+// Walks the activity-log chain for the patient and reports any
+// rows whose stored rowHash disagrees with a recomputed hash —
+// i.e. anything that was tampered with after insert.
+// ─────────────────────────────────────────────────────────────
+exports.verifyAuditChain = async (req, res) => {
+  try {
+    const UHID = String(req.params.uhid || "").toUpperCase();
+    const rows = await PatientActivityLog.find({ UHID }).sort({ createdAt: 1 }).lean();
+    const crypto = require("crypto");
+    const bad = [];
+    let prev = "";
+    for (const r of rows) {
+      const { rowHash, _id, __v, ...payload } = r;
+      // Drop the chain fields from the payload before re-hashing; recreate
+      // the doc shape used in activityLogger.log() exactly.
+      const doc = { ...payload };
+      delete doc.prevHash;
+      doc.prevHash = prev;
+      const canonical = JSON.stringify(doc, Object.keys(doc).sort());
+      const expected = crypto.createHash("sha256").update(canonical + "|" + prev).digest("hex");
+      if (expected !== rowHash) {
+        bad.push({ id: _id, when: r.createdAt, action: r.action, expected, stored: rowHash });
+      }
+      prev = rowHash;
+    }
+    return res.json({ success: true, checked: rows.length, tampered: bad.length, rows: bad });
+  } catch (e) {
+    return res.status(500).json({ success: false, message: e.message });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────
 // GET /api/patient-file/:uhid/activity?limit=200&module=...&action=...
 // Paginated audit feed — used by the activity-log drawer in the UI.
 // ─────────────────────────────────────────────────────────────

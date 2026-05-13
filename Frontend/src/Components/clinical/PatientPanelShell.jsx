@@ -37,9 +37,14 @@
  *   />
  */
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import PatientFileExport from "./PatientFileExport";
 import { useBoundLogger } from "../../utils/activityLogger";
+import { useTheme } from "../../hooks/useTheme";
+import { useDensity } from "../../hooks/useDensity";
+import { useIdleLock } from "../../hooks/useIdleLock";
+import { useLiveUpdates } from "../../hooks/useLiveUpdates";
+import { IdleLockOverlay, PinnedVitals } from "../safety/SafetyComponents";
 import "../../pages/patient/patient-file.css";
 
 // NOTE: This shell deliberately does NOT wrap in ClinicalLayout — the
@@ -95,6 +100,25 @@ export default function PatientPanelShell({
   const patName = patient?.fullName || patient?.patientName || admission?.patientName || "—";
   const uhid    = patient?.UHID || admission?.UHID || searchValue || "—";
 
+  // ── Roadmap G24/G26: theme + density toggles persisted in localStorage.
+  const { theme, toggle: toggleTheme }     = useTheme();
+  const { density, toggle: toggleDensity } = useDensity();
+
+  // ── Roadmap D15: full-screen idle lock after 10 minutes.
+  const { locked, unlock } = useIdleLock(10 * 60_000);
+
+  // ── Roadmap E20: live SSE subscription. When another user signs a note
+  // or fires an action against this patient, briefly flash a "live" badge.
+  const [livePulse, setLivePulse] = useState(0);
+  useLiveUpdates(patient?.UHID, () => {
+    setLivePulse((n) => n + 1);
+    setTimeout(() => setLivePulse((n) => Math.max(0, n - 1)), 5000);
+  });
+
+  // ── Roadmap G27: derive vitals for the pinned strip. Latest record
+  // from the patient passed in (panels already compute one).
+  const pinnedVitals = patient?.latestVitals || admission?.latestVitals || null;
+
   // ── Auto-instrument the panel: every meaningful UI event from the shell
   // flows into PatientActivityLog. This is the catch-net the user asked for:
   // "har dropdown selection, har button click" lands in the patient file.
@@ -121,6 +145,22 @@ export default function PatientPanelShell({
     onTabChange(id);
   };
 
+  // ── Roadmap C9: keyboard navigation on the tab strip. ←/→ moves
+  // focus between tabs, Home/End jump to first/last. Tabs themselves
+  // have role="tab" + aria-selected, the strip is role="tablist".
+  const tabRefs = useRef([]);
+  const handleTabKey = (e, idx) => {
+    let next = -1;
+    if (e.key === "ArrowRight") next = (idx + 1) % tabs.length;
+    else if (e.key === "ArrowLeft")  next = (idx - 1 + tabs.length) % tabs.length;
+    else if (e.key === "Home")       next = 0;
+    else if (e.key === "End")        next = tabs.length - 1;
+    if (next === -1) return;
+    e.preventDefault();
+    handleTabChange(tabs[next].id);
+    tabRefs.current[next]?.focus();
+  };
+
   // Wrap Complete File so the click is captured.
   const handleCompleteFile = () => {
     activity.click("complete-file.open", { summary: "Opened consolidated Complete File view" });
@@ -140,12 +180,31 @@ export default function PatientPanelShell({
             </div>
           </div>
           <div className="pf-shell__search">
+            {/* Theme + density quick-toggle toolbar (roadmap G24 + G26) */}
+            <div className="pf-toolbar" role="toolbar" aria-label="Display preferences">
+              <button
+                className={`pf-toolbar__btn ${theme === "dark" ? "pf-toolbar__btn--active" : ""}`}
+                onClick={toggleTheme}
+                title={`Theme: ${theme} (click to toggle)`}
+                aria-label="Toggle dark mode"
+              >{theme === "dark" ? "🌙" : "☀️"}</button>
+              <button
+                className={`pf-toolbar__btn ${density === "compact" ? "pf-toolbar__btn--active" : ""}`}
+                onClick={toggleDensity}
+                title={`Density: ${density}`}
+                aria-label="Toggle compact density"
+              >{density === "compact" ? "▤" : "▦"}</button>
+              {livePulse > 0 && (
+                <span className="pf-toolbar__btn" title="Live updates streaming" aria-label="Live updates">🟢</span>
+              )}
+            </div>
             <input
               className="pf-shell__search-input"
               value={searchValue || ""}
               onChange={(e) => onSearchChange?.(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && onSearchSubmit?.()}
               placeholder={searchPlaceholder}
+              aria-label="Patient UHID search"
             />
             <button
               className="pf-shell__search-btn"
@@ -241,25 +300,43 @@ export default function PatientPanelShell({
               {/* Caller-supplied gate banners (assessment gate, handover pending, etc.) */}
               {gateBanners}
 
-              {/* Tab strip */}
+              {/* Pinned vitals strip (G27) — visible only when patient has vitals */}
+              <PinnedVitals vitals={pinnedVitals?.vitals || pinnedVitals} recordedAt={pinnedVitals?.recordedAt || pinnedVitals?.createdAt} visible={!!pinnedVitals} />
+
+              {/* Tab strip — proper ARIA roles, keyboard nav (C9 + C10) */}
               <div className="pf-tabs">
-                <div className="pf-tabs__bar">
-                  {tabs.map((t) => {
+                <div className="pf-tabs__bar" role="tablist" aria-label={`${role === "nurse" ? "Nursing" : "Doctor"} patient panel tabs`}>
+                  {tabs.map((t, i) => {
                     const isActive = t.id === activeTab;
                     const count = tabCounts[t.id];
                     return (
                       <button
                         key={t.id}
+                        ref={(el) => (tabRefs.current[i] = el)}
                         className={`pf-tabs__btn ${isActive ? "pf-tabs__btn--active" : ""}`}
                         onClick={() => handleTabChange(t.id)}
+                        onKeyDown={(e) => handleTabKey(e, i)}
+                        role="tab"
+                        aria-selected={isActive}
+                        aria-controls={`panel-${t.id}`}
+                        id={`tab-${t.id}`}
+                        tabIndex={isActive ? 0 : -1}
                       >
                         {t.label}
-                        {count != null && count > 0 && <span className="pf-tabs__count">{count}</span>}
+                        {count != null && count > 0 && (
+                          <span className="pf-tabs__count" aria-label={`${count} records`}>{count}</span>
+                        )}
                       </button>
                     );
                   })}
                 </div>
-                <div className="pf-tabs__content">
+                <div
+                  className="pf-tabs__content"
+                  role="tabpanel"
+                  id={`panel-${activeTab}`}
+                  aria-labelledby={`tab-${activeTab}`}
+                  tabIndex={0}
+                >
                   {renderTab(activeTab)}
                 </div>
               </div>
@@ -269,6 +346,9 @@ export default function PatientPanelShell({
 
         {/* Role-specific modals rendered at the end so they overlay everything */}
         {modals}
+
+        {/* Roadmap D15 — full-screen idle lock overlay */}
+        {locked && <IdleLockOverlay onUnlock={unlock} />}
       </div>
     </>
   );

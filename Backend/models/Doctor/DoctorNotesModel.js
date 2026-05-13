@@ -91,6 +91,10 @@ const DoctorNotesSchema = new mongoose.Schema(
     finalDiagnosis:       { type: String },
     icd10Code:            { type: String },
     icd10Description:     { type: String },
+    // SNOMED CT clinical-finding code — emitted by FHIR export when present.
+    // Optional; ICD-10 stays the primary registry identifier.
+    snomedCode:           { type: String, default: "" },
+    snomedDisplay:        { type: String, default: "" },
 
     status: {
       type: String,

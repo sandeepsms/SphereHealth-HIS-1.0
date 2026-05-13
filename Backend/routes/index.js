@@ -143,6 +143,15 @@ router.use("/vitalsheet", vitalSheetRoutes);
 // ── Patient File — Complete aggregator + activity feed ───────
 router.use("/patient-file",     require("./Clinical/patientFileRoutes"));
 
+// ── Roadmap A1–A5 + D14: patient-safety gates ────────────────
+router.use("/safety",           require("./Clinical/safetyRoutes"));
+
+// ── Roadmap E20: live SSE updates ────────────────────────────
+router.use("/live-updates",     require("./Clinical/liveUpdatesRoutes"));
+
+// ── Roadmap D16: per-action 2FA (OTP gate) ───────────────────
+router.use("/2fa",              require("./Clinical/twoFactorRoutes"));
+
 // Live presence (who's serving whom)
 router.use("/presence",         require("./Presence/presenceRoutes"));
 // NABH visitor management

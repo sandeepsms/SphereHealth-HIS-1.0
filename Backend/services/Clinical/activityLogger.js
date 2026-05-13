@@ -13,7 +13,9 @@
 // reason a doctor can't save a note.)
 // ═══════════════════════════════════════════════════════════════
 
+const crypto = require("crypto");
 const PatientActivityLog = require("../../models/Clinical/PatientActivityLogModel");
+const { redact } = require("../../utils/phiRedactor");
 
 // ── Truncate large payloads so audit collection stays cheap ─────
 const MAX_SNAPSHOT_BYTES = 4096; // 4 KB per before/after slot
@@ -87,13 +89,33 @@ function inferAction(req) {
 }
 
 // ── Public: structured log call ─────────────────────────────────
+// FIX (roadmap D13): two upgrades to the audit row:
+//  1. before/after snapshots run through PHI redactor first — Aadhaar /
+//     PAN / phone numbers in free-text are replaced with hash-tagged
+//     placeholders so the audit collection stops being a leak risk.
+//  2. Each row records prevHash (SHA-256 of the previous row for this
+//     UHID) + rowHash (SHA-256 of the canonical payload || prevHash).
+//     A downstream verifier can walk the chain forward and detect any
+//     row that was tampered with or inserted out of order.
 async function log(fields = {}) {
   try {
     if (!fields.UHID || !fields.action || !fields.module) {
       return null; // soft-fail: missing critical key
     }
+    const UHID = String(fields.UHID).toUpperCase();
+    // Pull the most recent row's hash so we can chain to it.
+    let prevHash = "";
+    try {
+      const last = await PatientActivityLog
+        .findOne({ UHID })
+        .sort({ createdAt: -1 })
+        .select({ rowHash: 1 })
+        .lean();
+      prevHash = last?.rowHash || "";
+    } catch { /* first row — leave prevHash empty */ }
+
     const doc = {
-      UHID: String(fields.UHID).toUpperCase(),
+      UHID,
       patientId:   fields.patientId   || null,
       admissionId: fields.admissionId || null,
       ipdNo:       fields.ipdNo || "",
@@ -103,8 +125,8 @@ async function log(fields = {}) {
       summary:     fields.summary || "",
       sourceModel: fields.sourceModel || "",
       sourceId:    fields.sourceId    || null,
-      before:      compact(fields.before),
-      after:       compact(fields.after),
+      before:      redact(compact(fields.before)),
+      after:       redact(compact(fields.after)),
       userId:      fields.userId   || null,
       userName:    fields.userName || "",
       userRole:    fields.userRole || "",
@@ -114,8 +136,27 @@ async function log(fields = {}) {
       userAgent:   fields.userAgent || "",
       tags:        Array.isArray(fields.tags) ? fields.tags : [],
       isFlagged:   !!fields.isFlagged,
+      prevHash,
     };
-    return await PatientActivityLog.create(doc);
+
+    // Canonicalise + hash. JSON.stringify with sorted keys keeps the
+    // output deterministic so re-running the chain on a backup yields
+    // the same hashes.
+    const canonical = JSON.stringify(doc, Object.keys(doc).sort());
+    doc.rowHash = crypto
+      .createHash("sha256")
+      .update(canonical + "|" + prevHash)
+      .digest("hex");
+
+    const row = await PatientActivityLog.create(doc);
+    // FIX (roadmap E20): broadcast on the SSE bus so any patient-file
+    // tab currently subscribed to /api/live-updates/:uhid sees the new
+    // event in real time. Soft-fail — the bus may not be loaded yet.
+    try {
+      const { bus } = require("../../routes/Clinical/liveUpdatesRoutes");
+      bus.emit("activity", row.toObject ? row.toObject() : row);
+    } catch { /* SSE optional */ }
+    return row;
   } catch (e) {
     console.warn("[activityLogger] log failed:", e.message);
     return null;

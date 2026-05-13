@@ -111,6 +111,10 @@ const UserSchema = new mongoose.Schema(
       },
       specialization: String,
       registrationNumber: String,
+      // ABDM Healthcare Professional Registry ID — required by FHIR
+      // bundle export so the Practitioner resource carries the national
+      // identifier alongside the local registration number.
+      hprId:           { type: String, default: "" },
       qualifications: [String],
       experienceYears: Number,
       consultationFee: {

@@ -23,6 +23,10 @@ const OrderItemSchema = new mongoose.Schema(
     investigationName: { type: String, required: true },
     category: { type: String },
     sampleType: { type: String },
+    // LOINC code for FHIR DiagnosticReport / Observation export. Optional —
+    // emitted on the bundle if present, free-text fallback otherwise.
+    loincCode:    { type: String, default: "" },
+    loincDisplay: { type: String, default: "" },
 
     // INTERNAL → hospital lab, EXTERNAL → outside lab
     performedAt: {

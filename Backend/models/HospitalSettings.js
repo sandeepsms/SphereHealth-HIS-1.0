@@ -31,6 +31,11 @@ const HospitalSettingsSchema = new mongoose.Schema(
     rohiniId:      { type: String, default: "" },
     panNumber:     { type: String, default: "" },
 
+    /* ── ABDM (Ayushman Bharat Digital Mission) IDs ───────────
+       Required for FHIR bundle export to be ingested by ABDM PHR. */
+    hfrId:         { type: String, default: "" },  // Health Facility Registry ID
+    fhirEnabled:   { type: Boolean, default: true },
+
     /* ── Print / Header Settings ──────────────────────────────── */
     printHeaderColor:  { type: String, default: "#1e293b" },
     printAccentColor:  { type: String, default: "#1d4ed8" },

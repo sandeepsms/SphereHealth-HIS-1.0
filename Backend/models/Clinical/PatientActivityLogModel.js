@@ -92,6 +92,14 @@ const PatientActivityLogSchema = new mongoose.Schema(
     // True for events the clinical team should review (e.g. consent
     // refused, LAMA, critical-result acknowledged late).
     isFlagged: { type: Boolean, default: false, index: true },
+
+    // ── Chain-of-custody hash (NABH AAC.7 / ISO 27001) ───────
+    // Each row stores the SHA-256 of (canonical row payload + prev hash).
+    // Pre-save hook (activityLogger.log) sets these — DO NOT mutate after.
+    // A downstream verifier can walk the chain forward and detect any row
+    // that was modified or inserted between two existing rows.
+    prevHash: { type: String, default: "" },
+    rowHash:  { type: String, default: "" },
   },
   {
     timestamps: true,

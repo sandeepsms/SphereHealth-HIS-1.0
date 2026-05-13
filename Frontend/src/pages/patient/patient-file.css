@@ -31,6 +31,77 @@
   --pf-danger-l:  #fee2e2;
   --pf-info:      #0369a1;
   --pf-info-l:    #e0f2fe;
+
+  /* Density variables (roadmap G26) — comfortable defaults.
+   * useDensity() sets data-density="compact" on <html> to swap these. */
+  --pf-space-1:   4px;
+  --pf-space-2:   8px;
+  --pf-space-3:   12px;
+  --pf-space-4:   16px;
+  --pf-pad-card:  18px;
+  --pf-pad-row:   10px;
+  --pf-row-h:     38px;
+  --pf-font-base: 13px;
+}
+[data-density="compact"] {
+  --pf-space-1:   2px;
+  --pf-space-2:   5px;
+  --pf-space-3:   8px;
+  --pf-space-4:   11px;
+  --pf-pad-card:  12px;
+  --pf-pad-row:   6px;
+  --pf-row-h:     30px;
+  --pf-font-base: 12px;
+}
+
+/* Dark mode — roadmap G24. Triggered by data-theme="dark" on <html>.
+ * Every pf-* component already reads from --pf-* vars, so flipping
+ * these is enough. Selected raw hex values inside JSX still tint
+ * correctly because pf-tint--doctor/--nurse keep the same role accent. */
+[data-theme="dark"] {
+  --pf-bg:        #0b1220;
+  --pf-card:      #131a2c;
+  --pf-text:      #e2e8f0;
+  --pf-muted:     #94a3b8;
+  --pf-border:    #1e293b;
+  --pf-border-2:  #334155;
+  --pf-accent:    #818cf8;
+  --pf-accent-d:  #c7d2fe;
+  --pf-accent-l:  #1e1b4b;
+  --pf-accent-m:  #3730a3;
+  --pf-ok:        #34d399;
+  --pf-ok-l:      #064e3b;
+  --pf-warn:      #fbbf24;
+  --pf-warn-l:    #451a03;
+  --pf-danger:    #f87171;
+  --pf-danger-l:  #450a0a;
+  --pf-info:      #38bdf8;
+  --pf-info-l:    #082f49;
+}
+[data-theme="dark"] .pf-tint--doctor {
+  --pf-accent:   #a78bfa;
+  --pf-accent-d: #ede9fe;
+  --pf-accent-l: #2e1065;
+  --pf-accent-m: #5b21b6;
+}
+[data-theme="dark"] .pf-tint--nurse {
+  --pf-accent:   #5eead4;
+  --pf-accent-d: #ccfbf1;
+  --pf-accent-l: #042f2e;
+  --pf-accent-m: #115e59;
+}
+
+/* Reduced motion — roadmap C12. Disable hover-lifts + animations for
+ * users who prefer fewer motion effects. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .pf-stat-card:hover,
+  .pf-vital-tile:hover { transform: none !important; }
 }
 
 .pf-tint--doctor {
@@ -1256,6 +1327,78 @@
   color: #fff;
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   ROADMAP — Pinned Vitals strip (G27) + Theme/Density toolbar
+═══════════════════════════════════════════════════════════════ */
+.pf-pinned-vitals {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex; align-items: center; gap: 16px;
+  padding: 8px 16px;
+  background: linear-gradient(180deg, rgba(255,255,255,.97) 0%, rgba(255,255,255,.85) 100%);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--pf-border);
+  font-size: 12.5px;
+  flex-wrap: wrap;
+}
+[data-theme="dark"] .pf-pinned-vitals {
+  background: linear-gradient(180deg, rgba(19,26,44,.95) 0%, rgba(19,26,44,.85) 100%);
+}
+.pf-pinned-vitals__heart {
+  font-size: 16px;
+  color: var(--pf-danger);
+  animation: pf-pulse 2s ease-in-out infinite;
+}
+@keyframes pf-pulse {
+  0%,100% { transform: scale(1); }
+  50%     { transform: scale(1.15); }
+}
+.pf-pinned-vitals__item {
+  display: inline-flex; align-items: baseline; gap: 4px;
+}
+.pf-pinned-vitals__k {
+  font-size: 10px; font-weight: 800; text-transform: uppercase;
+  letter-spacing: .5px; color: var(--pf-muted);
+}
+.pf-pinned-vitals__v {
+  font-family: "JetBrains Mono", "DM Mono", monospace;
+  font-weight: 800; font-size: 13px; color: var(--pf-text);
+}
+.pf-pinned-vitals__u { font-size: 10px; color: var(--pf-muted); font-weight: 600; margin-left: 2px; }
+.pf-pinned-vitals__time {
+  margin-left: auto;
+  font-size: 10px; color: var(--pf-muted);
+  font-family: "JetBrains Mono", "DM Mono", monospace;
+}
+
+/* Theme + density toolbar (lives in pf-shell__head right cluster) */
+.pf-toolbar {
+  display: inline-flex;
+  gap: 4px;
+  background: rgba(255, 255, 255, .12);
+  border: 1px solid rgba(255, 255, 255, .25);
+  border-radius: 8px;
+  padding: 2px;
+  margin-right: 6px;
+}
+.pf-toolbar__btn {
+  background: transparent;
+  border: none;
+  color: #fff;
+  padding: 5px 9px;
+  border-radius: 6px;
+  font-size: 12px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 4px;
+  transition: background .12s;
+}
+.pf-toolbar__btn:hover { background: rgba(255, 255, 255, .18); }
+.pf-toolbar__btn--active { background: rgba(255, 255, 255, .28); font-weight: 700; }
+
+@media print {
+  .pf-pinned-vitals, .pf-toolbar { display: none !important; }
+}
+
 /* ── Spinner ─────────────────────────────────────────────── */
 .pf-spin-row {
   display: flex; justify-content: center; padding: 48px 0;
@@ -1378,9 +1521,26 @@
   border-top: 1px solid #cbd5e1;
   margin: 24px 28px 12px;
   padding-top: 8px;
-  display: flex; justify-content: space-between;
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
   font-size: 10px;
   color: #64748b;
+}
+.pf-print-footer__qr {
+  width: 56px; height: 56px;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  padding: 2px;
+  background: #fff;
+}
+
+@media print {
+  /* Repeat the footer on every printed page using running-element. The
+   * browser support is partial — Chrome respects it; falls back to a
+   * single footer at the end on Firefox. */
+  .pf-print-footer {
+    position: running(printFooter);
+  }
+  @page { @bottom-center { content: element(printFooter); } }
 }
 
 /* On-screen preview of print mode (popup window) — sane A4-ish width */
