@@ -193,6 +193,14 @@ function DoctorNotesContent({ selectedPatient }) {
   const [filterDate,    setFilterDate]    = useState("");   // "" | "today" | "week" | "last7"
   const [editingNote,   setEditingNote]   = useState(null); // draft note being edited
 
+  /* ── Tile / section navigator ──
+       Doctor Notes is broken into 6 tiles. When `activeTile` is null,
+       the user sees the grid of tiles. When set, the matching section
+       expands inline below the patient header and the rest of the
+       sections are hidden. "Back to all sections" returns to the grid.
+       Tile keys: "diagnosis" | "orders" | "mar" | "team" | "addnote" | "timeline" */
+  const [activeTile, setActiveTile] = useState(null);
+
   /* ── Recently admitted patients panel ── */
   const [recentPatients,   setRecentPatients]   = useState([]);
   const [consultPatients,  setConsultPatients]  = useState([]);  // admissions where I am consulting
@@ -1098,8 +1106,128 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
             </div>
           )}
 
+          {/* ══ TILE GRID (when no section is active) ════════════════════════
+                Doctor Notes is split into 6 tiles. Click → that section
+                expands inline below. Counts come from already-loaded
+                state (notes, diag, etc.). Sections owned by child
+                components (Orders / MAR / Team) show a generic "Open"
+                until we lift their counts up. */}
+          {patient && !activeTile && (
+            <div className="dnp-tiles-grid" role="navigation" aria-label="Doctor Notes sections">
+              {[
+                {
+                  id: "diagnosis",
+                  title: "Patient Diagnosis",
+                  subtitle: "Provisional → Working → Final + ICD-10",
+                  icon: "pi-bookmark",
+                  color: "#2563eb",
+                  tint: "#dbeafe",
+                  badges: [
+                    diag.provisional || diag.working || diag.final
+                      ? { label: "Filled", tone: "ok" }
+                      : { label: "Empty", tone: "warn" },
+                    diag.status ? { label: diag.status, tone: "info" } : null,
+                  ].filter(Boolean),
+                },
+                {
+                  id: "orders",
+                  title: "Doctor Orders & History",
+                  subtitle: "Active orders + full audit trail (NABH COP.2)",
+                  icon: "pi-list-check",
+                  color: "#7c3aed",
+                  tint: "#ede9fe",
+                  badges: [{ label: "Open", tone: "info" }],
+                },
+                {
+                  id: "mar",
+                  title: "Treatment Chart — Live MAR",
+                  subtitle: "Medication MAR + Infusion monitoring",
+                  icon: "pi-chart-bar",
+                  color: "#db2777",
+                  tint: "#fce7f3",
+                  badges: [{ label: "Open", tone: "info" }],
+                },
+                {
+                  id: "team",
+                  title: "Treatment Team",
+                  subtitle: "Primary consultant + consultations (COP.1)",
+                  icon: "pi-users",
+                  color: "#0d9488",
+                  tint: "#ccfbf1",
+                  badges: [{ label: "Open", tone: "info" }],
+                },
+                {
+                  id: "addnote",
+                  title: "Add a Note",
+                  subtitle: "Shift, Daily Progress, ICU, Procedure, Consultation…",
+                  icon: "pi-plus-circle",
+                  color: "#16a34a",
+                  tint: "#dcfce7",
+                  badges: [
+                    gateActive
+                      ? { label: "Initial Assessment required", tone: "warn" }
+                      : { label: "Ready", tone: "ok" },
+                  ],
+                },
+                {
+                  id: "timeline",
+                  title: "Notes Timeline",
+                  subtitle: "All historical notes + filters",
+                  icon: "pi-history",
+                  color: "#ea580c",
+                  tint: "#ffedd5",
+                  badges: [
+                    { label: `${totalNotes} total`, tone: "info" },
+                    signedNotes > 0 && { label: `${signedNotes} signed`, tone: "ok" },
+                    draftNotes > 0 && { label: `${draftNotes} draft`, tone: "warn" },
+                    todayNotes > 0 && { label: `${todayNotes} today`, tone: "accent" },
+                  ].filter(Boolean),
+                },
+              ].map(t => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setActiveTile(t.id)}
+                  className="dnp-tile"
+                  style={{ "--tile-color": t.color, "--tile-tint": t.tint }}
+                  aria-label={`Open ${t.title}`}
+                >
+                  <div className="dnp-tile__icon">
+                    <i className={`pi ${t.icon}`} />
+                  </div>
+                  <div className="dnp-tile__body">
+                    <div className="dnp-tile__title">{t.title}</div>
+                    <div className="dnp-tile__subtitle">{t.subtitle}</div>
+                    {t.badges.length > 0 && (
+                      <div className="dnp-tile__badges">
+                        {t.badges.map((b, i) => (
+                          <span key={i} className={`dnp-tile__badge dnp-tile__badge--${b.tone}`}>
+                            {b.label}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <i className="pi pi-chevron-right dnp-tile__chevron" aria-hidden />
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* ── Back-to-grid button (when a tile is open) ── */}
+          {patient && activeTile && (
+            <button
+              type="button"
+              onClick={() => setActiveTile(null)}
+              className="dnp-back-btn"
+              aria-label="Back to all sections"
+            >
+              <i className="pi pi-arrow-left" aria-hidden /> All Sections
+            </button>
+          )}
+
           {/* ══ DIAGNOSIS PANEL ══════════════════════════════════════════════ */}
-          {patient && (
+          {patient && activeTile === "diagnosis" && (
             <div style={{ background: "white", border: "1.5px solid #e0e7ef", borderRadius: 14, padding: "18px 22px", marginBottom: 14, boxShadow: "0 2px 10px rgba(37,99,235,.06)" }}>
               {/* Header */}
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
@@ -1207,40 +1335,45 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
           )}
 
           {/* ── Doctor Orders Panel ── */}
-          <DoctorOrdersPanel
-            UHID={patient?.UHID || patient?.uhid || searchUHID}
-            visitId={patient?.ipdNo || patient?.admissionNumber || patient?.visitId}
-            ipdNo={patient?.ipdNo || patient?.admissionNumber}
-            patientName={patient?.patientName || patient?.patientId?.fullName || ""}
-            refreshSignal={ordersRefresh}
-          />
-
-          {/* ── NABH Treatment Chart (Doctor Full View) ── */}
-          <div style={{ marginBottom: 14 }}>
-            <TreatmentChart
+          {activeTile === "orders" && (
+            <DoctorOrdersPanel
               UHID={patient?.UHID || patient?.uhid || searchUHID}
               visitId={patient?.ipdNo || patient?.admissionNumber || patient?.visitId}
+              ipdNo={patient?.ipdNo || patient?.admissionNumber}
               patientName={patient?.patientName || patient?.patientId?.fullName || ""}
-              nurseMode={false}
-              refreshTrigger={ordersRefresh}
+              refreshSignal={ordersRefresh}
             />
-          </div>
+          )}
+
+          {/* ── NABH Treatment Chart (Doctor Full View) ── */}
+          {activeTile === "mar" && (
+            <div style={{ marginBottom: 14 }}>
+              <TreatmentChart
+                UHID={patient?.UHID || patient?.uhid || searchUHID}
+                visitId={patient?.ipdNo || patient?.admissionNumber || patient?.visitId}
+                patientName={patient?.patientName || patient?.patientId?.fullName || ""}
+                nurseMode={false}
+                refreshTrigger={ordersRefresh}
+              />
+            </div>
+          )}
 
           {/* ── Treatment Team / Multi-doctor Consultation (NABH COP.1) ── */}
-          <TreatmentTeamPanel
-            admissionId={patient?._id || patient?.admissionId}
-            patientName={patient?.patientName || patient?.patientId?.fullName || ""}
-            UHID={patient?.UHID || patient?.uhid || searchUHID}
-            refreshTrigger={ordersRefresh}
-          />
+          {activeTile === "team" && (
+            <TreatmentTeamPanel
+              admissionId={patient?._id || patient?.admissionId}
+              patientName={patient?.patientName || patient?.patientId?.fullName || ""}
+              UHID={patient?.UHID || patient?.uhid || searchUHID}
+              refreshTrigger={ordersRefresh}
+            />
+          )}
 
-          {/* ── Shift Selector ── */}
-          {/* ── Sticky chrome: shift selector + module pill bar.
-              Patient header sits above this in the page; both stay
-              within the sticky range so the doctor can always see who
-              the patient is + spin up a new note without scrolling
-              back to the top. */}
-          <div className="dnp-sticky-chrome pf-tint--doctor">
+          {/* ── Add a Note: shift selector + module pill bar ──
+              Tile-gated. Sticky behavior removed because this is the
+              full section view, not chrome floating above another
+              section. Same primitives, just no `dnp-sticky-chrome`. */}
+          {activeTile === "addnote" && (
+          <div className="dnp-addnote-panel pf-tint--doctor">
             {/* Shift selector + Daily Progress quick action */}
             <div className="dnp-shift-row">
               <span className="dnp-shift-row__label">Shift:</span>
@@ -1289,8 +1422,10 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
               })}
             </div>
           </div>
+          )}
 
           {/* ── Notes Stats Bar ── */}
+          {activeTile === "timeline" && (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
             {[
               { label: "Total Notes", value: totalNotes, icon: "pi-file-edit", color: C.primary, bg: C.primaryL },
@@ -1309,8 +1444,10 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
               </div>
             ))}
           </div>
+          )}
 
           {/* ── Notes Timeline ── */}
+          {activeTile === "timeline" && (
           <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 20px", borderBottom: `1px solid ${C.border}`, background: "#f8fafc", flexWrap: "wrap", gap: 8 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 14 }}>
@@ -1806,6 +1943,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
             </div>
             )}
           </div>
+          )}
         </>
       )}
 
