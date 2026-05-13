@@ -1039,33 +1039,28 @@ function NursingNotesContent({ selectedPatient }) {
           </div>
 
           {/* ── Shift Selector ── */}
-          <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: "12px 20px", marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px" }}>Current Shift:</span>
-              <div style={{ display: "flex", gap: 6 }}>
-                {[
-                  { id: "morning",   label: "Morning",   icon: "pi-sun" },
-                  { id: "afternoon", label: "Afternoon", icon: "pi-cloud" },
-                  { id: "evening",   label: "Evening",   icon: "pi-moon" },
-                  { id: "night",     label: "Night",     icon: "pi-star" },
-                ].map(s => {
-                  const ss = SHIFT_STYLE[s.id];
-                  const active = shift === s.id;
-                  return (
-                    <button key={s.id} onClick={() => setShift(s.id)}
-                      style={{ padding: "6px 16px", border: `1.5px solid ${active ? C.primary + "60" : C.border}`, borderRadius: 20, background: active ? C.primaryL : "white", color: active ? C.primary : C.muted, fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, cursor: "pointer", transition: "all .15s", display: "flex", alignItems: "center", gap: 5 }}>
-                      <i className={`pi ${s.icon}`} style={{ fontSize: 10 }} />
-                      {s.label}
-                    </button>
-                  );
-                })}
-              </div>
+          {/* ── Sticky chrome: shift selector + module pill bar. Stays
+              pinned to the top so the nurse can always see who the
+              patient is + spin up a new note without scrolling back. */}
+          <div className="dnp-sticky-chrome pf-tint--nurse">
+            <div className="dnp-shift-row">
+              <span className="dnp-shift-row__label">Current Shift:</span>
+              {[
+                { id: "morning",   label: "Morning",   icon: "pi-sun" },
+                { id: "afternoon", label: "Afternoon", icon: "pi-cloud" },
+                { id: "evening",   label: "Evening",   icon: "pi-moon" },
+                { id: "night",     label: "Night",     icon: "pi-star" },
+              ].map(s => (
+                <button key={s.id} onClick={() => setShift(s.id)}
+                  className={`dnp-shift-pill ${shift === s.id ? "dnp-shift-pill--active" : ""}`}>
+                  <i className={`pi ${s.icon}`} style={{ fontSize: 10 }} />
+                  {s.label}
+                </button>
+              ))}
+              <button onClick={() => openModal("general")} className="dnp-shift-row__cta">
+                <i className="pi pi-plus" style={{ fontSize: 12 }} /> Quick Note
+              </button>
             </div>
-            <button onClick={() => openModal("general")}
-              style={{ padding: "9px 20px", background: C.green, color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 7, boxShadow: `0 4px 12px ${C.green}35` }}>
-              <i className="pi pi-plus" style={{ fontSize: 12 }} /> Quick Note
-            </button>
-          </div>
 
           {/* ── Initial Assessment Gate Banner ── */}
           {gateActive && (
@@ -1116,130 +1111,45 @@ function NursingNotesContent({ selectedPatient }) {
             </div>
           )}
 
-          {/* ── Module Launcher ── */}
-          {(() => {
-            const MOD_GROUPS = [
-              {
-                label: 'Assessment & Monitoring',
-                icon: 'pi-chart-line', color: '#1d4ed8', bg: '#dbeafe',
-                ids: ['vitals','neuro','pain','mews','fall','intake'],
-              },
-              {
-                label: 'Interventions',
-                icon: 'pi-plus-circle', color: '#0f766e', bg: '#ccfbf1',
-                ids: ['iv','blood','wound','skin','procedure'],
-              },
-              {
-                label: 'Documentation',
-                icon: 'pi-file-edit', color: '#7c3aed', bg: '#ede9fe',
-                ids: ['initial','daily','careplan','discharge','nutrition','education','general'],
-              },
-            ];
-            return (
-              <div style={{ background: C.card, borderRadius: 16, marginBottom: 14, overflow: 'hidden', border: `1.5px solid ${C.border}`, boxShadow: '0 2px 8px rgba(0,0,0,.04)' }}>
-                {/* Header */}
-                <div style={{ padding: '13px 22px', borderBottom: `1px solid ${C.border}`, background: 'linear-gradient(to right, #f0fdfa, #f8fafc)', display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div style={{ width: 34, height: 34, borderRadius: 10, background: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: `0 3px 8px ${C.primary}40` }}>
-                    <i className="pi pi-pen-to-square" style={{ fontSize: 14, color: 'white' }} />
-                  </div>
-                  <div>
-                    <div style={{ fontWeight: 800, fontSize: 14, color: C.text }}>Add Care Note</div>
-                    <div style={{ fontSize: 11, color: C.muted }}>Select a module to document · {gateActive ? <span style={{color:'#dc2626',fontWeight:700}}>Complete Initial Assessment first</span> : <span style={{color:'#16a34a',fontWeight:600}}>All modules unlocked</span>}</div>
-                  </div>
-                </div>
-
-                {/* Module groups */}
-                <div style={{ padding: '16px 22px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-                  {MOD_GROUPS.map(group => (
-                    <div key={group.label}>
-                      {/* Group label */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
-                        <div style={{ width: 22, height: 22, borderRadius: 6, background: group.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          <i className={`pi ${group.icon}`} style={{ fontSize: 11, color: group.color }} />
-                        </div>
-                        <span style={{ fontSize: 11, fontWeight: 700, color: group.color, textTransform: 'uppercase', letterSpacing: '.7px' }}>{group.label}</span>
-                        <div style={{ flex: 1, height: 1, background: `${group.color}20` }} />
-                      </div>
-                      {/* Module tiles */}
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(118px, 1fr))', gap: 8 }}>
-                        {group.ids.map(id => {
-                          const m = MODULES.find(x => x.id === id);
-                          if (!m) return null;
-                          const locked = gateActive && m.id !== 'initial';
-                          const isInitial = m.id === 'initial';
-                          const isHighlight = isInitial && gateActive;
-                          return (
-                            <button key={m.id} onClick={() => !locked && openModal(m.id)}
-                              title={locked ? 'Complete Nursing Initial Assessment first' : m.label}
-                              style={{
-                                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                                gap: 8, padding: '14px 8px',
-                                border: `1.5px solid ${isHighlight ? '#fca5a5' : locked ? '#e2e8f0' : m.border}`,
-                                borderRadius: 12,
-                                background: isHighlight ? '#fff0f0' : locked ? '#f8fafc' : 'white',
-                                cursor: locked ? 'not-allowed' : 'pointer',
-                                opacity: locked && !isInitial ? 0.45 : 1,
-                                transition: 'all .18s',
-                                position: 'relative',
-                                boxShadow: locked ? 'none' : '0 1px 4px rgba(0,0,0,.04)',
-                              }}
-                              onMouseEnter={e => {
-                                if (!locked) {
-                                  e.currentTarget.style.background = isHighlight ? '#fecaca' : m.bg;
-                                  e.currentTarget.style.transform = 'translateY(-2px)';
-                                  e.currentTarget.style.boxShadow = `0 6px 16px ${m.color}20`;
-                                  e.currentTarget.style.borderColor = m.color;
-                                }
-                              }}
-                              onMouseLeave={e => {
-                                if (!locked) {
-                                  e.currentTarget.style.background = isHighlight ? '#fff0f0' : 'white';
-                                  e.currentTarget.style.transform = 'none';
-                                  e.currentTarget.style.boxShadow = '0 1px 4px rgba(0,0,0,.04)';
-                                  e.currentTarget.style.borderColor = isHighlight ? '#fca5a5' : m.border;
-                                }
-                              }}>
-                              {/* Icon bubble */}
-                              <div style={{
-                                width: 38, height: 38, borderRadius: 10,
-                                background: isHighlight ? '#fee2e2' : locked ? '#f1f5f9' : m.bg,
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                transition: 'all .18s',
-                              }}>
-                                <i className={`pi ${locked && !isInitial ? 'pi-lock' : m.icon}`}
-                                  style={{ fontSize: 15, color: isHighlight ? '#dc2626' : locked ? '#94a3b8' : m.color }} />
-                              </div>
-                              {/* Label */}
-                              <span style={{
-                                fontSize: 10.5, fontWeight: 700, textAlign: 'center', lineHeight: 1.3,
-                                color: isHighlight ? '#dc2626' : locked && !isInitial ? '#94a3b8' : m.color,
-                              }}>
-                                {m.label}
-                              </span>
-                              {/* Badges */}
-                              {isInitial && gateActive && (
-                                <span style={{ position: 'absolute', top: -6, right: -6, background: '#dc2626', color: 'white', fontSize: 8, fontWeight: 800, padding: '2px 5px', borderRadius: 6, letterSpacing: '.3px', border: '1.5px solid white' }}>
-                                  REQ
-                                </span>
-                              )}
-                              {isInitial && !gateActive && (
-                                <span style={{ position: 'absolute', top: -6, right: -6, background: '#16a34a', color: 'white', fontSize: 8, fontWeight: 800, padding: '2px 5px', borderRadius: 6, border: '1.5px solid white' }}>
-                                  ✓
-                                </span>
-                              )}
-                              {m.dot && !gateActive && (
-                                <span style={{ position: 'absolute', top: -4, right: -4, width: 9, height: 9, background: '#dc2626', borderRadius: '50%', border: '2px solid white' }} />
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
+            {/* ── Module Launcher — compact pill bar, 3 groups ── */}
+            {(() => {
+              const MOD_GROUPS = [
+                { label: "Assessment & Monitoring", ids: ["vitals","neuro","pain","mews","fall","intake"] },
+                { label: "Interventions",            ids: ["iv","blood","wound","skin","procedure"] },
+                { label: "Documentation",            ids: ["initial","daily","careplan","discharge","nutrition","education","general"] },
+              ];
+              return (
+                <div className="dnp-module-bar" role="toolbar" aria-label="Add care note">
+                  {MOD_GROUPS.map((group, gi) => (
+                    <React.Fragment key={group.label}>
+                      {gi > 0 && <span className="dnp-module-bar__divider" aria-hidden />}
+                      <span className="dnp-module-bar__group">{group.label}</span>
+                      {group.ids.map(id => {
+                        const m = MODULES.find(x => x.id === id);
+                        if (!m) return null;
+                        const locked = gateActive && m.id !== "initial";
+                        const isInitial = m.id === "initial";
+                        return (
+                          <button key={m.id} onClick={() => !locked && openModal(m.id)}
+                            title={locked ? "Complete Nursing Initial Assessment first" : m.label}
+                            disabled={locked}
+                            className={`dnp-module-pill ${locked ? "dnp-module-pill--locked" : ""} ${isInitial && gateActive ? "dnp-module-pill--required" : ""}`}
+                            style={{ "--mod-color": m.color, "--mod-tint": m.bg }}>
+                            <i className={`pi ${locked && !isInitial ? "pi-lock" : m.icon}`} style={{ fontSize: 12 }} />
+                            {m.label}
+                            {isInitial && gateActive && <span className="dnp-module-pill__chip dnp-module-pill__chip--required">REQ</span>}
+                            {isInitial && !gateActive && <span className="dnp-module-pill__chip dnp-module-pill__chip--done">✓</span>}
+                            {m.dot && !gateActive && <span className="dnp-module-pill__dot" />}
+                          </button>
+                        );
+                      })}
+                    </React.Fragment>
                   ))}
                 </div>
-              </div>
-            );
-          })()}
+              );
+            })()}
+          </div>
+          {/* /dnp-sticky-chrome */}
 
           {/* ── Equipment Used This Shift ── */}
           {(() => {

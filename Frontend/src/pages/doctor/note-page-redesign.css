@@ -448,12 +448,177 @@
 }
 .dnp-empty__icon { font-size: 44px; margin-bottom: 12px; opacity: .6; }
 
+/* ═══════════════════════════════════════════════════════════════
+   Sticky page chrome — patient header + module pill bar stay
+   pinned to the top while the recorded-notes timeline scrolls
+   beneath them. Solves the "patient load karne ke baad pura page
+   scroll karna padta hai" problem.
+═══════════════════════════════════════════════════════════════ */
+.dnp-sticky-chrome {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--pf-bg, #f4f6fb);
+  margin: -16px -28px 14px;  /* span the page width even with parent padding */
+  padding: 12px 28px 0;
+  box-shadow: 0 8px 22px -16px rgba(15, 23, 42, .25);
+  border-bottom: 1px solid var(--pf-border, #e2e8f0);
+  backdrop-filter: blur(8px);
+}
+[data-theme="dark"] .dnp-sticky-chrome { background: var(--pf-bg, #0b1220); }
+
+/* Module pill bar — compact, multi-row, no scroll. Mirrors the
+ * patient-panel tab redesign so the page feels consistent. */
+.dnp-module-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 10px 14px;
+  background: var(--pf-card, #fff);
+  border: 1px solid var(--pf-border, #e2e8f0);
+  border-radius: 12px;
+  margin-bottom: 12px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, .03);
+}
+.dnp-module-bar__group {
+  font-size: 9.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  color: var(--pf-muted, #64748b);
+  padding: 0 4px;
+  align-self: center;
+  white-space: nowrap;
+}
+.dnp-module-bar__divider {
+  height: 18px;
+  width: 1px;
+  background: var(--pf-border, #e2e8f0);
+  margin: 0 3px;
+}
+
+.dnp-module-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 13px;
+  border-radius: 999px;
+  border: 1.5px solid var(--pf-border, #e2e8f0);
+  background: var(--pf-card, #fff);
+  color: var(--pf-text, #0f172a);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  position: relative;
+  transition: background .12s, color .12s, border-color .12s, transform .08s;
+}
+.dnp-module-pill:hover {
+  background: var(--mod-tint, var(--pf-accent-l, #eef2ff));
+  color: var(--mod-color, var(--pf-accent-d, #312e81));
+  border-color: var(--mod-color, var(--pf-accent, #4f46e5));
+  transform: translateY(-1px);
+}
+.dnp-module-pill:focus-visible {
+  outline: 2px solid var(--pf-accent, #4f46e5);
+  outline-offset: 1px;
+}
+.dnp-module-pill--locked {
+  opacity: .55;
+  cursor: not-allowed;
+  background: #f1f5f9;
+}
+.dnp-module-pill--locked:hover {
+  background: #f1f5f9;
+  transform: none;
+}
+.dnp-module-pill--required {
+  border-color: #d97706;
+  background: #fef3c7;
+  color: #92400e;
+}
+.dnp-module-pill--required:hover {
+  background: #fde68a;
+}
+.dnp-module-pill__dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--mod-color, var(--pf-accent, #4f46e5));
+}
+.dnp-module-pill__chip {
+  font-size: 9px;
+  font-weight: 800;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-left: 4px;
+  letter-spacing: .4px;
+}
+.dnp-module-pill__chip--required { background: #d97706; color: #fff; }
+.dnp-module-pill__chip--done     { background: #059669; color: #fff; }
+
+/* Shift selector row inside the sticky chrome */
+.dnp-shift-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px;
+  background: var(--pf-card, #fff);
+  border: 1px solid var(--pf-border, #e2e8f0);
+  border-radius: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.dnp-shift-row__label {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  color: var(--pf-muted, #64748b);
+}
+.dnp-shift-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 14px;
+  border-radius: 999px;
+  border: 1.5px solid var(--pf-border, #e2e8f0);
+  background: var(--pf-card, #fff);
+  color: var(--pf-muted, #64748b);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .12s, color .12s;
+}
+.dnp-shift-pill--active {
+  background: var(--pf-accent-l, #eef2ff);
+  color: var(--pf-accent-d, #312e81);
+  border-color: var(--pf-accent, #4f46e5);
+  font-weight: 800;
+}
+.dnp-shift-row__cta {
+  margin-left: auto;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 16px;
+  background: var(--pf-accent, #4f46e5);
+  color: #fff;
+  border: none;
+  border-radius: 9px;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--pf-accent, #4f46e5) 30%, transparent);
+}
+.dnp-shift-row__cta:hover { filter: brightness(1.06); }
+
+/* When the sticky chrome is active, the timeline gets a small offset
+ * so the first note doesn't get hidden under the chrome's shadow. */
+.dnp-timeline-area { padding-top: 4px; }
+
 /* Print rules: collapse hover effects, drop shadows */
 @media print {
   .dnp-note { box-shadow: none !important; background: transparent !important; }
   .dnp-note:hover { background: transparent !important; }
   .dnp-note__btn, .dnp-note__actions { display: none !important; }
   .dnp-date-header { position: static !important; backdrop-filter: none !important; }
+  .dnp-sticky-chrome { position: static !important; box-shadow: none !important; margin: 0 !important; padding: 0 !important; }
+  .dnp-module-bar, .dnp-shift-row { display: none !important; }
   .dnp-soap-cell, .dnp-vitals-strip, .dnp-section__head, .dnp-dx-strip {
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;

@@ -1235,64 +1235,55 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
           />
 
           {/* ── Shift Selector ── */}
-          <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: "12px 20px", marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px" }}>Shift:</span>
-              <div style={{ display: "flex", gap: 6 }}>
-                {[{id:"morning",label:"Morning",icon:"pi-sun"},{id:"afternoon",label:"Afternoon",icon:"pi-cloud"},{id:"evening",label:"Evening",icon:"pi-moon"},{id:"night",label:"Night",icon:"pi-star"}].map(s => (
-                  <button key={s.id} onClick={() => setShift(s.id)}
-                    style={{ padding: "6px 16px", border: `1.5px solid ${shift === s.id ? C.primary + "60" : C.border}`, borderRadius: 20, background: shift === s.id ? C.primaryL : "white", color: shift === s.id ? C.primary : C.muted, fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}>
-                    <i className={`pi ${s.icon}`} style={{ fontSize: 10 }} />{s.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <button onClick={() => openModal("daily")}
-              style={{ padding: "9px 20px", background: `linear-gradient(135deg,${C.primary},${C.primaryMid})`, color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 7, boxShadow: `0 4px 12px ${C.primary}30` }}>
-              <i className="pi pi-plus" style={{ fontSize: 12 }} /> Daily Progress Note
-            </button>
-          </div>
-
-          {/* ── Module Launcher ── */}
-          <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden", marginBottom: 14 }}>
-            <div style={{ padding: "10px 20px", borderBottom: `1px solid ${C.border}`, background: "#f8fafc", display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ width: 26, height: 26, borderRadius: 6, background: C.primary + "18", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <i className="pi pi-plus-circle" style={{ color: C.primary, fontSize: 12 }} />
-              </span>
-              <span style={{ fontWeight: 700, fontSize: 12, textTransform: "uppercase", letterSpacing: ".8px", color: C.muted }}>Clinical Documentation — NABH</span>
+          {/* ── Sticky chrome: shift selector + module pill bar.
+              Patient header sits above this in the page; both stay
+              within the sticky range so the doctor can always see who
+              the patient is + spin up a new note without scrolling
+              back to the top. */}
+          <div className="dnp-sticky-chrome pf-tint--doctor">
+            {/* Shift selector + Daily Progress quick action */}
+            <div className="dnp-shift-row">
+              <span className="dnp-shift-row__label">Shift:</span>
+              {[{id:"morning",label:"Morning",icon:"pi-sun"},{id:"afternoon",label:"Afternoon",icon:"pi-cloud"},{id:"evening",label:"Evening",icon:"pi-moon"},{id:"night",label:"Night",icon:"pi-star"}].map(s => (
+                <button key={s.id} onClick={() => setShift(s.id)}
+                  className={`dnp-shift-pill ${shift === s.id ? "dnp-shift-pill--active" : ""}`}>
+                  <i className={`pi ${s.icon}`} style={{ fontSize: 10 }} />{s.label}
+                </button>
+              ))}
+              <button onClick={() => openModal("daily")} className="dnp-shift-row__cta">
+                <i className="pi pi-plus" style={{ fontSize: 12 }} /> Daily Progress Note
+              </button>
             </div>
 
-            {/* Priority modules row */}
-            <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, background: "#fffbeb", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-              <span style={{ fontSize: 10, fontWeight: 700, color: "#92400e", textTransform: "uppercase", letterSpacing: ".6px", whiteSpace: "nowrap" }}>Required / Treatment:</span>
+            {/* Module launcher — single compact pill bar, 2 groups, multi-row wrap */}
+            <div className="dnp-module-bar">
+              <span className="dnp-module-bar__group">Required / Treatment</span>
               {MODULES.filter(m => m.id === "medication" || m.id === "infusion").map(m => {
                 const locked = gateActive && m.id !== "initial";
                 return (
-                  <button key={m.id} onClick={() => openModal(m.id)}
-                    style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 16px", borderRadius: 9, border: `2px solid ${locked ? C.border : m.border}`, fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, cursor: "pointer", background: locked ? "#f1f5f9" : (m.id === "initial" && gateActive ? "#fef3c7" : "white"), color: locked ? C.muted : m.color, transition: "all .2s", position: "relative", opacity: locked ? 0.6 : 1 }}
-                    onMouseEnter={e => { if (!locked) { e.currentTarget.style.background = m.bg; e.currentTarget.style.transform = "translateY(-1px)"; } }}
-                    onMouseLeave={e => { if (!locked) { e.currentTarget.style.background = m.id === "initial" && gateActive ? "#fef3c7" : "white"; e.currentTarget.style.transform = "none"; } }}>
-                    <i className={`pi ${locked ? "pi-lock" : m.icon}`} style={{ fontSize: 13 }} />
+                  <button key={m.id} onClick={() => !locked && openModal(m.id)}
+                    className={`dnp-module-pill ${locked ? "dnp-module-pill--locked" : ""}`}
+                    style={{ "--mod-color": m.color, "--mod-tint": m.bg }}
+                    title={locked ? "Locked — complete Initial Assessment first" : m.label}>
+                    <i className={`pi ${locked ? "pi-lock" : m.icon}`} style={{ fontSize: 12 }} />
                     {m.label}
-                    {m.id === "initial" && gateActive && <span style={{ marginLeft: 4, background: "#d97706", color: "white", fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 3 }}>REQUIRED</span>}
-                    {m.id === "initial" && assessmentDone && <span style={{ marginLeft: 4, background: C.green, color: "white", fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 3 }}>✓ DONE</span>}
+                    {m.id === "initial" && gateActive && <span className="dnp-module-pill__chip dnp-module-pill__chip--required">REQ</span>}
+                    {m.id === "initial" && assessmentDone && <span className="dnp-module-pill__chip dnp-module-pill__chip--done">✓</span>}
                   </button>
                 );
               })}
-            </div>
-
-            {/* All other modules */}
-            <div style={{ padding: "12px 18px", display: "flex", flexWrap: "wrap", gap: 8 }}>
-              <span style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", alignSelf: "center", marginRight: 4 }}>Notes:</span>
+              <span className="dnp-module-bar__divider" aria-hidden />
+              <span className="dnp-module-bar__group">Notes</span>
               {MODULES.filter(m => !m.priority && m.id !== "medication" && m.id !== "infusion").map(m => {
                 const locked = gateActive;
                 return (
-                  <button key={m.id} onClick={() => openModal(m.id)}
-                    style={{ display: "flex", alignItems: "center", gap: 7, padding: "8px 14px", borderRadius: 9, border: `1.5px solid ${locked ? C.border : m.border}`, fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 600, cursor: "pointer", background: "white", color: locked ? C.muted : m.color, transition: "all .2s", position: "relative", opacity: locked ? 0.55 : 1 }}
-                    onMouseEnter={e => { if (!locked) { e.currentTarget.style.background = m.bg; e.currentTarget.style.transform = "translateY(-1px)"; } }}
-                    onMouseLeave={e => { if (!locked) { e.currentTarget.style.background = "white"; e.currentTarget.style.transform = "none"; } }}>
-                    <i className={`pi ${locked ? "pi-lock" : m.icon}`} style={{ fontSize: 13 }} />{m.label}
-                    {m.dot && !locked && <span style={{ position: "absolute", top: -4, right: -4, width: 8, height: 8, background: m.color, borderRadius: "50%", border: "2px solid white" }} />}
+                  <button key={m.id} onClick={() => !locked && openModal(m.id)}
+                    className={`dnp-module-pill ${locked ? "dnp-module-pill--locked" : ""}`}
+                    style={{ "--mod-color": m.color, "--mod-tint": m.bg }}
+                    title={locked ? "Locked — complete Initial Assessment first" : m.label}>
+                    <i className={`pi ${locked ? "pi-lock" : m.icon}`} style={{ fontSize: 12 }} />
+                    {m.label}
+                    {m.dot && !locked && <span className="dnp-module-pill__dot" />}
                   </button>
                 );
               })}
