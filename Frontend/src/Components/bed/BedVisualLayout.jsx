@@ -1151,153 +1151,166 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         />
       )}
 
-      {/* ── FILTER BAR ── */}
-      <div
-        style={{
-          background: "#fff",
-          borderRadius: 14,
-          border: "1.5px solid #e2e8f0",
-          padding: "12px 16px",
-          marginBottom: 16,
-          boxShadow: "0 2px 10px rgba(15,23,42,.04)",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: 10,
-            flexWrap: "wrap",
-            gap: 10,
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 7,
-              fontSize: 11,
-              fontWeight: 800,
-              color: "#475569",
-              textTransform: "uppercase",
-              letterSpacing: ".5px",
-            }}
-          >
-            <i className="pi pi-filter" style={{ color: TEAL, fontSize: 12 }} />
-            Filters
+      {/* ── FILTER BAR (redesigned) ── */}
+      {(() => {
+        const FILTERS_CONF = [
+          {
+            key: "bldg", icon: "pi-building",
+            val: fBldg, ph: "All Buildings",
+            opts: bldgs.map((b) => ({ label: b.buildingName, value: b._id })),
+            findLabel: (v) => bldgs.find((b) => b._id === v)?.buildingName,
+            onChange: (v) => { setFBldg(v); setFFloor(null); setFWard(null); setFRoom(null); },
+            disabled: false,
+            color: "#0891b2",
+          },
+          {
+            key: "floor", icon: "pi-arrows-v",
+            val: fFloor, ph: "All Floors",
+            opts: floors.map((f) => ({ label: f.floorName || `Floor ${f.floorNumber}`, value: f._id })),
+            findLabel: (v) => {
+              const f = floors.find((x) => x._id === v);
+              return f ? (f.floorName || `Floor ${f.floorNumber}`) : null;
+            },
+            onChange: (v) => { setFFloor(v); setFWard(null); setFRoom(null); },
+            disabled: !fBldg,
+            color: "#ea580c",
+          },
+          {
+            key: "ward", icon: "pi-home",
+            val: fWard, ph: "All Wards",
+            opts: wards.map((w) => ({ label: w.wardName, value: w._id })),
+            findLabel: (v) => wards.find((w) => w._id === v)?.wardName,
+            onChange: setFWard,
+            disabled: !fFloor,
+            color: "#2563eb",
+          },
+          {
+            key: "room", icon: "pi-box",
+            val: fRoom, ph: "All Rooms",
+            opts: rooms.map((r) => ({ label: r.roomNumber, value: r._id })),
+            findLabel: (v) => rooms.find((r) => r._id === v)?.roomNumber,
+            onChange: setFRoom,
+            disabled: !fFloor,
+            color: "#7c3aed",
+          },
+        ];
+        const activeChips = FILTERS_CONF
+          .filter((f) => f.val)
+          .map((f) => ({ ...f, label: f.findLabel(f.val) || "—" }));
+        const hasSearch = (fSearch || "").trim().length > 0;
+        const anyActive = activeChips.length > 0 || hasSearch;
+        const clearAll = () => {
+          setFBldg(null); setFFloor(null); setFWard(null); setFRoom(null); setFSearch("");
+        };
+
+        return (
+          <div className="bm-bv-filterbar">
+            <div className="bm-bv-filterbar__head">
+              <div className="bm-bv-filterbar__title">
+                <i className="pi pi-filter" style={{ color: TEAL, fontSize: 12 }} />
+                Filters
+                {anyActive && (
+                  <span style={{
+                    background: TEAL, color: "#fff",
+                    fontSize: 9.5, fontWeight: 800, letterSpacing: ".5px",
+                    padding: "2px 7px", borderRadius: 999, marginLeft: 4,
+                  }}>
+                    {activeChips.length + (hasSearch ? 1 : 0)} active
+                  </span>
+                )}
+              </div>
+
+              {anyActive ? (
+                <div className="bm-bv-filterbar__chips">
+                  {hasSearch && (
+                    <span className="bm-bv-filterbar__chip" style={{ background: "#fef3c7", color: "#92400e", borderColor: "#fde68a" }}>
+                      <i className="pi pi-search" style={{ fontSize: 9 }} />
+                      "{fSearch.length > 14 ? fSearch.slice(0, 14) + "…" : fSearch}"
+                      <button onClick={() => setFSearch("")} title="Clear search">×</button>
+                    </span>
+                  )}
+                  {activeChips.map((c) => (
+                    <span key={c.key} className="bm-bv-filterbar__chip"
+                      style={{ background: `${c.color}1a`, color: c.color, borderColor: `${c.color}55` }}>
+                      <i className={`pi ${c.icon}`} style={{ fontSize: 9 }} />
+                      {c.label}
+                      <button onClick={() => c.onChange(null)} title={`Clear ${c.key}`}>×</button>
+                    </span>
+                  ))}
+                  <button
+                    onClick={clearAll}
+                    style={{
+                      background: "transparent", color: "#64748b",
+                      border: "1.5px solid #e2e8f0", borderRadius: 999,
+                      padding: "3px 11px", fontSize: 10.5, fontWeight: 800,
+                      cursor: "pointer", fontFamily: "inherit",
+                      display: "inline-flex", alignItems: "center", gap: 5,
+                    }}
+                  >
+                    <i className="pi pi-filter-slash" style={{ fontSize: 9 }} />
+                    Clear all
+                  </button>
+                </div>
+              ) : (
+                <span style={{ fontSize: 10.5, color: "#94a3b8" }}>
+                  <i className="pi pi-info-circle" style={{ marginRight: 5 }} />
+                  Showing every bed — narrow down using the controls below
+                </span>
+              )}
+            </div>
+
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr",
+              gap: 10,
+            }}>
+              {/* Search input */}
+              <div className={`bm-input`} style={{ height: 38 }}>
+                <i className="pi pi-search bm-input__icon" />
+                <input
+                  value={fSearch}
+                  onChange={(e) => setFSearch(e.target.value)}
+                  placeholder="Search beds or patients…"
+                  style={{ width: "100%", border: "none", outline: "none", padding: "9px 12px", fontSize: 13, background: "transparent", fontFamily: "inherit" }}
+                />
+                {fSearch && (
+                  <button onClick={() => setFSearch("")}
+                    style={{
+                      background: "transparent", border: "none", color: "#94a3b8",
+                      cursor: "pointer", padding: "0 10px", fontSize: 13,
+                    }}
+                    title="Clear search">
+                    <i className="pi pi-times-circle" />
+                  </button>
+                )}
+              </div>
+
+              {/* Dropdowns with icon prefix */}
+              {FILTERS_CONF.map((f) => (
+                <div key={f.key}
+                  className={`bm-input ${f.disabled ? "" : ""}`}
+                  style={{
+                    height: 38,
+                    opacity: f.disabled ? 0.55 : 1,
+                    background: f.val ? `${f.color}10` : "#fff",
+                    borderColor: f.val ? `${f.color}55` : "#e2e8f0",
+                  }}>
+                  <i className={`pi ${f.icon} bm-input__icon`}
+                    style={{ color: f.val ? f.color : "#94a3b8" }} />
+                  <Dropdown
+                    value={f.val}
+                    showClear
+                    disabled={f.disabled}
+                    options={f.opts}
+                    onChange={(e) => f.onChange(e.value)}
+                    placeholder={f.ph}
+                  />
+                </div>
+              ))}
+            </div>
           </div>
-          <button
-            onClick={() => {
-              setFBldg(null);
-              setFFloor(null);
-              setFWard(null);
-              setFRoom(null);
-              setFSearch("");
-            }}
-            style={{
-              background: "transparent", color: "#64748b",
-              border: "1.5px solid #e2e8f0", borderRadius: 999,
-              padding: "4px 12px", fontSize: 11, fontWeight: 700,
-              cursor: "pointer", fontFamily: "inherit",
-              display: "inline-flex", alignItems: "center", gap: 5,
-            }}
-            title="Clear all filters"
-          >
-            <i className="pi pi-filter-slash" style={{ fontSize: 10 }} />
-            Clear
-          </button>
-        </div>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr",
-            gap: 12,
-          }}
-        >
-          <div style={{ position: "relative" }}>
-            <i
-              className="pi pi-search"
-              style={{
-                position: "absolute",
-                left: 12,
-                top: "50%",
-                transform: "translateY(-50%)",
-                color: "#9ca3af",
-                fontSize: 14,
-              }}
-            />
-            <input
-              value={fSearch}
-              onChange={(e) => setFSearch(e.target.value)}
-              placeholder="Search beds or patients..."
-              style={{
-                width: "100%",
-                padding: "10px 14px 10px 38px",
-                border: "1px solid #e2e8f0",
-                borderRadius: 10,
-                fontSize: 13,
-                outline: "none",
-                fontFamily: "inherit",
-                boxSizing: "border-box",
-              }}
-            />
-          </div>
-          {[
-            {
-              val: fBldg,
-              opts: bldgs.map((b) => ({ label: b.buildingName, value: b._id })),
-              onChange: (v) => {
-                setFBldg(v);
-                setFFloor(null);
-                setFWard(null);
-                setFRoom(null);
-              },
-              disabled: false,
-              ph: "All Buildings",
-            },
-            {
-              val: fFloor,
-              opts: floors.map((f) => ({
-                label: f.floorName || `Floor ${f.floorNumber}`,
-                value: f._id,
-              })),
-              onChange: (v) => {
-                setFFloor(v);
-                setFWard(null);
-                setFRoom(null);
-              },
-              disabled: !fBldg,
-              ph: "All Floors",
-            },
-            {
-              val: fWard,
-              opts: wards.map((w) => ({ label: w.wardName, value: w._id })),
-              onChange: setFWard,
-              disabled: !fFloor,
-              ph: "All Wards",
-            },
-            {
-              val: fRoom,
-              opts: rooms.map((r) => ({ label: r.roomNumber, value: r._id })),
-              onChange: setFRoom,
-              disabled: !fFloor,
-              ph: "All Rooms",
-            },
-          ].map(({ val, opts, onChange, disabled, ph }, i) => (
-            <Dropdown
-              key={i}
-              className="w-full"
-              value={val}
-              showClear
-              disabled={disabled}
-              options={opts}
-              onChange={(e) => onChange(e.value)}
-              placeholder={ph}
-            />
-          ))}
-        </div>
-      </div>
+        );
+      })()}
 
       {/* ── BED GRID ── */}
       {busy ? (
@@ -1318,26 +1331,45 @@ const BedVisualLayout = ({ onRefreshParent }) => {
           </p>
         </div>
       ) : Object.keys(byFloor).length === 0 ? (
-        <div
-          style={{
-            textAlign: "center",
-            padding: 80,
-            background: "#fff",
-            borderRadius: 16,
-            border: "1px solid #e2e8f0",
-          }}
-        >
-          <i
-            className="pi pi-inbox"
-            style={{
-              fontSize: 52,
-              color: "#cbd5e1",
-              display: "block",
-              marginBottom: 12,
-            }}
-          />
-          <p style={{ color: "#94a3b8" }}>Koi bed nahi mila</p>
-        </div>
+        (() => {
+          const hasFilters = fBldg || fFloor || fWard || fRoom || (fSearch || "").trim();
+          const noBedsAtAll = beds.length === 0;
+          return (
+            <div className="bm-bv-empty">
+              <div className="bm-bv-empty__icon">
+                <i className={`pi ${noBedsAtAll ? "pi-th-large" : "pi-search"}`} />
+              </div>
+              <div className="bm-bv-empty__title">
+                {noBedsAtAll ? "No beds configured yet" : "No beds match your filters"}
+              </div>
+              <div className="bm-bv-empty__msg">
+                {noBedsAtAll
+                  ? "Set up your first bed to start admitting patients here. Bulk-create lets you add many at once."
+                  : "Try widening the filters or clearing one of the chips above. The Live Bed Map shows every bed across every building and floor."}
+              </div>
+              <div className="bm-bv-empty__cta-row">
+                {noBedsAtAll ? (
+                  <>
+                    <a href="/beds" className="bm-bv-empty__cta bm-bv-empty__cta--primary">
+                      <i className="pi pi-plus" /> Add beds
+                    </a>
+                    <a href="/wards" className="bm-bv-empty__cta bm-bv-empty__cta--ghost">
+                      <i className="pi pi-home" /> Configure wards first
+                    </a>
+                  </>
+                ) : hasFilters && (
+                  <button
+                    onClick={() => {
+                      setFBldg(null); setFFloor(null); setFWard(null); setFRoom(null); setFSearch("");
+                    }}
+                    className="bm-bv-empty__cta bm-bv-empty__cta--primary">
+                    <i className="pi pi-filter-slash" /> Clear all filters
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })()
       ) : (
         Object.entries(byFloor)
           .sort()
@@ -1848,48 +1880,21 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       )}
 
       {/* Legend */}
-      <div
-        style={{
-          background: "#fff",
-          borderRadius: 12,
-          padding: "10px 20px",
-          border: "1px solid #e2e8f0",
-          display: "flex",
-          gap: 20,
-          flexWrap: "wrap",
-          alignItems: "center",
-          marginTop: 4,
-        }}
-      >
-        <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>
-          Legend:
+      <div className="bm-bv-legend">
+        <span className="bm-bv-legend__label">
+          <i className="pi pi-tag" style={{ marginRight: 5, fontSize: 10 }} />
+          Status Legend
         </span>
         {Object.entries(STATUS_COLOR).map(([label, col]) => (
-          <span
-            key={label}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              fontSize: 12,
-              color: "#475569",
-            }}
-          >
-            <span
-              style={{
-                width: 20,
-                height: 13,
-                border: `3px solid ${col}`,
-                borderRadius: 4,
-                display: "inline-block",
-              }}
-            />
+          <span key={label} className="bm-bv-legend__item">
+            <span className="bm-bv-legend__dot"
+              style={{ background: STATUS_BG[label]?.bg || "#f3f4f6", borderColor: col }} />
             {label}
           </span>
         ))}
-        <span style={{ fontSize: 11, color: "#94a3b8", marginLeft: "auto" }}>
-          <i className="pi pi-info-circle" style={{ marginRight: 4 }} />
-          Green = admit · Red = patient details
+        <span className="bm-bv-legend__hint">
+          <i className="pi pi-info-circle" />
+          Click an Available bed to admit · Occupied bed to view patient details · Drag a patient onto an Available bed to transfer
         </span>
       </div>
 

@@ -263,237 +263,177 @@ function AddRoomCategory() {
 
       <BmStatStrip stats={_stats} />
 
-      {/* Add/Edit Form */}
-      <div
-        className="bm-card"
-        style={{
-          padding: "24px 28px",
-          marginBottom: 18,
+      {/* ── Add / Edit Form (sectioned, modern inputs) ── */}
+      <Formik
+        initialValues={{
+          categoryName: editing?.categoryName || "",
+          categoryCode: editing?.categoryCode || "",
+          description: editing?.description || "",
+          roomType: editing?.roomType || "General Ward",
         }}
+        enableReinitialize
+        validationSchema={validationSchema}
+        onSubmit={handleSubmit}
       >
-        <h2
-          style={{
-            fontSize: "16px",
-            fontWeight: 800,
-            color: "#0f172a",
-            marginBottom: "18px",
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            letterSpacing: ".2px",
-          }}
-        >
-          <i className={`pi ${editing ? "pi-pencil" : "pi-plus-circle"}`} style={{ color: "#db2777" }} />
-          {editing ? "Edit Room Category" : "Add New Room Category"}
-        </h2>
-
-        <Formik
-          initialValues={{
-            categoryName: editing?.categoryName || "",
-            categoryCode: editing?.categoryCode || "",
-            description: editing?.description || "",
-            roomType: editing?.roomType || "General Ward",
-          }}
-          enableReinitialize
-          validationSchema={validationSchema}
-          onSubmit={handleSubmit}
-        >
-          {({
-            values,
-            errors,
-            touched,
-            handleChange,
-            handleBlur,
-            resetForm,
-            setFieldValue,
-          }) => (
+        {({
+          values, errors, touched,
+          handleChange, handleBlur,
+          resetForm, setFieldValue,
+        }) => {
+          const invalid = (k) => errors[k] && touched[k];
+          return (
             <Form>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
-                  gap: "20px",
-                  marginBottom: "25px",
-                }}
-              >
-                {/* Category Name */}
-                <div style={{ display: "flex", flexDirection: "column" }}>
-                  <label
-                    style={{
-                      fontSize: "14px",
-                      fontWeight: 600,
-                      color: "#495057",
-                      marginBottom: "8px",
-                    }}
-                  >
-                    Category Name <span style={{ color: "#dc3545" }}>*</span>
-                  </label>
-                  <InputText
-                    name="categoryName"
-                    value={values.categoryName}
-                    onChange={handleChange}
-                    onBlur={handleBlur}
-                    placeholder="Enter Category Name"
-                    className={
-                      errors.categoryName && touched.categoryName
-                        ? "p-invalid"
-                        : ""
-                    }
-                  />
-                  {errors.categoryName && touched.categoryName && (
-                    <small
-                      style={{
-                        color: "#dc3545",
-                        fontSize: "12px",
-                        marginTop: "5px",
-                      }}
-                    >
-                      {errors.categoryName}
-                    </small>
+              <div className="bm-form-section">
+                <div className="bm-form-section__head bm-form-section__head--pink">
+                  <div className="bm-form-section__icon">
+                    <i className={`pi ${editing ? "pi-pencil" : "pi-plus-circle"}`} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div className="bm-form-section__title">
+                      {editing ? "Edit Room Category" : "Add New Room Category"}
+                    </div>
+                    <div className="bm-form-section__sub">
+                      {editing
+                        ? "Update tier name, code, room type, and description."
+                        : "Define a pricing tier (Economy → VIP) that rooms inherit defaults from."}
+                    </div>
+                  </div>
+                  {editing && (
+                    <span className="bm-pill bm-pill--info">
+                      <i className="pi pi-bookmark" /> Editing
+                    </span>
                   )}
                 </div>
 
-                {/* Category Code */}
-                <div style={{ display: "flex", flexDirection: "column" }}>
-                  <label
-                    style={{
-                      fontSize: "14px",
-                      fontWeight: 600,
-                      color: "#495057",
-                      marginBottom: "8px",
-                    }}
-                  >
-                    Category Code <span style={{ color: "#dc3545" }}>*</span>
-                  </label>
-                  <InputText
-                    name="categoryCode"
-                    value={values.categoryCode}
-                    onChange={(e) => {
-                      e.target.value = e.target.value.toUpperCase();
-                      handleChange(e);
-                    }}
-                    onBlur={handleBlur}
-                    placeholder="Enter Category Code"
-                    className={
-                      errors.categoryCode && touched.categoryCode
-                        ? "p-invalid"
-                        : ""
-                    }
-                    style={{ textTransform: "uppercase" }}
-                  />
-                  {errors.categoryCode && touched.categoryCode && (
-                    <small
-                      style={{
-                        color: "#dc3545",
-                        fontSize: "12px",
-                        marginTop: "5px",
-                      }}
-                    >
-                      {errors.categoryCode}
-                    </small>
-                  )}
+                <div className="bm-form-section__body">
+                  <div style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+                    gap: 14,
+                  }}>
+                    {/* Category Name */}
+                    <div className="bm-field">
+                      <label className="bm-label">
+                        <i className="pi pi-bookmark" />
+                        Category Name
+                        <span className="bm-label__req">Required</span>
+                      </label>
+                      <div className={`bm-input ${invalid("categoryName") ? "bm-input--invalid" : ""}`}>
+                        <i className="pi pi-tag bm-input__icon" />
+                        <InputText
+                          name="categoryName"
+                          value={values.categoryName}
+                          onChange={handleChange}
+                          onBlur={handleBlur}
+                          placeholder="e.g. Standard Single Room"
+                        />
+                      </div>
+                      {invalid("categoryName") && (
+                        <small className="bm-error">
+                          <i className="pi pi-exclamation-circle" />
+                          {errors.categoryName}
+                        </small>
+                      )}
+                    </div>
+
+                    {/* Category Code */}
+                    <div className="bm-field">
+                      <label className="bm-label">
+                        <i className="pi pi-hashtag" />
+                        Category Code
+                        <span className="bm-label__req">Required</span>
+                      </label>
+                      <div className={`bm-input ${invalid("categoryCode") ? "bm-input--invalid" : ""}`}>
+                        <i className="pi pi-hashtag bm-input__icon" />
+                        <InputText
+                          name="categoryCode"
+                          value={values.categoryCode}
+                          onChange={(e) => {
+                            e.target.value = (e.target.value || "").toUpperCase();
+                            handleChange(e);
+                          }}
+                          onBlur={handleBlur}
+                          placeholder="e.g. STD-1"
+                          style={{ textTransform: "uppercase", letterSpacing: ".5px" }}
+                        />
+                      </div>
+                      {invalid("categoryCode") && (
+                        <small className="bm-error">
+                          <i className="pi pi-exclamation-circle" />
+                          {errors.categoryCode}
+                        </small>
+                      )}
+                    </div>
+
+                    {/* Room Type */}
+                    <div className="bm-field">
+                      <label className="bm-label">
+                        <i className="pi pi-th-large" />
+                        Room Type
+                        <span className="bm-label__req">Required</span>
+                      </label>
+                      <div className={`bm-input ${invalid("roomType") ? "bm-input--invalid" : ""}`}>
+                        <i className="pi pi-th-large bm-input__icon" />
+                        <Dropdown
+                          name="roomType"
+                          value={values.roomType}
+                          options={ROOM_TYPE_OPTIONS}
+                          onChange={(e) => setFieldValue("roomType", e.value)}
+                          placeholder="Select room type"
+                        />
+                      </div>
+                      {invalid("roomType") && (
+                        <small className="bm-error">
+                          <i className="pi pi-exclamation-circle" />
+                          {errors.roomType}
+                        </small>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Description — full width */}
+                  <div className="bm-field" style={{ marginTop: 14 }}>
+                    <label className="bm-label">
+                      <i className="pi pi-align-left" />
+                      Description <span style={{ color: "#94a3b8", textTransform: "none", letterSpacing: 0, marginLeft: 4, fontWeight: 500, fontSize: 10 }}>(optional)</span>
+                    </label>
+                    <div className={`bm-input ${invalid("description") ? "bm-input--invalid" : ""}`} style={{ alignItems: "flex-start" }}>
+                      <i className="pi pi-align-left bm-input__icon" style={{ paddingTop: 11 }} />
+                      <InputTextarea
+                        name="description"
+                        value={values.description}
+                        onChange={handleChange}
+                        onBlur={handleBlur}
+                        placeholder="What does this category include? Amenities, ideal patient profile, etc."
+                        rows={2}
+                      />
+                    </div>
+                    {invalid("description") && (
+                      <small className="bm-error">
+                        <i className="pi pi-exclamation-circle" />
+                        {errors.description}
+                      </small>
+                    )}
+                  </div>
                 </div>
 
-                {/* Room Type Dropdown — FIXED */}
-                <div style={{ display: "flex", flexDirection: "column" }}>
-                  <label
-                    style={{
-                      fontSize: "14px",
-                      fontWeight: 600,
-                      color: "#495057",
-                      marginBottom: "8px",
-                    }}
-                  >
-                    Room Type <span style={{ color: "#dc3545" }}>*</span>
-                  </label>
-                  <Dropdown
-                    name="roomType"
-                    value={values.roomType}
-                    options={ROOM_TYPE_OPTIONS}
-                    onChange={(e) => setFieldValue("roomType", e.value)}
-                    placeholder="Select Room Type"
-                    className={
-                      errors.roomType && touched.roomType ? "p-invalid" : ""
-                    }
-                    style={{ width: "100%" }}
-                  />
-                  {errors.roomType && touched.roomType && (
-                    <small
-                      style={{
-                        color: "#dc3545",
-                        fontSize: "12px",
-                        marginTop: "5px",
-                      }}
-                    >
-                      {errors.roomType}
-                    </small>
+                <div className="bm-form-actions">
+                  {editing && (
+                    <button type="button" className="bm-btn bm-btn--ghost"
+                      onClick={() => { setEditing(null); resetForm(); }}>
+                      <i className="pi pi-times" /> Cancel
+                    </button>
                   )}
+                  <button type="submit" className="bm-btn bm-btn--primary">
+                    <i className={`pi ${editing ? "pi-save" : "pi-plus"}`} />
+                    {editing ? "Save Changes" : "Add Room Category"}
+                  </button>
                 </div>
-
-                {/* Description */}
-                <div style={{ display: "flex", flexDirection: "column" }}>
-                  <label
-                    style={{
-                      fontSize: "14px",
-                      fontWeight: 600,
-                      color: "#495057",
-                      marginBottom: "8px",
-                    }}
-                  >
-                    Description
-                  </label>
-                  <InputTextarea
-                    name="description"
-                    value={values.description}
-                    onChange={handleChange}
-                    onBlur={handleBlur}
-                    placeholder="Enter Description (optional)"
-                    rows={3}
-                    className={
-                      errors.description && touched.description
-                        ? "p-invalid"
-                        : ""
-                    }
-                  />
-                  {errors.description && touched.description && (
-                    <small
-                      style={{
-                        color: "#dc3545",
-                        fontSize: "12px",
-                        marginTop: "5px",
-                      }}
-                    >
-                      {errors.description}
-                    </small>
-                  )}
-                </div>
-              </div>
-
-              {/* Submit Buttons */}
-              <div style={{ display: "flex", gap: "10px" }}>
-                <Button
-                  type="submit"
-                  label={editing ? "Update Room Category" : "Add Room Category"}
-                  icon="pi pi-check"
-                  className="p-button-success"
-                />
-                {editing && (
-                  <Button
-                    type="button"
-                    label="Cancel"
-                    icon="pi pi-times"
-                    className="p-button-secondary"
-                    onClick={() => {
-                      setEditing(null);
-                      resetForm();
-                    }}
-                  />
-                )}
               </div>
             </Form>
-          )}
-        </Formik>
-      </div>
+          );
+        }}
+      </Formik>
 
       <BmCard
         title="Configured Categories"
