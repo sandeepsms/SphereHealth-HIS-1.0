@@ -16,7 +16,9 @@ import patientService from "../../Services/patient/patientService";
 import { doctorService } from "../../Services/doctors/doctorService";
 import useBedEvents from "../../hooks/useBedEvents";
 import authFetch    from "../../utils/authFetch";
+import { API_ENDPOINTS } from "../../config/api";
 import BedSectionHeader from "./BedSectionHeader";
+import BedActionMenu from "./BedActionMenu";
 import "./bed-mgmt.css";
 
 /* ─── Colors ─────────────────────────────────────────────── */
@@ -280,6 +282,9 @@ const BedVisualLayout = ({ onRefreshParent }) => {
   const [xferNotes,  setXferNotes]    = useState("");
   const [xferDoctor, setXferDoctor]   = useState("");
   const [xferSaving, setXferSaving]   = useState(false);
+
+  // Bed action menu — status-aware popup that opens on bed card click
+  const [actionMenuBed, setActionMenuBed] = useState(null);
 
   const [editModal, setEditModal] = useState(false);
   const [editAdm, setEditAdm] = useState(null);
@@ -680,16 +685,11 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     }
   };
 
+  // Open the status-aware action menu — replaces the old "go straight
+  // to admit / patient details" behavior. Power users can still
+  // double-click to skip the menu (handled separately if needed).
   const handleBedClick = (bed) => {
-    if (bed.status === "Available") handleAvailable(bed);
-    else if (bed.status === "Occupied") handleOccupied(bed);
-    else
-      toast.current?.show({
-        severity: "warn",
-        summary: "Unavailable",
-        detail: `Bed is currently ${bed.status}`,
-        life: 2500,
-      });
+    setActionMenuBed(bed);
   };
 
   const handlePatientPick = (p) => {
@@ -1575,48 +1575,41 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                       }}
                     >
                       {grp.beds.map((bed) => {
-                        const col = STATUS_COLOR[bed.status] || "#d1d5db";
-                        const sbg = STATUS_BG[bed.status] || {
-                          bg: "#f3f4f6",
-                          color: "#374151",
-                        };
                         const avail = bed.status === "Available";
-                        const occ = bed.status === "Occupied";
-                        const adm = bed.currentAdmission;
+                        const occ   = bed.status === "Occupied";
+                        const res   = bed.status === "Reserved";
+                        const mnt   = bed.status === "Maintenance";
+                        const blk   = bed.status === "Blocked";
+                        const adm   = bed.currentAdmission;
                         const pName = resolvePatientName(adm);
                         const pInfo = occ ? resolvePatientInfo(adm) : {};
                         const docName = occ ? resolveDoctorName(adm) : null;
-                        const admDate = adm?.admissionDate
-                          ? new Date(adm.admissionDate).toLocaleDateString(
-                              "en-IN",
-                              {
-                                day: "2-digit",
-                                month: "short",
-                                year: "numeric",
-                              },
-                            )
-                          : null;
-
-                        // ── Isolation / precaution display ──
+                        const admDate = adm?.admissionDate ? new Date(adm.admissionDate) : null;
+                        const admDays = admDate ? Math.max(1, Math.ceil((Date.now() - admDate.getTime()) / 86400000)) : null;
                         const flags = Array.isArray(bed.isolationFlags)
-                          ? bed.isolationFlags.filter(f => ISOLATION_STYLE[f])
-                          : [];
-                        const precStripe = PRECAUTION_LEVEL_TINT[bed.precautionLevel || "Standard"];
-                        // ── Housekeeping state ──
-                        const hkState = bed.housekeeping?.state;
-                        const hk = hkState && hkState !== "Idle" ? HK_STYLE[hkState] : null;
-                        // ── Equipment manifest ──
+                          ? bed.isolationFlags.filter(f => ISOLATION_STYLE[f]) : [];
+                        const hkState  = bed.housekeeping?.state;
+                        const hk       = hkState && hkState !== "Idle" ? HK_STYLE[hkState] : null;
                         const equipment = Array.isArray(bed.equipment) ? bed.equipment : [];
 
-                        // ── Drag-drop transfer state (P2 #8) ──
+                        // Drag-drop transfer hooks (P2 #8)
                         const isDragSource = dragSrcBed && getId(dragSrcBed._id) === getId(bed._id);
                         const isDropTarget = dragOverBedId === getId(bed._id) && avail && dragSrcBed && getId(dragSrcBed._id) !== getId(bed._id);
-                        const canDrag = occ;                  // only occupied beds are draggable
-                        const canDrop = avail && dragSrcBed;  // only available beds accept a drop
+                        const canDrag = occ;
+                        const canDrop = avail && dragSrcBed;
+
+                        const variant = avail ? "avail" : occ ? "occ" : res ? "res" : mnt ? "maint" : blk ? "blocked" : "avail";
+                        const classes = [
+                          "bm-bed-card",
+                          `bm-bed-card--${variant}`,
+                          isDropTarget && "bm-bed-card--drop-target",
+                          isDragSource && "bm-bed-card--drag-source",
+                        ].filter(Boolean).join(" ");
 
                         return (
                           <div
                             key={bed._id}
+                            className={classes}
                             draggable={canDrag}
                             onDragStart={(e) => {
                               if (!canDrag) return;
@@ -1624,184 +1617,153 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                               e.dataTransfer.effectAllowed = "move";
                               try { e.dataTransfer.setData("text/plain", String(bed._id)); } catch (_) {}
                             }}
-                            onDragEnd={() => {
-                              setDragSrcBed(null);
-                              setDragOverBedId(null);
-                            }}
-                            onDragOver={(e) => {
-                              if (!canDrop) return;
-                              e.preventDefault();
-                              e.dataTransfer.dropEffect = "move";
-                            }}
-                            onDragEnter={(e) => {
-                              if (!canDrop) return;
-                              e.preventDefault();
-                              setDragOverBedId(getId(bed._id));
-                            }}
-                            onDragLeave={() => {
-                              if (dragOverBedId === getId(bed._id)) setDragOverBedId(null);
-                            }}
+                            onDragEnd={() => { setDragSrcBed(null); setDragOverBedId(null); }}
+                            onDragOver={(e) => { if (canDrop) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }}
+                            onDragEnter={(e) => { if (canDrop) { e.preventDefault(); setDragOverBedId(getId(bed._id)); } }}
+                            onDragLeave={() => { if (dragOverBedId === getId(bed._id)) setDragOverBedId(null); }}
                             onDrop={(e) => {
                               if (!canDrop) return;
                               e.preventDefault();
                               setDragOverBedId(null);
                               setXferDialog({ from: dragSrcBed, to: bed });
-                              setXferReason("");
-                              setXferNotes("");
-                              setXferDoctor("");
+                              setXferReason(""); setXferNotes(""); setXferDoctor("");
                               setDragSrcBed(null);
                             }}
                             onClick={() => handleBedClick(bed)}
                             title={
-                              isDropTarget
-                                ? `Drop to transfer patient here`
-                                : flags.length
-                                  ? `Isolation: ${flags.join(", ")}${bed.isolationNotes ? " — " + bed.isolationNotes : ""}`
-                                  : canDrag
-                                    ? "Drag this card onto an Available bed to transfer the patient"
-                                    : undefined
+                              isDropTarget ? "Drop to transfer patient here"
+                                : flags.length ? `Isolation: ${flags.join(", ")}${bed.isolationNotes ? " — " + bed.isolationNotes : ""}`
+                                : canDrag ? "Click for actions · drag to transfer"
+                                : "Click for actions"
                             }
-                            style={{
-                              border: isDropTarget ? "2px dashed #16a34a" : "1px solid #e2e8f0",
-                              borderLeft: `4px solid ${col}`,
-                              borderTop: precStripe ? `3px solid ${precStripe}` : (isDropTarget ? "2px dashed #16a34a" : "1px solid #e2e8f0"),
-                              borderRadius: 12,
-                              background: isDropTarget
-                                ? "#f0fdf4"
-                                : avail
-                                  ? "#f9fafb"
-                                  : occ
-                                    ? "#fff"
-                                    : "#fafafa",
-                              cursor: canDrag ? "grab" : (avail || occ ? "pointer" : "default"),
-                              opacity: isDragSource ? 0.5 : 1,
-                              padding: "14px 16px",
-                              transition: "all .2s",
-                              position: "relative",
-                              boxShadow: isDropTarget ? "0 0 0 4px rgba(34,197,94,.15), 0 8px 24px rgba(34,197,94,.18)" : undefined,
-                            }}
-                            onMouseEnter={(e) => {
-                              if ((avail || occ) && !isDropTarget) {
-                                e.currentTarget.style.transform =
-                                  "translateY(-3px)";
-                                e.currentTarget.style.boxShadow =
-                                  "0 8px 24px rgba(0,0,0,.1)";
-                              }
-                            }}
-                            onMouseLeave={(e) => {
-                              if (!isDropTarget) {
-                                e.currentTarget.style.transform = "none";
-                                e.currentTarget.style.boxShadow = "none";
-                              }
-                            }}
                           >
-                            {/* ✅ Top row with Font Awesome bed icon */}
-                            <div
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "space-between",
-                                marginBottom: occ && pName ? 12 : 0,
-                              }}
-                            >
-                              <div
-                                style={{
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: 10,
-                                }}
-                              >
-                                <BedIcon status={bed.status} />
-                                <span
-                                  style={{
-                                    fontWeight: 800,
-                                    fontSize: 15,
-                                    color: "#0f172a",
-                                  }}
-                                >
-                                  {bed.bedNumber}
-                                </span>
-                              </div>
-                              <span
-                                style={{
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  gap: 5,
-                                  padding: "4px 12px",
-                                  borderRadius: 20,
-                                  fontSize: 12,
-                                  fontWeight: 600,
-                                  background: sbg.bg,
-                                  color: sbg.color,
-                                }}
-                              >
-                                <span
-                                  style={{
-                                    width: 7,
-                                    height: 7,
-                                    borderRadius: "50%",
-                                    background: col,
-                                    display: "inline-block",
-                                  }}
-                                />
+                            {/* Top row: bed number + status */}
+                            <div className="bm-bed-card__top">
+                              <span className="bm-bed-card__num">
+                                <i className="pi pi-th-large" />
+                                {bed.bedNumber}
+                              </span>
+                              <span className="bm-bed-card__pill">
+                                <span className="bm-bed-card__pill-dot" />
                                 {bed.status}
                               </span>
                             </div>
 
-                            {/* ── Isolation / precaution badges ── */}
-                            {flags.length > 0 && (
-                              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
+                            {/* Patient block (Occupied) */}
+                            {occ && pName && (
+                              <div className="bm-bed-card__patient">
+                                <span className="bm-bed-card__avatar"
+                                  style={{
+                                    background: pInfo.gender === "Female"
+                                      ? "linear-gradient(135deg,#fbcfe8,#f9a8d4)"
+                                      : "linear-gradient(135deg,#bfdbfe,#93c5fd)",
+                                    color: pInfo.gender === "Female" ? "#9d174d" : "#1e3a8a",
+                                  }}>
+                                  {pName.slice(0, 1).toUpperCase()}
+                                </span>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div className="bm-bed-card__pname">{pName}</div>
+                                  <div className="bm-bed-card__pmeta">
+                                    {pInfo.uhid && (
+                                      <span><i className="pi pi-id-card" /><strong>{pInfo.uhid}</strong></span>
+                                    )}
+                                    {pInfo.age != null && (
+                                      <span><i className="pi pi-user" />{pInfo.age}Y {pInfo.gender || ""}</span>
+                                    )}
+                                    {docName && (
+                                      <span><i className="pi pi-user-edit" style={{ color: "#7c3aed" }} />{docName}</span>
+                                    )}
+                                  </div>
+                                </div>
+                                {admDays != null && (
+                                  <span className="bm-bed-card__days" title={`Admitted on ${admDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`}>
+                                    <i className="pi pi-calendar" />
+                                    Day {admDays}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Patient block (Occupied but data still loading) */}
+                            {occ && !pName && (
+                              <div className="bm-bed-card__reason">
+                                <i className="pi pi-spin pi-spinner" style={{ marginRight: 5 }} />
+                                Patient data loading…
+                              </div>
+                            )}
+
+                            {/* Available admit prompt */}
+                            {avail && (
+                              <div className="bm-bed-card__admit-prompt">
+                                <i className="pi pi-user-plus" />
+                                Tap for actions · Admit / Reserve
+                              </div>
+                            )}
+
+                            {/* Reserved info */}
+                            {res && (
+                              <div className="bm-bed-card__reason">
+                                <i className="pi pi-bookmark" style={{ marginRight: 5, color: "#2563eb" }} />
+                                {bed.reservedBy ? `Held by ${bed.reservedBy}` : "Reserved"}
+                                {bed.reservedUntil && (
+                                  <> · until {new Date(bed.reservedUntil).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Maintenance reason */}
+                            {mnt && (
+                              <div className="bm-bed-card__reason">
+                                <i className="pi pi-wrench" style={{ marginRight: 5, color: "#d97706" }} />
+                                {hk ? hk.label : "Awaiting maintenance"}
+                              </div>
+                            )}
+
+                            {/* Blocked reason */}
+                            {blk && (
+                              <div className="bm-bed-card__reason">
+                                <i className="pi pi-ban" style={{ marginRight: 5, color: "#475569" }} />
+                                {bed.notes || "Bed blocked"}
+                              </div>
+                            )}
+
+                            {/* Chip row — isolation + housekeeping + equipment */}
+                            {(flags.length > 0 || hk || equipment.length > 0) && (
+                              <div className="bm-bed-card__chips">
                                 {flags.map(f => {
                                   const s = ISOLATION_STYLE[f];
                                   return (
-                                    <span key={f}
-                                      style={{
-                                        display: "inline-flex",
-                                        alignItems: "center",
-                                        gap: 3,
-                                        padding: "2px 7px",
-                                        borderRadius: 999,
-                                        fontSize: 10,
-                                        fontWeight: 700,
-                                        background: s.bg,
-                                        color: s.color,
-                                        border: `1px solid ${s.border}`,
-                                        letterSpacing: ".3px",
-                                      }}>
+                                    <span key={f} style={{
+                                      display: "inline-flex", alignItems: "center", gap: 3,
+                                      padding: "2px 7px", borderRadius: 999,
+                                      fontSize: 9.5, fontWeight: 800,
+                                      background: s.bg, color: s.color,
+                                      border: `1px solid ${s.border}`,
+                                      letterSpacing: ".3px",
+                                    }}>
                                       <i className={`pi ${s.icon}`} style={{ fontSize: 9 }} />
                                       {f}
                                     </span>
                                   );
                                 })}
-                              </div>
-                            )}
-
-                            {/* ── Housekeeping state badge (P1 #5) ── */}
-                            {hk && (
-                              <div style={{ marginTop: 6 }}>
-                                <span style={{
-                                  display: "inline-flex", alignItems: "center", gap: 4,
-                                  padding: "2px 8px", borderRadius: 999,
-                                  fontSize: 10, fontWeight: 700,
-                                  background: hk.bg, color: hk.color,
-                                  border: `1px solid ${hk.border}`,
-                                  letterSpacing: ".3px",
-                                }}>
-                                  <i className={`pi ${hk.icon}`} style={{ fontSize: 9 }} />
-                                  {hk.label}
-                                </span>
-                              </div>
-                            )}
-
-                            {/* ── Equipment chip (P2 #12) ── */}
-                            {equipment.length > 0 && (
-                              <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 4 }}
-                                   title={equipment.map(e => e.label || e.type).join(", ")}>
+                                {hk && !mnt && (
+                                  <span style={{
+                                    display: "inline-flex", alignItems: "center", gap: 3,
+                                    padding: "2px 7px", borderRadius: 999,
+                                    fontSize: 9.5, fontWeight: 800,
+                                    background: hk.bg, color: hk.color,
+                                    border: `1px solid ${hk.border}`,
+                                    letterSpacing: ".3px",
+                                  }}>
+                                    <i className={`pi ${hk.icon}`} style={{ fontSize: 9 }} />
+                                    {hk.label}
+                                  </span>
+                                )}
                                 {equipment.slice(0, 3).map((eq, i) => (
                                   <span key={eq._id || i} style={{
                                     display: "inline-flex", alignItems: "center", gap: 3,
                                     padding: "2px 7px", borderRadius: 6,
-                                    fontSize: 10, fontWeight: 700,
+                                    fontSize: 9.5, fontWeight: 700,
                                     background: "#f1f5f9", color: "#475569",
                                     border: "1px solid #cbd5e1",
                                   }}>
@@ -1812,107 +1774,10 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                                 {equipment.length > 3 && (
                                   <span style={{
                                     padding: "2px 7px", borderRadius: 6,
-                                    fontSize: 10, fontWeight: 700, color: "#64748b",
+                                    fontSize: 9.5, fontWeight: 700, color: "#64748b",
                                     background: "#f8fafc", border: "1px dashed #cbd5e1",
-                                  }}>
-                                    +{equipment.length - 3} more
-                                  </span>
+                                  }}>+{equipment.length - 3}</span>
                                 )}
-                              </div>
-                            )}
-
-                            {occ && pName && (
-                              <div
-                                style={{
-                                  borderTop: "1px solid #f1f5f9",
-                                  paddingTop: 10,
-                                }}
-                              >
-                                <div
-                                  style={{
-                                    fontWeight: 700,
-                                    fontSize: 14,
-                                    color: "#0f172a",
-                                  }}
-                                >
-                                  {pName}
-                                </div>
-                                <div
-                                  style={{
-                                    fontSize: 12,
-                                    color: "#64748b",
-                                    marginTop: 3,
-                                  }}
-                                >
-                                  {pInfo.uhid ? `ID: ${pInfo.uhid}` : ""}
-                                  {pInfo.age ? ` | ${pInfo.age}Y` : ""}
-                                  {pInfo.gender ? ` ${pInfo.gender}` : ""}
-                                </div>
-                                {docName && (
-                                  <div
-                                    style={{
-                                      fontSize: 12,
-                                      color: "#6b7280",
-                                      marginTop: 5,
-                                      display: "flex",
-                                      alignItems: "center",
-                                      gap: 5,
-                                    }}
-                                  >
-                                    <i
-                                      className="pi pi-user-edit"
-                                      style={{ color: "#7c3aed", fontSize: 12 }}
-                                    />
-                                    {docName}
-                                  </div>
-                                )}
-                                {admDate && (
-                                  <div
-                                    style={{
-                                      fontSize: 11,
-                                      color: "#94a3b8",
-                                      marginTop: 4,
-                                    }}
-                                  >
-                                    Admitted: {admDate}
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                            {occ && !pName && (
-                              <div
-                                style={{
-                                  borderTop: "1px solid #f1f5f9",
-                                  paddingTop: 8,
-                                }}
-                              >
-                                <div
-                                  style={{
-                                    fontSize: 12,
-                                    color: "#94a3b8",
-                                    fontStyle: "italic",
-                                  }}
-                                >
-                                  Patient data loading…
-                                </div>
-                              </div>
-                            )}
-                            {avail && (
-                              <div
-                                style={{
-                                  fontSize: 12,
-                                  color: "#94a3b8",
-                                  marginTop: 6,
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: 5,
-                                }}
-                              >
-                                <i
-                                  className="pi pi-plus-circle"
-                                  style={{ color: "#22c55e", fontSize: 13 }}
-                                />
-                                Click To Admit Patient
                               </div>
                             )}
                           </div>
@@ -3781,6 +3646,150 @@ const BedVisualLayout = ({ onRefreshParent }) => {
           </div>
         </Dialog>
       )}
+
+      {/* ── Status-aware Bed Action Menu (opens on bed click) ── */}
+      <BedActionMenu
+        bed={actionMenuBed}
+        onClose={() => setActionMenuBed(null)}
+        actions={{
+          // Available
+          onAdmit: (bed) => { setActionMenuBed(null); handleAvailable(bed); },
+          onReserve: (bed) => {
+            setActionMenuBed(null);
+            toast.current?.show({ severity: "info", summary: "Reserve bed", detail: "Reservation workflow opens here (use PATCH /:id/status with status=Reserved + reservedUntil)", life: 4000 });
+          },
+          onIsolation: (bed) => {
+            setActionMenuBed(null);
+            toast.current?.show({ severity: "info", summary: "Isolation", detail: "Edit isolation flags via Manage Beds → Edit Bed.", life: 3500 });
+          },
+          onEquipment: (bed) => {
+            setActionMenuBed(null);
+            toast.current?.show({ severity: "info", summary: "Equipment", detail: "Equipment manifest editor opens from Manage Beds → Edit Bed.", life: 3500 });
+          },
+          onMaintenance: async (bed) => {
+            setActionMenuBed(null);
+            try {
+              await bedService.updateBedStatus(getId(bed._id), "Maintenance");
+              await fetchBeds();
+              toast.current?.show({ severity: "success", summary: "Marked maintenance", detail: `Bed ${bed.bedNumber} sent to housekeeping`, life: 2500 });
+            } catch (e) {
+              toast.current?.show({ severity: "error", summary: "Failed", detail: e.message || "Could not update", life: 3000 });
+            }
+          },
+          onBlock: async (bed) => {
+            setActionMenuBed(null);
+            try {
+              await bedService.updateBedStatus(getId(bed._id), "Blocked");
+              await fetchBeds();
+              toast.current?.show({ severity: "success", summary: "Blocked", detail: `Bed ${bed.bedNumber} blocked`, life: 2500 });
+            } catch (e) {
+              toast.current?.show({ severity: "error", summary: "Failed", detail: e.message || "Could not update", life: 3000 });
+            }
+          },
+
+          // Occupied
+          onViewPatient: (bed) => { setActionMenuBed(null); handleOccupied(bed); },
+          onDoctorNotes: (bed) => {
+            setActionMenuBed(null);
+            const uhid = bed.currentAdmission?.patientId?.UHID || "";
+            window.location.href = uhid ? `/doctor-notes?uhid=${uhid}` : `/doctor-notes`;
+          },
+          onNursingNotes: (bed) => {
+            setActionMenuBed(null);
+            const uhid = bed.currentAdmission?.patientId?.UHID || "";
+            window.location.href = uhid ? `/nursing-notes?uhid=${uhid}` : `/nursing-notes`;
+          },
+          onMAR: (bed) => {
+            setActionMenuBed(null);
+            const uhid = bed.currentAdmission?.patientId?.UHID || "";
+            window.location.href = uhid ? `/doctor-notes?uhid=${uhid}#mar` : `/doctor-notes`;
+          },
+          onTransfer: (bed) => {
+            setActionMenuBed(null);
+            // Initiate the same drag-drop dialog flow but without dragging
+            setDragSrcBed(bed);
+            toast.current?.show({ severity: "info", summary: "Pick destination",
+              detail: "Click an Available bed (or drag this card onto one) to complete the transfer.", life: 4500 });
+          },
+          onEstimate: async (bed) => {
+            setActionMenuBed(null);
+            try {
+              const r = await authFetch(`${API_ENDPOINTS.BEDS}/${getId(bed._id)}/estimate`);
+              const data = await r.json();
+              if (data?.success && data?.data) {
+                const est = data.data;
+                toast.current?.show({
+                  severity: "info", summary: `Bed ${bed.bedNumber} estimate`,
+                  detail: `${est.days || 0} day(s) · approx ₹${(est.total || 0).toLocaleString("en-IN")}`,
+                  life: 5000,
+                });
+              }
+            } catch (e) {
+              toast.current?.show({ severity: "error", summary: "Failed", detail: e.message || "Could not estimate", life: 3000 });
+            }
+          },
+          onDischarge: (bed) => { setActionMenuBed(null); handleOccupied(bed); /* opens detail with discharge button */ },
+
+          // Reserved
+          onExtendReservation: (bed) => {
+            setActionMenuBed(null);
+            toast.current?.show({ severity: "info", summary: "Extend hold", detail: "Update reservedUntil from Manage Beds → Edit Bed.", life: 3500 });
+          },
+          onCancelReservation: async (bed) => {
+            setActionMenuBed(null);
+            try {
+              await bedService.updateBedStatus(getId(bed._id), "Available");
+              await fetchBeds();
+              toast.current?.show({ severity: "success", summary: "Reservation cancelled", detail: `Bed ${bed.bedNumber} is now Available`, life: 2500 });
+            } catch (e) {
+              toast.current?.show({ severity: "error", summary: "Failed", detail: e.message || "Could not update", life: 3000 });
+            }
+          },
+
+          // Maintenance
+          onClearMaintenance: async (bed) => {
+            setActionMenuBed(null);
+            try {
+              await bedService.updateBedStatus(getId(bed._id), "Available");
+              await fetchBeds();
+              toast.current?.show({ severity: "success", summary: "Cleared", detail: `Bed ${bed.bedNumber} is back in service`, life: 2500 });
+            } catch (e) {
+              toast.current?.show({ severity: "error", summary: "Failed", detail: e.message || "Could not update", life: 3000 });
+            }
+          },
+          onHousekeeping: (bed) => {
+            setActionMenuBed(null);
+            toast.current?.show({ severity: "info", summary: "Housekeeping queue",
+              detail: "Use the Bed Management Dashboard → Housekeeping Queue panel to advance state.", life: 4000 });
+          },
+
+          // Blocked
+          onUnblock: async (bed) => {
+            setActionMenuBed(null);
+            try {
+              await bedService.updateBedStatus(getId(bed._id), "Available");
+              await fetchBeds();
+              toast.current?.show({ severity: "success", summary: "Unblocked", detail: `Bed ${bed.bedNumber} is back in service`, life: 2500 });
+            } catch (e) {
+              toast.current?.show({ severity: "error", summary: "Failed", detail: e.message || "Could not update", life: 3000 });
+            }
+          },
+
+          // Common
+          onInfo: (bed) => {
+            setActionMenuBed(null);
+            // For Occupied beds re-use the existing detail modal which
+            // already shows full bed + patient info. For others fall
+            // back to a toast summary.
+            if (bed.status === "Occupied") handleOccupied(bed);
+            else toast.current?.show({
+              severity: "info", summary: `Bed ${bed.bedNumber}`,
+              detail: `Ward: ${bed.wardName || "—"} · Room: ${bed.roomNumber || "—"} · Floor: ${bed.floorNumber || "—"}`,
+              life: 4000,
+            });
+          },
+        }}
+      />
     </div>
   );
 };

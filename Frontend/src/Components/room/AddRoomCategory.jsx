@@ -244,13 +244,20 @@ function AddRoomCategory() {
     const list = Array.isArray(categoryList) ? categoryList : [];
     const active = list.filter(c => c.isActive !== false).length;
     const byClass = new Set(list.map(c => c.classification).filter(Boolean));
-    const minRate = list.length ? Math.min(...list.map(c => c.defaultPricing?.perBedDailyRate || Infinity).filter(n => Number.isFinite(n))) : 0;
-    const maxRate = list.length ? Math.max(...list.map(c => c.defaultPricing?.perBedDailyRate || 0)) : 0;
+    // Only consider categories that actually have a positive rate set
+    const rates = list
+      .map(c => Number(c.defaultPricing?.perBedDailyRate || 0))
+      .filter(n => Number.isFinite(n) && n > 0);
+    const rateLabel = rates.length === 0
+      ? "—"
+      : rates.length === 1
+        ? `₹${rates[0].toLocaleString("en-IN")}`
+        : `₹${Math.min(...rates).toLocaleString("en-IN")}–${Math.max(...rates).toLocaleString("en-IN")}`;
     return [
-      { key: "total",   label: "Categories",   value: list.length, icon: "pi-th-large",     tone: "purple" },
-      { key: "active",  label: "Active",       value: active,       icon: "pi-check-circle", tone: "green"  },
-      { key: "classes", label: "Tier classes", value: byClass.size, icon: "pi-tags",         tone: "blue"   },
-      { key: "rates",   label: "Daily rate range", value: list.length ? `₹${minRate}-${maxRate}` : "—", icon: "pi-dollar", tone: "amber" },
+      { key: "total",   label: "Categories",       value: list.length,   icon: "pi-th-large",     tone: "purple" },
+      { key: "active",  label: "Active",           value: active,         icon: "pi-check-circle", tone: "green"  },
+      { key: "classes", label: "Tier classes",     value: byClass.size,   icon: "pi-tags",         tone: "blue"   },
+      { key: "rates",   label: "Daily rate range", value: rateLabel,      icon: "pi-dollar",       tone: "amber"  },
     ];
   })();
 

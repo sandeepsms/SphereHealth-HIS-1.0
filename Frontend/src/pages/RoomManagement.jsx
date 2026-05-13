@@ -10,6 +10,7 @@ import {
   BmBar, BmDots, BmAvatar, BmCellStack, BmChip,
 } from "../Components/bed/BedPrimitives";
 import { roomService } from "../Services/roomService";
+import { bedService }  from "../Services/bedService";
 
 const TABS = [
   { key: "table",  icon: "pi pi-table",   label: "Table" },
@@ -32,27 +33,56 @@ const RoomManagement = () => {
   const [refresh, setRefresh]   = useState(0);
   const [filter, setFilter]     = useState("");
   const [rooms, setRooms]       = useState([]);
+  const [beds, setBeds]         = useState([]);   // for live occupancy
   const [loading, setLoading]   = useState(false);
 
+  /* Parallel fetch rooms + beds. Room.occupiedBeds in Mongo can be
+     stale; we derive real per-room status from the bed list so the
+     UI doesn't lie. */
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    roomService.getAllRooms()
-      .then(d => {
+    Promise.all([
+      roomService.getAllRooms().catch(() => []),
+      bedService.getAllBeds().catch(() => []),
+    ])
+      .then(([rd, bd]) => {
         if (cancelled) return;
-        const arr = Array.isArray(d) ? d : d?.data || d?.rooms || [];
-        setRooms(arr);
+        const roomArr = Array.isArray(rd) ? rd : rd?.data || rd?.rooms || [];
+        const bedArr  = Array.isArray(bd) ? bd : bd?.data || bd?.beds  || [];
+        setRooms(roomArr);
+        setBeds(bedArr);
       })
-      .catch(() => { if (!cancelled) setRooms([]); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [refresh]);
 
+  /* Real per-room occupancy derived from the bed list. */
+  const liveByRoom = useMemo(() => {
+    const map = {};
+    for (const b of beds) {
+      const rid = (b.room && (b.room._id || b.room.$oid)) || b.room || b.roomId;
+      const key = String(rid || "");
+      if (!key) continue;
+      const acc = map[key] || { total: 0, occ: 0, avail: 0 };
+      acc.total += 1;
+      if (b.status === "Occupied")  acc.occ   += 1;
+      if (b.status === "Available") acc.avail += 1;
+      map[key] = acc;
+    }
+    return map;
+  }, [beds]);
+
+  const liveFor = (r) => {
+    const id = String(r?._id?.$oid || r?._id || "");
+    return liveByRoom[id] || { total: Number(r.totalBeds) || 0, occ: 0, avail: Number(r.totalBeds) || 0 };
+  };
+
   /* ── Aggregates ── */
   const stats = useMemo(() => {
-    const totalBeds     = rooms.reduce((s, r) => s + (Number(r.totalBeds)     || 0), 0);
-    const availableBeds = rooms.reduce((s, r) => s + (Number(r.availableBeds) || 0), 0);
-    const occupiedBeds  = rooms.reduce((s, r) => s + (Number(r.occupiedBeds)  || 0), 0);
+    const totalBeds     = beds.length || rooms.reduce((s, r) => s + (Number(r.totalBeds) || 0), 0);
+    const occupiedBeds  = beds.filter(b => b.status === "Occupied").length;
+    const availableBeds = beds.filter(b => b.status === "Available").length;
     const active        = rooms.filter(r => r.status === "Active" || r.isActive !== false).length;
     return [
       { key: "total",     label: "Rooms",          value: rooms.length,  icon: "pi-box",          tone: "purple" },
@@ -176,9 +206,10 @@ const RoomManagement = () => {
           ) : viewMode === "cards" ? (
             <div style={{ padding: 14, display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
               {filtered.map(r => {
-                const totalBeds = Number(r.totalBeds) || 0;
-                const occ       = Number(r.occupiedBeds) || 0;
-                const avail     = Number(r.availableBeds ?? Math.max(0, totalBeds - occ));
+                const live      = liveFor(r);
+                const totalBeds = live.total || Number(r.totalBeds) || 0;
+                const occ       = live.occ;
+                const avail     = live.avail;
                 return (
                   <div key={r._id} className="bm-grid-card bm-grid-card--purple">
                     <div className="bm-grid-card__head">
@@ -226,9 +257,10 @@ const RoomManagement = () => {
                 </thead>
                 <tbody>
                   {filtered.map(r => {
-                    const totalBeds = Number(r.totalBeds) || 0;
-                    const occ       = Number(r.occupiedBeds) || 0;
-                    const avail     = Number(r.availableBeds ?? Math.max(0, totalBeds - occ));
+                    const live      = liveFor(r);
+                    const totalBeds = live.total || Number(r.totalBeds) || 0;
+                    const occ       = live.occ;
+                    const avail     = live.avail;
                     return (
                       <tr key={r._id}>
                         <td>

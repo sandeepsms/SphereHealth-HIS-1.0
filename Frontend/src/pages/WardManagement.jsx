@@ -221,13 +221,16 @@ const WardManagement = () => {
                       <td>
                         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                           <strong>{totalBeds}</strong>
+                          <span className="muted" style={{ fontSize: 11 }}>
+                            bed{totalBeds === 1 ? "" : "s"}
+                          </span>
                           {totalBeds > 0 && occBeds > 0 && (
                             <BmBar value={occBeds} max={totalBeds} width={70} showLabel={false} />
                           )}
                         </div>
-                        {(w.hourlyCharge || w.dailyCharge) && (
+                        {Number(w.dailyCharge) > 0 && (
                           <div className="muted" style={{ fontSize: 10, marginTop: 3 }}>
-                            ₹{w.dailyCharge || 0}/day
+                            ₹{Number(w.dailyCharge).toLocaleString("en-IN")}/day
                           </div>
                         )}
                       </td>

@@ -155,22 +155,28 @@ const BuildingManagement = () => {
                         />
                       </td>
                       <td>
-                        <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                          <strong style={{ fontSize: 14 }}>{floors}</strong>
+                        <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                          <span style={{
+                            background: "linear-gradient(135deg, #cffafe, #a5f3fc)",
+                            color: "#0e7490",
+                            fontWeight: 800, fontSize: 14,
+                            borderRadius: 8, padding: "3px 11px",
+                            minWidth: 32, textAlign: "center",
+                          }}>{floors}</span>
                           <span className="muted" style={{ fontSize: 11 }}>floor{floors === 1 ? "" : "s"}</span>
+                          {floors > 0 && (
+                            <div style={{ display: "flex", gap: 3, marginLeft: 8 }}>
+                              {Array.from({ length: Math.min(floors, 10) }).map((_, i) => (
+                                <span key={i} style={{
+                                  width: 6, height: 20, borderRadius: 2,
+                                  background: "linear-gradient(180deg, #22d3ee, #0e7490)",
+                                  opacity: 0.55 + (i / Math.max(1, Math.min(floors, 10))) * 0.45,
+                                }} />
+                              ))}
+                              {floors > 10 && <span className="muted" style={{ fontSize: 9, marginLeft: 4, alignSelf: "center" }}>+{floors - 10}</span>}
+                            </div>
+                          )}
                         </div>
-                        {floors > 0 && (
-                          <div style={{ display: "flex", gap: 2, marginTop: 4 }}>
-                            {Array.from({ length: Math.min(floors, 12) }).map((_, i) => (
-                              <span key={i} style={{
-                                width: 4, height: 14, borderRadius: 1,
-                                background: "linear-gradient(180deg, #06b6d4, #0e7490)",
-                                opacity: 0.4 + (i / Math.min(floors, 12)) * 0.5,
-                              }} />
-                            ))}
-                            {floors > 12 && <span className="muted" style={{ fontSize: 9, marginLeft: 4 }}>+{floors - 12}</span>}
-                          </div>
-                        )}
                       </td>
                       <td>
                         {b.address ? (

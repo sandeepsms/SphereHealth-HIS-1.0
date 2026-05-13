@@ -76,6 +76,7 @@ const BedDashboard = () => {
   const [beds, setBeds]             = useState([]);
   const [admissions, setAdmissions] = useState([]);
   const [transfers, setTransfers]   = useState([]);
+  const [wards, setWards]           = useState([]);      // for accurate ward count
   const [loading, setLoading]       = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
 
@@ -86,11 +87,13 @@ const BedDashboard = () => {
       fetchJSON(API_ENDPOINTS.BEDS),
       fetchJSON(API_ENDPOINTS.ADMISSIONS),
       fetchJSON(API_ENDPOINTS.BED_TRANSFERS),
-    ]).then(([b, a, t]) => {
+      fetchJSON(API_ENDPOINTS.WARDS),
+    ]).then(([b, a, t, w]) => {
       if (cancelled) return;
       setBeds(b);
       setAdmissions(a);
       setTransfers(t);
+      setWards(Array.isArray(w) ? w : []);
     }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [refreshTick]);
@@ -219,7 +222,7 @@ const BedDashboard = () => {
       to: "/wards", title: "Wards",
       subtitle: "Configure wards under each floor",
       icon: "pi-home", color: "#2563eb", tint: "#dbeafe",
-      badges: [{ label: `${kpis.wardRows.length} wards`, tone: "info" }],
+      badges: [{ label: `${wards.length || kpis.wardRows.length} wards`, tone: "info" }],
     },
     {
       to: "/rooms", title: "Rooms",
