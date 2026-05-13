@@ -264,6 +264,13 @@ function NursingNotesContent({ selectedPatient }) {
   const [ordersRefresh, setOrdersRefresh] = useState(0);
   const [consentOrder,  setConsentOrder]  = useState(null);
 
+  /* ── Tile / section navigator ──
+       Nursing Notes is split into 5 tiles, mirroring the Doctor Notes
+       tile pattern. `activeTile` null → grid view; otherwise the
+       matching section expands inline below the patient banner.
+       Tile keys: "orders" | "mar" | "addnote" | "equipment" | "timeline" */
+  const [activeTile, setActiveTile] = useState(null);
+
   /* ── Patient Report (print / PDF) ── */
   const [showReport, setShowReport] = useState(false);
 
@@ -1016,7 +1023,116 @@ function NursingNotesContent({ selectedPatient }) {
             );
           })()}
 
+          {/* ══ TILE GRID (when no section is active) ════════════════════════
+                Nursing Notes is split into 5 tiles. Mirrors the Doctor
+                Notes pattern — click a tile to expand that section
+                inline below the patient banner. Counts where we have
+                them (`notes.length`); child-owned counts (orders / MAR)
+                stay as "Open" badges until we lift them up later. */}
+          {!activeTile && (
+            <div className="dnp-tiles-grid" role="navigation" aria-label="Nursing Notes sections">
+              {[
+                {
+                  id: "orders",
+                  title: "Doctor's Active Orders",
+                  subtitle: "Live orders awaiting nursing action",
+                  icon: "pi-list-check",
+                  color: "#7c3aed",
+                  tint: "#ede9fe",
+                  badges: [{ label: "Open", tone: "info" }],
+                },
+                {
+                  id: "mar",
+                  title: "Treatment Chart — Live MAR",
+                  subtitle: "Administer meds + infusions (NABH COP.3)",
+                  icon: "pi-chart-bar",
+                  color: "#db2777",
+                  tint: "#fce7f3",
+                  badges: [{ label: "Open", tone: "info" }],
+                },
+                {
+                  id: "addnote",
+                  title: "Add a Care Note",
+                  subtitle: "Shift + Assessment, Interventions, Documentation",
+                  icon: "pi-plus-circle",
+                  color: "#0d9488",
+                  tint: "#ccfbf1",
+                  badges: [
+                    gateActive
+                      ? { label: "Initial Assessment required", tone: "warn" }
+                      : { label: "Ready", tone: "ok" },
+                  ],
+                },
+                {
+                  id: "equipment",
+                  title: "Equipment Used This Shift",
+                  subtitle: "Auto-billed disposables, IV lines, monitoring",
+                  icon: "pi-box",
+                  color: "#2563eb",
+                  tint: "#dbeafe",
+                  badges: [{ label: "Auto-billed", tone: "info" }],
+                },
+                {
+                  id: "timeline",
+                  title: "Nursing Notes Timeline",
+                  subtitle: "All historical care notes + filters",
+                  icon: "pi-history",
+                  color: "#ea580c",
+                  tint: "#ffedd5",
+                  badges: [
+                    notes.length > 0
+                      ? { label: `${notes.length} recorded`, tone: "info" }
+                      : { label: "No notes yet", tone: "warn" },
+                    notes.length > 0 && notes[0]?.shift
+                      ? { label: `Last: ${notes[0].shift}`, tone: "accent" }
+                      : null,
+                  ].filter(Boolean),
+                },
+              ].map(t => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setActiveTile(t.id)}
+                  className="dnp-tile"
+                  style={{ "--tile-color": t.color, "--tile-tint": t.tint }}
+                  aria-label={`Open ${t.title}`}
+                >
+                  <div className="dnp-tile__icon">
+                    <i className={`pi ${t.icon}`} />
+                  </div>
+                  <div className="dnp-tile__body">
+                    <div className="dnp-tile__title">{t.title}</div>
+                    <div className="dnp-tile__subtitle">{t.subtitle}</div>
+                    {t.badges.length > 0 && (
+                      <div className="dnp-tile__badges">
+                        {t.badges.map((b, i) => (
+                          <span key={i} className={`dnp-tile__badge dnp-tile__badge--${b.tone}`}>
+                            {b.label}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <i className="pi pi-chevron-right dnp-tile__chevron" aria-hidden />
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* ── Back-to-grid button (when a tile is open) ── */}
+          {activeTile && (
+            <button
+              type="button"
+              onClick={() => setActiveTile(null)}
+              className="dnp-back-btn"
+              aria-label="Back to all sections"
+            >
+              <i className="pi pi-arrow-left" aria-hidden /> All Sections
+            </button>
+          )}
+
           {/* ── Doctor's Active Orders (NurseOrdersPanel) ── */}
+          {activeTile === "orders" && (
           <div style={{ marginBottom: 14 }}>
             <NurseOrdersPanel
               UHID={patient.uhid || patient.UHID || searchUHID}
@@ -1025,8 +1141,10 @@ function NursingNotesContent({ selectedPatient }) {
               onConsentRequest={(order) => setConsentOrder(order)}
             />
           </div>
+          )}
 
           {/* ── NABH Treatment Chart (Nurse Administration View) ── */}
+          {activeTile === "mar" && (
           <div style={{ marginBottom: 14 }}>
             <TreatmentChart
               UHID={patient.uhid || patient.UHID || searchUHID}
@@ -1037,12 +1155,14 @@ function NursingNotesContent({ selectedPatient }) {
               onAdminSave={() => setOrdersRefresh(p => p + 1)}
             />
           </div>
+          )}
 
-          {/* ── Shift Selector ── */}
-          {/* ── Sticky chrome: shift selector + module pill bar. Stays
-              pinned to the top so the nurse can always see who the
-              patient is + spin up a new note without scrolling back. */}
-          <div className="dnp-sticky-chrome pf-tint--nurse">
+          {/* ── Add a Care Note: shift selector + module pill bar ──
+              Tile-gated. Same primitives as Doctor Notes; rendered as
+              a normal section (not sticky chrome) since it's the
+              active tile's panel. */}
+          {activeTile === "addnote" && (
+          <div className="dnp-addnote-panel pf-tint--nurse">
             <div className="dnp-shift-row">
               <span className="dnp-shift-row__label">Current Shift:</span>
               {[
@@ -1149,10 +1269,11 @@ function NursingNotesContent({ selectedPatient }) {
               );
             })()}
           </div>
-          {/* /dnp-sticky-chrome */}
+          )}
+          {/* /dnp-addnote-panel */}
 
           {/* ── Equipment Used This Shift ── */}
-          {(() => {
+          {activeTile === "equipment" && (() => {
             // Group items by category
             const CATEGORY_COLORS = {
               "IV & Infusion":      { color: C.teal,   bg: C.tealL,   icon: "pi-plus-circle"     },
@@ -1354,6 +1475,7 @@ function NursingNotesContent({ selectedPatient }) {
           })()}
 
           {/* ── Notes Timeline ── */}
+          {activeTile === "timeline" && (
           <div id="nursing-notes-timeline" style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 16, overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,.04)' }}>
             {/* Timeline header */}
             <div style={{ background: 'linear-gradient(to right, #f0fdfa, #f8fafc)', borderBottom: `1px solid ${C.border}`, padding: '14px 22px' }}>
@@ -1676,6 +1798,7 @@ function NursingNotesContent({ selectedPatient }) {
               </div>
             )}
           </div>
+          )}
         </>
       )}
 
