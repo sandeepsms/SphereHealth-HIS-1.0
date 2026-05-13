@@ -323,6 +323,8 @@ class InvestigationOrderService {
     if (!order) throw new Error("Order not found");
     if (order.orderStatus === "COMPLETED")
       throw new Error("Cannot cancel completed order");
+    if (order.orderStatus === "CANCELLED")
+      throw new Error("Order is already cancelled");
 
     order.orderStatus = "CANCELLED";
     order.cancelledAt = new Date();
@@ -336,6 +338,44 @@ class InvestigationOrderService {
     });
 
     await order.save();
+
+    // FIX (audit P16-B10): cancelling an order used to leave its
+    // BillingTriggers in their previous state (pending/billed) and the
+    // patient's bill still showed the cancelled tests. Now we mark every
+    // related trigger as voided and, if the trigger was already billed,
+    // ask the billing service to reverse the line item with a negative
+    // adjustment so the audit trail stays intact.
+    try {
+      const BillingTrigger = require("../../models/Billing/BillingTrigger");
+      const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+      const triggers = await BillingTrigger.find({
+        sourceDocumentId: order._id,
+        sourceType: "InvestigationOrder",
+        status: { $in: ["pending", "billed", "completed"] },
+      });
+      for (const t of triggers) {
+        if (t.status === "billed" && t.billId) {
+          const bill = await PatientBill.findById(t.billId);
+          if (bill && !["PAID", "CANCELLED", "REFUNDED"].includes(bill.billStatus)) {
+            // Drop the original line item — safe to mutate because this
+            // bill is still DRAFT/GENERATED/PARTIAL (cashier hasn't closed it).
+            const idx = bill.billItems.findIndex(
+              (i) => String(i._id) === String(t.billItemId),
+            );
+            if (idx >= 0) {
+              bill.billItems.splice(idx, 1);
+              await bill.save();
+            }
+          }
+        }
+        t.status = "voided";
+        t.notes = `Voided: investigation order cancelled — ${reason || ""}`.trim();
+        await t.save();
+      }
+    } catch (e) {
+      console.error("[InvestigationOrderService] cancelOrder billing reverse error:", e.message);
+    }
+
     return order;
   }
 

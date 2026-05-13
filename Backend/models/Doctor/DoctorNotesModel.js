@@ -99,7 +99,30 @@ const DoctorNotesSchema = new mongoose.Schema(
     signedAt: { type: Date },
 
     // Extended NABH fields
-    noteType:     { type: String },                              // "daily","icu","procedure", etc.
+    // FIX (audit P11-B1): noteType is now an enum so the frontend can't slip
+    // a junk value through and end up with un-bucketed notes that no view
+    // filter ever matches. Keep "general" as the default since older notes
+    // were created without a type and validate cleanly against it.
+    noteType: {
+      type: String,
+      enum: [
+        "general",
+        "admission",
+        "progress",
+        "daily",
+        "icu",
+        "procedure",
+        "consultation",
+        "assessment",
+        "discharge",
+        "death",
+        "amendment",
+        "operative",
+        "preop",
+        "postop",
+      ],
+      default: "general",
+    },
     isCritical:   { type: Boolean, default: false },
     tags:         [{ type: String }],
     noteDetails:  { type: mongoose.Schema.Types.Mixed },        // ICU/procedure/consultation specifics

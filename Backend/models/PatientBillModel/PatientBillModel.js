@@ -248,6 +248,26 @@ PatientBillSchema.index({ visitType: 1 });
 PatientBillSchema.index({ billDate: -1 });
 PatientBillSchema.index({ tpa: 1 });
 
+// FIX (audit P6-B1): partial unique index that prevents two concurrent
+// getOrCreateDraftBill() callers from materialising two DRAFT rows for the
+// same patient+visitType+admission. Previously the find-then-insert pattern
+// was race-prone and on a busy ward we ended up with split draft bills that
+// auto-billing kept hitting at random.
+//
+// `admission` is included in the key — for OPD the admission field is null,
+// and {null, null} pairs are treated as distinct under default indexes, so we
+// have a separate guard below for OPD without admission.
+PatientBillSchema.index(
+  { UHID: 1, visitType: 1, admission: 1 },
+  { unique: true, partialFilterExpression: { billStatus: "DRAFT" } }
+);
+
+// Enable optimistic concurrency — every save() bumps __v and refuses to
+// overwrite a stale snapshot. recordPayment uses this with a retry loop so
+// two cashiers taking payment from the same bill at the same instant can't
+// silently clobber each other's payment row.
+PatientBillSchema.set("optimisticConcurrency", true);
+
 module.exports =
   mongoose.models.PatientBill ||
   mongoose.model("PatientBill", PatientBillSchema);

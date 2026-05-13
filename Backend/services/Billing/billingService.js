@@ -255,40 +255,66 @@ class BillingService {
   }
 
   // ── 10. Record payment ────────────────────────────────────────
+  // FIX (audit P6-B2): two cashiers receiving payment for the same bill at
+  // the same instant used to race — both read the same snapshot, both pushed
+  // a payment row, the second save() clobbered the first. The schema now has
+  // optimisticConcurrency enabled (rejects stale __v with VersionError); here
+  // we retry the load-modify-save up to 5 times before giving up. Net effect:
+  // concurrent payments serialise correctly and no row is ever lost.
   async recordPayment(
     billId,
     { amount, paymentMode, transactionId, receivedBy, remarks },
   ) {
-    const bill = await PatientBill.findById(billId);
-    if (!bill) throw new Error("Bill not found");
-
-    if (bill.billStatus === "DRAFT") {
-      throw new Error(
-        "Bill abhi DRAFT hai — pehle generateFinalBill() karo, tab payment lo",
-      );
-    }
-    if (bill.billStatus === "PAID") throw new Error("Bill already fully paid");
-    if (bill.billStatus === "CANCELLED")
-      throw new Error("Cancelled bill pe payment nahi ho sakti");
     if (!amount || amount <= 0) throw new Error("Valid amount required");
 
-    bill.payments.push({
-      amount,
-      paymentMode,
-      transactionId,
-      receivedBy,
-      remarks,
-      paidAt: new Date(),
-    });
+    const MAX_RETRIES = 5;
+    let lastErr;
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      const bill = await PatientBill.findById(billId);
+      if (!bill) throw new Error("Bill not found");
 
-    const totalPaid = bill.payments.reduce((s, p) => s + p.amount, 0);
-    bill.advancePaid = totalPaid;
-    bill.balanceAmount = Math.max(0, bill.patientPayableAmount - totalPaid);
-    bill.billStatus = bill.balanceAmount === 0 ? "PAID" : "PARTIAL";
-    if (bill.billStatus === "PAID") bill.paidAt = new Date();
+      if (bill.billStatus === "DRAFT") {
+        throw new Error(
+          "Bill abhi DRAFT hai — pehle generateFinalBill() karo, tab payment lo",
+        );
+      }
+      if (bill.billStatus === "PAID") throw new Error("Bill already fully paid");
+      if (bill.billStatus === "CANCELLED")
+        throw new Error("Cancelled bill pe payment nahi ho sakti");
+      if (bill.billStatus === "REFUNDED")
+        throw new Error("Refunded bill — no further payments allowed");
 
-    await bill.save();
-    return bill;
+      bill.payments.push({
+        amount,
+        paymentMode,
+        transactionId,
+        receivedBy,
+        remarks,
+        paidAt: new Date(),
+      });
+
+      const totalPaid = bill.payments.reduce((s, p) => s + p.amount, 0);
+      bill.advancePaid = totalPaid;
+      bill.balanceAmount = Math.max(0, bill.patientPayableAmount - totalPaid);
+      bill.billStatus = bill.balanceAmount === 0 ? "PAID" : "PARTIAL";
+      if (bill.billStatus === "PAID") bill.paidAt = new Date();
+
+      try {
+        await bill.save();
+        return bill;
+      } catch (err) {
+        // VersionError → another writer hit save() between our read and write.
+        // Retry with a fresh snapshot.
+        if (err?.name === "VersionError") {
+          lastErr = err;
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw new Error(
+      `Payment concurrency conflict after ${MAX_RETRIES} retries: ${lastErr?.message || "unknown"}`,
+    );
   }
 
   // ── 11. Update TPA claim status ───────────────────────────────

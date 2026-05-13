@@ -396,6 +396,26 @@ exports.tpaPreAuthSubmit = async (req, res, next) => {
     const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
     const bill = await PatientBill.findById(req.params.billId);
     if (!bill) return res.status(404).json({ success: false, message: "Bill not found" });
+
+    // FIX (audit P6-B5): transition guard. Pre-auth was previously a one-way
+    // override — any user with API access could flip an APPROVED claim back
+    // to SUBMITTED (erasing the desk approval) or re-submit a settled claim
+    // (corrupting the TPA ledger). Only initial-state claims may transition
+    // to SUBMITTED; re-submits after rejection are allowed but log a note.
+    const ALLOWED_FROM = ["NOT_APPLICABLE", "PENDING", "REJECTED"];
+    if (!ALLOWED_FROM.includes(bill.tpaClaimStatus)) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot submit pre-auth — claim is already in '${bill.tpaClaimStatus}' state`,
+      });
+    }
+    if (bill.paymentType !== "TPA" && bill.paymentType !== "CORPORATE") {
+      return res.status(400).json({
+        success: false,
+        message: "Pre-auth is only valid for TPA or Corporate payment types",
+      });
+    }
+
     bill.tpaClaimNumber  = req.body.claimNumber || bill.tpaClaimNumber || "";
     bill.tpaClaimStatus  = "SUBMITTED";
     bill.tpaPayableAmount = Number(req.body.requestedAmount) || bill.tpaPayableAmount || 0;
@@ -429,6 +449,17 @@ exports.refundPayment = async (req, res, next) => {
     const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
     const bill = await PatientBill.findById(req.params.billId);
     if (!bill) return res.status(404).json({ success: false, message: "Bill not found" });
+
+    // FIX (audit P6-B4): bill state guard. Refunds were previously allowed
+    // on any bill that had a payment row — including DRAFT/GENERATED bills
+    // that the cashier shouldn't even be looking at, and already REFUNDED
+    // bills, which would let staff drive the balance arbitrarily negative.
+    if (!["PAID", "PARTIAL"].includes(bill.billStatus)) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot refund a ${bill.billStatus} bill — only PAID or PARTIAL bills can be refunded`,
+      });
+    }
 
     const amt = Number(req.body.amount);
     if (!amt || amt <= 0) {

@@ -610,14 +610,27 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
     return time < timeNow;
   };
 
-  /* ── Is the 30-min administration window open yet? ── */
+  /* ── Is the 30-min administration window open yet? ──
+   * FIX (audit P15-B1): Q4H/Q6H/QID schedules include a 00:00 slot. The
+   * naive comparison `timeNow >= slot - 30` flipped to TRUE the instant
+   * `slot - 30` went negative, which meant the 00:00 dose looked "ready
+   * to administer" all day long (from 00:00 onwards). Now the window
+   * wraps cleanly: a 00:00 slot opens at 23:30 of the same calendar day
+   * AND stays open for the rest of the night.
+   */
   const isWithinWindow = (time) => {
     if (!time || time?.startsWith("STAT:")) return true; // STAT always in window
     const SPECIAL = ["Immediate","As Needed","Continuous","Before Meals","After Meals","Once Weekly","—"];
     if (SPECIAL.includes(time)) return true;
     if (!isMarToday) return true; // Past date: all slots are "open" (history view)
     const toMins = (t) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
-    return toMins(timeNow) >= toMins(time) - 30;
+    const now  = toMins(timeNow);
+    const slot = toMins(time);
+    const earlyOpen = slot - 30;
+    if (earlyOpen >= 0) return now >= earlyOpen;
+    // slot is 00:00–00:29 → opening time wraps to prior evening (23:30+).
+    // Open if we're in the late-night wrap window OR already past the slot today.
+    return now >= (1440 + earlyOpen) || now >= slot;
   };
 
   /* ── Next dose time after a STAT administration ── */

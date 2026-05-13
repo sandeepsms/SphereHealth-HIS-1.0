@@ -81,9 +81,13 @@ class DoctorNotesController {
   signNote = handle(async (req, res) => {
     const doctorUserId =
       req.body.doctorId || req.body.doctor || req.headers["x-user-id"] || req.user;
+    // Allow the frontend signature pad to push a base64 PNG + display name
+    // through at sign-time so we can stamp it on the note.
+    const { signature, signedByName, signedByReg } = req.body || {};
     const note = await doctorNotesService.signDoctorNote(
       req.params.id,
       doctorUserId,
+      { signature, signedByName, signedByReg },
     );
     return res.json({ success: true, message: "Note signed", data: note });
   });

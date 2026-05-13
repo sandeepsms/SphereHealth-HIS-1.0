@@ -109,6 +109,15 @@ async function addItemToBill(bill, service, quantity, source, trigger) {
 
     const freshBill = await PatientBill.findById(bill._id);
     if (!freshBill) return null;
+    // FIX (audit P6-B3): auto-billing was happily pushing new line items onto
+    // bills that were already PAID / CANCELLED / REFUNDED, retroactively
+    // making the patient's "settled" bill look unpaid. Closed bills are now
+    // immutable — caller (createTrigger) decides what to do with the skipped
+    // event (typically it'll spin up a new draft on the next admission day).
+    if (["PAID", "CANCELLED", "REFUNDED"].includes(freshBill.billStatus)) {
+      console.warn(`[AutoBilling] skipping addItemToBill — bill ${freshBill._id} is ${freshBill.billStatus}`);
+      return null;
+    }
     freshBill.billItems.push(item);
     await freshBill.save();
     const savedItem = freshBill.billItems[freshBill.billItems.length - 1];

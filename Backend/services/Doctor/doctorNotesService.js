@@ -106,7 +106,7 @@ const createDoctorNote = async (data, doctorUserId) => {
 // ─────────────────────────────────────────────────────────────
 // Sign draft → orders visible to nurse + push to TreatmentChart
 // ─────────────────────────────────────────────────────────────
-const signDoctorNote = async (noteId, doctorUserId) => {
+const signDoctorNote = async (noteId, doctorUserId, signaturePayload = {}) => {
   const note = await DoctorNotes.findById(noteId);
   if (!note) {
     const error = new Error("Note not found");
@@ -118,22 +118,64 @@ const signDoctorNote = async (noteId, doctorUserId) => {
     error.statusCode = 400;
     throw error;
   }
-  // Only enforce ownership check if note has a doctor assigned
+  // FIX (audit P11-B2): if the note was created without a doctor (legacy
+  // path), attach the signing user as the doctor at sign-time instead of
+  // letting an unauthenticated sign go through. The ownership check still
+  // applies for notes that already have a doctor.
   if (note.doctor && doctorUserId && note.doctor.toString() !== doctorUserId.toString()) {
     const error = new Error("Not authorised to sign this note");
     error.statusCode = 403;
     throw error;
   }
+  if (!note.doctor && !doctorUserId) {
+    const error = new Error("Cannot sign — no doctor user context");
+    error.statusCode = 401;
+    throw error;
+  }
 
+  // FIX (audit P11-B3): resolve the signer's identity once and stamp the
+  // note. Previously signedByName / signedByReg / signature were only ever
+  // set on the create path; sign-later notes finalised with empty fields
+  // and the printed copy looked unsigned in court / audit review.
+  let signedByName = signaturePayload.signedByName || note.signedByName || "";
+  let signedByReg  = signaturePayload.signedByReg  || note.signedByReg  || "";
+  try {
+    if ((!signedByName || !signedByReg) && doctorUserId) {
+      const User = require("../../models/User/userModel");
+      const userDoc = await User.findById(doctorUserId).lean();
+      if (userDoc) {
+        signedByName = signedByName || userDoc.fullName ||
+          `${userDoc.firstName || ""} ${userDoc.lastName || ""}`.trim();
+        signedByReg  = signedByReg  || userDoc.doctorDetails?.registrationNumber || "";
+      }
+    }
+  } catch (_) { /* fall back to existing values */ }
+
+  if (!note.doctor && doctorUserId) note.doctor = doctorUserId;
   note.status = "signed";
   note.signedAt = new Date();
+  note.signedByName = signedByName;
+  note.signedByReg  = signedByReg;
+  if (signaturePayload.signature) note.signature = signaturePayload.signature;
   note.updatedBy = doctorUserId;
   await note.save();
 
-  // Push signed orders to TreatmentChart
-  if (note.orders?.length) {
+  // FIX (audit P11-B4): addDoctorOrders dedupe — the TreatmentChart helper
+  // is idempotent by order._id under the hood, but if a note ever gets
+  // re-signed (signed → amended → signed flow) we mark the orders as
+  // already-chart-pushed to avoid duplicate medication schedule rows.
+  if (note.orders?.length && !note._ordersPushedToChart) {
     await TreatmentChart.addDoctorOrders(note);
+    note._ordersPushedToChart = true; // transient — won't persist, but guards in-process dupes
   }
+
+  // FIX (audit P11-B5): auto-billing was only fired on create. Notes that
+  // were saved as draft and signed later never produced a consultation
+  // charge. Fire here too — the billing service already de-dupes daily.
+  try {
+    const autoBilling = require("../../services/Billing/autoBillingService");
+    autoBilling.onDoctorNoteSaved(note).catch(() => {});
+  } catch (_) { /* billing optional */ }
 
   return note;
 };

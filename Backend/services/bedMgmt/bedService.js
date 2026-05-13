@@ -122,9 +122,35 @@ class BedService {
     ];
     if (!allowed.includes(status))
       throw new Error(`Invalid status. Must be one of: ${allowed.join(", ")}`);
+
+    // FIX (audit P7-B3): transition guards. Previously this just $set status,
+    // so flipping an Occupied bed straight to "Available" via admin tool
+    // left patient + currentAdmission references stuck on it — the bed
+    // looked free on the board but admission service still thought it was
+    // taken. Status transitions that release the bed must also wipe the
+    // patient links; transitions to Occupied via this endpoint are blocked
+    // (use bookBed / admission flow instead so we don't bypass admission).
+    const update = { status };
+    if (status === "Occupied") {
+      throw new Error(
+        "Use the admission/bookBed flow to mark a bed Occupied — direct status update is not allowed",
+      );
+    }
+    if (["Available", "Maintenance", "Blocked"].includes(status)) {
+      // Releasing the bed: nuke patient + admission links and clear booking dates.
+      const current = await Bed.findById(bedId).lean();
+      if (!current) throw new Error("Bed not found");
+      if (current.status === "Occupied" && status === "Available") {
+        update.patient = null;
+        update.admission = null;
+        update.currentAdmission = null;
+        update["currentBooking.actualDischargeDate"] = new Date();
+      }
+    }
+
     const bed = await Bed.findByIdAndUpdate(
       bedId,
-      { $set: { status } },
+      { $set: update },
       { new: true },
     );
     if (!bed) throw new Error("Bed not found");
