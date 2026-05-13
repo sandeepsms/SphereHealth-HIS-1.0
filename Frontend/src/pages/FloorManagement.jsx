@@ -5,6 +5,7 @@ import { TabView, TabPanel } from "primereact/tabview";
 import FloorList from "../Components/floor/FloorList";
 import FloorForm from "../Components/floor/FloorForm";
 import FloorCard from "../Components/floor/FloorCard";
+import BedSectionHeader from "../Components/bed/BedSectionHeader";
 import { floorService } from "../Services/floorService";
 
 const FloorManagement = () => {
@@ -53,31 +54,24 @@ const FloorManagement = () => {
     loadFloors();
   }, [refreshKey]);
 
-  const headerTemplate = (
-    <div className="flex justify-content-between align-items-center">
-      <div className="flex align-items-center flex-column flex-grow-1">
-        <div className="flex align-items-center gap-2 mb-2">
-          <i className="pi pi-building text-3xl text-primary"></i>
-          <h2 className="m-0 p-2 text-2xl font-bold text-900">
-            Floor Management
-          </h2>
-        </div>
-        <p className="m-0 text-sm text-600">
-          Manage hospital floors and their details
-        </p>
-      </div>
-      <Button
-        label="Add New Floor"
-        icon="pi pi-plus"
-        onClick={handleAdd}
-        className="p-button-success m-2"
-      />
-    </div>
-  );
-
   return (
-    <div className=" p-2 " style={{ marginTop: "45px" }}>
-      <Card header={headerTemplate} className="shadow-1">
+    <div style={{ padding: 20, background: "#f1f5f9", minHeight: "100vh" }}>
+      <BedSectionHeader
+        title="Floors"
+        subtitle={`${floors.length} floor${floors.length === 1 ? "" : "s"} configured`}
+        icon="pi-arrows-v"
+        actions={
+          <Button icon="pi pi-plus" label="Add New Floor"
+            onClick={handleAdd}
+            style={{
+              background: "#fff", color: "#9a3412",
+              border: "none", fontWeight: 700,
+              borderRadius: 8, padding: "7px 16px", fontSize: 12,
+              boxShadow: "0 2px 8px rgba(0,0,0,.13)",
+            }} />
+        }
+      />
+      <Card className="shadow-1">
         <TabView
           activeIndex={activeTab}
           onTabChange={(e) => setActiveTab(e.index)}

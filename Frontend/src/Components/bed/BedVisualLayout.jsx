@@ -16,6 +16,7 @@ import patientService from "../../Services/patient/patientService";
 import { doctorService } from "../../Services/doctors/doctorService";
 import useBedEvents from "../../hooks/useBedEvents";
 import authFetch    from "../../utils/authFetch";
+import BedSectionHeader from "./BedSectionHeader";
 
 /* ─── Colors ─────────────────────────────────────────────── */
 const TEAL = "#0891b2";
@@ -218,6 +219,11 @@ const BedIcon = ({ status }) => {
 
 /* ══════════════════════════════════════════════════════════ */
 const BedVisualLayout = ({ onRefreshParent }) => {
+  // When mounted inside BedManagement (which already supplies its own
+  // header), the parent passes `onRefreshParent`. Used as the "embedded"
+  // signal so we skip the standalone BedSectionHeader to avoid two
+  // overlapping headers on the /beds page.
+  const isEmbedded = typeof onRefreshParent === "function";
   const toast = useRef(null);
 
   const [beds, setBeds] = useState([]);
@@ -1112,7 +1118,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
   };
 
   return (
-    <div style={{ fontFamily: "'Inter',-apple-system,sans-serif" }}>
+    <div style={{ fontFamily: "'Inter',-apple-system,sans-serif", padding: isEmbedded ? 0 : "20px 28px", background: isEmbedded ? "transparent" : "#f1f5f9", minHeight: isEmbedded ? "auto" : "100vh" }}>
       <Toast ref={toast} />
 
       {/* ══ DISCHARGE DIALOG SCROLL FIX ══ */}
@@ -1122,6 +1128,28 @@ const BedVisualLayout = ({ onRefreshParent }) => {
           overflow: hidden !important;
         }
       `}</style>
+
+      {/* Standalone-only Bed Management theme header */}
+      {!isEmbedded && (
+        <BedSectionHeader
+          title="Live Bed Map"
+          subtitle="Admit, transfer, discharge — by building / floor / ward / room"
+          icon="pi-eye"
+          actions={
+            <Button
+              icon="pi pi-refresh"
+              label="Refresh"
+              onClick={fetchBeds}
+              loading={busy}
+              style={{
+                background: "rgba(255,255,255,.15)", color: "#fff",
+                border: "1.5px solid rgba(255,255,255,.4)",
+                fontWeight: 700, borderRadius: 8, padding: "7px 14px", fontSize: 12,
+              }}
+            />
+          }
+        />
+      )}
 
       {/* ── FILTER BAR ── */}
       <div

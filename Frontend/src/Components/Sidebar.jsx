@@ -113,7 +113,9 @@ const NAV = [
     roles: [ADMIN, RX, NR, WB],
     items: [
       // ── Operational (everyone in group sees these) ──
-      { label: "Dashboard",          icon: "pi-chart-bar", path: "/bed-dashboard",  badge: "NEW", roles: [ADMIN, NR, WB] },
+      // Dashboard doubles as the Bed Management home — KPI strip on top
+      // and a tile grid linking out to every other section.
+      { label: "Home",               icon: "pi-th-large",  path: "/bed-dashboard",  badge: "NEW", roles: [ADMIN, NR, WB] },
       // Single role-aware Live Bed Map; RX sees read-only mode on the same route
       { label: "Live Bed Map",       icon: "pi-eye",       path: "/bed-visual",     roles: [ADMIN, RX, NR, WB] },
       { label: "Bed Transfers",      icon: "pi-arrows-h",  path: "/bed-transfers",  badge: "NEW", roles: [ADMIN, DR, NR] },

@@ -9,6 +9,7 @@ import * as yup from "yup";
 import { toast } from "react-toastify";
 
 import { roomCategoryService } from "../../Services/roomCategoryService";
+import BedSectionHeader from "../bed/BedSectionHeader";
 import "primereact/resources/themes/lara-light-blue/theme.css";
 import "primereact/resources/primereact.min.css";
 import "primeicons/primeicons.css";
@@ -241,19 +242,11 @@ function AddRoomCategory() {
         minHeight: "100vh",
       }}
     >
-      {/* Header */}
-      <div style={{ marginBottom: "20px" }}>
-        <h1
-          style={{
-            fontSize: "28px",
-            fontWeight: 600,
-            color: "#2c3e50",
-            margin: 0,
-          }}
-        >
-          Room Category Management
-        </h1>
-      </div>
+      <BedSectionHeader
+        title="Room Categories"
+        subtitle="Pricing tiers + amenities — Economy, Standard, Premium, Deluxe, VIP"
+        icon="pi-th-large"
+      />
 
       {/* Add/Edit Form */}
       <div

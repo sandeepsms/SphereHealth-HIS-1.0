@@ -8,6 +8,7 @@ import { Card } from "primereact/card";
 import { Toast } from "primereact/toast";
 import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
 import WardForm from "../Components/ward/WardForm";
+import BedSectionHeader from "../Components/bed/BedSectionHeader";
 import { wardService } from "../Services/wardService";
 
 const WardManagement = () => {
@@ -154,10 +155,6 @@ const WardManagement = () => {
 
   const header = (
     <div className="flex flex-wrap gap-2 align-items-center justify-content-between">
-      <div>
-        <h4 className="m-0">Ward Management</h4>
-        <p className="text-sm text-600 mt-1">Total Wards: {wards.length}</p>
-      </div>
       <div className="flex gap-2 align-items-center">
         <span className="p-input-icon-left">
           <i className="pi pi-search" />
@@ -165,34 +162,42 @@ const WardManagement = () => {
             type="search"
             value={globalFilter}
             onChange={(e) => setGlobalFilter(e.target.value)}
-            placeholder="Search..."
+            placeholder="Search wards..."
           />
         </span>
-        <Button
-          icon="pi pi-refresh"
-          className="p-button-outlined"
-          onClick={loadWards}
-          loading={loading}
-          tooltip="Refresh"
-          tooltipOptions={{ position: "top" }}
-        />
-        <Button
-          label="Add Ward"
-          icon="pi pi-plus"
-          onClick={() => {
-            setSelectedWard(null);
-            setShowForm(true);
-          }}
-          className="p-button-success"
-        />
       </div>
     </div>
   );
 
   return (
-    <div className="p-4" style={{ marginTop: "80px" }}>
+    <div style={{ padding: 20, background: "#f1f5f9", minHeight: "100vh" }}>
       <Toast ref={toast} />
       <ConfirmDialog />
+
+      <BedSectionHeader
+        title="Wards"
+        subtitle={`${wards.length} ward${wards.length === 1 ? "" : "s"} configured`}
+        icon="pi-home"
+        actions={
+          <>
+            <Button icon="pi pi-refresh" label="Refresh"
+              onClick={loadWards} loading={loading}
+              style={{
+                background: "rgba(255,255,255,.15)", color: "#fff",
+                border: "1.5px solid rgba(255,255,255,.4)",
+                fontWeight: 700, borderRadius: 8, padding: "7px 14px", fontSize: 12,
+              }} />
+            <Button icon="pi pi-plus" label="Add Ward"
+              onClick={() => { setSelectedWard(null); setShowForm(true); }}
+              style={{
+                background: "#fff", color: "#1e40af",
+                border: "none", fontWeight: 700,
+                borderRadius: 8, padding: "7px 16px", fontSize: 12,
+                boxShadow: "0 2px 8px rgba(0,0,0,.13)",
+              }} />
+          </>
+        }
+      />
 
       <Card className="shadow-1">
         <DataTable

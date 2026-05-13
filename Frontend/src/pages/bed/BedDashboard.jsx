@@ -17,9 +17,11 @@
 // ~5000 beds we'll move aggregations into a dedicated controller.
 
 import React, { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { API_ENDPOINTS } from "../../config/api";
 import useBedEvents from "../../hooks/useBedEvents";
 import authFetch from "../../utils/authFetch";
+import BedSectionHeader from "../../Components/bed/BedSectionHeader";
 
 const C = {
   card:     "#ffffff",
@@ -177,31 +179,89 @@ const BedDashboard = () => {
     } catch { /* silent */ }
   };
 
+  // ── Tile config (Doctor / Nursing Notes pattern) ────────────────
+  // Each tile = a deep-link into a Bed Management section, with a
+  // live badge driven from the same `kpis` aggregate so the hub
+  // page surfaces operational state at a glance.
+  const TILES = useMemo(() => ([
+    {
+      to: "/bed-visual", title: "Live Bed Map",
+      subtitle: "Admit · transfer · discharge in one view",
+      icon: "pi-eye", color: "#0d9488", tint: "#ccfbf1",
+      badges: [
+        { label: `${kpis.occupied} occupied`, tone: "info" },
+        kpis.available > 0 ? { label: `${kpis.available} available`, tone: "ok" } : null,
+      ].filter(Boolean),
+    },
+    {
+      to: "/bed-transfers", title: "Bed Transfers",
+      subtitle: "Doctor-initiated transfers awaiting nurse handover",
+      icon: "pi-arrows-h", color: "#7c3aed", tint: "#ede9fe",
+      badges: [
+        kpis.pendingTransfers.length > 0
+          ? { label: `${kpis.pendingTransfers.length} pending`, tone: "warn" }
+          : { label: "All handed over", tone: "ok" },
+      ],
+    },
+    {
+      to: "/bed-reports/monthly", title: "Monthly Report (NABH MOI.2)",
+      subtitle: "Occupancy %, ALOS, turnover — printable",
+      icon: "pi-file-pdf", color: "#0d9488", tint: "#ccfbf1",
+      badges: [{ label: "Open", tone: "info" }],
+    },
+    {
+      to: "/beds", title: "Manage Beds",
+      subtitle: "Create / edit / bulk create · table or visual",
+      icon: "pi-list", color: "#475569", tint: "#f1f5f9",
+      badges: [{ label: `${kpis.total} beds`, tone: "info" }],
+    },
+    {
+      to: "/wards", title: "Wards",
+      subtitle: "Configure wards under each floor",
+      icon: "pi-home", color: "#2563eb", tint: "#dbeafe",
+      badges: [{ label: `${kpis.wardRows.length} wards`, tone: "info" }],
+    },
+    {
+      to: "/rooms", title: "Rooms",
+      subtitle: "Rooms within each ward",
+      icon: "pi-box", color: "#7c3aed", tint: "#ede9fe",
+      badges: [{ label: "Open", tone: "info" }],
+    },
+    {
+      to: "/roomcategory", title: "Room Categories",
+      subtitle: "Pricing tiers · Economy → VIP",
+      icon: "pi-th-large", color: "#db2777", tint: "#fce7f3",
+      badges: [{ label: "Open", tone: "info" }],
+    },
+    {
+      to: "/floors", title: "Floors",
+      subtitle: "Floors per building",
+      icon: "pi-arrows-v", color: "#ea580c", tint: "#ffedd5",
+      badges: [{ label: "Open", tone: "info" }],
+    },
+    {
+      to: "/buildings", title: "Buildings",
+      subtitle: "Top of the location hierarchy",
+      icon: "pi-building", color: "#0891b2", tint: "#cffafe",
+      badges: [{ label: "Open", tone: "info" }],
+    },
+  ]), [kpis]);
+
   return (
     <div style={{ padding: "20px 28px", fontFamily: "'DM Sans', sans-serif", background: C.bg, minHeight: "100vh" }}>
-      {/* ── Page header ── */}
-      <div style={{
-        background: "linear-gradient(135deg, #475569, #1e293b)",
-        borderRadius: 14, padding: "18px 24px", color: "white",
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        marginBottom: 18, boxShadow: "0 6px 22px rgba(15,23,42,.25)",
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <div style={{ width: 46, height: 46, borderRadius: 12, background: "rgba(255,255,255,.18)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <i className="pi pi-chart-bar" style={{ fontSize: 22 }} />
-          </div>
-          <div>
-            <div style={{ fontSize: 19, fontWeight: 800 }}>Bed Management Dashboard</div>
-            <div style={{ fontSize: 12, opacity: .85 }}>Occupancy, expected discharges, isolation, and transfer queue</div>
-          </div>
-        </div>
-        <button onClick={() => setRefreshTick(t => t + 1)}
-          disabled={loading}
-          style={{ background: "rgba(255,255,255,.2)", border: "none", color: "white", borderRadius: 8, padding: "8px 16px", fontWeight: 700, cursor: "pointer", fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>
-          <i className={`pi ${loading ? "pi-spin pi-spinner" : "pi-refresh"}`} />
-          Refresh
-        </button>
-      </div>
+      <BedSectionHeader
+        title="Bed Management"
+        subtitle="Live occupancy, transfer queue, isolation, monthly reports"
+        icon="pi-th-large"
+        hideBack
+        actions={
+          <button onClick={() => setRefreshTick(t => t + 1)} disabled={loading}
+            style={{ background: "rgba(255,255,255,.2)", border: "1.5px solid rgba(255,255,255,.4)", color: "white", borderRadius: 8, padding: "7px 14px", fontWeight: 700, cursor: "pointer", fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>
+            <i className={`pi ${loading ? "pi-spin pi-spinner" : "pi-refresh"}`} />
+            Refresh
+          </button>
+        }
+      />
 
       {/* ── Headline KPI strip ── */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16 }}>
@@ -209,6 +269,72 @@ const BedDashboard = () => {
         <Kpi label="Available" value={kpis.available} sub={`${kpis.reserved} reserved`} color={C.green} bg={C.greenL} icon="pi-check-circle" />
         <Kpi label="ALOS (30d)" value={kpis.alos} sub="Avg Length of Stay (days)" color={C.purple} bg={C.purpleL} icon="pi-clock" />
         <Kpi label="Maintenance" value={kpis.maintenance + kpis.blocked} sub={`${kpis.maintenance} maint · ${kpis.blocked} blocked`} color={C.amber} bg={C.amberL} icon="pi-wrench" />
+      </div>
+
+      {/* ── Section tile grid (mirrors Doctor/Nursing Notes pattern) ── */}
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+        gap: 12, marginBottom: 18,
+      }}>
+        {TILES.map(t => (
+          <Link key={t.to} to={t.to}
+            style={{
+              textDecoration: "none", color: "inherit",
+              background: "white", border: "1.5px solid #e2e8f0", borderRadius: 14,
+              padding: "14px 16px",
+              display: "flex", gap: 12, alignItems: "flex-start",
+              position: "relative", overflow: "hidden",
+              transition: "transform .15s, box-shadow .15s, border-color .15s",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = "translateY(-2px)";
+              e.currentTarget.style.boxShadow = `0 12px 28px -18px ${t.color}80, 0 4px 10px rgba(15,23,42,.05)`;
+              e.currentTarget.style.borderColor = `${t.color}66`;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = "none";
+              e.currentTarget.style.boxShadow = "none";
+              e.currentTarget.style.borderColor = "#e2e8f0";
+            }}>
+            <span aria-hidden style={{
+              position: "absolute", left: 0, top: 0, bottom: 0, width: 4,
+              background: t.color, opacity: .9,
+            }} />
+            <div style={{
+              flexShrink: 0, width: 42, height: 42, borderRadius: 11,
+              background: t.tint, color: t.color,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 18,
+            }}>
+              <i className={`pi ${t.icon}`} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a", letterSpacing: ".2px" }}>{t.title}</div>
+              <div style={{ fontSize: 11, color: "#64748b", marginTop: 3, lineHeight: 1.4 }}>{t.subtitle}</div>
+              {t.badges?.length > 0 && (
+                <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 4 }}>
+                  {t.badges.map((b, i) => {
+                    const tone = {
+                      ok:    { bg: "#dcfce7", color: "#15803d", border: "#bbf7d0" },
+                      warn:  { bg: "#fef3c7", color: "#92400e", border: "#fde68a" },
+                      info:  { bg: "#e0e7ff", color: "#4338ca", border: "#c7d2fe" },
+                    }[b.tone] || {};
+                    return (
+                      <span key={i} style={{
+                        fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 999,
+                        textTransform: "uppercase", letterSpacing: ".4px",
+                        background: tone.bg, color: tone.color,
+                        border: `1px solid ${tone.border}`,
+                      }}>{b.label}</span>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            <i aria-hidden className="pi pi-chevron-right" style={{ alignSelf: "center", color: "#94a3b8", fontSize: 13 }} />
+          </Link>
+        ))}
       </div>
 
       {/* ── Two-column layout: lists ── */}

@@ -11,6 +11,7 @@ import { Card } from "primereact/card";
 import { Toast } from "primereact/toast";
 import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
 import BuildingForm from "../Components/building/BuildingForm";
+import BedSectionHeader from "../Components/bed/BedSectionHeader";
 import { buildingService } from "../Services/buildingService";
 
 const BuildingManagement = () => {
@@ -99,31 +100,38 @@ const BuildingManagement = () => {
 
   const header = (
     <div className="flex flex-wrap gap-2 align-items-center justify-content-between">
-      <h4 className="m-0">Building Management</h4>
       <span className="p-input-icon-left">
         <i className="pi pi-search" />
         <InputText
           type="search"
           value={globalFilter}
           onChange={(e) => setGlobalFilter(e.target.value)}
-          placeholder="Search..."
+          placeholder="Search buildings..."
         />
       </span>
-      <Button
-        label="Add Building"
-        icon="pi pi-plus"
-        onClick={() => {
-          setSelectedBuilding(null);
-          setShowForm(true);
-        }}
-      />
     </div>
   );
 
   return (
-    <div className="p-4">
+    <div style={{ padding: 20, background: "#f1f5f9", minHeight: "100vh" }}>
       <Toast ref={toast} />
       <ConfirmDialog />
+
+      <BedSectionHeader
+        title="Buildings"
+        subtitle={`${buildings.length} building${buildings.length === 1 ? "" : "s"} configured · top of the hierarchy`}
+        icon="pi-building"
+        actions={
+          <Button icon="pi pi-plus" label="Add Building"
+            onClick={() => { setSelectedBuilding(null); setShowForm(true); }}
+            style={{
+              background: "#fff", color: "#0e7490",
+              border: "none", fontWeight: 700,
+              borderRadius: 8, padding: "7px 16px", fontSize: 12,
+              boxShadow: "0 2px 8px rgba(0,0,0,.13)",
+            }} />
+        }
+      />
 
       <Card>
         <DataTable

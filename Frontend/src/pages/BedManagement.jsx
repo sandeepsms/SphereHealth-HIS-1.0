@@ -10,6 +10,7 @@ import { Toast } from "primereact/toast";
 
 import BedForm from "../Components/bed/BedForm";
 import BedBulkCreateDialog from "../Components/bed/BedBulkCreateDialog";
+import BedSectionHeader from "../Components/bed/BedSectionHeader";
 import BedStats from "../Components/bed/BedStats";
 import BedVisualLayout from "../Components/bed/BedVisualLayout";
 import { bedService } from "../Services/bedService";
@@ -145,144 +146,68 @@ const BedManagement = () => {
       <Toast ref={toast} />
       <ConfirmDialog />
 
-      {/* ══ TOP HEADER ══════════════════════════════════════════════════ */}
-      <div
-        style={{
-          background: "linear-gradient(135deg,#0891b2 0%,#0e7490 100%)",
-          borderRadius: 12,
-          padding: "14px 22px",
-          marginBottom: 20,
-          display: "flex",
-          flexWrap: "wrap",
-          gap: 14,
-          alignItems: "center",
-          justifyContent: "space-between",
-          boxShadow: "0 4px 18px rgba(8,145,178,.28)",
-        }}
-      >
-        {/* Title */}
-        <h2
-          style={{
-            margin: 0,
-            color: "#fff",
-            fontSize: 20,
-            fontWeight: 700,
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-          }}
-        >
-          <i className="pi pi-th-large" />
-          Bed Management
-        </h2>
+      <BedSectionHeader
+        title="Manage Beds"
+        subtitle="Create, edit, status — table / visual / stats views"
+        icon="pi-list"
+        actions={
+          <>
+            {/* View-mode pills */}
+            <div style={{ display: "flex", background: "rgba(255,255,255,.15)", borderRadius: 9, padding: 3, gap: 3 }}>
+              {TABS.map(({ key, icon, label }) => {
+                const active = viewMode === key;
+                return (
+                  <button key={key} onClick={() => setViewMode(key)}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 6,
+                      padding: "6px 13px", borderRadius: 6, border: "none",
+                      cursor: "pointer", fontSize: 12, fontWeight: 700,
+                      background: active ? "#fff" : "transparent",
+                      color: active ? "#1e293b" : "rgba(255,255,255,.9)",
+                      fontFamily: "inherit",
+                    }}>
+                    <i className={icon} style={{ fontSize: 12 }} /> {label}
+                  </button>
+                );
+              })}
+            </div>
 
-        {/* Tab switcher */}
-        <div
-          style={{
-            display: "flex",
-            background: "rgba(255,255,255,.15)",
-            borderRadius: 9,
-            padding: 3,
-            gap: 3,
-          }}
-        >
-          {TABS.map(({ key, icon, label }) => {
-            const active = viewMode === key;
-            return (
-              <button
-                key={key}
-                onClick={() => setViewMode(key)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "7px 16px",
-                  borderRadius: 6,
-                  border: "none",
-                  cursor: "pointer",
-                  fontSize: 13,
-                  fontWeight: 600,
-                  transition: "all .18s",
-                  background: active ? "#fff" : "transparent",
-                  color: active ? "#0891b2" : "rgba(255,255,255,.88)",
-                  boxShadow: active ? "0 2px 8px rgba(0,0,0,.14)" : "none",
-                }}
-              >
-                <i className={icon} style={{ fontSize: 13 }} />
-                {label}
-              </button>
-            );
-          })}
-        </div>
+            {viewMode === "table" && (
+              <span style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+                <i className="pi pi-search" style={{ position: "absolute", left: 10, color: "rgba(255,255,255,.7)", fontSize: 12, zIndex: 1 }} />
+                <InputText
+                  placeholder="Search beds…"
+                  value={globalFilter}
+                  onChange={(e) => setGlobalFilter(e.target.value)}
+                  style={{
+                    paddingLeft: 30, width: 200,
+                    background: "rgba(255,255,255,.18)",
+                    border: "1px solid rgba(255,255,255,.3)",
+                    borderRadius: 8, color: "#fff", fontSize: 12,
+                  }}
+                />
+              </span>
+            )}
 
-        {/* Search + Add */}
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          {viewMode === "table" && (
-            <span
+            <Button icon="pi pi-clone" label="Bulk Create"
+              onClick={() => setShowBulk(true)}
               style={{
-                position: "relative",
-                display: "inline-flex",
-                alignItems: "center",
-              }}
-            >
-              <i
-                className="pi pi-search"
-                style={{
-                  position: "absolute",
-                  left: 10,
-                  color: "rgba(255,255,255,.7)",
-                  fontSize: 13,
-                  zIndex: 1,
-                }}
-              />
-              <InputText
-                placeholder="Search beds…"
-                value={globalFilter}
-                onChange={(e) => setGlobalFilter(e.target.value)}
-                style={{
-                  paddingLeft: 32,
-                  width: 210,
-                  background: "rgba(255,255,255,.18)",
-                  border: "1px solid rgba(255,255,255,.3)",
-                  borderRadius: 8,
-                  color: "#fff",
-                  fontSize: 13,
-                }}
-              />
-            </span>
-          )}
-          <Button
-            icon="pi pi-clone"
-            label="Bulk Create"
-            onClick={() => setShowBulk(true)}
-            style={{
-              background: "rgba(255,255,255,.15)",
-              color: "#fff",
-              border: "1.5px solid rgba(255,255,255,.45)",
-              fontWeight: 700,
-              borderRadius: 8,
-              padding: "8px 16px",
-            }}
-          />
-          <Button
-            icon="pi pi-plus"
-            label="Add New Bed"
-            onClick={() => {
-              setSelectedBed(null);
-              setShowForm(true);
-            }}
-            style={{
-              background: "#fff",
-              color: "#0891b2",
-              border: "none",
-              fontWeight: 700,
-              borderRadius: 8,
-              padding: "8px 18px",
-              boxShadow: "0 2px 8px rgba(0,0,0,.13)",
-            }}
-          />
-        </div>
-      </div>
+                background: "rgba(255,255,255,.15)", color: "#fff",
+                border: "1.5px solid rgba(255,255,255,.4)",
+                fontWeight: 700, borderRadius: 8, padding: "7px 14px", fontSize: 12,
+              }} />
+
+            <Button icon="pi pi-plus" label="Add New Bed"
+              onClick={() => { setSelectedBed(null); setShowForm(true); }}
+              style={{
+                background: "#fff", color: "#1e293b",
+                border: "none", fontWeight: 700,
+                borderRadius: 8, padding: "7px 16px", fontSize: 12,
+                boxShadow: "0 2px 8px rgba(0,0,0,.13)",
+              }} />
+          </>
+        }
+      />
 
       {/* ══ TABLE VIEW ══════════════════════════════════════════════════ */}
       {viewMode === "table" && (
