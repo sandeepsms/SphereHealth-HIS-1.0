@@ -17,6 +17,7 @@ import { doctorService } from "../../Services/doctors/doctorService";
 import useBedEvents from "../../hooks/useBedEvents";
 import authFetch    from "../../utils/authFetch";
 import BedSectionHeader from "./BedSectionHeader";
+import "./bed-mgmt.css";
 
 /* ─── Colors ─────────────────────────────────────────────── */
 const TEAL = "#0891b2";
