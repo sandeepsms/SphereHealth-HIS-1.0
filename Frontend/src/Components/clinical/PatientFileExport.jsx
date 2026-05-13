@@ -25,6 +25,7 @@
 
 import React, { useState, useMemo, useCallback } from "react";
 import { toast } from "react-toastify";
+import { logActivity } from "../../utils/activityLogger";
 import "./patient-file-print.css";
 
 const QR_BASE = "https://api.qrserver.com/v1/create-qr-code/?size=320x320&margin=10&data=";
@@ -70,6 +71,17 @@ export default function PatientFileExport({ patient, printRef, title = "Patient 
       return;
     }
     setBusy("print");
+    // Audit: who hit print on whose chart, and when. (NABH AAC.7 — record
+    // disclosure trail). Fire-and-forget — never blocks the print dialog.
+    if (patient?.UHID) {
+      logActivity({
+        uhid: patient.UHID,
+        module: "PatientFileExport",
+        action: "print",
+        area: "print-button",
+        summary: `Print initiated — ${title}`,
+      });
+    }
     const ancestors = [];
     try {
       // Walk from the print region up to <body>, tagging each ancestor.
@@ -113,6 +125,16 @@ export default function PatientFileExport({ patient, printRef, title = "Patient 
       return;
     }
     setBusy("pdf");
+    // Audit: PDF downloads are a NABH AAC.7 disclosure event — log them.
+    if (patient?.UHID) {
+      logActivity({
+        uhid: patient.UHID,
+        module: "PatientFileExport",
+        action: "export",
+        area: "pdf-download",
+        summary: `PDF export — ${filename}`,
+      });
+    }
     try {
       // html2pdf is bundled (Frontend/package.json: "html2pdf.js": "^0.13.0").
       // Lazy import keeps the main bundle smaller.
@@ -137,7 +159,18 @@ export default function PatientFileExport({ patient, printRef, title = "Patient 
   }, [printRef, filename]);
 
   /** Show / hide the QR modal. */
-  const onShare = useCallback(() => setShowQR(true), []);
+  const onShare = useCallback(() => {
+    if (patient?.UHID) {
+      logActivity({
+        uhid: patient.UHID,
+        module: "PatientFileExport",
+        action: "click",
+        area: "qr-share.open",
+        summary: "Opened QR share dialog",
+      });
+    }
+    setShowQR(true);
+  }, [patient?.UHID]);
 
   /** Copy the share URL to clipboard. */
   const onCopy = useCallback(async () => {
@@ -161,6 +194,18 @@ export default function PatientFileExport({ patient, printRef, title = "Patient 
         if (!ok) throw new Error("execCommand copy returned false");
       }
       toast.success("Link copied — share via WhatsApp / SMS");
+      // Sharing the link off-system is a NABH disclosure event.
+      if (patient?.UHID) {
+        logActivity({
+          uhid: patient.UHID,
+          module: "PatientFileExport",
+          action: "export",
+          area: "qr-share.link-copied",
+          summary: "Patient timeline link copied to clipboard",
+          tags: ["disclosure"],
+          isFlagged: true,
+        });
+      }
     } catch {
       toast.error("Could not access clipboard — please copy manually");
     }

@@ -10,6 +10,8 @@ import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import PatientFileExport from "../../Components/clinical/PatientFileExport";
 // Phase 2 shell — pf-* design system shared with DoctorPatientPanel.
 import PatientPanelShell from "../../Components/clinical/PatientPanelShell";
+// Phase 3 — log every nurse-side UI event into the patient activity feed.
+import { useBoundLogger } from "../../utils/activityLogger";
 import {
   InitialAssessmentTab,
   MLCOrDoctorNotesTab,
@@ -1798,6 +1800,13 @@ function NursePatientPanelContent({ selectedAdmission }) {
   const [handoverNotes,      setHandoverNotes]      = useState("");
   const [handoverSaving,     setHandoverSaving]     = useState(false);
 
+  /* ── Activity logger — every nurse-side UI event lands in PatientActivityLog. */
+  const audit = useBoundLogger(patient?.UHID || uhidInput, {
+    module: "PatientPanel.Nurse",
+    admissionId: admission?._id || null,
+    ipdNo: admission?.admissionNumber || "",
+  });
+
   const fetchPendingTransfer = useCallback(async (admId) => {
     if (!admId) return;
     try {
@@ -1963,7 +1972,17 @@ function NursePatientPanelContent({ selectedAdmission }) {
                 </div>
               )}
             </div>
-            <button className="pf-gate__btn" onClick={() => { setHandoverNotes(""); setShowHandoverModal(true); }}>
+            <button
+              className="pf-gate__btn"
+              onClick={() => {
+                audit.click("handover.open", {
+                  summary: `Nurse opened handover modal for transfer ${pendingTransfer.transferNo || pendingTransfer._id}`,
+                  sourceModel: "BedTransfer", sourceId: pendingTransfer._id,
+                });
+                setHandoverNotes("");
+                setShowHandoverModal(true);
+              }}
+            >
               ✍️ Write Handover Notes
             </button>
           </div>
@@ -2006,7 +2025,11 @@ function NursePatientPanelContent({ selectedAdmission }) {
             <div className="pf-modal__title">✍️ Nursing Handover Notes</div>
             <div className="pf-modal__sub">Transfer #{pendingTransfer.transferNo || pendingTransfer._id?.slice(-6)}</div>
           </div>
-          <button className="pf-modal__close" onClick={() => setShowHandoverModal(false)} aria-label="close">✕</button>
+          <button
+            className="pf-modal__close"
+            onClick={() => { audit.click("handover.close-x", { summary: "Nurse closed handover modal via ✕" }); setShowHandoverModal(false); }}
+            aria-label="close"
+          >✕</button>
         </div>
 
         <div className="pf-modal__body">
@@ -2051,7 +2074,11 @@ function NursePatientPanelContent({ selectedAdmission }) {
           <button
             className="pf-action pf-action--quiet"
             disabled={handoverSaving}
-            onClick={() => { setShowHandoverModal(false); setHandoverNotes(""); }}
+            onClick={() => {
+              audit.cancel("handover.cancel-button", { summary: "Nurse pressed Cancel on handover modal" });
+              setShowHandoverModal(false);
+              setHandoverNotes("");
+            }}
           >
             Cancel
           </button>
@@ -2060,7 +2087,15 @@ function NursePatientPanelContent({ selectedAdmission }) {
             style={{ background: handoverNotes.trim() ? "#f97316" : "#e2e8f0", color: handoverNotes.trim() ? "#fff" : "#94a3b8" }}
             disabled={!handoverNotes.trim() || handoverSaving}
             onClick={async () => {
-              if (!handoverNotes.trim()) return;
+              if (!handoverNotes.trim()) {
+                audit.click("handover.submit-blocked", { summary: "Submit blocked — handover notes empty" });
+                return;
+              }
+              audit.submit("handover.submit", {
+                summary: `Nurse submitting handover for transfer ${pendingTransfer.transferNo || pendingTransfer._id}`,
+                sourceModel: "BedTransfer", sourceId: pendingTransfer._id,
+                after: { handoverNotes: handoverNotes.trim().slice(0, 200) },
+              });
               setHandoverSaving(true);
               try {
                 await axios.put(`${BASE}/bed-transfers/${pendingTransfer._id}/handover`, {

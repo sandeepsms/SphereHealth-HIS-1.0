@@ -11,6 +11,10 @@ import PatientFileExport from "../../Components/clinical/PatientFileExport";
 // Phase 2 shell — the pf-* design system, shared with NursePatientPanel.
 // Replaces ~225 lines of inline-styled chrome with a declarative invocation.
 import PatientPanelShell from "../../Components/clinical/PatientPanelShell";
+// Phase 3 — wire role-specific UI events (modal opens, dropdown picks,
+// form submits) into the patient activity log so the file truly captures
+// "har dropdown selection, har button click".
+import { useBoundLogger } from "../../utils/activityLogger";
 import {
   InitialAssessmentTab,
   MLCOrDoctorNotesTab,
@@ -1734,6 +1738,15 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
   const [shiftForm,         setShiftForm]         = useState({ toBedId:"", reason:"", shiftingNotes:"" });
   const [shiftSaving,       setShiftSaving]       = useState(false);
 
+  /* ── Activity logger — every shift-bed UI event lands in the audit feed.
+       The backend middleware already captures the actual POST /bed-transfers,
+       but the user wants the intermediate clicks/dropdown selects too.   */
+  const audit = useBoundLogger(patient?.UHID || activeUhid, {
+    module: "PatientPanel.Doctor",
+    admissionId: admission?._id || null,
+    ipdNo: admission?.admissionNumber || "",
+  });
+
   const loadAll = useCallback(async (uhid) => {
     if (!uhid?.trim()) return;
     const u = uhid.trim().toUpperCase();
@@ -1858,6 +1871,7 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
 
   /* ── Open Shift Bed modal — fetch available beds ── */
   const openShiftModal = async () => {
+    audit.click("shift-bed.open", { summary: "Doctor opened Shift Bed modal" });
     setShiftForm({ toBedId:"", reason:"", shiftingNotes:"" });
     setShowShiftModal(true);
     setBedsLoading(true);
@@ -1871,8 +1885,12 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
 
   /* ── Submit shift request ── */
   const submitShift = async () => {
-    if (!shiftForm.toBedId)               { alert("Please select a target bed."); return; }
-    if (!shiftForm.shiftingNotes?.trim()) { alert("Shifting notes are required."); return; }
+    if (!shiftForm.toBedId)               { audit.click("shift-bed.submit-blocked", { summary: "Submit blocked — no target bed" }); alert("Please select a target bed."); return; }
+    if (!shiftForm.shiftingNotes?.trim()) { audit.click("shift-bed.submit-blocked", { summary: "Submit blocked — shifting notes empty" }); alert("Shifting notes are required."); return; }
+    audit.submit("shift-bed.submit", {
+      summary: `Doctor submitted bed transfer — target ${shiftForm.toBedId}`,
+      after: { toBedId: shiftForm.toBedId, reason: shiftForm.reason, hasNotes: !!shiftForm.shiftingNotes?.trim() },
+    });
     // Fix: compare as strings to handle ObjectId vs string mismatch
     const targetBed = availableBeds.find(b => String(b._id) === String(shiftForm.toBedId));
     if (!targetBed) { alert("Selected bed not found. Please close and reopen the modal."); return; }
@@ -1904,7 +1922,11 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
 
   /* ── Cancel pending transfer ── */
   const cancelTransfer = async (transferId) => {
-    if (!window.confirm("Cancel this bed transfer? The reserved bed will be released.")) return;
+    if (!window.confirm("Cancel this bed transfer? The reserved bed will be released.")) {
+      audit.click("shift-bed.cancel-dismissed", { summary: "Doctor dismissed cancel confirmation" });
+      return;
+    }
+    audit.cancel("shift-bed.cancel", { summary: `Doctor cancelled pending transfer ${transferId}`, sourceModel: "BedTransfer", sourceId: transferId });
     try {
       await axios.put(`${BASE}/bed-transfers/${transferId}/cancel`);
       setPendingTransfer(null);
@@ -1986,7 +2008,11 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
             <div className="pf-modal__title">🔄 Shift Patient Bed</div>
             <div className="pf-modal__sub">Doctor adds shifting notes · Nurse will write handover notes to complete</div>
           </div>
-          <button className="pf-modal__close" onClick={() => setShowShiftModal(false)} aria-label="close">✕</button>
+          <button
+            className="pf-modal__close"
+            onClick={() => { audit.click("shift-bed.close-x", { summary: "Doctor closed shift-bed modal via ✕" }); setShowShiftModal(false); }}
+            aria-label="close"
+          >✕</button>
         </div>
 
         <div className="pf-modal__body">
@@ -2004,7 +2030,18 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
             ) : availableBeds.length === 0 ? (
               <div className="pf-fhint pf-fhint--error">⚠ No available beds found. All beds are occupied or reserved.</div>
             ) : (
-              <select className="pf-select" value={shiftForm.toBedId} onChange={(e) => setShiftForm((f) => ({ ...f, toBedId: e.target.value }))}>
+              <select
+                className="pf-select"
+                value={shiftForm.toBedId}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  const bed = availableBeds.find((b) => String(b._id) === String(v));
+                  audit.select("shift-bed.toBed", v, {
+                    summary: bed ? `Target bed → ${bed.bedNumber} (${bed.wardName || bed.ward?.name || ""})` : "Target bed cleared",
+                  });
+                  setShiftForm((f) => ({ ...f, toBedId: v }));
+                }}
+              >
                 <option value="">— Select available bed —</option>
                 {availableBeds.map((b) => (
                   <option key={b._id} value={b._id}>
@@ -2018,7 +2055,14 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
           {/* Reason */}
           <div>
             <label className="pf-flabel">Reason for Transfer</label>
-            <select className="pf-select" value={shiftForm.reason} onChange={(e) => setShiftForm((f) => ({ ...f, reason: e.target.value }))}>
+            <select
+              className="pf-select"
+              value={shiftForm.reason}
+              onChange={(e) => {
+                audit.select("shift-bed.reason", e.target.value, { summary: `Transfer reason → ${e.target.value || "(cleared)"}` });
+                setShiftForm((f) => ({ ...f, reason: e.target.value }));
+              }}
+            >
               <option value="">— Select reason —</option>
               {["Clinical need","ICU transfer","HDU transfer","Ward upgrade","Ward downgrade","Patient request","Isolation required","Bed availability","Discharge planning","Other"].map((r) => (
                 <option key={r} value={r}>{r}</option>
@@ -2048,7 +2092,11 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
         </div>
 
         <div className="pf-modal__foot">
-          <button className="pf-action pf-action--quiet" onClick={() => setShowShiftModal(false)} disabled={shiftSaving}>
+          <button
+            className="pf-action pf-action--quiet"
+            onClick={() => { audit.cancel("shift-bed.cancel-button", { summary: "Doctor pressed Cancel on shift-bed modal" }); setShowShiftModal(false); }}
+            disabled={shiftSaving}
+          >
             Cancel
           </button>
           <button

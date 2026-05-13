@@ -37,8 +37,9 @@
  *   />
  */
 
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import PatientFileExport from "./PatientFileExport";
+import { useBoundLogger } from "../../utils/activityLogger";
 import "../../pages/patient/patient-file.css";
 
 // NOTE: This shell deliberately does NOT wrap in ClinicalLayout — the
@@ -94,6 +95,38 @@ export default function PatientPanelShell({
   const patName = patient?.fullName || patient?.patientName || admission?.patientName || "—";
   const uhid    = patient?.UHID || admission?.UHID || searchValue || "—";
 
+  // ── Auto-instrument the panel: every meaningful UI event from the shell
+  // flows into PatientActivityLog. This is the catch-net the user asked for:
+  // "har dropdown selection, har button click" lands in the patient file.
+  const activity = useBoundLogger(patient?.UHID, {
+    module:      `PatientPanel.${role === "nurse" ? "Nurse" : "Doctor"}`,
+    admissionId: admission?._id || null,
+    ipdNo:       admission?.admissionNumber || "",
+  });
+
+  // Log a single "view" event the first time a new patient is loaded —
+  // tracks "Dr X opened patient Y at 09:42" across the team.
+  const loggedPatientRef = useRef(null);
+  useEffect(() => {
+    if (!patient?.UHID || loggedPatientRef.current === patient.UHID) return;
+    loggedPatientRef.current = patient.UHID;
+    activity.view("panel.open", { summary: `${role === "nurse" ? "Nurse" : "Doctor"} opened patient panel` });
+  }, [patient?.UHID, activity, role]);
+
+  // Wrap tab change so every switch logs as a "navigation" event.
+  const handleTabChange = (id) => {
+    if (id !== activeTab) {
+      activity.nav(`tab:${id}`, { summary: `Switched to tab "${id}"` });
+    }
+    onTabChange(id);
+  };
+
+  // Wrap Complete File so the click is captured.
+  const handleCompleteFile = () => {
+    activity.click("complete-file.open", { summary: "Opened consolidated Complete File view" });
+    window.open(`/patient-file/${patient.UHID}?role=${role}`, "_blank", "noopener");
+  };
+
   return (
     <>
       <div className={`pf-shell ${tintClass}`}>
@@ -128,7 +161,14 @@ export default function PatientPanelShell({
         {loaded && quickActions.length > 0 && (
           <div className="pf-shell__quick">
             {quickActions.map((a) => (
-              <button key={a.label} className="pf-shell__quick-btn" onClick={a.onClick}>
+              <button
+                key={a.label}
+                className="pf-shell__quick-btn"
+                onClick={() => {
+                  activity.click(`quick-action:${a.label}`, { summary: `Quick action — ${a.label}` });
+                  a.onClick?.();
+                }}
+              >
                 {a.label}
               </button>
             ))}
@@ -181,7 +221,7 @@ export default function PatientPanelShell({
                   {patient?.UHID && (
                     <button
                       className="pf-action pf-action--accent"
-                      onClick={() => window.open(`/patient-file/${patient.UHID}?role=${role}`, "_blank", "noopener")}
+                      onClick={handleCompleteFile}
                       title="Open the consolidated patient file in a new tab"
                     >
                       📂 Complete File
@@ -211,7 +251,7 @@ export default function PatientPanelShell({
                       <button
                         key={t.id}
                         className={`pf-tabs__btn ${isActive ? "pf-tabs__btn--active" : ""}`}
-                        onClick={() => onTabChange(t.id)}
+                        onClick={() => handleTabChange(t.id)}
                       >
                         {t.label}
                         {count != null && count > 0 && <span className="pf-tabs__count">{count}</span>}

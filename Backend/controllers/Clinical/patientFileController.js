@@ -252,7 +252,7 @@ exports.getActivityFeed = async (req, res) => {
 exports.logEvent = async (req, res) => {
   try {
     const UHID = String(req.params.uhid || "").toUpperCase();
-    const { module: mod, action, area, summary, sourceModel, sourceId, before, after, tags, ipdNo, admissionId } = req.body || {};
+    const { module: mod, action, area, summary, sourceModel, sourceId, before, after, tags, ipdNo, admissionId, isFlagged } = req.body || {};
     if (!mod || !action) {
       return res.status(400).json({ success: false, message: "module and action are required" });
     }
@@ -262,7 +262,7 @@ exports.logEvent = async (req, res) => {
       UHID, ipdNo: ipdNo || "", admissionId: admissionId || null,
       module: mod, action, area: area || "", summary: summary || "",
       sourceModel: sourceModel || "", sourceId: sourceId || null,
-      before, after, tags: Array.isArray(tags) ? tags : [],
+      before, after, tags: Array.isArray(tags) ? tags : [], isFlagged: !!isFlagged,
       userId:   user._id || user.id || null,
       userName: user.fullName || user.firstName || user.userName || "",
       userRole: user.role || user.userRole || "",
