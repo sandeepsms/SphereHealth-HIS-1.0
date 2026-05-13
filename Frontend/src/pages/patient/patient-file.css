@@ -620,7 +620,12 @@
 .pf-gate--danger  .pf-gate__btn { background: #dc2626; box-shadow: 0 4px 12px rgba(220, 38, 38, .25); }
 .pf-gate--warning .pf-gate__btn { background: #f97316; }
 
-/* ── Tab strip ───────────────────────────────────────────── */
+/* ── Tab strip ────────────────────────────────────────────
+   Pill-style chip tabs that wrap onto multiple rows so every tab is
+   visible without horizontal scrolling. Active tab is filled with
+   the role accent; inactive tabs have a subtle hover background.
+   This pattern scales to 15+ tabs without losing legibility — a
+   common requirement for HIS patient files. */
 .pf-tabs {
   background: var(--pf-card);
   border: 1px solid var(--pf-border);
@@ -629,28 +634,47 @@
   box-shadow: 0 2px 10px rgba(15, 23, 42, .04);
 }
 .pf-tabs__bar {
-  display: flex; overflow-x: auto;
-  border-bottom: 2px solid var(--pf-border);
-  background: #fafaf9;
-  scrollbar-width: thin;
+  display: flex;
+  flex-wrap: wrap;                       /* multi-row — no horizontal scroll */
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--pf-border);
+  background: linear-gradient(180deg, var(--pf-accent-l) 0%, transparent 100%);
 }
 .pf-tabs__btn {
-  padding: 13px 18px;
-  border: none; background: transparent;
+  padding: 7px 13px;
+  border: 1.5px solid var(--pf-border);
+  background: var(--pf-card);
   cursor: pointer;
-  font-size: 13px; font-weight: 500;
+  font-size: 12.5px;
+  font-weight: 600;
   color: var(--pf-muted);
-  border-bottom: 3px solid transparent;
-  margin-bottom: -2px;
+  border-radius: 999px;                 /* pill shape */
   white-space: nowrap;
-  transition: color .12s, border-color .12s;
+  transition: background .12s, color .12s, border-color .12s, transform .08s;
   display: inline-flex; align-items: center; gap: 6px;
+  line-height: 1.2;
 }
-.pf-tabs__btn:hover { color: var(--pf-accent); }
+.pf-tabs__btn:hover {
+  background: var(--pf-accent-l);
+  color: var(--pf-accent-d);
+  border-color: var(--pf-accent-m);
+}
+.pf-tabs__btn:focus-visible {
+  outline: 2px solid var(--pf-accent);
+  outline-offset: 1px;
+}
 .pf-tabs__btn--active {
+  background: var(--pf-accent);
+  color: #fff;
+  border-color: var(--pf-accent);
   font-weight: 700;
-  color: var(--pf-accent);
-  border-bottom-color: var(--pf-accent);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--pf-accent) 35%, transparent);
+}
+.pf-tabs__btn--active:hover {
+  background: var(--pf-accent-d);
+  color: #fff;
+  border-color: var(--pf-accent-d);
 }
 .pf-tabs__count {
   font-size: 10px;
@@ -658,16 +682,34 @@
   color: var(--pf-accent-d);
   border-radius: 999px;
   padding: 1px 7px;
-  font-weight: 700;
+  font-weight: 800;
   min-width: 18px; text-align: center;
 }
 .pf-tabs__btn--active .pf-tabs__count {
-  background: var(--pf-accent);
+  background: rgba(255, 255, 255, .25);
   color: #fff;
 }
 .pf-tabs__content {
   padding: 22px;
   min-height: 220px;
+}
+
+/* Compact density — tighter pills */
+[data-density="compact"] .pf-tabs__bar { padding: 6px 8px; gap: 4px; }
+[data-density="compact"] .pf-tabs__btn { padding: 5px 10px; font-size: 11.5px; }
+
+/* Dark mode — pill borders + inactive bg adapt */
+[data-theme="dark"] .pf-tabs__btn {
+  background: var(--pf-card);
+  border-color: var(--pf-border-2);
+}
+[data-theme="dark"] .pf-tabs__btn:hover {
+  background: var(--pf-accent-l);
+}
+
+/* Print — hide tab nav (the print view renders all sections inline) */
+@media print {
+  .pf-tabs__bar { display: none !important; }
 }
 
 /* ── Pretty action button (used on banners + headers) ────── */
