@@ -882,31 +882,462 @@ function DoctorNoteExpanded({ note }) {
     daily:"Daily Progress", icu:"ICU / Critical Care", procedure:"Procedure Note",
     consultation:"Consultation", preop:"Pre-operative", postop:"Post-operative",
     death:"Death Note", amendment:"Amendment", initialAssessment:"Initial Assessment",
+    progress:"Progress Note", assessment:"Assessment", admission:"Admission Note",
+    discharge:"Discharge Note", general:"General Note", operative:"Operative Note",
   };
+  const typeLabel = TYPE_LABELS[note.noteType] || note.noteType || "Clinical Note";
   return (
     <div className="ppt-note ppt-note--doctor">
+      {/* Banner — chart-style: type + meta + status badge */}
       <div className="ppt-note-head">
-        <span className="ppt-note-type">{TYPE_LABELS[note.noteType] || note.noteType || "Note"}</span>
+        <span className="ppt-note-type">{typeLabel}</span>
         <span className="ppt-note-meta">
-          {note.doctorName || "Doctor"} · {fmtDateTime(note.createdAt || note.noteDate)}
+          <strong>{note.doctorName || "Doctor"}</strong>
+          {note.doctorRegNo && <span className="ppt-reg">Reg {note.doctorRegNo}</span>}
+          · {fmtDateTime(note.visitDate || note.createdAt || note.noteDate)}
+          {note.shift && <span className="ppt-shift-badge">{note.shift}</span>}
           {note.status && <span className={`ppt-note-status ppt-note-status--${note.status}`}>{note.status}</span>}
+          {note.isCritical && <span className="ppt-note-status ppt-note-status--critical">⚠ critical</span>}
         </span>
       </div>
-      <KeyValueAll obj={note} skip={SKIP_NOTE_FIELDS} />
+
+      {/* SOAP block (S/O/A/P) — collapsible labelled paragraphs */}
+      {note.soap && Object.values(note.soap).some(Boolean) && (
+        <div className="ppt-soap">
+          {note.soap.subjective && <SoapRow letter="S" label="Subjective"  body={note.soap.subjective} />}
+          {note.soap.objective  && <SoapRow letter="O" label="Objective"   body={note.soap.objective} />}
+          {note.soap.assessment && <SoapRow letter="A" label="Assessment"  body={note.soap.assessment} />}
+          {note.soap.plan       && <SoapRow letter="P" label="Plan"        body={note.soap.plan} />}
+        </div>
+      )}
+
+      {/* Diagnosis line */}
+      {(note.provisionalDiagnosis || note.workingDiagnosis || note.finalDiagnosis || note.icd10Code) && (
+        <div className="ppt-detail-grid ppt-dx-grid">
+          {note.provisionalDiagnosis && <Field label="Provisional Diagnosis" value={note.provisionalDiagnosis} wide />}
+          {note.workingDiagnosis     && <Field label="Working Diagnosis"     value={note.workingDiagnosis}     wide />}
+          {note.finalDiagnosis       && <Field label="Final Diagnosis"       value={note.finalDiagnosis}       wide />}
+          {note.icd10Code            && <Field label="ICD-10"                value={`${note.icd10Code}${note.icd10Description ? ` — ${note.icd10Description}` : ""}`} />}
+        </div>
+      )}
+
+      {/* Vitals chips */}
+      {note.vitals && Object.values(note.vitals).some((v) => v != null && v !== "") && (
+        <VitalsChipRow vitals={note.vitals} />
+      )}
+
+      {/* Investigations ordered (just the list) */}
+      {Array.isArray(note.investigations) && note.investigations.length > 0 && (
+        <div className="ppt-inline-block">
+          <div className="ppt-section-sub">Investigations Ordered</div>
+          <div className="ppt-chip-list">
+            {note.investigations.map((inv, i) => (
+              <span key={i} className="ppt-chip ppt-chip--info">{typeof inv === "string" ? inv : (inv.testName || inv.name || "—")}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Orders table */}
+      {Array.isArray(note.orders) && note.orders.length > 0 && (
+        <div className="ppt-inline-block">
+          <div className="ppt-section-sub">Orders ({note.orders.length})</div>
+          <div className="ppt-table-wrap">
+            <table className="ppt-table">
+              <thead>
+                <tr><th>Type</th><th>Instruction</th><th>Route</th><th>Frequency</th><th>Duration</th><th>Status</th></tr>
+              </thead>
+              <tbody>
+                {note.orders.map((o, i) => (
+                  <tr key={i}>
+                    <td className="ppt-cap">{o.type || "—"}</td>
+                    <td>{o.instruction || "—"}</td>
+                    <td>{o.route || "—"}</td>
+                    <td>{o.frequency || "—"}</td>
+                    <td>{o.duration || "—"}</td>
+                    <td><span className={`ppt-status ppt-status--${(o.nurseStatus || "pending")}`}>{o.nurseStatus || "pending"}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Free-text body for non-SOAP notes (legacy "remarks" / "note" / "content") */}
+      {(note.remarks || note.note || note.noteText || note.content || note.patientStatus) && (
+        <div className="ppt-detail-grid">
+          {note.patientStatus && <Field label="Patient Status" value={note.patientStatus} />}
+          {(note.remarks || note.note || note.noteText || note.content) && (
+            <Field label="Notes" value={note.remarks || note.note || note.noteText || note.content} wide />
+          )}
+        </div>
+      )}
+
+      {/* Extended noteDetails (ICU/procedure-specific custom JSON) */}
+      {note.noteDetails && typeof note.noteDetails === "object" && Object.keys(note.noteDetails).length > 0 && (
+        <div className="ppt-inline-block">
+          <div className="ppt-section-sub">Additional Details</div>
+          <KeyValueAll obj={note.noteDetails} skip={EMPTY_SKIP} />
+        </div>
+      )}
+
+      {/* Tags */}
+      {Array.isArray(note.tags) && note.tags.length > 0 && (
+        <div className="ppt-chip-list" style={{ marginTop: 6 }}>
+          {note.tags.map((t, i) => <span key={i} className="ppt-chip">{t}</span>)}
+        </div>
+      )}
+
+      {/* Signature footer */}
+      <NoteSignature note={note} role="Doctor" />
     </div>
   );
 }
 
 function NurseNoteExpanded({ note }) {
+  const TYPE_LABELS = {
+    initial:"Initial Assessment", initialAssessment:"Initial Assessment",
+    general:"General Note", vitals:"Vitals", pain:"Pain Assessment",
+    neuro:"Neuro / GCS", intake:"Intake / Output", iv:"IV / Cannula Note",
+    blood:"Blood Transfusion", wound:"Wound Care", skin:"Skin Assessment",
+    procedure:"Procedure Note", discharge:"Discharge Note", fall:"Fall Risk",
+    mews:"MEWS Score", daily:"Daily Care", careplan:"Care Plan",
+    nutrition:"Nutrition", education:"Patient Education",
+  };
+  const typeLabel = TYPE_LABELS[note.noteType] || note.noteType || "Nursing Note";
   return (
     <div className="ppt-note ppt-note--nurse">
       <div className="ppt-note-head">
-        <span className="ppt-note-type">{note.noteType || "general"}</span>
+        <span className="ppt-note-type">{typeLabel}</span>
         <span className="ppt-note-meta">
-          {note.nurseName || "Nurse"} · {note.shift || "shift"} · {fmtDateTime(note.noteDate || note.createdAt)}
+          <strong>{note.nurseName || "Nurse"}</strong>
+          · {fmtDateTime(note.noteDate || note.createdAt)}
+          {note.shift && <span className="ppt-shift-badge">{note.shift}</span>}
+          {note.status && <span className={`ppt-note-status ppt-note-status--${note.status}`}>{note.status}</span>}
         </span>
       </div>
-      <KeyValueAll obj={note} skip={SKIP_NOTE_FIELDS} />
+
+      {/* Vitals chips (common to many nurse note types) */}
+      {note.vitals && Object.values(note.vitals).some((v) => v != null && v !== "") && (
+        <VitalsChipRow vitals={note.vitals} />
+      )}
+
+      {/* Free-text body — the primary content of a nursing note */}
+      {(note.remarks || note.note || note.noteText || note.content) && (
+        <div className="ppt-detail-grid">
+          <Field label="Notes" value={note.remarks || note.note || note.noteText || note.content} wide />
+        </div>
+      )}
+
+      {/* Pain assessment block */}
+      {note.painAssessment && Object.values(note.painAssessment).some(Boolean) && (
+        <div className="ppt-inline-block">
+          <div className="ppt-section-sub">Pain Assessment</div>
+          <KeyValueAll obj={note.painAssessment} skip={EMPTY_SKIP} />
+        </div>
+      )}
+
+      {/* GCS / neuro block */}
+      {note.gcs && (
+        <div className="ppt-inline-block">
+          <div className="ppt-section-sub">GCS / Neuro</div>
+          <KeyValueAll obj={note.gcs} skip={EMPTY_SKIP} />
+        </div>
+      )}
+
+      {/* Intake / output rows */}
+      {(Array.isArray(note.intake) || Array.isArray(note.output)) && (note.intake?.length > 0 || note.output?.length > 0) && (
+        <div className="ppt-inline-block">
+          <div className="ppt-section-sub">Intake / Output</div>
+          <IORows intake={note.intake} output={note.output} />
+        </div>
+      )}
+
+      {/* Blood transfusion specific block */}
+      {note.bloodTransfusion && (
+        <div className="ppt-inline-block">
+          <div className="ppt-section-sub">Blood Transfusion</div>
+          <KeyValueAll obj={note.bloodTransfusion} skip={EMPTY_SKIP} />
+        </div>
+      )}
+
+      {/* Generic catch-all for any other structured field that has content */}
+      <ExtraFields note={note} />
+
+      {/* Signature footer */}
+      <NoteSignature note={note} role="Nurse" />
+    </div>
+  );
+}
+
+/* ─── note building-blocks ─── */
+
+function SoapRow({ letter, label, body }) {
+  return (
+    <div className="ppt-soap-row">
+      <span className="ppt-soap-letter">{letter}</span>
+      <div className="ppt-soap-body">
+        <div className="ppt-soap-label">{label}</div>
+        <div className="ppt-soap-text">{body}</div>
+      </div>
+    </div>
+  );
+}
+
+function VitalsChipRow({ vitals }) {
+  const items = [];
+  if (vitals.bp && (vitals.bp.systolic || vitals.bp.diastolic)) {
+    items.push({ k: "BP",   v: `${vitals.bp.systolic || "—"}/${vitals.bp.diastolic || "—"}`, u: "mmHg" });
+  } else if (typeof vitals.bp === "string" && vitals.bp) {
+    items.push({ k: "BP", v: vitals.bp, u: "mmHg" });
+  }
+  if (vitals.pulse) items.push({ k: "Pulse", v: vitals.pulse, u: "bpm" });
+  if (vitals.temp)  items.push({ k: "Temp",  v: vitals.temp,  u: "°F" });
+  if (vitals.rr)    items.push({ k: "RR",    v: vitals.rr,    u: "/min" });
+  if (vitals.spo2)  items.push({ k: "SpO₂",  v: vitals.spo2,  u: "%" });
+  if (vitals.bsl)   items.push({ k: "BSL",   v: vitals.bsl,   u: "mg/dL" });
+  if (vitals.gcs)   items.push({ k: "GCS",   v: vitals.gcs,   u: "" });
+  if (vitals.pain != null) items.push({ k: "Pain", v: vitals.pain, u: "/10" });
+  if (!items.length) return null;
+  return (
+    <div className="ppt-vitals-row">
+      {items.map((it, i) => (
+        <div key={i} className="ppt-vital-chip">
+          <span className="ppt-vital-k">{it.k}</span>
+          <span className="ppt-vital-v">{it.v}</span>
+          {it.u && <span className="ppt-vital-u">{it.u}</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function IORows({ intake = [], output = [] }) {
+  return (
+    <div className="ppt-table-wrap">
+      <table className="ppt-table ppt-table--compact">
+        <thead>
+          <tr><th>Type</th><th>Time</th><th>Item</th><th>Route</th><th>Amount (ml)</th></tr>
+        </thead>
+        <tbody>
+          {intake.map((r, i) => (
+            <tr key={`in-${i}`}>
+              <td><span className="ppt-chip ppt-chip--info">IN</span></td>
+              <td>{fmtDateTime(r.time || r.at)}</td>
+              <td>{r.item || r.fluid || r.type || "—"}</td>
+              <td>{r.route || "—"}</td>
+              <td className="ppt-mono">{r.amount || r.volume || "—"}</td>
+            </tr>
+          ))}
+          {output.map((r, i) => (
+            <tr key={`out-${i}`}>
+              <td><span className="ppt-chip ppt-chip--warn">OUT</span></td>
+              <td>{fmtDateTime(r.time || r.at)}</td>
+              <td>{r.item || r.fluid || r.type || "—"}</td>
+              <td>{r.route || "—"}</td>
+              <td className="ppt-mono">{r.amount || r.volume || "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/* Signature footer — the real fix.
+ * Renders the signature as an <img> when it's a data URL or a /uploads/ path;
+ * otherwise shows a clean "Signed by Name (Reg) on date" line. NEVER spits
+ * raw base64 into the page. */
+function NoteSignature({ note, role }) {
+  const sig = note.signature || note.nurseSignature || "";
+  const isImg = typeof sig === "string" && (sig.startsWith("data:image/") || sig.startsWith("/uploads/") || /^https?:\/\//.test(sig));
+  const signedByName = note.signedByName || (role === "Nurse" ? note.nurseName : note.doctorName) || "";
+  const signedByReg  = note.signedByReg  || note.doctorRegNo || "";
+  const signedAt     = note.signedAt;
+
+  if (!sig && !signedByName && !signedAt) return null;
+  return (
+    <div className="ppt-sig">
+      <div className="ppt-sig-line">
+        {isImg ? (
+          <img src={sig} alt={`${role} signature`} className="ppt-sig-img" />
+        ) : sig ? (
+          <span className="ppt-sig-cursive">{signedByName || "Signed"}</span>
+        ) : (
+          <span className="ppt-sig-cursive ppt-sig-cursive--placeholder">— digital signature —</span>
+        )}
+      </div>
+      <div className="ppt-sig-meta">
+        <strong>{signedByName || `${role} (unsigned)`}</strong>
+        {signedByReg && <span className="ppt-reg">Reg {signedByReg}</span>}
+        {signedAt && <span>· {fmtDateTime(signedAt)}</span>}
+        {role && <span className="ppt-sig-role">· {role}</span>}
+      </div>
+    </div>
+  );
+}
+
+/* Renders any remaining structured fields not handled by the per-section blocks.
+ * Heavy nested objects (noteData / intakeOutput / vitalsHistory) get
+ * specialised renderers below so the user never sees raw JSON dumped on the
+ * page — that was the old "looks bad" UX.
+ */
+function ExtraFields({ note }) {
+  const HANDLED = new Set([
+    ...SKIP_NOTE_FIELDS,
+    "soap","vitals","orders","investigations","tags","noteDetails",
+    "remarks","note","noteText","content","patientStatus","isCritical",
+    "doctorName","doctorRegNo","nurseName","shift","status","signedAt",
+    "doctorId","consultantName","visitDate","painAssessment","gcs",
+    "intake","output","bloodTransfusion","provisionalDiagnosis",
+    "workingDiagnosis","finalDiagnosis","icd10Code","icd10Description",
+    // Heavy keys handled by dedicated child blocks below
+    "noteData","intakeOutput","ivLine","nursingCare","painScore",
+    "generalCondition","isCriticalEvent","triagecategory","triageCategory",
+  ]);
+  const note0 = note || {};
+  const entries = Object.entries(note0)
+    .filter(([k, v]) => !HANDLED.has(k) && v != null && v !== "" && v !== false)
+    .filter(([, v]) => !(Array.isArray(v) && v.length === 0))
+    .filter(([, v]) => typeof v !== "object" || Object.keys(v).length > 0);
+
+  return (
+    <>
+      {/* General-condition + IV-line summary chips (nursing-specific) */}
+      <NursingSummaryChips note={note0} />
+
+      {/* Intake / output structured block */}
+      <IntakeOutputBlock io={note0.intakeOutput} />
+
+      {/* Free-text observation (noteData.generalObservation etc.) */}
+      <ObservationBlock data={note0.noteData} />
+
+      {entries.length > 0 && (
+        <div className="ppt-inline-block">
+          <div className="ppt-section-sub">Additional Fields</div>
+          <div className="ppt-detail-grid">
+            {entries.map(([k, v]) => (
+              <Field key={k} label={prettyKey(k)} value={renderValue(v)} wide={typeof v === "string" && v.length > 60} />
+            ))}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+/** Renders a few quick-reference chips (general condition, IV line, pain) so
+ * the reader doesn't need to dig through Additional Fields. Only the truthy
+ * values show up. */
+function NursingSummaryChips({ note }) {
+  const gc = note.generalCondition;
+  const iv = note.ivLine;
+  const ps = note.painScore;
+  const items = [];
+  if (gc && typeof gc === "object") {
+    Object.entries(gc).forEach(([k, v]) => { if (v && v !== "false") items.push({ k: prettyKey(k), v }); });
+  }
+  if (iv && typeof iv === "object" && iv.condition) items.push({ k: "IV Line", v: iv.condition });
+  if (ps != null && ps !== "") items.push({ k: "Pain", v: `${ps}/10` });
+  if (!items.length) return null;
+  return (
+    <div className="ppt-chip-list" style={{ margin: "10px 0" }}>
+      {items.map((it, i) => (
+        <span key={i} className="ppt-chip ppt-chip--info">
+          <strong>{it.k}:</strong> {String(it.v)}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** Intake / Output — supports a few shapes:
+ *  - { ivFluidEntries: [{time, volume, fluid, via, ...}], oral, urineOutput, ... }
+ *  - flat numbers (oral, ivFluids, urineOutput, otherOutput)
+ */
+function IntakeOutputBlock({ io }) {
+  if (!io || typeof io !== "object") return null;
+  const entries = Array.isArray(io.ivFluidEntries) ? io.ivFluidEntries : [];
+  const totals = {};
+  ["oral","ivFluids","urineOutput","otherOutput","stool","drain","ngOutput"].forEach((k) => {
+    if (io[k] != null && io[k] !== "" && io[k] !== 0) totals[k] = io[k];
+  });
+  if (entries.length === 0 && Object.keys(totals).length === 0) return null;
+  return (
+    <div className="ppt-inline-block">
+      <div className="ppt-section-sub">Intake / Output</div>
+      {Object.keys(totals).length > 0 && (
+        <div className="ppt-chip-list" style={{ marginBottom: 8 }}>
+          {Object.entries(totals).map(([k, v]) => (
+            <span key={k} className="ppt-chip">
+              <strong>{prettyKey(k)}:</strong> {v}{typeof v === "number" || /^\d+$/.test(String(v)) ? " ml" : ""}
+            </span>
+          ))}
+        </div>
+      )}
+      {entries.length > 0 && (
+        <div className="ppt-table-wrap">
+          <table className="ppt-table ppt-table--compact">
+            <thead>
+              <tr><th>Time</th><th>Fluid</th><th>Volume</th><th>Via</th><th>Entered By</th></tr>
+            </thead>
+            <tbody>
+              {entries.map((e, i) => (
+                <tr key={i}>
+                  <td>{fmtDateTime(e.time)}</td>
+                  <td>{e.fluid || "—"}</td>
+                  <td className="ppt-mono">{e.volume != null ? `${e.volume} ml` : "—"}</td>
+                  <td>{e.via || "—"}</td>
+                  <td className="ppt-cell-src">{e.enteredBy || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Free-text observation block — pulls human-readable paragraphs out of a
+ * Mixed-type noteData blob and renders them as a proper card body rather
+ * than the JSON dump the legacy code produced. */
+function ObservationBlock({ data }) {
+  if (!data || typeof data !== "object") return null;
+  // Pull out string fields that look like observations (no nested JSON)
+  const textFields = [];
+  const structured = {};
+  Object.entries(data).forEach(([k, v]) => {
+    if (k === "_id" || k === "__v") return;
+    if (typeof v === "string" && v.length > 0 && !v.startsWith("data:image/")) {
+      textFields.push({ k: prettyKey(k), v });
+    } else if (typeof v === "object" && v != null && !Array.isArray(v)) {
+      structured[k] = v;
+    } else if (Array.isArray(v) && v.length > 0) {
+      structured[k] = v;
+    } else if (typeof v === "number" || typeof v === "boolean") {
+      if (v !== false && v !== 0) textFields.push({ k: prettyKey(k), v: String(v) });
+    }
+  });
+  if (textFields.length === 0 && Object.keys(structured).length === 0) return null;
+  return (
+    <div className="ppt-inline-block">
+      <div className="ppt-section-sub">Observation</div>
+      {textFields.length > 0 && (
+        <div className="ppt-detail-grid">
+          {textFields.map((t, i) => (
+            <Field key={i} label={t.k} value={t.v} wide={t.v.length > 80} />
+          ))}
+        </div>
+      )}
+      {Object.keys(structured).length > 0 && (
+        <div className="ppt-detail-grid" style={{ marginTop: 8 }}>
+          {Object.entries(structured).map(([k, v]) => (
+            <Field key={k} label={prettyKey(k)} value={renderValue(v)} wide />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -971,7 +1402,16 @@ const SKIP_NOTE_FIELDS = new Set([
   "_id","__v","createdAt","updatedAt","patient","patientName","patientUHID",
   "nurseStaffId","nurseEmployeeId","nurse","doctor","department","ipdNo",
   "noteType","noteDate","createdBy","modifiedBy","modifiedAt","auditTrail","loginUserId",
+  // FIX (signature bug): these are rendered by <NoteSignature/> at the
+  // bottom of every note. Listing them here keeps the raw base64 string
+  // / name / reg number from showing up as a "field" inside the body.
+  "signature","nurseSignature","signedByName","signedByReg","signedAt","signedByRole",
+  "updatedBy",
 ]);
+
+// Empty Set passed when a child needs the FULL auto-render of an object
+// (e.g. noteDetails Mixed type — we want every key surfaced there).
+const EMPTY_SKIP = new Set();
 
 function KeyValueAll({ obj, skip = new Set() }) {
   const entries = Object.entries(obj || {})
@@ -994,11 +1434,24 @@ function KeyValueAll({ obj, skip = new Set() }) {
 
 function renderValue(v) {
   if (v == null) return "—";
-  if (typeof v === "string" || typeof v === "number") return String(v);
+  if (typeof v === "string") {
+    // FIX (signature bug): a base64 data URL is an embedded image, not a
+    // string field — render it as an <img>. Same for /uploads/ paths and
+    // remote http(s) image URLs. Anything else stays as text.
+    if (v.startsWith("data:image/") || v.startsWith("/uploads/") || /^https?:\/\/.+\.(png|jpe?g|gif|webp|svg)$/i.test(v)) {
+      return <img src={v} alt="" className="ppt-inline-img" />;
+    }
+    // ISO date strings → format. Heuristic — must look like an ISO date.
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v)) {
+      return fmtDateTime(v);
+    }
+    return v;
+  }
+  if (typeof v === "number") return String(v);
   if (v instanceof Date) return fmtDateTime(v);
   if (Array.isArray(v)) {
     if (v.length === 0) return "—";
-    if (typeof v[0] === "string") return v.join(", ");
+    if (typeof v[0] === "string" || typeof v[0] === "number") return v.join(", ");
     return v.map((x, i) => <div key={i} className="ppt-sub-row">{renderObj(x)}</div>);
   }
   if (typeof v === "object") return renderObj(v);
@@ -1007,16 +1460,47 @@ function renderValue(v) {
 
 function renderObj(o) {
   return Object.entries(o)
-    .filter(([k, val]) => val != null && val !== "" && k !== "_id")
+    // FIX (note rendering): drop noise — `false` defaults and empty arrays.
+    // These are normally unchecked checkboxes / unfilled radios that the
+    // backend stored as the schema default. They add clutter without
+    // signal (e.g. "Bedsore Check: false" means the box was never ticked).
+    .filter(([k, val]) => {
+      if (val == null || val === "" || val === false) return false;
+      if (k === "_id" || k === "__v") return false;
+      if (Array.isArray(val) && val.length === 0) return false;
+      if (typeof val === "object" && Object.keys(val).length === 0) return false;
+      return true;
+    })
     .map(([k, val]) => {
       let display;
-      // FIX (audit P27-B2): wrap JSON.stringify in try/catch — Mongoose
-      // populated docs can contain circular references that would crash
-      // the tab. On failure, fall back to a safe placeholder.
-      try {
-        display = typeof val === "object" ? JSON.stringify(val) : String(val);
-      } catch {
-        display = "[object]";
+      // Strings that are actually images → render as <img>, never as text.
+      if (typeof val === "string" && (val.startsWith("data:image/") || val.startsWith("/uploads/"))) {
+        display = <img src={val} alt={k} className="ppt-inline-img" />;
+      } else if (typeof val === "string" && val.length > 200) {
+        // Truncate absurdly long strings (very long signatures, dumps) so the
+        // UI never gets bricked.
+        display = `${val.slice(0, 200)}…[truncated]`;
+      } else if (Array.isArray(val)) {
+        // Arrays of primitives render as a clean comma-separated list — never
+        // as raw JSON like `["None"]`. Arrays of objects fall back to JSON
+        // (no good single-line representation) but go through the try/catch
+        // below.
+        if (val.length === 0) {
+          display = "—";
+        } else if (val.every((x) => typeof x === "string" || typeof x === "number")) {
+          display = val.join(", ");
+        } else {
+          try { display = JSON.stringify(val); } catch { display = "[array]"; }
+        }
+      } else {
+        // FIX (audit P27-B2): wrap JSON.stringify in try/catch — Mongoose
+        // populated docs can contain circular references that would crash
+        // the tab. On failure, fall back to a safe placeholder.
+        try {
+          display = typeof val === "object" ? JSON.stringify(val) : String(val);
+        } catch {
+          display = "[object]";
+        }
       }
       return (
         <span key={k} className="ppt-sub-kv">
