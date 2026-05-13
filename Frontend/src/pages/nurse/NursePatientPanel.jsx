@@ -1750,52 +1750,80 @@ function MedicationsTab({doctorNotes=[], doctorOrders=[]}) {
 /* ══════════════════════════════════════════════════ TAB: BILLING */
 function BillingTab({billing}) {
   if (!billing) return <Empty icon="💰" msg="No billing record found"/>;
-  const thS={padding:"7px 12px",textAlign:"left",fontWeight:700,color:C.primaryD,borderBottom:`2px solid ${C.rose200}`,fontSize:10,textTransform:"uppercase"};
-  const tdS={padding:"8px 12px",borderBottom:`1px solid ${C.border}`,fontSize:12};
+  const dueClass = (billing.balanceAmount || 0) > 0 ? "pf-bill-header__kpi pf-bill-header__kpi--due" : "pf-bill-header__kpi";
   return (
-    <div style={{display:"flex",flexDirection:"column",gap:20}}>
-      <div style={{background:`linear-gradient(135deg,${C.primaryD},${C.primary})`,borderRadius:14,padding:"20px 26px",color:"#fff",display:"flex",flexWrap:"wrap",gap:20,justifyContent:"space-between",alignItems:"center"}}>
-        <div><div style={{fontSize:11,opacity:.8,marginBottom:3}}>Bill #{billing.billNumber||"—"}</div><div style={{fontSize:18,fontWeight:800}}><SBadge status={billing.billStatus}/></div></div>
-        {[{l:"Total",v:fmtCur(billing.netAmount)},{l:"Advance",v:fmtCur(billing.advancePaid)},{l:"Balance",v:fmtCur(billing.balanceAmount)}].map(s=>(
-          <div key={s.l} style={{textAlign:"center"}}><div style={{fontSize:10,opacity:.8,marginBottom:3}}>{s.l}</div><div style={{fontSize:20,fontWeight:800}}>{s.v}</div></div>
-        ))}
+    <div className="pf-tint--nurse" style={{display:"flex",flexDirection:"column",gap:16}}>
+      <div className="pf-bill-header">
+        <div>
+          <div className="pf-bill-header__id-label">Bill Number</div>
+          <div className="pf-bill-header__id-val">{billing.billNumber || "—"}</div>
+        </div>
+        <div className="pf-bill-header__kpi">
+          <div className="pf-bill-header__kpi-label">Total</div>
+          <div className="pf-bill-header__kpi-val">{fmtCur(billing.netAmount)}</div>
+        </div>
+        <div className="pf-bill-header__kpi">
+          <div className="pf-bill-header__kpi-label">Advance</div>
+          <div className="pf-bill-header__kpi-val">{fmtCur(billing.advancePaid)}</div>
+        </div>
+        <div className={dueClass}>
+          <div className="pf-bill-header__kpi-label">Balance Due</div>
+          <div className="pf-bill-header__kpi-val">{fmtCur(billing.balanceAmount)}</div>
+        </div>
+        <div><SBadge status={billing.billStatus}/></div>
       </div>
-      {(billing.billItems||[]).length>0 && (
-        <Card title="🧾 Services" titleBg={C.primaryL} titleColor={C.primaryD}>
-          <div style={{overflowX:"auto"}}>
-            <table style={{width:"100%",borderCollapse:"collapse"}}>
-              <thead><tr style={{background:C.primaryL}}>{["Service","Category","Amount"].map(h=><th key={h} style={thS}>{h}</th>)}</tr></thead>
+
+      {(billing.billItems || []).length > 0 && (
+        <div className="pf-section-card">
+          <div className="pf-section-card__head">
+            <span className="pf-section-card__icon">🧾</span>
+            <span className="pf-section-card__title">Services</span>
+            <span className="pf-section-card__count">{billing.billItems.length}</span>
+          </div>
+          <div className="pf-data-table-wrap">
+            <table className="pf-data-table">
+              <thead>
+                <tr><th>Service</th><th>Category</th><th style={{textAlign:"right"}}>Amount</th></tr>
+              </thead>
               <tbody>
-                {billing.billItems.map((item,i)=>(
-                  <tr key={i} style={{background:i%2?C.primaryL:C.card}}>
-                    <td style={{...tdS,fontWeight:600}}>{item.serviceName||"—"}</td>
-                    <td style={tdS}><Badge color={C.primary} bg={C.primaryL}>{item.category||"—"}</Badge></td>
-                    <td style={{...tdS,fontWeight:700,color:C.primary}}>{fmtCur(item.netAmount)}</td>
+                {billing.billItems.map((item, i) => (
+                  <tr key={i}>
+                    <td className="pf-cell-strong">{item.serviceName || "—"}</td>
+                    <td><Badge color={C.primary} bg={C.primaryL}>{item.category || "—"}</Badge></td>
+                    <td className="pf-cell-num pf-currency">{fmtCur(item.netAmount)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </Card>
+        </div>
       )}
-      {(billing.payments||[]).length>0 && (
-        <Card title="💳 Payments" titleBg={C.primaryL} titleColor={C.primaryD}>
-          <div style={{overflowX:"auto"}}>
-            <table style={{width:"100%",borderCollapse:"collapse"}}>
-              <thead><tr style={{background:C.primaryL}}>{["Date","Mode","Amount","Reference"].map(h=><th key={h} style={thS}>{h}</th>)}</tr></thead>
+
+      {(billing.payments || []).length > 0 && (
+        <div className="pf-section-card pf-section-card--ok">
+          <div className="pf-section-card__head">
+            <span className="pf-section-card__icon">💳</span>
+            <span className="pf-section-card__title">Payments</span>
+            <span className="pf-section-card__count">{billing.payments.length}</span>
+          </div>
+          <div className="pf-data-table-wrap">
+            <table className="pf-data-table">
+              <thead>
+                <tr><th>Date</th><th>Mode</th><th style={{textAlign:"right"}}>Amount</th><th>Reference</th></tr>
+              </thead>
               <tbody>
-                {billing.payments.map((p,i)=>(
-                  <tr key={i} style={{background:i%2?C.primaryL:C.card}}>
-                    <td style={tdS}>{fmtDT(p.paidAt||p.date)}</td>
-                    <td style={tdS}>{p.mode||p.paymentMode||"—"}</td>
-                    <td style={{...tdS,fontWeight:700,color:C.green}}>{fmtCur(p.amount)}</td>
-                    <td style={{...tdS,color:C.muted}}>{p.reference||p.receiptNumber||"—"}</td>
+                {billing.payments.map((p, i) => (
+                  <tr key={i}>
+                    <td>{fmtDT(p.paidAt || p.date)}</td>
+                    <td>{p.mode || p.paymentMode || "—"}</td>
+                    <td className="pf-cell-num pf-currency pf-currency--ok">{fmtCur(p.amount)}</td>
+                    <td className="pf-cell-muted">{p.reference || p.receiptNumber || "—"}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </Card>
+        </div>
       )}
     </div>
   );
