@@ -7,7 +7,10 @@ import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
 
 import BuildingForm from "../Components/building/BuildingForm";
 import BedSectionHeader from "../Components/bed/BedSectionHeader";
-import { BmStatStrip, BmCard, BmFilter, BmEmpty, BmPill, BmIconBtn } from "../Components/bed/BedPrimitives";
+import {
+  BmStatStrip, BmCard, BmFilter, BmEmpty, BmPill, BmIconBtn,
+  BmAvatar, BmCellStack,
+} from "../Components/bed/BedPrimitives";
 import { buildingService } from "../Services/buildingService";
 
 const BuildingManagement = () => {
@@ -133,35 +136,66 @@ const BuildingManagement = () => {
               <thead>
                 <tr>
                   <th>Building</th>
-                  <th>Code</th>
-                  <th className="right">Floors</th>
+                  <th>Floors · Visual</th>
                   <th>Address</th>
                   <th>Status</th>
                   <th className="right">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(b => (
-                  <tr key={b._id}>
-                    <td className="bm-key">{b.buildingName}</td>
-                    <td className="bm-code">{b.buildingCode || "—"}</td>
-                    <td className="right">{b.totalFloors ?? 0}</td>
-                    <td><span className="muted">{b.address || "—"}</span></td>
-                    <td>
-                      {b.isActive
-                        ? <BmPill tone="ok"     icon="pi-check">Active</BmPill>
-                        : <BmPill tone="danger" icon="pi-times">Inactive</BmPill>}
-                    </td>
-                    <td className="right">
-                      <div className="bm-row-actions">
-                        <BmIconBtn icon="pi-pencil" variant="info"   title="Edit"
-                          onClick={() => { setSelectedBuilding(b); setShowForm(true); }} />
-                        <BmIconBtn icon="pi-trash"  variant="danger" title="Delete"
-                          onClick={() => handleDelete(b)} />
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {filtered.map(b => {
+                  const floors = Number(b.totalFloors) || 0;
+                  return (
+                    <tr key={b._id}>
+                      <td>
+                        <BmCellStack
+                          avatar={<BmAvatar icon="pi-building" tone="cyan" />}
+                          title={b.buildingName}
+                          sub={b.buildingCode || "—"}
+                        />
+                      </td>
+                      <td>
+                        <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          <strong style={{ fontSize: 14 }}>{floors}</strong>
+                          <span className="muted" style={{ fontSize: 11 }}>floor{floors === 1 ? "" : "s"}</span>
+                        </div>
+                        {floors > 0 && (
+                          <div style={{ display: "flex", gap: 2, marginTop: 4 }}>
+                            {Array.from({ length: Math.min(floors, 12) }).map((_, i) => (
+                              <span key={i} style={{
+                                width: 4, height: 14, borderRadius: 1,
+                                background: "linear-gradient(180deg, #06b6d4, #0e7490)",
+                                opacity: 0.4 + (i / Math.min(floors, 12)) * 0.5,
+                              }} />
+                            ))}
+                            {floors > 12 && <span className="muted" style={{ fontSize: 9, marginLeft: 4 }}>+{floors - 12}</span>}
+                          </div>
+                        )}
+                      </td>
+                      <td>
+                        {b.address ? (
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                            <i className="pi pi-map-marker" style={{ fontSize: 10, color: "#94a3b8" }} />
+                            {b.address}
+                          </span>
+                        ) : <span className="muted">—</span>}
+                      </td>
+                      <td>
+                        {b.isActive
+                          ? <BmPill tone="ok"     icon="pi-check">Active</BmPill>
+                          : <BmPill tone="danger" icon="pi-times">Inactive</BmPill>}
+                      </td>
+                      <td className="right">
+                        <div className="bm-row-actions">
+                          <BmIconBtn icon="pi-pencil" variant="info"   title="Edit"
+                            onClick={() => { setSelectedBuilding(b); setShowForm(true); }} />
+                          <BmIconBtn icon="pi-trash"  variant="danger" title="Delete"
+                            onClick={() => handleDelete(b)} />
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

@@ -317,3 +317,135 @@
 .bm-grid-card--purple .bm-grid-card__icon { background: #ede9fe; color: #7c3aed; }
 .bm-grid-card--cyan    { border-left-color: #0891b2; }
 .bm-grid-card--cyan   .bm-grid-card__icon { background: #cffafe; color: #0891b2; }
+.bm-grid-card--pink    { border-left-color: #db2777; }
+.bm-grid-card--pink   .bm-grid-card__icon { background: #fce7f3; color: #db2777; }
+.bm-grid-card--green   { border-left-color: #16a34a; }
+.bm-grid-card--green  .bm-grid-card__icon { background: #dcfce7; color: #16a34a; }
+.bm-grid-card--teal    { border-left-color: #0d9488; }
+.bm-grid-card--teal   .bm-grid-card__icon { background: #ccfbf1; color: #0d9488; }
+
+/* ────────────────────────────────────────────────────────────────
+   Data visualization primitives — used in row cells / mini cards
+   to surface counts, ratios, and breakdowns inline.
+────────────────────────────────────────────────────────────────── */
+
+/* Inline progress bar (occupancy %, bed fill, etc.) */
+.bm-bar {
+  position: relative;
+  height: 6px;
+  background: #f1f5f9;
+  border-radius: 999px;
+  overflow: hidden;
+  min-width: 60px;
+}
+.bm-bar__fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width .3s ease;
+}
+.bm-bar__fill--low    { background: linear-gradient(90deg, #22c55e, #16a34a); }
+.bm-bar__fill--mid    { background: linear-gradient(90deg, #f59e0b, #d97706); }
+.bm-bar__fill--high   { background: linear-gradient(90deg, #ef4444, #dc2626); }
+.bm-bar__fill--info   { background: linear-gradient(90deg, #3b82f6, #2563eb); }
+.bm-bar__fill--purple { background: linear-gradient(90deg, #a78bfa, #7c3aed); }
+
+/* Bed-fill mini visual: row of small dots representing beds */
+.bm-dots {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.bm-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+}
+.bm-dot--occ      { background: #dc2626; border-color: #b91c1c; }
+.bm-dot--avail    { background: #22c55e; border-color: #16a34a; }
+.bm-dot--reserved { background: #3b82f6; border-color: #2563eb; }
+.bm-dot--maint    { background: #f59e0b; border-color: #d97706; }
+.bm-dot--blocked  { background: #94a3b8; border-color: #64748b; }
+.bm-dot--empty    { background: #f1f5f9; border-color: #e2e8f0; }
+
+/* Tiny inline chips for amenities / facilities / tags */
+.bm-chip-row {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.bm-chip {
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--bm-soft);
+  color: var(--bm-muted);
+  border: 1px solid var(--bm-border);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  letter-spacing: .2px;
+}
+.bm-chip .pi { font-size: 8px; }
+
+/* Avatar-style square icon (used in stack-side renders) */
+.bm-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #f1f5f9, #e2e8f0);
+  color: #475569;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+.bm-avatar--blue   { background: linear-gradient(135deg,#dbeafe,#bfdbfe); color: #2563eb; }
+.bm-avatar--purple { background: linear-gradient(135deg,#ede9fe,#ddd6fe); color: #7c3aed; }
+.bm-avatar--pink   { background: linear-gradient(135deg,#fce7f3,#fbcfe8); color: #db2777; }
+.bm-avatar--orange { background: linear-gradient(135deg,#ffedd5,#fed7aa); color: #ea580c; }
+.bm-avatar--cyan   { background: linear-gradient(135deg,#cffafe,#a5f3fc); color: #0891b2; }
+.bm-avatar--green  { background: linear-gradient(135deg,#dcfce7,#bbf7d0); color: #16a34a; }
+.bm-avatar--teal   { background: linear-gradient(135deg,#ccfbf1,#99f6e4); color: #0d9488; }
+.bm-avatar--amber  { background: linear-gradient(135deg,#fef3c7,#fde68a); color: #d97706; }
+.bm-avatar--red    { background: linear-gradient(135deg,#fee2e2,#fecaca); color: #dc2626; }
+.bm-avatar--slate  { background: linear-gradient(135deg,#f1f5f9,#e2e8f0); color: #475569; }
+
+/* Stacked title cell — used in tables for a primary + secondary line */
+.bm-cell-stack { display: flex; align-items: center; gap: 10px; }
+.bm-cell-stack__main { font-weight: 700; color: var(--bm-text); }
+.bm-cell-stack__sub  { font-size: 10.5px; color: var(--bm-muted); margin-top: 1px; }
+
+/* Classification badge (Economy / Premium / VIP) */
+.bm-class {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+}
+.bm-class--Economy  { background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }
+.bm-class--Standard { background: #dbeafe; color: #1e40af; border: 1px solid #93c5fd; }
+.bm-class--Premium  { background: #ede9fe; color: #5b21b6; border: 1px solid #c4b5fd; }
+.bm-class--Deluxe   { background: #fce7f3; color: #9d174d; border: 1px solid #f9a8d4; }
+.bm-class--VIP      { background: linear-gradient(135deg, #fef3c7, #fde68a); color: #92400e; border: 1px solid #fbbf24; }
+
+/* Pricing chip (₹ rate) */
+.bm-price {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  font-weight: 800;
+  color: #0f172a;
+}
+.bm-price__cur { font-size: 11px; color: var(--bm-muted); }
+.bm-price__val { font-size: 16px; }
+.bm-price__unit { font-size: 10px; color: var(--bm-muted); margin-left: 3px; }

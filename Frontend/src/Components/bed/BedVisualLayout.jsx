@@ -1353,48 +1353,78 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                 marginBottom: 20,
               }}
             >
-              <div
-                style={{
-                  background: TEAL_GRAD,
-                  padding: "16px 24px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 12,
-                }}
-              >
-                <i
-                  className="pi pi-building"
-                  style={{ color: "#fff", fontSize: 20 }}
-                />
-                <span style={{ color: "#fff", fontWeight: 800, fontSize: 18 }}>
-                  {floorLabel}
-                </span>
-                <div style={{ marginLeft: "auto", display: "flex", gap: 12 }}>
-                  {[
-                    ["Available", "#d1fae5", "#065f46"],
-                    ["Occupied", "#fee2e2", "#991b1b"],
-                  ].map(([k, bg, c]) => {
-                    const cnt = Object.values(floorData.rooms)
-                      .flatMap((r) => r.beds)
-                      .filter((b) => b.status === k).length;
-                    return (
-                      <span
-                        key={k}
-                        style={{
-                          background: bg,
-                          color: c,
-                          borderRadius: 20,
-                          padding: "3px 12px",
-                          fontSize: 12,
-                          fontWeight: 700,
-                        }}
-                      >
-                        {k}: {cnt}
+              {(() => {
+                // Per-floor full status breakdown for the banner
+                const allBeds = Object.values(floorData.rooms).flatMap(r => r.beds);
+                const by = (s) => allBeds.filter(b => b.status === s).length;
+                const total      = allBeds.length;
+                const occupied   = by("Occupied");
+                const available  = by("Available");
+                const maint      = by("Maintenance");
+                const reserved   = by("Reserved");
+                const blocked    = by("Blocked");
+                const isolation  = allBeds.filter(b => Array.isArray(b.isolationFlags) && b.isolationFlags.length > 0).length;
+                const pct        = total > 0 ? Math.round((occupied / total) * 100) : 0;
+                const STAT_PILL = (label, value, bg, c, icon) => (
+                  <span style={{
+                    background: bg, color: c, borderRadius: 999,
+                    padding: "3px 12px", fontSize: 11, fontWeight: 800,
+                    display: "inline-flex", alignItems: "center", gap: 5,
+                  }}>
+                    <i className={`pi ${icon}`} style={{ fontSize: 10 }} />
+                    {label}: {value}
+                  </span>
+                );
+                return (
+                  <div
+                    style={{
+                      background: TEAL_GRAD,
+                      padding: "14px 22px",
+                      color: "#fff",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                      <i className="pi pi-building" style={{ color: "#fff", fontSize: 18 }} />
+                      <span style={{ color: "#fff", fontWeight: 800, fontSize: 17 }}>
+                        {floorLabel}
                       </span>
-                    );
-                  })}
-                </div>
-              </div>
+                      <span style={{
+                        background: "rgba(255,255,255,.18)", color: "#fff",
+                        borderRadius: 999, padding: "2px 11px", fontSize: 11, fontWeight: 700,
+                      }}>
+                        {total} bed{total === 1 ? "" : "s"}
+                      </span>
+                      <div style={{ marginLeft: "auto", display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {STAT_PILL("Available", available, "#d1fae5", "#065f46", "pi-check-circle")}
+                        {STAT_PILL("Occupied",  occupied,  "#fee2e2", "#991b1b", "pi-user")}
+                        {reserved > 0 && STAT_PILL("Reserved", reserved, "#dbeafe", "#1e40af", "pi-bookmark")}
+                        {maint    > 0 && STAT_PILL("Maintenance", maint, "#fef3c7", "#92400e", "pi-wrench")}
+                        {blocked  > 0 && STAT_PILL("Blocked", blocked, "#f1f5f9", "#475569", "pi-ban")}
+                        {isolation > 0 && STAT_PILL("Isolation", isolation, "#fee2e2", "#7f1d1d", "pi-shield")}
+                      </div>
+                    </div>
+
+                    {/* Occupancy bar */}
+                    {total > 0 && (
+                      <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 12 }}>
+                        <div style={{
+                          flex: 1, height: 6, background: "rgba(255,255,255,.2)",
+                          borderRadius: 999, overflow: "hidden",
+                        }}>
+                          <div style={{
+                            width: `${pct}%`, height: "100%",
+                            background: pct > 85 ? "#fca5a5" : pct > 65 ? "#fcd34d" : "#86efac",
+                            transition: "width .4s",
+                          }} />
+                        </div>
+                        <span style={{ fontSize: 11, fontWeight: 800, whiteSpace: "nowrap" }}>
+                          {pct}% occupancy
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
               <div
                 style={{
                   display: "grid",

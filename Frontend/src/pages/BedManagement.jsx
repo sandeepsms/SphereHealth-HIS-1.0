@@ -7,10 +7,21 @@ import { Toast } from "primereact/toast";
 import BedForm from "../Components/bed/BedForm";
 import BedBulkCreateDialog from "../Components/bed/BedBulkCreateDialog";
 import BedSectionHeader from "../Components/bed/BedSectionHeader";
-import { BmStatStrip, BmCard, BmEmpty, BmPill, BmIconBtn } from "../Components/bed/BedPrimitives";
+import {
+  BmStatStrip, BmCard, BmEmpty, BmPill, BmIconBtn,
+  BmAvatar, BmCellStack, BmChip,
+} from "../Components/bed/BedPrimitives";
 import BedStats from "../Components/bed/BedStats";
 import BedVisualLayout from "../Components/bed/BedVisualLayout";
 import { bedService } from "../Services/bedService";
+
+const STATUS_AVATAR = {
+  Available:   { icon: "pi-check-circle",     tone: "green"  },
+  Occupied:    { icon: "pi-user",             tone: "red"    },
+  Maintenance: { icon: "pi-wrench",           tone: "amber"  },
+  Blocked:     { icon: "pi-ban",              tone: "slate"  },
+  Reserved:    { icon: "pi-bookmark",         tone: "blue"   },
+};
 
 const STATUS_TONES = {
   Available:   "ok",
@@ -224,32 +235,67 @@ const BedManagement = () => {
                     <th>Bed</th>
                     <th>Location</th>
                     <th>Status</th>
+                    <th>Flags &amp; Equipment</th>
                     <th>Patient</th>
                     <th className="right">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredBeds.map(r => (
-                    <tr key={r._id}>
-                      <td className="bm-key">{r.bedNumber}</td>
-                      <td>
-                        <div>{r.buildingName || "—"} · Floor {r.floorNumber || "—"}</div>
-                        <div className="muted">{r.wardName || "—"} · Room {r.roomNumber || "—"}</div>
-                      </td>
-                      <td><BmPill tone={STATUS_TONES[r.status] || "neutral"}>{r.status}</BmPill></td>
-                      <td>
-                        {r.currentAdmission?.patientId?.fullName
-                          ? <span style={{ fontWeight: 600 }}>{r.currentAdmission.patientId.fullName}</span>
-                          : <span className="muted">—</span>}
-                      </td>
-                      <td className="right">
-                        <div className="bm-row-actions">
-                          <BmIconBtn icon="pi-pencil" variant="info"   title="Edit"   onClick={() => handleEdit(r)} />
-                          <BmIconBtn icon="pi-trash"  variant="danger" title="Delete" onClick={() => handleDelete(r)} />
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {filteredBeds.map(r => {
+                    const av = STATUS_AVATAR[r.status] || { icon: "pi-th-large", tone: "slate" };
+                    const flags  = Array.isArray(r.isolationFlags) ? r.isolationFlags : [];
+                    const equip  = Array.isArray(r.equipment) ? r.equipment : [];
+                    const hk     = r.housekeeping?.state;
+                    const hkLive = hk && hk !== "Idle";
+                    return (
+                      <tr key={r._id}>
+                        <td>
+                          <BmCellStack
+                            avatar={<BmAvatar icon={av.icon} tone={av.tone} />}
+                            title={r.bedNumber}
+                            sub={r.precautionLevel && r.precautionLevel !== "Standard" ? `${r.precautionLevel} isolation` : ""}
+                          />
+                        </td>
+                        <td>
+                          <div>{r.buildingName || "—"} · Floor {r.floorNumber || "—"}</div>
+                          <div className="muted">{r.wardName || "—"} · Room {r.roomNumber || "—"}</div>
+                        </td>
+                        <td><BmPill tone={STATUS_TONES[r.status] || "neutral"}>{r.status}</BmPill></td>
+                        <td>
+                          {(flags.length === 0 && equip.length === 0 && !hkLive) ? (
+                            <span className="muted">—</span>
+                          ) : (
+                            <div className="bm-chip-row">
+                              {flags.slice(0, 2).map((f, i) => (
+                                <BmChip key={`f${i}`} icon="pi-shield">{f}</BmChip>
+                              ))}
+                              {flags.length > 2 && <BmChip>+{flags.length - 2}</BmChip>}
+                              {hkLive && (
+                                <BmChip icon={hk === "CleaningInProgress" ? "pi-spin pi-spinner" : "pi-bookmark-fill"}>
+                                  {hk.replace(/([A-Z])/g, " $1").trim()}
+                                </BmChip>
+                              )}
+                              {equip.slice(0, 2).map((e, i) => (
+                                <BmChip key={`e${i}`} icon="pi-cog">{e.label || e.type}</BmChip>
+                              ))}
+                              {equip.length > 2 && <BmChip>+{equip.length - 2}</BmChip>}
+                            </div>
+                          )}
+                        </td>
+                        <td>
+                          {r.currentAdmission?.patientId?.fullName
+                            ? <span style={{ fontWeight: 600 }}>{r.currentAdmission.patientId.fullName}</span>
+                            : <span className="muted">—</span>}
+                        </td>
+                        <td className="right">
+                          <div className="bm-row-actions">
+                            <BmIconBtn icon="pi-pencil" variant="info"   title="Edit"   onClick={() => handleEdit(r)} />
+                            <BmIconBtn icon="pi-trash"  variant="danger" title="Delete" onClick={() => handleDelete(r)} />
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

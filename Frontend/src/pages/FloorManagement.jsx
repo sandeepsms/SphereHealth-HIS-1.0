@@ -4,7 +4,10 @@ import { Toast } from "primereact/toast";
 import FloorList from "../Components/floor/FloorList";
 import FloorForm from "../Components/floor/FloorForm";
 import BedSectionHeader from "../Components/bed/BedSectionHeader";
-import { BmStatStrip, BmCard, BmFilter, BmEmpty, BmPill, BmIconBtn } from "../Components/bed/BedPrimitives";
+import {
+  BmStatStrip, BmCard, BmFilter, BmEmpty, BmPill, BmIconBtn,
+  BmAvatar, BmChip,
+} from "../Components/bed/BedPrimitives";
 import { floorService } from "../Services/floorService";
 
 const TABS = [
@@ -148,30 +151,54 @@ const FloorManagement = () => {
           </div>
         ) : (
           <div style={{ padding: 14, display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))" }}>
-            {filtered.map(f => (
-              <div key={f._id} className="bm-grid-card bm-grid-card--orange">
-                <div className="bm-grid-card__head">
-                  <div className="bm-grid-card__icon">
-                    <i className="pi pi-arrows-v" />
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div className="bm-grid-card__title">
-                      {f.floorName || `Floor ${f.floorNumber}`}
+            {filtered.map(f => {
+              const totalWards = Number(f.totalWards || f.wardCount) || 0;
+              const totalRooms = Number(f.totalRooms || f.roomCount) || 0;
+              return (
+                <div key={f._id} className="bm-grid-card bm-grid-card--orange">
+                  <div className="bm-grid-card__head">
+                    <BmAvatar
+                      icon="pi-arrows-v"
+                      tone="orange"
+                      label={String(f.floorNumber || "?")}
+                    />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="bm-grid-card__title">
+                        {f.floorName || `Floor ${f.floorNumber}`}
+                      </div>
+                      <div className="bm-grid-card__sub">
+                        <i className="pi pi-building" style={{ fontSize: 10, marginRight: 4 }} />
+                        {f.building?.buildingName || f.buildingName || "—"}
+                      </div>
                     </div>
-                    <div className="bm-grid-card__sub">
-                      {f.building?.buildingName || f.buildingName || "—"} · Floor {f.floorNumber}
-                    </div>
+                    <BmPill tone={f.isActive === false ? "danger" : "ok"}>
+                      {f.isActive === false ? "Inactive" : "Active"}
+                    </BmPill>
                   </div>
-                  <BmPill tone={f.isActive === false ? "danger" : "ok"}>
-                    {f.isActive === false ? "Inactive" : "Active"}
-                  </BmPill>
+
+                  {(totalWards > 0 || totalRooms > 0 || f.description) && (
+                    <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed #e2e8f0" }}>
+                      {(totalWards > 0 || totalRooms > 0) && (
+                        <div className="bm-chip-row" style={{ marginBottom: f.description ? 6 : 0 }}>
+                          {totalWards > 0 && <BmChip icon="pi-home">{totalWards} ward{totalWards === 1 ? "" : "s"}</BmChip>}
+                          {totalRooms > 0 && <BmChip icon="pi-box">{totalRooms} room{totalRooms === 1 ? "" : "s"}</BmChip>}
+                        </div>
+                      )}
+                      {f.description && (
+                        <div style={{ fontSize: 10.5, color: "#64748b", lineHeight: 1.4 }}>
+                          {f.description.length > 70 ? f.description.slice(0, 70) + "…" : f.description}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="bm-row-actions" style={{ justifyContent: "flex-end", marginTop: 10 }}>
+                    <BmIconBtn icon="pi-pencil" variant="info"   title="Edit"   onClick={() => handleEdit(f)} />
+                    <BmIconBtn icon="pi-trash"  variant="danger" title="Delete" onClick={() => handleDelete(f)} />
+                  </div>
                 </div>
-                <div className="bm-row-actions" style={{ justifyContent: "flex-end", marginTop: 4 }}>
-                  <BmIconBtn icon="pi-pencil" variant="info"   title="Edit"   onClick={() => handleEdit(f)} />
-                  <BmIconBtn icon="pi-trash"  variant="danger" title="Delete" onClick={() => handleDelete(f)} />
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </BmCard>

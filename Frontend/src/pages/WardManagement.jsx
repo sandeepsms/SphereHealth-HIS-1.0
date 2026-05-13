@@ -4,8 +4,27 @@ import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
 
 import WardForm from "../Components/ward/WardForm";
 import BedSectionHeader from "../Components/bed/BedSectionHeader";
-import { BmStatStrip, BmCard, BmFilter, BmEmpty, BmPill, BmIconBtn } from "../Components/bed/BedPrimitives";
+import {
+  BmStatStrip, BmCard, BmFilter, BmEmpty, BmPill, BmIconBtn,
+  BmBar, BmAvatar, BmCellStack, BmChip,
+} from "../Components/bed/BedPrimitives";
 import { wardService } from "../Services/wardService";
+
+/* ── Ward type → icon + avatar tone ── */
+const WARD_TYPE_ICON = {
+  General:    { icon: "pi-home",         tone: "blue"   },
+  ICU:        { icon: "pi-heart-fill",   tone: "red"    },
+  NICU:       { icon: "pi-heart",        tone: "pink"   },
+  CCU:        { icon: "pi-heart-fill",   tone: "red"    },
+  Emergency:  { icon: "pi-bolt",         tone: "amber"  },
+  Pediatric:  { icon: "pi-users",        tone: "orange" },
+  Maternity:  { icon: "pi-heart",        tone: "pink"   },
+  Surgical:   { icon: "pi-bookmark",     tone: "purple" },
+  Isolation:  { icon: "pi-shield",       tone: "red"    },
+  HDU:        { icon: "pi-chart-line",   tone: "amber"  },
+  Private:    { icon: "pi-star",         tone: "amber"  },
+  "Day Care": { icon: "pi-sun",          tone: "teal"   },
+};
 
 const WardManagement = () => {
   const [wards, setWards] = useState([]);
@@ -166,44 +185,78 @@ const WardManagement = () => {
                   <th>Type</th>
                   <th>Location</th>
                   <th className="right">Rooms</th>
-                  <th className="right">Beds</th>
+                  <th>Beds · Occupancy</th>
+                  <th>Facilities</th>
                   <th>Status</th>
                   <th className="right">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(w => (
-                  <tr key={w._id}>
-                    <td className="bm-key">
-                      <div>{w.wardName}</div>
-                      <div className="bm-code muted">{w.wardCode}</div>
-                    </td>
-                    <td>
-                      {w.wardType
-                        ? <BmPill tone={w.wardType === "Emergency" ? "danger" : "info"}>{w.wardType}</BmPill>
-                        : <span className="muted">—</span>}
-                    </td>
-                    <td>
-                      <div>{w.buildingName}</div>
-                      <div className="muted">Floor {w.floorNumber}</div>
-                    </td>
-                    <td className="right">{w.totalRooms ?? 0}</td>
-                    <td className="right">{w.totalBeds  ?? 0}</td>
-                    <td>
-                      {w.isActive
-                        ? <BmPill tone="ok"     icon="pi-check">Active</BmPill>
-                        : <BmPill tone="danger" icon="pi-times">Inactive</BmPill>}
-                    </td>
-                    <td className="right">
-                      <div className="bm-row-actions">
-                        <BmIconBtn icon="pi-pencil" variant="info"   title="Edit"
-                          onClick={() => { setSelectedWard(w); setShowForm(true); }} />
-                        <BmIconBtn icon="pi-trash"  variant="danger" title="Delete"
-                          onClick={() => handleDelete(w)} />
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {filtered.map(w => {
+                  const meta = WARD_TYPE_ICON[w.wardType] || { icon: "pi-home", tone: "blue" };
+                  const totalBeds = Number(w.totalBeds) || 0;
+                  const occBeds   = Number(w.occupiedBeds) || 0;
+                  const facilities = Array.isArray(w.facilities) ? w.facilities : [];
+                  return (
+                    <tr key={w._id}>
+                      <td>
+                        <BmCellStack
+                          avatar={<BmAvatar icon={meta.icon} tone={meta.tone} />}
+                          title={w.wardName}
+                          sub={w.wardCode || "—"}
+                        />
+                      </td>
+                      <td>
+                        {w.wardType
+                          ? <BmPill tone={w.wardType === "Emergency" || w.wardType === "ICU" || w.wardType === "Isolation" ? "danger" : "info"}>{w.wardType}</BmPill>
+                          : <span className="muted">—</span>}
+                      </td>
+                      <td>
+                        <div>{w.buildingName}</div>
+                        <div className="muted">Floor {w.floorNumber}</div>
+                      </td>
+                      <td className="right">
+                        <strong>{w.totalRooms ?? 0}</strong>
+                      </td>
+                      <td>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <strong>{totalBeds}</strong>
+                          {totalBeds > 0 && occBeds > 0 && (
+                            <BmBar value={occBeds} max={totalBeds} width={70} showLabel={false} />
+                          )}
+                        </div>
+                        {(w.hourlyCharge || w.dailyCharge) && (
+                          <div className="muted" style={{ fontSize: 10, marginTop: 3 }}>
+                            ₹{w.dailyCharge || 0}/day
+                          </div>
+                        )}
+                      </td>
+                      <td>
+                        {facilities.length === 0 ? (
+                          <span className="muted">—</span>
+                        ) : (
+                          <div className="bm-chip-row">
+                            {facilities.slice(0, 2).map((f, i) => <BmChip key={i}>{f}</BmChip>)}
+                            {facilities.length > 2 && <BmChip>+{facilities.length - 2}</BmChip>}
+                          </div>
+                        )}
+                      </td>
+                      <td>
+                        {w.isActive
+                          ? <BmPill tone="ok"     icon="pi-check">Active</BmPill>
+                          : <BmPill tone="danger" icon="pi-times">Inactive</BmPill>}
+                      </td>
+                      <td className="right">
+                        <div className="bm-row-actions">
+                          <BmIconBtn icon="pi-pencil" variant="info"   title="Edit"
+                            onClick={() => { setSelectedWard(w); setShowForm(true); }} />
+                          <BmIconBtn icon="pi-trash"  variant="danger" title="Delete"
+                            onClick={() => handleDelete(w)} />
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
