@@ -45,6 +45,9 @@ function AddRoomCategory() {
   const [filteredList, setFilteredList] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [editing, setEditing] = useState(null);
+  /* Form is hidden by default — opens when user clicks "Add Room Category"
+     or chooses Edit on an existing row. Closes on submit/cancel. */
+  const [showForm, setShowForm] = useState(false);
   const [viewingCategory, setViewingCategory] = useState(null);
   const [deleteDialog, setDeleteDialog] = useState({
     visible: false,
@@ -115,19 +118,17 @@ function AddRoomCategory() {
   const handleSubmit = async (values, { resetForm }) => {
     try {
       if (editing) {
-        console.log("Updating Room Category:", editing._id, values);
         await roomCategoryService.updateCategory(editing._id, values);
         toast.success("Room Category Updated Successfully");
         setEditing(null);
       } else {
-        console.log("Creating Room Category:", values);
         await roomCategoryService.createCategory(values);
         toast.success("Room Category Added Successfully");
       }
       resetForm();
+      setShowForm(false);  // close the panel after a successful save
       await fetchCategories();
     } catch (error) {
-      console.error("Submit error:", error);
       toast.error(
         error?.response?.data?.message || error.message || "Error occurred",
       );
@@ -136,8 +137,8 @@ function AddRoomCategory() {
 
   // ── Edit Handler ──────────────────────────────────────────────────────────
   const handleEdit = (category) => {
-    console.log("Editing category:", category);
     setEditing(category);
+    setShowForm(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -263,7 +264,25 @@ function AddRoomCategory() {
 
       <BmStatStrip stats={_stats} />
 
+      {/* Add / Edit toggle row — keeps the form collapsed until needed */}
+      {!showForm && (
+        <div style={{
+          display: "flex", justifyContent: "flex-end",
+          marginBottom: 14,
+        }}>
+          <button
+            type="button"
+            onClick={() => { setEditing(null); setShowForm(true); }}
+            className="bm-btn bm-btn--primary"
+          >
+            <i className="pi pi-plus" />
+            Add Room Category
+          </button>
+        </div>
+      )}
+
       {/* ── Add / Edit Form (sectioned, modern inputs) ── */}
+      {showForm && (
       <Formik
         initialValues={{
           categoryName: editing?.categoryName || "",
@@ -418,12 +437,10 @@ function AddRoomCategory() {
                 </div>
 
                 <div className="bm-form-actions">
-                  {editing && (
-                    <button type="button" className="bm-btn bm-btn--ghost"
-                      onClick={() => { setEditing(null); resetForm(); }}>
-                      <i className="pi pi-times" /> Cancel
-                    </button>
-                  )}
+                  <button type="button" className="bm-btn bm-btn--ghost"
+                    onClick={() => { setEditing(null); resetForm(); setShowForm(false); }}>
+                    <i className="pi pi-times" /> Cancel
+                  </button>
                   <button type="submit" className="bm-btn bm-btn--primary">
                     <i className={`pi ${editing ? "pi-save" : "pi-plus"}`} />
                     {editing ? "Save Changes" : "Add Room Category"}
@@ -434,6 +451,7 @@ function AddRoomCategory() {
           );
         }}
       </Formik>
+      )}
 
       <BmCard
         title="Configured Categories"
@@ -464,7 +482,8 @@ function AddRoomCategory() {
           categoryList.length === 0 ? (
             <BmEmpty icon="pi-th-large" title="No room categories yet"
               msg="Categories define pricing tiers (Economy → VIP) used by every room."
-              ctaLabel="Use the form above" ctaIcon="pi-arrow-up" onCta={() => window.scrollTo({ top: 0, behavior: "smooth" })} />
+              ctaLabel="Add Room Category" ctaIcon="pi-plus"
+              onCta={() => { setEditing(null); setShowForm(true); window.scrollTo({ top: 0, behavior: "smooth" }); }} />
           ) : (
             <BmEmpty icon="pi-search" title="No matches" msg="Try a different search term." />
           )

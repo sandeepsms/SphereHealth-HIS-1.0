@@ -1476,50 +1476,96 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                       background: "#fafafa",
                     }}
                   >
-                    <div
-                      style={{
-                        padding: "12px 18px",
-                        background: "#fff",
-                        borderBottom: "1px solid #f1f5f9",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 8,
-                        }}
-                      >
-                        <i
-                          className="pi pi-home"
-                          style={{ color: TEAL, fontSize: 15 }}
-                        />
-                        <span
+                    {(() => {
+                      // Per-room mini occupancy — used inside the ward header
+                      const total = grp.beds.length;
+                      const occ   = grp.beds.filter(b => b.status === "Occupied").length;
+                      const avail = grp.beds.filter(b => b.status === "Available").length;
+                      const pct   = total > 0 ? Math.round((occ / total) * 100) : 0;
+
+                      // Pick a ward-type tint from one of the beds in the group.
+                      // Falls back to teal for unknown types.
+                      const wardType = grp.beds[0]?.ward?.wardType
+                        || (grp.beds[0]?.wardName || "").match(/ICU|Emergency|Pedia|Female|Male|Private/i)?.[0]
+                        || "";
+                      const TINT = (() => {
+                        const t = String(wardType).toLowerCase();
+                        if (t.includes("icu") || t.includes("ccu") || t.includes("isolation"))
+                          return { stripe: "#dc2626", soft: "#fee2e2", text: "#991b1b", icon: "pi-heart-fill" };
+                        if (t.includes("emergency"))
+                          return { stripe: "#d97706", soft: "#fef3c7", text: "#92400e", icon: "pi-bolt" };
+                        if (t.includes("pedia"))
+                          return { stripe: "#ea580c", soft: "#ffedd5", text: "#9a3412", icon: "pi-users" };
+                        if (t.includes("female") || t.includes("maternity"))
+                          return { stripe: "#db2777", soft: "#fce7f3", text: "#9d174d", icon: "pi-heart" };
+                        if (t.includes("male"))
+                          return { stripe: "#2563eb", soft: "#dbeafe", text: "#1e40af", icon: "pi-home" };
+                        if (t.includes("private"))
+                          return { stripe: "#d97706", soft: "#fef3c7", text: "#92400e", icon: "pi-star" };
+                        return { stripe: TEAL, soft: "#ccfbf1", text: "#115e59", icon: "pi-home" };
+                      })();
+
+                      return (
+                        <div
                           style={{
-                            fontWeight: 700,
-                            fontSize: 15,
-                            color: "#0f172a",
+                            padding: "10px 14px",
+                            background: `linear-gradient(to right, ${TINT.soft}, #fff 65%)`,
+                            borderBottom: "1px solid #f1f5f9",
+                            borderLeft: `4px solid ${TINT.stripe}`,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            flexWrap: "wrap",
+                            gap: 8,
                           }}
                         >
-                          {grp.roomName}
-                        </span>
-                      </div>
-                      <span
-                        style={{
-                          fontSize: 11,
-                          fontWeight: 600,
-                          color: "#64748b",
-                          background: "#f1f5f9",
-                          borderRadius: 20,
-                          padding: "2px 10px",
-                        }}
-                      >
-                        {grp.beds.length} Bed{grp.beds.length !== 1 ? "s" : ""}
-                      </span>
-                    </div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}>
+                            <span style={{
+                              width: 30, height: 30, borderRadius: 8,
+                              background: "#fff",
+                              border: `1.5px solid ${TINT.stripe}33`,
+                              color: TINT.stripe,
+                              display: "flex", alignItems: "center", justifyContent: "center",
+                              fontSize: 13, flexShrink: 0,
+                              boxShadow: `0 2px 6px ${TINT.stripe}22`,
+                            }}>
+                              <i className={`pi ${TINT.icon}`} />
+                            </span>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontWeight: 800, fontSize: 14, color: "#0f172a", lineHeight: 1.1 }}>
+                                {grp.roomName}
+                              </div>
+                              <div style={{ fontSize: 10.5, color: TINT.text, fontWeight: 700, marginTop: 2, letterSpacing: ".3px" }}>
+                                {total} bed{total !== 1 ? "s" : ""} · {avail} available · {occ} occupied
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* mini occupancy bar + % */}
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 130 }}>
+                            <div style={{
+                              flex: 1, height: 5, background: "#f1f5f9",
+                              borderRadius: 999, overflow: "hidden", minWidth: 60,
+                            }}>
+                              <div style={{
+                                width: `${pct}%`, height: "100%",
+                                background: pct > 85 ? "linear-gradient(90deg,#ef4444,#dc2626)"
+                                          : pct > 65 ? "linear-gradient(90deg,#f59e0b,#d97706)"
+                                                     : "linear-gradient(90deg,#22c55e,#16a34a)",
+                                transition: "width .4s",
+                              }} />
+                            </div>
+                            <span style={{
+                              fontSize: 11, fontWeight: 800, color: "#0f172a", whiteSpace: "nowrap",
+                              background: "#fff", border: "1px solid #e2e8f0",
+                              borderRadius: 6, padding: "2px 7px",
+                            }}>
+                              {pct}%
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })()}
                     <div
                       style={{
                         padding: 12,
