@@ -1,4 +1,5 @@
 import API_ENDPOINTS from "../config/api";
+import authFetch from "../utils/authFetch";
 
 const extractId = (obj) => {
   if (!obj) return null;
@@ -23,7 +24,7 @@ const normalizeRoom = (room) => {
 export const roomService = {
   getAllRooms: async () => {
     try {
-      const response = await fetch(API_ENDPOINTS.ROOMS);
+      const response = await authFetch(API_ENDPOINTS.ROOMS);
       if (!response.ok) {
         const error = await response.json();
         throw new Error(error.message || "Failed to fetch rooms");
@@ -39,7 +40,7 @@ export const roomService = {
 
   getRoomById: async (id) => {
     try {
-      const response = await fetch(`${API_ENDPOINTS.ROOMS}/${id}`);
+      const response = await authFetch(`${API_ENDPOINTS.ROOMS}/${id}`);
       if (!response.ok) {
         const error = await response.json();
         throw new Error(error.message || "Failed to fetch room");
@@ -60,7 +61,7 @@ export const roomService = {
         throw new Error("Room number and name are required");
       }
 
-      const response = await fetch(API_ENDPOINTS.ROOMS, {
+      const response = await authFetch(API_ENDPOINTS.ROOMS, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(cleanData),
@@ -85,7 +86,7 @@ export const roomService = {
     try {
       const { pricing, services, ...cleanData } = data;
 
-      const response = await fetch(`${API_ENDPOINTS.ROOMS}/${id}`, {
+      const response = await authFetch(`${API_ENDPOINTS.ROOMS}/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(cleanData),
@@ -106,7 +107,7 @@ export const roomService = {
 
   deleteRoom: async (id) => {
     try {
-      const response = await fetch(`${API_ENDPOINTS.ROOMS}/${id}`, {
+      const response = await authFetch(`${API_ENDPOINTS.ROOMS}/${id}`, {
         method: "DELETE",
       });
       if (!response.ok) {
@@ -122,7 +123,7 @@ export const roomService = {
 
   getRoomsWithLowAvailability: async () => {
     try {
-      const response = await fetch(`${API_ENDPOINTS.ROOMS}/availability/low`);
+      const response = await authFetch(`${API_ENDPOINTS.ROOMS}/availability/low`);
       const data = await response.json();
       return (Array.isArray(data) ? data : []).map(normalizeRoom);
     } catch (error) {
@@ -133,7 +134,7 @@ export const roomService = {
 
   getFullyOccupiedRooms: async () => {
     try {
-      const response = await fetch(`${API_ENDPOINTS.ROOMS}/availability/full`);
+      const response = await authFetch(`${API_ENDPOINTS.ROOMS}/availability/full`);
       const data = await response.json();
       return (Array.isArray(data) ? data : []).map(normalizeRoom);
     } catch (error) {
@@ -144,7 +145,7 @@ export const roomService = {
 
   getRoomsByCategory: async (categoryId) => {
     try {
-      const response = await fetch(
+      const response = await authFetch(
         `${API_ENDPOINTS.ROOMS}/category/${categoryId}`,
       );
       const data = await response.json();
@@ -157,7 +158,7 @@ export const roomService = {
 
   getAvailableRoomsByCategory: async (categoryId) => {
     try {
-      const response = await fetch(
+      const response = await authFetch(
         `${API_ENDPOINTS.ROOMS}/category/${categoryId}/available`,
       );
       const data = await response.json();
@@ -170,7 +171,7 @@ export const roomService = {
 
   getRoomStatsByCategory: async (categoryId) => {
     try {
-      const response = await fetch(
+      const response = await authFetch(
         `${API_ENDPOINTS.ROOMS}/category/${categoryId}/stats`,
       );
       return await response.json();
@@ -182,7 +183,7 @@ export const roomService = {
 
   updateBedOccupancy: async (id, occupancy) => {
     try {
-      const response = await fetch(`${API_ENDPOINTS.ROOMS}/${id}/occupancy`, {
+      const response = await authFetch(`${API_ENDPOINTS.ROOMS}/${id}/occupancy`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(occupancy),
