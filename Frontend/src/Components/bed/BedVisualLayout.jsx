@@ -309,6 +309,64 @@ const BedVisualLayout = ({ onRefreshParent }) => {
   const [invoiceModal, setInvoiceModal] = useState(false);
   const [invoiceData, setInvoiceData] = useState(null);
 
+  /* ── Modal 7: Bed Info / Quick-Edit (isolation flags + equipment) ── */
+  const [bedInfoModal,    setBedInfoModal]    = useState(false);
+  const [bedInfoBed,      setBedInfoBed]      = useState(null);
+  const [bedInfoEditMode, setBedInfoEditMode] = useState(false);
+  const [bedInfoForm,     setBedInfoForm]     = useState({});
+  const [bedInfoSaving,   setBedInfoSaving]   = useState(false);
+
+  const openBedInfo = (bed, editMode = false) => {
+    setActionMenuBed(null);
+    if (!bed) return;
+    setBedInfoBed(bed);
+    setBedInfoEditMode(editMode);
+    setBedInfoForm({
+      precautionLevel: bed.precautionLevel || "Standard",
+      isolationFlags:  Array.isArray(bed.isolationFlags) ? [...bed.isolationFlags] : [],
+      isolationNotes:  bed.isolationNotes || "",
+      equipment:       Array.isArray(bed.equipment)
+        ? bed.equipment.map(e => (typeof e === "string" ? e : (e?.label || e?.type || ""))).filter(Boolean).join(", ")
+        : "",
+    });
+    setBedInfoModal(true);
+  };
+
+  const saveBedInfo = async () => {
+    if (!bedInfoBed) return;
+    setBedInfoSaving(true);
+    try {
+      const equipArr = (bedInfoForm.equipment || "")
+        .split(",").map(s => s.trim()).filter(Boolean)
+        .map(label => ({ label, type: label }));
+      await bedService.updateBed(getId(bedInfoBed._id), {
+        precautionLevel: bedInfoForm.precautionLevel,
+        isolationFlags:  bedInfoForm.isolationFlags,
+        isolationNotes:  bedInfoForm.isolationNotes,
+        equipment:       equipArr,
+      });
+      toast.current?.show({
+        severity: "success",
+        summary:  "Saved",
+        detail:   `Bed ${bedInfoBed.bedNumber} updated`,
+        life:     2500,
+      });
+      setBedInfoModal(false);
+      setBedInfoBed(null);
+      await fetchBeds();
+      onRefreshParent?.();
+    } catch (e) {
+      toast.current?.show({
+        severity: "error",
+        summary:  "Save failed",
+        detail:   e.message || "Could not update bed",
+        life:     3500,
+      });
+    } finally {
+      setBedInfoSaving(false);
+    }
+  };
+
   const searchResults = searchQ.trim()
     ? allPatients
         .map((p) => ({ p, score: scoreP(p, searchQ.trim()) }))
@@ -3675,6 +3733,230 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         </Dialog>
       )}
 
+      {/* ══ MODAL 7 — Bed Information / Quick-Edit ══════════════════════ */}
+      <Dialog
+        visible={bedInfoModal}
+        onHide={() => !bedInfoSaving && setBedInfoModal(false)}
+        style={{ width: "640px" }}
+        modal
+        draggable={false}
+        closable={false}
+        contentStyle={{ padding: 0 }}
+        header={null}
+      >
+        {bedInfoBed && (() => {
+          const b   = bedInfoBed;
+          const ed  = bedInfoEditMode;
+          const cat = typeof b.roomCategoryId === "object"
+            ? (b.roomCategoryId?.name || b.roomCategoryId?.categoryName || "—")
+            : (b.categoryName || b.category || "—");
+          const adt = b.currentAdmission?.admissionDate
+            ? new Date(b.currentAdmission.admissionDate).toLocaleDateString("en-IN",
+                { day: "2-digit", month: "short", year: "numeric" })
+            : null;
+          // The 11 isolation flags shipped on the Bed.isolationFlags enum.
+          const FLAGS = ["Contact","Droplet","Airborne","Neutropenic","MRSA","COVID","TB","VRE","CRE","C.diff","Reverse"];
+          const toggleFlag = (f) => {
+            const cur = new Set(bedInfoForm.isolationFlags || []);
+            if (cur.has(f)) cur.delete(f); else cur.add(f);
+            setBedInfoForm({ ...bedInfoForm, isolationFlags: [...cur] });
+          };
+          const row = (label, value) => (
+            <div style={{ display:"flex", justifyContent:"space-between", padding:"6px 0", borderBottom:"1px dashed #e2e8f0", fontSize:13 }}>
+              <span style={{ color:"#64748b", fontWeight:600 }}>{label}</span>
+              <span style={{ color:"#0f172a", fontWeight:700, textAlign:"right", maxWidth:"60%" }}>{value || "—"}</span>
+            </div>
+          );
+          return (
+            <div style={{ display:"flex", flexDirection:"column", maxHeight:"85vh", overflow:"hidden" }}>
+              {/* Header */}
+              <div style={{
+                background:"linear-gradient(135deg,#0891b2,#0e7490)",
+                padding:"18px 22px",
+                color:"#fff",
+                display:"flex",
+                alignItems:"center",
+                justifyContent:"space-between",
+              }}>
+                <div>
+                  <div style={{ fontSize:18, fontWeight:800 }}>
+                    <i className="pi pi-th-large" style={{ marginRight:8 }} />
+                    Bed {b.bedNumber || "—"}
+                  </div>
+                  <div style={{ fontSize:12, opacity:.85, marginTop:2 }}>
+                    {ed ? "Quick-edit isolation flags · equipment · precaution" : "Bed metadata · admission summary"}
+                  </div>
+                </div>
+                <button
+                  onClick={() => !bedInfoSaving && setBedInfoModal(false)}
+                  disabled={bedInfoSaving}
+                  style={{ background:"rgba(255,255,255,.18)", border:"none", color:"#fff",
+                    width:32, height:32, borderRadius:8, cursor: bedInfoSaving ? "not-allowed" : "pointer" }}
+                >
+                  <i className="pi pi-times" />
+                </button>
+              </div>
+
+              {/* Scrollable body */}
+              <div style={{ padding:"18px 22px", overflowY:"auto" }}>
+                {/* ── Bed metadata (always visible) ── */}
+                <div style={{ marginBottom:18 }}>
+                  <div style={{ fontSize:11, fontWeight:800, color:"#0e7490", textTransform:"uppercase", letterSpacing:".5px", marginBottom:8 }}>
+                    Location &amp; category
+                  </div>
+                  {row("Building",       b.buildingName)}
+                  {row("Floor",          b.floorNumber)}
+                  {row("Ward",           b.wardName)}
+                  {row("Room",           b.roomNumber)}
+                  {row("Category",       cat)}
+                  {row("Status",         b.status)}
+                  {row("Per-day charge", b.pricing?.perDayCharge != null ? `₹${Number(b.pricing.perDayCharge).toLocaleString("en-IN")}` : "—")}
+                </div>
+
+                {/* ── Current admission summary (only when occupied) ── */}
+                {b.status === "Occupied" && b.currentAdmission && (
+                  <div style={{ marginBottom:18 }}>
+                    <div style={{ fontSize:11, fontWeight:800, color:"#7c3aed", textTransform:"uppercase", letterSpacing:".5px", marginBottom:8 }}>
+                      Current admission
+                    </div>
+                    {row("Patient",       b.currentAdmission?.patientId?.fullName || b.currentAdmission?.patientName)}
+                    {row("UHID",          b.currentAdmission?.patientId?.UHID || b.currentAdmission?.UHID)}
+                    {row("Admitted",      adt)}
+                    {row("Type",          b.currentAdmission?.admissionType)}
+                    {row("Attending",     resolveDoctorName(b.currentAdmission))}
+                  </div>
+                )}
+
+                {/* ── Precaution level ── */}
+                <div style={{ marginBottom:14 }}>
+                  <div style={{ fontSize:11, fontWeight:800, color:"#dc2626", textTransform:"uppercase", letterSpacing:".5px", marginBottom:8 }}>
+                    Precaution level
+                  </div>
+                  {ed ? (
+                    <div style={{ display:"flex", gap:8 }}>
+                      {["Standard","Enhanced","Strict"].map(lvl => (
+                        <button
+                          key={lvl}
+                          onClick={() => setBedInfoForm({ ...bedInfoForm, precautionLevel: lvl })}
+                          style={{
+                            flex:1, padding:"9px 12px", borderRadius:8,
+                            border: bedInfoForm.precautionLevel === lvl ? "2px solid #dc2626" : "1px solid #e2e8f0",
+                            background: bedInfoForm.precautionLevel === lvl ? "#fef2f2" : "#fff",
+                            color: bedInfoForm.precautionLevel === lvl ? "#b91c1c" : "#475569",
+                            fontWeight:700, cursor:"pointer", fontSize:13,
+                          }}
+                        >{lvl}</button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize:14, fontWeight:700 }}>{bedInfoForm.precautionLevel || "Standard"}</div>
+                  )}
+                </div>
+
+                {/* ── Isolation flags ── */}
+                <div style={{ marginBottom:14 }}>
+                  <div style={{ fontSize:11, fontWeight:800, color:"#dc2626", textTransform:"uppercase", letterSpacing:".5px", marginBottom:8 }}>
+                    Isolation flags
+                  </div>
+                  {ed ? (
+                    <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8 }}>
+                      {FLAGS.map(f => {
+                        const on = (bedInfoForm.isolationFlags || []).includes(f);
+                        return (
+                          <label key={f} style={{
+                            display:"flex", alignItems:"center", gap:6, padding:"6px 8px",
+                            borderRadius:6, border: on ? "1.5px solid #dc2626" : "1px solid #e2e8f0",
+                            background: on ? "#fef2f2" : "#fff", cursor:"pointer",
+                            fontSize:12, fontWeight:600,
+                            color: on ? "#b91c1c" : "#475569",
+                          }}>
+                            <input type="checkbox" checked={on} onChange={() => toggleFlag(f)} />
+                            {f}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize:13 }}>
+                      {(bedInfoForm.isolationFlags && bedInfoForm.isolationFlags.length)
+                        ? bedInfoForm.isolationFlags.join(", ") : "None"}
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Isolation notes ── */}
+                <div style={{ marginBottom:14 }}>
+                  <div style={{ fontSize:11, fontWeight:800, color:"#64748b", textTransform:"uppercase", letterSpacing:".5px", marginBottom:6 }}>
+                    Isolation notes
+                  </div>
+                  {ed ? (
+                    <textarea
+                      value={bedInfoForm.isolationNotes || ""}
+                      onChange={e => setBedInfoForm({ ...bedInfoForm, isolationNotes: e.target.value })}
+                      rows={2}
+                      placeholder="Reverse isolation — neutropenic patient, etc."
+                      style={{ width:"100%", padding:"8px 10px", borderRadius:6, border:"1px solid #e2e8f0", fontSize:13, fontFamily:"inherit", resize:"vertical" }}
+                    />
+                  ) : (
+                    <div style={{ fontSize:13, whiteSpace:"pre-wrap" }}>{bedInfoForm.isolationNotes || "—"}</div>
+                  )}
+                </div>
+
+                {/* ── Equipment ── */}
+                <div style={{ marginBottom:8 }}>
+                  <div style={{ fontSize:11, fontWeight:800, color:"#0891b2", textTransform:"uppercase", letterSpacing:".5px", marginBottom:6 }}>
+                    Equipment (comma-separated)
+                  </div>
+                  {ed ? (
+                    <input
+                      type="text"
+                      value={bedInfoForm.equipment || ""}
+                      onChange={e => setBedInfoForm({ ...bedInfoForm, equipment: e.target.value })}
+                      placeholder="Ventilator, Cardiac monitor, Suction pump"
+                      style={{ width:"100%", padding:"9px 10px", borderRadius:6, border:"1px solid #e2e8f0", fontSize:13 }}
+                    />
+                  ) : (
+                    <div style={{ fontSize:13 }}>{bedInfoForm.equipment || "None recorded"}</div>
+                  )}
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div style={{ padding:"14px 22px", borderTop:"1px solid #e2e8f0", display:"flex", gap:10, justifyContent:"flex-end" }}>
+                {!ed && (
+                  <button
+                    onClick={() => setBedInfoEditMode(true)}
+                    style={{ padding:"9px 18px", borderRadius:8, border:"1px solid #0891b2", background:"#fff", color:"#0e7490", fontWeight:700, cursor:"pointer" }}
+                  >
+                    <i className="pi pi-pencil" style={{ marginRight:6 }} />
+                    Edit
+                  </button>
+                )}
+                <button
+                  onClick={() => !bedInfoSaving && setBedInfoModal(false)}
+                  disabled={bedInfoSaving}
+                  style={{ padding:"9px 18px", borderRadius:8, border:"1px solid #e2e8f0", background:"#fff", color:"#475569", fontWeight:700, cursor: bedInfoSaving ? "not-allowed" : "pointer" }}
+                >Close</button>
+                {ed && (
+                  <button
+                    onClick={saveBedInfo}
+                    disabled={bedInfoSaving}
+                    style={{
+                      padding:"9px 22px", borderRadius:8, border:"none",
+                      background:"linear-gradient(135deg,#0891b2,#0e7490)", color:"#fff",
+                      fontWeight:700, cursor: bedInfoSaving ? "not-allowed" : "pointer",
+                      boxShadow:"0 4px 14px rgba(8,145,178,.35)",
+                    }}
+                  >
+                    {bedInfoSaving ? "Saving…" : "Save changes"}
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+      </Dialog>
+
       {/* ── Status-aware Bed Action Menu (opens on bed click) ── */}
       <BedActionMenu
         bed={actionMenuBed}
@@ -3686,22 +3968,8 @@ const BedVisualLayout = ({ onRefreshParent }) => {
             setActionMenuBed(null);
             toast.current?.show({ severity: "info", summary: "Reserve bed", detail: "Reservation workflow opens here (use PATCH /:id/status with status=Reserved + reservedUntil)", life: 4000 });
           },
-          onIsolation: (bed) => {
-            setActionMenuBed(null);
-            // Open the bed-edit drawer in place (same flow as Manage Beds →
-            // Edit Bed). Isolation flags live on the Bed record, not the
-            // admission, so this works for any bed status.
-            openEdit(bed);
-            toast.current?.show({ severity: "info", summary: "Edit isolation flags",
-              detail: `Update precaution flags on the Edit Bed form for ${bed.bedNumber}, then Save.`, life: 4000 });
-          },
-          onEquipment: (bed) => {
-            setActionMenuBed(null);
-            // Equipment manifest is on the Bed record — open Edit Bed.
-            openEdit(bed);
-            toast.current?.show({ severity: "info", summary: "Edit equipment",
-              detail: `Update equipment manifest on the Edit Bed form for ${bed.bedNumber}, then Save.`, life: 4000 });
-          },
+          onIsolation: (bed) => openBedInfo(bed, true),
+          onEquipment: (bed) => openBedInfo(bed, true),
           onMaintenance: async (bed) => {
             setActionMenuBed(null);
             try {
@@ -3724,7 +3992,17 @@ const BedVisualLayout = ({ onRefreshParent }) => {
           },
 
           // Occupied
-          onViewPatient: (bed) => { setActionMenuBed(null); handleOccupied(bed); },
+          onViewPatient: async (bed) => {
+            setActionMenuBed(null);
+            const uhid = await resolveBedUHID(bed);
+            if (uhid) {
+              // Full clinical timeline: diagnoses, notes, orders, bills
+              window.location.href = `/patient-file/${encodeURIComponent(uhid)}`;
+            } else {
+              // No UHID resolvable — fall back to the in-place detail modal
+              handleOccupied(bed);
+            }
+          },
           onDoctorNotes: async (bed) => {
             setActionMenuBed(null);
             const uhid = await resolveBedUHID(bed);
@@ -3757,10 +4035,24 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               const data = await r.json();
               if (data?.success && data?.data) {
                 const est = data.data;
+                // Backend (bedService.estimateCharges) returns:
+                //   { bedId, bedNumber, daysOccupied, estimatedCharges }
+                // The old toast read est.days / est.total — wrong keys,
+                // so the user always saw "0 day(s) · approx ₹0".
+                const days   = est.daysOccupied ?? est.days ?? 0;
+                const charge = est.estimatedCharges ?? est.total ?? 0;
                 toast.current?.show({
-                  severity: "info", summary: `Bed ${bed.bedNumber} estimate`,
-                  detail: `${est.days || 0} day(s) · approx ₹${(est.total || 0).toLocaleString("en-IN")}`,
-                  life: 5000,
+                  severity: "info",
+                  summary: `Bed ${bed.bedNumber} estimate`,
+                  detail:  `${days} day(s) · approx ₹${Number(charge).toLocaleString("en-IN")}`,
+                  life:    6000,
+                });
+              } else {
+                toast.current?.show({
+                  severity: "warn",
+                  summary:  "No estimate available",
+                  detail:   data?.message || "Estimate could not be computed for this bed.",
+                  life:     3500,
                 });
               }
             } catch (e) {
@@ -3872,18 +4164,11 @@ const BedVisualLayout = ({ onRefreshParent }) => {
           },
 
           // Common
-          onInfo: (bed) => {
-            setActionMenuBed(null);
-            // For Occupied beds re-use the existing detail modal which
-            // already shows full bed + patient info. For others fall
-            // back to a toast summary.
-            if (bed.status === "Occupied") handleOccupied(bed);
-            else toast.current?.show({
-              severity: "info", summary: `Bed ${bed.bedNumber}`,
-              detail: `Ward: ${bed.wardName || "—"} · Room: ${bed.roomNumber || "—"} · Floor: ${bed.floorNumber || "—"}`,
-              life: 4000,
-            });
-          },
+          // Bed Information shows the bed-level metadata dialog (room /
+          // floor / category / equipment / isolation / history). For
+          // occupied beds the View Patient File button handles the
+          // clinical timeline — they're two different things now.
+          onInfo: (bed) => openBedInfo(bed, false),
         }}
       />
     </div>

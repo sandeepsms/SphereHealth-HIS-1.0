@@ -790,6 +790,17 @@ function MARPageContent({ selectedPatient }) {
     }
   }, [selectedPatient]);
 
+  /* Auto-load when /mar?uhid=… is opened from /bed-visual.
+     /api/mar/ipd/:ipd works with UHID, ipdNo, or bedNumber — pass UHID
+     straight through and let the search() function resolve it. */
+  useEffect(() => {
+    const u = new URLSearchParams(window.location.search).get("uhid");
+    if (!u || !u.trim()) return;
+    setSearchIPD(u.trim());
+    setTimeout(() => document.getElementById("mar-search-btn")?.click(), 200);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function search() {
     if(!searchIPD.trim()) return;
     setLoading(true);

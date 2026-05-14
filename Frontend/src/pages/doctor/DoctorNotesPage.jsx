@@ -249,6 +249,31 @@ function DoctorNotesContent({ selectedPatient }) {
     if (selectedPatient?.UHID) setSearchUHID(selectedPatient.UHID);
   }, [selectedPatient]);
 
+  /* Auto-load when /doctor-notes?uhid=… is opened from /bed-visual */
+  useEffect(() => {
+    const u = new URLSearchParams(window.location.search).get("uhid");
+    if (!u || !u.trim()) return;
+    setSearchUHID(u.trim());
+    (async () => {
+      setLoading(true);
+      try {
+        const { data } = await axios.get(
+          `${API_ENDPOINTS.ADMISSIONS}/active?UHID=${encodeURIComponent(u.trim())}`,
+        );
+        const arr = Array.isArray(data) ? data : data.data || [];
+        const active = arr[0];
+        if (active) {
+          setPatient(active);
+          await fetchNotes(active.ipdNo || active.admissionNumber || active._id);
+        }
+      } catch (_) { /* silent — user can still search manually */ }
+      finally { setLoading(false); }
+    })();
+    // run only once on mount — subsequent in-page UHID switches go
+    // through loadPatient(), not the URL.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /* Fetch patients on mount — primary IPD list + consulting list */
   useEffect(() => {
     (async () => {

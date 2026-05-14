@@ -231,6 +231,29 @@ function NursingNotesContent({ selectedPatient }) {
     if (selectedPatient?.UHID) setSearchUHID(selectedPatient.UHID);
   }, [selectedPatient]);
 
+  /* Auto-load when /nursing-notes?uhid=… is opened from /bed-visual */
+  useEffect(() => {
+    const u = new URLSearchParams(window.location.search).get("uhid");
+    if (!u || !u.trim()) return;
+    setSearchUHID(u.trim());
+    (async () => {
+      try {
+        const { data } = await axios.get(
+          `${API_ENDPOINTS.ADMISSIONS}/active?UHID=${encodeURIComponent(u.trim())}`,
+        );
+        const arr = Array.isArray(data) ? data : data.data || [];
+        const active = arr[0];
+        if (active) {
+          setPatient(active);
+          const ipd = active.ipdNo || active.admissionNumber || active._id;
+          setIpdNoForDraft(ipd);
+          await fetchNotes(ipd, active);
+        }
+      } catch (_) { /* silent — user can still search manually */ }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [patient,    setPatient]    = useState(null);
   const [notes,      setNotes]      = useState([]);
   const [loading,    setLoading]    = useState(false);
