@@ -395,25 +395,44 @@ function LabDashboard({ user, role }) {
 ══════════════════════════════════════════════════════════════════ */
 function AccountantDashboard({ user }) {
   const navigate = useNavigate();
+  const [stats, setStats] = useState({});
+  useEffect(() => { (async () => {
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const r = await axios.get(`${API}/billing/collection-summary?date=${today}`, authHdr());
+      const s = r.data?.summary || {};
+      setStats({
+        collected: s.totalCollected,
+        gross:     s.totalGross,
+        outstand:  s.totalPending,
+        tpaPend:   s.tpaPending,
+        txns:      s.txnCount,
+        advance:   s.advanceDue,
+      });
+    } catch {}
+  })(); }, []);
   return (
     <>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
-        <KPI label="Today's collection" value="—" color={C.green}   icon="pi-money-bill" />
-        <KPI label="Bills generated"    value="—" color={C.blue}    icon="pi-receipt" />
-        <KPI label="Refunds today"      value="—" color={C.red}     icon="pi-undo" />
-        <KPI label="TPA outstanding"    value="—" color={C.purple}  icon="pi-briefcase" />
-        <KPI label="Pending discounts"  value="—" color={C.amber}   icon="pi-percentage" />
+        <KPI label="Today's collection"  value={stats.collected != null ? fmtINR(stats.collected) : "—"} color={C.green}  icon="pi-money-bill" />
+        <KPI label="Today's gross"       value={stats.gross != null ? fmtINR(stats.gross) : "—"}        color={C.blue}   icon="pi-receipt" />
+        <KPI label="Outstanding today"   value={stats.outstand != null ? fmtINR(stats.outstand) : "—"} color={C.red}    icon="pi-clock" />
+        <KPI label="TPA pending"         value={stats.tpaPend != null ? fmtINR(stats.tpaPend) : "—"}   color={C.purple} icon="pi-briefcase" />
+        <KPI label="IPD advance due"     value={stats.advance != null ? fmtINR(stats.advance) : "—"}   color={C.amber}  icon="pi-home" />
+        <KPI label="Transactions"        value={stats.txns ?? "—"}                                      color={C.teal}   icon="pi-list" />
       </div>
 
       <div style={{ display: "grid", gap: 14 }}>
         <Card title="Quick actions" color={C.amber} icon="pi-bolt">
           <QuickActionsGrid items={[
-            { icon: "pi-receipt",      label: "Generate Bill",    sub: "Final / interim bill",            color: C.amber,   onClick: () => navigate("/billing") },
-            { icon: "pi-undo",         label: "Refunds",          sub: "Process refund requests",         color: C.red,     onClick: () => navigate("/billing") },
-            { icon: "pi-chart-line",   label: "Billing Intelligence",sub: "Collection · trends · KPIs",   color: C.green,   onClick: () => navigate("/billing-intelligence") },
-            { icon: "pi-briefcase",    label: "TPA / Cashless",   sub: "Insurance claims",                color: C.purple,  onClick: () => navigate("/tpa-cases") },
-            { icon: "pi-percentage",   label: "GST Summary",      sub: "Tax breakdown · GSTR feeder",     color: C.blue,    onClick: () => navigate("/pharmacy?tab=registers") },
-            { icon: "pi-shield",       label: "Audit Trail",      sub: "Every billing action logged",     color: C.teal,    onClick: () => navigate("/billing-audit-trail") },
+            { icon: "pi-book",         label: "Day Book",          sub: "Today's collection by mode / visit / doctor", color: C.amber,   onClick: () => navigate("/accounts?tab=daybook") },
+            { icon: "pi-chart-line",   label: "Revenue (MTD)",     sub: "Hospital + pharmacy month-to-date",           color: C.green,   onClick: () => navigate("/accounts?tab=revenue") },
+            { icon: "pi-percentage",   label: "GST Returns",       sub: "CGST / SGST / IGST bucket-wise",              color: C.purple,  onClick: () => navigate("/accounts?tab=gst") },
+            { icon: "pi-clock",        label: "Outstanding",       sub: "TPA pending · IPD advance",                   color: C.teal,    onClick: () => navigate("/accounts?tab=outstanding") },
+            { icon: "pi-undo",         label: "Refunds & Cancels", sub: "Process / review refund queue",               color: C.red,     onClick: () => navigate("/accounts?tab=refunds") },
+            { icon: "pi-receipt",      label: "Generate Bill",     sub: "Patient bill · payment recording",            color: C.blue,    onClick: () => navigate("/billing") },
+            { icon: "pi-briefcase",    label: "TPA / Cashless",    sub: "Insurance claims",                            color: C.purple,  onClick: () => navigate("/tpa-cases") },
+            { icon: "pi-shield",       label: "Audit Trail",       sub: "Every billing action logged",                 color: C.teal,    onClick: () => navigate("/billing-audit-trail") },
           ]} />
         </Card>
         <AccessSnapshot role={user.role} />

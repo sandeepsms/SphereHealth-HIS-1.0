@@ -222,6 +222,26 @@ const NAV = [
     ],
   },
 
+  /* ── Accounts & Finance — dedicated Accountant workspace ── */
+  /* Centralises daily collection, GST returns, outstanding (TPA + IPD
+     advance), refund / cancellation queue, and the audit trail.
+     Visible to Accountant + Admin; everything inside hits existing
+     billing / pharmacy register endpoints. */
+  {
+    id: "accounts", label: "Accounts & Finance",
+    icon: "pi-wallet", color: "#15803d", light: "#f0fdf4",
+    roles: [ADMIN, AC],
+    items: [
+      { label: "Accounts Console",     icon: "pi-th-large",    path: "/accounts",                 badge: "NEW",  roles: [ADMIN, AC] },
+      { label: "Day Book",             icon: "pi-book",        path: "/accounts?tab=daybook",                    roles: [ADMIN, AC] },
+      { label: "Revenue (MTD)",        icon: "pi-chart-line",  path: "/accounts?tab=revenue",                    roles: [ADMIN, AC] },
+      { label: "GST Returns",          icon: "pi-percentage",  path: "/accounts?tab=gst",                        roles: [ADMIN, AC] },
+      { label: "Outstanding",          icon: "pi-clock",       path: "/accounts?tab=outstanding",                roles: [ADMIN, AC] },
+      { label: "Refunds & Audit",      icon: "pi-undo",        path: "/accounts?tab=refunds",                    roles: [ADMIN, AC] },
+      { label: "Pharmacy Sales Reg.",  icon: "pi-receipt",     path: "/pharmacy?tab=registers",                  roles: [ADMIN, AC] },
+    ],
+  },
+
   /* ── Masters & Admin ─────────────────────────────────── */
   {
     id: "masters", label: "Masters & Admin",
