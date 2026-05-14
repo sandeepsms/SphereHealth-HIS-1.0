@@ -920,7 +920,38 @@ const BedVisualLayout = ({ onRefreshParent }) => {
   };
 
   const openDischarge = (adm, bed) => {
+    // ── New workflow (May 2026) ──
+    // The discharge process is now a 4-step pipeline:
+    //   1. Doctor fills the proper NABH discharge-summary format
+    //   2. Nurse adds the discharge nursing note
+    //   3. Reception clears the final payment
+    //   4. Finalize → admission becomes Discharged + bed released
+    // The simple "condition + notes" modal below is kept only as a
+    // fallback for the rare case where we can't resolve the UHID.
     setDetailModal(false);
+    const uhid =
+      adm?.UHID ||
+      adm?.patientUHID ||
+      adm?.patientId?.UHID ||
+      bed?.currentUHID ||
+      "";
+    if (uhid) {
+      try {
+        sessionStorage.setItem(
+          "discharge_context",
+          JSON.stringify({
+            uhid,
+            bedId:        getId(bed?._id),
+            bedNumber:    bed?.bedNumber,
+            admissionId:  getId(adm?._id),
+            startedAt:    new Date().toISOString(),
+          }),
+        );
+      } catch (_) {}
+      window.location.href = `/discharge-summary?uhid=${encodeURIComponent(uhid)}`;
+      return;
+    }
+    // Fallback: open the legacy simple discharge modal.
     setDischargeAdm(adm);
     setDischargeBed(bed);
     setDischargePatient(detailPatient);
