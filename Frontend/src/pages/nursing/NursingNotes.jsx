@@ -16,6 +16,7 @@ import NurseOrdersPanel from "../../Components/clinical/NurseOrdersPanel";
 import TreatmentChart from "../../Components/clinical/TreatmentChart";
 import FingerprintConsentModal from "../../Components/clinical/FingerprintConsentModal";
 import IntegratedVitalsPanel from "../../Components/clinical/IntegratedVitalsPanel";
+import { saveVitalSheet, getVitalSheet } from "../../Services/vital/vitalService";
 import NursingPatientReport from "../../Components/nursing/NursingPatientReport";
 
 /* ── Design tokens ── */
@@ -700,6 +701,81 @@ function NursingNotesContent({ selectedPatient }) {
     setLoading(true);
     try {
       await axios.post(API_ENDPOINTS.NURSE_NOTES, payload);
+
+      /* ── Dual-write to VitalSheet so the trend chart populates ───────────
+         NurseNote.vitals lives on the clinical note doc; the trend chart
+         inside the Vital Signs module reads /api/vitalsheet. Without this
+         second write the chart stayed empty after every Sign & Submit and
+         the nurse had to re-key the same numbers in the standalone /vitalSheet
+         page. Mirror the vitals payload into the time-slotted vitalsheet
+         row keyed by today's date + current time.
+      ─────────────────────────────────────────────────────────────────── */
+      if (activeModal === "vitals" || activeModal === "initial") {
+        try {
+          const uhid = patient.patientUHID || patient.UHID || patient.uhid || searchUHID;
+          const v = activeModal === "initial" ? initialAssess : vitals;
+          // Map both vital module + initial-assessment shape into VitalSheet values
+          const values = {};
+          const sbp = v.bp_sys, dbp = v.bp_dia;
+          if (sbp) values["BP Systolic"]  = { value: Number(sbp), unit: "mmHg" };
+          if (dbp) values["BP Diastolic"] = { value: Number(dbp), unit: "mmHg" };
+          if (v.pulse) values["Pulse"]    = { value: Number(v.pulse), unit: "bpm" };
+          if (v.temp)  values["Temperature"] = { value: Number(v.temp), unit: "°F" };
+          if (v.spo2)  values["SpO2"]     = { value: Number(v.spo2), unit: "%" };
+          if (v.rr)    values["Resp Rate"]= { value: Number(v.rr), unit: "/min" };
+          if (v.bsl)   values["BSL"]      = { value: Number(v.bsl), unit: "mg/dL" };
+          if (v.gcs)   values["GCS"]      = { value: v.gcs, unit: "score" };
+          if (v.painScore) values["Pain Score"] = { value: Number(v.painScore), unit: "score" };
+          if (v.weight) values["Weight"]  = { value: Number(v.weight), unit: "kg" };
+
+          if (Object.keys(values).length > 0 && uhid) {
+            const d = new Date();
+            const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+            const timeStr = `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+
+            // Merge with any existing rows for today so we don't clobber
+            // earlier hourly slots — append the new slot and re-sort.
+            let existingRows = [];
+            try {
+              const res = await getVitalSheet(uhid, dateStr);
+              const sheet = Array.isArray(res?.data) ? res.data[0] : res?.data || res;
+              if (sheet?.tableData) existingRows = sheet.tableData;
+            } catch (_) { /* no prior sheet today — fine */ }
+
+            const newRow = {
+              time: timeStr,
+              nurse: user?.fullName || user?.name || "",
+              notes: noteText || "",
+              values,
+            };
+            const merged = existingRows
+              .filter(r => r.time !== newRow.time)
+              .concat(newRow)
+              .sort((a, b) => a.time.localeCompare(b.time));
+
+            const activeVitals = [
+              { name: "BP Systolic",  unit: "mmHg"  },
+              { name: "BP Diastolic", unit: "mmHg"  },
+              { name: "Pulse",        unit: "bpm"   },
+              { name: "Temperature",  unit: "°F"    },
+              { name: "SpO2",         unit: "%"     },
+              { name: "Resp Rate",    unit: "/min"  },
+              { name: "BSL",          unit: "mg/dL" },
+              { name: "GCS",          unit: "score" },
+              { name: "Pain Score",   unit: "score" },
+              { name: "Weight",       unit: "kg"    },
+            ];
+
+            await saveVitalSheet({
+              uhid, date: dateStr, slot: "01 Hours",
+              activeVitals, tableData: merged,
+            });
+          }
+        } catch (e) {
+          // Don't block note save if vitalsheet sync fails — log and continue.
+          console.warn("[NursingNotes] vitalsheet dual-write failed:", e?.message);
+        }
+      }
 
       /* ── When "Initial Assessment" is saved, also mark nurseCompleted
              on the Admission document so the gate lifts immediately.     ── */
