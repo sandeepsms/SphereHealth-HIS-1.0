@@ -131,41 +131,148 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
   const SHEET = { fontFamily: "'DM Sans', 'Inter', system-ui, sans-serif", color: COL.ink, fontSize: 11 };
 
   return (
-    <div className="pr-page" style={{
+    <>
+      {/* Paper-size-scoped compaction. The PrintPreviewPage toolbar sets
+          html[data-paper] when the user picks a size; we use that selector
+          to reflow without re-rendering. Half-A4 (210×148.5mm landscape)
+          is the default — fits exactly ~10 medicine rows + footer totals
+          + header. A5 (148×210mm portrait) is a tighter variant for
+          billing printers. A4 keeps the full A4 layout. */}
+      <style>{`
+        .pr-pharm-bill { font-size: 10.5px; }
+        html[data-paper="half-a4"] .pr-pharm-bill { font-size: 9px; }
+        html[data-paper="a5"]      .pr-pharm-bill { font-size: 8.8px; }
+
+        /* Masthead */
+        .pr-pharm-bill .pb-mast       { padding: 18px 22px; gap: 16px; }
+        .pr-pharm-bill .pb-mast-logo  { width: 64px; height: 64px; padding: 6px; }
+        .pr-pharm-bill .pb-mast-name  { font-size: 20px; }
+        .pr-pharm-bill .pb-mast-line  { font-size: 10.5px; }
+        .pr-pharm-bill .pb-mast-chip  { font-size: 10px; padding: 10px 14px; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-mast       { padding: 9px 16px; gap: 10px; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-mast-logo  { width: 38px; height: 38px; padding: 3px; border-radius: 6px; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-mast-name  { font-size: 13.5px; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-mast-line  { font-size: 8.5px; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-mast-chip  { font-size: 8.5px; padding: 5px 8px; }
+        html[data-paper="a5"]      .pr-pharm-bill .pb-mast       { padding: 9px 14px; gap: 10px; }
+        html[data-paper="a5"]      .pr-pharm-bill .pb-mast-logo  { width: 36px; height: 36px; padding: 3px; }
+        html[data-paper="a5"]      .pr-pharm-bill .pb-mast-name  { font-size: 13px; }
+        html[data-paper="a5"]      .pr-pharm-bill .pb-mast-line  { font-size: 8.5px; }
+        html[data-paper="a5"]      .pr-pharm-bill .pb-mast-chip  { font-size: 8.5px; padding: 5px 8px; }
+
+        /* Title band */
+        .pr-pharm-bill .pb-title { padding: 12px 22px; }
+        .pr-pharm-bill .pb-title-no { font-size: 16px; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-title    { padding: 6px 16px; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-title-no { font-size: 13px; }
+        html[data-paper="a5"]      .pr-pharm-bill .pb-title    { padding: 6px 14px; }
+        html[data-paper="a5"]      .pr-pharm-bill .pb-title-no { font-size: 12.5px; }
+
+        /* Billed-to */
+        .pr-pharm-bill .pb-billto { padding: 14px 22px; gap: 18px; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-billto { padding: 7px 16px 5px; gap: 10px; }
+        html[data-paper="a5"]      .pr-pharm-bill .pb-billto { padding: 7px 14px 5px; gap: 10px; }
+
+        /* Sch-H banner */
+        .pr-pharm-bill .pb-schh { margin: 0 22px 12px; padding: 8px 12px; font-size: 10.5px; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-schh { margin: 0 16px 6px; padding: 4px 10px; font-size: 8.5px; }
+        html[data-paper="a5"]      .pr-pharm-bill .pb-schh { margin: 0 14px 6px; padding: 4px 10px; font-size: 8.5px; }
+
+        /* Item table */
+        .pr-pharm-bill .pb-tableWrap { padding: 0 22px; }
+        .pr-pharm-bill .pb-table th  { padding: 9px 10px; font-size: 9.5px; }
+        .pr-pharm-bill .pb-table td  { padding: 8px 10px; font-size: 10.5px; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-tableWrap { padding: 0 16px; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-table th  { padding: 4px 7px; font-size: 8px; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-table td  { padding: 3px 7px; font-size: 8.6px; line-height: 1.2; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-table .pb-cell-mono { font-size: 8px; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-table .pb-cell-sub  { font-size: 7.5px; }
+        html[data-paper="a5"]      .pr-pharm-bill .pb-tableWrap { padding: 0 14px; }
+        html[data-paper="a5"]      .pr-pharm-bill .pb-table th  { padding: 4px 6px; font-size: 7.8px; }
+        html[data-paper="a5"]      .pr-pharm-bill .pb-table td  { padding: 3px 6px; font-size: 8.4px; line-height: 1.2; }
+
+        /* HSN + Totals split */
+        .pr-pharm-bill .pb-twocol { padding: 0 22px 14px; gap: 14px; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-twocol { padding: 0 16px 6px; gap: 8px; }
+        html[data-paper="a5"]      .pr-pharm-bill .pb-twocol { padding: 0 14px 6px; gap: 8px; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-hsn-section-title,
+        html[data-paper="a5"]      .pr-pharm-bill .pb-hsn-section-title { padding: 4px 9px !important; font-size: 8px !important; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-hsn-table th,
+        html[data-paper="a5"]      .pr-pharm-bill .pb-hsn-table th { padding: 3px 7px !important; font-size: 7.5px !important; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-hsn-table td,
+        html[data-paper="a5"]      .pr-pharm-bill .pb-hsn-table td { padding: 3px 7px !important; font-size: 8.3px !important; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-totals-card-body,
+        html[data-paper="a5"]      .pr-pharm-bill .pb-totals-card-body { padding: 6px 10px !important; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-totals-row,
+        html[data-paper="a5"]      .pr-pharm-bill .pb-totals-row { padding: 2px 0 !important; font-size: 9px !important; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-grand,
+        html[data-paper="a5"]      .pr-pharm-bill .pb-grand { margin-top: 6px !important; padding: 6px 10px !important; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-grand-num,
+        html[data-paper="a5"]      .pr-pharm-bill .pb-grand-num { font-size: 14px !important; }
+
+        /* Amount in words */
+        .pr-pharm-bill .pb-words { margin: 0 22px 14px; padding: 10px 14px; font-size: 10.5px; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-words { margin: 0 16px 5px; padding: 4px 10px; font-size: 8.5px; }
+        html[data-paper="a5"]      .pr-pharm-bill .pb-words { margin: 0 14px 5px; padding: 4px 10px; font-size: 8.5px; }
+
+        /* Footer */
+        .pr-pharm-bill .pb-foot { padding: 0 22px 22px; gap: 18px; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-foot { padding: 0 16px 6px; gap: 10px; }
+        html[data-paper="a5"]      .pr-pharm-bill .pb-foot { padding: 0 14px 6px; gap: 10px; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-foot,
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-foot * { font-size: 8.5px; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-sign-line { height: 20px !important; }
+
+        /* Terms */
+        .pr-pharm-bill .pb-terms { padding: 12px 22px; font-size: 9px; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-terms { padding: 4px 16px; font-size: 7.5px; }
+        html[data-paper="a5"]      .pr-pharm-bill .pb-terms { padding: 4px 14px; font-size: 7.5px; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-terms ol,
+        html[data-paper="a5"]      .pr-pharm-bill .pb-terms ol { padding-left: 14px; margin: 0; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-terms li,
+        html[data-paper="a5"]      .pr-pharm-bill .pb-terms li { line-height: 1.35; }
+
+        /* Print page — never paginate the bill across pages */
+        @media print {
+          .pr-pharm-bill { page-break-inside: avoid; }
+        }
+      `}</style>
+
+    <div className="pr-page pr-pharm-bill" style={{
       ...SHEET,
       "--pr-header-color": id.color,
       "--pr-accent-color": id.accent,
       padding: 0,
     }}>
       {/* ════ MASTHEAD ════ */}
-      <div style={{
+      <div className="pb-mast" style={{
         background: `linear-gradient(135deg, ${id.color} 0%, ${id.accent} 100%)`,
-        color: "#fff", padding: "18px 22px",
-        display: "flex", alignItems: "center", gap: 16,
+        color: "#fff",
+        display: "flex", alignItems: "center",
       }}>
         {id.logo && (
-          <img src={id.logo} alt="" style={{
-            width: 64, height: 64, objectFit: "contain",
-            background: "#fff", padding: 6, borderRadius: 10,
+          <img src={id.logo} alt="" className="pb-mast-logo" style={{
+            objectFit: "contain",
+            background: "#fff", borderRadius: 10,
           }} />
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: "-.3px", lineHeight: 1.15 }}>
+          <div className="pb-mast-name" style={{ fontWeight: 800, letterSpacing: "-.3px", lineHeight: 1.15 }}>
             {id.name}
             {id.isOutsourced && (
               <span style={{
-                marginLeft: 10, fontSize: 9, fontWeight: 800,
-                padding: "3px 8px", borderRadius: 4,
+                marginLeft: 10, fontSize: 8.5, fontWeight: 800,
+                padding: "2px 7px", borderRadius: 3,
                 background: "rgba(255,255,255,.22)", border: "1px solid rgba(255,255,255,.35)",
                 verticalAlign: "middle", letterSpacing: ".5px",
               }}>OUTSOURCED PHARMACY</span>
             )}
           </div>
-          {id.tagline && <div style={{ fontSize: 11.5, opacity: .9, marginTop: 3 }}>{id.tagline}</div>}
-          <div style={{ fontSize: 10.5, opacity: .85, marginTop: 6, lineHeight: 1.45 }}>
+          {id.tagline && <div className="pb-mast-line" style={{ opacity: .9, marginTop: 2 }}>{id.tagline}</div>}
+          <div className="pb-mast-line" style={{ opacity: .85, marginTop: 4, lineHeight: 1.35 }}>
             {id.addressStr}
             {(id.phone || id.email) && (
-              <div style={{ marginTop: 2 }}>
+              <div style={{ marginTop: 1 }}>
                 {id.phone && <>📞 {id.phone}</>}
                 {id.phone && id.email && " · "}
                 {id.email && <>✉ {id.email}</>}
@@ -173,9 +280,9 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
             )}
           </div>
         </div>
-        <div style={{
-          textAlign: "right", fontSize: 10, opacity: .92,
-          background: "rgba(0,0,0,.18)", padding: "10px 14px", borderRadius: 8,
+        <div className="pb-mast-chip" style={{
+          textAlign: "right", opacity: .92,
+          background: "rgba(0,0,0,.18)", borderRadius: 7,
         }}>
           {id.gstin       && <div><span style={{ opacity: .75 }}>GSTIN</span> · <b style={{ fontFamily: "DM Mono, monospace" }}>{id.gstin}</b></div>}
           {id.drugLicense && <div style={{ marginTop: 3 }}><span style={{ opacity: .75 }}>D.L.</span> · <b style={{ fontFamily: "DM Mono, monospace" }}>{id.drugLicense}</b></div>}
@@ -184,27 +291,27 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
       </div>
 
       {/* ════ INVOICE TITLE BAND ════ */}
-      <div style={{
+      <div className="pb-title" style={{
         display: "flex", alignItems: "center", justifyContent: "space-between",
-        padding: "12px 22px", borderBottom: `1.5px solid ${COL.line}`,
+        borderBottom: `1.5px solid ${COL.line}`,
         background: COL.soft,
       }}>
         <div>
-          <div style={{ fontSize: 9.5, fontWeight: 800, color: COL.mute, letterSpacing: ".8px", textTransform: "uppercase" }}>Tax Invoice</div>
-          <div style={{ fontSize: 16, fontWeight: 800, color: id.accent, fontFamily: "DM Mono, monospace", marginTop: 2 }}>
+          <div style={{ fontSize: 8.5, fontWeight: 800, color: COL.mute, letterSpacing: ".8px", textTransform: "uppercase" }}>Tax Invoice</div>
+          <div className="pb-title-no" style={{ fontWeight: 800, color: id.accent, fontFamily: "DM Mono, monospace", marginTop: 1 }}>
             {r.billNumber || "PHM-NEW"}
           </div>
         </div>
         <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 9.5, color: COL.mute, fontWeight: 700, letterSpacing: ".5px", textTransform: "uppercase" }}>Issued on</div>
-          <div style={{ fontSize: 12, fontWeight: 700, marginTop: 2 }}>
+          <div style={{ fontSize: 8.5, color: COL.mute, fontWeight: 700, letterSpacing: ".5px", textTransform: "uppercase" }}>Issued on</div>
+          <div style={{ fontSize: 10.5, fontWeight: 700, marginTop: 1 }}>
             {r.createdAt ? new Date(r.createdAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : new Date().toLocaleString("en-IN")}
           </div>
         </div>
       </div>
 
       {/* ════ BILLED-TO + INVOICE META ════ */}
-      <div style={{ padding: "14px 22px", display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 18 }}>
+      <div className="pb-billto" style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr" }}>
         <div>
           <div style={{ fontSize: 9.5, fontWeight: 800, color: COL.mute, letterSpacing: ".8px", textTransform: "uppercase", marginBottom: 6 }}>Billed to</div>
           <div style={{ fontSize: 14, fontWeight: 800, color: COL.ink }}>{r.patientName || "Walk-in customer"}</div>
@@ -235,18 +342,17 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
 
       {/* ════ SCHEDULE-H BANNER (if any controlled drug) ════ */}
       {hasControlled && (
-        <div style={{
-          margin: "0 22px 12px", padding: "8px 12px",
+        <div className="pb-schh" style={{
           background: "#fef2f2", border: "1.5px solid #fecaca", borderLeft: "4px solid #dc2626",
-          borderRadius: 6, fontSize: 10.5, color: "#7f1d1d",
+          borderRadius: 5, color: "#7f1d1d",
         }}>
-          <b>⚠ Schedule H / H1 / X medicines dispensed.</b> Sold only on a registered medical practitioner's prescription. Prescription retained for record per Drugs &amp; Cosmetics Rules.
+          <b>⚠ Schedule H / H1 / X medicines dispensed.</b> Sold only on a registered medical practitioner's prescription. Retained for record per Drugs &amp; Cosmetics Rules.
         </div>
       )}
 
       {/* ════ ITEM TABLE ════ */}
-      <div style={{ padding: "0 22px" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10.5, marginBottom: 14 }}>
+      <div className="pb-tableWrap">
+        <table className="pb-table" style={{ width: "100%", borderCollapse: "collapse", marginBottom: 8 }}>
           <thead>
             <tr style={{ background: id.color, color: "#fff" }}>
               <th style={{ padding: "9px 10px", textAlign: "left",   fontSize: 9.5, fontWeight: 800, letterSpacing: ".3px", borderTopLeftRadius: 8 }}>#</th>
@@ -284,10 +390,10 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
                       <span style={{ display: "inline-block", marginTop: 2, padding: "1px 6px", borderRadius: 3, fontSize: 8.5, fontWeight: 800, background: "#fee2e2", color: "#991b1b", border: "1px solid #fecaca" }}>Sch {it.schedule}</span>
                     )}
                   </td>
-                  <td style={{ padding: "8px 10px", fontSize: 10, color: COL.mute, fontFamily: "DM Mono, monospace" }}>{it.hsnCode || "30049099"}</td>
-                  <td style={{ padding: "8px 10px", fontSize: 9.5, fontFamily: "DM Mono, monospace" }}>
+                  <td className="pb-cell-mono" style={{ color: COL.mute, fontFamily: "DM Mono, monospace" }}>{it.hsnCode || "30049099"}</td>
+                  <td className="pb-cell-mono" style={{ fontFamily: "DM Mono, monospace" }}>
                     <div>{it.batchNo || "—"}</div>
-                    <div style={{ color: COL.mute }}>{it.expiryDate ? _fmtDate(it.expiryDate, { month: "short", year: "2-digit" }) : "—"}</div>
+                    <div className="pb-cell-sub" style={{ color: COL.mute }}>{it.expiryDate ? _fmtDate(it.expiryDate, { month: "short", year: "2-digit" }) : "—"}</div>
                   </td>
                   <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 700 }}>{qty}</td>
                   <td style={{ padding: "8px 10px", textAlign: "right" }}>{rate.toFixed(2)}</td>
@@ -303,15 +409,15 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
       </div>
 
       {/* ════ HSN-WISE TAX + TOTALS ════ */}
-      <div style={{ padding: "0 22px 14px", display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 14 }}>
+      <div className="pb-twocol" style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr" }}>
 
         {/* HSN summary */}
-        <div style={{ border: `1px solid ${COL.line}`, borderRadius: 9, overflow: "hidden" }}>
-          <div style={{ padding: "8px 12px", background: COL.soft, borderBottom: `1px solid ${COL.line}`,
-            fontSize: 9.5, fontWeight: 800, color: COL.mute, letterSpacing: ".5px", textTransform: "uppercase" }}>
+        <div style={{ border: `1px solid ${COL.line}`, borderRadius: 8, overflow: "hidden" }}>
+          <div className="pb-hsn-section-title" style={{ padding: "7px 11px", background: COL.soft, borderBottom: `1px solid ${COL.line}`,
+            fontSize: 9, fontWeight: 800, color: COL.mute, letterSpacing: ".5px", textTransform: "uppercase" }}>
             HSN-wise tax summary
           </div>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10.5 }}>
+          <table className="pb-hsn-table" style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ background: "#fff", borderBottom: `1px solid ${COL.line}` }}>
                 <th style={{ padding: "6px 10px", textAlign: "left", color: COL.mute, fontSize: 9, fontWeight: 800, letterSpacing: ".3px" }}>HSN</th>
@@ -370,12 +476,12 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
         </div>
 
         {/* Totals card */}
-        <div style={{ border: `1px solid ${COL.line}`, borderRadius: 9, overflow: "hidden", background: "#fff" }}>
-          <div style={{ padding: "8px 12px", background: COL.soft, borderBottom: `1px solid ${COL.line}`,
-            fontSize: 9.5, fontWeight: 800, color: COL.mute, letterSpacing: ".5px", textTransform: "uppercase" }}>
+        <div style={{ border: `1px solid ${COL.line}`, borderRadius: 8, overflow: "hidden", background: "#fff" }}>
+          <div className="pb-hsn-section-title" style={{ padding: "7px 11px", background: COL.soft, borderBottom: `1px solid ${COL.line}`,
+            fontSize: 9, fontWeight: 800, color: COL.mute, letterSpacing: ".5px", textTransform: "uppercase" }}>
             Payment summary
           </div>
-          <div style={{ padding: "10px 14px" }}>
+          <div className="pb-totals-card-body" style={{ padding: "9px 13px" }}>
             {[
               ["Sub-total",     fmtINR(subTotal),       null],
               ...(totalDisc > 0 ? [["Discount",   `− ${fmtINR(totalDisc)}`, "#dc2626"]] : []),
@@ -385,31 +491,31 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
                 : [["CGST", `+ ${fmtINR(totalTax/2)}`, null], ["SGST", `+ ${fmtINR(totalTax/2)}`, null]]),
               ...(Math.abs(roundOff) >= 0.01 ? [["Round-off", `${roundOff > 0 ? "+ " : "− "}${fmtINR(Math.abs(roundOff))}`, null]] : []),
             ].map(([k, v, c], i) => (
-              <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 11, color: c || COL.ink }}>
+              <div key={i} className="pb-totals-row" style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", fontSize: 10.5, color: c || COL.ink }}>
                 <span style={{ color: COL.mute }}>{k}</span>
                 <span style={{ fontFamily: "DM Mono, monospace" }}>{v}</span>
               </div>
             ))}
 
             {/* Grand total */}
-            <div style={{
-              marginTop: 10, padding: "10px 12px",
+            <div className="pb-grand" style={{
+              marginTop: 8, padding: "9px 12px",
               background: `linear-gradient(135deg, ${id.color}, ${id.accent})`,
-              color: "#fff", borderRadius: 7,
+              color: "#fff", borderRadius: 6,
               display: "flex", justifyContent: "space-between", alignItems: "baseline",
             }}>
-              <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".6px", textTransform: "uppercase", opacity: .9 }}>Grand total</span>
-              <span style={{ fontSize: 19, fontWeight: 800, fontFamily: "DM Mono, monospace" }}>{fmtINR(grandTotal)}</span>
+              <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: ".5px", textTransform: "uppercase", opacity: .9 }}>Grand total</span>
+              <span className="pb-grand-num" style={{ fontSize: 17, fontWeight: 800, fontFamily: "DM Mono, monospace" }}>{fmtINR(grandTotal)}</span>
             </div>
 
             {/* Paid / balance */}
-            <div style={{ marginTop: 10, paddingTop: 8, borderTop: `1px dashed ${COL.line}` }}>
-              <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", fontSize: 11 }}>
+            <div style={{ marginTop: 7, paddingTop: 6, borderTop: `1px dashed ${COL.line}` }}>
+              <div className="pb-totals-row" style={{ display: "flex", justifyContent: "space-between", padding: "2px 0", fontSize: 10.5 }}>
                 <span style={{ color: COL.mute }}>Paid ({r.paymentMode || "Cash"})</span>
                 <b style={{ color: "#16a34a", fontFamily: "DM Mono, monospace" }}>{fmtINR(paid)}</b>
               </div>
               {balance > 0 && (
-                <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", fontSize: 11 }}>
+                <div className="pb-totals-row" style={{ display: "flex", justifyContent: "space-between", padding: "2px 0", fontSize: 10.5 }}>
                   <span style={{ color: COL.mute }}>Balance due</span>
                   <b style={{ color: "#dc2626", fontFamily: "DM Mono, monospace" }}>{fmtINR(balance)}</b>
                 </div>
@@ -420,19 +526,17 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
       </div>
 
       {/* ════ AMOUNT IN WORDS ════ */}
-      <div style={{
-        margin: "0 22px 14px", padding: "10px 14px",
-        background: COL.soft, border: `1px dashed ${id.accent}50`, borderRadius: 7,
-        fontSize: 10.5,
+      <div className="pb-words" style={{
+        background: COL.soft, border: `1px dashed ${id.accent}50`, borderRadius: 6,
       }}>
-        <span style={{ fontWeight: 800, color: id.accent, marginRight: 6, letterSpacing: ".3px", textTransform: "uppercase", fontSize: 9 }}>
+        <span style={{ fontWeight: 800, color: id.accent, marginRight: 6, letterSpacing: ".3px", textTransform: "uppercase", fontSize: 8.5 }}>
           Amount in words
         </span>
         <span style={{ fontWeight: 700 }}>{amountInWords(grandTotal)}</span>
       </div>
 
       {/* ════ FOOTER: bank + signatures + terms ════ */}
-      <div style={{ padding: "0 22px 22px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
+      <div className="pb-foot" style={{ display: "grid", gridTemplateColumns: "1fr 1fr" }}>
         {/* Bank + UPI */}
         {(id.bank?.name || id.bank?.account || id.bank?.upi) && (
           <div>
@@ -450,16 +554,16 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
 
         {/* Signatures */}
         <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
             <div>
-              <div style={{ height: 36, borderBottom: `1.5px solid ${COL.ink}` }} />
-              <div style={{ fontSize: 9.5, color: COL.mute, marginTop: 4, textAlign: "center", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px" }}>
+              <div className="pb-sign-line" style={{ height: 30, borderBottom: `1.5px solid ${COL.ink}` }} />
+              <div style={{ fontSize: 8.5, color: COL.mute, marginTop: 3, textAlign: "center", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px" }}>
                 Pharmacist signature
               </div>
             </div>
             <div>
-              <div style={{ height: 36, borderBottom: `1.5px solid ${COL.ink}` }} />
-              <div style={{ fontSize: 9.5, color: COL.mute, marginTop: 4, textAlign: "center", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px" }}>
+              <div className="pb-sign-line" style={{ height: 30, borderBottom: `1.5px solid ${COL.ink}` }} />
+              <div style={{ fontSize: 8.5, color: COL.mute, marginTop: 3, textAlign: "center", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px" }}>
                 Receiver signature
               </div>
             </div>
@@ -468,7 +572,7 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
       </div>
 
       {/* ════ TERMS + FOOTER NOTE ════ */}
-      <div style={{ padding: "12px 22px", borderTop: `2px solid ${id.color}`, background: COL.soft, fontSize: 9, color: COL.mute, lineHeight: 1.55 }}>
+      <div className="pb-terms" style={{ borderTop: `2px solid ${id.color}`, background: COL.soft, color: COL.mute, lineHeight: 1.45 }}>
         {id.terms.length > 0 && (
           <ol style={{ margin: 0, paddingLeft: 18 }}>
             {id.terms.map((t, i) => <li key={i}>{t}</li>)}
@@ -479,12 +583,13 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
             {id.footerNote}
           </div>
         )}
-        <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 9 }}>
+        <div style={{ marginTop: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span>This is a computer-generated tax invoice.</span>
           <span>Generated · {new Date().toLocaleString("en-IN")}</span>
         </div>
       </div>
     </div>
+    </>
   );
 };
 
