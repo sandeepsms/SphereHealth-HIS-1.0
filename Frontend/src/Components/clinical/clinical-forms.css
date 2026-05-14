@@ -31,23 +31,36 @@
 .his-field,
 .his-select,
 .his-textarea {
-  padding: 9px 12px;
+  padding: 10px 14px;
   border: 1.5px solid var(--his-border, #e2e8f0);
-  border-radius: 8px;
+  border-radius: 9px;
   font-family: 'DM Sans', sans-serif;
-  font-size: 13px;
+  font-size: 13.5px;
   color: var(--his-text, #0f172a);
   outline: none;
   background: #ffffff;
   width: 100%;
   box-sizing: border-box;
-  transition: border-color .15s, box-shadow .15s;
+  transition: border-color .15s, box-shadow .15s, background .15s;
+}
+.his-field:hover:not(:disabled):not(:focus),
+.his-select:hover:not(:disabled):not(:focus),
+.his-textarea:hover:not(:disabled):not(:focus) {
+  border-color: #cbd5e1;
+  background: #fafbfc;
 }
 .his-field:focus,
 .his-select:focus,
 .his-textarea:focus {
   border-color: var(--his-accent, #1e40af);
-  box-shadow: 0 0 0 3px rgba(30, 64, 175, .12);
+  box-shadow: 0 0 0 3px rgba(30, 64, 175, .15);
+  background: #ffffff;
+}
+.his-field::placeholder,
+.his-textarea::placeholder {
+  color: #94a3b8;
+  font-style: italic;
+  font-size: 12.5px;
 }
 .his-field:disabled,
 .his-select:disabled,

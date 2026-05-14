@@ -17,6 +17,7 @@ import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
 import SignaturePad from "../../Components/signature/SignaturePad";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import MLCAutoStamp from "../../Components/mlc/MLCAutoStamp";
+import "../../Components/clinical/clinical-forms.css";
 
 const API = `${API_ENDPOINTS.BASE}/discharge-summary`;
 
@@ -304,43 +305,132 @@ const DEPT_TEMPLATES = [
 
 /* ── Design tokens ── */
 const C = {
-  bg: "#f0f2f5", card: "#fff", border: "#e2e6ea",
-  text: "#1a1d23", muted: "#6b7280",
+  bg: "#f0f2f5", card: "#fff", border: "#e2e8f0",
+  text: "#0f172a", muted: "#64748b", subtle: "#f8fafc",
   green: "#16a34a", red: "#dc2626", amber: "#d97706", blue: "#1e40af",
 };
+
+/* Hex → soft-tint helpers used by Section / DeptBanner. */
+const hexA = (hex, alpha) => {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.slice(0,2), 16), g = parseInt(h.slice(2,4), 16), b = parseInt(h.slice(4,6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+};
+const hexShade = (hex, amount) => {
+  const h = hex.replace("#", "");
+  const r = Math.max(0, Math.min(255, parseInt(h.slice(0,2), 16) + amount));
+  const g = Math.max(0, Math.min(255, parseInt(h.slice(2,4), 16) + amount));
+  const b = Math.max(0, Math.min(255, parseInt(h.slice(4,6), 16) + amount));
+  return `#${r.toString(16).padStart(2,"0")}${g.toString(16).padStart(2,"0")}${b.toString(16).padStart(2,"0")}`;
+};
+
+/* Field wrapper. Label sits above the input with a thin colour stripe on
+   focus so the active field is obvious without changing layout. */
 function F({ label, required, children, hint }) {
   return (
-    <div>
-      <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 4 }}>
+    <div className="ds-field">
+      <label style={{
+        display: "block",
+        fontSize: 10.5,
+        fontWeight: 700,
+        color: C.muted,
+        textTransform: "uppercase",
+        letterSpacing: ".7px",
+        marginBottom: 6,
+      }}>
         {label}{required && <span style={{ color: C.red, marginLeft: 3 }}>*</span>}
       </label>
       {children}
-      {hint && <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>{hint}</div>}
+      {hint && <div style={{ fontSize: 10, color: C.muted, marginTop: 4, fontStyle: "italic" }}>{hint}</div>}
     </div>
   );
 }
-function G2({ children, gap = 14 }) { return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap }}>{children}</div>; }
-function G3({ children }) { return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>{children}</div>; }
-function G4({ children }) { return <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>{children}</div>; }
 
-function Section({ title, icon, color = C.blue, nabh, children, defaultOpen = true }) {
+/* Responsive grids. The fixed 4-column G4 was squeezing fields on narrow
+   viewports — now uses minmax(180px, 1fr) so it gracefully wraps to 3, 2,
+   1 column. G2 / G3 same approach. */
+function G2({ children, gap = 16 }) {
+  return <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap }}>{children}</div>;
+}
+function G3({ children }) {
+  return <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>{children}</div>;
+}
+function G4({ children }) {
+  return <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14 }}>{children}</div>;
+}
+
+/* Section card. Gradient header in dept colour, subtle inner shadow, NABH
+   pill anchored right, collapsible. */
+function Section({ title, icon, color = C.blue, nabh, sub, children, defaultOpen = true, badge }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div style={{ background: C.card, border: `1.5px solid ${color}25`, borderRadius: 12, overflow: "hidden", marginBottom: 14 }}>
+    <div style={{
+      background: C.card,
+      border: `1px solid ${hexA(color, 0.18)}`,
+      borderRadius: 14,
+      overflow: "hidden",
+      marginBottom: 16,
+      boxShadow: "0 1px 3px rgba(15,23,42,.04), 0 4px 12px rgba(15,23,42,.03)",
+    }}>
       <div onClick={() => setOpen(o => !o)} style={{
-        padding: "10px 18px", background: color + "08", borderBottom: open ? `1px solid ${color}18` : "none",
-        display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer",
+        padding: "14px 20px",
+        background: `linear-gradient(135deg, ${hexA(color, 0.08)}, ${hexA(color, 0.02)})`,
+        borderBottom: open ? `1px solid ${hexA(color, 0.15)}` : "none",
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        cursor: "pointer", gap: 12,
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ width: 26, height: 26, borderRadius: 6, background: color + "20", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <i className={`pi ${icon}`} style={{ fontSize: 12, color }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
+          <span style={{
+            width: 36, height: 36, borderRadius: 10,
+            background: `linear-gradient(135deg, ${color}, ${hexShade(color, -30)})`,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            boxShadow: `0 3px 10px ${hexA(color, 0.35)}`,
+            flexShrink: 0,
+          }}>
+            <i className={`pi ${icon}`} style={{ fontSize: 15, color: "#fff" }} />
           </span>
-          <span style={{ fontWeight: 700, fontSize: 13, color: C.text }}>{title}</span>
-          {nabh && <span style={{ background: "#f5f3ff", color: "#7c3aed", border: "1px solid #c4b5fd", fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 4 }}>NABH</span>}
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 800, fontSize: 14.5, color: C.text, letterSpacing: "-.2px" }}>
+              {title}
+              {nabh && (
+                <span style={{
+                  marginLeft: 10,
+                  background: "#f5f3ff", color: "#7c3aed",
+                  border: "1px solid #c4b5fd",
+                  fontSize: 9.5, fontWeight: 800,
+                  padding: "2px 8px", borderRadius: 4,
+                  textTransform: "uppercase", letterSpacing: ".5px",
+                  verticalAlign: "middle",
+                }}>NABH</span>
+              )}
+              {badge && (
+                <span style={{
+                  marginLeft: 8,
+                  background: hexA(color, 0.12), color,
+                  border: `1px solid ${hexA(color, 0.3)}`,
+                  fontSize: 9.5, fontWeight: 700,
+                  padding: "2px 8px", borderRadius: 4,
+                  verticalAlign: "middle",
+                }}>{badge}</span>
+              )}
+            </div>
+            {sub && (
+              <div style={{ fontSize: 11, color: C.muted, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {sub}
+              </div>
+            )}
+          </div>
         </div>
-        <i className={`pi ${open ? "pi-chevron-up" : "pi-chevron-down"}`} style={{ fontSize: 10, color: C.muted }} />
+        <div style={{
+          width: 28, height: 28, borderRadius: "50%",
+          background: hexA(color, 0.1),
+          display: "flex", alignItems: "center", justifyContent: "center",
+          flexShrink: 0,
+        }}>
+          <i className={`pi ${open ? "pi-chevron-up" : "pi-chevron-down"}`} style={{ fontSize: 11, color }} />
+        </div>
       </div>
-      {open && <div style={{ padding: "16px 18px" }}>{children}</div>}
+      {open && <div style={{ padding: "20px 22px" }}>{children}</div>}
     </div>
   );
 }
@@ -350,40 +440,148 @@ function DeptCard({ dept, selected, onSelect }) {
   const active = selected?.key === dept.key;
   return (
     <button onClick={() => onSelect(dept)} style={{
-      background: active ? dept.color + "12" : "white",
-      border: `2px solid ${active ? dept.color : C.border}`,
-      borderRadius: 12, padding: "14px 12px", cursor: "pointer", textAlign: "left",
-      transition: "all .15s", display: "flex", flexDirection: "column", gap: 6,
+      background: active
+        ? `linear-gradient(135deg, ${hexA(dept.color, 0.08)}, ${hexA(dept.color, 0.02)})`
+        : "white",
+      border: `1.5px solid ${active ? dept.color : C.border}`,
+      borderRadius: 14,
+      padding: "18px 16px",
+      cursor: "pointer",
+      textAlign: "left",
+      transition: "all .15s",
+      display: "flex", flexDirection: "column", gap: 10,
+      boxShadow: active
+        ? `0 6px 20px ${hexA(dept.color, 0.18)}`
+        : "0 1px 3px rgba(15,23,42,.04)",
+      minHeight: 92,
     }}
-      onMouseEnter={e => { if (!active) e.currentTarget.style.borderColor = dept.color + "60"; }}
-      onMouseLeave={e => { if (!active) e.currentTarget.style.borderColor = C.border; }}
+      onMouseEnter={e => {
+        if (!active) {
+          e.currentTarget.style.borderColor = hexA(dept.color, 0.5);
+          e.currentTarget.style.boxShadow = `0 4px 14px ${hexA(dept.color, 0.1)}`;
+          e.currentTarget.style.transform = "translateY(-1px)";
+        }
+      }}
+      onMouseLeave={e => {
+        if (!active) {
+          e.currentTarget.style.borderColor = C.border;
+          e.currentTarget.style.boxShadow = "0 1px 3px rgba(15,23,42,.04)";
+          e.currentTarget.style.transform = "none";
+        }
+      }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ width: 34, height: 34, borderRadius: 9, flexShrink: 0, background: active ? dept.color : dept.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <i className={`pi ${dept.icon}`} style={{ fontSize: 15, color: active ? "white" : dept.color }} />
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <span style={{
+          width: 40, height: 40, borderRadius: 10,
+          background: active
+            ? `linear-gradient(135deg, ${dept.color}, ${hexShade(dept.color, -30)})`
+            : dept.bg,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          flexShrink: 0,
+          boxShadow: active ? `0 4px 10px ${hexA(dept.color, 0.4)}` : "none",
+        }}>
+          <i className={`pi ${dept.icon}`} style={{ fontSize: 17, color: active ? "white" : dept.color }} />
         </span>
-        <div style={{ fontSize: 12, fontWeight: 700, color: active ? dept.color : C.text, lineHeight: 1.3 }}>{dept.label}</div>
+        <div style={{ fontSize: 13, fontWeight: 800, color: active ? dept.color : C.text, lineHeight: 1.3 }}>
+          {dept.label}
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", fontSize: 10, color: C.muted, fontWeight: 600 }}>
+        <span style={{ background: hexA(dept.color, 0.08), color: dept.color, padding: "2px 7px", borderRadius: 4 }}>
+          {dept.template.investigations?.length || 0} inv
+        </span>
+        <span style={{ background: hexA(dept.color, 0.08), color: dept.color, padding: "2px 7px", borderRadius: 4 }}>
+          {dept.template.medications?.length || 0} med
+        </span>
+        <span style={{ background: hexA(dept.color, 0.08), color: dept.color, padding: "2px 7px", borderRadius: 4 }}>
+          {dept.template.procedures?.length || 0} proc
+        </span>
       </div>
     </button>
   );
 }
 
+/* ── Table shell — adds a sticky column header row above the *Row rows ── */
+function TableShell({ cols, color, children, empty }) {
+  return (
+    <div style={{
+      border: `1px solid ${C.border}`, borderRadius: 10, overflow: "hidden",
+      background: "#fff",
+    }}>
+      {/* Header */}
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: cols.map(c => c.w).join(" ") + " auto",
+        gap: 8,
+        padding: "8px 12px",
+        background: `linear-gradient(135deg, ${hexA(color, 0.06)}, ${hexA(color, 0.02)})`,
+        borderBottom: `1px solid ${hexA(color, 0.15)}`,
+        fontSize: 10,
+        fontWeight: 800,
+        textTransform: "uppercase",
+        letterSpacing: ".6px",
+        color: hexShade(color, -20),
+      }}>
+        {cols.map((c, i) => <div key={i}>{c.label}</div>)}
+        <div />
+      </div>
+      {/* Body */}
+      <div style={{ padding: 10 }}>
+        {empty ? (
+          <div style={{
+            padding: "18px 12px", textAlign: "center",
+            color: C.muted, fontSize: 12, fontStyle: "italic",
+          }}>
+            {empty}
+          </div>
+        ) : children}
+      </div>
+    </div>
+  );
+}
+
+const MED_COLS = [
+  { label: "Drug", w: "2fr" }, { label: "Dose", w: "1fr" },
+  { label: "Route", w: "1fr" }, { label: "Frequency", w: "1fr" },
+  { label: "Duration", w: "1fr" }, { label: "Instructions", w: "1.5fr" },
+];
+const INV_COLS = [
+  { label: "Investigation", w: "2fr" }, { label: "Result / Finding", w: "1.5fr" },
+  { label: "Unit", w: "1fr" }, { label: "Status", w: "1fr" },
+];
+const PROC_COLS = [
+  { label: "Procedure", w: "2fr" }, { label: "Date", w: "1fr" },
+  { label: "Surgeon / Operator", w: "1.5fr" }, { label: "Findings", w: "2fr" },
+  { label: "Complications", w: "1.5fr" },
+];
+
 /* ── Medication row ── */
 function MedRow({ med, idx, color, onChange, onRemove }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1.5fr auto", gap: 6, marginBottom: 7, alignItems: "center" }}>
-      <input className="his-field" value={med.drug} onChange={e => onChange(idx, "drug", e.target.value)} placeholder="Drug name" />
-      <input className="his-field" value={med.dose} onChange={e => onChange(idx, "dose", e.target.value)} placeholder="Dose" />
+    <div style={{
+      display: "grid",
+      gridTemplateColumns: MED_COLS.map(c => c.w).join(" ") + " auto",
+      gap: 8, marginBottom: 8, alignItems: "center",
+    }}>
+      <input className="his-field" value={med.drug} onChange={e => onChange(idx, "drug", e.target.value)} placeholder="Paracetamol 500mg" />
+      <input className="his-field" value={med.dose} onChange={e => onChange(idx, "dose", e.target.value)} placeholder="1 tab" />
       <select className="his-select" value={med.route} onChange={e => onChange(idx, "route", e.target.value)}>
         {["Oral","IV","IM","SC","SL","Topical","Inhaled","PR","Nasal"].map(r => <option key={r}>{r}</option>)}
       </select>
       <select className="his-select" value={med.frequency} onChange={e => onChange(idx, "frequency", e.target.value)}>
         {["OD","BD","TDS","QID","SOS","HS","Q4H","Q6H","Q8H","Weekly","Ad lib"].map(f => <option key={f}>{f}</option>)}
       </select>
-      <input className="his-field" value={med.duration} onChange={e => onChange(idx, "duration", e.target.value)} placeholder="Duration" />
-      <input className="his-field" value={med.instructions} onChange={e => onChange(idx, "instructions", e.target.value)} placeholder="Instructions" />
-      <button onClick={() => onRemove(idx)} style={{ width: 28, height: 28, borderRadius: 6, border: "none", background: "#fef2f2", color: C.red, cursor: "pointer" }}>
-        <i className="pi pi-times" style={{ fontSize: 11 }} />
+      <input className="his-field" value={med.duration} onChange={e => onChange(idx, "duration", e.target.value)} placeholder="5 days" />
+      <input className="his-field" value={med.instructions} onChange={e => onChange(idx, "instructions", e.target.value)} placeholder="After meals" />
+      <button onClick={() => onRemove(idx)} title="Remove" style={{
+        width: 32, height: 32, borderRadius: 8, border: "none",
+        background: "#fef2f2", color: C.red, cursor: "pointer",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        transition: "background .15s",
+      }}
+        onMouseEnter={e => e.currentTarget.style.background = "#fee2e2"}
+        onMouseLeave={e => e.currentTarget.style.background = "#fef2f2"}>
+        <i className="pi pi-trash" style={{ fontSize: 12 }} />
       </button>
     </div>
   );
@@ -392,16 +590,24 @@ function MedRow({ med, idx, color, onChange, onRemove }) {
 /* ── Investigation row ── */
 function InvRow({ inv, idx, color, onChange, onRemove }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "2fr 1.5fr 1fr 1fr auto", gap: 6, marginBottom: 7, alignItems: "center" }}>
-      <input className="his-field" value={inv.name} onChange={e => onChange(idx, "name", e.target.value)} placeholder="Investigation name" />
-      <input className="his-field" value={inv.result} onChange={e => onChange(idx, "result", e.target.value)} placeholder="Result / Finding" />
-      <input className="his-field" value={inv.unit} onChange={e => onChange(idx, "unit", e.target.value)} placeholder="Unit" />
+    <div style={{
+      display: "grid",
+      gridTemplateColumns: INV_COLS.map(c => c.w).join(" ") + " auto",
+      gap: 8, marginBottom: 8, alignItems: "center",
+    }}>
+      <input className="his-field" value={inv.name} onChange={e => onChange(idx, "name", e.target.value)} placeholder="CBC, X-ray Chest, …" />
+      <input className="his-field" value={inv.result} onChange={e => onChange(idx, "result", e.target.value)} placeholder="Within normal limits" />
+      <input className="his-field" value={inv.unit} onChange={e => onChange(idx, "unit", e.target.value)} placeholder="—" />
       <select className="his-select" value={inv.status} onChange={e => onChange(idx, "status", e.target.value)}>
         <option value="">Status</option>
         {["Normal","Abnormal","Critical","Borderline","Pending"].map(s => <option key={s}>{s}</option>)}
       </select>
-      <button onClick={() => onRemove(idx)} style={{ width: 28, height: 28, borderRadius: 6, border: "none", background: "#fef2f2", color: C.red, cursor: "pointer" }}>
-        <i className="pi pi-times" style={{ fontSize: 11 }} />
+      <button onClick={() => onRemove(idx)} title="Remove" style={{
+        width: 32, height: 32, borderRadius: 8, border: "none",
+        background: "#fef2f2", color: C.red, cursor: "pointer",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}>
+        <i className="pi pi-trash" style={{ fontSize: 12 }} />
       </button>
     </div>
   );
@@ -410,14 +616,22 @@ function InvRow({ inv, idx, color, onChange, onRemove }) {
 /* ── Procedure row ── */
 function ProcRow({ proc, idx, onChange, onRemove }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1.5fr 2fr 1.5fr auto", gap: 6, marginBottom: 7, alignItems: "center" }}>
+    <div style={{
+      display: "grid",
+      gridTemplateColumns: PROC_COLS.map(c => c.w).join(" ") + " auto",
+      gap: 8, marginBottom: 8, alignItems: "center",
+    }}>
       <input className="his-field" value={proc.name} onChange={e => onChange(idx, "name", e.target.value)} placeholder="Procedure name" />
       <input className="his-field" type="date" value={proc.date} onChange={e => onChange(idx, "date", e.target.value)} />
-      <input className="his-field" value={proc.surgeon} onChange={e => onChange(idx, "surgeon", e.target.value)} placeholder="Surgeon / Operator" />
+      <input className="his-field" value={proc.surgeon} onChange={e => onChange(idx, "surgeon", e.target.value)} placeholder="Dr. …" />
       <input className="his-field" value={proc.findings} onChange={e => onChange(idx, "findings", e.target.value)} placeholder="Key findings" />
-      <input className="his-field" value={proc.complications} onChange={e => onChange(idx, "complications", e.target.value)} placeholder="Complications" />
-      <button onClick={() => onRemove(idx)} style={{ width: 28, height: 28, borderRadius: 6, border: "none", background: "#fef2f2", color: C.red, cursor: "pointer" }}>
-        <i className="pi pi-times" style={{ fontSize: 11 }} />
+      <input className="his-field" value={proc.complications} onChange={e => onChange(idx, "complications", e.target.value)} placeholder="None" />
+      <button onClick={() => onRemove(idx)} title="Remove" style={{
+        width: 32, height: 32, borderRadius: 8, border: "none",
+        background: "#fef2f2", color: C.red, cursor: "pointer",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}>
+        <i className="pi pi-trash" style={{ fontSize: 12 }} />
       </button>
     </div>
   );
@@ -1129,15 +1343,55 @@ function DischargeSummaryPageContent({ selectedPatient }) {
       {/* ══ FORM ══ */}
       {view === "form" && selectedDept && (
         <div>
-          {/* Dept banner */}
-          <div style={{ background: selectedDept.color + "10", border: `1.5px solid ${selectedDept.color}30`, borderRadius: 12, padding: "12px 18px", marginBottom: 14, display: "flex", alignItems: "center", gap: 12 }}>
-            <span style={{ width: 38, height: 38, borderRadius: 10, background: selectedDept.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <i className={`pi ${selectedDept.icon}`} style={{ fontSize: 18, color: selectedDept.color }} />
+          {/* Dept banner — gradient hero strip with template stats */}
+          <div style={{
+            background: `linear-gradient(135deg, ${selectedDept.color}, ${hexShade(selectedDept.color, -40)})`,
+            borderRadius: 14,
+            padding: "16px 22px",
+            marginBottom: 18,
+            display: "flex",
+            alignItems: "center",
+            gap: 16,
+            color: "#fff",
+            boxShadow: `0 4px 16px ${hexA(selectedDept.color, 0.3)}`,
+            flexWrap: "wrap",
+          }}>
+            <span style={{
+              width: 48, height: 48, borderRadius: 12,
+              background: "rgba(255,255,255,.22)",
+              border: "1.5px solid rgba(255,255,255,.35)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              flexShrink: 0,
+            }}>
+              <i className={`pi ${selectedDept.icon}`} style={{ fontSize: 22, color: "#fff" }} />
             </span>
-            <div>
-              <div style={{ fontWeight: 800, fontSize: 14, color: selectedDept.color }}>{selectedDept.label} — Discharge Summary</div>
-              <div style={{ fontSize: 11, color: C.muted }}>NABH COP.7 — Pre-loaded with department-specific template</div>
+            <div style={{ flex: 1, minWidth: 200 }}>
+              <div style={{ fontWeight: 800, fontSize: 17, letterSpacing: "-.2px" }}>
+                {selectedDept.label} <span style={{ opacity: .85, fontWeight: 600 }}>· Discharge Summary</span>
+              </div>
+              <div style={{ fontSize: 11.5, opacity: .85, marginTop: 3, display: "flex", gap: 12, flexWrap: "wrap" }}>
+                <span><i className="pi pi-verified" style={{ fontSize: 10, marginRight: 4 }} />NABH COP.7</span>
+                <span>·</span>
+                <span>{selectedDept.template.investigations?.length || 0} investigations</span>
+                <span>·</span>
+                <span>{selectedDept.template.medications?.length || 0} medications</span>
+                <span>·</span>
+                <span>{selectedDept.template.procedures?.length || 0} procedures pre-loaded</span>
+              </div>
             </div>
+            <button
+              onClick={() => setView("catalogue")}
+              style={{
+                padding: "9px 16px", borderRadius: 8,
+                background: "rgba(255,255,255,.18)",
+                border: "1.5px solid rgba(255,255,255,.3)",
+                color: "#fff", fontWeight: 700, fontSize: 12,
+                cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
+              }}
+            >
+              <i className="pi pi-th-large" style={{ fontSize: 11 }} />
+              Change template
+            </button>
           </div>
 
           {/* Patient Details */}
@@ -1318,49 +1572,69 @@ function DischargeSummaryPageContent({ selectedPatient }) {
           )}
 
           {/* Investigations */}
-          <Section title="Key Investigations" icon="pi-list" color={color} nabh>
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 1.5fr 1fr 1fr auto", gap: 6, marginBottom: 8, padding: "4px 0" }}>
-              {["Investigation","Result","Unit","Status",""].map(h => (
-                <div key={h} style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>{h}</div>
+          <Section title="Key Investigations" icon="pi-list" color={color} nabh
+            sub={`${investigations.length} investigation${investigations.length === 1 ? "" : "s"} recorded`}
+            badge={investigations.length ? `${investigations.length}` : null}>
+            <TableShell cols={INV_COLS} color={color}
+              empty={investigations.length === 0 ? "No investigations recorded — click Add to start." : null}>
+              {investigations.map((inv, idx) => (
+                <InvRow key={idx} inv={inv} idx={idx} color={color} onChange={updateInv} onRemove={removeInv} />
               ))}
-            </div>
-            {investigations.map((inv, idx) => (
-              <InvRow key={idx} inv={inv} idx={idx} color={color} onChange={updateInv} onRemove={removeInv} />
-            ))}
-            <button onClick={addInv} style={{ padding: "6px 14px", borderRadius: 7, border: `1.5px dashed ${color}50`, background: color + "06", color, fontWeight: 600, fontSize: 12, cursor: "pointer", marginTop: 4 }}>
-              <i className="pi pi-plus" style={{ marginRight: 5, fontSize: 10 }} />Add Investigation
+            </TableShell>
+            <button onClick={addInv} style={{
+              padding: "10px 18px", borderRadius: 8,
+              border: `1.5px dashed ${hexA(color, 0.4)}`,
+              background: hexA(color, 0.04), color,
+              fontWeight: 700, fontSize: 12, cursor: "pointer",
+              marginTop: 12, transition: "all .15s",
+              display: "inline-flex", alignItems: "center", gap: 7,
+            }}
+              onMouseEnter={e => { e.currentTarget.style.background = hexA(color, 0.1); e.currentTarget.style.borderStyle = "solid"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = hexA(color, 0.04); e.currentTarget.style.borderStyle = "dashed"; }}>
+              <i className="pi pi-plus" style={{ fontSize: 10 }} />Add Investigation
             </button>
           </Section>
 
           {/* Procedures */}
-          <Section title="Procedures Performed" icon="pi-cog" color={color} defaultOpen={procedures.length > 0}>
-            {procedures.length > 0 && (
-              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1.5fr 2fr 1.5fr auto", gap: 6, marginBottom: 8 }}>
-                {["Procedure","Date","Surgeon","Findings","Complications",""].map(h => (
-                  <div key={h} style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>{h}</div>
-                ))}
-              </div>
-            )}
-            {procedures.map((proc, idx) => (
-              <ProcRow key={idx} proc={proc} idx={idx} onChange={updateProc} onRemove={removeProc} />
-            ))}
-            <button onClick={addProc} style={{ padding: "6px 14px", borderRadius: 7, border: `1.5px dashed ${color}50`, background: color + "06", color, fontWeight: 600, fontSize: 12, cursor: "pointer", marginTop: 4 }}>
-              <i className="pi pi-plus" style={{ marginRight: 5, fontSize: 10 }} />Add Procedure
+          <Section title="Procedures Performed" icon="pi-cog" color={color}
+            sub={`${procedures.length} procedure${procedures.length === 1 ? "" : "s"} during stay`}
+            badge={procedures.length ? `${procedures.length}` : null}
+            defaultOpen={procedures.length > 0}>
+            <TableShell cols={PROC_COLS} color={color}
+              empty={procedures.length === 0 ? "No procedures performed during stay." : null}>
+              {procedures.map((proc, idx) => (
+                <ProcRow key={idx} proc={proc} idx={idx} onChange={updateProc} onRemove={removeProc} />
+              ))}
+            </TableShell>
+            <button onClick={addProc} style={{
+              padding: "10px 18px", borderRadius: 8,
+              border: `1.5px dashed ${hexA(color, 0.4)}`,
+              background: hexA(color, 0.04), color,
+              fontWeight: 700, fontSize: 12, cursor: "pointer",
+              marginTop: 12, display: "inline-flex", alignItems: "center", gap: 7,
+            }}>
+              <i className="pi pi-plus" style={{ fontSize: 10 }} />Add Procedure
             </button>
           </Section>
 
           {/* Discharge Medications */}
-          <Section title="Discharge Medications" icon="pi-box" color={color} nabh>
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1.5fr auto", gap: 6, marginBottom: 8 }}>
-              {["Drug","Dose","Route","Frequency","Duration","Instructions",""].map(h => (
-                <div key={h} style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>{h}</div>
+          <Section title="Discharge Medications" icon="pi-box" color={color} nabh
+            sub={`${medications.length} medication${medications.length === 1 ? "" : "s"} prescribed on discharge`}
+            badge={medications.length ? `${medications.length}` : null}>
+            <TableShell cols={MED_COLS} color={color}
+              empty={medications.length === 0 ? "No discharge medications yet — click Add to start." : null}>
+              {medications.map((med, idx) => (
+                <MedRow key={idx} med={med} idx={idx} color={color} onChange={updateMed} onRemove={removeMed} />
               ))}
-            </div>
-            {medications.map((med, idx) => (
-              <MedRow key={idx} med={med} idx={idx} color={color} onChange={updateMed} onRemove={removeMed} />
-            ))}
-            <button onClick={addMed} style={{ padding: "6px 14px", borderRadius: 7, border: `1.5px dashed ${color}50`, background: color + "06", color, fontWeight: 600, fontSize: 12, cursor: "pointer", marginTop: 4 }}>
-              <i className="pi pi-plus" style={{ marginRight: 5, fontSize: 10 }} />Add Medication
+            </TableShell>
+            <button onClick={addMed} style={{
+              padding: "10px 18px", borderRadius: 8,
+              border: `1.5px dashed ${hexA(color, 0.4)}`,
+              background: hexA(color, 0.04), color,
+              fontWeight: 700, fontSize: 12, cursor: "pointer",
+              marginTop: 12, display: "inline-flex", alignItems: "center", gap: 7,
+            }}>
+              <i className="pi pi-plus" style={{ fontSize: 10 }} />Add Medication
             </button>
           </Section>
 
