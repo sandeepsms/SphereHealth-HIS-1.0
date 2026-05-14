@@ -1,85 +1,67 @@
-import React, { useState, useEffect, useRef } from "react";
+/**
+ * HospitalSettingsPage.jsx — admin page for hospital identity, branding,
+ * print settings, legal fields, bank details.
+ *
+ * Redesigned to the latest theme:
+ * - Orange hero band with Save button on the right
+ * - Tab strip to navigate between 5 logical sections
+ *   (Identity · Address & Contact · Legal · Print & Branding · Bill & Bank)
+ * - Each tab body uses the shared Card / Field / Check / Modal primitives
+ * - Live print-header preview always at the top of the Print tab
+ * - Unsaved-changes ribbon appears the moment any field is touched
+ */
+import React, { useEffect, useRef, useState, useMemo } from "react";
+import { toast } from "react-toastify";
 import { useHospitalSettings } from "../../context/HospitalSettingsContext";
+import {
+  AdminPage, Hero, TabStrip, Card, Field, Check, PrimaryButton, C,
+} from "../../Components/admin-theme";
 
 const API_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
 
-/* ─── Reusable field components ─────────────────────────────────────────── */
-function Field({ label, name, value, onChange, type = "text", placeholder = "", half = false, hint }) {
-  return (
-    <div style={{ gridColumn: half ? "span 1" : "span 2", display: "flex", flexDirection: "column", gap: 4 }}>
-      <label style={LS.label}>{label}</label>
-      <input
-        type={type} name={name} value={value || ""} placeholder={placeholder}
-        onChange={onChange} style={LS.input}
-      />
-      {hint && <span style={{ fontSize: 11, color: "#94a3b8" }}>{hint}</span>}
-    </div>
-  );
-}
+const TABS = [
+  { key: "identity", label: "Identity & Branding", icon: "pi-image" },
+  { key: "address",  label: "Address & Contact",   icon: "pi-map-marker" },
+  { key: "legal",    label: "Legal & Registration",icon: "pi-verified" },
+  { key: "print",    label: "Print & Footer",      icon: "pi-print" },
+  { key: "bank",     label: "Bank Details",        icon: "pi-building-columns" },
+];
 
-function Toggle({ label, name, checked, onChange, description }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
-      <div>
-        <div style={{ fontWeight: 600, fontSize: 13, color: "#1e293b" }}>{label}</div>
-        {description && <div style={{ fontSize: 11.5, color: "#64748b", marginTop: 2 }}>{description}</div>}
-      </div>
-      <button
-        type="button"
-        onClick={() => onChange({ target: { name, type: "checkbox", checked: !checked } })}
-        style={{
-          width: 44, height: 24, borderRadius: 12, border: "none", cursor: "pointer",
-          background: checked ? "#2563eb" : "#cbd5e1", position: "relative", transition: "background .2s", flexShrink: 0,
-        }}
-      >
-        <span style={{
-          position: "absolute", top: 2, left: checked ? 22 : 2,
-          width: 20, height: 20, borderRadius: "50%", background: "#fff",
-          transition: "left .2s", boxShadow: "0 1px 4px rgba(0,0,0,.2)",
-        }} />
-      </button>
-    </div>
-  );
-}
-
-/* ─── Section Card ──────────────────────────────────────────────────────── */
-function Section({ title, icon, color = "#1e293b", children }) {
-  return (
-    <div style={LS.card}>
-      <div style={{ ...LS.cardHeader, borderLeft: `4px solid ${color}` }}>
-        <i className={`pi ${icon}`} style={{ color, fontSize: 16 }} />
-        <span style={{ fontWeight: 700, fontSize: 15, color: "#1e293b" }}>{title}</span>
-      </div>
-      <div style={LS.cardBody}>{children}</div>
-    </div>
-  );
-}
-
-/* ─── Main Page ─────────────────────────────────────────────────────────── */
 export default function HospitalSettingsPage() {
   const { settings: ctx, reload } = useHospitalSettings();
-  const [form,    setForm]    = useState({ ...ctx });
-  const [saving,  setSaving]  = useState(false);
-  const [saved,   setSaved]   = useState(false);
+  const [tab, setTab]     = useState("identity");
+  const [form, setForm]   = useState({ ...ctx });
+  const [orig, setOrig]   = useState({ ...ctx });
+  const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState(ctx.logo || "");
   const fileRef = useRef(null);
 
-  /* Sync context into form when it loads */
   useEffect(() => {
     setForm({ ...ctx });
+    setOrig({ ...ctx });
     setPreview(ctx.logo || "");
   }, [ctx]);
+
+  // Compare keys we care about (skip mongo internals) to detect dirty state.
+  const dirty = useMemo(() => {
+    const keys = new Set([...Object.keys(orig || {}), ...Object.keys(form || {})]);
+    for (const k of keys) {
+      if (k.startsWith("_") || k === "createdAt" || k === "updatedAt") continue;
+      if ((orig?.[k] ?? "") !== (form?.[k] ?? "")) return true;
+    }
+    return false;
+  }, [form, orig]);
 
   const handle = (e) => {
     const { name, value, type, checked } = e.target;
     setForm(f => ({ ...f, [name]: type === "checkbox" ? checked : value }));
   };
+  const toggle = (name) => () => setForm(f => ({ ...f, [name]: !f[name] }));
 
-  /* Logo upload → base64 */
   const handleLogo = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    if (file.size > 500 * 1024) { alert("Logo must be under 500 KB"); return; }
+    if (file.size > 500 * 1024) { toast.error("Logo must be under 500 KB"); return; }
     const reader = new FileReader();
     reader.onload = (ev) => {
       const data = ev.target.result;
@@ -88,7 +70,6 @@ export default function HospitalSettingsPage() {
     };
     reader.readAsDataURL(file);
   };
-
   const removeLogo = () => {
     setPreview("");
     setForm(f => ({ ...f, logo: "" }));
@@ -97,172 +78,276 @@ export default function HospitalSettingsPage() {
 
   const save = async () => {
     setSaving(true);
-    setSaved(false);
     try {
-      const res  = await fetch(`${API_URL}/hospital-settings`, {
+      const res = await fetch(`${API_URL}/hospital-settings`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
       });
       const json = await res.json();
-      if (json.success) { setSaved(true); reload(); setTimeout(() => setSaved(false), 3000); }
-      else alert("Save failed: " + json.message);
+      if (json.success) {
+        toast.success("Settings saved — all prints will use the updated profile");
+        setOrig({ ...form });
+        reload();
+      } else {
+        toast.error("Save failed: " + (json.message || "unknown error"));
+      }
     } catch (e) {
-      alert("Network error: " + e.message);
-    } finally {
-      setSaving(false);
-    }
+      toast.error("Network error: " + e.message);
+    } finally { setSaving(false); }
   };
 
+  // Save button always visible in the hero's right slot.
+  const saveButton = (
+    <PrimaryButton
+      icon={saving ? "pi-spin pi-spinner" : "pi-save"}
+      label={saving ? "Saving…" : (dirty ? "Save changes" : "Saved")}
+      onClick={save}
+      busy={saving}
+      disabled={!dirty}
+      color="#fff"
+    />
+  );
+
   return (
-    <div style={LS.page}>
-      {/* ── Page Header ── */}
-      <div style={LS.pageHeader}>
-        <div>
-          <h1 style={LS.pageTitle}>🏥 Hospital Settings</h1>
-          <p style={LS.pageSubtitle}>Manage hospital profile, branding, and print header/footer — used across all patient documents & bills</p>
-        </div>
-        <button onClick={save} disabled={saving} style={saving ? { ...LS.saveBtn, opacity: .7 } : LS.saveBtn}>
-          {saving ? "⏳ Saving…" : saved ? "✅ Saved!" : "💾 Save Settings"}
-        </button>
-      </div>
+    <AdminPage>
+      <Hero icon="pi-building" color="blue"
+        title="Hospital Settings"
+        subtitle="Hospital profile · branding · print headers / footers — used across every patient document & bill"
+        right={
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            {dirty && (
+              <span style={{ fontSize: 11.5, fontWeight: 800, padding: "4px 10px", borderRadius: 999, background: "rgba(255,255,255,.2)", border: "1.5px solid rgba(255,255,255,.4)" }}>
+                <i className="pi pi-circle-fill" style={{ fontSize: 7, marginRight: 5, color: "#fcd34d" }} />
+                Unsaved changes
+              </span>
+            )}
+            <button onClick={save} disabled={!dirty || saving}
+              style={{
+                padding: "9px 18px", borderRadius: 8, border: "none",
+                background: dirty ? "#fff" : "rgba(255,255,255,.25)",
+                color: dirty ? "#1e40af" : "rgba(255,255,255,.6)",
+                fontWeight: 800, fontSize: 12.5,
+                cursor: dirty && !saving ? "pointer" : "default",
+                display: "inline-flex", alignItems: "center", gap: 7,
+                boxShadow: dirty ? "0 2px 10px rgba(0,0,0,.18)" : "none",
+              }}>
+              <i className={`pi ${saving ? "pi-spin pi-spinner" : (dirty ? "pi-save" : "pi-check")}`} style={{ fontSize: 12 }} />
+              {saving ? "Saving…" : dirty ? "Save changes" : "All saved"}
+            </button>
+          </div>
+        } />
 
-      {saved && (
-        <div style={LS.successBanner}>
-          ✅ Settings saved successfully! All print headers and footers will now use the updated information.
-        </div>
-      )}
+      <TabStrip tabs={TABS} value={tab} onChange={setTab} accent={C.blue} accentL={C.blueL} />
 
-      {/* ── Logo & Branding ── */}
-      <Section title="Logo & Branding" icon="pi-image" color="#7c3aed">
-        <div style={LS.grid}>
-          {/* Logo Preview */}
+      {tab === "identity" && <IdentityTab form={form} handle={handle} toggle={toggle} preview={preview} fileRef={fileRef} handleLogo={handleLogo} removeLogo={removeLogo} />}
+      {tab === "address"  && <AddressTab  form={form} handle={handle} />}
+      {tab === "legal"    && <LegalTab    form={form} handle={handle} />}
+      {tab === "print"    && <PrintTab    form={form} handle={handle} toggle={toggle} />}
+      {tab === "bank"     && <BankTab     form={form} handle={handle} />}
+    </AdminPage>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════
+   TAB: Identity & Branding — logo + hospital name + tagline + NABH/NABL
+══════════════════════════════════════════════════════════════════ */
+function IdentityTab({ form, handle, toggle, preview, fileRef, handleLogo, removeLogo }) {
+  return (
+    <div style={{ display: "grid", gap: 14 }}>
+      <Card title="Logo" color={C.purple} icon="pi-image">
+        <div style={{ display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap" }}>
+          <div style={{
+            width: 160, height: 100, border: `2px dashed ${C.border}`, borderRadius: 10,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            background: C.subtle, overflow: "hidden", flexShrink: 0,
+          }}>
+            {preview
+              ? <img src={preview} alt="Logo" style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
+              : <span style={{ fontSize: 11, color: C.muted, textAlign: "center" }}>No logo<br />uploaded</span>}
+          </div>
+
+          <div style={{ flex: 1, minWidth: 220, display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input ref={fileRef} type="file" accept="image/*" onChange={handleLogo} style={{ display: "none" }} id="logo-upload" />
+              <label htmlFor="logo-upload" style={{
+                padding: "8px 16px", borderRadius: 7, border: `1.5px solid ${C.blue}`,
+                background: "#fff", color: C.blue, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                display: "inline-flex", alignItems: "center", gap: 6,
+              }}>
+                <i className="pi pi-upload" /> Upload logo
+              </label>
+              {preview && (
+                <button onClick={removeLogo} style={{
+                  padding: "8px 16px", borderRadius: 7, border: `1.5px solid ${C.red}`,
+                  background: "#fff", color: C.red, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                }}>
+                  <i className="pi pi-trash" /> Remove
+                </button>
+              )}
+            </div>
+            <div style={{ fontSize: 11, color: C.muted }}>
+              PNG / JPG · max 500 KB · recommended 300×150 px for clean print.
+            </div>
+          </div>
+
+          <div>
+            <Field label="Logo width in print (px)">
+              <input className="his-field" type="number" name="logoWidth"
+                value={form.logoWidth || 120} onChange={handle} min={40} max={300}
+                style={{ width: 120 }} />
+            </Field>
+          </div>
+        </div>
+      </Card>
+
+      <Card title="Hospital Identity" color={C.blue} icon="pi-building">
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          <Field label="Hospital name" required>
+            <input className="his-field" name="hospitalName" value={form.hospitalName || ""} onChange={handle}
+              placeholder="SphereHealth Hospital" />
+          </Field>
+          <Field label="Tagline / accreditation line">
+            <input className="his-field" name="tagline" value={form.tagline || ""} onChange={handle}
+              placeholder="NABH Accredited Multi-Specialty Hospital" />
+          </Field>
+        </div>
+
+        <div style={{ marginTop: 14, padding: "12px 14px", background: C.subtle, border: `1.5px solid ${C.border}`, borderRadius: 9 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 10 }}>
+            Accreditation badges (shown on prints)
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <Check label="NABH Accredited" v={form.nabh} on={toggle("nabh")} />
+            <Check label="NABL Accredited" v={form.nabl} on={toggle("nabl")} />
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════
+   TAB: Address & Contact
+══════════════════════════════════════════════════════════════════ */
+function AddressTab({ form, handle }) {
+  return (
+    <div style={{ display: "grid", gap: 14 }}>
+      <Card title="Hospital Address" color={C.teal} icon="pi-map-marker">
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
           <div style={{ gridColumn: "span 2" }}>
-            <label style={LS.label}>Hospital Logo</label>
-            <div style={{ display: "flex", alignItems: "center", gap: 20, marginTop: 8 }}>
-              <div style={{ width: 140, height: 90, border: "2px dashed #cbd5e1", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", background: "#f8fafc", overflow: "hidden" }}>
-                {preview
-                  ? <img src={preview} alt="Logo" style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
-                  : <span style={{ fontSize: 11, color: "#94a3b8", textAlign: "center" }}>No logo<br />uploaded</span>}
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <input ref={fileRef} type="file" accept="image/*" onChange={handleLogo} style={{ display: "none" }} id="logo-upload" />
-                <label htmlFor="logo-upload" style={{ ...LS.outlineBtn, cursor: "pointer" }}>📁 Upload Logo</label>
-                {preview && <button type="button" onClick={removeLogo} style={LS.dangerBtn}>🗑 Remove</button>}
-                <span style={{ fontSize: 11, color: "#94a3b8" }}>PNG/JPG · Max 500 KB · Recommended: 300×150px</span>
-              </div>
-              <div style={{ marginLeft: 20 }}>
-                <label style={LS.label}>Logo Width in Print (px)</label>
-                <input type="number" name="logoWidth" value={form.logoWidth || 120} onChange={handle} style={{ ...LS.input, width: 100, marginTop: 4 }} min={40} max={300} />
-              </div>
-            </div>
+            <Field label="Address line 1">
+              <input className="his-field" name="addressLine1" value={form.addressLine1 || ""} onChange={handle} placeholder="Building, Street" />
+            </Field>
           </div>
-
-          <Field label="Hospital Name"  name="hospitalName"  value={form.hospitalName}  onChange={handle} placeholder="e.g. SphereHealth Hospital" />
-          <Field label="Tagline / Accreditation" name="tagline" value={form.tagline} onChange={handle} placeholder="e.g. NABH Accredited Multi-Specialty Hospital" />
-        </div>
-
-        {/* Accreditation Toggles */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}>
-          <Toggle label="NABH Accredited" name="nabh" checked={!!form.nabh} onChange={handle} description="Shows NABH badge on prints" />
-          <Toggle label="NABL Accredited" name="nabl" checked={!!form.nabl} onChange={handle} description="Shows NABL badge on prints" />
-        </div>
-      </Section>
-
-      {/* ── Address ── */}
-      <Section title="Hospital Address" icon="pi-map-marker" color="#0891b2">
-        <div style={LS.grid}>
-          <Field label="Address Line 1"  name="addressLine1" value={form.addressLine1} onChange={handle} placeholder="Building, Street" />
-          <Field label="Address Line 2"  name="addressLine2" value={form.addressLine2} onChange={handle} placeholder="Area, Landmark (optional)" />
-          <Field label="City"            name="city"         value={form.city}         onChange={handle} placeholder="City" half />
-          <Field label="State"           name="state"        value={form.state}        onChange={handle} placeholder="State" half />
-          <Field label="Pincode"         name="pincode"      value={form.pincode}      onChange={handle} placeholder="Pincode" half />
-          <Field label="Country"         name="country"      value={form.country}      onChange={handle} placeholder="India" half />
-        </div>
-      </Section>
-
-      {/* ── Contact ── */}
-      <Section title="Contact Information" icon="pi-phone" color="#059669">
-        <div style={LS.grid}>
-          <Field label="Primary Phone"   name="phone1"   value={form.phone1}   onChange={handle} placeholder="+91-XXXXX-XXXXX" half />
-          <Field label="Secondary Phone" name="phone2"   value={form.phone2}   onChange={handle} placeholder="+91-XXXXX-XXXXX (optional)" half />
-          <Field label="Email Address"   name="email"    value={form.email}    onChange={handle} type="email" placeholder="billing@hospital.in" half />
-          <Field label="Website"         name="website"  value={form.website}  onChange={handle} placeholder="www.hospital.in" half />
-          <Field label="Fax"             name="fax"      value={form.fax}      onChange={handle} placeholder="Fax number (optional)" half />
-        </div>
-      </Section>
-
-      {/* ── Legal & Registration ── */}
-      <Section title="Legal & Registration" icon="pi-verified" color="#d97706">
-        <div style={LS.grid}>
-          <Field label="GSTIN"            name="gstin"          value={form.gstin}          onChange={handle} placeholder="22AAAAA0000A1Z5" half />
-          <Field label="PAN Number"       name="panNumber"      value={form.panNumber}      onChange={handle} placeholder="AAAPA0000A" half />
-          <Field label="Registration No." name="registrationNo" value={form.registrationNo} onChange={handle} placeholder="Hospital Registration Number" half />
-          <Field label="Rohini ID"        name="rohiniId"       value={form.rohiniId}       onChange={handle} placeholder="Rohini ID (for insurance)" half />
-        </div>
-      </Section>
-
-      {/* ── Print Settings ── */}
-      <Section title="Print Header & Footer Settings" icon="pi-print" color="#1d4ed8">
-        <div style={LS.grid}>
-          <div style={{ gridColumn: "span 1" }}>
-            <label style={LS.label}>Header Background Color</label>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
-              <input type="color" name="printHeaderColor" value={form.printHeaderColor || "#1e293b"} onChange={handle}
-                style={{ width: 48, height: 36, border: "1px solid #e2e8f0", borderRadius: 6, cursor: "pointer", padding: 2 }} />
-              <input type="text" name="printHeaderColor" value={form.printHeaderColor || "#1e293b"} onChange={handle} style={{ ...LS.input, width: 110 }} />
-              <span style={{ width: 60, height: 28, background: form.printHeaderColor, borderRadius: 6, border: "1px solid #e2e8f0" }} />
-            </div>
+          <div style={{ gridColumn: "span 2" }}>
+            <Field label="Address line 2">
+              <input className="his-field" name="addressLine2" value={form.addressLine2 || ""} onChange={handle} placeholder="Area, Landmark (optional)" />
+            </Field>
           </div>
-          <div style={{ gridColumn: "span 1" }}>
-            <label style={LS.label}>Accent / Highlight Color</label>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
-              <input type="color" name="printAccentColor" value={form.printAccentColor || "#1d4ed8"} onChange={handle}
-                style={{ width: 48, height: 36, border: "1px solid #e2e8f0", borderRadius: 6, cursor: "pointer", padding: 2 }} />
-              <input type="text" name="printAccentColor" value={form.printAccentColor || "#1d4ed8"} onChange={handle} style={{ ...LS.input, width: 110 }} />
-              <span style={{ width: 60, height: 28, background: form.printAccentColor, borderRadius: 6, border: "1px solid #e2e8f0" }} />
-            </div>
-          </div>
+          <Field label="City">
+            <input className="his-field" name="city" value={form.city || ""} onChange={handle} placeholder="City" />
+          </Field>
+          <Field label="State">
+            <input className="his-field" name="state" value={form.state || ""} onChange={handle} placeholder="State" />
+          </Field>
+          <Field label="Pincode">
+            <input className="his-field" name="pincode" value={form.pincode || ""} onChange={handle} placeholder="Pincode" />
+          </Field>
+          <Field label="Country">
+            <input className="his-field" name="country" value={form.country || "India"} onChange={handle} placeholder="India" />
+          </Field>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}>
-          <Toggle label="Show Logo in Prints" name="showLogoInPrint" checked={!!form.showLogoInPrint} onChange={handle} description="Display hospital logo on bills and documents" />
-          <Toggle label="Show Tagline in Prints" name="showTaglineInPrint" checked={!!form.showTaglineInPrint} onChange={handle} description="Display accreditation tagline below hospital name" />
-        </div>
-      </Section>
+      </Card>
 
-      {/* ── Bill Footer ── */}
-      <Section title="Bill Footer & Terms" icon="pi-file-edit" color="#db2777">
-        <div style={LS.grid}>
-          <Field label="Footer Thank-You Note" name="billFooterNote" value={form.billFooterNote} onChange={handle} placeholder="Thank you for choosing our hospital." />
-          <Field label="Terms Line 1" name="termsLine1" value={form.termsLine1} onChange={handle} placeholder="Computer generated bill..." />
-          <Field label="Terms Line 2" name="termsLine2" value={form.termsLine2} onChange={handle} placeholder="All charges as per tariff..." />
-          <Field label="Terms Line 3" name="termsLine3" value={form.termsLine3} onChange={handle} placeholder="For queries, contact Billing Dept." />
+      <Card title="Contact Information" color={C.green} icon="pi-phone">
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          <Field label="Primary phone">
+            <input className="his-field" name="phone1" value={form.phone1 || ""} onChange={handle} placeholder="+91-XXXXX-XXXXX" />
+          </Field>
+          <Field label="Secondary phone">
+            <input className="his-field" name="phone2" value={form.phone2 || ""} onChange={handle} placeholder="+91-XXXXX-XXXXX (optional)" />
+          </Field>
+          <Field label="Email address">
+            <input className="his-field" type="email" name="email" value={form.email || ""} onChange={handle} placeholder="billing@hospital.in" />
+          </Field>
+          <Field label="Website">
+            <input className="his-field" name="website" value={form.website || ""} onChange={handle} placeholder="www.hospital.in" />
+          </Field>
+          <Field label="Fax">
+            <input className="his-field" name="fax" value={form.fax || ""} onChange={handle} placeholder="Fax number (optional)" />
+          </Field>
         </div>
-      </Section>
+      </Card>
+    </div>
+  );
+}
 
-      {/* ── Bank Details ── */}
-      <Section title="Bank Details (for Payment Receipts)" icon="pi-building-columns" color="#475569">
-        <div style={LS.grid}>
-          <Field label="Bank Name"      name="bankName"   value={form.bankName}   onChange={handle} placeholder="State Bank of India" half />
-          <Field label="Account Number" name="accountNo"  value={form.accountNo}  onChange={handle} placeholder="XXXX XXXX XXXX" half />
-          <Field label="IFSC Code"      name="ifscCode"   value={form.ifscCode}   onChange={handle} placeholder="SBIN0001234" half />
-          <Field label="Branch"         name="bankBranch" value={form.bankBranch} onChange={handle} placeholder="Branch Name" half />
-        </div>
-      </Section>
+/* ════════════════════════════════════════════════════════════════
+   TAB: Legal & Registration
+══════════════════════════════════════════════════════════════════ */
+function LegalTab({ form, handle }) {
+  return (
+    <Card title="Legal & Registration" color={C.amber} icon="pi-verified">
+      <div style={{ padding: "10px 14px", background: C.amberL, border: `1.5px solid ${C.amber}30`, borderRadius: 9, marginBottom: 14, fontSize: 12, color: "#92400e" }}>
+        <i className="pi pi-info-circle" style={{ marginRight: 6 }} />
+        These identifiers appear on every printed bill, prescription, and claim form. Double-check before saving.
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <Field label="GSTIN" required>
+          <input className="his-field" name="gstin" value={form.gstin || ""} onChange={handle}
+            placeholder="22AAAAA0000A1Z5" style={{ fontFamily: "DM Mono, monospace", letterSpacing: ".5px" }} />
+        </Field>
+        <Field label="PAN number">
+          <input className="his-field" name="panNumber" value={form.panNumber || ""} onChange={handle}
+            placeholder="AAAPA0000A" style={{ fontFamily: "DM Mono, monospace", letterSpacing: ".5px" }} />
+        </Field>
+        <Field label="Hospital registration no.">
+          <input className="his-field" name="registrationNo" value={form.registrationNo || ""} onChange={handle}
+            placeholder="State health registration number" />
+        </Field>
+        <Field label="Rohini ID (for insurance)">
+          <input className="his-field" name="rohiniId" value={form.rohiniId || ""} onChange={handle}
+            placeholder="Rohini ID issued by IRDA" />
+        </Field>
+        <Field label="Drug License No. (pharmacy)">
+          <input className="his-field" name="drugLicenseNumber" value={form.drugLicenseNumber || form.drugLicenseNo || ""} onChange={handle}
+            placeholder="MH/20B/2024-001" style={{ fontFamily: "DM Mono, monospace", letterSpacing: ".5px" }} />
+        </Field>
+        <Field label="FSSAI number">
+          <input className="his-field" name="fssaiNumber" value={form.fssaiNumber || ""} onChange={handle}
+            placeholder="FSSAI registration / licence" />
+        </Field>
+      </div>
+    </Card>
+  );
+}
 
-      {/* ── Print Preview ── */}
-      <Section title="Print Header Preview" icon="pi-eye" color="#7c3aed">
-        <div style={{ background: form.printHeaderColor || "#1e293b", borderRadius: 8, padding: "16px 24px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+/* ════════════════════════════════════════════════════════════════
+   TAB: Print settings, colours, header preview, bill footer terms
+══════════════════════════════════════════════════════════════════ */
+function PrintTab({ form, handle, toggle }) {
+  const headerColor = form.printHeaderColor || "#1e293b";
+  const accentColor = form.printAccentColor || "#1d4ed8";
+  return (
+    <div style={{ display: "grid", gap: 14 }}>
+      <Card title="Live Print Header Preview" color={C.purple} icon="pi-eye">
+        <div style={{
+          background: headerColor, borderRadius: 8, padding: "18px 22px",
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+          boxShadow: "0 4px 14px rgba(15,23,42,.18)",
+        }}>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
             {form.showLogoInPrint && form.logo && (
-              <img src={form.logo} alt="Logo" style={{ height: 50, objectFit: "contain", borderRadius: 4, background: "#fff", padding: 4 }} />
+              <img src={form.logo} alt="" style={{ height: 50, objectFit: "contain", borderRadius: 4, background: "#fff", padding: 4 }} />
             )}
             <div>
               <div style={{ fontSize: 18, fontWeight: 800, color: "#fff" }}>{form.hospitalName || "Hospital Name"}</div>
               {form.showTaglineInPrint && form.tagline && (
-                <div style={{ fontSize: 11.5, color: "#94a3b8", marginTop: 2 }}>{form.tagline}</div>
+                <div style={{ fontSize: 11.5, color: "rgba(255,255,255,.7)", marginTop: 2 }}>{form.tagline}</div>
               )}
-              <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,.6)", marginTop: 2 }}>
                 {[form.city, form.state].filter(Boolean).join(", ")}
                 {form.phone1 && ` · 📞 ${form.phone1}`}
                 {form.email && ` · ✉ ${form.email}`}
@@ -270,40 +355,112 @@ export default function HospitalSettingsPage() {
             </div>
           </div>
           <div style={{ textAlign: "right" }}>
-            <div style={{ color: form.printAccentColor || "#60a5fa", fontWeight: 700, fontSize: 16 }}>PATIENT BILL</div>
-            {form.nabh && <span style={{ background: "#22c55e22", color: "#22c55e", border: "1px solid #22c55e44", fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10 }}>NABH</span>}
-            {form.nabl && <span style={{ background: "#60a5fa22", color: "#60a5fa", border: "1px solid #60a5fa44", fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10, marginLeft: 4 }}>NABL</span>}
+            <div style={{ color: accentColor, fontWeight: 800, fontSize: 16, marginBottom: 6 }}>PATIENT BILL</div>
+            {form.nabh && <Badge color="#22c55e" label="NABH" />}
+            {form.nabl && <Badge color="#60a5fa" label="NABL" />}
           </div>
         </div>
-        <div style={{ fontSize: 12, color: "#475569", marginTop: 10, padding: "8px 12px", background: "#f8fafc", borderRadius: 6, borderLeft: "3px solid #e2e8f0" }}>
-          <strong>Terms (preview):</strong> {form.termsLine1}
+        <div style={{ marginTop: 10, padding: "8px 12px", background: C.subtle, border: `1px solid ${C.border}`, borderRadius: 6, borderLeft: `3px solid ${accentColor}`, fontSize: 12, color: C.slate }}>
+          <b>Terms preview:</b> {form.termsLine1 || "Add a terms line below to preview it here."}
         </div>
-      </Section>
+      </Card>
 
-      {/* ── Save Button (bottom) ── */}
-      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8, paddingBottom: 40 }}>
-        <button onClick={save} disabled={saving} style={saving ? { ...LS.saveBtn, opacity: .7 } : LS.saveBtn}>
-          {saving ? "⏳ Saving…" : saved ? "✅ Saved!" : "💾 Save All Settings"}
-        </button>
-      </div>
+      <Card title="Print Header Colours" color={C.blue} icon="pi-palette">
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          <ColorField label="Header background" name="printHeaderColor" value={headerColor} onChange={handle} />
+          <ColorField label="Accent / highlight"  name="printAccentColor" value={accentColor} onChange={handle} />
+        </div>
+        <div style={{ marginTop: 14, padding: "12px 14px", background: C.subtle, border: `1.5px solid ${C.border}`, borderRadius: 9 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 10 }}>
+            Header content toggles
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <Check label="Show logo in prints"    v={form.showLogoInPrint}    on={toggle("showLogoInPrint")} />
+            <Check label="Show tagline in prints" v={form.showTaglineInPrint} on={toggle("showTaglineInPrint")} />
+          </div>
+        </div>
+      </Card>
+
+      <Card title="Bill Footer & Terms" color={C.pink} icon="pi-file-edit">
+        <div style={{ display: "grid", gap: 14 }}>
+          <Field label="Footer thank-you note">
+            <input className="his-field" name="billFooterNote" value={form.billFooterNote || ""} onChange={handle}
+              placeholder="Thank you for choosing our hospital." />
+          </Field>
+          <Field label="Terms line 1">
+            <input className="his-field" name="termsLine1" value={form.termsLine1 || ""} onChange={handle}
+              placeholder="This is a computer-generated bill and does not require a physical signature." />
+          </Field>
+          <Field label="Terms line 2">
+            <input className="his-field" name="termsLine2" value={form.termsLine2 || ""} onChange={handle}
+              placeholder="All charges are as per the approved hospital tariff." />
+          </Field>
+          <Field label="Terms line 3">
+            <input className="his-field" name="termsLine3" value={form.termsLine3 || ""} onChange={handle}
+              placeholder="For queries, contact the Billing Department." />
+          </Field>
+        </div>
+      </Card>
     </div>
   );
 }
 
-/* ── Styles ─────────────────────────────────────────────────────────────── */
-const LS = {
-  page:        { maxWidth: 960, margin: "0 auto", padding: "4px 0 40px", fontFamily: "'Segoe UI', Arial, sans-serif" },
-  pageHeader:  { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 },
-  pageTitle:   { fontSize: 22, fontWeight: 800, color: "#1e293b", margin: 0 },
-  pageSubtitle:{ fontSize: 13, color: "#64748b", marginTop: 4 },
-  successBanner:{ background: "#dcfce7", color: "#15803d", border: "1px solid #86efac", borderRadius: 8, padding: "10px 16px", marginBottom: 16, fontWeight: 600, fontSize: 13 },
-  card:        { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, marginBottom: 20, overflow: "hidden", boxShadow: "0 1px 6px rgba(0,0,0,.06)" },
-  cardHeader:  { display: "flex", alignItems: "center", gap: 10, padding: "14px 20px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" },
-  cardBody:    { padding: "20px 24px" },
-  grid:        { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px 20px" },
-  label:       { fontSize: 12, fontWeight: 600, color: "#374151", letterSpacing: ".3px" },
-  input:       { width: "100%", padding: "8px 12px", border: "1px solid #d1d5db", borderRadius: 7, fontSize: 13, color: "#1e293b", outline: "none", boxSizing: "border-box", background: "#fff", transition: "border .15s" },
-  saveBtn:     { background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, padding: "10px 28px", fontSize: 14, fontWeight: 700, cursor: "pointer", boxShadow: "0 2px 8px #2563eb44" },
-  outlineBtn:  { background: "#fff", color: "#2563eb", border: "1.5px solid #2563eb", borderRadius: 7, padding: "7px 16px", fontSize: 13, fontWeight: 600, textAlign: "center" },
-  dangerBtn:   { background: "#fff", color: "#dc2626", border: "1.5px solid #dc2626", borderRadius: 7, padding: "7px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" },
-};
+function Badge({ color, label }) {
+  return (
+    <span style={{
+      display: "inline-block", marginLeft: 4,
+      padding: "2px 8px", borderRadius: 10,
+      background: `${color}22`, color, border: `1px solid ${color}55`,
+      fontSize: 10, fontWeight: 800, letterSpacing: ".3px",
+    }}>{label}</span>
+  );
+}
+
+function ColorField({ label, name, value, onChange }) {
+  return (
+    <Field label={label}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <input type="color" name={name} value={value} onChange={onChange}
+          style={{ width: 48, height: 38, border: `1.5px solid ${C.border}`, borderRadius: 7, cursor: "pointer", padding: 2, flexShrink: 0 }} />
+        <input className="his-field" type="text" name={name} value={value} onChange={onChange}
+          style={{ width: 120, fontFamily: "DM Mono, monospace" }} />
+        <div style={{ width: 60, height: 30, background: value, borderRadius: 6, border: `1.5px solid ${C.border}`, flexShrink: 0 }} />
+      </div>
+    </Field>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════
+   TAB: Bank details (for payment receipts)
+══════════════════════════════════════════════════════════════════ */
+function BankTab({ form, handle }) {
+  return (
+    <Card title="Bank Details" color={C.slate} icon="pi-building-columns">
+      <div style={{ padding: "10px 14px", background: C.subtle, border: `1.5px solid ${C.border}`, borderRadius: 9, marginBottom: 14, fontSize: 12, color: C.muted }}>
+        <i className="pi pi-info-circle" style={{ marginRight: 6 }} />
+        Bank details are printed on advance / final bill receipts so patients can transfer the balance directly. Leave blank to skip the section on prints.
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <Field label="Bank name">
+          <input className="his-field" name="bankName" value={form.bankName || ""} onChange={handle} placeholder="State Bank of India" />
+        </Field>
+        <Field label="Account number">
+          <input className="his-field" name="accountNo" value={form.accountNo || ""} onChange={handle}
+            placeholder="XXXX XXXX XXXX" style={{ fontFamily: "DM Mono, monospace" }} />
+        </Field>
+        <Field label="IFSC code">
+          <input className="his-field" name="ifscCode" value={form.ifscCode || ""} onChange={handle}
+            placeholder="SBIN0001234" style={{ fontFamily: "DM Mono, monospace", textTransform: "uppercase" }} />
+        </Field>
+        <Field label="Branch">
+          <input className="his-field" name="bankBranch" value={form.bankBranch || ""} onChange={handle}
+            placeholder="Branch name" />
+        </Field>
+        <Field label="UPI ID">
+          <input className="his-field" name="upiId" value={form.upiId || ""} onChange={handle}
+            placeholder="hospital@upi" style={{ fontFamily: "DM Mono, monospace" }} />
+        </Field>
+      </div>
+    </Card>
+  );
+}
