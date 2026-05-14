@@ -12,7 +12,7 @@ import "bootstrap/dist/css/bootstrap.css";
 // ── Eager-loaded shell (always needed) ──────────────────────────
 import Sidebar from "./Components/Sidebar";
 import Header from "./Components/Header";
-import { AuthProvider, useAuth } from "./context/AuthContext";
+import { AuthProvider, useAuth, RoleGuard } from "./context/AuthContext";
 import { HospitalSettingsProvider } from "./context/HospitalSettingsContext";
 
 // PrimeReact CSS
@@ -141,6 +141,7 @@ const MLCPage = lazy(() => import("./pages/mlc/MLCPage"));
 const BillPrintPage = lazy(() => import("./pages/billing/BillPrintPage"));
 const HospitalSettingsPage = lazy(() => import("./pages/admin/HospitalSettingsPage"));
 const UserManagementPage = lazy(() => import("./pages/admin/UserManagementPage"));
+const RolesPage          = lazy(() => import("./pages/admin/RolesPage"));
 const HISAssistant = lazy(() => import("./Components/ai/HISAssistant"));
 
 
@@ -179,19 +180,27 @@ function RouteLoader() {
 }
 
 /* Role-aware landing page (keep in sync with LoginPage.landingPageForRole) */
+// Role-aware landing — every role gets sent to the workspace where they
+// actually do their job, instead of a generic admin dashboard. The map
+// below is the production-tested one for the existing routes; the new
+// `permissions.homePathForRole` helper is the canonical reference, but
+// App.jsx keeps its own table because some role-homes here pre-date
+// the modules they'd map to in permissions.js.
 const homeForRole = (role) => {
   switch (role) {
     case "Receptionist":     return "/reception";
     case "Doctor":           return "/doctor-opd-panel";
     case "Nurse":            return "/opd-queue";
     case "TPA Coordinator":  return "/tpa-cases";
-    case "Pharmacist":       return "/mar";
+    case "Pharmacist":       return "/pharmacy";
     case "Lab Technician":   return "/investigation-orders";
     case "Radiologist":      return "/investigation-orders";
     case "Accountant":       return "/billing";
     case "Ward Boy":         return "/bed-visual";
     case "Dietician":        return "/vitalSheet";
     case "Physiotherapist":  return "/updateVitalSheet";
+    case "Housekeeping":     return "/bed-visual";
+    case "Security":         return "/visitor-passes";
     default:                 return "/mainpage";
   }
 };
@@ -452,9 +461,18 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/daily-nursing-assessment" element={<DailyNursingAssessmentPage />} />
             <Route path="/patient-education" element={<PatientEducationPage />} />
 
-            {/* ── Admin ──────────────────────────────────────────── */}
-            <Route path="/hospital-settings" element={<HospitalSettingsPage />} />
-            <Route path="/admin/users" element={<UserManagementPage />} />
+            {/* ── Admin ───────────────────────────────────────────
+                 Sensitive routes are wrapped in <RoleGuard> so non-admins
+                 get a clean "Access denied" instead of partial UI / 401s. */}
+            <Route path="/hospital-settings" element={
+              <RoleGuard allow={["Admin"]}><HospitalSettingsPage /></RoleGuard>
+            } />
+            <Route path="/admin/users" element={
+              <RoleGuard allow={["Admin"]} action="users.read"><UserManagementPage /></RoleGuard>
+            } />
+            <Route path="/admin/roles" element={
+              <RoleGuard allow={["Admin"]}><RolesPage /></RoleGuard>
+            } />
 
             {/* ── Catch-all: redirect to dashboard ── */}
             <Route path="*" element={<Navigate to={homePath} replace />} />

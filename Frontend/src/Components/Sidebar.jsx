@@ -233,6 +233,7 @@ const NAV = [
       { label: "Department",         icon: "pi-sitemap",    path: "/department" },
       { label: "Doctor Management",  icon: "pi-user-edit",  path: "/doctors" },
       { label: "User Management",    icon: "pi-users",      path: "/admin/users" },
+      { label: "Roles & Permissions",icon: "pi-shield",     path: "/admin/roles",       badge: "NEW" },
       { label: "Hospital Charges",   icon: "pi-dollar",     path: "/hospital-charges" },
       // Buildings / Floors / Rooms / Room Categories moved to Bed Management
       // so the full bed hierarchy lives in one place.
