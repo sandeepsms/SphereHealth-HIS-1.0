@@ -78,7 +78,10 @@ const PharmacySettingsSchema = new mongoose.Schema(
     // Footer signature row — "Prepared by" + "Checked by" + "Authorised by".
     registerSignatures:  { type: Boolean, default: true },
     // Orientation hint for the print toolbar (CSS @page picks this up).
-    registerOrientation: { type: String, enum: ["portrait","landscape"], default: "landscape" },
+    // Portrait is the default — fits standard A4 stationery and looks
+    // right for the typical 8-10 column registers. Landscape stays
+    // available for wide registers if the user prefers it.
+    registerOrientation: { type: String, enum: ["portrait","landscape"], default: "portrait" },
 
     // Invoice footer text
     footerNote: { type: String, default: "" },

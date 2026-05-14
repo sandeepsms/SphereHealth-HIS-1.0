@@ -31,10 +31,10 @@ const PrintPreviewPage = ({
 }) => {
   const [paper,  setPaper]  = useState(defaultPaper);
   const [orient, setOrient] = useState(defaultOrient);
-  // Auto-enable doubling whenever half-A4 is selected (eco default).
-  // User can toggle off via the toolbar checkbox if they want a single
-  // copy on actual half-A4 paper for thermal printers etc.
-  const [doubleOnA4, setDoubleOnA4] = useState(true);
+  // Double-on-A4 is opt-in, not opt-out. Operators print single copies
+  // by default; if they want two halves on one A4 for paper saving,
+  // they tick the toolbar checkbox before clicking Print.
+  const [doubleOnA4, setDoubleOnA4] = useState(false);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-paper",  paper);

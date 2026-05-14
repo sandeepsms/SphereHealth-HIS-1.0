@@ -1599,7 +1599,7 @@ function RegistersTab() {
       columns, rows, totals,
       headerStyle:   phSet?.registerHeader || 1,
       defaultPaper:  "a4",
-      defaultOrient: phSet?.registerOrientation || "landscape",
+      defaultOrient: phSet?.registerOrientation || "portrait",
       pharmacySettings: phSet,
     });
   };
@@ -2270,9 +2270,9 @@ function SettingsTab() {
           </div>
           <div style={{ marginTop: 12 }}>
             <Field label="Page orientation">
-              <select className="his-select" style={{ width: 200 }} value={s.registerOrientation || "landscape"} onChange={upd("registerOrientation")}>
-                <option value="landscape">Landscape · recommended (wide tables)</option>
-                <option value="portrait">Portrait · narrow tables only</option>
+              <select className="his-select" style={{ width: 200 }} value={s.registerOrientation || "portrait"} onChange={upd("registerOrientation")}>
+                <option value="portrait">Portrait · recommended (standard registers)</option>
+                <option value="landscape">Landscape · for very wide tables</option>
               </select>
             </Field>
           </div>
