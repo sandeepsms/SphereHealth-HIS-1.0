@@ -83,28 +83,95 @@ export function Hero({ icon, title, subtitle, color = "orange", right }) {
 }
 
 // Optional tab strip — same look as the pharmacy module's nav.
+// Modern segmented-pill tab strip.
+//
+// Design decisions:
+// - Track background with subtle inner shadow ("inset") so the
+//   container reads as a control rather than a generic card.
+// - Active pill carries a soft drop shadow + accent-tinted background
+//   + accent left-side icon dot → unambiguous active state without
+//   being loud.
+// - Inactive tabs are muted text only. On hover they pick up a faint
+//   gray pill so the click target reads clearly.
+// - 220ms cubic-bezier transition on all pill properties so switching
+//   between tabs feels animated without being slow.
+// - Optional badge prop per tab (`{ key, label, icon, badge }`) renders
+//   a small count pill — useful for "Unsaved", inbox counts, etc.
+// - Mobile: horizontal scroll with snap; tabs never wrap.
 export function TabStrip({ tabs, value, onChange, accent = C.orange, accentL = C.orangeL }) {
   return (
-    <div style={{
-      background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12,
-      padding: 6, marginBottom: 14, display: "flex", gap: 4, overflowX: "auto",
+    <div role="tablist" style={{
+      background: C.card,
+      border: `1px solid ${C.border}`,
+      borderRadius: 12,
+      padding: 5,
+      marginBottom: 14,
+      display: "flex",
+      gap: 3,
+      overflowX: "auto",
+      scrollSnapType: "x proximity",
+      boxShadow: "inset 0 1px 2px rgba(15,23,42,.03)",
     }}>
       {tabs.map(t => {
         const active = value === t.key;
         return (
-          <button key={t.key} onClick={() => onChange(t.key)}
+          <button key={t.key}
+            role="tab"
+            aria-selected={active}
+            onClick={() => onChange(t.key)}
+            onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = "#f1f5f9"; }}
+            onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
             style={{
-              padding: "9px 16px", borderRadius: 8, border: "none",
-              background: active ? accentL : "transparent",
-              color:      active ? accent  : C.muted,
-              fontWeight: 700, fontSize: 12.5, cursor: "pointer",
-              display: "inline-flex", alignItems: "center", gap: 7,
+              position: "relative",
+              padding: "9px 16px",
+              borderRadius: 9,
+              border: "none",
+              background: active ? "#fff" : "transparent",
+              color: active ? accent : C.muted,
+              fontWeight: active ? 800 : 700,
+              fontSize: 12.5,
+              letterSpacing: ".1px",
+              cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 7,
               whiteSpace: "nowrap",
-              borderBottom: active ? `2px solid ${accent}` : "2px solid transparent",
-              transition: "all .12s",
+              flexShrink: 0,
+              scrollSnapAlign: "start",
+              transition: "background .22s cubic-bezier(.4,0,.2,1), color .18s, box-shadow .22s, transform .12s",
+              boxShadow: active
+                ? `0 1px 0 ${accent}, 0 1px 3px rgba(15,23,42,.10), 0 4px 14px ${accent}26`
+                : "none",
+              outline: "none",
+            }}
+            onFocus={(e) => { e.currentTarget.style.outline = `2px solid ${accent}55`; e.currentTarget.style.outlineOffset = "2px"; }}
+            onBlur={(e) => { e.currentTarget.style.outline = "none"; }}
+          >
+            {/* Coloured dot on the icon when active for instant visual scan */}
+            <span style={{
+              width: 18, height: 18, borderRadius: 6,
+              display: "inline-flex", alignItems: "center", justifyContent: "center",
+              background: active ? `${accent}18` : "transparent",
+              transition: "background .22s",
             }}>
-            <i className={`pi ${t.icon}`} style={{ fontSize: 11 }} />
-            {t.label}
+              <i className={`pi ${t.icon}`} style={{
+                fontSize: 11, color: active ? accent : C.muted, transition: "color .18s",
+              }} />
+            </span>
+            <span>{t.label}</span>
+            {t.badge != null && (
+              <span style={{
+                marginLeft: 2,
+                minWidth: 18, height: 18,
+                padding: "0 6px",
+                borderRadius: 999,
+                background: active ? accent : "#cbd5e1",
+                color: "#fff",
+                fontSize: 10, fontWeight: 800,
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                lineHeight: 1,
+              }}>{t.badge}</span>
+            )}
           </button>
         );
       })}

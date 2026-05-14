@@ -13,6 +13,7 @@ import "../../Components/clinical/clinical-forms.css";
 import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
 import { openPrint } from "../../Components/print/openPrint";
+import { TabStrip } from "../../Components/admin-theme";
 import TEMPLATES from "../../Components/print/printables/PharmacyBillTemplates";
 import PharmacyBill from "../../Components/print/printables/PharmacyBill";
 import PharmacyRegister, { REGISTER_HEADERS } from "../../Components/print/printables/PharmacyRegister";
@@ -136,31 +137,8 @@ export default function PharmacyHomePage() {
           </div>
         </div>
 
-        {/* Tab strip */}
-        <div style={{
-          background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12,
-          padding: 6, marginBottom: 14, display: "flex", gap: 4, overflowX: "auto",
-        }}>
-          {TABS.map(t => {
-            const active = tab === t.key;
-            return (
-              <button key={t.key} onClick={() => setTab(t.key)}
-                style={{
-                  padding: "9px 16px", borderRadius: 8, border: "none",
-                  background: active ? C.orangeL : "transparent",
-                  color:      active ? C.orange  : C.muted,
-                  fontWeight: 700, fontSize: 12.5, cursor: "pointer",
-                  display: "inline-flex", alignItems: "center", gap: 7,
-                  whiteSpace: "nowrap",
-                  borderBottom: active ? `2px solid ${C.orange}` : "2px solid transparent",
-                  transition: "all .12s",
-                }}>
-                <i className={`pi ${t.icon}`} style={{ fontSize: 11 }} />
-                {t.label}
-              </button>
-            );
-          })}
-        </div>
+        {/* Tab strip — shared admin TabStrip for design consistency */}
+        <TabStrip tabs={TABS} value={tab} onChange={setTab} accent={C.orange} accentL={C.orangeL} />
 
         {/* Tab body */}
         {tab === "dashboard" && <DashboardTab />}
