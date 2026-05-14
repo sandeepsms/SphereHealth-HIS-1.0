@@ -39,18 +39,20 @@ export const ROLE_KEYS = ROLES.map(r => r.key);
 
 /* ── High-level modules ──────────────────────────────────────────── */
 export const MODULES = [
-  { id: "reception",  label: "Reception",     icon: "pi-desktop",       home: "/reception",       color: "#0891b2" },
-  { id: "opd",        label: "OPD / Emergency",icon: "pi-stethoscope",  home: "/opd-visit",       color: "#7c3aed" },
-  { id: "ipd",        label: "Beds & IPD",    icon: "pi-th-large",      home: "/bed-visual",      color: "#1d4ed8" },
-  { id: "doctor",     label: "Doctor Workbench",icon: "pi-user-edit",   home: "/doctor",          color: "#7c3aed" },
-  { id: "nursing",    label: "Nursing",       icon: "pi-heart",         home: "/nursing-notes",   color: "#db2777" },
-  { id: "pharmacy",   label: "Pharmacy",      icon: "pi-box",           home: "/pharmacy",        color: "#ea580c" },
-  { id: "lab",        label: "Lab",           icon: "pi-search-plus",   home: "/lab-management",  color: "#0284c7" },
-  { id: "billing",    label: "Billing",       icon: "pi-receipt",       home: "/bill",            color: "#d97706" },
-  { id: "tpa",        label: "TPA / Cashless",icon: "pi-briefcase",     home: "/cashless",        color: "#7c3aed" },
-  { id: "maintenance",label: "Maintenance",   icon: "pi-wrench",        home: "/maintenance",     color: "#0d9488" },
-  { id: "admin",      label: "Masters & Admin", icon: "pi-cog",         home: "/admin/users",     color: "#1e293b" },
-  { id: "reports",    label: "Reports & MIS", icon: "pi-chart-bar",     home: "/admin-reports",   color: "#1d4ed8" },
+  { id: "reception",  label: "Reception",       icon: "pi-desktop",       home: "/reception",         color: "#0891b2" },
+  { id: "opd",        label: "OPD / Emergency", icon: "pi-stethoscope",   home: "/opd-visit",         color: "#7c3aed" },
+  { id: "ipd",        label: "Beds & IPD",      icon: "pi-th-large",      home: "/bed-visual",        color: "#1d4ed8" },
+  { id: "doctor",     label: "Doctor Workbench",icon: "pi-user-edit",     home: "/doctor",            color: "#7c3aed" },
+  { id: "nursing",    label: "Nursing",         icon: "pi-heart",         home: "/nursing-notes",     color: "#db2777" },
+  { id: "pharmacy",   label: "Pharmacy",        icon: "pi-box",           home: "/pharmacy",          color: "#ea580c" },
+  { id: "lab",        label: "Lab",             icon: "pi-search-plus",   home: "/lab-management",    color: "#0284c7" },
+  { id: "billing",    label: "Billing",         icon: "pi-receipt",       home: "/bill",              color: "#d97706" },
+  { id: "tpa",        label: "TPA / Cashless",  icon: "pi-briefcase",     home: "/cashless",          color: "#7c3aed" },
+  { id: "care",       label: "Care Plans",      icon: "pi-bolt",          home: "/vitalSheet",        color: "#16a34a" },
+  { id: "maintenance",label: "Maintenance",     icon: "pi-wrench",        home: "/maintenance",       color: "#0d9488" },
+  { id: "security",   label: "Visitor Security",icon: "pi-lock",          home: "/visitor-passes",    color: "#374151" },
+  { id: "admin",      label: "Masters & Admin", icon: "pi-cog",           home: "/admin/users",       color: "#1e293b" },
+  { id: "reports",    label: "Reports & MIS",   icon: "pi-chart-bar",     home: "/admin-reports",     color: "#1d4ed8" },
 ];
 
 /* ── Module access per role.
@@ -58,14 +60,16 @@ export const MODULES = [
 export const MODULE_ROLES = {
   reception:   ["Admin", "Receptionist", "Doctor", "Nurse", "Accountant", "TPA Coordinator"],
   opd:         ["Admin", "Doctor", "Nurse", "Receptionist"],
-  ipd:         ["Admin", "Doctor", "Nurse", "Receptionist", "Ward Boy", "Housekeeping"],
+  ipd:         ["Admin", "Doctor", "Nurse", "Receptionist", "Ward Boy", "Housekeeping", "Physiotherapist", "Dietician"],
   doctor:      ["Admin", "Doctor"],
-  nursing:     ["Admin", "Nurse", "Doctor"],
+  nursing:     ["Admin", "Nurse", "Doctor", "Physiotherapist", "Dietician"],
   pharmacy:    ["Admin", "Pharmacist", "Doctor"],
   lab:         ["Admin", "Lab Technician", "Radiologist", "Doctor"],
   billing:     ["Admin", "Receptionist", "Accountant", "TPA Coordinator"],
   tpa:         ["Admin", "TPA Coordinator", "Receptionist"],
-  maintenance: ["Admin", "Housekeeping"],
+  care:        ["Admin", "Physiotherapist", "Dietician", "Doctor", "Nurse"],
+  maintenance: ["Admin", "Housekeeping", "Ward Boy"],
+  security:    ["Admin", "Security", "Receptionist"],
   admin:       ["Admin"],
   reports:     ["Admin", "Accountant"],
 };
