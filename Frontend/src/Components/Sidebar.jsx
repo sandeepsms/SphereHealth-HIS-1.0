@@ -140,8 +140,9 @@ const NAV = [
     icon: "pi-wrench", color: "#d97706", light: "#fffbeb",
     roles: [ADMIN, MT, WB, NR],
     items: [
-      { label: "Dashboard",     icon: "pi-th-large",  path: "/maintenance",          badge: "NEW", roles: [ADMIN, MT, WB, NR] },
-      { label: "Live Bed Map",  icon: "pi-eye",       path: "/bed-visual",                         roles: [ADMIN, MT, WB] },
+      { label: "Dashboard",        icon: "pi-th-large",  path: "/maintenance",          badge: "NEW", roles: [ADMIN, MT, WB, NR] },
+      { label: "Equipment Tracker",icon: "pi-box",       path: "/equipment",            badge: "NEW", roles: [ADMIN, MT, NR] },
+      { label: "Live Bed Map",     icon: "pi-eye",       path: "/bed-visual",                         roles: [ADMIN, MT, WB] },
     ],
   },
 

@@ -170,4 +170,7 @@ router.use("/admin-ops",        require("./Admin/adminOpsRoutes"));
 // Diabetic chart — RBS readings + sliding-scale insulin per admission
 router.use("/diabetic-chart",   require("./Clinical/diabeticChartRoutes"));
 
+// Equipment inventory + homecare loan tracker + service history
+router.use("/equipment",        require("./Equipment/equipmentRoutes"));
+
 module.exports = router;
