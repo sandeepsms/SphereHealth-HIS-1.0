@@ -232,8 +232,9 @@ const NAV = [
     icon: "pi-wallet", color: "#15803d", light: "#f0fdf4",
     roles: [ADMIN, AC],
     items: [
-      { label: "Accounts Console",     icon: "pi-th-large",    path: "/accounts",                 badge: "NEW",  roles: [ADMIN, AC] },
-      { label: "Day Book",             icon: "pi-book",        path: "/accounts?tab=daybook",                    roles: [ADMIN, AC] },
+      // Each item deep-links to a tab in /accounts. The console parent has
+      // no separate sidebar entry — the 5 tabs together ARE the console.
+      { label: "Day Book",             icon: "pi-book",        path: "/accounts?tab=daybook",     badge: "NEW",  roles: [ADMIN, AC] },
       { label: "Revenue (MTD)",        icon: "pi-chart-line",  path: "/accounts?tab=revenue",                    roles: [ADMIN, AC] },
       { label: "GST Returns",          icon: "pi-percentage",  path: "/accounts?tab=gst",                        roles: [ADMIN, AC] },
       { label: "Outstanding",          icon: "pi-clock",       path: "/accounts?tab=outstanding",                roles: [ADMIN, AC] },
@@ -442,8 +443,23 @@ export default function Sidebar({ collapsed, setCollapsed }) {
     return init;
   });
 
-  const isActive = (path) =>
-    location.pathname === path || location.pathname.startsWith(path + "/");
+  // Active-state matching is query-aware so deep links like
+  // "/accounts?tab=daybook" highlight only when both the pathname AND the
+  // tab query param match. Without this, every "/accounts?tab=*" sidebar
+  // entry would always appear inactive while "Accounts Console" (path
+  // "/accounts") would always be active regardless of the open tab.
+  const isActive = (path) => {
+    if (!path) return false;
+    const [p, q] = path.split("?");
+    if (location.pathname !== p && !location.pathname.startsWith(p + "/")) return false;
+    if (!q) return true;                  // path has no query → pathname match is enough
+    const want = new URLSearchParams(q);
+    const have = new URLSearchParams(location.search);
+    for (const [k, v] of want) {
+      if (have.get(k) !== v) return false;
+    }
+    return true;
+  };
 
   const toggle = (id) => setOpen(p => ({ ...p, [id]: !p[id] }));
 

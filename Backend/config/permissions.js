@@ -75,7 +75,9 @@ const ACTIONS = {
   // Reports
   "reports.financial":     ["Admin", "Accountant"],
   "reports.clinical":      ["Admin", "Doctor"],
-  "reports.audit":         ["Admin"],
+  // Accountant added so /billing-audit-trail is reachable — audit-trail review
+  // is a core accountant function (catch unauthorized refunds / cancellations).
+  "reports.audit":         ["Admin", "Accountant"],
 };
 
 function roleCan(role, action) {

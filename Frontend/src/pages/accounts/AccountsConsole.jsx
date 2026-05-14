@@ -202,27 +202,51 @@ function DayBookTab() {
    REVENUE — month-to-date overview
 ══════════════════════════════════════════════════════════════ */
 function RevenueTab() {
+  const navigate = useNavigate();
+  // /billing/summary is a "today snapshot" endpoint — it ignores date params
+  // and returns { todayBills, pendingBills, todayRevenue, tpaPending }.
+  // We aggregate a real date range by calling /billing/collection-summary for
+  // each day in the window (max 31 days). That keeps the API surface unchanged
+  // while giving the Revenue tab proper MTD numbers.
   const [from, setFrom] = useState(firstOfMonth());
   const [to, setTo]     = useState(todayISO());
-  const [billing, setBilling] = useState(null);
+  const [agg, setAgg]   = useState({ collected: 0, gross: 0, pending: 0, txns: 0, days: 0 });
+  const [snapshot, setSnapshot] = useState(null);   // {todayBills, pendingBills, todayRevenue, tpaPending}
   const [pharmacy, setPharmacy] = useState(null);
   const [loading, setLoading] = useState(false);
 
   const refresh = async () => {
     setLoading(true);
     try {
-      const [b, p] = await Promise.all([
-        axios.get(`${API}/billing/summary?startDate=${from}&endDate=${to}`, authHdr()).catch(() => null),
-        axios.get(`${API}/pharmacy/stats`, authHdr()).catch(() => null),
+      // Build inclusive list of dates in window — cap at 31 days to avoid
+      // hammering the API.
+      const dates = [];
+      const start = new Date(from), end = new Date(to);
+      for (let d = new Date(start); d <= end && dates.length < 31; d.setDate(d.getDate() + 1)) {
+        dates.push(d.toISOString().slice(0, 10));
+      }
+      const [perDay, snap, ph] = await Promise.all([
+        Promise.all(dates.map(dt =>
+          axios.get(`${API}/billing/collection-summary?date=${dt}`, authHdr()).then(r => r.data?.summary || {}).catch(() => ({}))
+        )),
+        axios.get(`${API}/billing/summary`, authHdr()).then(r => r.data?.data).catch(() => null),
+        axios.get(`${API}/pharmacy/stats`, authHdr()).then(r => r.data?.data).catch(() => null),
       ]);
-      setBilling(b?.data || null);
-      setPharmacy(p?.data?.data || null);
+      const totals = perDay.reduce((acc, s) => ({
+        collected: acc.collected + Number(s.totalCollected || 0),
+        gross:     acc.gross     + Number(s.totalGross     || 0),
+        pending:   acc.pending   + Number(s.totalPending   || 0),
+        txns:      acc.txns      + Number(s.txnCount       || 0),
+        days:      acc.days + 1,
+      }), { collected: 0, gross: 0, pending: 0, txns: 0, days: 0 });
+      setAgg(totals);
+      setSnapshot(snap);
+      setPharmacy(ph);
     } catch (e) {}
     setLoading(false);
   };
   useEffect(() => { refresh(); }, [from, to]);
 
-  const bs = billing?.summary || billing?.data || billing || {};
   return (
     <>
       <Card title="Date range" color={C.blue} icon="pi-calendar"
@@ -237,30 +261,42 @@ function RevenueTab() {
           </div>
         }>
         <div style={{ fontSize: 12.5, color: C.muted }}>
-          {Math.ceil((new Date(to) - new Date(from)) / 86400000) + 1} day window · {from} → {to}
+          {agg.days} day window · {from} → {to}
+          {agg.days >= 31 && <span style={{ color: C.amber, fontWeight: 700, marginLeft: 8 }}>· capped at 31 days</span>}
         </div>
       </Card>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, margin: "12px 0" }}>
-        <KPI label="Hospital billing"   value={fmtINR(bs.totalBilled ?? bs.netAmount ?? 0)}    color={C.blue}    icon="pi-receipt" />
-        <KPI label="Collected"          value={fmtINR(bs.totalCollected ?? bs.totalPaid ?? 0)} color={C.green}   icon="pi-money-bill" />
-        <KPI label="Outstanding"        value={fmtINR(bs.totalPending ?? bs.outstanding ?? 0)} color={C.red}     icon="pi-clock" />
-        <KPI label="Bills generated"    value={bs.totalBills ?? bs.billCount ?? "—"}           color={C.purple}  icon="pi-list" />
+        <KPI label="Collected (range)"  value={fmtINR(agg.collected)}                          color={C.green}   icon="pi-money-bill" />
+        <KPI label="Gross billed"       value={fmtINR(agg.gross)}                              color={C.blue}    icon="pi-receipt" />
+        <KPI label="Outstanding"        value={fmtINR(agg.pending)}                            color={C.red}     icon="pi-clock" />
+        <KPI label="Transactions"       value={agg.txns}                                       color={C.purple}  icon="pi-list" />
         <KPI label="Pharmacy MTD"       value={fmtINR(pharmacy?.monthSales?.net ?? 0)}         color={C.amber}   icon="pi-box" />
         <KPI label="Pharmacy today"     value={fmtINR(pharmacy?.todaySales?.net ?? 0)}         color={C.orange}  icon="pi-shopping-cart" />
       </div>
 
-      <Card title="Revenue stream snapshot" color={C.amber} icon="pi-chart-bar">
-        <div style={{ fontSize: 12.5, color: C.muted, padding: "8px 0 14px" }}>
-          Service-wise revenue breakdown wiring is pending a backend aggregator (<code>/api/billing/revenue-streams</code>).
-          For now use the cards above + Bills List for line-item drill-downs.
-        </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <PrimaryButton label="Open Bills List" icon="pi-list" color={C.amber} onClick={() => location.assign("/billing")} />
-          <PrimaryButton label="Billing Intelligence" icon="pi-bolt" color={C.purple} onClick={() => location.assign("/billing-intelligence")} />
-          <PrimaryButton label="Pharmacy Sales Register" icon="pi-receipt" color={C.orange} onClick={() => location.assign("/pharmacy?tab=registers")} />
+      {/* Live snapshot — today's bills awaiting payment + TPA outstanding */}
+      <Card title="Today's snapshot" color={C.purple} icon="pi-flag">
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12 }}>
+          <KPI label="Bills today"        value={snapshot?.todayBills ?? "—"}                  color={C.blue}    icon="pi-receipt" />
+          <KPI label="Today's revenue"    value={fmtINR(snapshot?.todayRevenue ?? 0)}          color={C.green}   icon="pi-money-bill" />
+          <KPI label="Pending bills"      value={snapshot?.pendingBills ?? "—"}                color={C.amber}   icon="pi-clock" />
+          <KPI label="TPA pending (live)" value={fmtINR(snapshot?.tpaPending ?? 0)}            color={C.red}     icon="pi-briefcase" />
         </div>
       </Card>
+
+      <div style={{ marginTop: 12 }}>
+        <Card title="Drill down" color={C.amber} icon="pi-chart-bar">
+          <div style={{ fontSize: 12.5, color: C.muted, padding: "0 0 12px" }}>
+            Service-wise revenue breakdown wiring is pending a backend aggregator (<code>/api/billing/revenue-streams</code>).
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <PrimaryButton label="Open Bills List"          icon="pi-list"    color={C.amber}  onClick={() => navigate("/billing")} />
+            <PrimaryButton label="Billing Intelligence"     icon="pi-bolt"    color={C.purple} onClick={() => navigate("/billing-intelligence")} />
+            <PrimaryButton label="Pharmacy Sales Register"  icon="pi-receipt" color={C.orange} onClick={() => navigate("/pharmacy?tab=registers")} />
+          </div>
+        </Card>
+      </div>
     </>
   );
 }
@@ -285,13 +321,17 @@ function GSTTab() {
   useEffect(() => { refresh(); }, [from, to]);
 
   const buckets = data?.data?.buckets || data?.buckets || [];
+  // Pharmacy GST endpoint only computes CGST + SGST (intra-state supplies).
+  // IGST would require inter-state ship-to addresses which the pharmacy
+  // POS doesn't capture — left as a placeholder when that data becomes
+  // available. For now the column is dropped from the UI to avoid showing
+  // a misleading ₹0.
   const totals  = buckets.reduce((acc, b) => ({
     taxable: acc.taxable + (b.netTaxable ?? b.taxable ?? 0),
     cgst:    acc.cgst    + (b.cgst ?? 0),
     sgst:    acc.sgst    + (b.sgst ?? 0),
-    igst:    acc.igst    + (b.igst ?? 0),
     total:   acc.total   + (b.netTax ?? b.tax ?? 0),
-  }), { taxable: 0, cgst: 0, sgst: 0, igst: 0, total: 0 });
+  }), { taxable: 0, cgst: 0, sgst: 0, total: 0 });
 
   return (
     <>
@@ -316,8 +356,7 @@ function GSTTab() {
         <KPI label="Taxable value"  value={fmtINR(totals.taxable)} color={C.blue}   icon="pi-receipt" />
         <KPI label="CGST"           value={fmtINR(totals.cgst)}    color={C.amber}  icon="pi-percentage" />
         <KPI label="SGST"           value={fmtINR(totals.sgst)}    color={C.amber}  icon="pi-percentage" />
-        <KPI label="IGST"           value={fmtINR(totals.igst)}    color={C.purple} icon="pi-percentage" />
-        <KPI label="Total tax"      value={fmtINR(totals.total)}   color={C.green}  icon="pi-money-bill" />
+        <KPI label="Net tax"        value={fmtINR(totals.total)}   color={C.green}  icon="pi-money-bill" />
       </div>
 
       <Card title="Bucket-wise GST breakdown" color={C.purple} icon="pi-list">
@@ -331,18 +370,16 @@ function GSTTab() {
             { label: "Net Taxable", align: "right" },
             { label: "CGST", align: "right" },
             { label: "SGST", align: "right" },
-            { label: "IGST", align: "right" },
-            { label: "Tax Total", align: "right" },
+            { label: "Net Tax", align: "right" },
           ]}>
             {buckets.map((b, i) => (
               <tr key={i}>
-                <td><Badge value={`${b.gstRate ?? b.rate ?? 0}%`} palette={C.purple} /></td>
+                <td><Badge value={`${b.gstRate ?? b.rate ?? 0}%`} /></td>
                 <td style={{ textAlign: "right" }}>{b.qty ?? "—"}</td>
                 <td style={{ textAlign: "right" }}>{b.billCount ?? "—"}</td>
                 <td style={{ textAlign: "right", fontWeight: 700 }}>{fmtINR2(b.netTaxable ?? b.taxable ?? 0)}</td>
                 <td style={{ textAlign: "right" }}>{fmtINR2(b.cgst ?? 0)}</td>
                 <td style={{ textAlign: "right" }}>{fmtINR2(b.sgst ?? 0)}</td>
-                <td style={{ textAlign: "right" }}>{fmtINR2(b.igst ?? 0)}</td>
                 <td style={{ textAlign: "right", fontWeight: 800, color: C.green }}>{fmtINR2(b.netTax ?? b.tax ?? 0)}</td>
               </tr>
             ))}
@@ -363,6 +400,7 @@ function GSTTab() {
    OUTSTANDING — TPA pending + IPD advance + credit ledger
 ══════════════════════════════════════════════════════════════ */
 function OutstandingTab() {
+  const navigate = useNavigate();
   const [tpaCases, setTpaCases] = useState([]);
   const [collection, setCollection] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -420,8 +458,8 @@ function OutstandingTab() {
       </Card>
 
       <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <PrimaryButton label="All TPA Cases" icon="pi-briefcase" color={C.purple} onClick={() => location.assign("/tpa-cases")} />
-        <PrimaryButton label="Discharge Queue (pending bills)" icon="pi-sign-out" color={C.green} onClick={() => location.assign("/discharge-queue")} />
+        <PrimaryButton label="All TPA Cases" icon="pi-briefcase" color={C.purple} onClick={() => navigate("/tpa-cases")} />
+        <PrimaryButton label="Discharge Queue (pending bills)" icon="pi-sign-out" color={C.green} onClick={() => navigate("/discharge-queue")} />
       </div>
     </>
   );

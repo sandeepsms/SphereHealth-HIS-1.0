@@ -341,7 +341,7 @@ function AppLayout({ collapsed, setCollapsed }) {
 
             {/* ── Services & TPA ────────────────────────────────── */}
             <Route path="/addservice" element={
-              <RoleGuard action="departments.write"><ServiceAdd /></RoleGuard>
+              <RoleGuard allow={["Admin", "TPA Coordinator", "Accountant"]}><ServiceAdd /></RoleGuard>
             } />
             <Route path="/addtpa" element={
               <RoleGuard action="tpa.pre-auth"><AddTpa /></RoleGuard>
@@ -449,7 +449,7 @@ function AppLayout({ collapsed, setCollapsed }) {
               <RoleGuard action="reception.visitor-pass"><VisitorPasses /></RoleGuard>
             } />
             <Route path="/tpa-cases" element={
-              <RoleGuard action="tpa.pre-auth"><TPACases /></RoleGuard>
+              <RoleGuard allow={["Admin", "TPA Coordinator", "Receptionist", "Accountant"]}><TPACases /></RoleGuard>
             } />
             <Route path="/appointments" element={<Appointments />} />
             {/* Receptionist-flavored versions of shared modules */}
@@ -480,7 +480,7 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/maintenance"    element={<MaintenanceDashboardPage />} />
             <Route path="/equipment"      element={<EquipmentDashboardPage />} />
             <Route path="/pharmacy"       element={
-              <RoleGuard allow={["Admin", "Pharmacist", "Doctor"]}><PharmacyHomePage /></RoleGuard>
+              <RoleGuard allow={["Admin", "Pharmacist", "Doctor", "Accountant"]}><PharmacyHomePage /></RoleGuard>
             } />
             <Route path="/discharge-summary" element={
               <RoleGuard action="ipd.discharge-summary"><DischargeSummaryPage /></RoleGuard>

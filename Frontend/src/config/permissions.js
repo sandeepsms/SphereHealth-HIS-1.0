@@ -138,7 +138,8 @@ export const ACTIONS = {
   // Reports
   "reports.financial":     ["Admin", "Accountant"],
   "reports.clinical":      ["Admin", "Doctor"],
-  "reports.audit":         ["Admin"],
+  // Accountant needs audit-trail review to catch unauthorized refunds/cancels.
+  "reports.audit":         ["Admin", "Accountant"],
 };
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
