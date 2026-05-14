@@ -50,6 +50,7 @@ const WB    = "Ward Boy";
 const ADMIN = "Admin";
 const PT    = "Physiotherapist";
 const DT    = "Dietician";
+const MT    = "Maintenance";        // Housekeeping / facilities / equipment
 
 /* ══════════════════════════════════════════════════════════════
    MASTER NAV DEFINITION
@@ -133,6 +134,17 @@ const NAV = [
     ],
   },
 
+  /* ── Maintenance ─────────────────────────────────────── */
+  {
+    id: "maintenance", label: "Maintenance",
+    icon: "pi-wrench", color: "#d97706", light: "#fffbeb",
+    roles: [ADMIN, MT, WB, NR],
+    items: [
+      { label: "Dashboard",     icon: "pi-th-large",  path: "/maintenance",          badge: "NEW", roles: [ADMIN, MT, WB, NR] },
+      { label: "Live Bed Map",  icon: "pi-eye",       path: "/bed-visual",                         roles: [ADMIN, MT, WB] },
+    ],
+  },
+
   /* ── Clinical — Doctor ──────────────────────────────── */
   {
     id: "doctor", label: "Clinical — Doctor",
@@ -163,18 +175,6 @@ const NAV = [
       { label: "Care Plan",             icon: "pi-heart",      path: "/nursing-care-plan",       roles: [ADMIN, NR], nabh: true },
       { label: "Fall Risk",             icon: "pi-exclamation-triangle", path: "/fall-risk-assessment", roles: [ADMIN, NR], nabh: true },
       { label: "Pain Assessment",       icon: "pi-minus-circle", path: "/pain-assessment",       roles: [ADMIN, NR], nabh: true },
-    ],
-  },
-
-  /* ── Vitals ──────────────────────────────────────────── */
-  {
-    id: "vitals", label: "Vitals",
-    icon: "pi-chart-line", color: "#16a34a", light: "#f0fdf4",
-    roles: [ADMIN, NR, DR, PT, DT],
-    items: [
-      { label: "Update Vitals",  icon: "pi-pencil",    path: "/updateVitalSheet",  roles: [ADMIN, NR, PT, DT] },
-      { label: "Vital Sheet",    icon: "pi-table",     path: "/vitalSheet",        roles: [ADMIN, NR, DR, DT] },
-      { label: "Vitals View",    icon: "pi-chart-bar", path: "/vitalsView",        roles: [ADMIN, NR, DR, DT] },
     ],
   },
 

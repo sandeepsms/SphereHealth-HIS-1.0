@@ -124,6 +124,7 @@ const PatientHistoryPage = lazy(() => import("./pages/patient/PatientHistoryPage
 const CompletePatientFilePage = lazy(() => import("./pages/patient/CompletePatientFilePage"));
 const MARPage = lazy(() => import("./pages/clinical/MARPage"));
 const DiabeticChartPage = lazy(() => import("./pages/clinical/DiabeticChartPage"));
+const MaintenanceDashboardPage = lazy(() => import("./pages/maintenance/MaintenanceDashboardPage"));
 const DischargeSummaryPage = lazy(() => import("./pages/clinical/DischargeSummaryPage"));
 const ConsentFormPage = lazy(() => import("./pages/clinical/ConsentFormPage"));
 const IPDInitialAssessmentPage = lazy(() => import("./pages/clinical/IPDInitialAssessmentPage"));
@@ -423,6 +424,7 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/patient-file/:uhid" element={<CompletePatientFilePage />} />
             <Route path="/mar" element={<MARPage />} />
             <Route path="/diabetic-chart" element={<DiabeticChartPage />} />
+            <Route path="/maintenance"    element={<MaintenanceDashboardPage />} />
             <Route path="/discharge-summary" element={<DischargeSummaryPage />} />
             <Route path="/consent-forms" element={<ConsentFormPage />} />
             <Route path="/nurse-initial-assessment" element={<NurseInitialAssessmentPage />} />
