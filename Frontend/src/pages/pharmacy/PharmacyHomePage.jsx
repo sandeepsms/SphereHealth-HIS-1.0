@@ -1353,12 +1353,18 @@ function RegistersTab() {
     // Pass header style + paper + orientation EXPLICITLY (not just inside
     // pharmacySettings) so the printable never silently falls back to its
     // hardcoded defaults if the settings doc is stale or unreachable.
+    //
+    // IMPORTANT: registers always default to A4. The pharmacySettings.defaultPaper
+    // is the user's preferred paper for BILLS (typically Half-A4 receipts) —
+    // registers routinely have 50+ rows and would either get clipped or repeat
+    // uselessly on Half-A4 doubling mode. The toolbar still lets the operator
+    // switch to Half-A4 manually if they really want.
     openPrint("pharmacy-register", {
       type:  reg, title: meta?.label || "Register", subtitle,
       color: meta?.color || "#475569",
       columns, rows, totals,
       headerStyle:   phSet?.registerHeader || 1,
-      defaultPaper:  phSet?.defaultPaper   || "a4",
+      defaultPaper:  "a4",
       defaultOrient: phSet?.registerOrientation || "landscape",
       pharmacySettings: phSet,
     });

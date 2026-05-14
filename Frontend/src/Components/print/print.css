@@ -508,28 +508,38 @@ html[data-paper="a5"] .pr-page {
   }
   html[data-paper="half-a4"][data-duplicate="on"] .pr-doc {
     width: 210mm;
-    height: 297mm;
     margin: 0;
     padding: 0;
   }
+  /* Each copy is AT LEAST 148.5mm tall (so two short receipts perfectly
+     halve an A4 sheet) but is allowed to grow if the content needs more
+     space. Never use `height` + `overflow:hidden` here — that silently
+     clipped multi-row register data and made the duplicate useless. If
+     the content overflows the half, the browser will page-break onto a
+     second sheet, which is the correct fallback. */
   html[data-paper="half-a4"][data-duplicate="on"] .pr-doc-copy {
     width: 210mm;
-    height: 148.5mm;
+    min-height: 148.5mm;
     padding: 8mm 12mm;
-    overflow: hidden;
-    page-break-after: avoid;
-    break-after: avoid-page;
     box-sizing: border-box;
+    overflow: visible;
+    page-break-after: auto;
+    break-after: auto;
+    page-break-inside: auto;
   }
+  /* Allow the cut-line + second copy to start on the same sheet when
+     the first copy is short; the browser will page-break them apart
+     only if combined height genuinely exceeds A4. */
   html[data-paper="half-a4"][data-duplicate="on"] .pr-doc-copy .pr-page {
     width: 100%;
-    height: 100%;
+    min-height: 0 !important;
     padding: 0 !important;
     margin: 0 !important;
-    min-height: 0 !important;
     box-shadow: none;
   }
   html[data-paper="half-a4"][data-duplicate="on"] .pr-doc-cutline {
     width: 210mm;
+    page-break-inside: avoid;
+    break-inside: avoid;
   }
 }
