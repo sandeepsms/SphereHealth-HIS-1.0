@@ -561,6 +561,34 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     setSearchQ("");
     setSearchModal(true);
   };
+  // ── UHID resolver for action handlers ──────────────────────────────────
+  // Earlier handlers only checked `bed.currentAdmission?.patientId?.UHID`,
+  // which is only populated when the beds endpoint deep-populates patient.
+  // When that fails the user was sent to a generic /doctor-notes page with
+  // no patient context. This walks every reasonable shape:
+  //   1. bed.currentAdmission.patientId.UHID         (deep-populated)
+  //   2. bed.currentAdmission.UHID                   (admission-level UHID)
+  //   3. bed.currentAdmission.patientUHID            (alias)
+  //   4. bed.currentUHID                             (some bed snapshots)
+  //   5. live admissionService lookup by bedId       (last-resort fetch)
+  const resolveBedUHID = async (bed) => {
+    if (!bed) return "";
+    const ca = bed.currentAdmission;
+    if (ca && typeof ca === "object") {
+      if (ca.patientId && typeof ca.patientId === "object" && ca.patientId.UHID) return ca.patientId.UHID;
+      if (ca.UHID)        return ca.UHID;
+      if (ca.patientUHID) return ca.patientUHID;
+    }
+    if (bed.currentUHID) return bed.currentUHID;
+    try {
+      const list = await admissionService.getActiveAdmissions();
+      const arr = Array.isArray(list) ? list : list?.admissions || list?.data || [];
+      const bedId = getId(bed._id);
+      const match = arr.find((a) => getId(a.bedId) === bedId || getId(a.bed) === bedId);
+      return match?.UHID || match?.patientUHID || match?.patientId?.UHID || "";
+    } catch { return ""; }
+  };
+
   const handleOccupied = async (bed) => {
     setDetailBed(bed);
     setDetailPatient(null);
@@ -3660,11 +3688,19 @@ const BedVisualLayout = ({ onRefreshParent }) => {
           },
           onIsolation: (bed) => {
             setActionMenuBed(null);
-            toast.current?.show({ severity: "info", summary: "Isolation", detail: "Edit isolation flags via Manage Beds → Edit Bed.", life: 3500 });
+            // Open the bed-edit drawer in place (same flow as Manage Beds →
+            // Edit Bed). Isolation flags live on the Bed record, not the
+            // admission, so this works for any bed status.
+            openEdit(bed);
+            toast.current?.show({ severity: "info", summary: "Edit isolation flags",
+              detail: `Update precaution flags on the Edit Bed form for ${bed.bedNumber}, then Save.`, life: 4000 });
           },
           onEquipment: (bed) => {
             setActionMenuBed(null);
-            toast.current?.show({ severity: "info", summary: "Equipment", detail: "Equipment manifest editor opens from Manage Beds → Edit Bed.", life: 3500 });
+            // Equipment manifest is on the Bed record — open Edit Bed.
+            openEdit(bed);
+            toast.current?.show({ severity: "info", summary: "Edit equipment",
+              detail: `Update equipment manifest on the Edit Bed form for ${bed.bedNumber}, then Save.`, life: 4000 });
           },
           onMaintenance: async (bed) => {
             setActionMenuBed(null);
@@ -3689,27 +3725,30 @@ const BedVisualLayout = ({ onRefreshParent }) => {
 
           // Occupied
           onViewPatient: (bed) => { setActionMenuBed(null); handleOccupied(bed); },
-          onDoctorNotes: (bed) => {
+          onDoctorNotes: async (bed) => {
             setActionMenuBed(null);
-            const uhid = bed.currentAdmission?.patientId?.UHID || "";
+            const uhid = await resolveBedUHID(bed);
             window.location.href = uhid ? `/doctor-notes?uhid=${uhid}` : `/doctor-notes`;
           },
-          onNursingNotes: (bed) => {
+          onNursingNotes: async (bed) => {
             setActionMenuBed(null);
-            const uhid = bed.currentAdmission?.patientId?.UHID || "";
+            const uhid = await resolveBedUHID(bed);
             window.location.href = uhid ? `/nursing-notes?uhid=${uhid}` : `/nursing-notes`;
           },
-          onMAR: (bed) => {
+          onMAR: async (bed) => {
             setActionMenuBed(null);
-            const uhid = bed.currentAdmission?.patientId?.UHID || "";
-            window.location.href = uhid ? `/doctor-notes?uhid=${uhid}#mar` : `/doctor-notes`;
+            const uhid = await resolveBedUHID(bed);
+            // /mar is the standalone MAR page; older code routed to
+            // /doctor-notes#mar which had no anchor handler and just
+            // dumped the user on a generic notes page.
+            window.location.href = uhid ? `/mar?uhid=${uhid}` : `/mar`;
           },
           onTransfer: (bed) => {
             setActionMenuBed(null);
             // Initiate the same drag-drop dialog flow but without dragging
             setDragSrcBed(bed);
             toast.current?.show({ severity: "info", summary: "Pick destination",
-              detail: "Click an Available bed (or drag this card onto one) to complete the transfer.", life: 4500 });
+              detail: `Click any Available bed to transfer from ${bed.bedNumber}. Press Esc or click 'Cancel transfer' in the toast to abort.`, life: 5500 });
           },
           onEstimate: async (bed) => {
             setActionMenuBed(null);
