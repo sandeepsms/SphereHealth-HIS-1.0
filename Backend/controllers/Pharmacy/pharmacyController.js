@@ -25,8 +25,34 @@ const DrugBatch   = require("../../models/Pharmacy/DrugBatchModel");
 const Supplier    = require("../../models/Pharmacy/SupplierModel");
 const Sale        = require("../../models/Pharmacy/PharmacySaleModel");
 const Counter     = require("../../models/CounterModel");
+const mongoose    = require("mongoose");
 
-const todayISO = () => new Date().toISOString().slice(0, 10);
+const todayISO  = () => new Date().toISOString().slice(0, 10);
+const isOid     = (v) => mongoose.Types.ObjectId.isValid(v);
+// Centralised error reply — Mongoose ValidationError → 400, bad cast → 400,
+// duplicate key → 409, everything else → 500. Caller passes (res, err).
+const sendErr   = (res, e) => {
+  if (e?.name === "ValidationError") {
+    const msg = Object.values(e.errors).map(x => x.message).join("; ");
+    return res.status(400).json({ success: false, message: msg });
+  }
+  if (e?.name === "CastError") {
+    return res.status(400).json({ success: false, message: `Invalid id / cast — ${e.path}` });
+  }
+  if (e?.code === 11000) {
+    return res.status(409).json({ success: false, message: "Duplicate key — record already exists" });
+  }
+  return res.status(500).json({ success: false, message: e?.message || "Server error" });
+};
+// Counter helper — schema uses `_id: String` as the scope key, not `name`.
+async function nextSeq(scope) {
+  const c = await Counter.findOneAndUpdate(
+    { _id: scope },
+    { $inc: { seq: 1 } },
+    { upsert: true, new: true, setDefaultsOnInsert: true },
+  );
+  return c.seq || 1;
+}
 
 /* ════════════════════════════════════════════════════════════════
    DRUGS
@@ -43,7 +69,7 @@ exports.listDrugs = async (req, res) => {
     }
     const drugs = await Drug.find(where).sort({ name: 1 }).lean();
     res.json({ success: true, data: drugs });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+  } catch (e) { sendErr(res, e); }
 };
 
 exports.searchDrugs = async (req, res) => {
@@ -54,34 +80,36 @@ exports.searchDrugs = async (req, res) => {
     const drugs = await Drug.find({ isActive: true, $or: [{ name: rx }, { genericName: rx }, { brandName: rx }] })
       .limit(25).lean();
     res.json({ success: true, data: drugs });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+  } catch (e) { sendErr(res, e); }
 };
 
 exports.createDrug = async (req, res) => {
   try {
     const drug = await Drug.create({ ...req.body, createdBy: req.user?.fullName || "System" });
     res.json({ success: true, data: drug });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+  } catch (e) { sendErr(res, e); }
 };
 
 exports.updateDrug = async (req, res) => {
   try {
+    if (!isOid(req.params.id)) return res.status(400).json({ success: false, message: "Invalid drug id" });
     const drug = await Drug.findByIdAndUpdate(
       req.params.id,
       { $set: { ...req.body, updatedBy: req.user?.fullName || "System" } },
-      { new: true }
+      { new: true, runValidators: true }
     );
     if (!drug) return res.status(404).json({ success: false, message: "Drug not found" });
     res.json({ success: true, data: drug });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+  } catch (e) { sendErr(res, e); }
 };
 
 exports.deleteDrug = async (req, res) => {
   try {
+    if (!isOid(req.params.id)) return res.status(400).json({ success: false, message: "Invalid drug id" });
     const drug = await Drug.findByIdAndUpdate(req.params.id, { $set: { isActive: false } }, { new: true });
     if (!drug) return res.status(404).json({ success: false, message: "Drug not found" });
     res.json({ success: true, data: drug });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+  } catch (e) { sendErr(res, e); }
 };
 
 /* ════════════════════════════════════════════════════════════════
@@ -91,28 +119,30 @@ exports.listSuppliers = async (req, res) => {
   try {
     const items = await Supplier.find({ isActive: true }).sort({ name: 1 }).lean();
     res.json({ success: true, data: items });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+  } catch (e) { sendErr(res, e); }
 };
 exports.createSupplier = async (req, res) => {
   try {
     const s = await Supplier.create({ ...req.body, createdBy: req.user?.fullName || "System" });
     res.json({ success: true, data: s });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+  } catch (e) { sendErr(res, e); }
 };
 exports.updateSupplier = async (req, res) => {
   try {
+    if (!isOid(req.params.id)) return res.status(400).json({ success: false, message: "Invalid supplier id" });
     const s = await Supplier.findByIdAndUpdate(req.params.id,
-      { $set: { ...req.body, updatedBy: req.user?.fullName || "System" } }, { new: true });
+      { $set: { ...req.body, updatedBy: req.user?.fullName || "System" } }, { new: true, runValidators: true });
     if (!s) return res.status(404).json({ success: false, message: "Supplier not found" });
     res.json({ success: true, data: s });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+  } catch (e) { sendErr(res, e); }
 };
 exports.deleteSupplier = async (req, res) => {
   try {
+    if (!isOid(req.params.id)) return res.status(400).json({ success: false, message: "Invalid supplier id" });
     const s = await Supplier.findByIdAndUpdate(req.params.id, { $set: { isActive: false } }, { new: true });
     if (!s) return res.status(404).json({ success: false, message: "Supplier not found" });
     res.json({ success: true, data: s });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+  } catch (e) { sendErr(res, e); }
 };
 
 /* ════════════════════════════════════════════════════════════════
@@ -127,6 +157,23 @@ exports.recordGRN = async (req, res) => {
     if (!drugId || !batchNo || !expiryDate || !quantityIn) {
       return res.status(400).json({ success: false, message: "drugId, batchNo, expiryDate, quantityIn required" });
     }
+    if (!isOid(drugId)) {
+      return res.status(400).json({ success: false, message: "Invalid drug id" });
+    }
+    const qty = Number(quantityIn);
+    if (!Number.isFinite(qty) || qty <= 0) {
+      return res.status(400).json({ success: false, message: "quantityIn must be a positive number" });
+    }
+    const exp = new Date(expiryDate);
+    if (isNaN(exp.getTime())) {
+      return res.status(400).json({ success: false, message: "expiryDate is not a valid date" });
+    }
+    if (exp.getTime() <= Date.now()) {
+      return res.status(400).json({ success: false, message: "expiryDate is already in the past — refusing to add expired stock" });
+    }
+    if (supplierId && !isOid(supplierId)) {
+      return res.status(400).json({ success: false, message: "Invalid supplier id" });
+    }
     const drug = await Drug.findById(drugId).lean();
     if (!drug) return res.status(404).json({ success: false, message: "Drug not found" });
 
@@ -135,10 +182,10 @@ exports.recordGRN = async (req, res) => {
 
     const batch = await DrugBatch.create({
       drugId, drugName: drug.name,
-      batchNo, expiryDate: new Date(expiryDate),
+      batchNo: batchNo.trim(), expiryDate: exp,
       mfgDate: mfgDate ? new Date(mfgDate) : null,
-      quantityIn: Number(quantityIn),
-      remaining:  Number(quantityIn),
+      quantityIn: qty,
+      remaining:  qty,
       purchaseRate: Number(purchaseRate || 0),
       mrp:          Number(mrp || 0),
       salePrice:    Number(salePrice || drug.defaultSalePrice || mrp || 0),
@@ -153,7 +200,7 @@ exports.recordGRN = async (req, res) => {
     res.json({ success: true, data: batch, grnNumber });
   } catch (e) {
     if (e.code === 11000) return res.status(409).json({ success: false, message: "This batch already exists for this drug" });
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -170,7 +217,7 @@ exports.listBatches = async (req, res) => {
     if (lowStock === "true") where.remaining = { $lt: 5 };
     const batches = await DrugBatch.find(where).sort({ expiryDate: 1 }).populate("drugId", "name reorderLevel").lean();
     res.json({ success: true, data: batches });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+  } catch (e) { sendErr(res, e); }
 };
 
 // Live stock rollup per drug — sum(remaining) across active batches.
@@ -198,7 +245,7 @@ exports.stockRollup = async (req, res) => {
       { $sort: { drugName: 1 } },
     ]);
     res.json({ success: true, data: rollup });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+  } catch (e) { sendErr(res, e); }
 };
 
 /* ════════════════════════════════════════════════════════════════
@@ -238,19 +285,25 @@ exports.dispense = async (req, res) => {
       return res.status(400).json({ success: false, message: "items[] is required" });
     }
 
-    // Bill number
-    const counter = await Counter.findOneAndUpdate(
-      { name: "pharmacyBill" },
-      { $inc: { seq: 1 } },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    );
-    const seq = counter.seq || 1;
+    // Per-item validation BEFORE we touch any state.
+    for (const it of items) {
+      if (!it.drugId || !isOid(it.drugId)) {
+        return res.status(400).json({ success: false, message: `Invalid drugId on item "${it.drugName || ""}"` });
+      }
+      const q = Number(it.quantity);
+      if (!Number.isFinite(q) || q <= 0) {
+        return res.status(400).json({ success: false, message: `Invalid quantity for "${it.drugName || it.drugId}" — must be > 0` });
+      }
+    }
+
+    // Bill number — Counter._id is the scope key, NOT a `name` field.
+    const seq = await nextSeq("pharmacyBill");
     const billNumber = `PHM-${new Date().toISOString().slice(0,10).replace(/-/g, "")}-${String(seq).padStart(4, "0")}`;
 
     // Pre-flight: enough stock?
     for (const it of items) {
       const have = await DrugBatch.aggregate([
-        { $match: { drugId: new (require("mongoose").Types.ObjectId)(it.drugId), isActive: true, remaining: { $gt: 0 } } },
+        { $match: { drugId: new mongoose.Types.ObjectId(it.drugId), isActive: true, remaining: { $gt: 0 } } },
         { $group: { _id: null, total: { $sum: "$remaining" } } },
       ]);
       const total = have[0]?.total || 0;
@@ -334,19 +387,21 @@ exports.listSales = async (req, res) => {
     }
     const sales = await Sale.find(where).sort({ createdAt: -1 }).limit(500).lean();
     res.json({ success: true, data: sales });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+  } catch (e) { sendErr(res, e); }
 };
 
 exports.getSale = async (req, res) => {
   try {
+    if (!isOid(req.params.id)) return res.status(400).json({ success: false, message: "Invalid sale id" });
     const s = await Sale.findById(req.params.id).lean();
     if (!s) return res.status(404).json({ success: false, message: "Sale not found" });
     res.json({ success: true, data: s });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+  } catch (e) { sendErr(res, e); }
 };
 
 exports.cancelSale = async (req, res) => {
   try {
+    if (!isOid(req.params.id)) return res.status(400).json({ success: false, message: "Invalid sale id" });
     const s = await Sale.findById(req.params.id);
     if (!s) return res.status(404).json({ success: false, message: "Sale not found" });
     if (s.status !== "Completed") return res.status(400).json({ success: false, message: "Only completed sales can be cancelled" });
@@ -365,7 +420,7 @@ exports.cancelSale = async (req, res) => {
     s.remarks = (s.remarks ? s.remarks + " · " : "") + `Cancelled by ${req.user?.fullName || "System"} on ${new Date().toISOString()}`;
     await s.save();
     res.json({ success: true, data: s });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+  } catch (e) { sendErr(res, e); }
 };
 
 /* ════════════════════════════════════════════════════════════════
@@ -402,7 +457,7 @@ exports.stats = async (req, res) => {
       todaySales: { count: todaySalesAgg[0]?.count || 0, total: Math.round(todaySalesAgg[0]?.total || 0) },
       monthSales: { count: monthSalesAgg[0]?.count || 0, total: Math.round(monthSalesAgg[0]?.total || 0) },
     } });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+  } catch (e) { sendErr(res, e); }
 };
 
 exports.alerts = async (req, res) => {
@@ -443,5 +498,5 @@ exports.alerts = async (req, res) => {
     }).sort({ expiryDate: -1 }).limit(100).lean();
 
     res.json({ success: true, data: { lowStock: rollup, outOfStock, expiringSoon, expired } });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+  } catch (e) { sendErr(res, e); }
 };

@@ -136,7 +136,8 @@ function wait(ms) { return new Promise((r) => setTimeout(r, ms)); }
       "investigationOrder", "consentForm",
       "dischargeSummary", "mlcNumber", "visitorPass",
     ];
-    const r = await Counter.deleteMany({ name: { $in: COUNTER_KEYS } });
+    // Counter schema uses _id (String) as the scope key, not a `name` field.
+    const r = await Counter.deleteMany({ _id: { $in: COUNTER_KEYS } });
     console.log(`  ✓ Counters reset           ${String(r.deletedCount || 0).padStart(6)} counters cleared`);
   } catch (e) {
     console.warn("  ! Counter reset skipped:", e.message);
