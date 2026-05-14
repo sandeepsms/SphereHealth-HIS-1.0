@@ -3728,7 +3728,64 @@ const BedVisualLayout = ({ onRefreshParent }) => {
               toast.current?.show({ severity: "error", summary: "Failed", detail: e.message || "Could not estimate", life: 3000 });
             }
           },
-          onDischarge: (bed) => { setActionMenuBed(null); handleOccupied(bed); /* opens detail with discharge button */ },
+          onDischarge: async (bed) => {
+            // Open the Discharge form DIRECTLY from the action menu.
+            // Earlier this hop went through the detail modal, so a second
+            // click was required and the form sometimes never surfaced when
+            // detailModal+dischargeModal both fought to open.
+            setActionMenuBed(null);
+
+            // Resolve the admission for this bed: prefer populated
+            // currentAdmission, otherwise look it up by bedId.
+            let adm = null;
+            const ca = bed.currentAdmission;
+            if (ca && typeof ca === "object" && ca._id) {
+              adm = ca;
+            } else {
+              try {
+                const list = await admissionService.getActiveAdmissions();
+                const arr = Array.isArray(list) ? list : list?.admissions || list?.data || [];
+                const bedId = getId(bed._id);
+                adm = arr.find((a) => getId(a.bedId) === bedId || getId(a.bed) === bedId) || null;
+              } catch (e) {
+                console.error("[BedLayout] onDischarge lookup failed:", e?.message);
+              }
+            }
+            if (!adm) {
+              toast.current?.show({
+                severity: "warn",
+                summary: "No active admission",
+                detail: `Bed ${bed.bedNumber || ""} doesn't have an active admission record. Try refreshing the bed list.`,
+                life: 4500,
+              });
+              return;
+            }
+
+            // Best-effort patient resolution so the discharge dialog shows
+            // the right name. Fall back to whatever's already on the
+            // admission record if the fetch fails.
+            let pat = null;
+            if (adm.patientId && typeof adm.patientId === "object" && getPatientName(adm.patientId)) {
+              pat = adm.patientId;
+            } else {
+              const uhid = adm.UHID || adm.patientUHID;
+              if (uhid) {
+                try { pat = unwrapPatient(await patientService.getPatientByUHID(uhid)); } catch (_) {}
+              }
+              if (!pat) {
+                const objId = isMongoId(getId(adm.patientId)) ? getId(adm.patientId) : null;
+                if (objId) {
+                  try { pat = unwrapPatient(await patientService.getPatientById(objId)); } catch (_) {}
+                }
+              }
+              if (!pat) {
+                pat = allPatients.find(p => (adm.UHID && p.UHID === adm.UHID)) || null;
+              }
+            }
+
+            setDetailPatient(pat);
+            openDischarge(adm, bed);
+          },
 
           // Reserved
           onExtendReservation: (bed) => {
