@@ -1,196 +1,135 @@
-// src/pages/doctor/DoctorListPage.jsx
-import { useState, useEffect, useRef } from "react";
+/**
+ * DoctorListPage.jsx — admin page for hospital doctors / consultants.
+ *
+ * Redesigned to the latest theme: teal hero band, KPI strip, primary
+ * card with search + add button + table. Edit/Add flow continues to
+ * use the existing DoctorFormPage at /doctors/new and /doctors/:id/edit.
+ */
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { DataTable } from "primereact/datatable";
-import { Column } from "primereact/column";
-import { Button } from "primereact/button";
-import { InputText } from "primereact/inputtext";
-import { Toast } from "primereact/toast";
-import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
-import { Tag } from "primereact/tag";
+import { toast } from "react-toastify";
 import { doctorService } from "../../Services/doctors/doctorService";
+import {
+  AdminPage, Hero, KPI, Card, Table, EmptyRow, RowAction, Badge,
+  SearchInput, PrimaryButton, C,
+} from "../../Components/admin-theme";
 
+const fullNameOf = (d) => `${d.personalInfo?.firstName || ""} ${d.personalInfo?.lastName || ""}`.trim() || "—";
 
 const DoctorListPage = () => {
   const navigate = useNavigate();
-  const toast = useRef(null);
+  const [rows, setRows]    = useState([]);
+  const [q, setQ]          = useState("");
+  const [loading, setLoad] = useState(false);
 
- 
-  
-
-  const [doctors, setDoctors] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [globalFilter, setGlobalFilter] = useState("");
-
-  useEffect(() => {
-    loadDoctors();
-  }, []);
-
-  const loadDoctors = async () => {
+  useEffect(() => { load(); }, []);
+  const load = async () => {
     try {
-      setLoading(true);
+      setLoad(true);
       const data = await doctorService.getAllDoctors();
-      console.log("📋 Doctors loaded:", data);
-      setDoctors(Array.isArray(data) ? data : []);
-    } catch (error) {
-      console.error("❌ Failed to load doctors:", error);
-      toast.current?.show({
-        severity: "error",
-        summary: "Error",
-        detail: "Failed to load doctors",
-        life: 3000,
-      });
-    } finally {
-      setLoading(false);
-    }
+      setRows(Array.isArray(data) ? data : []);
+    } catch (e) { toast.error("Failed to load doctors"); }
+    finally { setLoad(false); }
   };
 
-  const handleDelete = (doctorId) => {
-    confirmDialog({
-      message: "Are you sure you want to delete this doctor?",
-      header: "Delete Confirmation",
-      icon: "pi pi-exclamation-triangle",
-      acceptClassName: "p-button-danger",
-      accept: async () => {
-        try {
-          await doctorService.deleteDoctor(doctorId);
-          toast.current?.show({
-            severity: "success",
-            summary: "Success",
-            detail: "Doctor deleted successfully",
-            life: 3000,
-          });
-          loadDoctors();
-        } catch (error) {
-          console.error("Failed to delete doctor:", error);
-          toast.current?.show({
-            severity: "error",
-            summary: "Error",
-            detail: "Failed to delete doctor",
-            life: 3000,
-          });
-        }
-      },
-    });
-  };
-
-  const nameTemplate = (rowData) => {
-    const fullName = `${rowData.personalInfo?.firstName || ""} ${
-      rowData.personalInfo?.lastName || ""
-    }`.trim();
-    return fullName || "N/A";
-  };
-
-  const contactTemplate = (rowData) => {
-    return (
-      <div>
-        <div>{rowData.contact?.mobileNumber || "N/A"}</div>
-        <small className="text-gray-500">{rowData.contact?.email}</small>
-      </div>
+  const filtered = useMemo(() => {
+    if (!q.trim()) return rows;
+    const rx = new RegExp(q.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    return rows.filter(d =>
+      rx.test(d.doctorId || "")
+      || rx.test(fullNameOf(d))
+      || rx.test(d.department?.departmentName || "")
+      || rx.test(d.professional?.specialization || "")
+      || rx.test(d.contact?.mobileNumber || "")
+      || rx.test(d.contact?.email || "")
     );
-  };
+  }, [rows, q]);
 
-  const departmentTemplate = (rowData) => {
-    return rowData.department?.departmentName || "N/A";
-  };
+  const kpis = useMemo(() => {
+    const active = rows.filter(d => d.isActive).length;
+    const departments = new Set(rows.map(d => d.department?.departmentName).filter(Boolean));
+    const specs = new Set(rows.map(d => d.professional?.specialization).filter(Boolean));
+    const seniorCount = rows.filter(d => (d.professional?.experience || 0) >= 10).length;
+    return { total: rows.length, active, departments: departments.size, specs: specs.size, senior: seniorCount };
+  }, [rows]);
 
-  const specializationTemplate = (rowData) => {
-    return rowData.professional?.specialization || "N/A";
+  const remove = (id, name) => {
+    if (!window.confirm(`Delete doctor ${name || ""}? This cannot be undone.`)) return;
+    doctorService.deleteDoctor(id)
+      .then(() => { toast.success("Doctor deleted"); load(); })
+      .catch(() => toast.error("Failed to delete doctor"));
   };
-
-  const statusTemplate = (rowData) => {
-    return (
-      <Tag
-        value={rowData.isActive ? "Active" : "Inactive"}
-        severity={rowData.isActive ? "success" : "danger"}
-      />
-    );
-  };
-
-  const actionTemplate = (rowData) => {
-    return (
-      <div className="flex gap-2">
-        <Button
-          icon="pi pi-pencil"
-          rounded
-          text
-          severity="info"
-          onClick={() => navigate(`/doctors/${rowData._id}/edit`)}
-          tooltip="Edit"
-          style={{
-            borderColor: "#blue",
-            color: "#fff",
-          }}
-        />
-        <Button
-          icon="pi pi-trash"
-          rounded
-          text
-          severity="danger"
-          onClick={() => handleDelete(rowData._id)}
-          tooltip="Delete"
-        />
-      </div>
-    );
-  };
-
-  const header = (
-    <div className="flex justify-content-between align-items-center">
-      <h2 className="m-0">Doctor Management</h2>
-      <div className="flex gap-2">
-        <span className="p-input-icon-left">
-          <i className="pi pi-search " />
-          <InputText
-            value={globalFilter}
-            onChange={(e) => setGlobalFilter(e.target.value)}
-            placeholder="Search doctors..."
-            className="pl-6"
-          />
-        </span>
-        <Button
-          label="Add Doctor"
-          icon="pi pi-plus"
-          onClick={() => navigate("/doctors/new")}
-        />
-      </div>
-    </div>
-  );
 
   return (
-    <div className="p-4">
-      <Toast ref={toast} />
-      <ConfirmDialog />
+    <AdminPage>
+      <Hero icon="pi-user" color="teal"
+        title="Doctor Management"
+        subtitle="Consultants, registered doctors, specialisations, department mapping" />
 
-      <DataTable
-        value={doctors}
-        loading={loading}
-        header={header}
-        globalFilter={globalFilter}
-        emptyMessage="No doctors found"
-        paginator
-        rows={10}
-        rowsPerPageOptions={[10, 25, 50]}
-        tableStyle={{ minWidth: "60rem" }}
-      >
-        <Column field="doctorId" header="Doctor ID" sortable />
-        <Column header="Name" body={nameTemplate} sortable />
-        <Column header="Contact" body={contactTemplate} />
-        <Column header="Department" body={departmentTemplate} sortable />
-        <Column
-          header="Specialization"
-          body={specializationTemplate}
-          sortable
-        />
-        <Column
-          field="professional.experience"
-          header="Experience"
-          sortable
-          body={(row) => `${row.professional?.experience || 0} years`}
-        />
-        <Column header="Status" body={statusTemplate} sortable />
-        <Column header="Actions" body={actionTemplate} />
-      </DataTable>
-    </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
+        <KPI label="Total Doctors"   value={kpis.total}       color={C.teal}   icon="pi-user" />
+        <KPI label="Active"          value={kpis.active}      color={C.green}  icon="pi-check-circle" />
+        <KPI label="Departments"     value={kpis.departments} color={C.blue}   icon="pi-building" />
+        <KPI label="Specialisations" value={kpis.specs}       color={C.purple} icon="pi-tag" />
+        <KPI label="Senior (≥10 yr)" value={kpis.senior}      color={C.amber}  icon="pi-star" />
+      </div>
+
+      <Card title="All Doctors" color={C.teal} icon="pi-list"
+        right={
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <SearchInput value={q} onChange={e => setQ(e.target.value)}
+              placeholder="Search id / name / department / specialisation…" width={300} />
+            <PrimaryButton icon="pi-plus" label="Add Doctor" color={C.teal}
+              onClick={() => navigate("/doctors/new")} />
+          </div>
+        }
+        padding={0}>
+        <Table cols={["Doctor ID", "Name", "Contact", "Department", "Specialisation", "Experience", "Status", "Action"]}>
+          {loading
+            ? <EmptyRow span={8} text="Loading…" />
+            : filtered.length === 0
+              ? <EmptyRow span={8} text={q ? `No doctors match "${q}"` : "No doctors yet — click Add Doctor to enroll one."} />
+              : filtered.map((d, i) => {
+                const name = fullNameOf(d);
+                const initials = name.split(/\s+/).slice(0, 2).map(s => s[0]).join("").toUpperCase() || "DR";
+                return (
+                  <tr key={d._id} style={{ borderTop: `1px solid ${C.border}`, background: i % 2 ? "#fafbfc" : "#fff" }}>
+                    <td style={{ padding: "9px 12px", fontFamily: "DM Mono, monospace", fontWeight: 700 }}>{d.doctorId || "—"}</td>
+                    <td style={{ padding: "9px 12px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                        <div style={{ width: 30, height: 30, borderRadius: "50%", background: C.tealL, color: C.teal, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 11, flexShrink: 0, border: `1.5px solid ${C.teal}30` }}>
+                          {initials}
+                        </div>
+                        <div>
+                          <div style={{ fontWeight: 700 }}>{name}</div>
+                          {d.professional?.qualification && (
+                            <div style={{ fontSize: 10.5, color: C.muted, marginTop: 1 }}>{d.professional.qualification}</div>
+                          )}
+                        </div>
+                      </div>
+                    </td>
+                    <td style={{ padding: "9px 12px" }}>
+                      <div style={{ fontFamily: "DM Mono, monospace", fontSize: 11 }}>{d.contact?.mobileNumber || "—"}</div>
+                      {d.contact?.email && (
+                        <div style={{ fontSize: 10.5, color: C.muted, marginTop: 1 }}>{d.contact.email}</div>
+                      )}
+                    </td>
+                    <td style={{ padding: "9px 12px", color: C.muted }}>{d.department?.departmentName || "—"}</td>
+                    <td style={{ padding: "9px 12px" }}>{d.professional?.specialization || "—"}</td>
+                    <td style={{ padding: "9px 12px", fontWeight: 700 }}>{d.professional?.experience || 0} yr</td>
+                    <td style={{ padding: "9px 12px" }}>
+                      <Badge value={d.isActive ? "Active" : "Inactive"} palette={d.isActive ? "active" : "inactive"} />
+                    </td>
+                    <td style={{ padding: "7px 12px" }}>
+                      <RowAction icon="pi-pencil" label="Edit"   color={C.blue} onClick={() => navigate(`/doctors/${d._id}/edit`)} />
+                      <RowAction icon="pi-trash"  label="Delete" color={C.red}  onClick={() => remove(d._id, name)} />
+                    </td>
+                  </tr>
+                );
+              })}
+        </Table>
+      </Card>
+    </AdminPage>
   );
 };
 
