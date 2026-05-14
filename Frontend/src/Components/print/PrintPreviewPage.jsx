@@ -3,6 +3,12 @@
 // switcher + orientation toggle + Print button) on top of the document
 // body. Sets `data-paper` and `data-orient` on <html> so print.css
 // `@page` rules + per-printable CSS pick up the right size + orientation.
+//
+// Half-A4 paper has a special "Double on A4" mode (default ON) that
+// prints the same receipt TWICE on a single A4 sheet — top half and
+// bottom half with a dashed cut-line between them. Saves paper for
+// receipts that the patient + pharmacy both want a copy of. The CSS
+// switches @page to A4 portrait when this is active.
 
 import React, { useEffect, useState } from "react";
 import "./print.css";
@@ -25,11 +31,24 @@ const PrintPreviewPage = ({
 }) => {
   const [paper,  setPaper]  = useState(defaultPaper);
   const [orient, setOrient] = useState(defaultOrient);
+  // Auto-enable doubling whenever half-A4 is selected (eco default).
+  // User can toggle off via the toolbar checkbox if they want a single
+  // copy on actual half-A4 paper for thermal printers etc.
+  const [doubleOnA4, setDoubleOnA4] = useState(true);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-paper",  paper);
     document.documentElement.setAttribute("data-orient", orient);
-  }, [paper, orient]);
+    // `data-duplicate` only takes effect for half-A4; the CSS rules
+    // gate on both data-paper="half-a4" AND data-duplicate="on".
+    document.documentElement.setAttribute(
+      "data-duplicate",
+      paper === "half-a4" && doubleOnA4 ? "on" : "off",
+    );
+  }, [paper, orient, doubleOnA4]);
+
+  const isHalf      = paper === "half-a4";
+  const showDouble  = isHalf && doubleOnA4;
 
   return (
     <>
@@ -63,12 +82,47 @@ const PrintPreviewPage = ({
           })}
         </div>
 
+        {/* Eco-print toggle — visible only on Half-A4 */}
+        {isHalf && (
+          <label
+            title="Print the same receipt twice on a single A4 sheet — patient + pharmacy each get a copy."
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              padding: "5px 10px", border: `1.5px solid ${doubleOnA4 ? "#16a34a" : "#cbd5e1"}`,
+              borderRadius: 6, background: doubleOnA4 ? "#dcfce7" : "#fff",
+              color: doubleOnA4 ? "#166534" : "#475569",
+              fontSize: 11, fontWeight: 700, cursor: "pointer", letterSpacing: ".2px",
+            }}>
+            <input type="checkbox" checked={doubleOnA4}
+              onChange={(e) => setDoubleOnA4(e.target.checked)}
+              style={{ accentColor: "#16a34a", margin: 0 }} />
+            🌿 Double on A4
+          </label>
+        )}
+
         <button onClick={() => window.close()}>Close</button>
         <button className="primary" onClick={() => window.print()}>
           Print
         </button>
       </div>
-      <div>{children}</div>
+
+      {/* Document body — single copy by default. When Double-on-A4 is
+          active for Half-A4, a clone is rendered after the original
+          with a dashed cut-line in between. The clone is purely visual
+          (no React state inside the printables) so re-rendering is safe. */}
+      <div className="pr-doc">
+        <div className="pr-doc-copy">{children}</div>
+        {showDouble && (
+          <>
+            <div className="pr-doc-cutline pr-no-print-fold">
+              <span>✂ cut here</span>
+            </div>
+            <div className="pr-doc-copy pr-doc-copy--duplicate" aria-hidden="true">
+              {children}
+            </div>
+          </>
+        )}
+      </div>
     </>
   );
 };

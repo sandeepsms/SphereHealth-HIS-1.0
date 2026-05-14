@@ -36,6 +36,14 @@ html[data-paper="a5"][data-orient="landscape"]      { --pr-page-width: 210mm; }
   html[data-paper="a4"][data-orient="landscape"] @page         { size: A4 landscape;    margin: 10mm 12mm; }
   html[data-paper="a5"][data-orient="landscape"] @page         { size: A5 landscape;    margin: 8mm; }
   html[data-paper="half-a4"][data-orient="landscape"] @page    { size: 210mm 148.5mm;   margin: 8mm 12mm; }
+
+  /* ── Eco mode — when Half-A4 is duplicated on a single A4 sheet ──
+     Switch @page back to full A4 portrait so both halves land on the
+     same physical sheet. Margins go to 0 so the two halves align
+     exactly to the cut line at 148.5mm — anything else and the lower
+     copy drifts down. */
+  html[data-paper="half-a4"][data-duplicate="on"] @page        { size: A4 portrait; margin: 0; }
+  html[data-paper="half-a4"][data-duplicate="on"][data-orient="landscape"] @page { size: A4 landscape; margin: 0; }
 }
 
 * { box-sizing: border-box; }
@@ -455,3 +463,73 @@ html[data-paper="a5"] .pr-page {
   border-color: white;
 }
 .pr-toolbar button:hover { filter: brightness(1.1); }
+
+/* ════════════════════════════════════════════════════════════════
+   Document wrapper — supports the half-A4 "double on A4" eco mode.
+   On-screen the two copies stack with a dashed cut line between
+   them so the operator can verify the duplicate before printing.
+   On print the cut line is rendered with thin dashes so they can
+   fold or scissor through it cleanly.
+════════════════════════════════════════════════════════════════ */
+.pr-doc { display: flex; flex-direction: column; align-items: center; }
+.pr-doc-copy { width: 100%; display: flex; justify-content: center; }
+.pr-doc-cutline {
+  width: var(--pr-page-width, 210mm);
+  margin: 0 auto;
+  padding: 8px 0;
+  border-top: 1.5px dashed #94a3b8;
+  position: relative;
+  text-align: center;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  background: transparent;
+}
+.pr-doc-cutline span {
+  position: relative;
+  top: -16px;
+  background: #f1f5f9;
+  padding: 0 10px;
+}
+
+@media print {
+  /* Hide on-screen ✂ label, keep the dashed rule as the cut guide */
+  .pr-no-print-fold span { display: none; }
+  .pr-doc-cutline {
+    border-top: 1px dashed #475569;
+    margin: 0;
+    padding: 0;
+    height: 0;
+    /* Mid-page cut line for half-A4 duplicate mode. Sized so the
+       two .pr-doc-copy children each get exactly 148.5mm — the
+       top one is 0–148.5mm, the bottom one is 148.5–297mm. */
+  }
+  html[data-paper="half-a4"][data-duplicate="on"] .pr-doc {
+    width: 210mm;
+    height: 297mm;
+    margin: 0;
+    padding: 0;
+  }
+  html[data-paper="half-a4"][data-duplicate="on"] .pr-doc-copy {
+    width: 210mm;
+    height: 148.5mm;
+    padding: 8mm 12mm;
+    overflow: hidden;
+    page-break-after: avoid;
+    break-after: avoid-page;
+    box-sizing: border-box;
+  }
+  html[data-paper="half-a4"][data-duplicate="on"] .pr-doc-copy .pr-page {
+    width: 100%;
+    height: 100%;
+    padding: 0 !important;
+    margin: 0 !important;
+    min-height: 0 !important;
+    box-shadow: none;
+  }
+  html[data-paper="half-a4"][data-duplicate="on"] .pr-doc-cutline {
+    width: 210mm;
+  }
+}
