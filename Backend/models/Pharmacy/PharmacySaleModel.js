@@ -46,7 +46,8 @@ const PharmacySaleSchema = new mongoose.Schema(
       default: "Walk-in",
       index: true,
     },
-    admissionId:   { type: mongoose.Schema.Types.ObjectId, ref: "Admission", default: null },
+    admissionId:    { type: mongoose.Schema.Types.ObjectId, ref: "Admission", default: null, index: true },
+    admissionNumber:{ type: String, default: "" },           // denormalised for quick search/display
     prescriptionRef:{ type: String, default: "" },
 
     items:       { type: [SALE_ITEM], default: [] },

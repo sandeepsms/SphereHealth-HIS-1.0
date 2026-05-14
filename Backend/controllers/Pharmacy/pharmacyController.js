@@ -277,9 +277,14 @@ exports.dispense = async (req, res) => {
   try {
     const {
       patientUHID, patientName, contactNumber, age, gender, doctorName,
-      saleType = "Walk-in", admissionId, prescriptionRef,
+      saleType = "Walk-in", admissionId, admissionNumber, prescriptionRef,
       items, paymentMode = "Cash", amountPaid, discountPercent = 0, remarks,
     } = req.body;
+
+    // Validate admissionId if present
+    if (admissionId && !isOid(admissionId)) {
+      return res.status(400).json({ success: false, message: "Invalid admissionId" });
+    }
 
     if (!items || !items.length) {
       return res.status(400).json({ success: false, message: "items[] is required" });
@@ -352,7 +357,8 @@ exports.dispense = async (req, res) => {
     const sale = await Sale.create({
       billNumber,
       patientUHID, patientName, contactNumber, age, gender, doctorName,
-      saleType, admissionId: admissionId || null, prescriptionRef: prescriptionRef || "",
+      saleType, admissionId: admissionId || null, admissionNumber: admissionNumber || "",
+      prescriptionRef: prescriptionRef || "",
       items: saleItems,
       subTotal, totalDiscount: totalDisc, totalTaxable, totalGst,
       roundOff, grandTotal,

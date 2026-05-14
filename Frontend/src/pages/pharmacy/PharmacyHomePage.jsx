@@ -8,8 +8,10 @@
  * sectioned cards, his-field inputs, tight modals.
  */
 import React, { useEffect, useMemo, useState } from "react";
+import axios from "axios";
 import "../../Components/clinical/clinical-forms.css";
 import { toast } from "react-toastify";
+import { API_ENDPOINTS } from "../../config/api";
 import {
   listDrugs, createDrug, updateDrug, deleteDrug,
   listSuppliers, createSupplier, updateSupplier, deleteSupplier,
@@ -18,6 +20,55 @@ import {
   getStats, getAlerts,
   DRUG_FORMS, DRUG_CATEGORIES, PAYMENT_MODES, SALE_TYPES,
 } from "../../Services/pharmacyService";
+
+/* HIS UHID bridge — call this with a UHID and get back a normalised
+   { patientId, patientName, age, gender, contact, doctorName, admissionId,
+     saleType }. Tries the active-admission endpoint first (so IPD bills
+     can link back to the admission); if that returns nothing, falls back
+     to the patient-master lookup. */
+async function lookupHisPatient(uhid) {
+  if (!uhid || !uhid.trim()) return null;
+  const token = localStorage.getItem("his_token");
+  const headers = { Authorization: `Bearer ${token}` };
+  try {
+    const r = await axios.get(`${API_ENDPOINTS.BASE}/admissions/active?UHID=${encodeURIComponent(uhid.trim())}`, { headers });
+    const list = Array.isArray(r.data) ? r.data : r.data?.data || [];
+    const adm = list[0];
+    if (adm) {
+      const pat = adm.patientId && typeof adm.patientId === "object" ? adm.patientId : null;
+      return {
+        patientUHID:  adm.UHID,
+        patientName:  adm.patientName || pat?.fullName || "",
+        age:          pat?.age || "",
+        gender:       pat?.gender || adm.gender || "",
+        contactNumber:pat?.contactNumber || pat?.phone || adm.contactNumber || "",
+        doctorName:   adm.attendingDoctor || "",
+        admissionId:  adm._id,
+        admissionNumber: adm.admissionNumber,
+        saleType:     adm.admissionType === "OPD" ? "OPD" : "IPD",
+        source:       "admission",
+      };
+    }
+  } catch (_) { /* try patient master next */ }
+  try {
+    const r = await axios.get(`${API_ENDPOINTS.BASE}/patients/uhid/${encodeURIComponent(uhid.trim())}`, { headers });
+    const pat = r.data?.data || r.data;
+    if (pat && (pat.UHID || pat._id)) {
+      return {
+        patientUHID:  pat.UHID || uhid.trim(),
+        patientName:  pat.fullName || pat.patientName || "",
+        age:          pat.age || "",
+        gender:       pat.gender || "",
+        contactNumber:pat.contactNumber || pat.phone || "",
+        doctorName:   "",
+        admissionId:  null,
+        saleType:     "OPD",
+        source:       "patient",
+      };
+    }
+  } catch (_) {}
+  return null;
+}
 
 const C = {
   bg: "#f8fafc", card: "#fff", border: "#e2e8f0",
@@ -493,10 +544,51 @@ function DispenseTab() {
   const [rollup, setRollup] = useState([]);
   const [items, setItems]   = useState([]);   // current cart
   const [patient, setPatient] = useState({ patientUHID: "", patientName: "", contactNumber: "", age: "", gender: "", doctorName: "" });
+  const [admissionId, setAdmissionId] = useState(null);
+  const [admissionNumber, setAdmissionNumber] = useState("");
+  const [hisLinked, setHisLinked]   = useState(false);
+  const [lookupBusy, setLookupBusy] = useState(false);
   const [saleType, setSaleType] = useState("Walk-in");
   const [paymentMode, setPaymentMode] = useState("Cash");
   const [saving, setSaving] = useState(false);
   const [drugSearch, setDrugSearch] = useState("");
+
+  // Pull HIS patient from UHID — auto-fills name/age/gender/contact/doctor
+  // and links the bill to the active admission so IPD pharmacy bills can
+  // flow back into the billing ledger.
+  const fetchByUHID = async () => {
+    const u = patient.patientUHID.trim();
+    if (!u) { toast.warn("Enter a UHID to look up"); return; }
+    setLookupBusy(true);
+    try {
+      const hit = await lookupHisPatient(u);
+      if (!hit) {
+        toast.error(`No patient found for ${u} in HIS — sell as Walk-in or check the UHID`);
+        setHisLinked(false);
+        return;
+      }
+      setPatient({
+        patientUHID:  hit.patientUHID,
+        patientName:  hit.patientName,
+        age:          hit.age,
+        gender:       hit.gender,
+        contactNumber:hit.contactNumber,
+        doctorName:   hit.doctorName,
+      });
+      setAdmissionId(hit.admissionId);
+      setAdmissionNumber(hit.admissionNumber || "");
+      setSaleType(hit.saleType || "OPD");
+      setHisLinked(true);
+      toast.success(`Linked ${hit.patientName} (${hit.source === "admission" ? `IPD · ${hit.admissionNumber || hit.admissionId}` : "OPD"})`);
+    } catch (e) {
+      toast.error(e.message || "UHID lookup failed");
+    } finally { setLookupBusy(false); }
+  };
+
+  const clearLink = () => {
+    setPatient({ patientUHID: "", patientName: "", contactNumber: "", age: "", gender: "", doctorName: "" });
+    setAdmissionId(null); setAdmissionNumber(""); setHisLinked(false); setSaleType("Walk-in");
+  };
 
   useEffect(() => { (async () => {
     try { setRollup((await stockRollup()).data || []); } catch (e) { toast.error(e.message); }
@@ -544,6 +636,7 @@ function DispenseTab() {
     try {
       const r = await dispense({
         ...patient, saleType, paymentMode,
+        admissionId, admissionNumber,
         items: items.map(it => ({
           drugId: it.drugId, drugName: it.drugName,
           quantity: Number(it.quantity), unitPrice: Number(it.unitPrice),
@@ -552,7 +645,7 @@ function DispenseTab() {
       });
       toast.success(`Bill ${r.data.billNumber} · ${fmtINR(r.data.grandTotal)}`);
       setItems([]);
-      setPatient({ patientUHID: "", patientName: "", contactNumber: "", age: "", gender: "", doctorName: "" });
+      clearLink();
       setRollup((await stockRollup()).data || []);
     } catch (e) { toast.error(e.message); }
     finally { setSaving(false); }
@@ -635,8 +728,54 @@ function DispenseTab() {
       {/* Patient + payment */}
       <Card title="Patient & Payment" color={C.blue} icon="pi-user">
         <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10 }}>
-          <Field label="UHID"><input className="his-field" value={patient.patientUHID} onChange={e => setPatient(p => ({ ...p, patientUHID: e.target.value }))} placeholder="UH00000001 (optional)" /></Field>
+
+          {/* UHID lookup — pulls HIS patient + active admission */}
+          <Field label="UHID — pull from HIS">
+            <div style={{ display: "flex", gap: 6 }}>
+              <input className="his-field" style={{ flex: 1, fontFamily: "DM Mono, monospace" }}
+                value={patient.patientUHID}
+                placeholder="UH00000001 (or leave empty for walk-in)"
+                onChange={e => setPatient(p => ({ ...p, patientUHID: e.target.value }))}
+                onKeyDown={e => { if (e.key === "Enter") fetchByUHID(); }} />
+              <button onClick={fetchByUHID} disabled={lookupBusy || !patient.patientUHID.trim()}
+                style={{ padding: "8px 14px", borderRadius: 7, border: "none",
+                  background: lookupBusy ? "#94a3b8" : C.blue, color: "#fff",
+                  fontWeight: 700, fontSize: 11.5,
+                  cursor: lookupBusy || !patient.patientUHID.trim() ? "not-allowed" : "pointer",
+                  whiteSpace: "nowrap" }}>
+                {lookupBusy ? <i className="pi pi-spin pi-spinner" style={{ fontSize: 10 }} />
+                            : <><i className="pi pi-search" style={{ fontSize: 10, marginRight: 4 }} />Fetch</>}
+              </button>
+            </div>
+          </Field>
+
+          {hisLinked && (
+            <div style={{
+              padding: "9px 12px", background: C.greenL, border: `1.5px solid ${C.green}40`,
+              borderRadius: 7, display: "flex", alignItems: "center", gap: 8,
+            }}>
+              <i className="pi pi-link" style={{ color: C.green, fontSize: 12 }} />
+              <div style={{ flex: 1, fontSize: 11.5, fontWeight: 700, color: "#166534" }}>
+                Linked to HIS · {saleType}
+                {admissionNumber && <span style={{ marginLeft: 6, fontFamily: "DM Mono, monospace", color: C.green }}>{admissionNumber}</span>}
+              </div>
+              <button onClick={clearLink} title="Unlink"
+                style={{ width: 22, height: 22, borderRadius: 5, border: "none", background: "#fff", color: C.muted, cursor: "pointer", fontSize: 10 }}>
+                <i className="pi pi-times" />
+              </button>
+            </div>
+          )}
+
           <Field label="Patient name"><input className="his-field" value={patient.patientName} onChange={e => setPatient(p => ({ ...p, patientName: e.target.value }))} /></Field>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            <Field label="Age"><input className="his-field" value={patient.age || ""} onChange={e => setPatient(p => ({ ...p, age: e.target.value }))} /></Field>
+            <Field label="Gender">
+              <select className="his-select" value={patient.gender || ""} onChange={e => setPatient(p => ({ ...p, gender: e.target.value }))}>
+                <option value="">—</option>
+                {["Male","Female","Other"].map(g => <option key={g}>{g}</option>)}
+              </select>
+            </Field>
+          </div>
           <Field label="Contact"><input className="his-field" value={patient.contactNumber} onChange={e => setPatient(p => ({ ...p, contactNumber: e.target.value }))} /></Field>
           <Field label="Doctor"><input className="his-field" value={patient.doctorName} onChange={e => setPatient(p => ({ ...p, doctorName: e.target.value }))} /></Field>
           <Field label="Sale type">
