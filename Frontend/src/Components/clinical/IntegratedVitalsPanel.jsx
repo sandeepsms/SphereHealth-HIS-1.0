@@ -84,6 +84,239 @@ const DEFAULT_ENTRY = {
   weight: "", o2Device: "None", o2Flow: "", notes: "",
 };
 
+/* ═══════════════════════════════════════════════════════
+   Vital Trend Chart — inline SVG line chart
+   Flattens history[] → list of points sorted by date+time,
+   then draws each enabled series as a smoothed path. The
+   chart auto-scales per series so heterogeneous units
+   (mmHg, bpm, °F, %) all fit the same plot box.
+═══════════════════════════════════════════════════════ */
+const SERIES = [
+  { key: "sbp",   label: "SBP",   unit: "mmHg",  color: "#dc2626", normLo: 90,  normHi: 140, vitalNames: ["BP Systolic","BP_Systolic","bp_sys"] },
+  { key: "dbp",   label: "DBP",   unit: "mmHg",  color: "#f59e0b", normLo: 60,  normHi: 90,  vitalNames: ["BP Diastolic","BP_Diastolic","bp_dia"] },
+  { key: "pulse", label: "Pulse", unit: "bpm",   color: "#2563eb", normLo: 60,  normHi: 100, vitalNames: ["Pulse","pulse"] },
+  { key: "temp",  label: "Temp",  unit: "°F",    color: "#16a34a", normLo: 97,  normHi: 99.5, vitalNames: ["Temperature","temp"] },
+  { key: "spo2",  label: "SpO₂",  unit: "%",     color: "#7c3aed", normLo: 95,  normHi: 100, vitalNames: ["SpO2","spo2"] },
+  { key: "rr",    label: "RR",    unit: "/min",  color: "#0891b2", normLo: 12,  normHi: 20,  vitalNames: ["Resp Rate","rr"] },
+];
+
+function readVitalValue(valuesObj, names) {
+  if (!valuesObj) return null;
+  for (const n of names) {
+    const v = valuesObj[n];
+    if (v == null) continue;
+    const num = typeof v === "object" ? Number(v.value) : Number(v);
+    if (!isNaN(num)) return num;
+  }
+  return null;
+}
+
+function VitalTrendChart({ history, onOpenFullSheet, defaultDate }) {
+  const [enabled, setEnabled] = useState({ sbp: true, dbp: true, pulse: true, temp: true, spo2: true, rr: false });
+  const [scope,   setScope]   = useState("today"); // today | 3d | 7d | all
+
+  // Flatten history → points sorted by datetime
+  const points = React.useMemo(() => {
+    const out = [];
+    for (const sheet of (history || [])) {
+      const date = sheet.date;
+      for (const row of (sheet.tableData || [])) {
+        const ts = `${date} ${row.time || "00:00"}`;
+        const dt = new Date(`${date}T${(row.time || "00:00")}:00`);
+        const p = { ts, dt, time: row.time, date };
+        for (const s of SERIES) {
+          p[s.key] = readVitalValue(row.values, s.vitalNames);
+        }
+        out.push(p);
+      }
+    }
+    return out.sort((a, b) => a.dt - b.dt);
+  }, [history]);
+
+  // Filter by scope
+  const filtered = React.useMemo(() => {
+    if (!points.length) return [];
+    if (scope === "all") return points;
+    const now = new Date();
+    let cutoff = new Date(now);
+    if (scope === "today") cutoff.setHours(0, 0, 0, 0);
+    else if (scope === "3d") cutoff.setDate(cutoff.getDate() - 3);
+    else if (scope === "7d") cutoff.setDate(cutoff.getDate() - 7);
+    return points.filter(p => p.dt >= cutoff);
+  }, [points, scope]);
+
+  // Chart geometry
+  const W = 900, H = 220;
+  const PAD_L = 38, PAD_R = 16, PAD_T = 14, PAD_B = 28;
+  const plotW = W - PAD_L - PAD_R;
+  const plotH = H - PAD_T - PAD_B;
+
+  if (filtered.length === 0) {
+    return (
+      <div style={{ background: "#fff", border: "1.5px solid #e2e8f0", borderRadius: 12, padding: "30px 18px", textAlign: "center", color: "#64748b", fontSize: 13 }}>
+        <i className="pi pi-chart-line" style={{ fontSize: 24, color: "#cbd5e1", marginBottom: 8, display: "block" }} />
+        No vitals recorded yet — record one below and the trend chart will appear here.
+      </div>
+    );
+  }
+
+  const xFor = (i) => PAD_L + (filtered.length === 1 ? plotW / 2 : (i / (filtered.length - 1)) * plotW);
+
+  // Per-series Y mapping (each series scales to its own normal band ±50%)
+  const yFor = (s, val) => {
+    if (val == null || isNaN(val)) return null;
+    const range = s.normHi - s.normLo;
+    const lo = s.normLo - range * 0.6;
+    const hi = s.normHi + range * 0.6;
+    const t = (val - lo) / (hi - lo);
+    return PAD_T + (1 - Math.max(0, Math.min(1, t))) * plotH;
+  };
+
+  const buildPath = (s) => {
+    const cmds = [];
+    filtered.forEach((p, i) => {
+      const y = yFor(s, p[s.key]);
+      if (y == null) return;
+      cmds.push(`${cmds.length === 0 ? "M" : "L"} ${xFor(i).toFixed(1)} ${y.toFixed(1)}`);
+    });
+    return cmds.join(" ");
+  };
+
+  // X-axis tick labels (every Nth point so it doesn't overlap)
+  const tickStride = Math.max(1, Math.ceil(filtered.length / 8));
+
+  return (
+    <div style={{ background: "#fff", border: "1.5px solid #e2e8f0", borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 3px rgba(15,23,42,.04)" }}>
+      <div style={{
+        padding: "11px 16px",
+        background: "linear-gradient(135deg,#eff6ff,#f0f9ff)",
+        borderBottom: "1px solid #dbeafe",
+        display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <i className="pi pi-chart-line" style={{ fontSize: 14, color: "#1d4ed8" }} />
+          <span style={{ fontWeight: 800, fontSize: 13, color: "#1d4ed8" }}>Vital Trend Chart</span>
+          <span style={{ fontSize: 11, color: "#64748b" }}>· {filtered.length} reading{filtered.length === 1 ? "" : "s"}</span>
+        </div>
+
+        <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
+          {[["today","Today"],["3d","3 days"],["7d","7 days"],["all","All"]].map(([k, label]) => (
+            <button key={k} onClick={() => setScope(k)}
+              style={{
+                padding: "5px 11px", borderRadius: 6,
+                background: scope === k ? "#1d4ed8" : "#fff",
+                color:      scope === k ? "#fff"    : "#475569",
+                border: `1px solid ${scope === k ? "#1d4ed8" : "#e2e8f0"}`,
+                fontSize: 11, fontWeight: 700, cursor: "pointer",
+              }}>{label}</button>
+          ))}
+          {onOpenFullSheet && (
+            <button onClick={onOpenFullSheet}
+              style={{
+                padding: "5px 12px", borderRadius: 6,
+                background: "#fff", color: "#1d4ed8",
+                border: "1px solid #bfdbfe", fontWeight: 700, fontSize: 11,
+                cursor: "pointer", display: "flex", alignItems: "center", gap: 5,
+              }}>
+              <i className="pi pi-external-link" style={{ fontSize: 10 }} />
+              Full sheet
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Series toggles */}
+      <div style={{ padding: "8px 14px", borderBottom: "1px solid #f1f5f9", display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {SERIES.map(s => {
+          const hasData = filtered.some(p => p[s.key] != null);
+          const on = enabled[s.key];
+          return (
+            <button key={s.key}
+              onClick={() => setEnabled(e => ({ ...e, [s.key]: !e[s.key] }))}
+              disabled={!hasData}
+              style={{
+                padding: "4px 10px", borderRadius: 14,
+                background: on && hasData ? s.color : "#fff",
+                color:      on && hasData ? "#fff"  : (hasData ? s.color : "#cbd5e1"),
+                border: `1.5px solid ${hasData ? s.color : "#e2e8f0"}`,
+                fontSize: 10.5, fontWeight: 700,
+                cursor: hasData ? "pointer" : "not-allowed",
+                opacity: hasData ? 1 : 0.5,
+                display: "inline-flex", alignItems: "center", gap: 5,
+              }}>
+              <span style={{ width: 7, height: 7, borderRadius: "50%", background: on && hasData ? "#fff" : s.color }} />
+              {s.label}
+              {hasData && (
+                <span style={{ fontSize: 9.5, opacity: .75 }}>
+                  ({filtered.filter(p => p[s.key] != null).length})
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* SVG plot */}
+      <div style={{ padding: "10px 8px 0", overflowX: "auto" }}>
+        <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: H, display: "block" }}>
+          {/* Y-axis grid lines (4 bands) */}
+          {[0, 0.25, 0.5, 0.75, 1].map((t, i) => (
+            <line key={i}
+              x1={PAD_L} x2={W - PAD_R}
+              y1={PAD_T + t * plotH} y2={PAD_T + t * plotH}
+              stroke="#f1f5f9" strokeDasharray={i === 0 || i === 4 ? "" : "3 3"}
+              strokeWidth={1} />
+          ))}
+          {/* X-axis baseline */}
+          <line x1={PAD_L} x2={W - PAD_R} y1={H - PAD_B} y2={H - PAD_B} stroke="#cbd5e1" />
+
+          {/* Series lines + points */}
+          {SERIES.filter(s => enabled[s.key]).map(s => (
+            <g key={s.key}>
+              <path d={buildPath(s)} fill="none" stroke={s.color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+              {filtered.map((p, i) => {
+                const y = yFor(s, p[s.key]);
+                if (y == null) return null;
+                const abnormal = p[s.key] < s.normLo || p[s.key] > s.normHi;
+                return (
+                  <g key={i}>
+                    <circle cx={xFor(i)} cy={y} r={abnormal ? 4 : 2.8}
+                      fill={abnormal ? "#fff" : s.color}
+                      stroke={s.color} strokeWidth={abnormal ? 2 : 0}>
+                      <title>{`${s.label}: ${p[s.key]} ${s.unit}\n${p.date} ${p.time}${abnormal ? "  ⚠ abnormal" : ""}`}</title>
+                    </circle>
+                  </g>
+                );
+              })}
+            </g>
+          ))}
+
+          {/* X-axis labels */}
+          {filtered.map((p, i) => {
+            if (i % tickStride !== 0 && i !== filtered.length - 1) return null;
+            const label = scope === "today" ? p.time : `${p.date.slice(5)} ${p.time}`;
+            return (
+              <text key={i} x={xFor(i)} y={H - PAD_B + 14}
+                fontSize="9.5" fill="#64748b" textAnchor="middle">
+                {label}
+              </text>
+            );
+          })}
+
+          {/* Y-axis legend stripe (per enabled series, normal range bar on left) */}
+          {SERIES.filter(s => enabled[s.key]).map((s, i, arr) => (
+            <text key={s.key}
+              x={4} y={PAD_T + 12 + i * 12}
+              fontSize="9" fontWeight="700" fill={s.color}>
+              {s.label}
+            </text>
+          ))}
+        </svg>
+      </div>
+    </div>
+  );
+}
+
 /* ═══════════════════════════════════════════════════════ */
 export default function IntegratedVitalsPanel({ UHID, nurseName = "", onVitalsChange }) {
   const [history,   setHistory]   = useState([]);   // all records for this UHID
@@ -234,6 +467,13 @@ export default function IntegratedVitalsPanel({ UHID, nurseName = "", onVitalsCh
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
+      {/* ── Dynamic Vital Trend Chart ── */}
+      <VitalTrendChart
+        history={history}
+        defaultDate={histDate}
+        onOpenFullSheet={UHID ? () => { window.location.href = `/vitalSheet/${encodeURIComponent(UHID)}`; } : null}
+      />
 
       {/* ── History Table ── */}
       <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
