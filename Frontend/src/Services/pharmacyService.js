@@ -49,6 +49,10 @@ export const cancelSale    = (id)              => _post(`/sales/${id}/cancel`);
 export const getStats      = () => _get(`/stats`);
 export const getAlerts     = () => _get(`/alerts`);
 
+// Settings (pharmacy identity for print — in-house vs outsourced)
+export const getPharmacySettings    = ()   => _get(`/settings`);
+export const updatePharmacySettings = (b)  => _put(`/settings`, b);
+
 // Registers
 export const getSalesRegister    = (p = {}) => _get(`/registers/sales${_qs(p)}`);
 export const getPurchaseRegister = (p = {}) => _get(`/registers/purchase${_qs(p)}`);

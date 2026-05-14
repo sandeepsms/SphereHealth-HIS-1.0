@@ -26,6 +26,10 @@ router.get   ("/sales",          ctrl.listSales);
 router.get   ("/sales/:id",      ctrl.getSale);
 router.post  ("/sales/:id/cancel", ctrl.cancelSale);
 
+// Settings (in-house vs outsourced print identity)
+router.get   ("/settings",       ctrl.getSettings);
+router.put   ("/settings",       ctrl.updateSettings);
+
 // Dashboard
 router.get   ("/stats",          ctrl.stats);
 router.get   ("/alerts",         ctrl.alerts);

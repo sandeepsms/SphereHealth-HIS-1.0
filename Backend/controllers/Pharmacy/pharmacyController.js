@@ -24,6 +24,7 @@ const Drug        = require("../../models/Pharmacy/DrugModel");
 const DrugBatch   = require("../../models/Pharmacy/DrugBatchModel");
 const Supplier    = require("../../models/Pharmacy/SupplierModel");
 const Sale        = require("../../models/Pharmacy/PharmacySaleModel");
+const Settings    = require("../../models/Pharmacy/PharmacySettingsModel");
 const Counter     = require("../../models/CounterModel");
 const mongoose    = require("mongoose");
 
@@ -463,6 +464,34 @@ exports.stats = async (req, res) => {
       todaySales: { count: todaySalesAgg[0]?.count || 0, total: Math.round(todaySalesAgg[0]?.total || 0) },
       monthSales: { count: monthSalesAgg[0]?.count || 0, total: Math.round(monthSalesAgg[0]?.total || 0) },
     } });
+  } catch (e) { sendErr(res, e); }
+};
+
+/* ════════════════════════════════════════════════════════════════
+   PHARMACY SETTINGS — in-house vs outsourced print identity
+══════════════════════════════════════════════════════════════════ */
+exports.getSettings = async (req, res) => {
+  try {
+    const s = await Settings.findById("default").lean();
+    if (!s) {
+      // Return a default doc on first load so the frontend has shape to bind to.
+      const seeded = await Settings.create({ _id: "default" });
+      return res.json({ success: true, data: seeded });
+    }
+    res.json({ success: true, data: s });
+  } catch (e) { sendErr(res, e); }
+};
+
+exports.updateSettings = async (req, res) => {
+  try {
+    const body = { ...req.body, updatedBy: req.user?.fullName || "System" };
+    delete body._id;
+    const s = await Settings.findByIdAndUpdate(
+      "default",
+      { $set: body },
+      { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }
+    );
+    res.json({ success: true, data: s });
   } catch (e) { sendErr(res, e); }
 };
 

@@ -19,6 +19,7 @@ import {
   recordGRN, listBatches, stockRollup,
   dispense, listSales, cancelSale,
   getStats, getAlerts,
+  getPharmacySettings, updatePharmacySettings,
   getSalesRegister, getPurchaseRegister, getStockRegister,
   getScheduleHRegister, getExpiryRegister, getGstSummary,
   DRUG_FORMS, DRUG_CATEGORIES, PAYMENT_MODES, SALE_TYPES,
@@ -96,6 +97,7 @@ const TABS = [
   { key: "sales",     label: "Sales Register", icon: "pi-receipt" },
   { key: "registers", label: "Registers",  icon: "pi-book" },
   { key: "suppliers", label: "Suppliers",  icon: "pi-truck" },
+  { key: "settings",  label: "Settings",   icon: "pi-cog" },
 ];
 
 const fmtINR = (n) => `₹${Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
@@ -166,6 +168,7 @@ export default function PharmacyHomePage() {
         {tab === "sales"     && <SalesTab />}
         {tab === "registers" && <RegistersTab />}
         {tab === "suppliers" && <SuppliersTab />}
+        {tab === "settings"  && <SettingsTab />}
       </div>
     </div>
   );
@@ -545,6 +548,16 @@ function GRNTab() {
 /* ════════════════════════════════════════════════════════════════
    DISPENSE TAB — sell to patient / walk-in
 ══════════════════════════════════════════════════════════════════ */
+// Module-level cache for pharmacy settings so we don't re-fetch on every
+// dispense / sales print. Cleared when Settings tab saves a change.
+let _phSettings = null;
+async function getCachedPhSettings() {
+  if (_phSettings) return _phSettings;
+  try { _phSettings = (await getPharmacySettings()).data || null; } catch { _phSettings = null; }
+  return _phSettings;
+}
+function invalidatePhSettings() { _phSettings = null; }
+
 function DispenseTab() {
   const [rollup, setRollup] = useState([]);
   const [items, setItems]   = useState([]);   // current cart
@@ -651,7 +664,10 @@ function DispenseTab() {
       toast.success(`Bill ${r.data.billNumber} · ${fmtINR(r.data.grandTotal)}`);
       // Auto-open the GST tax-invoice — paper-size selector lives in
       // the print window toolbar (half-A4 default for pharmacy).
-      openPrint("pharmacy-bill", { ...r.data });
+      // Pharmacy settings travel with the payload so the bill renders
+      // the right header/footer (hospital vs outsourced).
+      const phSet = await getCachedPhSettings();
+      openPrint("pharmacy-bill", { ...r.data, pharmacySettings: phSet });
       setItems([]);
       clearLink();
       setRollup((await stockRollup()).data || []);
@@ -860,7 +876,10 @@ function SalesTab() {
               </td>
               <td style={{ padding: "8px 12px" }}>
                 <RowAction icon="pi-print" color={C.blue}
-                  onClick={() => openPrint("pharmacy-bill", { ...s })}
+                  onClick={async () => {
+                    const phSet = await getCachedPhSettings();
+                    openPrint("pharmacy-bill", { ...s, pharmacySettings: phSet });
+                  }}
                   label="Print" />
                 {s.status === "Completed" && (
                   <RowAction icon="pi-times" color={C.red} onClick={() => cancel(s)} label="Cancel" />
@@ -1189,6 +1208,192 @@ function GstSummaryTbl({ data, loading }) {
           ))}
       </Table>
     </_RegisterShell>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════
+   SETTINGS TAB — Pharmacy identity (in-house vs outsourced)
+══════════════════════════════════════════════════════════════════ */
+function SettingsTab() {
+  const [s, setS] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const upd = (k) => (e) => setS(p => ({ ...p, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value }));
+
+  useEffect(() => { (async () => {
+    try { setS((await getPharmacySettings()).data); } catch (e) { toast.error(e.message); }
+  })(); }, []);
+
+  const onLogoFile = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (f.size > 1024 * 1024) { toast.error("Logo must be under 1 MB"); return; }
+    const reader = new FileReader();
+    reader.onload = () => setS(p => ({ ...p, logo: reader.result }));
+    reader.readAsDataURL(f);
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const r = await updatePharmacySettings(s);
+      setS(r.data);
+      invalidatePhSettings();
+      toast.success("Pharmacy settings saved · prints will use the new header/footer immediately");
+    } catch (e) { toast.error(e.message); }
+    finally { setSaving(false); }
+  };
+
+  if (!s) return <div style={{ padding: 30, textAlign: "center", color: C.muted }}>Loading settings…</div>;
+
+  const isOutsourced = s.mode === "outsourced";
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: 14 }}>
+      {/* LEFT: editable fields */}
+      <Card title="Pharmacy identity" color={C.orange} icon="pi-cog">
+        {/* Mode toggle */}
+        <div style={{ marginBottom: 14, padding: "12px 14px", background: C.subtle, border: `1.5px solid ${C.border}`, borderRadius: 9 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 8 }}>
+            Print mode
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            {[
+              { v: "in-house",    label: "In-house",   sub: "Use hospital header/footer", icon: "pi-building" },
+              { v: "outsourced",  label: "Outsourced", sub: "Third-party pharmacy identity below", icon: "pi-truck" },
+            ].map(o => {
+              const active = s.mode === o.v;
+              return (
+                <button key={o.v} onClick={() => setS(p => ({ ...p, mode: o.v }))}
+                  style={{
+                    flex: 1, padding: "11px 14px", borderRadius: 9,
+                    border: `1.5px solid ${active ? C.orange : C.border}`,
+                    background: active ? C.orangeL : "#fff",
+                    cursor: "pointer", textAlign: "left",
+                    display: "flex", alignItems: "center", gap: 10,
+                  }}>
+                  <i className={`pi ${o.icon}`} style={{ color: active ? C.orange : C.muted, fontSize: 14 }} />
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: 12.5, color: active ? C.orange : C.text }}>{o.label}</div>
+                    <div style={{ fontSize: 10.5, color: C.muted }}>{o.sub}</div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {!isOutsourced && (
+          <div style={{ padding: "10px 14px", background: C.blueL, border: `1px solid ${C.blue}30`, borderRadius: 8, fontSize: 12, color: "#1e3a8a", marginBottom: 14 }}>
+            <i className="pi pi-info-circle" style={{ marginRight: 6 }} />
+            Currently in-house. Pharmacy bills carry the hospital's header/footer from <b>Admin → Hospital Settings</b>. Switch to "Outsourced" to enter custom identity below.
+          </div>
+        )}
+
+        {/* Identity fields — only meaningful when outsourced, but always editable */}
+        <div style={{ opacity: isOutsourced ? 1 : 0.55, pointerEvents: isOutsourced ? "auto" : "none" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: 12, marginBottom: 12 }}>
+            <Field label="Pharmacy name *"><input className="his-field" value={s.pharmacyName || ""} onChange={upd("pharmacyName")} placeholder="MediCare Pharma Pvt Ltd" /></Field>
+            <Field label="Tagline"><input className="his-field" value={s.tagline || ""} onChange={upd("tagline")} placeholder="Trusted since 1998" /></Field>
+          </div>
+
+          <Field label="Logo (PNG / JPG · ≤1 MB)">
+            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              {s.logo && (
+                <img src={s.logo} alt="logo" style={{ width: 60, height: 60, objectFit: "contain", border: `1.5px solid ${C.border}`, borderRadius: 8, background: "#fff" }} />
+              )}
+              <input type="file" accept="image/*" onChange={onLogoFile} className="his-field" />
+              {s.logo && (
+                <button onClick={() => setS(p => ({ ...p, logo: "" }))} style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${C.border}`, background: "#fff", color: C.red, fontSize: 11, cursor: "pointer" }}>Remove</button>
+              )}
+            </div>
+          </Field>
+
+          <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <Field label="Address line 1"><input className="his-field" value={s.addressLine1 || ""} onChange={upd("addressLine1")} /></Field>
+            <Field label="Address line 2"><input className="his-field" value={s.addressLine2 || ""} onChange={upd("addressLine2")} /></Field>
+            <Field label="City"><input className="his-field" value={s.city || ""} onChange={upd("city")} /></Field>
+            <Field label="State"><input className="his-field" value={s.state || ""} onChange={upd("state")} /></Field>
+            <Field label="Pincode"><input className="his-field" value={s.pincode || ""} onChange={upd("pincode")} /></Field>
+            <Field label="Phone 1"><input className="his-field" value={s.phone1 || ""} onChange={upd("phone1")} /></Field>
+            <Field label="Phone 2"><input className="his-field" value={s.phone2 || ""} onChange={upd("phone2")} /></Field>
+            <Field label="Email"><input className="his-field" value={s.email || ""} onChange={upd("email")} /></Field>
+          </div>
+
+          <div style={{ marginTop: 14, padding: "12px 14px", border: `1.5px solid ${C.red}25`, background: C.redL + "55", borderRadius: 9 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: C.red, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 8 }}>
+              Regulatory / tax — appears on every printed bill
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <Field label="GSTIN *"><input className="his-field" value={s.gstin || ""} onChange={upd("gstin")} placeholder="27ABCDE1234F1Z5" /></Field>
+              <Field label="PAN"><input className="his-field" value={s.panNumber || ""} onChange={upd("panNumber")} /></Field>
+              <Field label="Drug License No. *"><input className="his-field" value={s.drugLicenseNo || ""} onChange={upd("drugLicenseNo")} placeholder="MH/20B/2024-001" /></Field>
+              <Field label="Drug License Expiry"><input type="date" className="his-field" value={s.drugLicenseExp ? s.drugLicenseExp.slice(0,10) : ""} onChange={upd("drugLicenseExp")} /></Field>
+              <Field label="FSSAI No"><input className="his-field" value={s.fssaiNumber || ""} onChange={upd("fssaiNumber")} /></Field>
+            </div>
+          </div>
+
+          <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12 }}>
+            <Field label="Bank name"><input className="his-field" value={s.bankName || ""} onChange={upd("bankName")} /></Field>
+            <Field label="Account no"><input className="his-field" value={s.bankAccount || ""} onChange={upd("bankAccount")} /></Field>
+            <Field label="IFSC"><input className="his-field" value={s.ifscCode || ""} onChange={upd("ifscCode")} /></Field>
+            <Field label="UPI ID"><input className="his-field" value={s.upiId || ""} onChange={upd("upiId")} placeholder="pharma@upi" /></Field>
+          </div>
+
+          <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <Field label="Header colour"><input type="color" className="his-field" style={{ height: 38 }} value={s.headerColor || "#ea580c"} onChange={upd("headerColor")} /></Field>
+            <Field label="Accent colour"><input type="color" className="his-field" style={{ height: 38 }} value={s.accentColor || "#c2410c"} onChange={upd("accentColor")} /></Field>
+          </div>
+
+          <div style={{ marginTop: 14 }}>
+            <Field label="Footer note">
+              <textarea className="his-textarea" rows={2} value={s.footerNote || ""} onChange={upd("footerNote")} placeholder="Thank you for choosing MediCare Pharma" />
+            </Field>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 18, display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <button onClick={save} disabled={saving}
+            style={{ padding: "10px 22px", borderRadius: 8, border: "none", background: saving ? "#94a3b8" : C.orange, color: "#fff", fontWeight: 800, fontSize: 13, cursor: saving ? "not-allowed" : "pointer" }}>
+            {saving ? "Saving…" : <><i className="pi pi-save" style={{ marginRight: 6 }} />Save settings</>}
+          </button>
+        </div>
+      </Card>
+
+      {/* RIGHT: live preview card */}
+      <Card title="Header preview" color={C.blue} icon="pi-eye">
+        <div style={{ background: "#fff", border: `1.5px solid ${C.border}`, borderRadius: 9, overflow: "hidden" }}>
+          <div style={{
+            background: `linear-gradient(135deg, ${s.headerColor || C.orange}, ${s.accentColor || C.orange}cc)`,
+            color: "#fff", padding: "16px 18px",
+            display: "flex", alignItems: "center", gap: 12,
+          }}>
+            {(isOutsourced && s.logo) && (
+              <img src={s.logo} alt="" style={{ width: 48, height: 48, objectFit: "contain", background: "#fff", borderRadius: 8, padding: 4 }} />
+            )}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: "-.2px" }}>
+                {isOutsourced ? (s.pharmacyName || "Pharmacy name") : "(Hospital name from settings)"}
+              </div>
+              <div style={{ fontSize: 11, opacity: .9, marginTop: 2 }}>
+                {isOutsourced ? (s.tagline || s.addressLine1 || "Tagline / address") : "(Hospital tagline & address)"}
+              </div>
+            </div>
+            <div style={{ textAlign: "right", fontSize: 10, opacity: .9 }}>
+              <div>GSTIN: <b>{isOutsourced ? (s.gstin || "—") : "(hospital)"}</b></div>
+              <div>D.L.: <b>{isOutsourced ? (s.drugLicenseNo || "—") : "(hospital)"}</b></div>
+            </div>
+          </div>
+          <div style={{ padding: "12px 18px", fontSize: 11, color: C.muted, background: C.subtle }}>
+            <div><b style={{ color: C.text }}>Phone:</b> {isOutsourced ? (s.phone1 || "—") : "—"}</div>
+            <div><b style={{ color: C.text }}>Email:</b> {isOutsourced ? (s.email || "—") : "—"}</div>
+          </div>
+        </div>
+        <div style={{ marginTop: 12, padding: "10px 12px", background: C.subtle, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 11, color: C.muted }}>
+          <i className="pi pi-info-circle" style={{ marginRight: 5 }} />
+          Save and click <b>Print</b> on any bill in the Sales Register to see the live result.
+        </div>
+      </Card>
+    </div>
   );
 }
 
