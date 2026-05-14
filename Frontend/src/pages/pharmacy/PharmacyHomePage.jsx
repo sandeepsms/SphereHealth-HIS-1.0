@@ -584,8 +584,14 @@ function DispenseTab() {
     try {
       const hit = await lookupHisPatient(u);
       if (!hit) {
-        toast.error(`No patient found for ${u} in HIS — sell as Walk-in or check the UHID`);
+        // Critical: any STALE admissionId from a prior lookup must be
+        // wiped, otherwise the next dispense submit would link THIS
+        // patient to the previous patient's admission ledger.
+        setAdmissionId(null);
+        setAdmissionNumber("");
         setHisLinked(false);
+        setSaleType("Walk-in");
+        toast.error(`No patient found for ${u} in HIS — selling as Walk-in. Re-enter UHID if this is wrong.`);
         return;
       }
       setPatient({

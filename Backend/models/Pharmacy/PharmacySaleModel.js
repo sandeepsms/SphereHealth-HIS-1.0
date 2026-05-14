@@ -65,6 +65,25 @@ const PharmacySaleSchema = new mongoose.Schema(
     amountPaid:  { type: Number, default: 0 },
     balanceDue:  { type: Number, default: 0 },
 
+    // ── Patient credit ledger (signed amount the pharmacy OWES the patient).
+    //   Positive value = pharmacy is holding patient's money:
+    //     • over-payment at counter (amountPaid > grandTotal)
+    //     • refund issued via "Credit-note" or "Adjusted" mode (not paid in cash)
+    //   Reset to 0 when settled back to the patient (cash payout / next bill).
+    //   Kept separate from balanceDue so neither field clamps the other.
+    patientCredit: { type: Number, default: 0 },
+    patientCreditLog: {
+      type: [ new mongoose.Schema({
+        amount:    { type: Number, required: true },     // positive = credit added, negative = settled
+        reason:    { type: String, default: "" },        // "Over-payment", "Refund (Credit-note)", "Settled to patient"
+        refSlip:   { type: String, default: "" },        // bill no / refund slip / payout ref
+        at:        { type: Date, default: Date.now },
+        byName:    { type: String, default: "" },
+        byId:      { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+      }, { _id: true }) ],
+      default: [],
+    },
+
     status: {
       type: String,
       enum: ["Completed","Partial-Return","Refunded","Cancelled","Hold"],

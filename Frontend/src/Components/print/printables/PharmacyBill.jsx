@@ -119,6 +119,19 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
   const totals = { subTotal, totalDisc, totalTaxable, totalTax, grandTotal, roundOff, paid, balance };
   const hasControlled = items.some(it => it.schedule && /^(H|H1|X)$/i.test(it.schedule));
 
+  /* Returns / revised-bill state ───────────────────────────────────
+     If the sale has been partially or fully returned, surface that on
+     the print so the customer copy is unambiguous about what's owed
+     and what's been refunded. The original items[] block is preserved
+     untouched — legal requirement, the original tax invoice must
+     remain reprintable as-is — and the refunds section is appended
+     after the totals.  */
+  const returns       = Array.isArray(r.returns) ? r.returns : [];
+  const isRevised     = ["Partial-Return", "Refunded", "Cancelled"].includes(r.status);
+  const refundTotal   = returns.reduce((s, x) => s + Number(x.refundAmount || 0), 0);
+  const netAfter      = Math.max(0, Number(r.grandTotal || 0) - refundTotal);
+  const patientCred   = Number(r.patientCredit || 0);
+
   /* Template choice — per-print override > pharmacy default > 1 */
   const tplId   = Number(r.template || r.billTemplate || r.pharmacySettings?.billTemplate || 1);
   const Chosen  = (TEMPLATES.find(t => t.id === tplId) || TEMPLATES[0]).Render;
@@ -222,6 +235,42 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
         html[data-paper="a5"]      .pr-pharm-bill .pb-terms li { line-height: 1.35; }
 
         @media print { .pr-pharm-bill { page-break-inside: avoid; } }
+
+        /* ── Revised-bill watermark (Partial-Return / Refunded / Cancelled) */
+        .pr-pharm-bill .pb-revised-ribbon {
+          position: absolute; top: 14px; right: -38px;
+          transform: rotate(35deg);
+          background: ${r.status === "Cancelled" ? "#b91c1c" : "#b45309"};
+          color: #fff; padding: 5px 50px; font-size: 11px;
+          font-weight: 800; letter-spacing: 2px;
+          box-shadow: 0 1px 3px rgba(0,0,0,.25);
+          z-index: 5; pointer-events: none;
+        }
+        .pr-pharm-bill .pb-revised-banner {
+          margin: 0 22px 8px; padding: 7px 12px;
+          background: ${r.status === "Cancelled" ? "#fef2f2" : "#fffbeb"};
+          border: 1.5px solid ${r.status === "Cancelled" ? "#fecaca" : "#fcd34d"};
+          border-radius: 6px; font-size: 10px; color: ${r.status === "Cancelled" ? "#7f1d1d" : "#92400e"};
+          display: flex; justify-content: space-between; align-items: center;
+        }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-revised-banner,
+        html[data-paper="a5"]      .pr-pharm-bill .pb-revised-banner { margin: 0 16px 5px; padding: 4px 10px; font-size: 8.5px; }
+
+        /* ── Returns section block (one per refund slip) */
+        .pr-pharm-bill .pb-returns { margin: 8px 22px 12px; border: 1.5px dashed #f59e0b; border-radius: 8px; overflow: hidden; }
+        .pr-pharm-bill .pb-returns-head { padding: 7px 12px; background: #fffbeb; border-bottom: 1px solid #fde68a; font-size: 10px; color: #92400e; display: flex; justify-content: space-between; }
+        .pr-pharm-bill .pb-returns-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+        .pr-pharm-bill .pb-returns-table th { padding: 5px 9px; text-align: left; background: #fef3c7; color: #78350f; font-size: 8.5px; letter-spacing: .4px; text-transform: uppercase; border-bottom: 1px solid #fcd34d; }
+        .pr-pharm-bill .pb-returns-table td { padding: 5px 9px; border-bottom: 1px solid #fef3c7; }
+        .pr-pharm-bill .pb-returns-foot { display: flex; justify-content: flex-end; gap: 12px; padding: 6px 12px; background: #fffbeb; font-size: 10px; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-returns,
+        html[data-paper="a5"]      .pr-pharm-bill .pb-returns { margin: 4px 16px 6px; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-returns-head,
+        html[data-paper="a5"]      .pr-pharm-bill .pb-returns-head { padding: 4px 10px; font-size: 8.5px; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-returns-table th,
+        html[data-paper="a5"]      .pr-pharm-bill .pb-returns-table th { padding: 3px 7px; font-size: 7.5px; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-returns-table td,
+        html[data-paper="a5"]      .pr-pharm-bill .pb-returns-table td { padding: 3px 7px; font-size: 8.4px; }
       `}</style>
 
       <div className="pr-page pr-pharm-bill" style={{
@@ -229,8 +278,84 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
         "--pr-header-color": id.color,
         "--pr-accent-color": id.accent,
         padding: 0,
+        position: "relative",
+        overflow: "hidden",
       }}>
+        {isRevised && (
+          <div className="pb-revised-ribbon">
+            {r.status === "Cancelled" ? "CANCELLED" : "REVISED"}
+          </div>
+        )}
+
         <Chosen {...renderProps} />
+
+        {isRevised && (
+          <div className="pb-revised-banner">
+            <span>
+              <b>{r.status === "Cancelled" ? "CANCELLED BILL" : "REVISED BILL"}</b>
+              {" · "}
+              {r.status === "Refunded"      && "All items returned"}
+              {r.status === "Partial-Return"&& "One or more items returned"}
+              {r.status === "Cancelled"     && "Sale cancelled — invoice retained for audit"}
+            </span>
+            <span>
+              Original&nbsp;{fmtINR(Number(r.grandTotal || 0))}
+              {refundTotal > 0 && <> · Refund&nbsp;<b>− {fmtINR(refundTotal)}</b> · Net&nbsp;<b>{fmtINR(netAfter)}</b></>}
+            </span>
+          </div>
+        )}
+
+        {returns.length > 0 && (
+          <div className="pb-returns">
+            <div className="pb-returns-head">
+              <b>RETURNS &amp; REFUNDS — {returns.length} slip(s)</b>
+              <span>Net of returns: <b>{fmtINR(netAfter)}</b></span>
+            </div>
+            {returns.map((ret, ri) => (
+              <div key={ri} style={{ borderTop: ri > 0 ? "1px solid #fde68a" : "none" }}>
+                <div className="pb-returns-head" style={{ background: "#fffdf5", borderBottom: "1px dashed #fcd34d", fontSize: 9.5 }}>
+                  <span>
+                    <b style={{ fontFamily: "DM Mono, monospace" }}>{ret.refundSlipNumber || `Refund #${ri+1}`}</b>
+                    {ret.refundedAt && <> · {_fmtDate(ret.refundedAt, { day: "2-digit", month: "short", year: "numeric" })}</>}
+                    {ret.refundMode && <> · {ret.refundMode}</>}
+                    {ret.reason && <> · <i>{ret.reason}</i></>}
+                  </span>
+                  <span>Refund: <b>{fmtINR(Number(ret.refundAmount || 0))}</b></span>
+                </div>
+                <table className="pb-returns-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: "5%" }}>#</th>
+                      <th style={{ width: "45%" }}>Drug</th>
+                      <th style={{ width: "12%" }}>Batch</th>
+                      <th style={{ width: "8%", textAlign: "right" }}>Qty</th>
+                      <th style={{ width: "10%", textAlign: "right" }}>Rate</th>
+                      <th style={{ width: "10%", textAlign: "right" }}>GST</th>
+                      <th style={{ width: "10%", textAlign: "right" }}>Net</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(ret.refundedItems || []).map((it, ii) => (
+                      <tr key={ii}>
+                        <td>{ii + 1}</td>
+                        <td>{it.drugName}</td>
+                        <td style={{ fontFamily: "DM Mono, monospace", fontSize: 9 }}>{it.batchNo || "—"}</td>
+                        <td style={{ textAlign: "right" }}>{it.quantity}</td>
+                        <td style={{ textAlign: "right" }}>{fmtINR(Number(it.unitPrice || 0))}</td>
+                        <td style={{ textAlign: "right" }}>{fmtINR(Number(it.gstAmount || 0))}</td>
+                        <td style={{ textAlign: "right", fontWeight: 700 }}>{fmtINR(Number(it.netAmount || 0))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+            <div className="pb-returns-foot">
+              <span>Total refunded: <b style={{ color: "#b45309" }}>{fmtINR(refundTotal)}</b></span>
+              {patientCred > 0 && <span>Credit held: <b style={{ color: "#0369a1" }}>{fmtINR(patientCred)}</b></span>}
+            </div>
+          </div>
+        )}
       </div>
     </>
   );

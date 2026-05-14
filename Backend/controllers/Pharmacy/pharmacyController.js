@@ -250,27 +250,70 @@ exports.stockRollup = async (req, res) => {
 };
 
 /* ════════════════════════════════════════════════════════════════
-   DISPENSE — FIFO consume by expiry
+   DISPENSE — FIFO consume by expiry, race-safe via atomic updates
 ══════════════════════════════════════════════════════════════════ */
+// Walks batches by expiry asc and reserves `qty` units atomically. Uses
+// findOneAndUpdate with a `remaining: { $gte: take }` predicate so two
+// concurrent dispenses can't both claim the same units — one wins, the
+// other gets null and we re-read the live remaining and retry.
+// Also rejects soft-deleted drugs and already-expired batches.
 async function fifoConsume(drugId, qty) {
-  // Pull batches with remaining > 0 in expiry order. Walk them, decrementing,
-  // until we've consumed `qty`. Returns the list of {batch, used}.
-  const batches = await DrugBatch.find({
-    drugId, isActive: true, remaining: { $gt: 0 },
-  }).sort({ expiryDate: 1 });
+  // Drug.isActive gate — block dispense if the master record was disabled
+  const drug = await Drug.findById(drugId).lean();
+  if (!drug || !drug.isActive) throw new Error("Drug is deactivated — cannot dispense");
 
   const used = [];
   let need = qty;
-  for (const b of batches) {
-    if (need <= 0) break;
-    const take = Math.min(b.remaining, need);
-    b.quantityOut = (b.quantityOut || 0) + take;
-    b.remaining   = (b.remaining   || 0) - take;
-    await b.save();
-    used.push({ batch: b, used: take });
-    need -= take;
+  const triedBatchIds = new Set();
+  // Hard cap on retries so a runaway concurrency situation can't loop forever
+  const MAX_PASSES = 32;
+
+  for (let pass = 0; pass < MAX_PASSES && need > 0; pass++) {
+    // Re-query each pass so we always see live `remaining` after races.
+    // Exclude already-tried-and-empty batches.
+    const where = {
+      drugId, isActive: true, remaining: { $gt: 0 },
+      // Block expired batches at dispense time (D&C compliance) —
+      // the GRN endpoint already refuses expiry < today on receipt,
+      // but a previously-receivable batch may have expired since.
+      expiryDate: { $gte: new Date() },
+    };
+    if (triedBatchIds.size > 0) where._id = { $nin: [...triedBatchIds] };
+
+    const batches = await DrugBatch.find(where).sort({ expiryDate: 1 }).limit(8).lean();
+    if (batches.length === 0) break;
+
+    let madeProgress = false;
+    for (const b of batches) {
+      if (need <= 0) break;
+      const take = Math.min(b.remaining, need);
+      // Atomic conditional update — wins iff remaining still ≥ take
+      const updated = await DrugBatch.findOneAndUpdate(
+        { _id: b._id, isActive: true, remaining: { $gte: take } },
+        { $inc: { quantityOut: take, remaining: -take } },
+        { new: true },
+      );
+      if (!updated) {
+        // Lost the race — mark this batch as "tried in this pass" so
+        // we don't pick it again; next pass will see the new remaining.
+        triedBatchIds.add(String(b._id));
+        continue;
+      }
+      used.push({ batch: updated, used: take });
+      need -= take;
+      madeProgress = true;
+    }
+    if (!madeProgress) break;
   }
-  if (need > 0) throw new Error(`Insufficient stock — short by ${need} unit(s)`);
+
+  if (need > 0) {
+    // Roll back what we already reserved — this whole dispense is rejected.
+    for (const u of used) {
+      await DrugBatch.findByIdAndUpdate(u.batch._id,
+        { $inc: { quantityOut: -u.used, remaining: u.used } });
+    }
+    throw new Error(`Insufficient stock — short by ${need} unit(s)`);
+  }
   return used;
 }
 
@@ -282,9 +325,47 @@ exports.dispense = async (req, res) => {
       items, paymentMode = "Cash", amountPaid, discountPercent = 0, remarks,
     } = req.body;
 
-    // Validate admissionId if present
+    // ── Sale-type / patient identity sanity checks ────────────────────
+    // saleType drives the legal billing flow (walk-in is anonymous OTC,
+    // OPD/IPD/Homecare are patient-linked). Catch mismatches at the door
+    // so we never end up with an IPD bill that has no admission, or a
+    // walk-in bill that's silently linked to a stale admission id.
+    const ST = ["OPD", "IPD", "Walk-in", "Homecare"];
+    if (!ST.includes(saleType)) {
+      return res.status(400).json({ success: false, message: `Invalid saleType "${saleType}"` });
+    }
+
     if (admissionId && !isOid(admissionId)) {
       return res.status(400).json({ success: false, message: "Invalid admissionId" });
+    }
+
+    // Walk-in must NOT carry an admission reference — Counter UI sometimes
+    // leaves the field set when the user switches sale-type. We strip it
+    // here rather than reject, so the cashier doesn't have to re-enter.
+    let _admissionId     = admissionId || null;
+    let _admissionNumber = admissionNumber || "";
+    if (saleType === "Walk-in") {
+      _admissionId = null;
+      _admissionNumber = "";
+    }
+
+    // IPD must have an admission link — that's the whole point of an
+    // IPD bill (charge attaches to the admission ledger).
+    if (saleType === "IPD" && !_admissionId) {
+      return res.status(400).json({
+        success: false,
+        message: "IPD sale requires an admissionId — please select an active admission",
+      });
+    }
+
+    // OPD/Homecare/IPD without UHID — at minimum we need to know WHO,
+    // otherwise the prescription can't be audited later. Walk-in is the
+    // only flow allowed to be anonymous.
+    if (saleType !== "Walk-in" && !String(patientUHID || "").trim()) {
+      return res.status(400).json({
+        success: false,
+        message: `${saleType} sale requires a patient UHID`,
+      });
     }
 
     if (!items || !items.length) {
@@ -355,16 +436,31 @@ exports.dispense = async (req, res) => {
     const grandTotal = grandTotalRaw + roundOff;
     const paid = Number(amountPaid != null ? amountPaid : grandTotal);
 
+    // Over-payment becomes patient credit (pharmacy owes patient).
+    // balanceDue tracks the OPPOSITE direction (patient owes pharmacy).
+    // The two are never both non-zero on a single bill.
+    const overPaid    = Math.max(0, paid - grandTotal);
+    const balanceDue  = Math.max(0, grandTotal - paid);
+    const creditLog   = overPaid > 0 ? [{
+      amount: round2(overPaid),
+      reason: "Over-payment at counter",
+      refSlip: billNumber,
+      byName: req.user?.fullName || "System",
+      byId:   req.user?._id || null,
+    }] : [];
+
     const sale = await Sale.create({
       billNumber,
       patientUHID, patientName, contactNumber, age, gender, doctorName,
-      saleType, admissionId: admissionId || null, admissionNumber: admissionNumber || "",
+      saleType, admissionId: _admissionId, admissionNumber: _admissionNumber,
       prescriptionRef: prescriptionRef || "",
       items: saleItems,
       subTotal, totalDiscount: totalDisc, totalTaxable, totalGst,
       roundOff, grandTotal,
       paymentMode, amountPaid: paid,
-      balanceDue: Math.max(0, grandTotal - paid),
+      balanceDue,
+      patientCredit:    round2(overPaid),
+      patientCreditLog: creditLog,
       status: "Completed",
       createdBy: req.user?.fullName || "System",
       createdById: req.user?._id || null,
@@ -525,12 +621,35 @@ exports.returnItems = async (req, res) => {
       (s, r) => s + (r.refundedItems || []).reduce((ss, ri) => ss + Number(ri.quantity || 0), 0), 0);
     sale.status = totalReturnedQty >= totalSoldQty ? "Refunded" : "Partial-Return";
 
-    // Balance due reduces by the refund (if patient owed money, the
-    // refund reduces it; otherwise it becomes a credit owed back to
-    // them which we surface as negative balance).
-    sale.balanceDue = Math.max(0, (sale.balanceDue || 0) - refundAmount);
+    // Money flow on refund:
+    //   1. If patient still owed money on this bill (balanceDue > 0),
+    //      first knock that off — patient now owes less.
+    //   2. Any refund amount LEFT OVER after that is money the pharmacy
+    //      must pay back. How we account for it depends on refundMode:
+    //        • Cash / Card / UPI — paid out at counter now, no ledger entry.
+    //        • Credit-note / Adjusted — pharmacy still holds the money
+    //          (will offset future bill or be paid out later), so it goes
+    //          to patientCredit as a positive balance.
+    const due       = Number(sale.balanceDue || 0);
+    const dueOffset = Math.min(due, refundAmount);
+    sale.balanceDue = round2(due - dueOffset);
+    const payable   = round2(refundAmount - dueOffset);
+
+    if (payable > 0 && (refundMode === "Credit-note" || refundMode === "Adjusted")) {
+      sale.patientCredit = round2((sale.patientCredit || 0) + payable);
+      sale.patientCreditLog.push({
+        amount: payable,
+        reason: `Refund (${refundMode})`,
+        refSlip: refundSlipNumber,
+        byName: req.user?.fullName || req.user?.name || "System",
+        byId:   req.user?._id || null,
+      });
+    }
+
     sale.remarks = (sale.remarks ? sale.remarks + " · " : "") +
-      `Returned ${refundedItems.length} line(s) · refund ${refundSlipNumber} · ${fmtINRSimple(refundAmount)} via ${refundMode}`;
+      `Returned ${refundedItems.length} line(s) · refund ${refundSlipNumber} · ${fmtINRSimple(refundAmount)} via ${refundMode}` +
+      (payable > 0 && (refundMode === "Credit-note" || refundMode === "Adjusted")
+        ? ` · credit ${fmtINRSimple(payable)} held for patient` : "");
 
     await sale.save();
 
@@ -546,20 +665,63 @@ exports.cancelSale = async (req, res) => {
     if (!isOid(req.params.id)) return res.status(400).json({ success: false, message: "Invalid sale id" });
     const s = await Sale.findById(req.params.id);
     if (!s) return res.status(404).json({ success: false, message: "Sale not found" });
-    if (s.status !== "Completed") return res.status(400).json({ success: false, message: "Only completed sales can be cancelled" });
+    // Block cancellation if returns have already been issued — those refund
+    // slips have left the counter and adjusting them retroactively would
+    // mis-balance the GST register. Operator must reverse returns first.
+    if ((s.returns || []).length > 0) {
+      return res.status(409).json({
+        success: false,
+        message: "Cannot cancel — this sale has refund slips on it. Reverse refunds first.",
+      });
+    }
+    if (s.status !== "Completed") {
+      return res.status(400).json({ success: false, message: `Only Completed sales can be cancelled (current: ${s.status})` });
+    }
 
-    // Restore stock to the original batches.
+    // Per-item returned-qty map so we never over-restore stock.
+    const returnedByItem = {};
+    for (const r of (s.returns || [])) {
+      for (const ri of (r.refundedItems || [])) {
+        const k = String(ri.saleItemId || "");
+        if (!k) continue;
+        returnedByItem[k] = (returnedByItem[k] || 0) + Number(ri.quantity || 0);
+      }
+    }
+
+    // Restore stock to the original batches — only what wasn't already returned.
     for (const it of s.items) {
       if (!it.batchId) continue;
+      const alreadyReturned = returnedByItem[String(it._id)] || 0;
+      const restoreQty = Math.max(0, Number(it.quantity || 0) - alreadyReturned);
+      if (restoreQty <= 0) continue;
       const b = await DrugBatch.findById(it.batchId);
       if (b) {
-        b.quantityOut = Math.max(0, (b.quantityOut || 0) - it.quantity);
-        b.remaining   = (b.quantityIn || 0) - (b.quantityOut || 0);
+        b.quantityOut = Math.max(0, (b.quantityOut || 0) - restoreQty);
+        b.remaining   = Math.max(0, (b.quantityIn || 0) - (b.quantityOut || 0));
         await b.save();
       }
     }
+
+    // Money: any amount the patient already paid (minus refunds already
+    // issued) becomes patientCredit, since on cancellation we can't
+    // assume the cashier pays cash back instantly. The frontend can
+    // surface this for counter-staff payout.
+    const refundedSoFar  = (s.returns || []).reduce((t, r) => t + Number(r.refundAmount || 0), 0);
+    const payable        = Math.max(0, Number(s.amountPaid || 0) - refundedSoFar);
+    if (payable > 0) {
+      s.patientCredit = round2((s.patientCredit || 0) + payable);
+      s.patientCreditLog.push({
+        amount: payable,
+        reason: "Sale cancelled — payment held as credit",
+        refSlip: s.billNumber,
+        byName: req.user?.fullName || "System",
+        byId:   req.user?._id || null,
+      });
+    }
+    s.balanceDue = 0;
     s.status = "Cancelled";
-    s.remarks = (s.remarks ? s.remarks + " · " : "") + `Cancelled by ${req.user?.fullName || "System"} on ${new Date().toISOString()}`;
+    s.remarks = (s.remarks ? s.remarks + " · " : "") + `Cancelled by ${req.user?.fullName || "System"} on ${new Date().toISOString()}` +
+      (payable > 0 ? ` · ${fmtINRSimple(payable)} held as credit` : "");
     await s.save();
     res.json({ success: true, data: s });
   } catch (e) { sendErr(res, e); }
@@ -573,16 +735,33 @@ exports.stats = async (req, res) => {
     const now = new Date();
     const todayStart = new Date(); todayStart.setHours(0,0,0,0);
 
-    const [drugsCount, batches, todaySalesAgg, monthSalesAgg] = await Promise.all([
+    const monthStart  = new Date(now.getFullYear(), now.getMonth(), 1);
+    // Sales counted are anything that left the counter as a tax invoice —
+    // Completed + Partial-Return + Refunded. Refunds are subtracted as a
+    // separate aggregation so revenue is net of returns (matches register).
+    const SALE_STATUSES = ["Completed", "Partial-Return", "Refunded"];
+    const [drugsCount, batches, todaySalesAgg, monthSalesAgg, todayRefundAgg, monthRefundAgg] = await Promise.all([
       Drug.countDocuments({ isActive: true }),
       DrugBatch.find({ isActive: true, remaining: { $gt: 0 } }).lean(),
       Sale.aggregate([
-        { $match: { status: "Completed", createdAt: { $gte: todayStart } } },
+        { $match: { status: { $in: SALE_STATUSES }, createdAt: { $gte: todayStart } } },
         { $group: { _id: null, count: { $sum: 1 }, total: { $sum: "$grandTotal" } } },
       ]),
       Sale.aggregate([
-        { $match: { status: "Completed", createdAt: { $gte: new Date(now.getFullYear(), now.getMonth(), 1) } } },
+        { $match: { status: { $in: SALE_STATUSES }, createdAt: { $gte: monthStart } } },
         { $group: { _id: null, count: { $sum: 1 }, total: { $sum: "$grandTotal" } } },
+      ]),
+      Sale.aggregate([
+        { $match: { status: { $in: ["Partial-Return","Refunded"] }, createdAt: { $gte: todayStart } } },
+        { $unwind: "$returns" },
+        { $match: { "returns.refundedAt": { $gte: todayStart } } },
+        { $group: { _id: null, refund: { $sum: "$returns.refundAmount" } } },
+      ]),
+      Sale.aggregate([
+        { $match: { status: { $in: ["Partial-Return","Refunded"] }, createdAt: { $gte: monthStart } } },
+        { $unwind: "$returns" },
+        { $match: { "returns.refundedAt": { $gte: monthStart } } },
+        { $group: { _id: null, refund: { $sum: "$returns.refundAmount" } } },
       ]),
     ]);
 
@@ -590,14 +769,29 @@ exports.stats = async (req, res) => {
     const expiringCount = batches.filter(b => b.expiryDate && new Date(b.expiryDate) <= new Date(Date.now() + 90 * 86400000)).length;
     const expiredCount  = batches.filter(b => b.expiryDate && new Date(b.expiryDate) < now).length;
 
+    const tGross  = todaySalesAgg[0]?.total || 0;
+    const tRefund = todayRefundAgg[0]?.refund || 0;
+    const mGross  = monthSalesAgg[0]?.total || 0;
+    const mRefund = monthRefundAgg[0]?.refund || 0;
+
     res.json({ success: true, data: {
       drugsCount,
       batchesInStock: batches.length,
       stockValue: Math.round(stockValue),
       expiringWithin90Days: expiringCount,
       alreadyExpired: expiredCount,
-      todaySales: { count: todaySalesAgg[0]?.count || 0, total: Math.round(todaySalesAgg[0]?.total || 0) },
-      monthSales: { count: monthSalesAgg[0]?.count || 0, total: Math.round(monthSalesAgg[0]?.total || 0) },
+      todaySales: {
+        count: todaySalesAgg[0]?.count || 0,
+        total: Math.round(tGross),
+        refunds: Math.round(tRefund),
+        net:    Math.round(Math.max(0, tGross - tRefund)),
+      },
+      monthSales: {
+        count: monthSalesAgg[0]?.count || 0,
+        total: Math.round(mGross),
+        refunds: Math.round(mRefund),
+        net:    Math.round(Math.max(0, mGross - mRefund)),
+      },
     } });
   } catch (e) { sendErr(res, e); }
 };
@@ -643,11 +837,16 @@ function _rangeFilter(req, field = "createdAt") {
 }
 
 // Sales register — bill-wise with HSN-wise GST split.
+// Includes Completed + Partial-Return + Refunded so the audit trail is
+// complete. Refund deltas are reported in their own column so the row
+// shows ORIGINAL totals (legal source) with a refund tail.
 exports.salesRegister = async (req, res) => {
   try {
-    const where = { status: "Completed", ..._rangeFilter(req) };
+    const where = {
+      status: { $in: ["Completed", "Partial-Return", "Refunded"] },
+      ..._rangeFilter(req),
+    };
     const rows = await Sale.find(where).sort({ createdAt: 1 }).lean();
-    // Aggregate HSN-wise tax for each bill
     const out = rows.map(s => {
       const hsnMap = new Map();
       let totalDisc = 0;
@@ -659,6 +858,8 @@ exports.salesRegister = async (req, res) => {
         r.tax     += Number(it.gstAmount    || 0);
         totalDisc += Number(it.discountAmount || 0);
       }
+      const refundAmount = (s.returns || []).reduce((t, r) => t + Number(r.refundAmount || 0), 0);
+      const netAfterReturns = Math.max(0, Number(s.grandTotal || 0) - refundAmount);
       return {
         _id: s._id,
         billNumber: s.billNumber,
@@ -668,7 +869,9 @@ exports.salesRegister = async (req, res) => {
         admissionNumber: s.admissionNumber || "",
         saleType: s.saleType,
         paymentMode: s.paymentMode,
+        status: s.status,
         itemsCount: s.items?.length || 0,
+        returnsCount: (s.returns || []).length,
         subTotal: s.subTotal,
         discount: totalDisc,
         taxable: s.totalTaxable,
@@ -676,18 +879,22 @@ exports.salesRegister = async (req, res) => {
         sgst: Math.round(s.totalGst / 2 * 100) / 100,
         gstTotal: s.totalGst,
         grandTotal: s.grandTotal,
+        refundAmount,                                  // sum of all return slips
+        netAfterReturns,                               // grandTotal − refundAmount
         hsnBreakup: [...hsnMap.values()],
       };
     });
-    // Day-level totals
     const totals = rows.reduce((acc, s) => {
+      const refundAmount = (s.returns || []).reduce((t, r) => t + Number(r.refundAmount || 0), 0);
       acc.bills += 1;
-      acc.subTotal   += s.subTotal   || 0;
+      acc.subTotal   += s.subTotal     || 0;
       acc.taxable    += s.totalTaxable || 0;
-      acc.gstTotal   += s.totalGst   || 0;
-      acc.grandTotal += s.grandTotal || 0;
+      acc.gstTotal   += s.totalGst     || 0;
+      acc.grandTotal += s.grandTotal   || 0;
+      acc.refunds    += refundAmount;
+      acc.net        += Math.max(0, (s.grandTotal || 0) - refundAmount);
       return acc;
-    }, { bills: 0, subTotal: 0, taxable: 0, gstTotal: 0, grandTotal: 0 });
+    }, { bills: 0, subTotal: 0, taxable: 0, gstTotal: 0, grandTotal: 0, refunds: 0, net: 0 });
     res.json({ success: true, data: { rows: out, totals } });
   } catch (e) { sendErr(res, e); }
 };
@@ -750,14 +957,33 @@ exports.stockRegister = async (req, res) => {
       const receipts = allBatches
         .filter(b => new Date(b.createdAt) >= start && new Date(b.createdAt) <= end)
         .reduce((s, b) => s + (b.quantityIn || 0), 0);
-      // Issued in range: sum of items.quantity from Completed sales for this drug in range
+      // Issued in range = sum(items.quantity from sales in range)
+      //                 − sum(returns.refundedItems.quantity from sales in range)
+      // Includes Partial-Return + Refunded sales so the audit is honest about
+      // what stock actually left the pharmacy.
       const issuedAgg = await Sale.aggregate([
-        { $match: { status: "Completed", createdAt: { $gte: start, $lte: end } } },
+        { $match: {
+            status: { $in: ["Completed", "Partial-Return", "Refunded"] },
+            createdAt: { $gte: start, $lte: end },
+          } },
         { $unwind: "$items" },
         { $match: { "items.drugId": d._id } },
         { $group: { _id: null, qty: { $sum: "$items.quantity" } } },
       ]);
-      const issued = issuedAgg[0]?.qty || 0;
+      const grossIssued = issuedAgg[0]?.qty || 0;
+
+      const returnedAgg = await Sale.aggregate([
+        { $match: {
+            status: { $in: ["Partial-Return", "Refunded"] },
+            createdAt: { $gte: start, $lte: end },
+          } },
+        { $unwind: "$returns" },
+        { $unwind: "$returns.refundedItems" },
+        { $match: { "returns.refundedItems.drugId": d._id } },
+        { $group: { _id: null, qty: { $sum: "$returns.refundedItems.quantity" } } },
+      ]);
+      const returnedQty = returnedAgg[0]?.qty || 0;
+      const issued = Math.max(0, grossIssued - returnedQty);
       const closing = allBatches.reduce((s, b) => s + (b.remaining || 0), 0);
       if (opening || receipts || issued || closing) {
         out.push({
@@ -773,16 +999,41 @@ exports.stockRegister = async (req, res) => {
 
 // Schedule H / H1 / X register — every sale containing a controlled drug,
 // with prescription reference + Rx prescriber. Required by D&C Rules.
+// Includes Completed + Partial-Return + Refunded so the audit covers
+// returns. Net dispensed quantity = sold − returned per (sale, item).
 exports.scheduleHRegister = async (req, res) => {
   try {
-    const where = { status: "Completed", ..._rangeFilter(req) };
+    const where = {
+      status: { $in: ["Completed", "Partial-Return", "Refunded"] },
+      ..._rangeFilter(req),
+    };
     const sales = await Sale.find(where).sort({ createdAt: 1 }).lean();
+    // Cache drug schedule lookups so we don't re-read the same drug 50×
+    const drugCache = new Map();
     const out = [];
+
     for (const s of sales) {
-      // Reload each item's drug to read its `schedule`
+      // Pre-compute returned qty per item from this sale's returns[]
+      const returnedByItem = {};
+      for (const r of (s.returns || [])) {
+        for (const ri of (r.refundedItems || [])) {
+          const k = String(ri.saleItemId || "");
+          if (!k) continue;
+          returnedByItem[k] = (returnedByItem[k] || 0) + Number(ri.quantity || 0);
+        }
+      }
+
       for (const it of (s.items || [])) {
-        const d = await Drug.findById(it.drugId).select("schedule isHighAlert isNarcotic name").lean();
+        const key = String(it.drugId);
+        let d = drugCache.get(key);
+        if (!d) {
+          d = await Drug.findById(it.drugId).select("schedule isHighAlert isNarcotic name").lean();
+          drugCache.set(key, d);
+        }
         if (d && /^(H|H1|X)$/i.test(d.schedule || "")) {
+          const itemKey = String(it._id);
+          const returnedQty = Number(returnedByItem[itemKey] || 0);
+          const dispensedNet = Math.max(0, Number(it.quantity || 0) - returnedQty);
           out.push({
             date: s.createdAt,
             billNumber: s.billNumber,
@@ -794,9 +1045,12 @@ exports.scheduleHRegister = async (req, res) => {
             schedule: d.schedule,
             batchNo: it.batchNo,
             expiryDate: it.expiryDate,
-            quantity: it.quantity,
+            quantity: dispensedNet,             // net of returns
+            quantitySold: it.quantity,           // original (audit trail)
+            quantityReturned: returnedQty,
             isHighAlert: !!d.isHighAlert,
             isNarcotic:  !!d.isNarcotic,
+            isReturned:  returnedQty > 0,
           });
         }
       }
@@ -835,11 +1089,15 @@ exports.expiryRegister = async (req, res) => {
 };
 
 // GST summary — daily/period totals, ready to plug into GSTR-1 / GSTR-3B.
+// Includes Completed + Partial-Return + Refunded sales (the original invoice
+// is the legal outward supply); refunds are subtracted as a separate credit-
+// note bucket per gstRate so the output mirrors GSTR-1 (gross + credit-note).
 exports.gstSummary = async (req, res) => {
   try {
     const range = _rangeFilter(req);
+    const STATUS_IN = ["Completed", "Partial-Return", "Refunded"];
     const sales = await Sale.aggregate([
-      { $match: { status: "Completed", ...range } },
+      { $match: { status: { $in: STATUS_IN }, ...range } },
       { $unwind: "$items" },
       { $group: {
         _id: "$items.gstRate",
@@ -851,22 +1109,56 @@ exports.gstSummary = async (req, res) => {
       { $project: { gstRate: "$_id", _id: 0, taxable: 1, tax: 1, qty: 1, billCount: { $size: "$billsArr" } } },
       { $sort: { gstRate: 1 } },
     ]);
-    const totals = sales.reduce((acc, r) => ({
+    // Credit-note bucket — sum of refunded items per gstRate within the range.
+    const refunds = await Sale.aggregate([
+      { $match: { status: { $in: ["Partial-Return", "Refunded"] }, ...range } },
+      { $unwind: "$returns" },
+      { $unwind: "$returns.refundedItems" },
+      { $group: {
+        _id: "$returns.refundedItems.gstRate",
+        taxable: { $sum: "$returns.refundedItems.taxableAmount" },
+        tax:     { $sum: "$returns.refundedItems.gstAmount" },
+        qty:     { $sum: "$returns.refundedItems.quantity" },
+      } },
+    ]);
+    const refundMap = new Map(refunds.map(r => [Number(r._id), r]));
+    const buckets = sales.map(r => {
+      const ref = refundMap.get(Number(r.gstRate)) || { taxable: 0, tax: 0, qty: 0 };
+      const netTaxable = r.taxable - ref.taxable;
+      const netTax     = r.tax     - ref.tax;
+      return {
+        gstRate:  r.gstRate,
+        qty:      r.qty,
+        billCount: r.billCount,
+        taxable:  Math.round(r.taxable * 100) / 100,
+        tax:      Math.round(r.tax     * 100) / 100,
+        cgst:     Math.round(r.tax / 2 * 100) / 100,
+        sgst:     Math.round(r.tax / 2 * 100) / 100,
+        refundQty:     ref.qty,
+        refundTaxable: Math.round(ref.taxable * 100) / 100,
+        refundTax:     Math.round(ref.tax     * 100) / 100,
+        netTaxable:    Math.round(netTaxable  * 100) / 100,
+        netTax:        Math.round(netTax      * 100) / 100,
+      };
+    });
+    const totals = buckets.reduce((acc, r) => ({
       taxable: acc.taxable + r.taxable,
       tax:     acc.tax     + r.tax,
-    }), { taxable: 0, tax: 0 });
+      refundTaxable: acc.refundTaxable + r.refundTaxable,
+      refundTax:     acc.refundTax     + r.refundTax,
+    }), { taxable: 0, tax: 0, refundTaxable: 0, refundTax: 0 });
+    const netTaxable = totals.taxable - totals.refundTaxable;
+    const netTax     = totals.tax     - totals.refundTax;
     res.json({ success: true, data: {
-      buckets: sales.map(r => ({
-        ...r,
-        cgst: Math.round(r.tax / 2 * 100) / 100,
-        sgst: Math.round(r.tax / 2 * 100) / 100,
-        taxable: Math.round(r.taxable * 100) / 100,
-        tax: Math.round(r.tax * 100) / 100,
-      })),
-      grandTaxable: Math.round(totals.taxable * 100) / 100,
-      grandTax:     Math.round(totals.tax     * 100) / 100,
-      grandCGST:    Math.round(totals.tax / 2 * 100) / 100,
-      grandSGST:    Math.round(totals.tax / 2 * 100) / 100,
+      buckets,
+      grandTaxable:  Math.round(totals.taxable * 100) / 100,
+      grandTax:      Math.round(totals.tax     * 100) / 100,
+      grandCGST:     Math.round(totals.tax / 2 * 100) / 100,
+      grandSGST:     Math.round(totals.tax / 2 * 100) / 100,
+      grandRefundTaxable: Math.round(totals.refundTaxable * 100) / 100,
+      grandRefundTax:     Math.round(totals.refundTax     * 100) / 100,
+      grandNetTaxable:    Math.round(netTaxable * 100) / 100,
+      grandNetTax:        Math.round(netTax     * 100) / 100,
     } });
   } catch (e) { sendErr(res, e); }
 };

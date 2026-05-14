@@ -71,7 +71,10 @@ export default {
   listDrugs, searchDrugs, createDrug, updateDrug, deleteDrug,
   listSuppliers, createSupplier, updateSupplier, deleteSupplier,
   recordGRN, listBatches, stockRollup,
-  dispense, listSales, getSale, cancelSale,
+  dispense, listSales, getSale, cancelSale, returnSaleItems,
   getStats, getAlerts,
+  getPharmacySettings, updatePharmacySettings,
+  getSalesRegister, getPurchaseRegister, getStockRegister,
+  getScheduleHRegister, getExpiryRegister, getGstSummary,
   DRUG_FORMS, DRUG_CATEGORIES, PAYMENT_MODES, SALE_TYPES,
 };
