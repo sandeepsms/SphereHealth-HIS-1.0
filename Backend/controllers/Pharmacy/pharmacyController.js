@@ -466,6 +466,247 @@ exports.stats = async (req, res) => {
   } catch (e) { sendErr(res, e); }
 };
 
+/* ════════════════════════════════════════════════════════════════
+   REGISTERS — auto-populated audit logs required by D&C Act + GST
+══════════════════════════════════════════════════════════════════ */
+// Tiny helper to parse from/to from query into a Date range filter.
+function _rangeFilter(req, field = "createdAt") {
+  const { from, to } = req.query;
+  const f = {};
+  if (from) f.$gte = new Date(from);
+  if (to)   f.$lte = new Date(new Date(to).getTime() + 86399_999);
+  return Object.keys(f).length ? { [field]: f } : {};
+}
+
+// Sales register — bill-wise with HSN-wise GST split.
+exports.salesRegister = async (req, res) => {
+  try {
+    const where = { status: "Completed", ..._rangeFilter(req) };
+    const rows = await Sale.find(where).sort({ createdAt: 1 }).lean();
+    // Aggregate HSN-wise tax for each bill
+    const out = rows.map(s => {
+      const hsnMap = new Map();
+      let totalDisc = 0;
+      for (const it of (s.items || [])) {
+        const key = `${it.gstRate || 12}`;
+        if (!hsnMap.has(key)) hsnMap.set(key, { gstRate: Number(key), taxable: 0, tax: 0 });
+        const r = hsnMap.get(key);
+        r.taxable += Number(it.taxableAmount || 0);
+        r.tax     += Number(it.gstAmount    || 0);
+        totalDisc += Number(it.discountAmount || 0);
+      }
+      return {
+        _id: s._id,
+        billNumber: s.billNumber,
+        date: s.createdAt,
+        patientName: s.patientName || "Walk-in",
+        patientUHID: s.patientUHID || "",
+        admissionNumber: s.admissionNumber || "",
+        saleType: s.saleType,
+        paymentMode: s.paymentMode,
+        itemsCount: s.items?.length || 0,
+        subTotal: s.subTotal,
+        discount: totalDisc,
+        taxable: s.totalTaxable,
+        cgst: Math.round(s.totalGst / 2 * 100) / 100,
+        sgst: Math.round(s.totalGst / 2 * 100) / 100,
+        gstTotal: s.totalGst,
+        grandTotal: s.grandTotal,
+        hsnBreakup: [...hsnMap.values()],
+      };
+    });
+    // Day-level totals
+    const totals = rows.reduce((acc, s) => {
+      acc.bills += 1;
+      acc.subTotal   += s.subTotal   || 0;
+      acc.taxable    += s.totalTaxable || 0;
+      acc.gstTotal   += s.totalGst   || 0;
+      acc.grandTotal += s.grandTotal || 0;
+      return acc;
+    }, { bills: 0, subTotal: 0, taxable: 0, gstTotal: 0, grandTotal: 0 });
+    res.json({ success: true, data: { rows: out, totals } });
+  } catch (e) { sendErr(res, e); }
+};
+
+// Purchase register — GRN-wise with supplier + GST claim.
+exports.purchaseRegister = async (req, res) => {
+  try {
+    const where = { isActive: true, ..._rangeFilter(req, "createdAt") };
+    const batches = await DrugBatch.find(where).sort({ createdAt: 1 })
+      .populate("drugId", "name hsnCode gstRate category").lean();
+    const out = batches.map(b => {
+      const purchase = (b.quantityIn || 0) * (b.purchaseRate || 0);
+      const gstRate  = b.drugId?.gstRate || 12;
+      const taxable  = purchase / (1 + gstRate / 100);      // assume purchase rate is gross-of-tax
+      const tax      = purchase - taxable;
+      return {
+        _id: b._id,
+        grnNumber: b.grnNumber || "",
+        invoiceNo: b.invoiceNo || "",
+        invoiceDate: b.invoiceDate || b.createdAt,
+        supplier:  b.supplierName || "—",
+        drug:      b.drugId?.name || b.drugName,
+        hsn:       b.drugId?.hsnCode || "30049099",
+        batch:     b.batchNo,
+        expiry:    b.expiryDate,
+        qty:       b.quantityIn,
+        rate:      b.purchaseRate,
+        gross:     Math.round(purchase * 100) / 100,
+        gstRate,
+        taxable:   Math.round(taxable * 100) / 100,
+        tax:       Math.round(tax * 100) / 100,
+      };
+    });
+    const totals = out.reduce((acc, r) => ({
+      grnCount: acc.grnCount + 1,
+      gross:    acc.gross    + r.gross,
+      taxable:  acc.taxable  + r.taxable,
+      tax:      acc.tax      + r.tax,
+    }), { grnCount: 0, gross: 0, taxable: 0, tax: 0 });
+    res.json({ success: true, data: { rows: out, totals } });
+  } catch (e) { sendErr(res, e); }
+};
+
+// Stock register — Form 35 (D&C): opening + receipts + issues + closing per drug.
+// "Opening" = batches.created before from-date, sum(quantityIn). "Issued in range" =
+// sales items linked to those batches during the range.
+exports.stockRegister = async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    const start = from ? new Date(from) : new Date(Date.now() - 30 * 86400000);
+    const end   = to   ? new Date(new Date(to).getTime() + 86399_999) : new Date();
+
+    const drugs = await Drug.find({ isActive: true }).lean();
+    const out = [];
+    for (const d of drugs) {
+      const allBatches = await DrugBatch.find({ drugId: d._id, isActive: true }).lean();
+      const opening = allBatches
+        .filter(b => new Date(b.createdAt) < start)
+        .reduce((s, b) => s + (b.quantityIn || 0), 0);
+      const receipts = allBatches
+        .filter(b => new Date(b.createdAt) >= start && new Date(b.createdAt) <= end)
+        .reduce((s, b) => s + (b.quantityIn || 0), 0);
+      // Issued in range: sum of items.quantity from Completed sales for this drug in range
+      const issuedAgg = await Sale.aggregate([
+        { $match: { status: "Completed", createdAt: { $gte: start, $lte: end } } },
+        { $unwind: "$items" },
+        { $match: { "items.drugId": d._id } },
+        { $group: { _id: null, qty: { $sum: "$items.quantity" } } },
+      ]);
+      const issued = issuedAgg[0]?.qty || 0;
+      const closing = allBatches.reduce((s, b) => s + (b.remaining || 0), 0);
+      if (opening || receipts || issued || closing) {
+        out.push({
+          drugId: d._id, drugName: d.name, category: d.category, hsn: d.hsnCode || "30049099",
+          opening, receipts, issued, closing,
+          reorderLevel: d.reorderLevel || 10,
+        });
+      }
+    }
+    res.json({ success: true, data: { rows: out, from: start, to: end } });
+  } catch (e) { sendErr(res, e); }
+};
+
+// Schedule H / H1 / X register — every sale containing a controlled drug,
+// with prescription reference + Rx prescriber. Required by D&C Rules.
+exports.scheduleHRegister = async (req, res) => {
+  try {
+    const where = { status: "Completed", ..._rangeFilter(req) };
+    const sales = await Sale.find(where).sort({ createdAt: 1 }).lean();
+    const out = [];
+    for (const s of sales) {
+      // Reload each item's drug to read its `schedule`
+      for (const it of (s.items || [])) {
+        const d = await Drug.findById(it.drugId).select("schedule isHighAlert isNarcotic name").lean();
+        if (d && /^(H|H1|X)$/i.test(d.schedule || "")) {
+          out.push({
+            date: s.createdAt,
+            billNumber: s.billNumber,
+            patientName: s.patientName || "—",
+            patientUHID: s.patientUHID || "—",
+            doctorName:  s.doctorName  || "—",
+            prescriptionRef: s.prescriptionRef || "—",
+            drugName: d.name,
+            schedule: d.schedule,
+            batchNo: it.batchNo,
+            expiryDate: it.expiryDate,
+            quantity: it.quantity,
+            isHighAlert: !!d.isHighAlert,
+            isNarcotic:  !!d.isNarcotic,
+          });
+        }
+      }
+    }
+    res.json({ success: true, data: { rows: out } });
+  } catch (e) { sendErr(res, e); }
+};
+
+// Expiry register — batches expiring within `within` days (default 90).
+exports.expiryRegister = async (req, res) => {
+  try {
+    const within = Number(req.query.within || 90);
+    const cutoff = new Date(Date.now() + within * 86400000);
+    const batches = await DrugBatch.find({
+      isActive: true, remaining: { $gt: 0 },
+      expiryDate: { $lte: cutoff },
+    }).sort({ expiryDate: 1 }).populate("drugId", "name category").lean();
+    const out = batches.map(b => {
+      const days = Math.floor((new Date(b.expiryDate).getTime() - Date.now()) / 86400000);
+      return {
+        drug: b.drugId?.name || b.drugName,
+        category: b.drugId?.category,
+        batchNo: b.batchNo,
+        supplier: b.supplierName || "—",
+        expiryDate: b.expiryDate,
+        daysToExpiry: days,
+        remaining: b.remaining,
+        salePrice: b.salePrice,
+        value: (b.remaining || 0) * (b.salePrice || 0),
+        status: days < 0 ? "EXPIRED" : days <= 30 ? "URGENT" : days <= 60 ? "SOON" : "WATCH",
+      };
+    });
+    const totalValue = out.reduce((s, r) => s + r.value, 0);
+    res.json({ success: true, data: { rows: out, totalValue: Math.round(totalValue) } });
+  } catch (e) { sendErr(res, e); }
+};
+
+// GST summary — daily/period totals, ready to plug into GSTR-1 / GSTR-3B.
+exports.gstSummary = async (req, res) => {
+  try {
+    const range = _rangeFilter(req);
+    const sales = await Sale.aggregate([
+      { $match: { status: "Completed", ...range } },
+      { $unwind: "$items" },
+      { $group: {
+        _id: "$items.gstRate",
+        taxable: { $sum: "$items.taxableAmount" },
+        tax:     { $sum: "$items.gstAmount" },
+        qty:     { $sum: "$items.quantity" },
+        billsArr:{ $addToSet: "$_id" },
+      } },
+      { $project: { gstRate: "$_id", _id: 0, taxable: 1, tax: 1, qty: 1, billCount: { $size: "$billsArr" } } },
+      { $sort: { gstRate: 1 } },
+    ]);
+    const totals = sales.reduce((acc, r) => ({
+      taxable: acc.taxable + r.taxable,
+      tax:     acc.tax     + r.tax,
+    }), { taxable: 0, tax: 0 });
+    res.json({ success: true, data: {
+      buckets: sales.map(r => ({
+        ...r,
+        cgst: Math.round(r.tax / 2 * 100) / 100,
+        sgst: Math.round(r.tax / 2 * 100) / 100,
+        taxable: Math.round(r.taxable * 100) / 100,
+        tax: Math.round(r.tax * 100) / 100,
+      })),
+      grandTaxable: Math.round(totals.taxable * 100) / 100,
+      grandTax:     Math.round(totals.tax     * 100) / 100,
+      grandCGST:    Math.round(totals.tax / 2 * 100) / 100,
+      grandSGST:    Math.round(totals.tax / 2 * 100) / 100,
+    } });
+  } catch (e) { sendErr(res, e); }
+};
+
 exports.alerts = async (req, res) => {
   try {
     const now = new Date();

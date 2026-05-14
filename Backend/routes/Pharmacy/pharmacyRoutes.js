@@ -30,4 +30,12 @@ router.post  ("/sales/:id/cancel", ctrl.cancelSale);
 router.get   ("/stats",          ctrl.stats);
 router.get   ("/alerts",         ctrl.alerts);
 
+// Registers (D&C Rules + GST)
+router.get   ("/registers/sales",      ctrl.salesRegister);
+router.get   ("/registers/purchase",   ctrl.purchaseRegister);
+router.get   ("/registers/stock",      ctrl.stockRegister);
+router.get   ("/registers/schedule-h", ctrl.scheduleHRegister);
+router.get   ("/registers/expiry",     ctrl.expiryRegister);
+router.get   ("/registers/gst",        ctrl.gstSummary);
+
 module.exports = router;

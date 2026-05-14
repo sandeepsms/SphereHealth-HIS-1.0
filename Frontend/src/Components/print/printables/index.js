@@ -17,6 +17,7 @@ import VisitorPass       from "./VisitorPass";
 import MARSheet          from "./MARSheet";
 import DoctorOrderSheet  from "./DoctorOrderSheet";
 import TPAAuthorization  from "./TPAAuthorization";
+import PharmacyBill      from "./PharmacyBill";
 
 export const PRINTABLES = {
   // ── Receipts / billing ─────────────────────────────────
@@ -26,6 +27,7 @@ export const PRINTABLES = {
   "refund-receipt":   { component: RefundReceipt,     title: "Refund Receipt",            defaultPaper: "half-a4" },
   "cost-estimate":    { component: CostEstimate,      title: "Cost Estimate · Indicative",defaultPaper: "a4"      },
   "final-bill":       { component: FinalBill,         title: "Final Bill (IPD)",          defaultPaper: "a4"      },
+  "pharmacy-bill":    { component: PharmacyBill,      title: "Pharmacy GST Tax Invoice",  defaultPaper: "half-a4" },
 
   // ── Clinical ──────────────────────────────────────────
   "opd-prescription": { component: OPDPrescription,   title: "OPD Prescription (Rx)",     defaultPaper: "a4"      },

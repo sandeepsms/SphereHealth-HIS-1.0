@@ -12,12 +12,15 @@ import axios from "axios";
 import "../../Components/clinical/clinical-forms.css";
 import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
+import { openPrint } from "../../Components/print/openPrint";
 import {
   listDrugs, createDrug, updateDrug, deleteDrug,
   listSuppliers, createSupplier, updateSupplier, deleteSupplier,
   recordGRN, listBatches, stockRollup,
   dispense, listSales, cancelSale,
   getStats, getAlerts,
+  getSalesRegister, getPurchaseRegister, getStockRegister,
+  getScheduleHRegister, getExpiryRegister, getGstSummary,
   DRUG_FORMS, DRUG_CATEGORIES, PAYMENT_MODES, SALE_TYPES,
 } from "../../Services/pharmacyService";
 
@@ -91,6 +94,7 @@ const TABS = [
   { key: "grn",       label: "Goods Receipt", icon: "pi-download" },
   { key: "dispense",  label: "Dispense",   icon: "pi-shopping-cart" },
   { key: "sales",     label: "Sales Register", icon: "pi-receipt" },
+  { key: "registers", label: "Registers",  icon: "pi-book" },
   { key: "suppliers", label: "Suppliers",  icon: "pi-truck" },
 ];
 
@@ -160,6 +164,7 @@ export default function PharmacyHomePage() {
         {tab === "grn"       && <GRNTab />}
         {tab === "dispense"  && <DispenseTab />}
         {tab === "sales"     && <SalesTab />}
+        {tab === "registers" && <RegistersTab />}
         {tab === "suppliers" && <SuppliersTab />}
       </div>
     </div>
@@ -644,6 +649,9 @@ function DispenseTab() {
         })),
       });
       toast.success(`Bill ${r.data.billNumber} · ${fmtINR(r.data.grandTotal)}`);
+      // Auto-open the GST tax-invoice — paper-size selector lives in
+      // the print window toolbar (half-A4 default for pharmacy).
+      openPrint("pharmacy-bill", { ...r.data });
       setItems([]);
       clearLink();
       setRollup((await stockRollup()).data || []);
@@ -851,6 +859,9 @@ function SalesTab() {
                 }}>{s.status}</span>
               </td>
               <td style={{ padding: "8px 12px" }}>
+                <RowAction icon="pi-print" color={C.blue}
+                  onClick={() => openPrint("pharmacy-bill", { ...s })}
+                  label="Print" />
                 {s.status === "Completed" && (
                   <RowAction icon="pi-times" color={C.red} onClick={() => cancel(s)} label="Cancel" />
                 )}
@@ -865,6 +876,322 @@ function SalesTab() {
 /* ════════════════════════════════════════════════════════════════
    SUPPLIERS TAB
 ══════════════════════════════════════════════════════════════════ */
+/* ════════════════════════════════════════════════════════════════
+   REGISTERS TAB — D&C Rules + GST mandated audit logs
+══════════════════════════════════════════════════════════════════ */
+const REGISTER_DEFS = [
+  { key: "sales",      label: "Sales Register",    icon: "pi-receipt",   color: C.green,  desc: "Bill-wise GST · CGST/SGST split per HSN" },
+  { key: "purchase",   label: "Purchase Register", icon: "pi-download",  color: C.purple, desc: "GRN-wise input tax credit · supplier-wise" },
+  { key: "stock",      label: "Stock Register",    icon: "pi-box",       color: C.blue,   desc: "Form 35 · opening + receipt + issue + closing per drug" },
+  { key: "schedule-h", label: "Schedule H/H1/X",   icon: "pi-shield",    color: C.red,    desc: "Rx-mandatory drugs · prescriber + patient · D&C audit" },
+  { key: "expiry",     label: "Expiry Register",   icon: "pi-clock",     color: C.amber,  desc: "Batches expiring soon + already expired · return-to-vendor" },
+  { key: "gst",        label: "GST Summary",       icon: "pi-percentage",color: C.pink,   desc: "GSTR-1 / GSTR-3B feeder · daily / monthly totals" },
+];
+
+function RegistersTab() {
+  const [reg, setReg] = useState("sales");
+  const today = new Date().toISOString().slice(0, 10);
+  const monthStart = today.slice(0, 8) + "01";
+  const [from, setFrom] = useState(monthStart);
+  const [to,   setTo]   = useState(today);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const fetchers = {
+    sales:        getSalesRegister,
+    purchase:     getPurchaseRegister,
+    stock:        getStockRegister,
+    "schedule-h": getScheduleHRegister,
+    expiry:       getExpiryRegister,
+    gst:          getGstSummary,
+  };
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const params = reg === "expiry" ? { within: 90 }
+                    : reg === "stock" ? { from, to }
+                    : { from, to };
+      const r = await fetchers[reg](params);
+      setData(r.data);
+    } catch (e) { toast.error(e.message); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [reg, from, to]);
+
+  return (
+    <div>
+      {/* Register switcher chips */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 8, marginBottom: 14 }}>
+        {REGISTER_DEFS.map(r => {
+          const active = reg === r.key;
+          return (
+            <button key={r.key} onClick={() => setReg(r.key)}
+              style={{
+                padding: "12px 14px", borderRadius: 10,
+                border: `1.5px solid ${active ? r.color : C.border}`,
+                background: active ? `${r.color}08` : "#fff",
+                cursor: "pointer", textAlign: "left",
+                display: "flex", alignItems: "center", gap: 10,
+                transition: "all .15s",
+              }}>
+              <div style={{
+                width: 36, height: 36, borderRadius: 9, flexShrink: 0,
+                background: r.color + (active ? "20" : "10"),
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                <i className={`pi ${r.icon}`} style={{ color: r.color, fontSize: 15 }} />
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 800, fontSize: 12.5, color: active ? r.color : C.text }}>{r.label}</div>
+                <div style={{ fontSize: 10, color: C.muted, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.desc}</div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Date range (except for Expiry which uses days-within) */}
+      {reg !== "expiry" && (
+        <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: "10px 14px", marginBottom: 14, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <Field label="From"><input type="date" className="his-field" value={from} onChange={e => setFrom(e.target.value)} /></Field>
+          <Field label="To"><input type="date" className="his-field" value={to} onChange={e => setTo(e.target.value)} /></Field>
+          <div style={{ flex: 1 }} />
+          <button onClick={load} disabled={loading}
+            style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: loading ? "#94a3b8" : C.orange, color: "#fff", fontWeight: 700, fontSize: 12, cursor: loading ? "not-allowed" : "pointer" }}>
+            <i className={`pi ${loading ? "pi-spin pi-spinner" : "pi-refresh"}`} style={{ marginRight: 6 }} />Refresh
+          </button>
+          <button onClick={() => window.print()}
+            style={{ padding: "8px 16px", borderRadius: 8, border: `1.5px solid ${C.orange}`, background: "#fff", color: C.orange, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+            <i className="pi pi-print" style={{ marginRight: 6 }} />Print
+          </button>
+        </div>
+      )}
+
+      {/* Body per register */}
+      {reg === "sales"      && <SalesRegisterTbl      data={data} loading={loading} />}
+      {reg === "purchase"   && <PurchaseRegisterTbl   data={data} loading={loading} />}
+      {reg === "stock"      && <StockRegisterTbl      data={data} loading={loading} />}
+      {reg === "schedule-h" && <ScheduleHRegisterTbl  data={data} loading={loading} />}
+      {reg === "expiry"     && <ExpiryRegisterTbl     data={data} loading={loading} />}
+      {reg === "gst"        && <GstSummaryTbl         data={data} loading={loading} />}
+    </div>
+  );
+}
+
+function _RegisterShell({ title, color, totals, children }) {
+  return (
+    <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 3px rgba(15,23,42,.04)" }}>
+      <div style={{ padding: "10px 16px", background: `${color}08`, borderBottom: `1px solid ${color}20`, display: "flex", alignItems: "center", gap: 12 }}>
+        <i className="pi pi-book" style={{ color, fontSize: 14 }} />
+        <span style={{ fontWeight: 800, fontSize: 13, color }}>{title}</span>
+        {totals}
+      </div>
+      <div style={{ overflowX: "auto" }}>{children}</div>
+    </div>
+  );
+}
+
+function SalesRegisterTbl({ data, loading }) {
+  if (loading) return <Card title="Loading…" color={C.green} icon="pi-spin pi-spinner"><div /></Card>;
+  const rows = data?.rows || [];
+  const t = data?.totals;
+  return (
+    <_RegisterShell title="Sales Register" color={C.green}
+      totals={t && <span style={{ fontSize: 11, color: C.muted, marginLeft: "auto" }}>
+        {t.bills} bills · taxable {fmtINR(t.taxable)} · GST {fmtINR(t.gstTotal)} · <b style={{ color: C.green }}>{fmtINR(t.grandTotal)}</b>
+      </span>}>
+      <Table cols={["Date","Bill #","Patient","UHID/Adm","Type","Items","Taxable","CGST","SGST","Total","Pay"]} compact>
+        {rows.length === 0 ? <EmptyRow span={11} text="No bills in this range." /> :
+          rows.map(r => (
+            <tr key={r._id} style={{ borderTop: `1px solid ${C.border}` }}>
+              <td style={{ padding: "6px 10px", color: C.muted }}>{new Date(r.date).toLocaleDateString("en-IN")}</td>
+              <td style={{ padding: "6px 10px", fontFamily: "DM Mono, monospace", fontSize: 11 }}>{r.billNumber}</td>
+              <td style={{ padding: "6px 10px" }}>{r.patientName}</td>
+              <td style={{ padding: "6px 10px", color: C.muted, fontSize: 11 }}>{r.admissionNumber || r.patientUHID || "—"}</td>
+              <td style={{ padding: "6px 10px" }}>{r.saleType}</td>
+              <td style={{ padding: "6px 10px" }}>{r.itemsCount}</td>
+              <td style={{ padding: "6px 10px", textAlign: "right" }}>{fmtINR(r.taxable)}</td>
+              <td style={{ padding: "6px 10px", textAlign: "right", color: C.muted }}>{fmtINR(r.cgst)}</td>
+              <td style={{ padding: "6px 10px", textAlign: "right", color: C.muted }}>{fmtINR(r.sgst)}</td>
+              <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 700 }}>{fmtINR(r.grandTotal)}</td>
+              <td style={{ padding: "6px 10px" }}>{r.paymentMode}</td>
+            </tr>
+          ))}
+      </Table>
+    </_RegisterShell>
+  );
+}
+
+function PurchaseRegisterTbl({ data, loading }) {
+  if (loading) return null;
+  const rows = data?.rows || []; const t = data?.totals;
+  return (
+    <_RegisterShell title="Purchase Register" color={C.purple}
+      totals={t && <span style={{ fontSize: 11, color: C.muted, marginLeft: "auto" }}>
+        {t.grnCount} GRNs · taxable {fmtINR(t.taxable)} · input GST {fmtINR(t.tax)} · gross <b style={{ color: C.purple }}>{fmtINR(t.gross)}</b>
+      </span>}>
+      <Table cols={["GRN Date","GRN #","Invoice #","Supplier","Drug","HSN","Batch","Expiry","Qty","Rate","Taxable","GST","Gross"]} compact>
+        {rows.length === 0 ? <EmptyRow span={13} text="No purchases recorded in this range." /> :
+          rows.map(r => (
+            <tr key={r._id} style={{ borderTop: `1px solid ${C.border}` }}>
+              <td style={{ padding: "6px 10px", color: C.muted }}>{new Date(r.invoiceDate).toLocaleDateString("en-IN")}</td>
+              <td style={{ padding: "6px 10px", fontFamily: "DM Mono, monospace", fontSize: 10.5 }}>{r.grnNumber}</td>
+              <td style={{ padding: "6px 10px", fontFamily: "DM Mono, monospace", fontSize: 10.5 }}>{r.invoiceNo}</td>
+              <td style={{ padding: "6px 10px" }}>{r.supplier}</td>
+              <td style={{ padding: "6px 10px", fontWeight: 600 }}>{r.drug}</td>
+              <td style={{ padding: "6px 10px" }}>{r.hsn}</td>
+              <td style={{ padding: "6px 10px", fontFamily: "DM Mono, monospace", fontSize: 10 }}>{r.batch}</td>
+              <td style={{ padding: "6px 10px", color: C.muted }}>{fmtDate(r.expiry)}</td>
+              <td style={{ padding: "6px 10px", textAlign: "right" }}>{r.qty}</td>
+              <td style={{ padding: "6px 10px", textAlign: "right" }}>{fmtINR(r.rate)}</td>
+              <td style={{ padding: "6px 10px", textAlign: "right" }}>{fmtINR(r.taxable)}</td>
+              <td style={{ padding: "6px 10px", textAlign: "right", color: C.muted }}>{fmtINR(r.tax)}</td>
+              <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 700 }}>{fmtINR(r.gross)}</td>
+            </tr>
+          ))}
+      </Table>
+    </_RegisterShell>
+  );
+}
+
+function StockRegisterTbl({ data, loading }) {
+  if (loading) return null;
+  const rows = data?.rows || [];
+  return (
+    <_RegisterShell title="Stock Register · Form 35" color={C.blue}
+      totals={<span style={{ fontSize: 11, color: C.muted, marginLeft: "auto" }}>{rows.length} drugs with movement</span>}>
+      <Table cols={["Drug","Category","HSN","Opening","Receipts","Issued","Closing","Reorder","Status"]} compact>
+        {rows.length === 0 ? <EmptyRow span={9} text="No stock movement in this range." /> :
+          rows.map(r => {
+            const low = r.closing < r.reorderLevel;
+            return (
+              <tr key={r.drugId} style={{ borderTop: `1px solid ${C.border}` }}>
+                <td style={{ padding: "6px 10px", fontWeight: 600 }}>{r.drugName}</td>
+                <td style={{ padding: "6px 10px", color: C.muted }}>{r.category}</td>
+                <td style={{ padding: "6px 10px" }}>{r.hsn}</td>
+                <td style={{ padding: "6px 10px", textAlign: "right" }}>{r.opening}</td>
+                <td style={{ padding: "6px 10px", textAlign: "right", color: C.green }}>+{r.receipts}</td>
+                <td style={{ padding: "6px 10px", textAlign: "right", color: C.red }}>−{r.issued}</td>
+                <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 800 }}>{r.closing}</td>
+                <td style={{ padding: "6px 10px", color: C.muted }}>{r.reorderLevel}</td>
+                <td style={{ padding: "6px 10px" }}>
+                  <span style={{ padding: "2px 7px", borderRadius: 4, fontSize: 9.5, fontWeight: 800,
+                    background: low ? C.redL : C.greenL, color: low ? C.red : C.green,
+                    border: `1px solid ${low ? C.red : C.green}30` }}>
+                    {low ? "BELOW REORDER" : "OK"}
+                  </span>
+                </td>
+              </tr>
+            );
+          })}
+      </Table>
+    </_RegisterShell>
+  );
+}
+
+function ScheduleHRegisterTbl({ data, loading }) {
+  if (loading) return null;
+  const rows = data?.rows || [];
+  return (
+    <_RegisterShell title="Schedule H / H1 / X Register" color={C.red}
+      totals={<span style={{ fontSize: 11, color: C.muted, marginLeft: "auto" }}>{rows.length} prescription-mandatory dispenses</span>}>
+      <Table cols={["Date","Bill #","Patient","UHID","Doctor","Rx Ref","Drug","Schedule","Batch","Expiry","Qty","Flags"]} compact>
+        {rows.length === 0 ? <EmptyRow span={12} text="No Schedule H drugs dispensed in this range." /> :
+          rows.map((r, i) => (
+            <tr key={i} style={{ borderTop: `1px solid ${C.border}` }}>
+              <td style={{ padding: "6px 10px", color: C.muted }}>{new Date(r.date).toLocaleString("en-IN")}</td>
+              <td style={{ padding: "6px 10px", fontFamily: "DM Mono, monospace", fontSize: 10.5 }}>{r.billNumber}</td>
+              <td style={{ padding: "6px 10px", fontWeight: 600 }}>{r.patientName}</td>
+              <td style={{ padding: "6px 10px" }}>{r.patientUHID}</td>
+              <td style={{ padding: "6px 10px" }}>{r.doctorName}</td>
+              <td style={{ padding: "6px 10px", fontSize: 10.5 }}>{r.prescriptionRef}</td>
+              <td style={{ padding: "6px 10px", fontWeight: 600 }}>{r.drugName}</td>
+              <td style={{ padding: "6px 10px" }}>
+                <span style={{ padding: "2px 8px", borderRadius: 4, background: C.redL, color: C.red, fontWeight: 800, fontSize: 9.5, border: `1px solid ${C.red}30` }}>
+                  Sch {r.schedule}
+                </span>
+              </td>
+              <td style={{ padding: "6px 10px", fontFamily: "DM Mono, monospace", fontSize: 10 }}>{r.batchNo}</td>
+              <td style={{ padding: "6px 10px", color: C.muted }}>{fmtDate(r.expiryDate)}</td>
+              <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 700 }}>{r.quantity}</td>
+              <td style={{ padding: "6px 10px" }}>
+                {r.isHighAlert && <span style={{ marginRight: 4, padding: "1px 5px", borderRadius: 3, background: "#fee2e2", color: C.red, fontWeight: 800, fontSize: 9 }}>HAM</span>}
+                {r.isNarcotic  && <span style={{ padding: "1px 5px", borderRadius: 3, background: "#fef3c7", color: C.amber, fontWeight: 800, fontSize: 9 }}>NARC</span>}
+              </td>
+            </tr>
+          ))}
+      </Table>
+    </_RegisterShell>
+  );
+}
+
+function ExpiryRegisterTbl({ data, loading }) {
+  if (loading) return null;
+  const rows = data?.rows || [];
+  const totalValue = data?.totalValue || 0;
+  const statusC = {
+    EXPIRED: { c: C.red,   bg: C.redL },
+    URGENT:  { c: C.red,   bg: C.redL },
+    SOON:    { c: C.amber, bg: C.amberL },
+    WATCH:   { c: C.blue,  bg: C.blueL },
+  };
+  return (
+    <_RegisterShell title="Expiry Register · next 90 days" color={C.amber}
+      totals={<span style={{ fontSize: 11, color: C.muted, marginLeft: "auto" }}>{rows.length} batches · value <b style={{ color: C.amber }}>{fmtINR(totalValue)}</b></span>}>
+      <Table cols={["Drug","Category","Batch","Supplier","Expiry","Days","Remaining","Sale ₹","Value","Status"]} compact>
+        {rows.length === 0 ? <EmptyRow span={10} text="No batches expiring within 90 days." /> :
+          rows.map((r, i) => {
+            const st = statusC[r.status] || statusC.WATCH;
+            return (
+              <tr key={i} style={{ borderTop: `1px solid ${C.border}` }}>
+                <td style={{ padding: "6px 10px", fontWeight: 600 }}>{r.drug}</td>
+                <td style={{ padding: "6px 10px", color: C.muted }}>{r.category}</td>
+                <td style={{ padding: "6px 10px", fontFamily: "DM Mono, monospace", fontSize: 10 }}>{r.batchNo}</td>
+                <td style={{ padding: "6px 10px" }}>{r.supplier}</td>
+                <td style={{ padding: "6px 10px", color: r.daysToExpiry < 0 ? C.red : C.amber, fontWeight: 700 }}>{fmtDate(r.expiryDate)}</td>
+                <td style={{ padding: "6px 10px", color: r.daysToExpiry < 0 ? C.red : C.muted, fontWeight: 700 }}>{r.daysToExpiry < 0 ? `${Math.abs(r.daysToExpiry)}d ago` : `${r.daysToExpiry}d`}</td>
+                <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 700 }}>{r.remaining}</td>
+                <td style={{ padding: "6px 10px", textAlign: "right" }}>{fmtINR(r.salePrice)}</td>
+                <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 700 }}>{fmtINR(r.value)}</td>
+                <td style={{ padding: "6px 10px" }}>
+                  <span style={{ padding: "2px 8px", borderRadius: 4, background: st.bg, color: st.c, fontWeight: 800, fontSize: 9.5, border: `1px solid ${st.c}30` }}>{r.status}</span>
+                </td>
+              </tr>
+            );
+          })}
+      </Table>
+    </_RegisterShell>
+  );
+}
+
+function GstSummaryTbl({ data, loading }) {
+  if (loading) return null;
+  const buckets = data?.buckets || [];
+  return (
+    <_RegisterShell title="GST Summary · GSTR-1 / GSTR-3B feeder" color={C.pink}
+      totals={<span style={{ fontSize: 11, color: C.muted, marginLeft: "auto" }}>
+        Taxable <b>{fmtINR(data?.grandTaxable)}</b> · CGST {fmtINR(data?.grandCGST)} · SGST {fmtINR(data?.grandSGST)} · Total tax <b style={{ color: C.pink }}>{fmtINR(data?.grandTax)}</b>
+      </span>}>
+      <Table cols={["GST Slab","Bills","Qty","Taxable","CGST","SGST","Total Tax","Gross"]} compact>
+        {buckets.length === 0 ? <EmptyRow span={8} text="No taxable sales in this range." /> :
+          buckets.map(b => (
+            <tr key={b.gstRate} style={{ borderTop: `1px solid ${C.border}` }}>
+              <td style={{ padding: "7px 10px", fontWeight: 800, color: C.pink }}>{b.gstRate}%</td>
+              <td style={{ padding: "7px 10px" }}>{b.billCount}</td>
+              <td style={{ padding: "7px 10px", textAlign: "right" }}>{b.qty}</td>
+              <td style={{ padding: "7px 10px", textAlign: "right" }}>{fmtINR(b.taxable)}</td>
+              <td style={{ padding: "7px 10px", textAlign: "right" }}>{fmtINR(b.cgst)}</td>
+              <td style={{ padding: "7px 10px", textAlign: "right" }}>{fmtINR(b.sgst)}</td>
+              <td style={{ padding: "7px 10px", textAlign: "right", fontWeight: 700 }}>{fmtINR(b.tax)}</td>
+              <td style={{ padding: "7px 10px", textAlign: "right", fontWeight: 700 }}>{fmtINR(b.taxable + b.tax)}</td>
+            </tr>
+          ))}
+      </Table>
+    </_RegisterShell>
+  );
+}
+
 function SuppliersTab() {
   const [rows, setRows] = useState([]);
   const [edit, setEdit] = useState(null);

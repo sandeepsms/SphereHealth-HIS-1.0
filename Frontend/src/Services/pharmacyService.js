@@ -49,6 +49,14 @@ export const cancelSale    = (id)              => _post(`/sales/${id}/cancel`);
 export const getStats      = () => _get(`/stats`);
 export const getAlerts     = () => _get(`/alerts`);
 
+// Registers
+export const getSalesRegister    = (p = {}) => _get(`/registers/sales${_qs(p)}`);
+export const getPurchaseRegister = (p = {}) => _get(`/registers/purchase${_qs(p)}`);
+export const getStockRegister    = (p = {}) => _get(`/registers/stock${_qs(p)}`);
+export const getScheduleHRegister= (p = {}) => _get(`/registers/schedule-h${_qs(p)}`);
+export const getExpiryRegister   = (p = {}) => _get(`/registers/expiry${_qs(p)}`);
+export const getGstSummary       = (p = {}) => _get(`/registers/gst${_qs(p)}`);
+
 export const DRUG_FORMS = ["Tablet","Capsule","Syrup","Injection","Drops","Cream","Ointment","Inhaler","Patch","Powder","Suppository","Other"];
 export const DRUG_CATEGORIES = ["Antibiotic","Analgesic","Antipyretic","Antihypertensive","Antidiabetic","Cardiac","Respiratory","Neuro","Gastro","Steroid","Vitamin","Insulin","IV Fluid","Topical","Other"];
 export const PAYMENT_MODES = ["Cash","Card","UPI","Mixed","Credit"];
