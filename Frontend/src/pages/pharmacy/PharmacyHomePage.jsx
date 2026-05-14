@@ -20,7 +20,7 @@ import {
   listDrugs, createDrug, updateDrug, deleteDrug,
   listSuppliers, createSupplier, updateSupplier, deleteSupplier,
   recordGRN, listBatches, stockRollup,
-  dispense, listSales, cancelSale,
+  dispense, listSales, cancelSale, returnSaleItems,
   getStats, getAlerts,
   getPharmacySettings, updatePharmacySettings,
   getSalesRegister, getPurchaseRegister, getStockRegister,
@@ -833,6 +833,7 @@ function SalesTab() {
   const [q, setQ] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo]     = useState("");
+  const [returnSale, setReturnSale] = useState(null);    // the bill being returned
 
   const refresh = async () => {
     try { setRows((await listSales({ q, from, to })).data || []); }
@@ -844,6 +845,15 @@ function SalesTab() {
     if (!window.confirm(`Cancel bill ${s.billNumber}? Stock will be restored.`)) return;
     try { await cancelSale(s._id); toast.success("Sale cancelled · stock restored"); refresh(); }
     catch (e) { toast.error(e.message); }
+  };
+
+  // Status pill colour mapping
+  const STATUS_COL = {
+    Completed:        { c: C.green,  bg: C.greenL  },
+    "Partial-Return": { c: C.amber,  bg: C.amberL  },
+    Refunded:         { c: C.purple, bg: C.purpleL },
+    Cancelled:        { c: C.red,    bg: C.redL    },
+    Hold:             { c: C.muted,  bg: C.subtle  },
   };
 
   return (
@@ -871,11 +881,18 @@ function SalesTab() {
               <td style={{ padding: "9px 12px", fontWeight: 800 }}>{fmtINR(s.grandTotal)}</td>
               <td style={{ padding: "9px 12px" }}>{s.paymentMode}</td>
               <td style={{ padding: "9px 12px" }}>
-                <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 800,
-                  background: s.status === "Completed" ? C.greenL : s.status === "Cancelled" ? C.redL : C.subtle,
-                  color:      s.status === "Completed" ? C.green  : s.status === "Cancelled" ? C.red  : C.muted,
-                  border: `1px solid ${s.status === "Completed" ? C.green : s.status === "Cancelled" ? C.red : C.border}30`,
-                }}>{s.status}</span>
+                {(() => {
+                  const sc = STATUS_COL[s.status] || STATUS_COL.Hold;
+                  return (
+                    <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 800,
+                      background: sc.bg, color: sc.c, border: `1px solid ${sc.c}30` }}>{s.status}</span>
+                  );
+                })()}
+                {(s.returns?.length > 0) && (
+                  <div style={{ fontSize: 9.5, color: C.muted, marginTop: 2 }}>
+                    {s.returns.length} return{s.returns.length === 1 ? "" : "s"} · ₹{(s.returns || []).reduce((t, r) => t + (r.refundAmount || 0), 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+                  </div>
+                )}
               </td>
               <td style={{ padding: "8px 12px" }}>
                 <RowAction icon="pi-print" color={C.blue}
@@ -884,6 +901,9 @@ function SalesTab() {
                     openPrint("pharmacy-bill", { ...s, pharmacySettings: phSet });
                   }}
                   label="Print" />
+                {(s.status === "Completed" || s.status === "Partial-Return") && (
+                  <RowAction icon="pi-undo" color={C.amber} onClick={() => setReturnSale(s)} label="Return" />
+                )}
                 {s.status === "Completed" && (
                   <RowAction icon="pi-times" color={C.red} onClick={() => cancel(s)} label="Cancel" />
                 )}
@@ -891,9 +911,232 @@ function SalesTab() {
             </tr>
           ))}
       </Table>
+
+      {returnSale && (
+        <ReturnModal sale={returnSale}
+          onClose={() => setReturnSale(null)}
+          onDone={() => { setReturnSale(null); refresh(); }} />
+      )}
     </div>
   );
 }
+
+/* ════════════════════════════════════════════════════════════════
+   RETURN MODAL — per-item qty picker, refund mode, prints refund slip
+══════════════════════════════════════════════════════════════════ */
+function ReturnModal({ sale, onClose, onDone }) {
+  // Compute remaining-returnable per item: original qty - sum of already returned
+  const alreadyReturned = useMemo(() => {
+    const m = {};
+    for (const r of (sale.returns || [])) {
+      for (const ri of (r.refundedItems || [])) {
+        const k = String(ri.saleItemId || "");
+        m[k] = (m[k] || 0) + Number(ri.quantity || 0);
+      }
+    }
+    return m;
+  }, [sale]);
+
+  const [picks, setPicks] = useState({});        // saleItemId → qty
+  const [refundMode, setRefundMode] = useState(sale.paymentMode || "Cash");
+  const [reason, setReason]   = useState("");
+  const [notes,  setNotes]    = useState("");
+  const [saving, setSaving]   = useState(false);
+
+  const setQty = (id, max, val) => {
+    const n = Math.max(0, Math.min(Number(max), Number(val) || 0));
+    setPicks(p => ({ ...p, [id]: n }));
+  };
+
+  // Live recompute — what would the refund look like?
+  const summary = useMemo(() => {
+    let qtyTotal = 0, gross = 0, disc = 0, taxable = 0, gst = 0, net = 0;
+    for (const it of (sale.items || [])) {
+      const k = String(it._id);
+      const q = Number(picks[k] || 0);
+      if (q <= 0) continue;
+      const unit = Number(it.unitPrice || 0);
+      const dPct = Number(it.discountPercent || 0);
+      const gPct = Number(it.gstRate || 12);
+      const g = q * unit;
+      const d = g * dPct / 100;
+      const t = g - d;
+      const tx= t * gPct / 100;
+      qtyTotal += q;
+      gross    += g;
+      disc     += d;
+      taxable  += t;
+      gst      += tx;
+      net      += t + tx;
+    }
+    return {
+      qtyTotal,
+      gross: round2(gross), disc: round2(disc),
+      taxable: round2(taxable), gst: round2(gst), net: round2(net),
+    };
+  }, [picks, sale]);
+
+  const submit = async () => {
+    const items = Object.entries(picks)
+      .filter(([, q]) => Number(q) > 0)
+      .map(([saleItemId, quantity]) => ({ saleItemId, quantity: Number(quantity) }));
+    if (items.length === 0) { toast.warn("Pick at least one item with quantity > 0"); return; }
+    setSaving(true);
+    try {
+      const r = await returnSaleItems(sale._id, { items, refundMode, reason, notes });
+      const updated = r.data.sale;
+      const rec     = r.data.returnRecord;
+      toast.success(`Refund ${rec.refundSlipNumber} · ₹${rec.refundAmount.toLocaleString("en-IN")} via ${refundMode}`);
+
+      // Print refund slip + revised bill — both honour current pharmacy settings
+      const phSet = await getCachedPhSettings();
+      openPrint("refund-receipt", {
+        receiptNo: rec.refundSlipNumber,
+        patientName: updated.patientName, uhid: updated.patientUHID, ipdNo: updated.admissionNumber,
+        date: rec.refundedAt,
+        approvedBy: rec.refundedBy,
+        refundedBy: rec.refundedBy,
+        amount: rec.refundAmount, method: refundMode.toLowerCase(),
+        refNo: rec.refundSlipNumber, reason: reason || `Pharmacy item return (${items.length} line(s))`,
+        sourceReceiptNo: updated.billNumber, sourceMethod: updated.paymentMode,
+        sourceAmount: updated.grandTotal, runningBalance: updated.balanceDue || 0,
+      });
+      // Auto-open the revised tax invoice right after — caller can keep
+      // both windows side-by-side.
+      setTimeout(() => {
+        openPrint("pharmacy-bill", {
+          ...updated,
+          pharmacySettings: phSet,
+          // header overlay so the bill is clearly labelled as REVISED
+          billLabel: "REVISED TAX INVOICE", revisionNote: `${updated.returns?.length || 1} return event(s) applied · latest ${rec.refundSlipNumber}`,
+        });
+      }, 350);
+
+      onDone();
+    } catch (e) {
+      toast.error(e.message);
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div onClick={onClose} style={{
+      position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", zIndex: 1000,
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 14,
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: "#fff", borderRadius: 12, width: "min(880px, 98vw)",
+        maxHeight: "92vh", display: "flex", flexDirection: "column",
+        boxShadow: "0 20px 50px rgba(0,0,0,.25)", overflow: "hidden",
+      }}>
+        <div style={{ padding: "12px 18px",
+          background: `linear-gradient(135deg,${C.amber},#b45309)`,
+          color: "#fff", display: "flex", alignItems: "center", gap: 10,
+        }}>
+          <i className="pi pi-undo" style={{ fontSize: 16 }} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 800, fontSize: 14 }}>Return items · {sale.billNumber}</div>
+            <div style={{ fontSize: 11, opacity: .85 }}>{sale.patientName || "Walk-in"}{sale.patientUHID && ` · ${sale.patientUHID}`} · sold {new Date(sale.createdAt).toLocaleDateString("en-IN")}</div>
+          </div>
+          <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 7, border: "none", background: "rgba(255,255,255,.18)", color: "#fff", cursor: "pointer" }}><i className="pi pi-times" /></button>
+        </div>
+
+        <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+          <div style={{ marginBottom: 10, padding: "8px 12px", background: C.amberL, border: `1.5px solid ${C.amber}30`, borderRadius: 7, fontSize: 11.5, color: "#92400e" }}>
+            <i className="pi pi-info-circle" style={{ marginRight: 5 }} />
+            Set the quantity for each item the patient is returning. The refund is recomputed live with the same GST + discount as the original line — stock will be restored to its original batch on submit.
+          </div>
+
+          <Table cols={["Drug","Batch · Expiry","Sold","Already returned","Returnable","Return now","Refund ₹"]} compact>
+            {(sale.items || []).map(it => {
+              const id = String(it._id);
+              const sold = Number(it.quantity || 0);
+              const alreadyN = Number(alreadyReturned[id] || 0);
+              const remaining = sold - alreadyN;
+              const pick = Number(picks[id] || 0);
+              const unit = Number(it.unitPrice || 0);
+              const dPct = Number(it.discountPercent || 0);
+              const gPct = Number(it.gstRate || 12);
+              const g = pick * unit;
+              const d = g * dPct / 100;
+              const net = (g - d) * (1 + gPct / 100);
+              const fullyDone = remaining === 0;
+              return (
+                <tr key={id} style={{ borderTop: `1px solid ${C.border}`, background: fullyDone ? "#fafbfc" : "#fff" }}>
+                  <td style={{ padding: "7px 10px" }}>
+                    <div style={{ fontWeight: 700 }}>{it.drugName}</div>
+                    <div style={{ fontSize: 10, color: C.muted }}>₹{unit.toFixed(2)}/unit · GST {gPct}%{dPct > 0 && ` · disc ${dPct}%`}</div>
+                  </td>
+                  <td style={{ padding: "7px 10px", fontSize: 10.5, fontFamily: "DM Mono, monospace" }}>
+                    {it.batchNo || "—"}
+                    <div style={{ color: C.muted, fontSize: 9.5 }}>{it.expiryDate ? new Date(it.expiryDate).toLocaleDateString("en-IN") : "—"}</div>
+                  </td>
+                  <td style={{ padding: "7px 10px", textAlign: "right" }}>{sold}</td>
+                  <td style={{ padding: "7px 10px", textAlign: "right", color: alreadyN > 0 ? C.amber : C.muted }}>{alreadyN}</td>
+                  <td style={{ padding: "7px 10px", textAlign: "right", fontWeight: 700, color: remaining > 0 ? C.text : C.muted }}>{remaining}</td>
+                  <td style={{ padding: "5px 10px" }}>
+                    <input type="number" min="0" max={remaining} disabled={fullyDone}
+                      className="his-field" style={{ width: 70, padding: "4px 8px", fontSize: 12 }}
+                      value={picks[id] || ""}
+                      onChange={e => setQty(id, remaining, e.target.value)}
+                      placeholder={remaining > 0 ? "0" : "—"} />
+                  </td>
+                  <td style={{ padding: "7px 10px", textAlign: "right", fontWeight: 800, color: C.green }}>
+                    {pick > 0 ? `₹${net.toFixed(2)}` : "—"}
+                  </td>
+                </tr>
+              );
+            })}
+          </Table>
+
+          <div style={{ marginTop: 14, padding: "10px 14px", background: C.subtle, border: `1px solid ${C.border}`, borderRadius: 8 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
+              <Row label="Items being returned"     value={`${summary.qtyTotal} unit(s)`} />
+              <Row label="Gross"                    value={fmtINR(summary.gross)} />
+              {summary.disc > 0 && <Row label="Discount" value={`− ${fmtINR(summary.disc)}`} valueColor={C.red} />}
+              <Row label="Taxable"                  value={fmtINR(summary.taxable)} />
+              <Row label="GST"                      value={`+ ${fmtINR(summary.gst)}`} />
+              <div style={{ borderTop: `1px dashed ${C.border}`, paddingTop: 6, marginTop: 4 }}>
+                <Row label="Refund to patient" value={fmtINR(summary.net)} bold large valueColor={C.green} />
+              </div>
+            </div>
+          </div>
+
+          <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <Field label="Refund mode">
+              <select className="his-select" value={refundMode} onChange={e => setRefundMode(e.target.value)}>
+                {["Cash","Card","UPI","Adjusted","Credit-note"].map(o => <option key={o}>{o}</option>)}
+              </select>
+            </Field>
+            <Field label="Reason (optional)"><input className="his-field" value={reason} onChange={e => setReason(e.target.value)} placeholder="Wrong med · adverse reaction · over-ordered" /></Field>
+          </div>
+          <div style={{ marginTop: 10 }}>
+            <Field label="Internal notes (optional)">
+              <textarea className="his-textarea" rows={2} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Batch returned to vendor on …, fitness-for-resale confirmed by …" />
+            </Field>
+          </div>
+        </div>
+
+        <div style={{ padding: "10px 18px", borderTop: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+          <div style={{ fontSize: 11, color: C.muted }}>
+            <i className="pi pi-info-circle" style={{ marginRight: 5 }} />
+            Refund slip + revised bill will print automatically after submit.
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={onClose} disabled={saving} style={{ padding: "8px 14px", borderRadius: 7, border: `1.5px solid ${C.border}`, background: "#fff", color: C.muted, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Cancel</button>
+            <button onClick={submit} disabled={saving || summary.qtyTotal === 0}
+              style={{ padding: "8px 18px", borderRadius: 7, border: "none",
+                background: saving || summary.qtyTotal === 0 ? "#94a3b8" : C.amber,
+                color: "#fff", fontWeight: 800, fontSize: 12,
+                cursor: saving || summary.qtyTotal === 0 ? "not-allowed" : "pointer" }}>
+              {saving ? "Processing…" : <><i className="pi pi-check" style={{ marginRight: 6 }} />Process return · {fmtINR(summary.net)}</>}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+function round2(n) { return Math.round(n * 100) / 100; }
 
 /* ════════════════════════════════════════════════════════════════
    SUPPLIERS TAB

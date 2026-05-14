@@ -406,6 +406,141 @@ exports.getSale = async (req, res) => {
   } catch (e) { sendErr(res, e); }
 };
 
+/* ════════════════════════════════════════════════════════════════
+   PARTIAL RETURN — refund 1+ items, restore stock, recompute totals
+══════════════════════════════════════════════════════════════════ */
+exports.returnItems = async (req, res) => {
+  try {
+    if (!isOid(req.params.id)) return res.status(400).json({ success: false, message: "Invalid sale id" });
+    const { items = [], refundMode = "Cash", reason = "", notes = "" } = req.body;
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ success: false, message: "items[] is required — at least one item to return" });
+    }
+    if (!["Cash","Card","UPI","Adjusted","Credit-note"].includes(refundMode)) {
+      return res.status(400).json({ success: false, message: "Invalid refundMode" });
+    }
+
+    const sale = await Sale.findById(req.params.id);
+    if (!sale) return res.status(404).json({ success: false, message: "Sale not found" });
+    if (!["Completed","Partial-Return"].includes(sale.status)) {
+      return res.status(400).json({ success: false, message: `Cannot return items on a ${sale.status} sale` });
+    }
+
+    // Pre-compute how much has already been returned PER saleItem so we
+    // can clamp this request against the remaining returnable quantity.
+    const alreadyReturned = {};   // saleItemId → qty
+    for (const r of (sale.returns || [])) {
+      for (const ri of (r.refundedItems || [])) {
+        const k = String(ri.saleItemId || "");
+        if (!k) continue;
+        alreadyReturned[k] = (alreadyReturned[k] || 0) + Number(ri.quantity || 0);
+      }
+    }
+
+    // Build the return record, validate quantities, recompute money
+    // (same formula as dispense so the inverse is exact: net per item =
+    // qty × unitPrice × (1 - disc%) × (1 + gst%) ).
+    const refundedItems = [];
+    let refundAmount = 0, refundTaxable = 0, refundGst = 0, refundDiscount = 0;
+
+    for (const reqIt of items) {
+      const saleItemId = String(reqIt.saleItemId || reqIt._id || "");
+      if (!saleItemId) {
+        return res.status(400).json({ success: false, message: "Each item needs a saleItemId" });
+      }
+      const orig = sale.items.id(saleItemId);
+      if (!orig) {
+        return res.status(404).json({ success: false, message: `Sale item ${saleItemId} not found in this bill` });
+      }
+      const qty = Number(reqIt.quantity || 0);
+      if (!Number.isFinite(qty) || qty <= 0) {
+        return res.status(400).json({ success: false, message: `Invalid return quantity for "${orig.drugName}"` });
+      }
+      const remaining = Number(orig.quantity || 0) - (alreadyReturned[saleItemId] || 0);
+      if (qty > remaining) {
+        return res.status(409).json({
+          success: false,
+          message: `Cannot return ${qty} of "${orig.drugName}" — only ${remaining} remaining (of ${orig.quantity} originally sold)`,
+        });
+      }
+
+      // Per-item math — proportional to the dispensed item
+      const unit  = Number(orig.unitPrice || 0);
+      const gst   = Number(orig.gstRate ?? 12);
+      const dPct  = Number(orig.discountPercent || 0);
+      const gross = qty * unit;
+      const disc  = gross * dPct / 100;
+      const taxable = gross - disc;
+      const gstAmt  = taxable * gst / 100;
+      const net     = taxable + gstAmt;
+
+      refundedItems.push({
+        saleItemId, drugId: orig.drugId, drugName: orig.drugName,
+        batchId: orig.batchId, batchNo: orig.batchNo, expiryDate: orig.expiryDate,
+        quantity: qty, unitPrice: unit, gstRate: gst, discountPercent: dPct,
+        grossAmount: round2(gross), discountAmount: round2(disc),
+        taxableAmount: round2(taxable), gstAmount: round2(gstAmt),
+        netAmount: round2(net),
+      });
+
+      refundAmount   += net;
+      refundTaxable  += taxable;
+      refundGst      += gstAmt;
+      refundDiscount += disc;
+
+      // Restore stock to the original batch (FIFO didn't matter here —
+      // we know exactly which batch each item came from).
+      if (orig.batchId) {
+        const b = await DrugBatch.findById(orig.batchId);
+        if (b) {
+          b.quantityOut = Math.max(0, (b.quantityOut || 0) - qty);
+          b.remaining   = Math.max(0, (b.quantityIn || 0) - (b.quantityOut || 0));
+          await b.save();
+        }
+      }
+    }
+
+    // Issue a refund slip number via Counter (separate sequence)
+    const seq = await nextSeq("pharmacyRefund");
+    const refundSlipNumber = `REF-PHM-${new Date().toISOString().slice(0,10).replace(/-/g, "")}-${String(seq).padStart(4, "0")}`;
+
+    const returnRecord = {
+      refundSlipNumber,
+      refundedItems,
+      refundAmount:    round2(refundAmount),
+      refundTaxable:   round2(refundTaxable),
+      refundGst:       round2(refundGst),
+      refundDiscount:  round2(refundDiscount),
+      refundMode, reason, notes,
+      refundedBy:      req.user?.fullName || req.user?.name || "System",
+      refundedById:    req.user?._id || null,
+    };
+    sale.returns.push(returnRecord);
+
+    // Decide new status — fully returned (sum of all returned == sum of all sold)
+    // → Refunded; partially returned → Partial-Return.
+    const totalSoldQty = (sale.items || []).reduce((s, it) => s + Number(it.quantity || 0), 0);
+    const totalReturnedQty = (sale.returns || []).reduce(
+      (s, r) => s + (r.refundedItems || []).reduce((ss, ri) => ss + Number(ri.quantity || 0), 0), 0);
+    sale.status = totalReturnedQty >= totalSoldQty ? "Refunded" : "Partial-Return";
+
+    // Balance due reduces by the refund (if patient owed money, the
+    // refund reduces it; otherwise it becomes a credit owed back to
+    // them which we surface as negative balance).
+    sale.balanceDue = Math.max(0, (sale.balanceDue || 0) - refundAmount);
+    sale.remarks = (sale.remarks ? sale.remarks + " · " : "") +
+      `Returned ${refundedItems.length} line(s) · refund ${refundSlipNumber} · ${fmtINRSimple(refundAmount)} via ${refundMode}`;
+
+    await sale.save();
+
+    res.json({ success: true, data: { sale, returnRecord } });
+  } catch (e) { sendErr(res, e); }
+};
+
+function round2(n) { return Math.round(n * 100) / 100; }
+function fmtINRSimple(n) { return `₹${Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`; }
+
 exports.cancelSale = async (req, res) => {
   try {
     if (!isOid(req.params.id)) return res.status(400).json({ success: false, message: "Invalid sale id" });

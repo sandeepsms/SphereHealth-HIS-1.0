@@ -67,9 +67,39 @@ const PharmacySaleSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["Completed","Refunded","Cancelled","Hold"],
+      enum: ["Completed","Partial-Return","Refunded","Cancelled","Hold"],
       default: "Completed",
       index: true,
+    },
+
+    // ── Returns / refunds — every partial return appends a record here.
+    //   refundSlipNumber  REF-PHM-YYYYMMDD-NNNN, issued by Counter
+    //   refundedItems[]   {{ saleItemId, drugId, drugName, batchId, batchNo,
+    //                       quantity, unitPrice, gstRate, discountPercent,
+    //                       grossAmount, discountAmount, taxableAmount,
+    //                       gstAmount, netAmount }}
+    //   refundAmount     total returned to customer (sum of items' netAmount)
+    //   refundMode       Cash / Card / UPI / Adjusted / Credit-note
+    //   reason           optional free-text
+    // Existing items[] is kept unchanged so the original tax invoice
+    // can always be reprinted. Net-of-returns figures are computed from
+    // items[] - sum(returns[].refundedItems[]).
+    returns: {
+      type: [ new mongoose.Schema({
+        refundSlipNumber: { type: String, default: "" },
+        refundedItems:    { type: Array, default: [] },
+        refundAmount:     { type: Number, default: 0 },
+        refundTaxable:    { type: Number, default: 0 },
+        refundGst:        { type: Number, default: 0 },
+        refundDiscount:   { type: Number, default: 0 },
+        refundMode:       { type: String, enum: ["Cash","Card","UPI","Adjusted","Credit-note"], default: "Cash" },
+        refundedAt:       { type: Date, default: Date.now },
+        refundedBy:       { type: String, default: "" },
+        refundedById:     { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+        reason:           { type: String, default: "" },
+        notes:            { type: String, default: "" },
+      }, { _id: true, timestamps: true }) ],
+      default: [],
     },
 
     createdBy:   { type: String, default: "" },

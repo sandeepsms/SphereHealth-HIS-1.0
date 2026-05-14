@@ -245,7 +245,9 @@ const PharmacyRegister = ({ settings = {}, receipt = {} }) => {
         .pr-pharm-reg .reg-foot { padding: 10px 22px; font-size: 9px; }
         html[data-paper="half-a4"] .pr-pharm-reg .reg-foot { padding: 6px 16px; font-size: 7.5px; }
         @media print {
-          @page { size: ${opts.orientation === "portrait" ? "A4 portrait" : "A4 landscape"}; margin: 10mm 12mm; }
+          /* @page rules live in print.css, driven by html[data-paper] + html[data-orient].
+             The toolbar's portrait/landscape pill + paper-size dropdown set those attributes.
+             Don't override here — let the user's toolbar choice win. */
           .pr-pharm-reg:not(.reg-gov) thead tr { background: ${accent} !important; color: #fff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         }
 

@@ -14,16 +14,28 @@
    app's existing design systems (pf-*, dnp-*, bm-*).
 ═══════════════════════════════════════════════════════════════ */
 
-/* ── Page rules — one rule per paper size ── */
+/* ── Page rules — one rule per (paper × orientation) combination ──
+   data-paper is set by the toolbar dropdown, data-orient by the
+   portrait/landscape pill toggle. Both default to A4 portrait. */
 html[data-paper="a4"]      { --pr-page-width: 210mm; }
 html[data-paper="a5"]      { --pr-page-width: 148mm; }
 html[data-paper="half-a4"] { --pr-page-width: 210mm; }
+html[data-paper="a4"][data-orient="landscape"]      { --pr-page-width: 297mm; }
+html[data-paper="a5"][data-orient="landscape"]      { --pr-page-width: 210mm; }
 
 @page                       { margin: 12mm; }
 @media print {
-  html[data-paper="a4"] @page      { size: A4 portrait;     margin: 12mm; }
-  html[data-paper="a5"] @page      { size: A5 portrait;     margin: 8mm; }
-  html[data-paper="half-a4"] @page { size: 210mm 148.5mm;  margin: 8mm 12mm; }
+  /* Portrait — default */
+  html[data-paper="a4"] @page                                  { size: A4 portrait;     margin: 12mm; }
+  html[data-paper="a4"][data-orient="portrait"] @page          { size: A4 portrait;     margin: 12mm; }
+  html[data-paper="a5"] @page                                  { size: A5 portrait;     margin: 8mm; }
+  html[data-paper="a5"][data-orient="portrait"] @page          { size: A5 portrait;     margin: 8mm; }
+  html[data-paper="half-a4"] @page                             { size: 210mm 148.5mm;   margin: 8mm 12mm; }
+
+  /* Landscape variants */
+  html[data-paper="a4"][data-orient="landscape"] @page         { size: A4 landscape;    margin: 10mm 12mm; }
+  html[data-paper="a5"][data-orient="landscape"] @page         { size: A5 landscape;    margin: 8mm; }
+  html[data-paper="half-a4"][data-orient="landscape"] @page    { size: 210mm 148.5mm;   margin: 8mm 12mm; }
 }
 
 * { box-sizing: border-box; }

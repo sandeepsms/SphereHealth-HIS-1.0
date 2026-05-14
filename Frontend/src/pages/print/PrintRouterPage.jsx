@@ -481,7 +481,7 @@ const PrintRouterPage = () => {
   const Component = cfg.component;
   if (!ready) {
     return (
-      <PrintPreviewPage toolbarTitle="Loading…" defaultPaper={cfg.defaultPaper}>
+      <PrintPreviewPage toolbarTitle="Loading…" defaultPaper={cfg.defaultPaper} defaultOrient={cfg.defaultOrient}>
         <div className="pr-page" style={{ textAlign: "center", color: "#64748b" }}>
           Loading hospital settings…
         </div>
@@ -489,7 +489,7 @@ const PrintRouterPage = () => {
     );
   }
   return (
-    <PrintPreviewPage toolbarTitle={cfg.title} defaultPaper={cfg.defaultPaper}>
+    <PrintPreviewPage toolbarTitle={cfg.title} defaultPaper={cfg.defaultPaper} defaultOrient={cfg.defaultOrient}>
       <Component settings={settings} receipt={payload || {}} />
     </PrintPreviewPage>
   );
