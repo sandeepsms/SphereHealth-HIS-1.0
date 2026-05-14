@@ -14,6 +14,7 @@ import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
 import { openPrint } from "../../Components/print/openPrint";
 import TEMPLATES from "../../Components/print/printables/PharmacyBillTemplates";
+import PharmacyBill from "../../Components/print/printables/PharmacyBill";
 import {
   listDrugs, createDrug, updateDrug, deleteDrug,
   listSuppliers, createSupplier, updateSupplier, deleteSupplier,
@@ -926,6 +927,175 @@ function RegistersTab() {
     gst:          getGstSummary,
   };
 
+  /* Build a print payload tailored to whichever register is active.
+     Each register has its own column shape, so we map them per key.
+     Routes through openPrint("pharmacy-register", ...) → opens the
+     standard print window with paper-size + hospital header. */
+  const printRegister = async () => {
+    if (!data) { toast.warn("No data to print"); return; }
+    const phSet = await getCachedPhSettings();
+    const meta  = REGISTER_DEFS.find(r => r.key === reg);
+    const subtitle = reg === "expiry"
+      ? "Batches expiring within 90 days"
+      : `${new Date(from).toLocaleDateString("en-IN")} → ${new Date(to).toLocaleDateString("en-IN")}`;
+
+    const fmtMoney = (n) => Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 });
+
+    let columns = [], rows = [], totals = {};
+    if (reg === "sales") {
+      columns = [
+        { key: "date",       label: "Date",     nowrap: true, muted: true },
+        { key: "billNumber", label: "Bill #",   mono: true,   bold: true },
+        { key: "patientName",label: "Patient" },
+        { key: "ref",        label: "UHID/Adm", muted: true },
+        { key: "saleType",   label: "Type",     nowrap: true },
+        { key: "itemsCount", label: "Items",    align: "right" },
+        { key: "taxable",    label: "Taxable",  align: "right" },
+        { key: "cgst",       label: "CGST",     align: "right", muted: true },
+        { key: "sgst",       label: "SGST",     align: "right", muted: true },
+        { key: "grand",      label: "Grand",    align: "right", bold: true },
+        { key: "paymentMode",label: "Pay" },
+      ];
+      rows = (data.rows || []).map(r => ({
+        date: new Date(r.date).toLocaleDateString("en-IN"),
+        billNumber: r.billNumber, patientName: r.patientName,
+        ref: r.admissionNumber || r.patientUHID || "—",
+        saleType: r.saleType, itemsCount: r.itemsCount,
+        taxable: fmtMoney(r.taxable), cgst: fmtMoney(r.cgst), sgst: fmtMoney(r.sgst),
+        grand: `₹${fmtMoney(r.grandTotal)}`, paymentMode: r.paymentMode,
+      }));
+      totals = data.totals && {
+        Bills: data.totals.bills,
+        "Taxable": `₹${fmtMoney(data.totals.taxable)}`,
+        "GST": `₹${fmtMoney(data.totals.gstTotal)}`,
+        "Grand total": `₹${fmtMoney(data.totals.grandTotal)}`,
+      };
+    } else if (reg === "purchase") {
+      columns = [
+        { key: "date",     label: "GRN Date", nowrap: true, muted: true },
+        { key: "grn",      label: "GRN #",    mono: true },
+        { key: "invoice",  label: "Invoice #",mono: true },
+        { key: "supplier", label: "Supplier" },
+        { key: "drug",     label: "Drug",     bold: true },
+        { key: "hsn",      label: "HSN" },
+        { key: "batch",    label: "Batch",    mono: true },
+        { key: "expiry",   label: "Expiry",   muted: true },
+        { key: "qty",      label: "Qty",      align: "right" },
+        { key: "rate",     label: "Rate",     align: "right" },
+        { key: "taxable",  label: "Taxable",  align: "right" },
+        { key: "tax",      label: "GST",      align: "right", muted: true },
+        { key: "gross",    label: "Gross",    align: "right", bold: true },
+      ];
+      rows = (data.rows || []).map(r => ({
+        date: new Date(r.invoiceDate).toLocaleDateString("en-IN"),
+        grn: r.grnNumber, invoice: r.invoiceNo, supplier: r.supplier, drug: r.drug,
+        hsn: r.hsn, batch: r.batch,
+        expiry: r.expiry ? new Date(r.expiry).toLocaleDateString("en-IN") : "—",
+        qty: r.qty, rate: fmtMoney(r.rate),
+        taxable: fmtMoney(r.taxable), tax: fmtMoney(r.tax), gross: `₹${fmtMoney(r.gross)}`,
+      }));
+      totals = data.totals && {
+        GRNs: data.totals.grnCount, "Taxable": `₹${fmtMoney(data.totals.taxable)}`,
+        "Input GST": `₹${fmtMoney(data.totals.tax)}`,
+        "Gross": `₹${fmtMoney(data.totals.gross)}`,
+      };
+    } else if (reg === "stock") {
+      columns = [
+        { key: "drugName", label: "Drug", bold: true },
+        { key: "category", label: "Category", muted: true },
+        { key: "hsn",      label: "HSN" },
+        { key: "opening",  label: "Opening", align: "right" },
+        { key: "receipts", label: "Receipts", align: "right" },
+        { key: "issued",   label: "Issued",   align: "right" },
+        { key: "closing",  label: "Closing",  align: "right", bold: true },
+        { key: "reorder",  label: "Reorder",  align: "right", muted: true },
+        { key: "status",   label: "Status",   nowrap: true },
+      ];
+      rows = (data.rows || []).map(r => ({
+        drugName: r.drugName, category: r.category, hsn: r.hsn,
+        opening: r.opening, receipts: `+${r.receipts}`, issued: `−${r.issued}`,
+        closing: r.closing, reorder: r.reorderLevel,
+        status: r.closing < r.reorderLevel ? "BELOW REORDER" : "OK",
+      }));
+      totals = { "Drugs with movement": (data.rows || []).length };
+    } else if (reg === "schedule-h") {
+      columns = [
+        { key: "date",       label: "Date",   nowrap: true, muted: true },
+        { key: "billNumber", label: "Bill #", mono: true },
+        { key: "patientName",label: "Patient", bold: true },
+        { key: "patientUHID",label: "UHID" },
+        { key: "doctorName", label: "Doctor" },
+        { key: "rx",         label: "Rx Ref"  },
+        { key: "drugName",   label: "Drug",   bold: true },
+        { key: "schedule",   label: "Sch" },
+        { key: "batch",      label: "Batch",  mono: true },
+        { key: "expiry",     label: "Expiry", muted: true },
+        { key: "qty",        label: "Qty",    align: "right", bold: true },
+        { key: "flags",      label: "Flags" },
+      ];
+      rows = (data.rows || []).map(r => ({
+        date: new Date(r.date).toLocaleString("en-IN"),
+        billNumber: r.billNumber, patientName: r.patientName, patientUHID: r.patientUHID,
+        doctorName: r.doctorName, rx: r.prescriptionRef, drugName: r.drugName,
+        schedule: r.schedule, batch: r.batchNo,
+        expiry: r.expiryDate ? new Date(r.expiryDate).toLocaleDateString("en-IN") : "—",
+        qty: r.quantity,
+        flags: [r.isHighAlert && "HAM", r.isNarcotic && "NARC"].filter(Boolean).join(" · ") || "—",
+      }));
+      totals = { "Rx dispenses": (data.rows || []).length };
+    } else if (reg === "expiry") {
+      columns = [
+        { key: "drug",     label: "Drug",      bold: true },
+        { key: "category", label: "Category",  muted: true },
+        { key: "batchNo",  label: "Batch",     mono: true },
+        { key: "supplier", label: "Supplier" },
+        { key: "expiry",   label: "Expiry",    nowrap: true },
+        { key: "days",     label: "Days",      nowrap: true, bold: true },
+        { key: "remaining",label: "Qty",       align: "right", bold: true },
+        { key: "rate",     label: "Sale ₹",    align: "right" },
+        { key: "value",    label: "Value",     align: "right", bold: true },
+        { key: "status",   label: "Status",    nowrap: true },
+      ];
+      rows = (data.rows || []).map(r => ({
+        drug: r.drug, category: r.category, batchNo: r.batchNo, supplier: r.supplier,
+        expiry: new Date(r.expiryDate).toLocaleDateString("en-IN"),
+        days: r.daysToExpiry < 0 ? `${Math.abs(r.daysToExpiry)}d ago` : `${r.daysToExpiry}d`,
+        remaining: r.remaining, rate: fmtMoney(r.salePrice),
+        value: `₹${fmtMoney(r.value)}`, status: r.status,
+      }));
+      totals = { Batches: (data.rows || []).length, "Locked value": `₹${fmtMoney(data.totalValue)}` };
+    } else if (reg === "gst") {
+      columns = [
+        { key: "gstRate",   label: "GST Slab", bold: true },
+        { key: "billCount", label: "Bills" },
+        { key: "qty",       label: "Qty",       align: "right" },
+        { key: "taxable",   label: "Taxable",   align: "right" },
+        { key: "cgst",      label: "CGST",      align: "right" },
+        { key: "sgst",      label: "SGST",      align: "right" },
+        { key: "tax",       label: "Total Tax", align: "right", bold: true },
+        { key: "gross",     label: "Gross",     align: "right", bold: true },
+      ];
+      rows = (data.buckets || []).map(b => ({
+        gstRate: `${b.gstRate}%`, billCount: b.billCount, qty: b.qty,
+        taxable: fmtMoney(b.taxable), cgst: fmtMoney(b.cgst), sgst: fmtMoney(b.sgst),
+        tax: fmtMoney(b.tax), gross: `₹${fmtMoney(b.taxable + b.tax)}`,
+      }));
+      totals = {
+        Taxable: `₹${fmtMoney(data.grandTaxable)}`,
+        CGST:    `₹${fmtMoney(data.grandCGST)}`,
+        SGST:    `₹${fmtMoney(data.grandSGST)}`,
+        "Total tax": `₹${fmtMoney(data.grandTax)}`,
+      };
+    }
+
+    openPrint("pharmacy-register", {
+      type:  reg, title: meta?.label || "Register", subtitle,
+      color: meta?.color || "#475569",
+      columns, rows, totals,
+      pharmacySettings: phSet,
+    });
+  };
+
   const load = async () => {
     setLoading(true);
     try {
@@ -971,6 +1141,16 @@ function RegistersTab() {
         })}
       </div>
 
+      {/* Print button always available (expiry register has no date range) */}
+      {reg === "expiry" && (
+        <div style={{ marginBottom: 14, display: "flex", justifyContent: "flex-end" }}>
+          <button onClick={printRegister}
+            style={{ padding: "8px 16px", borderRadius: 8, border: `1.5px solid ${C.orange}`, background: "#fff", color: C.orange, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+            <i className="pi pi-print" style={{ marginRight: 6 }} />Print register
+          </button>
+        </div>
+      )}
+
       {/* Date range (except for Expiry which uses days-within) */}
       {reg !== "expiry" && (
         <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: "10px 14px", marginBottom: 14, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -981,9 +1161,9 @@ function RegistersTab() {
             style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: loading ? "#94a3b8" : C.orange, color: "#fff", fontWeight: 700, fontSize: 12, cursor: loading ? "not-allowed" : "pointer" }}>
             <i className={`pi ${loading ? "pi-spin pi-spinner" : "pi-refresh"}`} style={{ marginRight: 6 }} />Refresh
           </button>
-          <button onClick={() => window.print()}
+          <button onClick={printRegister}
             style={{ padding: "8px 16px", borderRadius: 8, border: `1.5px solid ${C.orange}`, background: "#fff", color: C.orange, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
-            <i className="pi pi-print" style={{ marginRight: 6 }} />Print
+            <i className="pi pi-print" style={{ marginRight: 6 }} />Print register
           </button>
         </div>
       )}
@@ -1215,9 +1395,98 @@ function GstSummaryTbl({ data, loading }) {
 /* ════════════════════════════════════════════════════════════════
    SETTINGS TAB — Pharmacy identity (in-house vs outsourced)
 ══════════════════════════════════════════════════════════════════ */
+/* Demo data driving the template thumbnails + preview modal. Real
+   pharmacy data isn't fetched here — every template renders the same
+   sample bill so users can compare layouts apples-to-apples. */
+const DEMO_BILL = {
+  billNumber: "PHM-DEMO-0042",
+  createdAt: new Date().toISOString(),
+  patientName: "Mrs. Asha Sharma", patientUHID: "UH00000099",
+  age: 52, gender: "Female", contactNumber: "+91-9876543210",
+  doctorName: "Dr. Mehta", admissionNumber: "ADM-2026-0042",
+  saleType: "IPD", paymentMode: "Cash", createdBy: "Pharmacist · Mr. Sharma",
+  items: [
+    { drugName: "Paracetamol 500mg", strength: "500mg · Tablet",  hsnCode: "30049011", batchNo: "PAR-001", expiryDate: "2027-09-01", quantity: 20, unitPrice: 2.5, gstRate: 12, discountPercent: 0, schedule: "OTC" },
+    { drugName: "Azithromycin 500mg", strength: "500mg · Tablet", hsnCode: "30049099", batchNo: "AZI-021", expiryDate: "2027-06-15", quantity: 5,  unitPrice: 78,  gstRate: 12, discountPercent: 5, schedule: "H"   },
+    { drugName: "Pantoprazole 40mg",  strength: "40mg · Tablet",  hsnCode: "30049079", batchNo: "PAN-088", expiryDate: "2028-02-28", quantity: 10, unitPrice: 8.5, gstRate: 12, discountPercent: 0, schedule: "H"   },
+    { drugName: "Insulin Actrapid",   strength: "40 IU/mL · 10mL",hsnCode: "30043910", batchNo: "ACT-17", expiryDate: "2026-12-31", quantity: 1,  unitPrice: 165, gstRate: 5,  discountPercent: 0, schedule: "H"   },
+  ],
+};
+const DEMO_SETTINGS = {
+  hospitalName: "SphereHealth Multispeciality Hospital",
+  tagline: "Compassionate care · NABH accredited",
+  showLogoInPrint: false,
+  addressLine1: "Plot 12, Sector 21", city: "New Delhi", state: "Delhi", pincode: "110001",
+  phone1: "+91-11-4567-8900", email: "info@spherehealth.com",
+  gstin: "07ABCDE1234F1Z5", drugLicenseNo: "DL/20B/2024-001",
+  bankName: "HDFC Bank", accountNo: "XXXXXXXX1234", ifscCode: "HDFC0000123",
+  printHeaderColor: "#1e293b", printAccentColor: "#1d4ed8",
+  billFooterNote: "Thank you for choosing SphereHealth — get well soon!",
+  termsLine1: "Goods once sold are not returnable unless the seal is intact (within 7 days).",
+  termsLine2: "Medicines must be stored as per pack instructions.",
+  termsLine3: "This is a computer-generated invoice. Subject to local jurisdiction.",
+};
+
+function TemplatePreviewModal({ tplId, isActive, settingsDoc, onClose, onUse }) {
+  const tpl = TEMPLATES.find(t => t.id === tplId) || TEMPLATES[0];
+  const isInh = tpl.audience === "in-house";
+  // Build a "pharmacySettings" snapshot from the in-progress settings doc so the
+  // preview reflects the manager's outsourced identity in real time.
+  const phSettings = settingsDoc ? { ...settingsDoc, billTemplate: tplId } : null;
+  return (
+    <div onClick={onClose} style={{
+      position: "fixed", inset: 0, background: "rgba(15,23,42,.65)", zIndex: 1000,
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 14,
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: "#fff", borderRadius: 14, width: "min(1100px, 98vw)",
+        maxHeight: "94vh", display: "flex", flexDirection: "column",
+        boxShadow: "0 20px 60px rgba(0,0,0,.35)",
+      }}>
+        <div style={{
+          padding: "12px 18px", display: "flex", alignItems: "center", gap: 10,
+          background: "linear-gradient(135deg,#7c3aed,#5b21b6)", color: "#fff",
+          borderTopLeftRadius: 14, borderTopRightRadius: 14,
+        }}>
+          <div style={{ width: 30, height: 30, borderRadius: 8, background: "rgba(255,255,255,.22)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800 }}>#{tpl.id}</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 800, fontSize: 15 }}>{tpl.label}</div>
+            <div style={{ fontSize: 11, opacity: .85 }}>{tpl.sub} · {isInh ? "In-house" : "Outsourced"}</div>
+          </div>
+          <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 8, border: "none", background: "rgba(255,255,255,.18)", color: "#fff", cursor: "pointer" }}><i className="pi pi-times" /></button>
+        </div>
+        <div style={{ flex: 1, overflow: "auto", background: "#e2e8f0", padding: 18 }}>
+          <div style={{ background: "#fff", boxShadow: "0 6px 22px rgba(15,23,42,.18)", maxWidth: 880, margin: "0 auto" }}>
+            <PharmacyBill
+              settings={DEMO_SETTINGS}
+              receipt={{ ...DEMO_BILL, template: tplId, pharmacySettings: phSettings }}
+            />
+          </div>
+        </div>
+        <div style={{ padding: "10px 18px", borderTop: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+          <div style={{ fontSize: 11, color: C.muted }}>
+            <i className="pi pi-info-circle" style={{ marginRight: 5 }} />
+            Sample data shown — your real bills will use this template with actual patient and item data.
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={onClose} style={{ padding: "8px 14px", borderRadius: 7, border: `1.5px solid ${C.border}`, background: "#fff", color: C.muted, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Close</button>
+            <button onClick={onUse} disabled={isActive}
+              style={{ padding: "8px 20px", borderRadius: 7, border: "none",
+                background: isActive ? "#86efac" : "#7c3aed", color: "#fff",
+                fontWeight: 800, fontSize: 12, cursor: isActive ? "default" : "pointer" }}>
+              {isActive ? <><i className="pi pi-check" style={{ marginRight: 6 }} />Currently selected</> : <><i className="pi pi-check-circle" style={{ marginRight: 6 }} />Use this template</>}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SettingsTab() {
   const [s, setS] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [previewTpl, setPreviewTpl] = useState(null);
   const upd = (k) => (e) => setS(p => ({ ...p, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value }));
 
   useEffect(() => { (async () => {
@@ -1254,52 +1523,97 @@ function SettingsTab() {
       {/* TEMPLATE PICKER — top of Settings */}
       <Card title="Bill print template" color={C.purple} icon="pi-palette">
         <div style={{ fontSize: 11.5, color: C.muted, marginBottom: 12 }}>
-          Pick a layout for every pharmacy bill the system prints. Switching here updates instantly — no re-deploy.
-          Templates <b>1-5</b> are tuned for in-house hospital branding, <b>6-10</b> for outsourced retail pharmacies.
-          Per-print overrides via <code style={{ background: "#f1f5f9", padding: "1px 5px", borderRadius: 3 }}>receipt.template</code> are honoured.
+          Pick a layout for every pharmacy bill. <b>Click any thumbnail to preview at full size</b> — then click "Use this" inside the preview to apply.
+          Templates <b>1-5</b> are tuned for in-house, <b>6-10</b> for outsourced retail pharmacies.
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
           {TEMPLATES.map(t => {
             const active = (s.billTemplate || 1) === t.id;
             const isInh  = t.audience === "in-house";
             const accent = isInh ? C.blue : C.orange;
             return (
-              <button key={t.id} onClick={() => setS(p => ({ ...p, billTemplate: t.id }))}
+              <div key={t.id}
                 style={{
-                  padding: 10, borderRadius: 10,
-                  border: `1.5px solid ${active ? accent : C.border}`,
-                  background: active ? accent + "08" : "#fff",
-                  cursor: "pointer", textAlign: "left",
-                  position: "relative", transition: "all .15s",
-                  boxShadow: active ? `0 4px 12px ${accent}25` : "0 1px 2px rgba(15,23,42,.04)",
-                }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <div style={{
-                    width: 28, height: 28, borderRadius: 7,
-                    background: active ? accent : accent + "15",
-                    color: active ? "#fff" : accent,
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    fontWeight: 800, fontSize: 12,
-                  }}>{t.id}</div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12.5, fontWeight: 800, color: active ? accent : C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.label}</div>
-                    <div style={{ fontSize: 10, color: C.muted, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.sub}</div>
-                  </div>
-                  {active && <i className="pi pi-check-circle" style={{ color: accent, fontSize: 14 }} />}
-                </div>
+                  borderRadius: 10,
+                  border: `2px solid ${active ? accent : C.border}`,
+                  background: "#fff",
+                  overflow: "hidden",
+                  position: "relative",
+                  cursor: "pointer",
+                  boxShadow: active ? `0 6px 18px ${accent}30` : "0 1px 3px rgba(15,23,42,.05)",
+                  transition: "transform .15s, box-shadow .15s",
+                }}
+                onClick={() => setPreviewTpl(t.id)}
+                onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = `0 8px 22px ${accent}35`; }}
+                onMouseLeave={e => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = active ? `0 6px 18px ${accent}30` : "0 1px 3px rgba(15,23,42,.05)"; }}
+              >
+                {/* Thumbnail viewport — scales a real PharmacyBill to ~210px wide */}
                 <div style={{
-                  marginTop: 6, fontSize: 9, fontWeight: 800,
-                  padding: "2px 7px", borderRadius: 3, display: "inline-block",
-                  background: isInh ? "#dbeafe" : "#fed7aa",
-                  color:      isInh ? "#1e40af" : "#9a3412",
-                  letterSpacing: ".4px", textTransform: "uppercase",
+                  height: 200, overflow: "hidden", position: "relative",
+                  background: "#f1f5f9",
+                  borderBottom: `1px solid ${C.border}`,
                 }}>
-                  {isInh ? "In-house" : "Outsourced"}
+                  <div style={{
+                    transform: "scale(0.27)", transformOrigin: "top left",
+                    width: "370%", pointerEvents: "none",
+                  }}>
+                    <PharmacyBill settings={DEMO_SETTINGS} receipt={{ ...DEMO_BILL, template: t.id }} />
+                  </div>
+                  {active && (
+                    <div style={{
+                      position: "absolute", top: 8, right: 8,
+                      width: 26, height: 26, borderRadius: "50%",
+                      background: accent, color: "#fff",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      boxShadow: "0 2px 8px rgba(0,0,0,.2)",
+                    }}>
+                      <i className="pi pi-check" style={{ fontSize: 12 }} />
+                    </div>
+                  )}
+                  <div style={{
+                    position: "absolute", top: 8, left: 8,
+                    padding: "2px 8px", borderRadius: 4,
+                    background: "rgba(0,0,0,.7)", color: "#fff",
+                    fontSize: 9.5, fontWeight: 800, letterSpacing: ".4px",
+                  }}>#{t.id}</div>
                 </div>
-              </button>
+                {/* Label strip */}
+                <div style={{ padding: "8px 10px" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: active ? accent : C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {t.label}
+                    </div>
+                    <span style={{
+                      flexShrink: 0, fontSize: 8.5, fontWeight: 800,
+                      padding: "1px 6px", borderRadius: 3,
+                      background: isInh ? "#dbeafe" : "#fed7aa",
+                      color:      isInh ? "#1e40af" : "#9a3412",
+                      letterSpacing: ".4px", textTransform: "uppercase",
+                    }}>
+                      {isInh ? "In-house" : "Outsourced"}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 10, color: C.muted, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.sub}</div>
+                </div>
+              </div>
             );
           })}
         </div>
+
+        {/* Full-size preview modal */}
+        {previewTpl != null && (
+          <TemplatePreviewModal
+            tplId={previewTpl}
+            isActive={(s.billTemplate || 1) === previewTpl}
+            settingsDoc={s}
+            onClose={() => setPreviewTpl(null)}
+            onUse={() => {
+              setS(p => ({ ...p, billTemplate: previewTpl }));
+              setPreviewTpl(null);
+              toast.success(`Template #${previewTpl} selected — Save to apply`);
+            }}
+          />
+        )}
         <div style={{ marginTop: 12 }}>
           <Field label="Default paper size">
             <select className="his-select" style={{ width: 200 }} value={s.defaultPaper || "half-a4"} onChange={upd("defaultPaper")}>

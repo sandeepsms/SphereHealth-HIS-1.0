@@ -18,6 +18,7 @@ import MARSheet          from "./MARSheet";
 import DoctorOrderSheet  from "./DoctorOrderSheet";
 import TPAAuthorization  from "./TPAAuthorization";
 import PharmacyBill      from "./PharmacyBill";
+import PharmacyRegister  from "./PharmacyRegister";
 
 export const PRINTABLES = {
   // ── Receipts / billing ─────────────────────────────────
@@ -28,6 +29,7 @@ export const PRINTABLES = {
   "cost-estimate":    { component: CostEstimate,      title: "Cost Estimate · Indicative",defaultPaper: "a4"      },
   "final-bill":       { component: FinalBill,         title: "Final Bill (IPD)",          defaultPaper: "a4"      },
   "pharmacy-bill":    { component: PharmacyBill,      title: "Pharmacy GST Tax Invoice",  defaultPaper: "half-a4" },
+  "pharmacy-register":{ component: PharmacyRegister,  title: "Pharmacy Register",         defaultPaper: "a4"      },
 
   // ── Clinical ──────────────────────────────────────────
   "opd-prescription": { component: OPDPrescription,   title: "OPD Prescription (Rx)",     defaultPaper: "a4"      },
