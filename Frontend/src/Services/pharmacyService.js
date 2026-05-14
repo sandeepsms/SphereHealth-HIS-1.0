@@ -45,6 +45,7 @@ export const listSales     = (params = {})     => _get(`/sales${_qs(params)}`);
 export const getSale       = (id)              => _get(`/sales/${id}`);
 export const cancelSale    = (id)              => _post(`/sales/${id}/cancel`);
 export const returnSaleItems = (id, body)       => _post(`/sales/${id}/return`, body);
+export const addItemsToSale  = (id, body)       => _post(`/sales/${id}/add-items`, body);
 
 // Dashboard
 export const getStats      = () => _get(`/stats`);
@@ -71,7 +72,7 @@ export default {
   listDrugs, searchDrugs, createDrug, updateDrug, deleteDrug,
   listSuppliers, createSupplier, updateSupplier, deleteSupplier,
   recordGRN, listBatches, stockRollup,
-  dispense, listSales, getSale, cancelSale, returnSaleItems,
+  dispense, listSales, getSale, cancelSale, returnSaleItems, addItemsToSale,
   getStats, getAlerts,
   getPharmacySettings, updatePharmacySettings,
   getSalesRegister, getPurchaseRegister, getStockRegister,

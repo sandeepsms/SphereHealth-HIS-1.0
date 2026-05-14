@@ -127,9 +127,11 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
      remain reprintable as-is — and the refunds section is appended
      after the totals.  */
   const returns       = Array.isArray(r.returns) ? r.returns : [];
-  const isRevised     = ["Partial-Return", "Refunded", "Cancelled"].includes(r.status);
-  const refundTotal   = returns.reduce((s, x) => s + Number(x.refundAmount || 0), 0);
-  const netAfter      = Math.max(0, Number(r.grandTotal || 0) - refundTotal);
+  const supplements   = Array.isArray(r.supplements) ? r.supplements : [];
+  const isRevised     = ["Partial-Return", "Refunded", "Cancelled", "Supplemented"].includes(r.status);
+  const refundTotal     = returns.reduce((s, x) => s + Number(x.refundAmount || 0), 0);
+  const supplementTotal = supplements.reduce((s, x) => s + Number(x.addedTotal || 0), 0);
+  const netAfter      = Math.max(0, Number(r.grandTotal || 0) + supplementTotal - refundTotal);
   const patientCred   = Number(r.patientCredit || 0);
 
   /* Template choice — per-print override > pharmacy default > 1 */
@@ -302,6 +304,23 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
         html[data-paper="a5"]      .pr-pharm-bill .pb-returns-table th { padding: 3px 7px; font-size: 7.5px; }
         html[data-paper="half-a4"] .pr-pharm-bill .pb-returns-table td,
         html[data-paper="a5"]      .pr-pharm-bill .pb-returns-table td { padding: 3px 7px; font-size: 8.4px; }
+
+        /* ── Supplements section block (one per debit-note slip) ── green
+           palette to visually distinguish from returns (amber/orange). */
+        .pr-pharm-bill .pb-supplements { margin: 8px 22px 12px; border: 1.5px dashed #16a34a; border-radius: 8px; overflow: hidden; }
+        .pr-pharm-bill .pb-supplements-head { padding: 7px 12px; background: #f0fdf4; border-bottom: 1px solid #bbf7d0; font-size: 10px; color: #166534; display: flex; justify-content: space-between; }
+        .pr-pharm-bill .pb-supplements-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+        .pr-pharm-bill .pb-supplements-table th { padding: 5px 9px; text-align: left; background: #dcfce7; color: #14532d; font-size: 8.5px; letter-spacing: .4px; text-transform: uppercase; border-bottom: 1px solid #86efac; }
+        .pr-pharm-bill .pb-supplements-table td { padding: 5px 9px; border-bottom: 1px solid #dcfce7; }
+        .pr-pharm-bill .pb-supplements-foot { display: flex; justify-content: flex-end; gap: 12px; padding: 6px 12px; background: #f0fdf4; font-size: 10px; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-supplements,
+        html[data-paper="a5"]      .pr-pharm-bill .pb-supplements { margin: 4px 16px 6px; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-supplements-head,
+        html[data-paper="a5"]      .pr-pharm-bill .pb-supplements-head { padding: 4px 10px; font-size: 8.5px; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-supplements-table th,
+        html[data-paper="a5"]      .pr-pharm-bill .pb-supplements-table th { padding: 3px 7px; font-size: 7.5px; }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-supplements-table td,
+        html[data-paper="a5"]      .pr-pharm-bill .pb-supplements-table td { padding: 3px 7px; font-size: 8.4px; }
       `}</style>
 
       <div className="pr-page pr-pharm-bill" style={{
@@ -328,11 +347,67 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
               {r.status === "Refunded"      && "All items returned"}
               {r.status === "Partial-Return"&& "One or more items returned"}
               {r.status === "Cancelled"     && "Sale cancelled — invoice retained for audit"}
+              {r.status === "Supplemented"  && `${supplements.length} item${supplements.length === 1 ? "" : "s"} added via supplementary invoice`}
             </span>
             <span>
               Original&nbsp;{fmtINR(Number(r.grandTotal || 0))}
-              {refundTotal > 0 && <> · Refund&nbsp;<b>− {fmtINR(refundTotal)}</b> · Net&nbsp;<b>{fmtINR(netAfter)}</b></>}
+              {supplementTotal > 0 && <> · Added&nbsp;<b style={{ color: "#15803d" }}>+ {fmtINR(supplementTotal)}</b></>}
+              {refundTotal > 0     && <> · Refund&nbsp;<b style={{ color: "#b45309" }}>− {fmtINR(refundTotal)}</b></>}
+              {(supplementTotal > 0 || refundTotal > 0) && <> · Net&nbsp;<b>{fmtINR(netAfter)}</b></>}
             </span>
+          </div>
+        )}
+
+        {supplements.length > 0 && (
+          <div className="pb-supplements">
+            <div className="pb-supplements-head">
+              <b>SUPPLEMENTARY INVOICE — {supplements.length} slip(s)</b>
+              <span>Added total: <b>{fmtINR(supplementTotal)}</b></span>
+            </div>
+            {supplements.map((sup, si) => (
+              <div key={si} style={{ borderTop: si > 0 ? "1px solid #bbf7d0" : "none" }}>
+                <div className="pb-supplements-head" style={{ background: "#f0fdf4", borderBottom: "1px dashed #86efac", fontSize: 9.5 }}>
+                  <span>
+                    <b style={{ fontFamily: "DM Mono, monospace" }}>{sup.supplementSlipNumber || `Supplement #${si+1}`}</b>
+                    {sup.addedAt && <> · {_fmtDate(sup.addedAt, { day: "2-digit", month: "short", year: "numeric" })}</>}
+                    {sup.paymentMode && <> · {sup.paymentMode}</>}
+                    {sup.reason && <> · <i>{sup.reason}</i></>}
+                  </span>
+                  <span>Total: <b>{fmtINR(Number(sup.addedTotal || 0))}</b></span>
+                </div>
+                <table className="pb-supplements-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: "5%" }}>#</th>
+                      <th style={{ width: "45%" }}>Drug</th>
+                      <th style={{ width: "12%" }}>Batch</th>
+                      <th style={{ width: "8%", textAlign: "right" }}>Qty</th>
+                      <th style={{ width: "10%", textAlign: "right" }}>Rate</th>
+                      <th style={{ width: "10%", textAlign: "right" }}>GST</th>
+                      <th style={{ width: "10%", textAlign: "right" }}>Net</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(sup.addedItems || []).map((it, ii) => (
+                      <tr key={ii}>
+                        <td>{ii + 1}</td>
+                        <td>{it.drugName}</td>
+                        <td style={{ fontFamily: "DM Mono, monospace", fontSize: 9 }}>{it.batchNo || "—"}</td>
+                        <td style={{ textAlign: "right" }}>{it.quantity}</td>
+                        <td style={{ textAlign: "right" }}>{fmtINR(Number(it.unitPrice || 0))}</td>
+                        <td style={{ textAlign: "right" }}>{fmtINR(Number(it.gstAmount || 0))}</td>
+                        <td style={{ textAlign: "right", fontWeight: 700 }}>{fmtINR(Number(it.netAmount || 0))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+            <div className="pb-supplements-foot">
+              <span>Paid: <b style={{ color: "#15803d" }}>{fmtINR(supplements.reduce((s, x) => s + Number(x.amountPaid || 0), 0))}</b></span>
+              <span>Balance due: <b style={{ color: "#dc2626" }}>{fmtINR(supplements.reduce((s, x) => s + Number(x.balanceDue || 0), 0))}</b></span>
+              <span>Addendum total: <b style={{ color: "#15803d" }}>{fmtINR(supplementTotal)}</b></span>
+            </div>
           </div>
         )}
 

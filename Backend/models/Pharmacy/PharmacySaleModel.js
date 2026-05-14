@@ -86,7 +86,7 @@ const PharmacySaleSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["Completed","Partial-Return","Refunded","Cancelled","Hold"],
+      enum: ["Completed","Partial-Return","Refunded","Cancelled","Hold","Supplemented"],
       default: "Completed",
       index: true,
     },
@@ -117,6 +117,43 @@ const PharmacySaleSchema = new mongoose.Schema(
         refundedById:     { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
         reason:           { type: String, default: "" },
         notes:            { type: String, default: "" },
+      }, { _id: true, timestamps: true }) ],
+      default: [],
+    },
+
+    // ── Supplementary invoices (debit notes) — every "missed item added
+    //   after-the-fact" appends a record here. Sequential slip number
+    //   SUP-PHM-YYYYMMDD-NNNN, mirror shape to returns[] but for ADDED items.
+    //
+    //   addedItems[]   {{ drugId, drugName, batchId, batchNo, expiryDate,
+    //                     quantity, unitPrice, gstRate, discountPercent,
+    //                     grossAmount, discountAmount, taxableAmount,
+    //                     gstAmount, netAmount }}
+    //   addedTotal     total billable for the addendum (sum of items' netAmount)
+    //   paymentMode    how the patient settled the addendum (Cash/Card/...)
+    //   amountPaid     paid against the addendum at counter
+    //   reason         free text — "missed Ondansetron at counter", "doc added one more drug"
+    //
+    //   Original items[] is NEVER mutated — GST law requires the original
+    //   tax invoice be reprintable as-issued. Effective totals are
+    //   computed at read time: items[] + sum(supplements[].addedItems[]) - sum(returns[].refundedItems[]).
+    supplements: {
+      type: [ new mongoose.Schema({
+        supplementSlipNumber: { type: String, default: "" },
+        addedItems:    { type: Array, default: [] },
+        addedSubTotal: { type: Number, default: 0 },
+        addedDiscount: { type: Number, default: 0 },
+        addedTaxable:  { type: Number, default: 0 },
+        addedGst:      { type: Number, default: 0 },
+        addedTotal:    { type: Number, default: 0 },
+        paymentMode:   { type: String, enum: ["Cash","Card","UPI","Mixed","Credit"], default: "Cash" },
+        amountPaid:    { type: Number, default: 0 },
+        balanceDue:    { type: Number, default: 0 },
+        addedAt:       { type: Date, default: Date.now },
+        addedBy:       { type: String, default: "" },
+        addedById:     { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+        reason:        { type: String, default: "" },
+        notes:         { type: String, default: "" },
       }, { _id: true, timestamps: true }) ],
       default: [],
     },

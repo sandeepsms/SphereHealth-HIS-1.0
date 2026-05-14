@@ -20,7 +20,7 @@ import {
   listDrugs, createDrug, updateDrug, deleteDrug,
   listSuppliers, createSupplier, updateSupplier, deleteSupplier,
   recordGRN, listBatches, stockRollup,
-  dispense, listSales, cancelSale, returnSaleItems,
+  dispense, listSales, cancelSale, returnSaleItems, addItemsToSale,
   getStats, getAlerts,
   getPharmacySettings, updatePharmacySettings,
   getSalesRegister, getPurchaseRegister, getStockRegister,
@@ -845,6 +845,7 @@ function SalesTab() {
   const [from, setFrom] = useState("");
   const [to, setTo]     = useState("");
   const [returnSale, setReturnSale] = useState(null);    // the bill being returned
+  const [addItemsSale, setAddItemsSale] = useState(null); // the bill to add items to
 
   const refresh = async () => {
     try { setRows((await listSales({ q, from, to })).data || []); }
@@ -917,7 +918,10 @@ function SalesTab() {
                     });
                   }}
                   label="Print" />
-                {(s.status === "Completed" || s.status === "Partial-Return") && (
+                {(s.status === "Completed" || s.status === "Partial-Return" || s.status === "Supplemented") && (
+                  <RowAction icon="pi-plus" color={C.green} onClick={() => setAddItemsSale(s)} label="Add" />
+                )}
+                {(s.status === "Completed" || s.status === "Partial-Return" || s.status === "Supplemented") && (
                   <RowAction icon="pi-undo" color={C.amber} onClick={() => setReturnSale(s)} label="Return" />
                 )}
                 {s.status === "Completed" && (
@@ -932,6 +936,11 @@ function SalesTab() {
         <ReturnModal sale={returnSale}
           onClose={() => setReturnSale(null)}
           onDone={() => { setReturnSale(null); refresh(); }} />
+      )}
+      {addItemsSale && (
+        <AddItemsModal sale={addItemsSale}
+          onClose={() => setAddItemsSale(null)}
+          onDone={() => { setAddItemsSale(null); refresh(); }} />
       )}
     </div>
   );
@@ -1154,6 +1163,231 @@ function ReturnModal({ sale, onClose, onDone }) {
     </div>
   );
 }
+
+/* ════════════════════════════════════════════════════════════════
+   ADD ITEMS MODAL — append missed items to an already-saved bill
+   via a supplementary invoice (debit note). Original items[] is
+   never touched; everything goes into sale.supplements[] with a
+   sequential SUP-PHM-YYYYMMDD-NNNN slip number.
+══════════════════════════════════════════════════════════════════ */
+function AddItemsModal({ sale, onClose, onDone }) {
+  const [rollup, setRollup] = useState([]);
+  const [items, setItems]   = useState([]);   // newly added items
+  const [drugSearch, setDrugSearch] = useState("");
+  const [paymentMode, setPaymentMode] = useState(sale.paymentMode || "Cash");
+  const [reason, setReason] = useState("");
+  const [notes, setNotes]   = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => { (async () => {
+    try { setRollup((await stockRollup()).data || []); }
+    catch (e) { toast.error(e.message); }
+  })(); }, []);
+
+  const matches = useMemo(() => {
+    if (!drugSearch.trim()) return [];
+    const rx = new RegExp(drugSearch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    return rollup.filter(r => rx.test(r.drugName || "")).slice(0, 8);
+  }, [drugSearch, rollup]);
+
+  const addItem = (r) => {
+    if (items.some(it => it.drugId === r.drugId)) {
+      toast.info(`${r.drugName} already in addendum — update qty below`);
+      return;
+    }
+    setItems(p => [...p, {
+      drugId: r.drugId, drugName: r.drugName,
+      quantity: 1, unitPrice: r.latestSale || 0, gstRate: 12, discountPercent: 0,
+      available: r.totalRemaining,
+    }]);
+    setDrugSearch("");
+  };
+  const updItem = (idx, k, v) => setItems(p => p.map((it, i) => i === idx ? { ...it, [k]: v } : it));
+  const rmItem  = (idx)        => setItems(p => p.filter((_, i) => i !== idx));
+
+  const tot = useMemo(() => {
+    let sub = 0, disc = 0, gst = 0;
+    items.forEach(it => {
+      const qty = Number(it.quantity || 0), unit = Number(it.unitPrice || 0);
+      const gross = qty * unit;
+      const d = gross * Number(it.discountPercent || 0) / 100;
+      const tax = (gross - d) * Number(it.gstRate || 0) / 100;
+      sub += gross; disc += d; gst += tax;
+    });
+    const grand = Math.round(((sub - disc) + gst) * 100) / 100;
+    return { sub: round2(sub), disc: round2(disc), gst: round2(gst), grand };
+  }, [items]);
+
+  const submit = async () => {
+    if (items.length === 0) { toast.warn("Add at least one item to the addendum"); return; }
+    setSaving(true);
+    try {
+      const r = await addItemsToSale(sale._id, {
+        items: items.map(it => ({
+          drugId: it.drugId, drugName: it.drugName,
+          quantity: Number(it.quantity), unitPrice: Number(it.unitPrice),
+          gstRate: Number(it.gstRate), discountPercent: Number(it.discountPercent),
+        })),
+        paymentMode, reason, notes,
+      });
+      const updated = r.data.sale;
+      const rec     = r.data.supplementRecord;
+      toast.success(`Addendum ${rec.supplementSlipNumber} · ${fmtINR(rec.addedTotal)} added to ${sale.billNumber}`);
+
+      // Auto-print revised tax invoice — patient + pharmacy each need a copy
+      const phSet = await getCachedPhSettings();
+      setTimeout(() => {
+        openPrint("pharmacy-bill", {
+          ...updated,
+          template:     phSet?.billTemplate || 1,
+          defaultPaper: phSet?.defaultPaper || "half-a4",
+          pharmacySettings: phSet,
+          billLabel: "REVISED TAX INVOICE",
+          revisionNote: `Supplementary slip ${rec.supplementSlipNumber} · ${fmtINR(rec.addedTotal)} added`,
+        });
+      }, 350);
+
+      onDone();
+    } catch (e) {
+      toast.error(e.message);
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div onClick={onClose} style={{
+      position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", zIndex: 1000,
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 14,
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: "#fff", borderRadius: 12, width: "min(880px, 98vw)",
+        maxHeight: "92vh", display: "flex", flexDirection: "column",
+        boxShadow: "0 20px 50px rgba(0,0,0,.25)", overflow: "hidden",
+      }}>
+        <div style={{ padding: "12px 18px",
+          background: `linear-gradient(135deg,${C.green},#15803d)`,
+          color: "#fff", display: "flex", alignItems: "center", gap: 10,
+        }}>
+          <i className="pi pi-plus-circle" style={{ fontSize: 16 }} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 800, fontSize: 14 }}>Add items · {sale.billNumber}</div>
+            <div style={{ fontSize: 11, opacity: .85 }}>{sale.patientName || "Walk-in"}{sale.patientUHID && ` · ${sale.patientUHID}`} · sold {new Date(sale.createdAt).toLocaleDateString("en-IN")}</div>
+          </div>
+          <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 7, border: "none", background: "rgba(255,255,255,.18)", color: "#fff", cursor: "pointer" }}><i className="pi pi-times" /></button>
+        </div>
+
+        <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+          <div style={{ marginBottom: 10, padding: "8px 12px", background: "#dcfce7", border: "1.5px solid #16a34a30", borderRadius: 7, fontSize: 11.5, color: "#166534" }}>
+            <i className="pi pi-info-circle" style={{ marginRight: 5 }} />
+            Items added here become a <b>supplementary invoice</b> (GST debit note) linked to the original bill. The original tax invoice stays unchanged — both prints together form the complete sale.
+          </div>
+
+          <div style={{ position: "relative", marginBottom: 10 }}>
+            <input className="his-field" placeholder="Search drug to add…"
+              value={drugSearch} onChange={e => setDrugSearch(e.target.value)} />
+            {matches.length > 0 && (
+              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, background: "#fff", border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: "0 8px 20px rgba(0,0,0,.1)", maxHeight: 240, overflow: "auto", zIndex: 10 }}>
+                {matches.map(m => (
+                  <button key={m.drugId} onClick={() => addItem(m)}
+                    style={{ width: "100%", padding: "8px 12px", border: "none", background: "#fff", textAlign: "left", cursor: "pointer", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                    <span style={{ fontWeight: 700 }}>{m.drugName}</span>
+                    <span style={{ color: C.muted }}>Stock: {m.totalRemaining} · {fmtINR(m.latestSale)}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <Table cols={["Drug","Qty","Unit ₹","GST %","Disc %","Net ₹",""]} compact>
+            {items.length === 0
+              ? <EmptyRow span={7} text="No items yet — search a drug above to add to the addendum." />
+              : items.map((it, idx) => {
+                const gross = (it.quantity || 0) * (it.unitPrice || 0);
+                const dAmt  = gross * (it.discountPercent || 0) / 100;
+                const gAmt  = (gross - dAmt) * (it.gstRate || 0) / 100;
+                const net   = (gross - dAmt) + gAmt;
+                const overStock = Number(it.quantity) > it.available;
+                return (
+                  <tr key={idx} style={{ borderTop: `1px solid ${C.border}` }}>
+                    <td style={{ padding: "6px 10px" }}>
+                      <div style={{ fontWeight: 700 }}>{it.drugName}</div>
+                      <div style={{ fontSize: 10, color: overStock ? C.red : C.muted }}>
+                        Available: {it.available}{overStock && " · over-stock!"}
+                      </div>
+                    </td>
+                    <td style={{ padding: "4px 10px" }}>
+                      <input type="number" className="his-field" style={{ width: 70, padding: "4px 6px", fontSize: 11, borderColor: overStock ? C.red : undefined }}
+                        value={it.quantity} onChange={e => updItem(idx, "quantity", e.target.value)} />
+                    </td>
+                    <td style={{ padding: "4px 10px" }}>
+                      <input type="number" className="his-field" style={{ width: 80, padding: "4px 6px", fontSize: 11 }}
+                        value={it.unitPrice} onChange={e => updItem(idx, "unitPrice", e.target.value)} />
+                    </td>
+                    <td style={{ padding: "4px 10px" }}>
+                      <input type="number" className="his-field" style={{ width: 60, padding: "4px 6px", fontSize: 11 }}
+                        value={it.gstRate} onChange={e => updItem(idx, "gstRate", e.target.value)} />
+                    </td>
+                    <td style={{ padding: "4px 10px" }}>
+                      <input type="number" className="his-field" style={{ width: 60, padding: "4px 6px", fontSize: 11 }}
+                        value={it.discountPercent} onChange={e => updItem(idx, "discountPercent", e.target.value)} />
+                    </td>
+                    <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 700, color: C.green }}>{fmtINR(net)}</td>
+                    <td style={{ padding: "4px 10px", textAlign: "center" }}>
+                      <button onClick={() => rmItem(idx)} title="Remove"
+                        style={{ width: 22, height: 22, borderRadius: 4, border: "none", background: C.redL, color: C.red, cursor: "pointer", fontSize: 11 }}>
+                        <i className="pi pi-times" />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+          </Table>
+
+          <div style={{ marginTop: 12, padding: "10px 14px", background: C.subtle, borderRadius: 8, border: `1px solid ${C.border}` }}>
+            <Row label="Subtotal" value={fmtINR(tot.sub)} />
+            <Row label="Discount" value={`− ${fmtINR(tot.disc)}`} valueColor={C.muted} />
+            <Row label="GST" value={`+ ${fmtINR(tot.gst)}`} valueColor={C.muted} />
+            <div style={{ borderTop: `1px dashed ${C.border}`, marginTop: 6, paddingTop: 6 }}>
+              <Row label="Addendum total" value={fmtINR(tot.grand)} valueColor={C.green} bold large />
+            </div>
+          </div>
+
+          <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <Field label="Payment mode">
+              <select className="his-select" value={paymentMode} onChange={e => setPaymentMode(e.target.value)}>
+                {["Cash","Card","UPI","Mixed","Credit"].map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </Field>
+            <Field label="Reason (optional)">
+              <input className="his-field" value={reason} onChange={e => setReason(e.target.value)} placeholder="Missed at counter · doctor added later" />
+            </Field>
+          </div>
+          <div style={{ marginTop: 10 }}>
+            <Field label="Internal notes (optional)">
+              <textarea className="his-textarea" rows={2} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Any operational note for the audit log" />
+            </Field>
+          </div>
+        </div>
+
+        <div style={{ padding: "10px 16px", borderTop: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <div style={{ fontSize: 10.5, color: C.muted }}>
+            <i className="pi pi-print" style={{ marginRight: 5 }} />
+            A revised tax invoice will print automatically after submit.
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={onClose} style={{ padding: "8px 14px", borderRadius: 7, border: `1.5px solid ${C.border}`, background: "#fff", color: C.muted, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Cancel</button>
+            <button onClick={submit} disabled={saving || items.length === 0}
+              style={{ padding: "8px 18px", borderRadius: 7, border: "none",
+                background: saving || items.length === 0 ? "#86efac" : C.green,
+                color: "#fff", fontWeight: 800, fontSize: 12, cursor: saving || items.length === 0 ? "not-allowed" : "pointer" }}>
+              {saving ? "Adding…" : <><i className="pi pi-check" style={{ marginRight: 6 }} />Add items · {fmtINR(tot.grand)}</>}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function round2(n) { return Math.round(n * 100) / 100; }
 
 /* ════════════════════════════════════════════════════════════════
