@@ -662,6 +662,41 @@ export default function IntegratedVitalsPanel({ UHID, nurseName = "", onVitalsCh
               value={entry.notes} onChange={e => setE("notes", e.target.value)} />
           </div>
 
+          {/* ── Diabetic-chart jump-off — when BSL is captured and out of normal,
+                offer a one-click trip to /diabetic-chart so the nurse can pick
+                up the sliding-scale insulin recommendation without leaving the
+                workflow. Threshold: <70 (hypo) or >180 (hyperglycaemia). ── */}
+          {entry.bsl && UHID && (Number(entry.bsl) < 70 || Number(entry.bsl) > 180) && (
+            <div style={{
+              background: Number(entry.bsl) < 70 ? "#fef2f2" : "#fffbeb",
+              border: `1.5px solid ${Number(entry.bsl) < 70 ? "#fecaca" : "#fde68a"}`,
+              borderRadius: 8, padding: "10px 14px",
+              display: "flex", alignItems: "center", gap: 10,
+            }}>
+              <i className={`pi ${Number(entry.bsl) < 70 ? "pi-exclamation-triangle" : "pi-bolt"}`}
+                style={{ fontSize: 15, color: Number(entry.bsl) < 70 ? C.red : C.amber }} />
+              <div style={{ flex: 1, fontSize: 12 }}>
+                <div style={{ fontWeight: 800, color: Number(entry.bsl) < 70 ? C.red : C.amber }}>
+                  {Number(entry.bsl) < 70 ? "Hypoglycaemia detected" : "Hyperglycaemia detected"} — BG {entry.bsl} mg/dL
+                </div>
+                <div style={{ fontSize: 11, color: "#475569", marginTop: 1 }}>
+                  Open the diabetic chart to record this slot + apply sliding-scale insulin
+                </div>
+              </div>
+              <button
+                onClick={() => { window.location.href = `/diabetic-chart?uhid=${encodeURIComponent(UHID)}`; }}
+                style={{
+                  padding: "8px 14px", borderRadius: 7, border: "none",
+                  background: Number(entry.bsl) < 70 ? C.red : C.amber, color: "#fff",
+                  fontWeight: 700, fontSize: 11, cursor: "pointer",
+                  display: "flex", alignItems: "center", gap: 6,
+                }}>
+                <i className="pi pi-external-link" style={{ fontSize: 10 }} />
+                Open diabetic chart
+              </button>
+            </div>
+          )}
+
           {/* MEWS Banner */}
           {hasAnyVital && (
             <div style={{ background: band.bg, border: `1.5px solid ${band.color}30`, borderRadius: 8, padding: "10px 14px", display: "flex", alignItems: "center", gap: 10 }}>

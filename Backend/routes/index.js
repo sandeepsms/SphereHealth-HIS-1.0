@@ -167,4 +167,7 @@ router.use("/mlc",              require("./MLC/mlcRoutes"));
 // Admin operational endpoints — daily accrual, etc.
 router.use("/admin-ops",        require("./Admin/adminOpsRoutes"));
 
+// Diabetic chart — RBS readings + sliding-scale insulin per admission
+router.use("/diabetic-chart",   require("./Clinical/diabeticChartRoutes"));
+
 module.exports = router;

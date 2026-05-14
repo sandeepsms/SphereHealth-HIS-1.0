@@ -185,7 +185,8 @@ const NAV = [
     nabh: true, roles: [ADMIN, PH, NR, DR],
     items: [
       // MAR is the canonical record — Doctor reads it (gets to "DR" too)
-      { label: "MAR",              icon: "pi-table",         path: "/mar",   nabh: true, roles: [ADMIN, PH, NR, DR] },
+      { label: "MAR",              icon: "pi-table",         path: "/mar",             nabh: true, roles: [ADMIN, PH, NR, DR] },
+      { label: "Diabetic Chart",   icon: "pi-chart-bar",     path: "/diabetic-chart",  nabh: true, badge: "NEW", roles: [ADMIN, NR, DR] },
     ],
   },
 
