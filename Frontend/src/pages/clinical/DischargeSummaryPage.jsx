@@ -756,16 +756,37 @@ function DischargeSummaryPageContent({ selectedPatient }) {
         const admDate = found.admissionDate ? new Date(found.admissionDate) : null;
         const disDate = new Date();
         const stayDays = admDate ? Math.ceil((disDate - admDate) / 86400000) : "";
+        // Resolve nested patient (admissionService may or may not
+        // populate the patientId ref). Fall back to a direct GET if the
+        // age / gender / DOB are missing.
+        let pat = (found.patientId && typeof found.patientId === "object") ? found.patientId : null;
+        if ((!pat || !pat.gender) && found.UHID) {
+          try {
+            const r = await axios.get(`${API_ENDPOINTS.BASE}/patients/uhid/${encodeURIComponent(found.UHID)}`, { headers });
+            pat = r?.data?.data || r?.data || pat;
+          } catch (_) { /* keep whatever we have */ }
+        }
+        const ageNow = pat?.age
+          || (pat?.dateOfBirth ? Math.max(0, Math.floor((Date.now() - new Date(pat.dateOfBirth).getTime()) / (365.25 * 86400000))) : "");
         setForm(p => ({
           ...p,
-          UHID: found.UHID,
-          patientName: found.patientName || found.patientId?.fullName || "",
-          ipdNo: found.admissionNumber || "",
-          admissionDate: admDate ? admDate.toLocaleDateString("en-IN") : "",
+          UHID:           found.UHID,
+          patientName:    found.patientName || pat?.fullName || found.patientId?.fullName || "",
+          age:            ageNow ? String(ageNow) : p.age,
+          gender:         pat?.gender || found.gender || p.gender,
+          contactNumber:  pat?.contactNumber || pat?.phone || found.contactNumber || p.contactNumber,
+          ipdNo:          found.admissionNumber || "",
+          // Date <input type="date"> needs ISO YYYY-MM-DD; the old
+          // toLocaleDateString("en-IN") returned "14/05/2026" and the
+          // browser silently rendered the input empty.
+          admissionDate:  admDate ? admDate.toISOString().slice(0, 10) : "",
           stayDays,
-          department: found.department || p.department,
-          doctorName: found.attendingDoctor || p.doctorName,
-          contactNumber: found.contactNumber || "",
+          department:     found.department || p.department,
+          doctorName:     found.attendingDoctor || found.attendingDoctorId?.fullName || p.doctorName,
+          doctorRegNo:    found.attendingDoctorId?.doctorDetails?.registrationNumber
+                          || found.attendingDoctorRegNo
+                          || p.doctorRegNo,
+          admittingDiagnosis: found.provisionalDiagnosis || p.admittingDiagnosis,
         }));
         // Restore auto-save draft if available
         const dKey = `sphere_draft_discharge_${found._id}`;
@@ -908,113 +929,183 @@ function DischargeSummaryPageContent({ selectedPatient }) {
         </div>
       </div>
 
-      {/* ── Patient search (always visible) ── */}
-      <div style={{ background: C.card, borderRadius: 12, padding: "12px 18px", marginBottom: 14, border: `1.5px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <i className="pi pi-search" style={{ color: C.muted, fontSize: 14 }} />
-        <input value={uhid} onChange={e => setUhid(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && searchPatient()}
-          className="his-field" style={{ flex: 1, minWidth: 220 }} placeholder="Enter UHID / Admission No. to load patient…" />
-        <button id="ds-load-btn" onClick={searchPatient} disabled={searching} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: searching ? C.muted : C.blue, color: "white", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
-          {searching ? "Searching…" : "Load Patient"}
-        </button>
-        {patInfo && (
-          <div style={{ display: "flex", gap: 12, fontSize: 12, color: C.text, flexWrap: "wrap" }}>
-            <span><b>Patient:</b> {form.patientName}</span>
-            <span><b>UHID:</b> {form.UHID}</span>
-            <span><b>IPD:</b> {form.ipdNo}</span>
-            <span><b>Stay:</b> {form.stayDays} days</span>
-            {workflowCtx?.bedNumber && <span><b>Bed:</b> {workflowCtx.bedNumber}</span>}
+      {/* ══ Patient identity card ────────────────────────────────────────
+         Two states:
+           • EMPTY  — full-width search bar to load a patient by UHID
+           • LOADED — gradient hero card showing patient avatar, name,
+                      key facts, with a "change patient" toggle that
+                      flips back to the search bar.
+      ═══════════════════════════════════════════════════════════════════ */}
+      {!patInfo ? (
+        <div style={{
+          background: C.card, borderRadius: 12, padding: "14px 18px",
+          marginBottom: 14, border: `1.5px solid ${C.border}`,
+          display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+        }}>
+          <div style={{
+            width: 32, height: 32, borderRadius: 8, background: "#eff6ff",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            flexShrink: 0,
+          }}>
+            <i className="pi pi-search" style={{ color: C.blue, fontSize: 14 }} />
           </div>
-        )}
-      </div>
+          <input value={uhid} onChange={e => setUhid(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && searchPatient()}
+            className="his-field" style={{ flex: 1, minWidth: 220 }}
+            placeholder="Enter UHID / Admission No. to load patient…" />
+          <button id="ds-load-btn" onClick={searchPatient} disabled={searching}
+            style={{
+              padding: "9px 22px", borderRadius: 8, border: "none",
+              background: searching ? C.muted : C.blue, color: "white",
+              fontWeight: 700, fontSize: 12, cursor: "pointer",
+            }}>
+            {searching ? "Searching…" : <><i className="pi pi-arrow-circle-right" style={{ marginRight: 6 }} />Load Patient</>}
+          </button>
+        </div>
+      ) : (
+        <div style={{
+          background: "linear-gradient(135deg,#1e40af,#0e7490)",
+          borderRadius: 12, padding: "14px 18px", marginBottom: 14,
+          display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap",
+          color: "#fff", boxShadow: "0 4px 14px rgba(30,64,175,.25)",
+        }}>
+          {/* Avatar initial */}
+          <div style={{
+            width: 50, height: 50, borderRadius: "50%",
+            background: "rgba(255,255,255,.2)", border: "2px solid rgba(255,255,255,.35)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 20, fontWeight: 800, flexShrink: 0,
+          }}>
+            {(form.patientName || "?").trim().charAt(0).toUpperCase()}
+          </div>
 
-      {/* ══ Discharge workflow stepper ═══════════════════════════════════
-         Visible once a patient is loaded. The 4 steps run sequentially:
-           1. Doctor — discharge summary saved as DRAFT
-           2. Nurse  — adds the discharge nursing note
-           3. Reception — final-payment + bill clearance
-           4. Finalize — flips admission to Discharged + frees bed
-         Each step is a button that jumps to the right page; status pills
-         show what's already done (DRAFT saved, finalized, etc.).
+          {/* Name + key facts */}
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: "-.2px" }}>
+              {form.patientName || "—"}
+            </div>
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 4, fontSize: 11.5, opacity: .92 }}>
+              <span><b style={{ opacity: .75 }}>UHID</b> · {form.UHID}</span>
+              <span><b style={{ opacity: .75 }}>IPD</b> · {form.ipdNo || "—"}</span>
+              {(form.age || form.gender) && (
+                <span><b style={{ opacity: .75 }}>Age/Sex</b> · {[form.age && `${form.age}Y`, form.gender].filter(Boolean).join(" / ") || "—"}</span>
+              )}
+              <span><b style={{ opacity: .75 }}>Stay</b> · {form.stayDays ? `${form.stayDays} days` : "—"}</span>
+              {form.doctorName && <span><b style={{ opacity: .75 }}>Doctor</b> · {form.doctorName}</span>}
+              {workflowCtx?.bedNumber && <span><b style={{ opacity: .75 }}>Bed</b> · {workflowCtx.bedNumber}</span>}
+            </div>
+          </div>
+
+          {/* Change patient */}
+          <button
+            onClick={() => { setPatInfo(null); setUhid(""); }}
+            style={{
+              padding: "8px 14px", borderRadius: 8,
+              background: "rgba(255,255,255,.15)", border: "1.5px solid rgba(255,255,255,.3)",
+              color: "#fff", fontWeight: 700, fontSize: 11.5,
+              cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
+            }}>
+            <i className="pi pi-refresh" style={{ fontSize: 11 }} />
+            Change
+          </button>
+        </div>
+      )}
+
+      {/* ══ Discharge workflow strip — compact horizontal pipeline ════════
+         4 steps: Doctor → Nurse → Reception → Finalize. Each pill is
+         clickable (when applicable). Step 1 turns green on Save, gating
+         Step 4 (Finalize) which actually flips the admission.
       ═══════════════════════════════════════════════════════════════════ */}
       {patInfo && (() => {
         const done1 = !!lastSavedId;
-        const Step = ({ n, title, sub, status, onClick, accent, disabled }) => (
-          <div style={{
-            flex: 1, minWidth: 220,
-            background: status === "done" ? "#f0fdf4" : status === "active" ? "#eff6ff" : "#f8fafc",
-            border: `1.5px solid ${status === "done" ? "#86efac" : status === "active" ? "#93c5fd" : "#e2e8f0"}`,
-            borderRadius: 10, padding: "12px 14px",
-            display: "flex", alignItems: "center", gap: 12,
-          }}>
-            <div style={{
-              width: 30, height: 30, borderRadius: "50%",
-              background: status === "done" ? "#16a34a" : accent,
-              color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
-              fontWeight: 800, fontSize: 13,
-            }}>
-              {status === "done" ? <i className="pi pi-check" style={{ fontSize: 13 }} /> : n}
+        const STEP_COLORS = {
+          doctor:    { bg: "#2563eb", soft: "#eff6ff", border: "#bfdbfe" },
+          nurse:     { bg: "#db2777", soft: "#fdf2f8", border: "#fbcfe8" },
+          reception: { bg: "#0891b2", soft: "#ecfeff", border: "#a5f3fc" },
+          finalize:  { bg: "#15803d", soft: "#f0fdf4", border: "#86efac" },
+          done:      { bg: "#16a34a", soft: "#dcfce7", border: "#86efac" },
+        };
+        const Pill = ({ n, role, label, sub, isDone, isActive, onClick, disabled }) => {
+          const c = isDone ? STEP_COLORS.done : STEP_COLORS[role];
+          return (
+            <div onClick={!disabled && onClick ? onClick : undefined}
+              style={{
+                flex: "1 1 220px",
+                background: isDone || isActive ? c.soft : "#f8fafc",
+                border: `1.5px solid ${isDone || isActive ? c.border : "#e2e8f0"}`,
+                borderRadius: 10,
+                padding: "10px 12px",
+                display: "flex", alignItems: "center", gap: 10,
+                cursor: disabled ? "not-allowed" : (onClick ? "pointer" : "default"),
+                opacity: disabled && !isDone ? 0.6 : 1,
+                transition: "transform .15s, box-shadow .15s",
+                position: "relative",
+              }}
+              onMouseEnter={(e) => { if (!disabled && onClick) e.currentTarget.style.boxShadow = "0 4px 14px rgba(0,0,0,.08)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "none"; }}
+            >
+              <div style={{
+                width: 28, height: 28, borderRadius: "50%",
+                background: c.bg, color: "#fff",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontWeight: 800, fontSize: 12, flexShrink: 0,
+              }}>
+                {isDone ? <i className="pi pi-check" style={{ fontSize: 12 }} /> : n}
+              </div>
+              <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
+                <div style={{ fontSize: 11.5, fontWeight: 800, color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {label}
+                </div>
+                <div style={{ fontSize: 10, color: "#64748b", marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {sub}
+                </div>
+              </div>
+              {onClick && !disabled && (
+                <i className="pi pi-arrow-right" style={{ fontSize: 10, color: c.bg, flexShrink: 0 }} />
+              )}
             </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 12, fontWeight: 800, color: "#0f172a" }}>{title}</div>
-              <div style={{ fontSize: 10.5, color: "#64748b", marginTop: 1 }}>{sub}</div>
-            </div>
-            {onClick && (
-              <button onClick={onClick} disabled={disabled}
-                style={{
-                  padding: "6px 12px", borderRadius: 6, border: "none",
-                  background: disabled ? "#cbd5e1" : accent, color: "#fff",
-                  fontSize: 11, fontWeight: 700,
-                  cursor: disabled ? "not-allowed" : "pointer",
-                  whiteSpace: "nowrap",
-                }}>
-                {status === "done" ? "Re-open" : "Open"}
-                <i className="pi pi-arrow-right" style={{ fontSize: 9, marginLeft: 5 }} />
-              </button>
-            )}
-          </div>
-        );
+          );
+        };
 
         return (
           <div style={{
-            background: "linear-gradient(135deg,#fef9c3,#fffbeb)",
-            border: "1.5px solid #fde68a", borderRadius: 12,
-            padding: "12px 16px", marginBottom: 14,
+            background: "white",
+            border: "1px solid #e2e8f0", borderRadius: 12,
+            padding: "10px 14px", marginBottom: 14,
+            display: "flex", alignItems: "center", gap: 10,
+            boxShadow: "0 1px 3px rgba(0,0,0,.04)",
           }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-              <i className="pi pi-list" style={{ color: "#b45309", fontSize: 14 }} />
-              <div style={{ fontSize: 12, fontWeight: 800, color: "#92400e", letterSpacing: ".3px", textTransform: "uppercase" }}>
-                Discharge workflow
-              </div>
-              <div style={{ fontSize: 10.5, color: "#92400e", opacity: .8 }}>
-                Doctor → Nurse → Reception → Finalize
+            <div style={{
+              display: "flex", flexDirection: "column", alignItems: "center",
+              gap: 1, paddingRight: 12, borderRight: "1px solid #e2e8f0",
+              minWidth: 90,
+            }}>
+              <i className="pi pi-list" style={{ color: "#475569", fontSize: 13 }} />
+              <div style={{ fontSize: 9.5, fontWeight: 800, color: "#475569", textTransform: "uppercase", letterSpacing: ".4px" }}>
+                Workflow
               </div>
             </div>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <Step n={1} title="Discharge summary"
-                sub={done1 ? "Saved as DRAFT" : "Fill the format below and click Save"}
-                status={done1 ? "done" : "active"}
-                accent="#2563eb" />
-              <Step n={2} title="Nursing discharge note"
-                sub="Final shift handover · home-care advice"
-                status={done1 ? "active" : "pending"}
-                accent="#db2777"
+            <div style={{ display: "flex", gap: 8, flex: 1, flexWrap: "wrap" }}>
+              <Pill n={1} role="doctor"
+                label="Discharge summary"
+                sub={done1 ? "Saved · DRAFT" : "Fill below + Save"}
+                isDone={done1} isActive={!done1} />
+              <Pill n={2} role="nurse"
+                label="Nursing note"
+                sub="Hand-off + advice"
+                isActive={done1}
                 disabled={!form.UHID}
-                onClick={() => {
-                  window.location.href = `/nursing-notes?uhid=${encodeURIComponent(form.UHID)}&mode=discharge`;
-                }} />
-              <Step n={3} title="Reception · final payment"
-                sub="Settle outstanding bill · TPA / cash"
-                status={done1 ? "active" : "pending"}
-                accent="#0891b2"
+                onClick={() => { window.location.href = `/nursing-notes?uhid=${encodeURIComponent(form.UHID)}&mode=discharge`; }} />
+              <Pill n={3} role="reception"
+                label="Final payment"
+                sub="TPA / cash settlement"
+                isActive={done1}
                 disabled={!form.UHID}
-                onClick={() => {
-                  window.location.href = `/discharge-queue?uhid=${encodeURIComponent(form.UHID)}`;
-                }} />
-              <Step n={4} title="Finalize & free bed"
-                sub={done1 ? "Mark admission Discharged · release bed" : "Save the summary first"}
-                status={done1 ? "active" : "pending"}
-                accent="#15803d"
+                onClick={() => { window.location.href = `/discharge-queue?uhid=${encodeURIComponent(form.UHID)}`; }} />
+              <Pill n={4} role="finalize"
+                label="Finalize & free bed"
+                sub={done1 ? "Discharge + release" : "Save first"}
+                isActive={done1}
                 disabled={!lastSavedId || finalizing || saving}
                 onClick={handleFinalize} />
             </div>
