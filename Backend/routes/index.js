@@ -173,4 +173,7 @@ router.use("/diabetic-chart",   require("./Clinical/diabeticChartRoutes"));
 // Equipment inventory + homecare loan tracker + service history
 router.use("/equipment",        require("./Equipment/equipmentRoutes"));
 
+// Pharmacy — drug master, batches, GRN, dispense, sales register
+router.use("/pharmacy",         require("./Pharmacy/pharmacyRoutes"));
+
 module.exports = router;

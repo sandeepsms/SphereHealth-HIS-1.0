@@ -126,6 +126,7 @@ const MARPage = lazy(() => import("./pages/clinical/MARPage"));
 const DiabeticChartPage = lazy(() => import("./pages/clinical/DiabeticChartPage"));
 const MaintenanceDashboardPage = lazy(() => import("./pages/maintenance/MaintenanceDashboardPage"));
 const EquipmentDashboardPage   = lazy(() => import("./pages/maintenance/EquipmentDashboardPage"));
+const PharmacyHomePage         = lazy(() => import("./pages/pharmacy/PharmacyHomePage"));
 const DischargeSummaryPage = lazy(() => import("./pages/clinical/DischargeSummaryPage"));
 const ConsentFormPage = lazy(() => import("./pages/clinical/ConsentFormPage"));
 const IPDInitialAssessmentPage = lazy(() => import("./pages/clinical/IPDInitialAssessmentPage"));
@@ -427,6 +428,7 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/diabetic-chart" element={<DiabeticChartPage />} />
             <Route path="/maintenance"    element={<MaintenanceDashboardPage />} />
             <Route path="/equipment"      element={<EquipmentDashboardPage />} />
+            <Route path="/pharmacy"       element={<PharmacyHomePage />} />
             <Route path="/discharge-summary" element={<DischargeSummaryPage />} />
             <Route path="/consent-forms" element={<ConsentFormPage />} />
             <Route path="/nurse-initial-assessment" element={<NurseInitialAssessmentPage />} />
