@@ -193,7 +193,7 @@ function AdminDashboard({ user }) {
             { icon: "pi-sitemap",    label: "Departments",          sub: "Hospital departments + services",        color: C.orange,  onClick: () => navigate("/department") },
             { icon: "pi-user-edit",  label: "Doctor Master",        sub: "Consultants, specialisations",           color: C.purple,  onClick: () => navigate("/doctors") },
             { icon: "pi-dollar",     label: "Hospital Charges",     sub: "TPA tariff sheets",                      color: C.amber,   onClick: () => navigate("/hospital-charges") },
-            { icon: "pi-chart-bar",  label: "Reports",              sub: "Operational + financial",                color: C.green,   onClick: () => navigate("/admin-reports") },
+            { icon: "pi-chart-bar",  label: "Reports",              sub: "Operational + financial",                color: C.green,   onClick: () => navigate("/billing-intelligence") },
             { icon: "pi-print",      label: "Print Gallery",        sub: "Preview every printable",                color: C.pink,    onClick: () => navigate("/print-gallery") },
           ]} />
         </Card>
@@ -238,9 +238,9 @@ function DoctorDashboard({ user }) {
             { icon: "pi-user-edit",  label: "OPD Panel",        sub: "Live OPD queue + assessment",            color: C.purple, onClick: () => navigate("/doctor-opd-panel") },
             { icon: "pi-search",     label: "Patient Search",   sub: "Find any patient · view full file",      color: C.blue,   onClick: () => navigate("/patient-search") },
             { icon: "pi-th-large",   label: "Bed View",         sub: "Walk the wards · IPD census",            color: C.teal,   onClick: () => navigate("/bed-visual") },
-            { icon: "pi-pen-to-square",label: "Doctor Orders",  sub: "Drug orders · MAR · investigations",     color: C.amber,  onClick: () => navigate("/doctor-orders") },
+            { icon: "pi-pen-to-square",label: "Doctor Orders",  sub: "Investigation orders · drug orders",     color: C.amber,  onClick: () => navigate("/investigation-orders") },
             { icon: "pi-file-edit",  label: "Discharge Summary",sub: "Finalize discharge",                     color: C.red,    onClick: () => navigate("/discharge-summary") },
-            { icon: "pi-receipt",    label: "Sick Certificate", sub: "Issue medical certificate",              color: C.green,  onClick: () => navigate("/medical-certificate") },
+            { icon: "pi-receipt",    label: "Doctor Notes",     sub: "Daily progress · certificates",          color: C.green,  onClick: () => navigate("/doctor-notes") },
             { icon: "pi-box",        label: "Pharmacy",         sub: "Drug search · in-house stock",           color: C.orange, onClick: () => navigate("/pharmacy") },
             { icon: "pi-flag",       label: "MLC Register",     sub: "Medico-legal cases",                     color: C.red,    onClick: () => navigate("/mlc") },
           ]} />
@@ -308,7 +308,7 @@ function ReceptionDashboard({ user }) {
             { icon: "pi-search",     label: "Patient Search",     sub: "Find by UHID / name / phone",   color: C.amber,   onClick: () => navigate("/patient-search") },
             { icon: "pi-sign-out",   label: "Discharge Queue",    sub: "Bills + clearance",             color: C.green,   onClick: () => navigate("/discharge-queue") },
             { icon: "pi-id-card",    label: "Visitor Pass",       sub: "Issue attendant pass",          color: C.amber,   onClick: () => navigate("/visitor-passes") },
-            { icon: "pi-receipt",    label: "Billing",            sub: "Generate bill · payment",       color: C.amber,   onClick: () => navigate("/bill") },
+            { icon: "pi-receipt",    label: "Billing",            sub: "Generate bill · payment",       color: C.amber,   onClick: () => navigate("/billing") },
             { icon: "pi-briefcase",  label: "TPA / Cashless",     sub: "Pre-auth + claim",              color: C.purple,  onClick: () => navigate("/tpa-cases") },
           ]} />
         </Card>
@@ -379,9 +379,9 @@ function LabDashboard({ user, role }) {
         <Card title="Quick actions" color={C.blue} icon="pi-bolt">
           <QuickActionsGrid items={[
             { icon: "pi-list",         label: "Investigation Orders", sub: "All open requests",         color: C.blue,    onClick: () => navigate("/investigation-orders") },
-            { icon: "pi-flask",        label: "Lab Management",       sub: "Tests catalogue + workflow",color: C.purple,  onClick: () => navigate("/lab-management") },
-            { icon: "pi-pen-to-square",label: "Result Entry",         sub: "Enter & verify results",    color: C.green,   onClick: () => navigate("/lab-management") },
-            { icon: "pi-print",        label: "Dispatch Reports",     sub: "Print + share with patient",color: C.amber,   onClick: () => navigate("/lab-management") },
+            { icon: "pi-flask",        label: "Test Master",          sub: "Tests catalogue + setup",   color: C.purple,  onClick: () => navigate("/investigation-master") },
+            { icon: "pi-pen-to-square",label: "Result Entry",         sub: "Enter & verify results",    color: C.green,   onClick: () => navigate("/investigation-orders") },
+            { icon: "pi-print",        label: "Dispatch Reports",     sub: "Print + share with patient",color: C.amber,   onClick: () => navigate("/investigation-orders") },
           ]} />
         </Card>
         <AccessSnapshot role={user.role} />
@@ -408,12 +408,12 @@ function AccountantDashboard({ user }) {
       <div style={{ display: "grid", gap: 14 }}>
         <Card title="Quick actions" color={C.amber} icon="pi-bolt">
           <QuickActionsGrid items={[
-            { icon: "pi-receipt",      label: "Generate Bill",    sub: "Final / interim bill",            color: C.amber,   onClick: () => navigate("/bill") },
-            { icon: "pi-undo",         label: "Refunds",          sub: "Process refund requests",         color: C.red,     onClick: () => navigate("/bill") },
-            { icon: "pi-chart-line",   label: "Daily Report",     sub: "Collection summary",              color: C.green,   onClick: () => navigate("/admin-reports") },
+            { icon: "pi-receipt",      label: "Generate Bill",    sub: "Final / interim bill",            color: C.amber,   onClick: () => navigate("/billing") },
+            { icon: "pi-undo",         label: "Refunds",          sub: "Process refund requests",         color: C.red,     onClick: () => navigate("/billing") },
+            { icon: "pi-chart-line",   label: "Billing Intelligence",sub: "Collection · trends · KPIs",   color: C.green,   onClick: () => navigate("/billing-intelligence") },
             { icon: "pi-briefcase",    label: "TPA / Cashless",   sub: "Insurance claims",                color: C.purple,  onClick: () => navigate("/tpa-cases") },
             { icon: "pi-percentage",   label: "GST Summary",      sub: "Tax breakdown · GSTR feeder",     color: C.blue,    onClick: () => navigate("/pharmacy?tab=registers") },
-            { icon: "pi-print",        label: "Reports",          sub: "Operational + financial",         color: C.teal,    onClick: () => navigate("/admin-reports") },
+            { icon: "pi-shield",       label: "Audit Trail",      sub: "Every billing action logged",     color: C.teal,    onClick: () => navigate("/billing-audit-trail") },
           ]} />
         </Card>
         <AccessSnapshot role={user.role} />
@@ -440,8 +440,8 @@ function TPADashboard({ user }) {
         <Card title="Quick actions" color={C.purple} icon="pi-bolt">
           <QuickActionsGrid items={[
             { icon: "pi-briefcase",    label: "TPA Cases",       sub: "All cashless cases",            color: C.purple,  onClick: () => navigate("/tpa-cases") },
-            { icon: "pi-send",         label: "New Pre-Auth",    sub: "Send to TPA",                   color: C.amber,   onClick: () => navigate("/cashless") },
-            { icon: "pi-receipt",      label: "Claim Files",     sub: "File final bill claim",         color: C.blue,    onClick: () => navigate("/cashless") },
+            { icon: "pi-send",         label: "New Pre-Auth",    sub: "Send to TPA",                   color: C.amber,   onClick: () => navigate("/addtpa") },
+            { icon: "pi-receipt",      label: "Claim Files",     sub: "File final bill claim",         color: C.blue,    onClick: () => navigate("/tpa-cases") },
             { icon: "pi-dollar",       label: "Hospital Charges",sub: "TPA tariff sheets",             color: C.green,   onClick: () => navigate("/hospital-charges") },
           ]} />
         </Card>

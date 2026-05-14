@@ -284,9 +284,17 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/allpatient" element={<PatientsTable />} />
 
             {/* ── Doctors ──────────────────────────────────────── */}
-            <Route path="/doctors" element={<DoctorListPage />} />
-            <Route path="/doctors/new" element={<DoctorFormPage />} />
-            <Route path="/doctors/:doctorId/edit" element={<DoctorFormPage />} />
+            {/* List visible to anyone who books / refers / staffs OPD;
+                create / edit limited to Admin via doctors.write. */}
+            <Route path="/doctors" element={
+              <RoleGuard action="doctors.read"><DoctorListPage /></RoleGuard>
+            } />
+            <Route path="/doctors/new" element={
+              <RoleGuard action="doctors.write"><DoctorFormPage /></RoleGuard>
+            } />
+            <Route path="/doctors/:doctorId/edit" element={
+              <RoleGuard action="doctors.write"><DoctorFormPage /></RoleGuard>
+            } />
 
             {/* ── Nursing ──────────────────────────────────────── */}
             <Route path="/nursing-notes" element={<NursingNotes />} />
@@ -331,12 +339,22 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/patients/:id" element={<PatientDetails />} />
 
             {/* ── Services & TPA ────────────────────────────────── */}
-            <Route path="/addservice" element={<ServiceAdd />} />
-            <Route path="/addtpa" element={<AddTpa />} />
-            <Route path="/ServiceAlldata" element={<ServiceAlldata />} />
+            <Route path="/addservice" element={
+              <RoleGuard action="departments.write"><ServiceAdd /></RoleGuard>
+            } />
+            <Route path="/addtpa" element={
+              <RoleGuard action="tpa.pre-auth"><AddTpa /></RoleGuard>
+            } />
+            <Route path="/ServiceAlldata" element={
+              <RoleGuard action="billing.read"><ServiceAlldata /></RoleGuard>
+            } />
 
-            {/* ── Department ────────────────────────────────────── */}
-            <Route path="/department" element={<DepartmentManagement />} />
+            {/* ── Department ──────────────────────────────────────
+                Anyone may read (departments.read); writes happen inside the
+                page and are gated by departments.write at the API. */}
+            <Route path="/department" element={
+              <RoleGuard action="departments.read"><DepartmentManagement /></RoleGuard>
+            } />
 
             {/* ── Bed Management ────────────────────────────────── */}
             <Route path="/bed-dashboard" element={<BedDashboard />} />
@@ -352,30 +370,65 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/floors" element={<FloorManagement />} />
 
             {/* ── Hospital Charges ──────────────────────────────── */}
-            <Route path="/hospital-charges" element={<HospitalChargesList />} />
-            <Route path="/hospital-charges/create" element={<CreateHospitalCharges />} />
-            <Route path="/hospital-charges/edit/:id" element={<EditHospitalCharges />} />
+            {/* TPA tariff sheets — anyone who can bill may view; only
+                Admin can mutate (same gate as departments.write). */}
+            <Route path="/hospital-charges" element={
+              <RoleGuard action="billing.read"><HospitalChargesList /></RoleGuard>
+            } />
+            <Route path="/hospital-charges/create" element={
+              <RoleGuard action="departments.write"><CreateHospitalCharges /></RoleGuard>
+            } />
+            <Route path="/hospital-charges/edit/:id" element={
+              <RoleGuard action="departments.write"><EditHospitalCharges /></RoleGuard>
+            } />
 
-            {/* ── Old Billing (existing) ────────────────────────── */}
-            <Route path="/billing" element={<BillsList />} />
-            <Route path="/billing/create/:prescriptionId" element={<BillGeneration />} />
-            <Route path="/billing/view/:billId" element={<BillGeneration />} />
-            <Route path="/billing/edit/:billId" element={<BillGeneration />} />
+            {/* ── Old Billing (existing) ──────────────────────────
+                Anyone who can read billing (Admin, Accountant, Receptionist,
+                TPA Coordinator) may view. Refunds inside the page are gated
+                separately by billing.refund on the API. */}
+            <Route path="/billing" element={
+              <RoleGuard action="billing.read"><BillsList /></RoleGuard>
+            } />
+            <Route path="/billing/create/:prescriptionId" element={
+              <RoleGuard action="billing.write"><BillGeneration /></RoleGuard>
+            } />
+            <Route path="/billing/view/:billId" element={
+              <RoleGuard action="billing.read"><BillGeneration /></RoleGuard>
+            } />
+            <Route path="/billing/edit/:billId" element={
+              <RoleGuard action="billing.write"><BillGeneration /></RoleGuard>
+            } />
             <Route path="/bills" element={<Navigate to="/billing" replace />} />
 
             {/* ── New Billing System ──────────────── */}
-            <Route path="/patient-billing" element={<PatientBilling />} />
-            <Route path="/patient-billing/:uhid" element={<PatientBilling />} />
-            <Route path="/service-master" element={<ServiceMasterManager />} />
-            <Route path="/chargeable-services" element={<ChargeableServices />} />
+            <Route path="/patient-billing" element={
+              <RoleGuard action="billing.read"><PatientBilling /></RoleGuard>
+            } />
+            <Route path="/patient-billing/:uhid" element={
+              <RoleGuard action="billing.read"><PatientBilling /></RoleGuard>
+            } />
+            <Route path="/service-master" element={
+              <RoleGuard action="departments.write"><ServiceMasterManager /></RoleGuard>
+            } />
+            <Route path="/chargeable-services" element={
+              <RoleGuard action="billing.read"><ChargeableServices /></RoleGuard>
+            } />
 
-            {/* ── AI Billing Intelligence ──────────────────────── */}
-            <Route path="/billing-intelligence" element={<BillingIntelligencePage />} />
-            <Route path="/billing-intelligence/:uhid" element={<BillingIntelligencePage />} />
+            {/* ── AI Billing Intelligence — admin/accountant only ── */}
+            <Route path="/billing-intelligence" element={
+              <RoleGuard action="reports.financial"><BillingIntelligencePage /></RoleGuard>
+            } />
+            <Route path="/billing-intelligence/:uhid" element={
+              <RoleGuard action="reports.financial"><BillingIntelligencePage /></RoleGuard>
+            } />
 
-            {/* ── Billing Audit Trail ──────────────────────────── */}
-            <Route path="/billing-audit-trail" element={<BillingAuditTrailPage />} />
-            <Route path="/billing-audit-trail/:uhid" element={<BillingAuditTrailPage />} />
+            {/* ── Billing Audit Trail — admin only ───────────────── */}
+            <Route path="/billing-audit-trail" element={
+              <RoleGuard action="reports.audit"><BillingAuditTrailPage /></RoleGuard>
+            } />
+            <Route path="/billing-audit-trail/:uhid" element={
+              <RoleGuard action="reports.audit"><BillingAuditTrailPage /></RoleGuard>
+            } />
 
             {/* ── Main / Default ───────────────────────────────── */}
             <Route path="/" element={<Navigate to={homePath} replace />} />
@@ -388,9 +441,15 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/reception" element={<ReceptionDashboard />} />
             <Route path="/reception/register" element={<ReceptionConsole />} />
             <Route path="/reception-console" element={<ReceptionConsole />} />
-            <Route path="/discharge-queue" element={<DischargeQueue />} />
-            <Route path="/visitor-passes" element={<VisitorPasses />} />
-            <Route path="/tpa-cases" element={<TPACases />} />
+            <Route path="/discharge-queue" element={
+              <RoleGuard action="reception.discharge"><DischargeQueue /></RoleGuard>
+            } />
+            <Route path="/visitor-passes" element={
+              <RoleGuard action="reception.visitor-pass"><VisitorPasses /></RoleGuard>
+            } />
+            <Route path="/tpa-cases" element={
+              <RoleGuard action="tpa.pre-auth"><TPACases /></RoleGuard>
+            } />
             <Route path="/appointments" element={<Appointments />} />
             {/* Receptionist-flavored versions of shared modules */}
             <Route path="/patient-search" element={<ReceptionPatientSearch />} />
@@ -419,8 +478,12 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/diabetic-chart" element={<DiabeticChartPage />} />
             <Route path="/maintenance"    element={<MaintenanceDashboardPage />} />
             <Route path="/equipment"      element={<EquipmentDashboardPage />} />
-            <Route path="/pharmacy"       element={<PharmacyHomePage />} />
-            <Route path="/discharge-summary" element={<DischargeSummaryPage />} />
+            <Route path="/pharmacy"       element={
+              <RoleGuard allow={["Admin", "Pharmacist", "Doctor"]}><PharmacyHomePage /></RoleGuard>
+            } />
+            <Route path="/discharge-summary" element={
+              <RoleGuard action="ipd.discharge-summary"><DischargeSummaryPage /></RoleGuard>
+            } />
             <Route path="/consent-forms" element={<ConsentFormPage />} />
             <Route path="/nurse-initial-assessment" element={<NurseInitialAssessmentPage />} />
             <Route path="/ipd-initial-assessment" element={<IPDInitialAssessmentPage />} />
@@ -429,8 +492,12 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/ipd-assessment/:uhid" element={<IPDInitialAssessmentPage />} />
 
             {/* Investigation / Lab — used by Lab Tech, Radiologist, Doctor */}
-            <Route path="/investigation-orders" element={<InvestigationOrders />} />
-            <Route path="/investigation-master" element={<InvestigationMaster />} />
+            <Route path="/investigation-orders" element={
+              <RoleGuard allow={["Admin", "Lab Technician", "Radiologist", "Doctor", "Nurse", "Receptionist"]}><InvestigationOrders /></RoleGuard>
+            } />
+            <Route path="/investigation-master" element={
+              <RoleGuard allow={["Admin", "Lab Technician", "Radiologist"]}><InvestigationMaster /></RoleGuard>
+            } />
             <Route path="/doctor-assessment" element={<DoctorAssessmentPage />} />
             <Route path="/opd-assessment" element={<OPDAssessmentPage />} />
             <Route path="/doctor-patient-panel" element={<DoctorPatientPanel />} />

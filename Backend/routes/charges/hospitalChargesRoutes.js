@@ -1,27 +1,17 @@
 const express = require("express");
 const router = express.Router();
-
 const hospitalChargesController = require("../../controllers/charges/hospitalChargesController");
+const { requireAction } = require("../../middleware/auth");
 
-// Create hospital charges
-router.post("/create", hospitalChargesController.createHospitalCharges);
+// TPA tariff sheets — same ACL as departments: read for anyone who bills,
+// write for Admin only (tariff sheets are contractual).
+router.get("/",                  requireAction("billing.read"),  hospitalChargesController.getAllHospitalCharges);
+router.get("/document/:id",      requireAction("billing.read"),  hospitalChargesController.getHospitalChargesById);
+router.get("/tpa/:tpaId",        requireAction("billing.read"),  hospitalChargesController.getHospitalChargesByTPA);
 
-// Get all hospital charges (search, isActive supported)
-router.get("/", hospitalChargesController.getAllHospitalCharges);
-
-router.get("/document/:id", hospitalChargesController.getHospitalChargesById); // PEHLE
-router.get("/tpa/:tpaId", hospitalChargesController.getHospitalChargesByTPA);
-
-// Update hospital charges
-router.put("/:id", hospitalChargesController.updateHospitalCharges);
-
-// Delete hospital charges
-router.delete("/:id", hospitalChargesController.deleteHospitalCharges);
-
-// Toggle active / inactive
-router.patch(
-  "/:id/toggle-status",
-  hospitalChargesController.toggleActiveStatus,
-);
+router.post("/create",           requireAction("departments.write"), hospitalChargesController.createHospitalCharges);
+router.put("/:id",               requireAction("departments.write"), hospitalChargesController.updateHospitalCharges);
+router.delete("/:id",            requireAction("departments.write"), hospitalChargesController.deleteHospitalCharges);
+router.patch("/:id/toggle-status", requireAction("departments.write"), hospitalChargesController.toggleActiveStatus);
 
 module.exports = router;

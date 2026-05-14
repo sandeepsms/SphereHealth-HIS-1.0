@@ -44,6 +44,25 @@ const authorize = (...roles) => (req, res, next) => {
 /* ── Admin only shorthand ── */
 const adminOnly = authorize("Admin");
 
+/* ── Fine-grained action gate ──
+   requireAction("pharmacy.dispense") — checks Backend/config/permissions.js.
+   This is the server-side mirror of the frontend `can(action)` helper.
+   Use this for any sensitive write endpoint; the action key MUST match the
+   token defined in both Backend/config/permissions.js and
+   Frontend/src/config/permissions.js (they are intentionally identical). */
+const { roleCan } = require("../config/permissions");
+const requireAction = (action) => (req, res, next) => {
+  if (!req.user)
+    return res.status(401).json({ message: "Not authenticated" });
+  if (!roleCan(req.user.role, action))
+    return res.status(403).json({
+      message: `Access denied. Action '${action}' is not permitted for role '${req.user.role}'.`,
+      action,
+      role: req.user.role,
+    });
+  next();
+};
+
 /* ── Soft authentication ──
    Try to verify the token but never block the request — if no/invalid
    token, req.user is left undefined and the request proceeds. Use this
@@ -93,6 +112,7 @@ module.exports = {
   authenticate,
   authorize,
   adminOnly,
+  requireAction,
   attemptAuth,
   attachDoctorProfile,
   restrictToOwnDoctorPatients,

@@ -21,6 +21,7 @@ import axios from "axios";
 import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
 import { openPrint } from "../../Components/print/openPrint";
+import { useAuth } from "../../context/AuthContext";
 import "./reception-shared.css";
 
 const fmtCur  = (n) => `₹${(Number(n) || 0).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
@@ -335,13 +336,17 @@ export default function ReceptionBilling() {
 /* ───────────────────────────────────────────────────────────── */
 
 function BillDetail({ bill, onGenerate, onPay, onPrint, onRefund, onCancel }) {
+  const { can } = useAuth();
   const isDraft   = bill.billStatus === "DRAFT";
   const canPay    = ["GENERATED", "PARTIAL"].includes(bill.billStatus);
   const items     = bill.billItems || [];
   const payments  = bill.payments || [];
   const paidTotal = payments.reduce((s, p) => s + (p.amount || 0), 0);
-  const canRefund = paidTotal > 0 && bill.billStatus !== "CANCELLED";
-  const canCancel = !isDraft && paidTotal <= 0 && !["CANCELLED", "REFUNDED"].includes(bill.billStatus);
+  // Receptionist may collect payments but NOT issue refunds or cancel a
+  // finalized bill — those need Accountant/Admin (billing.refund).
+  // Backend already 403s the call; this hides the button so the UX matches.
+  const canRefund = can("billing.refund") && paidTotal > 0 && bill.billStatus !== "CANCELLED";
+  const canCancel = can("billing.refund") && !isDraft && paidTotal <= 0 && !["CANCELLED", "REFUNDED"].includes(bill.billStatus);
 
   return (
     <div className="rx-detail-card">

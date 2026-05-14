@@ -1,27 +1,25 @@
 const express = require("express");
 const router = express.Router();
 const departmentController = require("../../controllers/Department/department");
+const { requireAction } = require("../../middleware/auth");
 
-// Basic CRUD operations
-router.post("/", departmentController.createDepartment);
-router.get("/", departmentController.getAllDepartments);
-router.get("/stats", departmentController.getDepartmentStats);
-router.get("/search", departmentController.searchDepartments);
-router.get("/active", departmentController.getActiveDepartments);
-router.get("/opd", departmentController.getOPDDepartments);
-router.get("/ipd", departmentController.getIPDDepartments);
-router.get("/emergency", departmentController.getEmergencyDepartments);
-router.get(
-  "/category/:category",
-  departmentController.getDepartmentsByCategory
-);
-router.get("/code/:code", departmentController.getDepartmentByCode);
-router.get("/:id", departmentController.getDepartmentById);
-router.put("/:id", departmentController.updateDepartment);
-router.delete("/:id", departmentController.deleteDepartment);
+// ─── Reads — many roles (sidebar, doctor picker, etc. need this) ─
+router.get("/",                       requireAction("departments.read"), departmentController.getAllDepartments);
+router.get("/stats",                  requireAction("departments.read"), departmentController.getDepartmentStats);
+router.get("/search",                 requireAction("departments.read"), departmentController.searchDepartments);
+router.get("/active",                 requireAction("departments.read"), departmentController.getActiveDepartments);
+router.get("/opd",                    requireAction("departments.read"), departmentController.getOPDDepartments);
+router.get("/ipd",                    requireAction("departments.read"), departmentController.getIPDDepartments);
+router.get("/emergency",              requireAction("departments.read"), departmentController.getEmergencyDepartments);
+router.get("/category/:category",     requireAction("departments.read"), departmentController.getDepartmentsByCategory);
+router.get("/code/:code",             requireAction("departments.read"), departmentController.getDepartmentByCode);
+router.get("/:id",                    requireAction("departments.read"), departmentController.getDepartmentById);
 
-// HOD management
-router.post("/:id/hod", departmentController.assignHOD);
-router.delete("/:id/hod", departmentController.removeHOD);
+// ─── Writes — Admin only ─────────────────────────────────────
+router.post("/",                      requireAction("departments.write"), departmentController.createDepartment);
+router.put("/:id",                    requireAction("departments.write"), departmentController.updateDepartment);
+router.delete("/:id",                 requireAction("departments.write"), departmentController.deleteDepartment);
+router.post("/:id/hod",               requireAction("departments.write"), departmentController.assignHOD);
+router.delete("/:id/hod",             requireAction("departments.write"), departmentController.removeHOD);
 
 module.exports = router;

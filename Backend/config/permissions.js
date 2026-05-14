@@ -1,0 +1,84 @@
+/**
+ * permissions.js — backend mirror of Frontend/src/config/permissions.js
+ *
+ * Kept deliberately small and dependency-free so it can be required
+ * from any controller / middleware. Action tokens MUST match the
+ * frontend's ACTIONS map character-for-character so the UI hides
+ * what the API rejects and vice-versa.
+ *
+ * If you change anything here, mirror the same change in
+ * Frontend/src/config/permissions.js.
+ */
+
+const ACTIONS = {
+  // User & access management
+  "users.read":            ["Admin"],
+  "users.write":           ["Admin"],
+  "users.reset-password":  ["Admin"],
+  "users.signature":       ["Admin"],
+  "users.deactivate":      ["Admin"],
+
+  // Hospital identity / settings
+  "settings.read":         ["Admin"],
+  "settings.write":        ["Admin"],
+
+  // Departments + doctor master
+  "departments.read":      ["Admin", "Doctor", "Nurse", "Receptionist"],
+  "departments.write":     ["Admin"],
+  "doctors.read":          ["Admin", "Receptionist", "Doctor", "Nurse"],
+  "doctors.write":         ["Admin"],
+
+  // Reception flows
+  "reception.register":    ["Admin", "Receptionist"],
+  "reception.discharge":   ["Admin", "Receptionist"],
+  "reception.visitor-pass":["Admin", "Receptionist", "Security"],
+
+  // Clinical
+  "rx.write":              ["Admin", "Doctor"],
+  "rx.read":               ["Admin", "Doctor", "Nurse", "Pharmacist"],
+  "ipd.assign-bed":        ["Admin", "Receptionist", "Doctor"],
+  "ipd.discharge":         ["Admin", "Doctor", "Receptionist"],
+  "ipd.discharge-summary": ["Admin", "Doctor"],
+  "vitals.write":          ["Admin", "Nurse", "Doctor"],
+  "mar.write":             ["Admin", "Nurse"],
+  "doctor-orders.write":   ["Admin", "Doctor"],
+
+  // Pharmacy
+  "pharmacy.dispense":     ["Admin", "Pharmacist"],
+  "pharmacy.grn":          ["Admin", "Pharmacist"],
+  "pharmacy.return":       ["Admin", "Pharmacist"],
+  "pharmacy.add-items":    ["Admin", "Pharmacist"],
+  "pharmacy.cancel":       ["Admin", "Pharmacist"],
+  "pharmacy.settings":     ["Admin", "Pharmacist"],
+
+  // Lab
+  "lab.order":             ["Admin", "Doctor", "Receptionist"],
+  "lab.collect":           ["Admin", "Lab Technician", "Nurse"],
+  "lab.result-entry":      ["Admin", "Lab Technician"],
+  "lab.verify":            ["Admin", "Radiologist", "Doctor"],
+  "lab.dispatch":          ["Admin", "Lab Technician"],
+
+  // Billing
+  "billing.read":          ["Admin", "Accountant", "Receptionist", "TPA Coordinator"],
+  "billing.write":         ["Admin", "Accountant", "Receptionist"],
+  "billing.refund":        ["Admin", "Accountant"],
+  "billing.discount":      ["Admin", "Accountant"],
+
+  // TPA / cashless
+  "tpa.pre-auth":          ["Admin", "TPA Coordinator", "Receptionist"],
+  "tpa.claim":             ["Admin", "TPA Coordinator"],
+
+  // Reports
+  "reports.financial":     ["Admin", "Accountant"],
+  "reports.clinical":      ["Admin", "Doctor"],
+  "reports.audit":         ["Admin"],
+};
+
+function roleCan(role, action) {
+  if (!role) return false;
+  const allowed = ACTIONS[action];
+  if (!allowed) return false;
+  return allowed.includes("*") || allowed.includes(role);
+}
+
+module.exports = { ACTIONS, roleCan };

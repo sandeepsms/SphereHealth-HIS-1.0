@@ -14,6 +14,7 @@ import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
 import { openPrint } from "../../Components/print/openPrint";
 import { TabStrip } from "../../Components/admin-theme";
+import { useAuth } from "../../context/AuthContext";
 import TEMPLATES from "../../Components/print/printables/PharmacyBillTemplates";
 import PharmacyBill from "../../Components/print/printables/PharmacyBill";
 import PharmacyRegister, { REGISTER_HEADERS } from "../../Components/print/printables/PharmacyRegister";
@@ -818,6 +819,14 @@ function DispenseTab() {
    SALES TAB — history register
 ══════════════════════════════════════════════════════════════════ */
 function SalesTab() {
+  const { can } = useAuth();
+  // Doctors can land here because the route allows {Admin, Pharmacist, Doctor},
+  // but the destructive operations (cancel / return / add-items) are
+  // Pharmacist+Admin only per pharmacy.cancel / pharmacy.return / pharmacy.add-items.
+  // Hide the buttons so the UX matches what the API will accept.
+  const canCancel   = can("pharmacy.cancel");
+  const canReturn   = can("pharmacy.return");
+  const canAddItems = can("pharmacy.add-items");
   const [rows, setRows] = useState([]);
   const [q, setQ] = useState("");
   const [from, setFrom] = useState("");
@@ -896,13 +905,13 @@ function SalesTab() {
                     });
                   }}
                   label="Print" />
-                {(s.status === "Completed" || s.status === "Partial-Return" || s.status === "Supplemented") && (
+                {canAddItems && (s.status === "Completed" || s.status === "Partial-Return" || s.status === "Supplemented") && (
                   <RowAction icon="pi-plus" color={C.green} onClick={() => setAddItemsSale(s)} label="Add" />
                 )}
-                {(s.status === "Completed" || s.status === "Partial-Return" || s.status === "Supplemented") && (
+                {canReturn && (s.status === "Completed" || s.status === "Partial-Return" || s.status === "Supplemented") && (
                   <RowAction icon="pi-undo" color={C.amber} onClick={() => setReturnSale(s)} label="Return" />
                 )}
-                {s.status === "Completed" && (
+                {canCancel && s.status === "Completed" && (
                   <RowAction icon="pi-times" color={C.red} onClick={() => cancel(s)} label="Cancel" />
                 )}
               </td>
