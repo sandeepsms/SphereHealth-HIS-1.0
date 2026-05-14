@@ -13,6 +13,7 @@ import "../../Components/clinical/clinical-forms.css";
 import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
 import { openPrint } from "../../Components/print/openPrint";
+import TEMPLATES from "../../Components/print/printables/PharmacyBillTemplates";
 import {
   listDrugs, createDrug, updateDrug, deleteDrug,
   listSuppliers, createSupplier, updateSupplier, deleteSupplier,
@@ -1248,8 +1249,69 @@ function SettingsTab() {
   const isOutsourced = s.mode === "outsourced";
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: 14 }}>
-      {/* LEFT: editable fields */}
+    <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 14 }}>
+
+      {/* TEMPLATE PICKER — top of Settings */}
+      <Card title="Bill print template" color={C.purple} icon="pi-palette">
+        <div style={{ fontSize: 11.5, color: C.muted, marginBottom: 12 }}>
+          Pick a layout for every pharmacy bill the system prints. Switching here updates instantly — no re-deploy.
+          Templates <b>1-5</b> are tuned for in-house hospital branding, <b>6-10</b> for outsourced retail pharmacies.
+          Per-print overrides via <code style={{ background: "#f1f5f9", padding: "1px 5px", borderRadius: 3 }}>receipt.template</code> are honoured.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+          {TEMPLATES.map(t => {
+            const active = (s.billTemplate || 1) === t.id;
+            const isInh  = t.audience === "in-house";
+            const accent = isInh ? C.blue : C.orange;
+            return (
+              <button key={t.id} onClick={() => setS(p => ({ ...p, billTemplate: t.id }))}
+                style={{
+                  padding: 10, borderRadius: 10,
+                  border: `1.5px solid ${active ? accent : C.border}`,
+                  background: active ? accent + "08" : "#fff",
+                  cursor: "pointer", textAlign: "left",
+                  position: "relative", transition: "all .15s",
+                  boxShadow: active ? `0 4px 12px ${accent}25` : "0 1px 2px rgba(15,23,42,.04)",
+                }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{
+                    width: 28, height: 28, borderRadius: 7,
+                    background: active ? accent : accent + "15",
+                    color: active ? "#fff" : accent,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontWeight: 800, fontSize: 12,
+                  }}>{t.id}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 800, color: active ? accent : C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.label}</div>
+                    <div style={{ fontSize: 10, color: C.muted, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.sub}</div>
+                  </div>
+                  {active && <i className="pi pi-check-circle" style={{ color: accent, fontSize: 14 }} />}
+                </div>
+                <div style={{
+                  marginTop: 6, fontSize: 9, fontWeight: 800,
+                  padding: "2px 7px", borderRadius: 3, display: "inline-block",
+                  background: isInh ? "#dbeafe" : "#fed7aa",
+                  color:      isInh ? "#1e40af" : "#9a3412",
+                  letterSpacing: ".4px", textTransform: "uppercase",
+                }}>
+                  {isInh ? "In-house" : "Outsourced"}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ marginTop: 12 }}>
+          <Field label="Default paper size">
+            <select className="his-select" style={{ width: 200 }} value={s.defaultPaper || "half-a4"} onChange={upd("defaultPaper")}>
+              <option value="half-a4">Half-A4 (210 × 148.5mm) · recommended</option>
+              <option value="a4">A4 (210 × 297mm) · formal invoice</option>
+              <option value="a5">A5 (148 × 210mm) · compact</option>
+            </select>
+          </Field>
+        </div>
+      </Card>
+
+      {/* IDENTITY FIELDS BLOCK */}
       <Card title="Pharmacy identity" color={C.orange} icon="pi-cog">
         {/* Mode toggle */}
         <div style={{ marginBottom: 14, padding: "12px 14px", background: C.subtle, border: `1.5px solid ${C.border}`, borderRadius: 9 }}>
@@ -1359,40 +1421,11 @@ function SettingsTab() {
         </div>
       </Card>
 
-      {/* RIGHT: live preview card */}
-      <Card title="Header preview" color={C.blue} icon="pi-eye">
-        <div style={{ background: "#fff", border: `1.5px solid ${C.border}`, borderRadius: 9, overflow: "hidden" }}>
-          <div style={{
-            background: `linear-gradient(135deg, ${s.headerColor || C.orange}, ${s.accentColor || C.orange}cc)`,
-            color: "#fff", padding: "16px 18px",
-            display: "flex", alignItems: "center", gap: 12,
-          }}>
-            {(isOutsourced && s.logo) && (
-              <img src={s.logo} alt="" style={{ width: 48, height: 48, objectFit: "contain", background: "#fff", borderRadius: 8, padding: 4 }} />
-            )}
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: "-.2px" }}>
-                {isOutsourced ? (s.pharmacyName || "Pharmacy name") : "(Hospital name from settings)"}
-              </div>
-              <div style={{ fontSize: 11, opacity: .9, marginTop: 2 }}>
-                {isOutsourced ? (s.tagline || s.addressLine1 || "Tagline / address") : "(Hospital tagline & address)"}
-              </div>
-            </div>
-            <div style={{ textAlign: "right", fontSize: 10, opacity: .9 }}>
-              <div>GSTIN: <b>{isOutsourced ? (s.gstin || "—") : "(hospital)"}</b></div>
-              <div>D.L.: <b>{isOutsourced ? (s.drugLicenseNo || "—") : "(hospital)"}</b></div>
-            </div>
-          </div>
-          <div style={{ padding: "12px 18px", fontSize: 11, color: C.muted, background: C.subtle }}>
-            <div><b style={{ color: C.text }}>Phone:</b> {isOutsourced ? (s.phone1 || "—") : "—"}</div>
-            <div><b style={{ color: C.text }}>Email:</b> {isOutsourced ? (s.email || "—") : "—"}</div>
-          </div>
-        </div>
-        <div style={{ marginTop: 12, padding: "10px 12px", background: C.subtle, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 11, color: C.muted }}>
-          <i className="pi pi-info-circle" style={{ marginRight: 5 }} />
-          Save and click <b>Print</b> on any bill in the Sales Register to see the live result.
-        </div>
-      </Card>
+      {/* Preview tip strip */}
+      <div style={{ padding: "10px 14px", background: C.purpleL, border: `1px solid ${C.purple}30`, borderRadius: 8, fontSize: 11.5, color: "#5b21b6" }}>
+        <i className="pi pi-info-circle" style={{ marginRight: 6 }} />
+        Tip — open <b>/print-gallery → Pharmacy Tax Invoice</b> after saving to preview the selected template with demo data. Or click <b>Print</b> on any row in the Sales Register to print a real bill with the new template.
+      </div>
     </div>
   );
 }

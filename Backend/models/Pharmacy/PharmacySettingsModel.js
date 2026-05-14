@@ -56,6 +56,12 @@ const PharmacySettingsSchema = new mongoose.Schema(
     // Design
     headerColor:    { type: String, default: "#ea580c" },   // primary header band
     accentColor:    { type: String, default: "#c2410c" },   // totals + emphasis
+    // Selected bill template (1-10) — drives the PharmacyBill renderer.
+    // Pharmacy manager picks one in /pharmacy → Settings, every bill
+    // prints in that style unless explicitly overridden in the payload.
+    billTemplate:   { type: Number, default: 1, min: 1, max: 10 },
+    // Default paper size when openPrint(...) is invoked from this module.
+    defaultPaper:   { type: String, enum: ["a4","half-a4","a5"], default: "half-a4" },
 
     // Invoice footer text
     footerNote: { type: String, default: "" },
