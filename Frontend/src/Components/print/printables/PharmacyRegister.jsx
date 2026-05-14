@@ -182,7 +182,7 @@ export const REGISTER_HEADERS = [
   { id: 1, label: "Classic Centred",  sub: "Formal · serif · B&W underline" },
   { id: 2, label: "Modern Gradient",  sub: "Coloured masthead · with logo" },
   { id: 3, label: "Compact Strip",    sub: "Single-row inline · saves space" },
-  { id: 4, label: "Government Stamp", sub: "Double border · all-uppercase courier" },
+  { id: 4, label: "Government Stamp", sub: "Courier · B&W grid · full document" },
   { id: 5, label: "Letterhead",       sub: "Centred name + accent rule" },
 ];
 
@@ -218,6 +218,12 @@ const PharmacyRegister = ({ settings = {}, receipt = {} }) => {
 
   const COL = { ink: "#0f172a", mute: "#64748b", line: "#e2e8f0", soft: "#f8fafc" };
 
+  // Header style 4 (Government Stamp) flips the whole register into a
+  // Courier-mono, grid-lined, B&W aesthetic — masthead + title band +
+  // totals strip + table + signatures + footer ALL match. Toggled
+  // via the `reg-gov` class on the root.
+  const isGov = headerStyleId === 4;
+
   return (
     <>
       <style>{`
@@ -240,11 +246,37 @@ const PharmacyRegister = ({ settings = {}, receipt = {} }) => {
         html[data-paper="half-a4"] .pr-pharm-reg .reg-foot { padding: 6px 16px; font-size: 7.5px; }
         @media print {
           @page { size: ${opts.orientation === "portrait" ? "A4 portrait" : "A4 landscape"}; margin: 10mm 12mm; }
-          .pr-pharm-reg thead tr { background: ${accent} !important; color: #fff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          .pr-pharm-reg:not(.reg-gov) thead tr { background: ${accent} !important; color: #fff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        }
+
+        /* ── Government-style overrides — applied when headerStyle = 4.
+           Whole register switches to Courier mono, grid borders, B&W. ── */
+        .pr-pharm-reg.reg-gov,
+        .pr-pharm-reg.reg-gov * { font-family: 'Courier New', monospace !important; }
+        .pr-pharm-reg.reg-gov                       { color: #000; }
+        .pr-pharm-reg.reg-gov .reg-title            { background: #fff !important; border-bottom: 2px solid #000 !important; }
+        .pr-pharm-reg.reg-gov .reg-title-eyebrow    { color: #000 !important; }
+        .pr-pharm-reg.reg-gov .reg-title-name       { color: #000 !important; }
+        .pr-pharm-reg.reg-gov .reg-title-meta       { color: #000 !important; }
+        .pr-pharm-reg.reg-gov .reg-totals-strip     { background: #fff !important; border-bottom: 1.5px solid #000 !important; }
+        .pr-pharm-reg.reg-gov .reg-totals-chip      { background: #fff !important; border: 1.5px solid #000 !important; color: #000 !important; border-radius: 0 !important; }
+        .pr-pharm-reg.reg-gov .reg-totals-chip .reg-totals-k { color: #000 !important; }
+        .pr-pharm-reg.reg-gov .reg-totals-chip .reg-totals-v { color: #000 !important; }
+        .pr-pharm-reg.reg-gov .reg-table            { border: 2px solid #000; }
+        .pr-pharm-reg.reg-gov .reg-table thead tr   { background: #fff !important; color: #000 !important; }
+        .pr-pharm-reg.reg-gov .reg-table th,
+        .pr-pharm-reg.reg-gov .reg-table td         { border: 1px solid #000 !important; color: #000 !important; }
+        .pr-pharm-reg.reg-gov .reg-table tbody tr   { background: #fff !important; }
+        .pr-pharm-reg.reg-gov .reg-sign-line        { border-color: #000 !important; }
+        .pr-pharm-reg.reg-gov .reg-sign-label       { color: #000 !important; }
+        .pr-pharm-reg.reg-gov .reg-foot             { background: #fff !important; border-top: 2px solid #000 !important; color: #000 !important; }
+
+        @media print {
+          .pr-pharm-reg.reg-gov thead tr { background: #fff !important; color: #000 !important; }
         }
       `}</style>
 
-      <div className="pr-page pr-pharm-reg" style={{ padding: 0, fontFamily: "'DM Sans', system-ui, sans-serif", color: COL.ink }}>
+      <div className={`pr-page pr-pharm-reg ${isGov ? "reg-gov" : ""}`} style={{ padding: 0, fontFamily: isGov ? "'Courier New', monospace" : "'DM Sans', system-ui, sans-serif", color: COL.ink }}>
         {/* HEADER — picked from the 5 styles */}
         <Header id={id} opts={opts} accent={accent} />
 
@@ -254,11 +286,11 @@ const PharmacyRegister = ({ settings = {}, receipt = {} }) => {
           display: "flex", alignItems: "center", justifyContent: "space-between",
         }}>
           <div>
-            <div style={{ fontSize: 9, fontWeight: 800, color: COL.mute, letterSpacing: ".8px", textTransform: "uppercase" }}>Statutory Register</div>
-            <div style={{ fontSize: 15, fontWeight: 800, color: accent, marginTop: 2 }}>{receipt.title || "Register"}</div>
-            {receipt.subtitle && <div style={{ fontSize: 10, color: COL.mute, marginTop: 2 }}>{receipt.subtitle}</div>}
+            <div className="reg-title-eyebrow" style={{ fontSize: 9, fontWeight: 800, color: COL.mute, letterSpacing: ".8px", textTransform: "uppercase" }}>Statutory Register</div>
+            <div className="reg-title-name" style={{ fontSize: 15, fontWeight: 800, color: accent, marginTop: 2 }}>{receipt.title || "Register"}</div>
+            {receipt.subtitle && <div className="reg-title-meta" style={{ fontSize: 10, color: COL.mute, marginTop: 2 }}>{receipt.subtitle}</div>}
           </div>
-          <div style={{ textAlign: "right", fontSize: 9.5, color: COL.mute }}>
+          <div className="reg-title-meta" style={{ textAlign: "right", fontSize: 9.5, color: COL.mute }}>
             <div>Generated <b>{new Date().toLocaleString("en-IN")}</b></div>
             <div>Rows: <b>{rows.length}</b></div>
           </div>
@@ -266,15 +298,15 @@ const PharmacyRegister = ({ settings = {}, receipt = {} }) => {
 
         {/* TOTALS SUMMARY */}
         {totals && Object.keys(totals).length > 0 && (
-          <div style={{ padding: "8px 22px", borderBottom: `1px solid ${COL.line}`, display: "flex", gap: 16, flexWrap: "wrap", fontSize: 10.5 }}>
+          <div className="reg-totals-strip" style={{ padding: "8px 22px", borderBottom: `1px solid ${COL.line}`, display: "flex", gap: 16, flexWrap: "wrap", fontSize: 10.5 }}>
             {Object.entries(totals).map(([k, v]) => (
-              <div key={k} style={{
+              <div key={k} className="reg-totals-chip" style={{
                 display: "flex", flexDirection: "column", gap: 1,
                 padding: "4px 12px", background: COL.soft,
                 borderRadius: 5, border: `1px solid ${COL.line}`,
               }}>
-                <span style={{ fontSize: 8.5, fontWeight: 800, color: COL.mute, textTransform: "uppercase", letterSpacing: ".5px" }}>{k}</span>
-                <span style={{ fontWeight: 800, color: accent }}>{String(v)}</span>
+                <span className="reg-totals-k" style={{ fontSize: 8.5, fontWeight: 800, color: COL.mute, textTransform: "uppercase", letterSpacing: ".5px" }}>{k}</span>
+                <span className="reg-totals-v" style={{ fontWeight: 800, color: accent }}>{String(v)}</span>
               </div>
             ))}
           </div>
@@ -320,8 +352,8 @@ const PharmacyRegister = ({ settings = {}, receipt = {} }) => {
           <div style={{ padding: "18px 22px 8px", display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 24 }}>
             {["Prepared by", "Checked by", "Authorised by"].map(role => (
               <div key={role} style={{ textAlign: "center" }}>
-                <div style={{ height: 36, borderBottom: `1.5px solid ${COL.ink}` }} />
-                <div style={{ fontSize: 9, color: COL.mute, marginTop: 4, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px" }}>{role}</div>
+                <div className="reg-sign-line" style={{ height: 36, borderBottom: `1.5px solid ${COL.ink}` }} />
+                <div className="reg-sign-label" style={{ fontSize: 9, color: COL.mute, marginTop: 4, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px" }}>{role}</div>
               </div>
             ))}
           </div>
