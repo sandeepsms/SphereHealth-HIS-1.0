@@ -270,8 +270,66 @@ export function PrimaryButton({ label, icon, onClick, color = C.orange, disabled
   );
 }
 
+// Image upload box with thumbnail preview + remove button.
+// Returns a base64 data URL via onChange.
+export function ImageUpload({ label, value, onChange, hint, maxKB = 500, width = 160, height = 100 }) {
+  const id = React.useId();
+  const handle = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (f.size > maxKB * 1024) { alert(`Image must be under ${maxKB} KB`); return; }
+    const reader = new FileReader();
+    reader.onload = (ev) => onChange(ev.target.result);
+    reader.readAsDataURL(f);
+  };
+  return (
+    <div>
+      {label && <div style={{ display: "block", fontSize: 10.5, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 5 }}>{label}</div>}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ width, height, border: `2px dashed ${C.border}`, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", background: C.subtle, overflow: "hidden", flexShrink: 0 }}>
+          {value
+            ? <img src={value} alt="" style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
+            : <span style={{ fontSize: 10.5, color: C.muted, textAlign: "center" }}>No image</span>}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1, minWidth: 140 }}>
+          <input type="file" accept="image/*" onChange={handle} id={id} style={{ display: "none" }} />
+          <label htmlFor={id} style={{ padding: "6px 12px", borderRadius: 6, border: `1.5px solid ${C.blue}`, background: "#fff", color: C.blue, fontSize: 11.5, fontWeight: 700, cursor: "pointer", textAlign: "center" }}>
+            <i className="pi pi-upload" style={{ marginRight: 5, fontSize: 10 }} /> Upload
+          </label>
+          {value && (
+            <button onClick={() => onChange("")} style={{ padding: "6px 12px", borderRadius: 6, border: `1.5px solid ${C.red}`, background: "#fff", color: C.red, fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>
+              <i className="pi pi-trash" style={{ marginRight: 5, fontSize: 10 }} /> Remove
+            </button>
+          )}
+          {hint && <span style={{ fontSize: 10, color: C.muted }}>{hint}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Sub-card inside a Card for grouping related fields.
+export function SubCard({ title, color = C.muted, icon, children, hint }) {
+  return (
+    <div style={{ padding: "12px 14px", background: C.subtle, border: `1.5px solid ${C.border}`, borderRadius: 9 }}>
+      {(title || hint) && (
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 10 }}>
+          {title && (
+            <div style={{ fontSize: 11, fontWeight: 800, color, textTransform: "uppercase", letterSpacing: ".5px", display: "inline-flex", alignItems: "center", gap: 6 }}>
+              {icon && <i className={`pi ${icon}`} style={{ fontSize: 11 }} />}
+              {title}
+            </div>
+          )}
+          {hint && <span style={{ fontSize: 10.5, color: C.muted, fontWeight: 600 }}>{hint}</span>}
+        </div>
+      )}
+      {children}
+    </div>
+  );
+}
+
 const ADMIN_THEME = {
   C, AdminPage, Hero, TabStrip, KPI, Card, Table, EmptyRow, RowAction,
-  Badge, Modal, Field, Check, SearchInput, PrimaryButton,
+  Badge, Modal, Field, Check, SearchInput, PrimaryButton, ImageUpload, SubCard,
 };
 export default ADMIN_THEME;
