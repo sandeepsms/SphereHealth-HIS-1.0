@@ -479,18 +479,15 @@ const PrintRouterPage = () => {
   }
 
   const Component = cfg.component;
-  if (!ready) {
-    return (
-      <PrintPreviewPage toolbarTitle="Loading…" defaultPaper={cfg.defaultPaper} defaultOrient={cfg.defaultOrient}>
-        <div className="pr-page" style={{ textAlign: "center", color: "#64748b" }}>
-          Loading hospital settings…
-        </div>
-      </PrintPreviewPage>
-    );
-  }
+
   // Per-payload paper/orientation override — lets the calling page honour
   // user-saved pharmacy settings (e.g. defaultPaper, registerOrientation)
   // without each caller having to roll its own preview window.
+  // Computed BEFORE the loading branch so the toolbar mounts on the
+  // correct defaults from the start (useState only uses the initial
+  // value, so mounting the toolbar with `cfg.defaultPaper` first and
+  // then re-rendering with `overridePaper` would silently keep the
+  // first value — that's the bug the `key` prop below now prevents).
   const overridePaper  = payload?.defaultPaper
     || payload?.pharmacySettings?.defaultPaper
     || cfg.defaultPaper;
@@ -498,8 +495,28 @@ const PrintRouterPage = () => {
     || payload?.pharmacySettings?.registerOrientation
     || cfg.defaultOrient;
 
+  if (!ready) {
+    return (
+      <PrintPreviewPage
+        key={`loading-${overridePaper}-${overrideOrient}`}
+        toolbarTitle="Loading…"
+        defaultPaper={overridePaper}
+        defaultOrient={overrideOrient}
+      >
+        <div className="pr-page" style={{ textAlign: "center", color: "#64748b" }}>
+          Loading hospital settings…
+        </div>
+      </PrintPreviewPage>
+    );
+  }
+
   return (
-    <PrintPreviewPage toolbarTitle={cfg.title} defaultPaper={overridePaper} defaultOrient={overrideOrient}>
+    <PrintPreviewPage
+      key={`ready-${overridePaper}-${overrideOrient}`}
+      toolbarTitle={cfg.title}
+      defaultPaper={overridePaper}
+      defaultOrient={overrideOrient}
+    >
       <Component settings={settings} receipt={payload || {}} />
     </PrintPreviewPage>
   );
