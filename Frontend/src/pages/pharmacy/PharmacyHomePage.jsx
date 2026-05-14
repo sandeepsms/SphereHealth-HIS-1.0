@@ -676,7 +676,12 @@ function DispenseTab() {
       // Pharmacy settings travel with the payload so the bill renders
       // the right header/footer (hospital vs outsourced).
       const phSet = await getCachedPhSettings();
-      openPrint("pharmacy-bill", { ...r.data, pharmacySettings: phSet });
+      openPrint("pharmacy-bill", {
+        ...r.data,
+        template:     phSet?.billTemplate || 1,
+        defaultPaper: phSet?.defaultPaper || "half-a4",
+        pharmacySettings: phSet,
+      });
       setItems([]);
       clearLink();
       setRollup((await stockRollup()).data || []);
@@ -904,7 +909,12 @@ function SalesTab() {
                 <RowAction icon="pi-print" color={C.blue}
                   onClick={async () => {
                     const phSet = await getCachedPhSettings();
-                    openPrint("pharmacy-bill", { ...s, pharmacySettings: phSet });
+                    openPrint("pharmacy-bill", {
+                      ...s,
+                      template:      phSet?.billTemplate || 1,
+                      defaultPaper:  phSet?.defaultPaper || "half-a4",
+                      pharmacySettings: phSet,
+                    });
                   }}
                   label="Print" />
                 {(s.status === "Completed" || s.status === "Partial-Return") && (
@@ -1012,6 +1022,8 @@ function ReturnModal({ sale, onClose, onDone }) {
       setTimeout(() => {
         openPrint("pharmacy-bill", {
           ...updated,
+          template:     phSet?.billTemplate || 1,
+          defaultPaper: phSet?.defaultPaper || "half-a4",
           pharmacySettings: phSet,
           // header overlay so the bill is clearly labelled as REVISED
           billLabel: "REVISED TAX INVOICE", revisionNote: `${updated.returns?.length || 1} return event(s) applied · latest ${rec.refundSlipNumber}`,
@@ -1338,10 +1350,16 @@ function RegistersTab() {
       };
     }
 
+    // Pass header style + paper + orientation EXPLICITLY (not just inside
+    // pharmacySettings) so the printable never silently falls back to its
+    // hardcoded defaults if the settings doc is stale or unreachable.
     openPrint("pharmacy-register", {
       type:  reg, title: meta?.label || "Register", subtitle,
       color: meta?.color || "#475569",
       columns, rows, totals,
+      headerStyle:   phSet?.registerHeader || 1,
+      defaultPaper:  phSet?.defaultPaper   || "a4",
+      defaultOrient: phSet?.registerOrientation || "landscape",
       pharmacySettings: phSet,
     });
   };

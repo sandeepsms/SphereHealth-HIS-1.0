@@ -74,14 +74,43 @@ html[data-paper="a5"] .pr-page {
 }
 
 @media print {
-  body { background: white; }
+  /* Critical: kill all browser-injected page chrome / spacing that would
+     create a phantom second page from a single-page document.  */
+  html, body {
+    background: white;
+    margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
   .pr-page {
     box-shadow: none;
-    margin: 0 auto;
-    padding: 0;     /* @page margin handles this */
+    margin: 0 auto !important;
+    padding: 0 !important;      /* @page margin owns the physical edge */
+    /* IMPORTANT — drop the on-screen min-height. The on-screen value
+       (`calc(width × 1.414)`) equals full paper, but @page margins
+       reduce the printable area to less than that, so the element
+       overflows to a phantom blank page. Let height flow naturally
+       in print; the browser fills exactly one page if content fits. */
+    min-height: 0 !important;
+    height: auto !important;
+    page-break-after: avoid !important;
+    page-break-inside: auto;
+    break-after: avoid-page;
+  }
+  .pr-page:last-child {
+    page-break-after: avoid !important;
+    break-after: avoid-page !important;
   }
   .pr-no-print { display: none !important; }
   .pr-page-break { page-break-after: always; }
+  /* Same defensive rules for the paper-variant overrides above */
+  html[data-paper="half-a4"] .pr-page,
+  html[data-paper="a5"]      .pr-page,
+  html[data-paper="a4"]      .pr-page {
+    min-height: 0 !important;
+    height: auto !important;
+  }
 }
 
 /* ════════════════════════════════════════════════════════════════

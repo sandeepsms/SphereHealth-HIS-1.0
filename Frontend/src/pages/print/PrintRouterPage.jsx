@@ -488,8 +488,18 @@ const PrintRouterPage = () => {
       </PrintPreviewPage>
     );
   }
+  // Per-payload paper/orientation override — lets the calling page honour
+  // user-saved pharmacy settings (e.g. defaultPaper, registerOrientation)
+  // without each caller having to roll its own preview window.
+  const overridePaper  = payload?.defaultPaper
+    || payload?.pharmacySettings?.defaultPaper
+    || cfg.defaultPaper;
+  const overrideOrient = payload?.defaultOrient
+    || payload?.pharmacySettings?.registerOrientation
+    || cfg.defaultOrient;
+
   return (
-    <PrintPreviewPage toolbarTitle={cfg.title} defaultPaper={cfg.defaultPaper} defaultOrient={cfg.defaultOrient}>
+    <PrintPreviewPage toolbarTitle={cfg.title} defaultPaper={overridePaper} defaultOrient={overrideOrient}>
       <Component settings={settings} receipt={payload || {}} />
     </PrintPreviewPage>
   );

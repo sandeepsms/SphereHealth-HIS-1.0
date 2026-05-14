@@ -234,7 +234,19 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
         html[data-paper="half-a4"] .pr-pharm-bill .pb-terms li,
         html[data-paper="a5"]      .pr-pharm-bill .pb-terms li { line-height: 1.35; }
 
-        @media print { .pr-pharm-bill { page-break-inside: avoid; } }
+        @media print {
+          .pr-pharm-bill {
+            page-break-inside: avoid;
+            min-height: 0 !important;
+            height: auto !important;
+            page-break-after: avoid !important;
+            break-after: avoid-page !important;
+          }
+          .pr-pharm-bill > *:last-child {
+            page-break-after: avoid !important;
+            break-after: avoid-page !important;
+          }
+        }
 
         /* ── Revised-bill watermark (Partial-Return / Refunded / Cancelled)
              Sits as a semi-transparent diagonal stamp across the centre of

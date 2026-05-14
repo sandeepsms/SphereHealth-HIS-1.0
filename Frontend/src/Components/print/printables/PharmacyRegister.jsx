@@ -242,8 +242,17 @@ const PharmacyRegister = ({ settings = {}, receipt = {} }) => {
         html[data-paper="half-a4"] .pr-pharm-reg .reg-table td { padding: 3px 6px; font-size: 8.2px; line-height: 1.25; }
         .pr-pharm-reg .reg-table tbody tr { page-break-inside: avoid; }
         .pr-pharm-reg .reg-table thead   { display: table-header-group; }
+        .pr-pharm-reg .reg-table tfoot   { display: table-footer-group; }
         .pr-pharm-reg .reg-foot { padding: 10px 22px; font-size: 9px; }
         html[data-paper="half-a4"] .pr-pharm-reg .reg-foot { padding: 6px 16px; font-size: 7.5px; }
+        /* Belt-and-braces: kill any forced height / page-break that the
+           generic .pr-page rules might leave behind. Without this, a
+           register that fits on one page still produces a phantom 2nd. */
+        @media print {
+          .pr-pharm-reg { min-height: 0 !important; height: auto !important;
+                          page-break-after: avoid !important; break-after: avoid-page !important; }
+          .pr-pharm-reg > *:last-child { page-break-after: avoid !important; }
+        }
         @media print {
           /* @page rules live in print.css, driven by html[data-paper] + html[data-orient].
              The toolbar's portrait/landscape pill + paper-size dropdown set those attributes.
