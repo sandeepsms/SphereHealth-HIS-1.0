@@ -236,15 +236,34 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
 
         @media print { .pr-pharm-bill { page-break-inside: avoid; } }
 
-        /* ── Revised-bill watermark (Partial-Return / Refunded / Cancelled) */
-        .pr-pharm-bill .pb-revised-ribbon {
-          position: absolute; top: 14px; right: -38px;
-          transform: rotate(35deg);
-          background: ${r.status === "Cancelled" ? "#b91c1c" : "#b45309"};
-          color: #fff; padding: 5px 50px; font-size: 11px;
-          font-weight: 800; letter-spacing: 2px;
-          box-shadow: 0 1px 3px rgba(0,0,0,.25);
-          z-index: 5; pointer-events: none;
+        /* ── Revised-bill watermark (Partial-Return / Refunded / Cancelled)
+             Sits as a semi-transparent diagonal stamp across the centre of
+             the page so it's unambiguous from any angle but never covers
+             critical fields like GSTIN, totals, or signatures. Rendered
+             behind content via z-index + transparent fill colour.        */
+        .pr-pharm-bill .pb-revised-watermark {
+          position: absolute;
+          top: 50%; left: 50%;
+          transform: translate(-50%, -50%) rotate(-22deg);
+          font-size: 92px; font-weight: 900; letter-spacing: 14px;
+          color: ${r.status === "Cancelled" ? "rgba(185,28,28,.10)" : "rgba(180,83,9,.10)"};
+          border: 8px solid ${r.status === "Cancelled" ? "rgba(185,28,28,.18)" : "rgba(180,83,9,.18)"};
+          border-radius: 12px;
+          padding: 14px 38px;
+          white-space: nowrap;
+          pointer-events: none;
+          z-index: 1;
+          text-transform: uppercase;
+        }
+        html[data-paper="half-a4"] .pr-pharm-bill .pb-revised-watermark,
+        html[data-paper="a5"]      .pr-pharm-bill .pb-revised-watermark {
+          font-size: 62px; letter-spacing: 10px; padding: 10px 26px; border-width: 6px;
+        }
+        @media print {
+          .pr-pharm-bill .pb-revised-watermark {
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
         }
         .pr-pharm-bill .pb-revised-banner {
           margin: 0 22px 8px; padding: 7px 12px;
@@ -282,7 +301,7 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
         overflow: "hidden",
       }}>
         {isRevised && (
-          <div className="pb-revised-ribbon">
+          <div className="pb-revised-watermark">
             {r.status === "Cancelled" ? "CANCELLED" : "REVISED"}
           </div>
         )}

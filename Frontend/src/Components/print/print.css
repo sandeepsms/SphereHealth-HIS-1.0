@@ -400,6 +400,26 @@ html[data-paper="a5"] .pr-page {
   color: white;
   cursor: pointer;
 }
+/* The native <select> dropdown panel inherits the system colour scheme,
+   not the trigger's own colours — on a dark toolbar the options come out
+   white-on-white in some browsers. Force the trigger to a light surface
+   so the dropdown panel is legible everywhere. */
+.pr-toolbar select {
+  background: #ffffff;
+  color: #0f172a;
+  border-color: rgba(255,255,255,.55);
+  padding-right: 26px;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path fill='%230f172a' d='M2 4l4 5 4-5z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
+.pr-toolbar select option {
+  background: #ffffff;
+  color: #0f172a;
+  font-weight: 600;
+}
 .pr-toolbar button.primary {
   background: white;
   color: #0f172a;
