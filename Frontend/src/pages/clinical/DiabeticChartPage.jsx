@@ -88,6 +88,16 @@ export default function DiabeticChartPage() {
 
   // Row draft state, keyed by slot. Each draft = { bgValue, bgTime, actualDose, administeredAt, remarks }
   const [drafts, setDrafts] = useState({});
+  // Per-slot save state. Each slot can be:
+  //   undefined → idle
+  //   "saving"  → request in flight (button disabled, spinner)
+  //   "cooldown"→ 800 ms post-success buffer to swallow double-clicks
+  // Map keyed by slot so different rows can be saved in parallel.
+  const [saveState, setSaveState] = useState({});
+  // Track the last payload hash per slot so we can also drop identical
+  // re-submits even after the cooldown lapses — defensive against
+  // accidental triple-click on already-saved row.
+  const lastSavedHashRef = React.useRef({});
 
   /* ── Read UHID from URL on mount ── */
   useEffect(() => {
@@ -151,6 +161,17 @@ export default function DiabeticChartPage() {
 
   const handleSaveSlot = async (slot) => {
     if (!sheet) return;
+
+    // ── Double-click guard ───────────────────────────────────────────
+    // If this slot is already saving (request in flight) or cooling
+    // down right after a successful save (800 ms window) — drop the
+    // extra click silently. Without this, a panicked double-tap was
+    // posting the same row twice; the backend already idempotently
+    // replaces by (slot, scheduledTime) so a duplicate row was never
+    // created on disk, but the second POST raced the first and would
+    // sometimes overwrite a freshly-entered value with stale state.
+    if (saveState[slot] === "saving" || saveState[slot] === "cooldown") return;
+
     const meta = ALL_SLOTS_META[slot];
     const d = dft(slot);
     const existing = entryBySlot[slot] || {};
@@ -173,13 +194,39 @@ export default function DiabeticChartPage() {
       remarks: d.remarks ?? existing.remarks ?? "",
     };
 
+    // Second guard: if the exact same payload (by content hash) was the
+    // last thing we saved for this slot, don't bother re-POSTing. Catches
+    // the rare case where someone tabs through and presses Enter twice.
+    const hash = JSON.stringify({
+      bg: payload.bgValue, dose: payload.actualDose,
+      at: payload.administeredAt, time: payload.bgTime,
+      remarks: payload.remarks,
+    });
+    if (lastSavedHashRef.current[slot] === hash) {
+      toast.info(`${meta?.label || slot} already saved — no changes to post`);
+      return;
+    }
+
+    setSaveState(s => ({ ...s, [slot]: "saving" }));
     try {
       const res = await upsertEntry(sheet._id, payload);
       setSheet(res.data);
       setDft(slot, { _saved: true, _justSaved: Date.now() });
-      toast.success(`${ALL_SLOTS_META[slot]?.label || slot} saved`);
+      lastSavedHashRef.current[slot] = hash;
+      toast.success(`${meta?.label || slot} saved`);
+      // 800 ms cooldown so a delayed second click after the toast fires
+      // is also swallowed.
+      setSaveState(s => ({ ...s, [slot]: "cooldown" }));
+      setTimeout(() => {
+        setSaveState(s => {
+          const next = { ...s }; delete next[slot]; return next;
+        });
+      }, 800);
     } catch (e) {
       toast.error(e.message || "Save failed");
+      setSaveState(s => {
+        const next = { ...s }; delete next[slot]; return next;
+      });
     }
   };
 
@@ -498,16 +545,41 @@ export default function DiabeticChartPage() {
                           }}>{stat.label}</span>
                         </td>
                         <td style={{ padding: "8px 11px", whiteSpace: "nowrap" }}>
-                          <button onClick={() => handleSaveSlot(slot)}
-                            style={{
-                              padding: "6px 14px", borderRadius: 6, border: "none",
-                              background: C.green, color: "#fff",
-                              fontWeight: 700, fontSize: 11, cursor: "pointer",
-                              display: "inline-flex", alignItems: "center", gap: 5,
-                            }}>
-                            <i className="pi pi-save" style={{ fontSize: 10 }} />
-                            Save
-                          </button>
+                          {(() => {
+                            const st = saveState[slot];
+                            const saving   = st === "saving";
+                            const cooling  = st === "cooldown";
+                            const disabled = saving || cooling;
+                            return (
+                              <button
+                                onClick={() => handleSaveSlot(slot)}
+                                disabled={disabled}
+                                aria-busy={saving}
+                                style={{
+                                  padding: "6px 14px", borderRadius: 6, border: "none",
+                                  background: saving  ? "#94a3b8"
+                                            : cooling ? "#16a34a"
+                                            : C.green,
+                                  color: "#fff",
+                                  fontWeight: 700, fontSize: 11,
+                                  cursor: disabled ? "not-allowed" : "pointer",
+                                  opacity: disabled ? 0.85 : 1,
+                                  display: "inline-flex", alignItems: "center", gap: 5,
+                                  minWidth: 78,                          // stops the button reflowing as label changes
+                                  justifyContent: "center",
+                                  transition: "background .15s",
+                                }}
+                              >
+                                {saving ? (
+                                  <><i className="pi pi-spin pi-spinner" style={{ fontSize: 11 }} />Saving…</>
+                                ) : cooling ? (
+                                  <><i className="pi pi-check" style={{ fontSize: 11 }} />Saved</>
+                                ) : (
+                                  <><i className="pi pi-save" style={{ fontSize: 10 }} />Save</>
+                                )}
+                              </button>
+                            );
+                          })()}
                         </td>
                       </tr>
                     );
