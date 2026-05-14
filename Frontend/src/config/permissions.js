@@ -100,7 +100,9 @@ export const ACTIONS = {
 
   // Clinical
   "rx.write":              ["Admin", "Doctor"],
-  "rx.read":               ["Admin", "Doctor", "Nurse", "Pharmacist"],
+  // Accountant gets read access for the Accounts Console (GST register,
+  // pharmacy stats, sales/expiry registers). Write actions stay restricted.
+  "rx.read":               ["Admin", "Doctor", "Nurse", "Pharmacist", "Accountant"],
   "ipd.assign-bed":        ["Admin", "Receptionist", "Doctor"],
   "ipd.discharge":         ["Admin", "Doctor", "Receptionist"],
   "ipd.discharge-summary": ["Admin", "Doctor"],

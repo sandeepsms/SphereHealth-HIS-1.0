@@ -35,7 +35,11 @@ const ACTIONS = {
 
   // Clinical
   "rx.write":              ["Admin", "Doctor"],
-  "rx.read":               ["Admin", "Doctor", "Nurse", "Pharmacist"],
+  // Accountant added so /pharmacy/stats and /pharmacy/registers/* (the GST
+  // register, sales register, expiry register etc.) are reachable for the
+  // accounts console. They are read-only for Accountant — no write is
+  // exposed via this action.
+  "rx.read":               ["Admin", "Doctor", "Nurse", "Pharmacist", "Accountant"],
   "ipd.assign-bed":        ["Admin", "Receptionist", "Doctor"],
   "ipd.discharge":         ["Admin", "Doctor", "Receptionist"],
   "ipd.discharge-summary": ["Admin", "Doctor"],
