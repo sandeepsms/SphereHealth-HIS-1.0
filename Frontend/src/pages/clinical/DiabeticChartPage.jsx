@@ -520,10 +520,41 @@ export default function DiabeticChartPage() {
                           ) : <span style={{ color: C.muted }}>—</span>}
                         </td>
                         <td style={{ padding: "8px 11px" }}>
-                          <input type="number" className="his-field" style={{ width: 70, padding: "6px 8px", fontSize: 12.5 }}
-                            placeholder={rec.dose != null ? String(rec.dose) : "—"}
-                            value={doseInput}
-                            onChange={ev => setDft(slot, { actualDose: ev.target.value })} />
+                          {(() => {
+                            // Deviation badge: actual vs recommended. Highlights
+                            // the row when nurse over- or under-doses so nothing
+                            // slips through silently. "—" when no actual saved.
+                            const actualNum = doseInput === "" || doseInput == null ? null : Number(doseInput);
+                            const recNum    = rec.dose;
+                            const showBadge = actualNum != null && recNum != null && actualNum !== recNum;
+                            const dev = showBadge ? actualNum - recNum : 0;
+                            return (
+                              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                <input type="number" className="his-field"
+                                  style={{
+                                    width: 70, padding: "6px 8px", fontSize: 12.5,
+                                    borderColor: showBadge ? (dev > 0 ? C.amber : C.red) : undefined,
+                                  }}
+                                  placeholder={recNum != null ? String(recNum) : "—"}
+                                  value={doseInput}
+                                  onChange={ev => setDft(slot, { actualDose: ev.target.value })} />
+                                {showBadge && (
+                                  <span
+                                    title={`Actual ${actualNum}u differs from sliding-scale recommendation of ${recNum}u`}
+                                    style={{
+                                      padding: "2px 6px", borderRadius: 4,
+                                      background: dev > 0 ? "#fef3c7" : "#fee2e2",
+                                      color:      dev > 0 ? "#92400e" : "#991b1b",
+                                      border: `1px solid ${dev > 0 ? "#fde68a" : "#fecaca"}`,
+                                      fontSize: 9.5, fontWeight: 800,
+                                      whiteSpace: "nowrap",
+                                    }}>
+                                    {dev > 0 ? "+" : ""}{dev}u
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </td>
                         <td style={{ padding: "10px 11px", color: C.muted, fontSize: 11.5, whiteSpace: "nowrap" }}>
                           {e?.route || sheet.slidingScale?.route || "SC"}
@@ -588,22 +619,61 @@ export default function DiabeticChartPage() {
               </table>
             </div>
 
-            {/* Day summary footer */}
-            <div style={{ padding: "10px 18px", background: "#f8fafc", borderTop: `1px solid ${C.border}`, display: "flex", gap: 16, fontSize: 11.5, color: C.muted, flexWrap: "wrap" }}>
+            {/* Day summary footer — split into distinct metrics so nurses
+                don't conflate "doses given" with "total units" and can
+                spot when actual differs from recommended. */}
+            <div style={{ padding: "12px 18px", background: "#f8fafc", borderTop: `1px solid ${C.border}` }}>
               {(() => {
                 const all = sheet.entries || [];
                 const valid = all.filter(e => e.bgValue != null);
                 const avg = valid.length ? Math.round(valid.reduce((s, e) => s + e.bgValue, 0) / valid.length) : null;
                 const hypo  = valid.filter(e => e.bgValue < 70).length;
                 const hyper = valid.filter(e => e.bgValue > 200).length;
-                const totalInsulin = all.reduce((s, e) => s + (e.actualDose || 0), 0);
+                const givenRows = all.filter(e => (e.actualDose || 0) > 0);
+                const totalInsulin = givenRows.reduce((s, e) => s + (e.actualDose || 0), 0);
+                const totalRecommended = all
+                  .filter(e => (e.actualDose || 0) > 0 && e.recommendedDose != null)
+                  .reduce((s, e) => s + e.recommendedDose, 0);
+                const deviation = totalInsulin - totalRecommended;
+
+                const Stat = ({ label, value, color, hint }) => (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 1, paddingRight: 18, borderRight: `1px solid ${C.border}` }}>
+                    <span style={{ fontSize: 9.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>{label}</span>
+                    <span style={{ fontSize: 14, fontWeight: 800, color: color || C.text }}>{value}</span>
+                    {hint && <span style={{ fontSize: 9.5, color: C.muted, marginTop: 1 }}>{hint}</span>}
+                  </div>
+                );
+
                 return (
-                  <>
-                    <span><b style={{ color: C.text }}>Mean BG:</b> {avg != null ? `${avg} mg/dL` : "—"}</span>
-                    <span><b style={{ color: C.red }}>Hypo events:</b> {hypo}</span>
-                    <span><b style={{ color: C.amber }}>Hyperglycaemia:</b> {hyper}</span>
-                    <span><b style={{ color: C.blue }}>Total insulin today:</b> {totalInsulin} units</span>
-                  </>
+                  <div style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "flex-start" }}>
+                    <Stat label="Mean BG" color={C.text}
+                      value={avg != null ? `${avg} mg/dL` : "—"}
+                      hint={`${valid.length} reading${valid.length === 1 ? "" : "s"}`} />
+                    <Stat label="Hypo events" color={hypo > 0 ? C.red : C.text}
+                      value={hypo}
+                      hint={hypo > 0 ? "BG <70 mg/dL" : "—"} />
+                    <Stat label="Hyperglycaemia" color={hyper > 0 ? C.amber : C.text}
+                      value={hyper}
+                      hint={hyper > 0 ? "BG >200 mg/dL" : "—"} />
+                    <Stat label="Doses administered" color={C.blue}
+                      value={givenRows.length}
+                      hint={`of ${visibleSlots.length} slot${visibleSlots.length === 1 ? "" : "s"}`} />
+                    <Stat label="Total insulin" color={C.blue}
+                      value={`${totalInsulin} u`}
+                      hint="sum of actual doses" />
+                    <div style={{ display: "flex", flexDirection: "column", gap: 1, paddingRight: 18 }}>
+                      <span style={{ fontSize: 9.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>vs recommended</span>
+                      <span style={{
+                        fontSize: 14, fontWeight: 800,
+                        color: deviation === 0 ? C.green : deviation > 0 ? C.amber : C.red,
+                      }}>
+                        {deviation === 0 ? "On policy" : `${deviation > 0 ? "+" : ""}${deviation} u`}
+                      </span>
+                      <span style={{ fontSize: 9.5, color: C.muted, marginTop: 1 }}>
+                        recommended {totalRecommended} u
+                      </span>
+                    </div>
+                  </div>
                 );
               })()}
             </div>
