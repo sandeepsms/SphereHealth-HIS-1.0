@@ -63,6 +63,23 @@ const PharmacySettingsSchema = new mongoose.Schema(
     // Default paper size when openPrint(...) is invoked from this module.
     defaultPaper:   { type: String, enum: ["a4","half-a4","a5"], default: "half-a4" },
 
+    // ── Register-specific print preferences (separate from bill) ──
+    // 1 = Classic Centred (formal, B&W)    2 = Modern Gradient (with logo)
+    // 3 = Compact Strip   4 = Government Stamp (bordered)
+    // 5 = Letterhead (centred + accent rule)
+    registerHeader: { type: Number, default: 1, min: 1, max: 5 },
+    // Visual options that the register printable honours.
+    registerShowLogo:    { type: Boolean, default: true },
+    registerShowGstin:   { type: Boolean, default: true },
+    registerShowDL:      { type: Boolean, default: true },
+    registerShowContact: { type: Boolean, default: true },
+    // Add a "S.No." column at the start of every register table.
+    registerSerialColumn:{ type: Boolean, default: true },
+    // Footer signature row — "Prepared by" + "Checked by" + "Authorised by".
+    registerSignatures:  { type: Boolean, default: true },
+    // Orientation hint for the print toolbar (CSS @page picks this up).
+    registerOrientation: { type: String, enum: ["portrait","landscape"], default: "landscape" },
+
     // Invoice footer text
     footerNote: { type: String, default: "" },
     termsLine1: { type: String, default: "Goods once sold are not returnable unless seal is intact (within 7 days)." },

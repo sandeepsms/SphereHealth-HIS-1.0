@@ -15,6 +15,7 @@ import { API_ENDPOINTS } from "../../config/api";
 import { openPrint } from "../../Components/print/openPrint";
 import TEMPLATES from "../../Components/print/printables/PharmacyBillTemplates";
 import PharmacyBill from "../../Components/print/printables/PharmacyBill";
+import PharmacyRegister, { REGISTER_HEADERS } from "../../Components/print/printables/PharmacyRegister";
 import {
   listDrugs, createDrug, updateDrug, deleteDrug,
   listSuppliers, createSupplier, updateSupplier, deleteSupplier,
@@ -1427,6 +1428,85 @@ const DEMO_SETTINGS = {
   termsLine3: "This is a computer-generated invoice. Subject to local jurisdiction.",
 };
 
+/* Sample register data so each header style renders with real content
+   in the thumbnail and modal previews. */
+const DEMO_REGISTER = {
+  type: "sales",
+  title: "Sales Register",
+  subtitle: "01 May 2026 → 14 May 2026",
+  color: "#16a34a",
+  columns: [
+    { key: "date",       label: "Date",      nowrap: true, muted: true },
+    { key: "billNumber", label: "Bill #",    mono: true, bold: true },
+    { key: "patient",    label: "Patient" },
+    { key: "taxable",    label: "Taxable",   align: "right" },
+    { key: "cgst",       label: "CGST",      align: "right", muted: true },
+    { key: "sgst",       label: "SGST",      align: "right", muted: true },
+    { key: "grand",      label: "Grand",     align: "right", bold: true },
+  ],
+  rows: [
+    { date: "14 May 2026", billNumber: "PHM-DEMO-0042", patient: "Asha Sharma",       taxable: "165.00", cgst: "9.90",  sgst: "9.90",  grand: "₹184.80" },
+    { date: "14 May 2026", billNumber: "PHM-DEMO-0043", patient: "Ravi Kumar",        taxable: "850.00", cgst: "51.00", sgst: "51.00", grand: "₹952.00" },
+    { date: "14 May 2026", billNumber: "PHM-DEMO-0044", patient: "Priya Verma",       taxable: "320.50", cgst: "19.23", sgst: "19.23", grand: "₹358.96" },
+    { date: "14 May 2026", billNumber: "PHM-DEMO-0045", patient: "Mr. JaiBhagwan",    taxable: "192.00", cgst: "11.52", sgst: "11.52", grand: "₹215.04" },
+    { date: "14 May 2026", billNumber: "PHM-DEMO-0046", patient: "Walk-in customer",  taxable: "60.00",  cgst: "3.60",  sgst: "3.60",  grand: "₹67.20" },
+  ],
+  totals: { Bills: 5, "Taxable": "₹1,587.50", "GST": "₹190.50", "Grand total": "₹1,778.00" },
+};
+
+function RegisterPreviewModal({ headerId, isActive, settingsDoc, onClose, onUse }) {
+  const meta = REGISTER_HEADERS.find(h => h.id === headerId) || REGISTER_HEADERS[0];
+  const phSettings = settingsDoc ? { ...settingsDoc, registerHeader: headerId } : null;
+  return (
+    <div onClick={onClose} style={{
+      position: "fixed", inset: 0, background: "rgba(15,23,42,.65)", zIndex: 1000,
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 14,
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: "#fff", borderRadius: 14, width: "min(1100px, 98vw)",
+        maxHeight: "94vh", display: "flex", flexDirection: "column",
+        boxShadow: "0 20px 60px rgba(0,0,0,.35)",
+      }}>
+        <div style={{
+          padding: "12px 18px", display: "flex", alignItems: "center", gap: 10,
+          background: "linear-gradient(135deg,#0d9488,#0f766e)", color: "#fff",
+          borderTopLeftRadius: 14, borderTopRightRadius: 14,
+        }}>
+          <div style={{ width: 30, height: 30, borderRadius: 8, background: "rgba(255,255,255,.22)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800 }}>#{meta.id}</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 800, fontSize: 15 }}>{meta.label}</div>
+            <div style={{ fontSize: 11, opacity: .85 }}>{meta.sub}</div>
+          </div>
+          <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 8, border: "none", background: "rgba(255,255,255,.18)", color: "#fff", cursor: "pointer" }}><i className="pi pi-times" /></button>
+        </div>
+        <div style={{ flex: 1, overflow: "auto", background: "#e2e8f0", padding: 18 }}>
+          <div style={{ background: "#fff", boxShadow: "0 6px 22px rgba(15,23,42,.18)", maxWidth: 1000, margin: "0 auto" }}>
+            <PharmacyRegister
+              settings={DEMO_SETTINGS}
+              receipt={{ ...DEMO_REGISTER, headerStyle: headerId, pharmacySettings: phSettings }}
+            />
+          </div>
+        </div>
+        <div style={{ padding: "10px 18px", borderTop: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+          <div style={{ fontSize: 11, color: C.muted }}>
+            <i className="pi pi-info-circle" style={{ marginRight: 5 }} />
+            Sample data. Your real registers print with patient + bill data from the database.
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={onClose} style={{ padding: "8px 14px", borderRadius: 7, border: `1.5px solid ${C.border}`, background: "#fff", color: C.muted, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Close</button>
+            <button onClick={onUse} disabled={isActive}
+              style={{ padding: "8px 20px", borderRadius: 7, border: "none",
+                background: isActive ? "#86efac" : "#0d9488", color: "#fff",
+                fontWeight: 800, fontSize: 12, cursor: isActive ? "default" : "pointer" }}>
+              {isActive ? <><i className="pi pi-check" style={{ marginRight: 6 }} />Currently selected</> : <><i className="pi pi-check-circle" style={{ marginRight: 6 }} />Use this header</>}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TemplatePreviewModal({ tplId, isActive, settingsDoc, onClose, onUse }) {
   const tpl = TEMPLATES.find(t => t.id === tplId) || TEMPLATES[0];
   const isInh = tpl.audience === "in-house";
@@ -1487,6 +1567,7 @@ function SettingsTab() {
   const [s, setS] = useState(null);
   const [saving, setSaving] = useState(false);
   const [previewTpl, setPreviewTpl] = useState(null);
+  const [previewReg, setPreviewReg] = useState(null);
   const upd = (k) => (e) => setS(p => ({ ...p, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value }));
 
   useEffect(() => { (async () => {
@@ -1623,6 +1704,86 @@ function SettingsTab() {
             </select>
           </Field>
         </div>
+      </Card>
+
+      {/* REGISTER HEADER PICKER */}
+      <Card title="Register print style" color={C.teal} icon="pi-book">
+        <div style={{ fontSize: 11.5, color: C.muted, marginBottom: 12 }}>
+          Statutory registers (Sales · Purchase · Stock · Schedule H · Expiry · GST) print with the header style picked here.
+          The hospital identity comes from <b>Hospital Settings</b> when in-house, otherwise from the identity fields below.
+          Click any card to preview at full size with sample data.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
+          {REGISTER_HEADERS.map(h => {
+            const active = (s.registerHeader || 1) === h.id;
+            return (
+              <div key={h.id}
+                onClick={() => setPreviewReg(h.id)}
+                style={{
+                  borderRadius: 10, border: `2px solid ${active ? C.teal : C.border}`,
+                  background: "#fff", overflow: "hidden", cursor: "pointer",
+                  boxShadow: active ? `0 6px 18px ${C.teal}30` : "0 1px 3px rgba(15,23,42,.05)",
+                  transition: "transform .15s, box-shadow .15s",
+                }}
+                onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-2px)"; }}
+                onMouseLeave={e => { e.currentTarget.style.transform = "none"; }}
+              >
+                <div style={{ height: 160, overflow: "hidden", position: "relative", background: "#f1f5f9", borderBottom: `1px solid ${C.border}` }}>
+                  <div style={{ transform: "scale(0.28)", transformOrigin: "top left", width: "360%", pointerEvents: "none" }}>
+                    <PharmacyRegister
+                      settings={DEMO_SETTINGS}
+                      receipt={{ ...DEMO_REGISTER, headerStyle: h.id, pharmacySettings: { ...s, registerHeader: h.id } }} />
+                  </div>
+                  {active && (
+                    <div style={{ position: "absolute", top: 8, right: 8, width: 26, height: 26, borderRadius: "50%", background: C.teal, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 8px rgba(0,0,0,.2)" }}>
+                      <i className="pi pi-check" style={{ fontSize: 12 }} />
+                    </div>
+                  )}
+                  <div style={{ position: "absolute", top: 8, left: 8, padding: "2px 8px", borderRadius: 4, background: "rgba(0,0,0,.7)", color: "#fff", fontSize: 9.5, fontWeight: 800 }}>#{h.id}</div>
+                </div>
+                <div style={{ padding: "8px 10px" }}>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: active ? C.teal : C.text }}>{h.label}</div>
+                  <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>{h.sub}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Per-register toggles */}
+        <div style={{ marginTop: 16, padding: "12px 14px", border: `1.5px solid ${C.border}`, borderRadius: 9, background: C.subtle }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 10 }}>Register options</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+            <Check label="Show logo on register"           v={s.registerShowLogo    !== false} on={() => setS(p => ({ ...p, registerShowLogo:    !(p.registerShowLogo !== false) }))} />
+            <Check label="Show GSTIN"                       v={s.registerShowGstin   !== false} on={() => setS(p => ({ ...p, registerShowGstin:   !(p.registerShowGstin !== false) }))} />
+            <Check label="Show Drug Licence No."            v={s.registerShowDL      !== false} on={() => setS(p => ({ ...p, registerShowDL:      !(p.registerShowDL !== false) }))} />
+            <Check label="Show contact (phone / email)"     v={s.registerShowContact !== false} on={() => setS(p => ({ ...p, registerShowContact: !(p.registerShowContact !== false) }))} />
+            <Check label="Add S.No. column"                 v={s.registerSerialColumn !== false} on={() => setS(p => ({ ...p, registerSerialColumn:!(p.registerSerialColumn !== false) }))} />
+            <Check label="Signatures (Prepared/Checked/Authorised)" v={s.registerSignatures !== false} on={() => setS(p => ({ ...p, registerSignatures: !(p.registerSignatures !== false) }))} />
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <Field label="Page orientation">
+              <select className="his-select" style={{ width: 200 }} value={s.registerOrientation || "landscape"} onChange={upd("registerOrientation")}>
+                <option value="landscape">Landscape · recommended (wide tables)</option>
+                <option value="portrait">Portrait · narrow tables only</option>
+              </select>
+            </Field>
+          </div>
+        </div>
+
+        {previewReg != null && (
+          <RegisterPreviewModal
+            headerId={previewReg}
+            isActive={(s.registerHeader || 1) === previewReg}
+            settingsDoc={s}
+            onClose={() => setPreviewReg(null)}
+            onUse={() => {
+              setS(p => ({ ...p, registerHeader: previewReg }));
+              setPreviewReg(null);
+              toast.success(`Register header style #${previewReg} selected — Save to apply`);
+            }}
+          />
+        )}
       </Card>
 
       {/* IDENTITY FIELDS BLOCK */}
