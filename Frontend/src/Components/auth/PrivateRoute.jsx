@@ -55,7 +55,7 @@ function AccessDenied() {
         <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 20 }}>
           Your role <strong style={{ color: "#1e40af" }}>{user?.role}</strong> does not have permission to view this page.
         </div>
-        <a href="/mainpage" style={{
+        <a href="/dashboard" style={{
           display: "inline-flex", alignItems: "center", gap: 6,
           padding: "10px 22px", background: "#1e40af", color: "white",
           borderRadius: 8, fontWeight: 700, fontSize: 13, textDecoration: "none",

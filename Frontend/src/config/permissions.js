@@ -45,14 +45,19 @@ export const MODULES = [
   { id: "doctor",     label: "Doctor Workbench",icon: "pi-user-edit",     home: "/doctor",            color: "#7c3aed" },
   { id: "nursing",    label: "Nursing",         icon: "pi-heart",         home: "/nursing-notes",     color: "#db2777" },
   { id: "pharmacy",   label: "Pharmacy",        icon: "pi-box",           home: "/pharmacy",          color: "#ea580c" },
-  { id: "lab",        label: "Lab",             icon: "pi-search-plus",   home: "/lab-management",    color: "#0284c7" },
-  { id: "billing",    label: "Billing",         icon: "pi-receipt",       home: "/bill",              color: "#d97706" },
-  { id: "tpa",        label: "TPA / Cashless",  icon: "pi-briefcase",     home: "/cashless",          color: "#7c3aed" },
+  // Module `home` paths drive the AccessSnapshot tile clicks on
+  // RoleDashboardPage. These need to point to routes that actually
+  // exist — previously /lab-management, /bill, /cashless, /admin-reports
+  // were all dead, so clicking a module tile bounced to the catch-all
+  // and re-redirected to /dashboard.
+  { id: "lab",        label: "Lab",             icon: "pi-search-plus",   home: "/investigation-orders", color: "#0284c7" },
+  { id: "billing",    label: "Billing",         icon: "pi-receipt",       home: "/billing",           color: "#d97706" },
+  { id: "tpa",        label: "TPA / Cashless",  icon: "pi-briefcase",     home: "/tpa-cases",         color: "#7c3aed" },
   { id: "care",       label: "Care Plans",      icon: "pi-bolt",          home: "/vitalSheet",        color: "#16a34a" },
   { id: "maintenance",label: "Maintenance",     icon: "pi-wrench",        home: "/maintenance",       color: "#0d9488" },
   { id: "security",   label: "Visitor Security",icon: "pi-lock",          home: "/visitor-passes",    color: "#374151" },
   { id: "admin",      label: "Masters & Admin", icon: "pi-cog",           home: "/admin/users",       color: "#1e293b" },
-  { id: "reports",    label: "Reports & MIS",   icon: "pi-chart-bar",     home: "/admin-reports",     color: "#1d4ed8" },
+  { id: "reports",    label: "Reports & MIS",   icon: "pi-chart-bar",     home: "/billing-intelligence", color: "#1d4ed8" },
 ];
 
 /* ── Module access per role.
@@ -173,25 +178,24 @@ export function actionsForRole(role) {
     .map(([action]) => action);
 }
 
-// Role-aware "home" path — pharmacist lands on /pharmacy, doctor on /doctor, etc.
+// Role-aware "home" path.
+//
+// Every role lands on /dashboard — the RoleDashboardPage dispatcher
+// renders the right layout for the logged-in user. This replaces the
+// old per-role redirect table which had several problems:
+//   • Admin landed on /mainpage which is a receptionist-flavoured
+//     MainPage (the old generic dashboard) — Dietician / Physio /
+//     Accountant clicking sidebar "Dashboard" went to the same wrong
+//     page (treated as a permission breach by the user on 13 May 2026).
+//   • Several roles pointed to legacy paths that no longer exist
+//     (/lab-management, /cashless, /admin-reports, /dashboard1) and
+//     would 404 / fall through to the catch-all.
+// Returning a single /dashboard keeps the dispatch in one place
+// (RoleDashboardPage reads user.role) so we never have to fan out
+// per-role landing logic again.
 export function homePathForRole(role) {
-  const PRIORITY = {
-    Admin: "/mainpage",
-    Doctor: "/doctor",
-    Nurse: "/nursing-notes",
-    Receptionist: "/reception",
-    Pharmacist: "/pharmacy",
-    "Lab Technician": "/lab-management",
-    Radiologist: "/lab-management",
-    Accountant: "/admin-reports",
-    "TPA Coordinator": "/cashless",
-    Physiotherapist: "/dashboard1",
-    Dietician: "/dashboard1",
-    "Ward Boy": "/bed-visual",
-    Security: "/visitor-passes",
-    Housekeeping: "/bed-visual",
-  };
-  return PRIORITY[role] || "/dashboard1";
+  if (!role) return "/login";
+  return "/dashboard";
 }
 
 const PERMISSIONS = {

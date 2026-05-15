@@ -58,11 +58,17 @@ const MT    = "Maintenance";        // Housekeeping / facilities / equipment
    Each item also carries roles for fine-grained filtering.
 ══════════════════════════════════════════════════════════════ */
 const NAV = [
-  /* ── Dashboard ──────────────────────────────────────── */
+  /* ── Dashboard ──────────────────────────────────────────────
+     /dashboard is the role-aware RoleDashboardPage — it reads
+     user.role and renders the right layout. Previously this pointed
+     to /mainpage which was the receptionist-flavoured MainPage and
+     non-receptionist roles (Dietician, Physio, Accountant, …) saw
+     reception's "New OPD / IPD Registration" cards — a permission
+     breach reported on 13 May 2026. */
   {
     id: "dashboard", label: "Dashboard",
     icon: "pi-home", color: "#1e40af", light: "#eff6ff",
-    path: "/mainpage", single: true, roles: ALL,
+    path: "/dashboard", single: true, roles: ALL,
   },
 
   /* ── Reception (NABH front-desk workflow) ───────────── */

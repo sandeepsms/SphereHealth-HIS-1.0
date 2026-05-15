@@ -30,7 +30,10 @@ const PAGE_NAMES = {
   "/pressure-area-care": "Pressure Area Care",
   "/discharge-summary": "Discharge Summary",
   "/mar": "MAR (Medication Administration)",
+  "/dashboard": "Dashboard",
   "/mainpage": "Dashboard",
+  "/dietitian": "Dietician Console",
+  "/accounts": "Accounts & Finance",
 };
 
 /* ─── helpers ─────────────────────────────────────────────────────────────── */

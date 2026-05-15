@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
+import { homePathForRole } from "../../config/permissions";
 
 const ROLE_COLORS = {
   Admin:            "#1e40af",
@@ -37,22 +38,12 @@ export default function LoginPage() {
   const [error, setError]       = useState("");
 
   // Role-aware landing page: each role gets its own home
-  const landingPageForRole = (role) => {
-    switch (role) {
-      case "Receptionist":     return "/reception";
-      case "Doctor":           return "/doctor-opd-panel";
-      case "Nurse":            return "/opd-queue";
-      case "TPA Coordinator":  return "/tpa-cases";
-      case "Pharmacist":       return "/mar";
-      case "Lab Technician":   return "/investigation-orders";
-      case "Radiologist":      return "/investigation-orders";
-      case "Accountant":       return "/billing";
-      case "Ward Boy":         return "/bed-visual";
-      case "Dietician":        return "/vitalSheet";
-      case "Physiotherapist":  return "/updateVitalSheet";
-      default:                 return "/mainpage";
-    }
-  };
+  // Removed local landingPageForRole — its routes were stale (Dietician
+  // landed on /vitalSheet, Physio on /updateVitalSheet — both nurse
+  // pages; Pharmacist on /mar — a nursing route; default /mainpage was
+  // the reception-flavoured generic dashboard). Now defers to the
+  // central homePathForRole in permissions.js which sends everyone to
+  // /dashboard (RoleDashboardPage handles per-role layout).
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -61,9 +52,10 @@ export default function LoginPage() {
     setLoading(true);
     try {
       const user = await login(email.trim(), password);
-      // Prefer the page the user was trying to reach before login; otherwise
-      // send them to their role-specific home (Receptionist → /reception).
-      const dest = fromState && fromState !== "/mainpage" ? fromState : landingPageForRole(user?.role);
+      // Prefer the page the user was trying to reach before login;
+      // otherwise send them to their role-aware /dashboard.
+      const STALE_REDIRECTS = ["/mainpage", "/dashboard1", "/login"];
+      const dest = fromState && !STALE_REDIRECTS.includes(fromState) ? fromState : homePathForRole(user?.role);
       navigate(dest, { replace: true });
     } catch (err) {
       setError(err?.response?.data?.message || "Login failed. Please check your credentials.");

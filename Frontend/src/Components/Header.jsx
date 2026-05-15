@@ -3,9 +3,12 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
 const MODULE_NAMES = {
+  "/dashboard":              "Dashboard",
   "/mainpage":               "Dashboard",
   "/dashboard1":             "Dashboard",
   "/dash":                   "Dashboard",
+  "/dietitian":              "Dietician Console",
+  "/accounts":               "Accounts & Finance",
   "/registration":           "Patient Registration",
   "/allpatient":             "Patient List",
   "/patients":               "Patient Management",
@@ -185,7 +188,10 @@ export default function Header() {
 
               {/* Menu items */}
               {[
-                { icon: "pi-home",     label: "Dashboard",       action: () => { navigate(user?.role === "Receptionist" ? "/reception" : "/mainpage"); setDropOpen(false); } },
+                // Dashboard goes to /dashboard (RoleDashboardPage, role-aware).
+                // Previously sent non-Receptionists to /mainpage (the old
+                // reception-flavoured MainPage) — same breach as sidebar.
+                { icon: "pi-home",     label: "Dashboard",       action: () => { navigate("/dashboard"); setDropOpen(false); } },
                 { icon: "pi-user",     label: "My Profile",      action: () => setDropOpen(false) },
                 { icon: "pi-cog",      label: "Settings",        action: () => setDropOpen(false) },
               ].map(item => (

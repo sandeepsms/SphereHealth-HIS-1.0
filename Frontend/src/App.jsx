@@ -434,9 +434,19 @@ function AppLayout({ collapsed, setCollapsed }) {
 
             {/* ── Main / Default ───────────────────────────────── */}
             <Route path="/" element={<Navigate to={homePath} replace />} />
+            {/* /mainpage was the original receptionist-flavoured generic
+                dashboard. Now superseded by /dashboard (RoleDashboardPage,
+                role-aware). Keep the route as a redirect so any stale
+                bookmark / sidebar memory / external link still lands on
+                the correct per-role view rather than leaking reception
+                content to other roles. */}
             <Route
               path="/mainpage"
-              element={user?.role === "Receptionist" ? <Navigate to="/reception" replace /> : <MainPage />}
+              element={
+                user?.role === "Receptionist"
+                  ? <Navigate to="/reception" replace />
+                  : <Navigate to="/dashboard" replace />
+              }
             />
 
             {/* ── Reception Console (single-window registration) ── */}
