@@ -20,6 +20,7 @@ import {
   PrimaryButton, Modal, Field, C,
 } from "../../Components/admin-theme";
 import { useAuth } from "../../context/AuthContext";
+import { ShiftTab, EquipmentTab, SuppliesTab, CodeBlueTab, MortuaryTab } from "./WardBoyConsoleTabs";
 
 const API = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
 const authHdr = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem("his_token")}` } });
@@ -111,6 +112,11 @@ export default function WardBoyConsole() {
           { id: "available", label: "Available",  icon: "pi-inbox",         badge: stats.open },
           { id: "mine",      label: "My Tasks",   icon: "pi-user-edit",     badge: stats.myActive },
           { id: "today",     label: "Today",      icon: "pi-check-circle",  badge: stats.doneToday },
+          { id: "shift",     label: "Shift",      icon: "pi-clock" },
+          { id: "equipment", label: "Equipment",  icon: "pi-cog" },
+          { id: "supplies",  label: "Supplies",   icon: "pi-inbox" },
+          { id: "code-blue", label: "Code Blue",  icon: "pi-bolt" },
+          { id: "mortuary",  label: "Mortuary",   icon: "pi-shield" },
         ]}
       />
 
@@ -118,6 +124,11 @@ export default function WardBoyConsole() {
         {tab === "available" && <AvailableTab onChange={refreshStats} />}
         {tab === "mine"      && <MyTasksTab  onChange={refreshStats} />}
         {tab === "today"     && <TodayTab />}
+        {tab === "shift"     && <ShiftTab />}
+        {tab === "equipment" && <EquipmentTab />}
+        {tab === "supplies"  && <SuppliesTab />}
+        {tab === "code-blue" && <CodeBlueTab />}
+        {tab === "mortuary"  && <MortuaryTab />}
       </div>
     </AdminPage>
   );

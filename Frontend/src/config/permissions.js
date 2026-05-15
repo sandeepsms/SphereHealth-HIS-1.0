@@ -149,6 +149,13 @@ export const ACTIONS = {
   "ward.create":           ["Admin", "Doctor", "Nurse", "Receptionist", "Ward Boy"],
   "ward.fulfill":          ["Admin", "Ward Boy"],
   "ward.admin":            ["Admin"],
+  // Phase B / C
+  "ward.shift":            ["Admin", "Ward Boy", "Housekeeping"],
+  "ward.equipment":        ["Admin", "Ward Boy", "Nurse"],
+  "ward.supplies":         ["Admin", "Ward Boy", "Housekeeping", "Nurse"],
+  "ward.code-blue":        ["Admin", "Doctor", "Nurse", "Ward Boy"],
+  "ward.mortuary":         ["Admin", "Doctor", "Nurse", "Ward Boy"],
+  "ward.manage":           ["Admin", "Nurse"],
 
   // Reports
   "reports.financial":     ["Admin", "Accountant"],

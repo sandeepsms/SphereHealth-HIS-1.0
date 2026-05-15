@@ -87,6 +87,13 @@ const ACTIONS = {
   "ward.create":           ["Admin", "Doctor", "Nurse", "Receptionist", "Ward Boy"],
   "ward.fulfill":          ["Admin", "Ward Boy"],
   "ward.admin":            ["Admin"],
+  // Phase B / C — operations beyond the basic task board
+  "ward.shift":            ["Admin", "Ward Boy", "Housekeeping"],   // clock in/out for support staff
+  "ward.equipment":        ["Admin", "Ward Boy", "Nurse"],          // issue / return register
+  "ward.supplies":         ["Admin", "Ward Boy", "Housekeeping", "Nurse"],
+  "ward.code-blue":        ["Admin", "Doctor", "Nurse", "Ward Boy"],
+  "ward.mortuary":         ["Admin", "Doctor", "Nurse", "Ward Boy"],
+  "ward.manage":           ["Admin", "Nurse"],                       // KPI dashboard
 
   // Reports
   "reports.financial":     ["Admin", "Accountant"],

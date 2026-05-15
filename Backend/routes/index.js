@@ -182,4 +182,7 @@ router.use("/dietitian",        require("./Clinical/dietitianRoutes"));
 // Ward Boy — task board (transport / equipment / sample / errand)
 router.use("/ward-tasks",       require("./Clinical/wardTaskRoutes"));
 
+// Ward Operations — shift / equipment / supplies / code-blue / mortuary + manager
+router.use("/ward-ops",         require("./Clinical/wardOpsRoutes"));
+
 module.exports = router;
