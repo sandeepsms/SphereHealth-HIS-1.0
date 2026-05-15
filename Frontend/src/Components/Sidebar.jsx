@@ -305,9 +305,18 @@ const DIETICIAN_NAV = [{
   path: "/dietitian", single: true, roles: ["Dietician"],
 }];
 
+// Ward Boy gets the same single-page treatment — the entire workflow
+// (Available, My Tasks, Today) lives inside the /ward-tasks console.
+const WARD_BOY_NAV = [{
+  id: "dashboard", label: "Dashboard",
+  icon: "pi-user", color: "#0d9488", light: "#f0fdfa",
+  path: "/ward-tasks", single: true, roles: ["Ward Boy"],
+}];
+
 function filterNav(nav, userRole) {
   if (userRole === ADMIN) return nav; // Admin sees everything unfiltered
   if (userRole === "Dietician") return DIETICIAN_NAV;
+  if (userRole === "Ward Boy")  return WARD_BOY_NAV;
   return nav
     .filter(section => canSee(section.roles, userRole))
     .map(section => {

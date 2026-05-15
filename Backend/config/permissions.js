@@ -76,6 +76,18 @@ const ACTIONS = {
   "diet.read":             ["Admin", "Dietician", "Doctor", "Nurse"],
   "diet.write":            ["Admin", "Dietician"],
 
+  // Ward Boy — task board (patient transport, equipment fetch, errands).
+  //   read    = anyone in the IPD circle (so a nurse can see her request
+  //             was claimed and which ward boy is on it)
+  //   create  = clinical staff who raise the request (Nurse / Doctor /
+  //             Receptionist) and Ward Boy themselves (ad-hoc log)
+  //   fulfill = Ward Boy only (accept/start/complete)
+  //   admin   = Admin-only free-form edit (priority bump, etc.)
+  "ward.read":             ["Admin", "Doctor", "Nurse", "Receptionist", "Ward Boy", "Housekeeping"],
+  "ward.create":           ["Admin", "Doctor", "Nurse", "Receptionist", "Ward Boy"],
+  "ward.fulfill":          ["Admin", "Ward Boy"],
+  "ward.admin":            ["Admin"],
+
   // Reports
   "reports.financial":     ["Admin", "Accountant"],
   "reports.clinical":      ["Admin", "Doctor"],

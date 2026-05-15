@@ -34,10 +34,9 @@ function greet() {
 export default function RoleDashboardPage() {
   const { user } = useAuth();
   if (!user) return <AdminPage><div style={{ padding: 40 }}>Loading…</div></AdminPage>;
-  // Dietician's "dashboard" IS the dietitian console — user requested
-  // a single-page workspace with pill-tabs. Anyone landing here via /
-  // catch-all or stale link gets redirected.
+  // Single-page roles — their console is their dashboard.
   if (user.role === "Dietician") return <Navigate to="/dietitian" replace />;
+  if (user.role === "Ward Boy")  return <Navigate to="/ward-tasks" replace />;
   const roleMeta = ROLES.find(r => r.key === user.role) || ROLES[0];
 
   // Role color name → matches Hero's color prop enum

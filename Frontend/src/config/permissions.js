@@ -144,6 +144,12 @@ export const ACTIONS = {
   "diet.read":             ["Admin", "Dietician", "Doctor", "Nurse"],
   "diet.write":            ["Admin", "Dietician"],
 
+  // Ward Boy task board
+  "ward.read":             ["Admin", "Doctor", "Nurse", "Receptionist", "Ward Boy", "Housekeeping"],
+  "ward.create":           ["Admin", "Doctor", "Nurse", "Receptionist", "Ward Boy"],
+  "ward.fulfill":          ["Admin", "Ward Boy"],
+  "ward.admin":            ["Admin"],
+
   // Reports
   "reports.financial":     ["Admin", "Accountant"],
   "reports.clinical":      ["Admin", "Doctor"],
@@ -195,11 +201,10 @@ export function actionsForRole(role) {
 // per-role landing logic again.
 export function homePathForRole(role) {
   if (!role) return "/login";
-  // Dietician's home IS the dietitian console — they don't get a
-  // separate dashboard. (User-requested 13 May 2026: dietician sidebar
-  // shows only Dashboard, and Dashboard is the console itself with
-  // pill-tabs for every sub-task.)
+  // Single-page roles — sidebar shows only Dashboard which IS the
+  // console itself. Each adds their role-home as the landing path.
   if (role === "Dietician") return "/dietitian";
+  if (role === "Ward Boy")  return "/ward-tasks";
   return "/dashboard";
 }
 

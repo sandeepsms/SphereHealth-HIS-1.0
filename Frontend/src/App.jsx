@@ -117,6 +117,7 @@ const ReceptionBedView        = lazy(() => import("./pages/reception/ReceptionBe
 const ReceptionBilling        = lazy(() => import("./pages/reception/ReceptionBilling"));
 const AccountsConsole         = lazy(() => import("./pages/accounts/AccountsConsole"));
 const DieticianConsole        = lazy(() => import("./pages/dietitian/DieticianConsole"));
+const WardBoyConsole          = lazy(() => import("./pages/wardboy/WardBoyConsole"));
 
 // Clinical pages
 const NurseOPDQueuePage = lazy(() => import("./pages/nurse/NurseOPDQueuePage"));
@@ -543,6 +544,11 @@ function AppLayout({ collapsed, setCollapsed }) {
             {/* ── Dietician workspace — Patient List / Assessment / Library ─ */}
             <Route path="/dietitian" element={
               <RoleGuard action="diet.read"><DieticianConsole /></RoleGuard>
+            } />
+
+            {/* ── Ward Boy task board — Available / My Tasks / Today ─ */}
+            <Route path="/ward-tasks" element={
+              <RoleGuard action="ward.read"><WardBoyConsole /></RoleGuard>
             } />
 
             {/* ── Universal role dashboard ────────────────────────

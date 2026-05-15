@@ -18,6 +18,7 @@ import useBedEvents from "../../hooks/useBedEvents";
 import authFetch    from "../../utils/authFetch";
 import { API_ENDPOINTS } from "../../config/api";
 import BedSectionHeader from "./BedSectionHeader";
+import RequestWardBoyButton from "../ward/RequestWardBoyButton";
 import BedActionMenu from "./BedActionMenu";
 import "./bed-mgmt.css";
 
@@ -1806,6 +1807,27 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                               <div className="bm-bed-card__reason">
                                 <i className="pi pi-spin pi-spinner" style={{ marginRight: 5 }} />
                                 Patient data loading…
+                              </div>
+                            )}
+
+                            {/* Request Ward Boy — only on occupied beds with
+                                resolved patient data. The button is hidden
+                                for roles without ward.create permission so
+                                Lab/Pharmacy/etc. don't see clutter. */}
+                            {occ && pName && (
+                              <div
+                                style={{ marginTop: 6, display: "flex", justifyContent: "flex-end" }}
+                                onClick={(e) => e.stopPropagation()}  /* keep card-click from firing */
+                              >
+                                <RequestWardBoyButton
+                                  compact
+                                  patient={{
+                                    UHID: pInfo.uhid,
+                                    patientName: pName,
+                                    admissionId: adm?._id,
+                                    fromLocation: `Bed ${bed.bedNumber}`,
+                                  }}
+                                />
                               </div>
                             )}
 

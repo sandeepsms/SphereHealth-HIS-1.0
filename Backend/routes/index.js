@@ -179,4 +179,7 @@ router.use("/pharmacy",         require("./Pharmacy/pharmacyRoutes"));
 // Dietician — diet plan templates + per-patient assessment & assigned plans
 router.use("/dietitian",        require("./Clinical/dietitianRoutes"));
 
+// Ward Boy — task board (transport / equipment / sample / errand)
+router.use("/ward-tasks",       require("./Clinical/wardTaskRoutes"));
+
 module.exports = router;
