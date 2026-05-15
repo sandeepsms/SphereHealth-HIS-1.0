@@ -7,11 +7,25 @@
  *   /reports       list / get / create / update / verify
  */
 const { LabTrend, LabReport } = require("../../models/Clinical/labRecordsModels");
+const User = require("../../models/User/userModel");
 
-const userName = (req) =>
-  req.user?.fullName ||
-  `${req.user?.firstName || ""} ${req.user?.lastName || ""}`.trim() ||
-  "Unknown";
+/* JWT only carries { id, role, employeeId } — so look up the user
+   record once per write to stamp a readable name on createdByName /
+   reportedByName. Falls back to a synthesised name if the DB lookup
+   fails for any reason. */
+async function resolveUserName(req) {
+  // Honour anything the JWT already provided (future-proofing in case
+  // we ever expand the JWT payload).
+  if (req.user?.fullName) return req.user.fullName;
+  const composed = `${req.user?.firstName || ""} ${req.user?.lastName || ""}`.trim();
+  if (composed) return composed;
+  if (!req.user?.id) return "Unknown";
+  try {
+    const u = await User.findById(req.user.id).select("fullName firstName lastName").lean();
+    if (!u) return "Unknown";
+    return u.fullName || `${u.firstName || ""} ${u.lastName || ""}`.trim() || "Unknown";
+  } catch { return "Unknown"; }
+}
 
 /* ── Reference panels (single source of truth, served to frontend) ── */
 const PANELS = {
@@ -202,10 +216,11 @@ exports.trendCreate = async (req, res) => {
     const body = req.body || {};
     if (!body.UHID) return res.status(400).json({ success: false, message: "UHID required" });
     applyClassification(body.tests);
+    const name = await resolveUserName(req);
     body.createdBy     = req.user?.id;
-    body.createdByName = userName(req);
+    body.createdByName = name;
     body.updatedBy     = req.user?.id;
-    body.updatedByName = userName(req);
+    body.updatedByName = name;
     body.status        = body.status || "draft";
     const row = await LabTrend.create(body);
     res.status(201).json({ success: true, data: row });
@@ -217,7 +232,7 @@ exports.trendUpdate = async (req, res) => {
     const body = req.body || {};
     if (body.tests) applyClassification(body.tests);
     body.updatedBy     = req.user?.id;
-    body.updatedByName = userName(req);
+    body.updatedByName = await resolveUserName(req);
     const row = await LabTrend.findByIdAndUpdate(req.params.id, body, { new: true, runValidators: true }).lean();
     if (!row) return res.status(404).json({ success: false, message: "Not found" });
     res.json({ success: true, data: row });
@@ -261,7 +276,7 @@ exports.reportCreate = async (req, res) => {
       return res.status(400).json({ success: false, message: "UHID + reportType + testName required" });
     }
     body.reportedBy     = req.user?.id;
-    body.reportedByName = userName(req);
+    body.reportedByName = await resolveUserName(req);
     body.reportDate     = body.reportDate ? new Date(body.reportDate) : new Date();
     body.status         = body.status || "reported";
     const row = await LabReport.create(body);
