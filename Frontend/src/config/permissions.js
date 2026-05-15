@@ -195,6 +195,11 @@ export function actionsForRole(role) {
 // per-role landing logic again.
 export function homePathForRole(role) {
   if (!role) return "/login";
+  // Dietician's home IS the dietitian console — they don't get a
+  // separate dashboard. (User-requested 13 May 2026: dietician sidebar
+  // shows only Dashboard, and Dashboard is the console itself with
+  // pill-tabs for every sub-task.)
+  if (role === "Dietician") return "/dietitian";
   return "/dashboard";
 }
 

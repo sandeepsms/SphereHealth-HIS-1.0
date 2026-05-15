@@ -76,28 +76,44 @@ export default function DieticianConsole() {
   const [tab, setTab] = useState(params.get("tab") || "patients");
   const [activeUHID, setActiveUHID] = useState(params.get("uhid") || "");
   const [activePatient, setActivePatient] = useState(null);
+  // `presetTemplate` flows from LibraryTab → AssessmentTab when the
+  // dietician clicks "Apply to patient" on a library card. The
+  // AssessmentTab reads `?template=<id>` and pre-selects the picker.
+  const [presetTemplate, setPresetTemplate] = useState(params.get("template") || "");
 
   useEffect(() => {
     const newP = { tab };
-    if (activeUHID) newP.uhid = activeUHID;
-    if (params.get("tab") !== tab || params.get("uhid") !== (activeUHID || null)) {
+    if (activeUHID)      newP.uhid = activeUHID;
+    if (presetTemplate)  newP.template = presetTemplate;
+    if (params.get("tab") !== tab
+        || params.get("uhid") !== (activeUHID || null)
+        || params.get("template") !== (presetTemplate || null)) {
       setParams(newP, { replace: true });
     }
-  }, [tab, activeUHID]);
+  }, [tab, activeUHID, presetTemplate]);
 
   useEffect(() => {
     const t = params.get("tab") || "patients";
     const u = params.get("uhid") || "";
+    const tpl = params.get("template") || "";
     if (t !== tab) setTab(t);
     if (u !== activeUHID) setActiveUHID(u);
+    if (tpl !== presetTemplate) setPresetTemplate(tpl);
   }, [params]);
 
   // When a patient is selected from list, jump to Assessment tab.
-  const openAssessment = (patient) => {
+  const openAssessment = (patient, templateId = "") => {
     setActivePatient(patient);
     setActiveUHID(patient.UHID);
+    if (templateId) setPresetTemplate(templateId);
     setTab("assessment");
   };
+
+  // Clear preset template once consumed by Assessment tab — caller
+  // passes this so the URL becomes clean (?template= goes away once
+  // the user has loaded the assessment, otherwise refreshing reapplies
+  // the template every time which is surprising).
+  const clearPresetTemplate = () => setPresetTemplate("");
 
   return (
     <AdminPage>
@@ -119,8 +135,16 @@ export default function DieticianConsole() {
 
       <div style={{ marginTop: 16 }}>
         {tab === "patients"   && <PatientListTab onOpen={openAssessment} />}
-        {tab === "assessment" && <AssessmentTab uhid={activeUHID} patient={activePatient} onSaved={() => setTab("patients")} />}
-        {tab === "library"    && <LibraryTab />}
+        {tab === "assessment" && (
+          <AssessmentTab
+            uhid={activeUHID}
+            patient={activePatient}
+            presetTemplate={presetTemplate}
+            onPresetConsumed={clearPresetTemplate}
+            onSaved={() => setTab("patients")}
+          />
+        )}
+        {tab === "library"    && <LibraryTab onApplyToPatient={openAssessment} />}
       </div>
     </AdminPage>
   );
@@ -273,7 +297,7 @@ function suggestCategory(conditions = "") {
   return null;
 }
 
-function AssessmentTab({ uhid, patient: patientFromList, onSaved }) {
+function AssessmentTab({ uhid, patient: patientFromList, presetTemplate, onPresetConsumed, onSaved }) {
   const { can } = useAuth();
   const canWrite = can("diet.write");
   const [templates, setTemplates] = useState([]);
@@ -292,6 +316,17 @@ function AssessmentTab({ uhid, patient: patientFromList, onSaved }) {
       setTemplates(t?.data?.data || []);
     })();
   }, []);
+
+  // If a preset template id came in via URL / Library "Apply to patient",
+  // pre-select it ONCE templates are loaded (we can't select before that
+  // since the <select> needs the option to exist). Then call the parent's
+  // consumer so the URL drops `?template=` and a refresh doesn't keep
+  // re-applying the preset over a manually-changed selection.
+  useEffect(() => {
+    if (!presetTemplate || !templates.length) return;
+    setChosenTpl(presetTemplate);
+    onPresetConsumed && onPresetConsumed();
+  }, [presetTemplate, templates.length]);
 
   // When UHID changes (new patient picked or page reloaded via deep link):
   //   1. Reset form to blanks so old patient's data doesn't bleed in.
@@ -793,11 +828,15 @@ ${instr ? `<div class="notes"><strong>⚠️ Instructions</strong><ul style="mar
 /* ══════════════════════════════════════════════════════════════
    3. PLAN LIBRARY — 17 seeded templates browsable by category
 ══════════════════════════════════════════════════════════════ */
-function LibraryTab() {
+function LibraryTab({ onApplyToPatient }) {
+  const { can } = useAuth();
+  const canApply = can("diet.write");
   const [templates, setTemplates] = useState([]);
   const [filter, setFilter]       = useState("all");
+  const [q, setQ]                 = useState("");
   const [loading, setLoading]     = useState(false);
   const [preview, setPreview]     = useState(null);
+  const [applying, setApplying]   = useState(null);   // template currently being applied (patient picker open)
 
   const refresh = async () => {
     setLoading(true);
@@ -810,12 +849,28 @@ function LibraryTab() {
   useEffect(() => { refresh(); }, []);
 
   const cats = useMemo(() => [...new Set(templates.map(t => t.category))], [templates]);
-  const visible = filter === "all" ? templates : templates.filter(t => t.category === filter);
+  const visible = useMemo(() => {
+    let v = filter === "all" ? templates : templates.filter(t => t.category === filter);
+    if (q) {
+      const ql = q.toLowerCase();
+      v = v.filter(t =>
+        (t.name || "").toLowerCase().includes(ql) ||
+        (t.description || "").toLowerCase().includes(ql) ||
+        (t.indicatedFor || []).join(",").toLowerCase().includes(ql)
+      );
+    }
+    return v;
+  }, [templates, filter, q]);
 
   return (
     <>
-      <Card title="Filter by category" color={C.green} icon="pi-filter"
-        right={<PrimaryButton label="Refresh" icon="pi-refresh" color={C.green} onClick={refresh} busy={loading} />}>
+      <Card title="Filter & search" color={C.green} icon="pi-filter"
+        right={
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <SearchInput value={q} onChange={setQ} placeholder="Search name / indication…" />
+            <PrimaryButton label="Refresh" icon="pi-refresh" color={C.green} onClick={refresh} busy={loading} />
+          </div>
+        }>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {[{ id: "all", lbl: "All" }, ...cats.map(c => ({ id: c, lbl: CATEGORY_LABELS[c] || c }))].map(o => (
             <button key={o.id} onClick={() => setFilter(o.id)}
@@ -830,44 +885,171 @@ function LibraryTab() {
         </div>
       </Card>
 
-      <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 12 }}>
-        {visible.map(t => {
-          const color = CATEGORY_COLOR[t.category] || C.green;
-          return (
-            <button key={t._id} onClick={() => setPreview(t)}
-              style={{
-                background: "#fff", border: `1.5px solid ${C.border}`, borderRadius: 12,
-                padding: 16, textAlign: "left", cursor: "pointer",
-                display: "flex", flexDirection: "column", gap: 8,
-                transition: "all .15s",
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.borderColor = color + "55"; e.currentTarget.style.boxShadow = `0 6px 18px ${color}25`; e.currentTarget.style.transform = "translateY(-2px)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.boxShadow = "none"; e.currentTarget.style.transform = "none"; }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <Badge value={CATEGORY_LABELS[t.category] || t.category} />
-                <span style={{ fontFamily: "monospace", fontSize: 10.5, color: C.muted }}>{t.code}</span>
+      {visible.length === 0 ? (
+        <div style={{ marginTop: 14 }}>
+          <Card title="No templates match" color={C.muted} icon="pi-info-circle">
+            <div style={{ padding: 14, textAlign: "center", color: C.muted, fontSize: 12.5 }}>
+              {q ? `No results for "${q}".` : "No templates in this category."} Try a different filter or clear the search.
+            </div>
+          </Card>
+        </div>
+      ) : (
+        <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 12 }}>
+          {visible.map(t => {
+            const color = CATEGORY_COLOR[t.category] || C.green;
+            return (
+              <div key={t._id}
+                style={{
+                  background: "#fff", border: `1.5px solid ${C.border}`, borderRadius: 12,
+                  padding: 16, display: "flex", flexDirection: "column", gap: 8,
+                  transition: "all .15s",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.borderColor = color + "55"; e.currentTarget.style.boxShadow = `0 6px 18px ${color}25`; e.currentTarget.style.transform = "translateY(-2px)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.boxShadow = "none"; e.currentTarget.style.transform = "none"; }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <Badge value={CATEGORY_LABELS[t.category] || t.category} />
+                  <span style={{ fontFamily: "monospace", fontSize: 10.5, color: C.muted }}>{t.code}</span>
+                </div>
+                <div style={{ fontWeight: 800, fontSize: 14, color: C.text }}>{t.name}</div>
+                <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.4, minHeight: 32 }}>{t.description}</div>
+                <div style={{ display: "flex", gap: 8, paddingTop: 4, fontSize: 11, color: C.muted, fontWeight: 700 }}>
+                  {t.calories && <span>🔥 {t.calories} kcal</span>}
+                  {t.protein && <span>💪 {t.protein} g protein</span>}
+                  {t.durationType === "weekly" && <span>📅 Weekly</span>}
+                  <span style={{ marginLeft: "auto" }}>{t.meals?.length || 0} meals</span>
+                </div>
+                <div style={{ display: "flex", gap: 6, marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${C.border}` }}>
+                  <button onClick={() => setPreview(t)}
+                    style={{
+                      flex: 1, padding: "6px 10px", borderRadius: 6,
+                      border: `1.5px solid ${C.border}`, background: "#fff",
+                      color: C.muted, fontWeight: 800, fontSize: 11.5, cursor: "pointer",
+                    }}>
+                    <i className="pi pi-eye" style={{ marginRight: 4 }} />Preview
+                  </button>
+                  {canApply && onApplyToPatient && (
+                    <button onClick={() => setApplying(t)}
+                      style={{
+                        flex: 1, padding: "6px 10px", borderRadius: 6,
+                        border: `1.5px solid ${color}`, background: color + "10",
+                        color, fontWeight: 800, fontSize: 11.5, cursor: "pointer",
+                      }}>
+                      <i className="pi pi-arrow-right" style={{ marginRight: 4 }} />Apply to patient
+                    </button>
+                  )}
+                </div>
               </div>
-              <div style={{ fontWeight: 800, fontSize: 14, color: C.text }}>{t.name}</div>
-              <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.4 }}>{t.description}</div>
-              <div style={{ display: "flex", gap: 8, marginTop: "auto", paddingTop: 6, fontSize: 11, color: C.muted, fontWeight: 700 }}>
-                {t.calories && <span>🔥 {t.calories} kcal</span>}
-                {t.protein && <span>💪 {t.protein} g protein</span>}
-                {t.durationType === "weekly" && <span>📅 Weekly</span>}
-                <span style={{ marginLeft: "auto" }}>{t.meals?.length || 0} meals</span>
-              </div>
-            </button>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
 
-      {preview && <TemplatePreview tmpl={preview} onClose={() => setPreview(null)} />}
+      {preview && (
+        <TemplatePreview
+          tmpl={preview}
+          onClose={() => setPreview(null)}
+          onApply={canApply && onApplyToPatient ? () => { setApplying(preview); setPreview(null); } : null}
+        />
+      )}
+
+      {applying && (
+        <ApplyToPatientModal
+          tmpl={applying}
+          onClose={() => setApplying(null)}
+          onPick={(patient) => { onApplyToPatient(patient, applying._id); setApplying(null); }}
+        />
+      )}
     </>
   );
 }
 
-function TemplatePreview({ tmpl, onClose }) {
+/* Modal: pick which admitted patient to apply the chosen template to.
+   Pulls the same /dietitian/patients list used elsewhere; rows highlight
+   patients who already have an active plan (clicking still allowed —
+   AssessmentTab will load that plan and the new template selection
+   becomes an UPDATE rather than a duplicate). */
+function ApplyToPatientModal({ tmpl, onClose, onPick }) {
+  const [rows, setRows] = useState([]);
+  const [q, setQ] = useState("");
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await axios.get(`${API}/dietitian/patients`, authHdr());
+        setRows(r.data?.data || []);
+      } catch {}
+      setLoading(false);
+    })();
+  }, []);
+  const filtered = useMemo(() => {
+    if (!q) return rows;
+    const ql = q.toLowerCase();
+    return rows.filter(r =>
+      (r.UHID || "").toLowerCase().includes(ql) ||
+      (r.patientName || "").toLowerCase().includes(ql) ||
+      (r.ward || "").toLowerCase().includes(ql)
+    );
+  }, [rows, q]);
+  const color = CATEGORY_COLOR[tmpl.category] || C.green;
+  return (
+    <Modal title={`Apply "${tmpl.name}" to a patient`} icon="pi-arrow-right" color={color} onClose={onClose} hideFooter size={680}>
+      <div style={{ marginBottom: 10, padding: "8px 10px", background: color + "12", border: `1px solid ${color}40`, borderRadius: 6, fontSize: 12, color: C.text }}>
+        <strong>{tmpl.name}</strong> — {tmpl.description}
+        {tmpl.calories && <span style={{ marginLeft: 8, color: C.muted, fontWeight: 700 }}>· {tmpl.calories} kcal · {tmpl.protein} g protein</span>}
+      </div>
+      <div style={{ marginBottom: 8 }}>
+        <SearchInput value={q} onChange={setQ} placeholder="UHID / name / ward…" width="100%" />
+      </div>
+      {loading ? (
+        <div style={{ padding: 14, textAlign: "center", color: C.muted, fontSize: 12.5 }}>Loading patients…</div>
+      ) : filtered.length === 0 ? (
+        <EmptyRow span={1} text="No referred patients found. (Active IPD admissions + OPD diet-referrals show up here.)" />
+      ) : (
+        <div style={{ maxHeight: 360, overflowY: "auto", border: `1px solid ${C.border}`, borderRadius: 6 }}>
+          {filtered.map((p, i) => (
+            <button key={i} onClick={() => onPick(p)}
+              style={{
+                width: "100%", padding: "10px 14px",
+                background: "#fff", border: "none",
+                borderBottom: i < filtered.length - 1 ? `1px solid ${C.border}` : "none",
+                textAlign: "left", cursor: "pointer",
+                display: "flex", alignItems: "center", gap: 12,
+                transition: "background .12s",
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = color + "08"}
+              onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}>
+              <Badge value={p.source} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 800, fontSize: 13, color: C.text }}>{p.patientName || "—"}</div>
+                <div style={{ fontSize: 11, color: C.muted }}>
+                  {p.UHID} · {p.ward && p.ward !== "—" ? `${p.ward} / ${p.room}-${p.bed}` : (p.department || "—")}
+                  {p.referredBy && ` · Dr. ${p.referredBy}`}
+                </div>
+              </div>
+              {p.hasPlan && <Badge value="ACTIVE PLAN" />}
+              <i className="pi pi-arrow-right" style={{ fontSize: 11, color: color }} />
+            </button>
+          ))}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+function TemplatePreview({ tmpl, onClose, onApply }) {
   return (
     <Modal title={tmpl.name} icon="pi-book" color={CATEGORY_COLOR[tmpl.category] || C.green} onClose={onClose} hideFooter size={760}>
+      {onApply && (
+        <div style={{ marginBottom: 14, padding: "10px 12px", background: "#f0fdf4", border: "1.5px solid #86efac", borderRadius: 8, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+          <div style={{ fontSize: 12, color: "#166534" }}>
+            <strong>Ready to use this template?</strong> Pick a patient and we'll pre-fill their assessment with this plan.
+          </div>
+          <button onClick={onApply}
+            style={{ padding: "8px 14px", borderRadius: 7, border: "1.5px solid #15803d", background: "#15803d", color: "#fff", fontWeight: 800, fontSize: 12, cursor: "pointer", whiteSpace: "nowrap" }}>
+            <i className="pi pi-arrow-right" style={{ marginRight: 5 }} />Apply to patient
+          </button>
+        </div>
+      )}
       <div style={{ marginBottom: 10, fontSize: 12.5, color: C.muted }}>{tmpl.description}</div>
 
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 14, padding: "10px 12px", background: "#f8fafc", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12, fontWeight: 700 }}>

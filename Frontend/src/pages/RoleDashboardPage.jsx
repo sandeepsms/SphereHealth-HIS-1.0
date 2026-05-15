@@ -10,7 +10,7 @@
  *   - Helpful links into deep workflows
  */
 import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Navigate } from "react-router-dom";
 import axios from "axios";
 import { useAuth } from "../context/AuthContext";
 import {
@@ -34,6 +34,10 @@ function greet() {
 export default function RoleDashboardPage() {
   const { user } = useAuth();
   if (!user) return <AdminPage><div style={{ padding: 40 }}>Loading…</div></AdminPage>;
+  // Dietician's "dashboard" IS the dietitian console — user requested
+  // a single-page workspace with pill-tabs. Anyone landing here via /
+  // catch-all or stale link gets redirected.
+  if (user.role === "Dietician") return <Navigate to="/dietitian" replace />;
   const roleMeta = ROLES.find(r => r.key === user.role) || ROLES[0];
 
   // Role color name → matches Hero's color prop enum

@@ -228,15 +228,19 @@ const NAV = [
     ],
   },
 
-  /* ── Dietitian — patient nutritional assessment + plan library ── */
+  /* ── Dietitian — single Console entry for Doctor/Nurse/Admin ──
+     For Dietician this section is REPLACED entirely by the
+     DIETICIAN_NAV override below (Dashboard → /dietitian). For other
+     roles who need to view diet plans (treating doctor, nurse on rounds,
+     admin oversight) we keep a single "Dietician Console" link — they
+     get the full console where they can read everything, write actions
+     are gated by diet.write at both UI and API levels. */
   {
     id: "dietitian", label: "Nutrition / Diet",
     icon: "pi-apple", color: "#16a34a", light: "#f0fdf4",
-    roles: [ADMIN, DT, DR, NR],
+    roles: [ADMIN, DR, NR],   // DT excluded — they get DIETICIAN_NAV instead
     items: [
-      { label: "Referred Patients",  icon: "pi-users",         path: "/dietitian?tab=patients",   badge: "NEW",  roles: [ADMIN, DT, DR, NR] },
-      { label: "Assessment & Plan",  icon: "pi-pen-to-square", path: "/dietitian?tab=assessment",                roles: [ADMIN, DT] },
-      { label: "Diet Plan Library",  icon: "pi-book",          path: "/dietitian?tab=library",                   roles: [ADMIN, DT, DR, NR] },
+      { label: "Dietician Console",  icon: "pi-apple",  path: "/dietitian",  badge: "NEW",  roles: [ADMIN, DR, NR] },
     ],
   },
 
@@ -289,8 +293,21 @@ function canSee(roles, userRole) {
   return roles.includes(userRole);
 }
 
+// Dietician-specific stripped sidebar — user requested 13 May 2026 that
+// the Dietician sees ONLY a Dashboard entry, and every dietician sub-
+// task (referred patients, assessment, library) lives as a pill-tab
+// inside the /dietitian console rather than as separate sidebar items.
+// We hard-fork the nav for this role so the rest of the NAV array
+// (which other roles still consume) doesn't need to change.
+const DIETICIAN_NAV = [{
+  id: "dashboard", label: "Dashboard",
+  icon: "pi-apple", color: "#16a34a", light: "#f0fdf4",
+  path: "/dietitian", single: true, roles: ["Dietician"],
+}];
+
 function filterNav(nav, userRole) {
   if (userRole === ADMIN) return nav; // Admin sees everything unfiltered
+  if (userRole === "Dietician") return DIETICIAN_NAV;
   return nav
     .filter(section => canSee(section.roles, userRole))
     .map(section => {
