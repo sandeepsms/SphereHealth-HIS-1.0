@@ -568,7 +568,11 @@ function AppLayout({ collapsed, setCollapsed }) {
               <RoleGuard action="house.manage"><HousekeepingManagerDashboard /></RoleGuard>
             } />
 
-            {/* ── Lab Tech / Radiologist manual data entry ── */}
+            {/* ── Lab Technician manual data entry (outsourced workflow) ──
+                Lab + imaging are outsourced; Lab Tech transcribes the
+                external reports here. Radiologist role kept in the user
+                model for future in-house imaging but doesn't currently
+                have its own workflow. */}
             <Route path="/lab-results" element={
               <RoleGuard action="lab.records.read"><LabResultsEntry /></RoleGuard>
             } />

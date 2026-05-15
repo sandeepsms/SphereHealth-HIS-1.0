@@ -123,15 +123,18 @@ export const ACTIONS = {
   "pharmacy.cancel":       ["Admin", "Pharmacist"],
   "pharmacy.settings":     ["Admin", "Pharmacist"],
 
-  // Lab
+  // Lab — outsourced workflow. Lab Technician does ALL data entry
+  // (labs + imaging + micro + histopath). No in-house Pathologist /
+  // Radiologist for now (14 May 2026 — role stays in userModel for
+  // when in-house imaging comes online).
   "lab.order":             ["Admin", "Doctor", "Receptionist"],
   "lab.collect":           ["Admin", "Lab Technician", "Nurse"],
   "lab.result-entry":      ["Admin", "Lab Technician"],
-  "lab.verify":            ["Admin", "Radiologist", "Doctor"],
+  "lab.verify":            ["Admin", "Doctor"],
   "lab.dispatch":          ["Admin", "Lab Technician"],
-  "lab.records.read":      ["Admin", "Doctor", "Nurse", "Lab Technician", "Radiologist"],
-  "lab.records.write":     ["Admin", "Lab Technician", "Radiologist"],
-  "lab.records.verify":    ["Admin", "Doctor", "Radiologist"],
+  "lab.records.read":      ["Admin", "Doctor", "Nurse", "Lab Technician"],
+  "lab.records.write":     ["Admin", "Lab Technician"],
+  "lab.records.verify":    ["Admin", "Doctor"],
 
   // Billing
   "billing.read":          ["Admin", "Accountant", "Receptionist", "TPA Coordinator"],

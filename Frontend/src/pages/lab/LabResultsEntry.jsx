@@ -1,22 +1,28 @@
 /**
- * LabResultsEntry.jsx — Lab Tech / Radiologist manual data entry.
+ * LabResultsEntry.jsx — Lab Technician's single-user data-entry surface.
  *
  * URL: /lab-results
  *
+ * Context (14 May 2026): lab + imaging are OUTSOURCED. External labs
+ * and imaging centres send back paper / PDF reports; the Lab Technician
+ * is the single in-house user who transcribes everything into the HIS
+ * — lab values into the trend sheet, imaging / micro / histopath
+ * findings into the Reports tab. In-house Pathologist / Radiologist
+ * roles are deferred for now.
+ *
  * Three pill tabs:
  *   1. Trend Sheet  — grid (rows = tests, cols = dates) modelled on
- *                      the user-supplied HTML template. Each cell
- *                      auto-classifies normal / borderline / critical
+ *                      the OPD / IPD Investigation Trend Sheet HTML
+ *                      template the user supplied. Each cell auto-
+ *                      classifies normal / borderline / critical
  *                      against the test's reference range.
- *                      Save sends the entire grid to
- *                      POST /api/lab-records/trends or PUT /:id.
- *   2. Reports      — single-instance form for imaging (X-ray/CT/MRI),
- *                      microbiology, histopath, ECG/echo, PFT, endoscopy.
- *                      Narrative findings + impression.
- *   3. History      — recent records browser (filter by UHID).
+ *                      Save → POST /api/lab-records/trends.
+ *   2. Reports      — single-instance form for imaging (X-ray / CT /
+ *                      MRI / USG), microbiology, histopath, ECG / echo,
+ *                      PFT, endoscopy. Narrative findings + impression.
+ *   3. History      — combined trends + reports browser, UHID-scoped.
  *
- * Patient picker (UHID + name) lives at the top of the page so the
- * same picker drives all three tabs.
+ * The patient picker at the top drives all three tabs.
  */
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";

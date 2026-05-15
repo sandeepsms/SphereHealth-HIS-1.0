@@ -204,8 +204,12 @@ const NAV = [
     icon: "pi-search-plus", color: "#0284c7", light: "#f0f9ff",
     roles: [ADMIN, LB, RL, DR],
     items: [
-      { label: "Investigation Orders",  icon: "pi-list",   path: "/investigation-orders",  roles: [ADMIN, LB, RL, DR] },
-      { label: "Manual Lab Entry",      icon: "pi-table",  path: "/lab-results",           badge: "NEW", roles: [ADMIN, LB, RL] },
+      // Lab/Imaging is outsourced — Lab Technician is the single
+      // in-house user who transcribes external reports + maintains
+      // the trend sheets. Radiologist removed 14 May 2026 (role
+      // stays in userModel for future in-house imaging.)
+      { label: "Investigation Orders",  icon: "pi-list",   path: "/investigation-orders",  roles: [ADMIN, LB, DR] },
+      { label: "Manual Lab Entry",      icon: "pi-table",  path: "/lab-results",           badge: "NEW", roles: [ADMIN, LB] },
       { label: "Investigation Master",  icon: "pi-cog",    path: "/investigation-master",  roles: [ADMIN, LB] },
     ],
   },

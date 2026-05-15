@@ -55,16 +55,22 @@ const ACTIONS = {
   "pharmacy.cancel":       ["Admin", "Pharmacist"],
   "pharmacy.settings":     ["Admin", "Pharmacist"],
 
-  // Lab
+  // Lab — outsourced workflow (no in-house Pathologist / Radiologist
+  // for now). Lab Technician transcribes external reports for every
+  // investigation type — labs, imaging, micro, histopath. Treating
+  // doctor verifies. Radiologist removed from the lab.* surface on
+  // 14 May 2026 per user direction; role still defined in userModel
+  // so it can be re-enabled when in-house imaging comes online.
   "lab.order":             ["Admin", "Doctor", "Receptionist"],
   "lab.collect":           ["Admin", "Lab Technician", "Nurse"],
   "lab.result-entry":      ["Admin", "Lab Technician"],
-  "lab.verify":            ["Admin", "Radiologist", "Doctor"],
+  "lab.verify":            ["Admin", "Doctor"],
   "lab.dispatch":          ["Admin", "Lab Technician"],
-  // Manual lab data entry (trend sheets + imaging/micro/histopath reports)
-  "lab.records.read":      ["Admin", "Doctor", "Nurse", "Lab Technician", "Radiologist"],
-  "lab.records.write":     ["Admin", "Lab Technician", "Radiologist"],
-  "lab.records.verify":    ["Admin", "Doctor", "Radiologist"],
+  // Manual lab data entry — trend sheets + imaging / micro / histopath
+  // reports (everything outsourced labs send back as paper/PDF).
+  "lab.records.read":      ["Admin", "Doctor", "Nurse", "Lab Technician"],
+  "lab.records.write":     ["Admin", "Lab Technician"],
+  "lab.records.verify":    ["Admin", "Doctor"],
 
   // Billing
   "billing.read":          ["Admin", "Accountant", "Receptionist", "TPA Coordinator"],
