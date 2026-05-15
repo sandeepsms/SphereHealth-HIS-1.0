@@ -14,11 +14,7 @@ const {
   CleaningTask, SpillageIncident, ChemicalInventory,
   AreaCleaningLog, PestControlSchedule,
 } = require("../../models/Clinical/housekeepingModels");
-
-const userName = (req) =>
-  req.user?.fullName ||
-  `${req.user?.firstName || ""} ${req.user?.lastName || ""}`.trim() ||
-  "Unknown";
+const userName = require("../../utils/userName");
 
 /* ── TASK BOARD ──────────────────────────────────────────── */
 exports.taskList = async (req, res) => {
@@ -54,7 +50,7 @@ exports.taskCreate = async (req, res) => {
     const body = req.body || {};
     if (!body.title || !body.type) return res.status(400).json({ success: false, message: "title + type required" });
     body.requestedBy     = req.user?.id;
-    body.requestedByName = userName(req);
+    body.requestedByName = await userName(req);
     body.requestedByRole = req.user?.role || "";
     body.requestedAt     = new Date();
     body.status          = "open";
@@ -65,9 +61,10 @@ exports.taskCreate = async (req, res) => {
 
 exports.taskAccept = async (req, res) => {
   try {
+    const name = await userName(req, "Housekeeping");
     const t = await CleaningTask.findOneAndUpdate(
       { _id: req.params.id, status: "open" },
-      { $set: { status: "assigned", assignedTo: req.user.id, assignedToName: userName(req), acceptedAt: new Date() } },
+      { $set: { status: "assigned", assignedTo: req.user.id, assignedToName: name, acceptedAt: new Date() } },
       { new: true }
     ).lean();
     if (!t) return res.status(409).json({ success: false, message: "Task already taken or not open." });
@@ -134,7 +131,7 @@ exports.spillageReport = async (req, res) => {
     const body = req.body || {};
     if (!body.area || !body.type) return res.status(400).json({ success: false, message: "area + type required" });
     body.reportedBy     = req.user?.id;
-    body.reportedByName = userName(req);
+    body.reportedByName = await userName(req);
     body.reportedByRole = req.user?.role || "";
     body.reportedAt     = new Date();
     body.status         = "reported";
@@ -155,11 +152,12 @@ exports.spillageContain = async (req, res) => {
 exports.spillageClean = async (req, res) => {
   try {
     const body = req.body || {};
+    const cleanedByName = await userName(req);
     const row = await SpillageIncident.findByIdAndUpdate(req.params.id,
       { $set: {
           cleanedAt: new Date(),
           cleanedBy: req.user?.id,
-          cleanedByName: userName(req),
+          cleanedByName,
           productsUsed: body.productsUsed || [],
           protocolFollowed: body.protocolFollowed || "spillage",
           reportedToInfectionControl: !!body.reportedToInfectionControl,
@@ -250,12 +248,13 @@ exports.checklistLog = async (req, res) => {
     const allDone = checks.every(c => c.done);
     const someDone = checks.some(c => c.done);
     const status = allDone ? "done" : someDone ? "partial" : "pending";
+    const performedByName = await userName(req);
     const update = {
       $set: {
         date, area: body.area, shift: body.shift,
         cleaningType: body.cleaningType || "routine",
         performedBy: req.user?.id,
-        performedByName: userName(req),
+        performedByName,
         checks, status,
         productsUsed: body.productsUsed || [],
         protocolFollowed: body.protocolFollowed || "",
@@ -303,7 +302,7 @@ exports.pestSchedule = async (req, res) => {
     const body = req.body || {};
     if (!body.scheduledDate || !body.area) return res.status(400).json({ success: false, message: "scheduledDate + area required" });
     body.loggedBy     = req.user?.id;
-    body.loggedByName = userName(req);
+    body.loggedByName = await userName(req);
     body.status       = "scheduled";
     const row = await PestControlSchedule.create(body);
     res.status(201).json({ success: true, data: row });

@@ -13,11 +13,7 @@ const {
   WardShift, EquipmentLog, WardSupplyLog, CodeBlueEvent, MortuaryRecord,
 } = require("../../models/Clinical/wardOpsModels");
 const WardTask = require("../../models/Clinical/WardTaskModel");
-
-const userName = (req) =>
-  req.user?.fullName ||
-  `${req.user?.firstName || ""} ${req.user?.lastName || ""}`.trim() ||
-  "Unknown";
+const userName = require("../../utils/userName");
 
 /* ── SHIFT ─────────────────────────────────────────────────── */
 exports.shiftCurrent = async (req, res) => {
@@ -33,7 +29,7 @@ exports.shiftStart = async (req, res) => {
     const open = await WardShift.findOne({ user: req.user.id, endedAt: null }).lean();
     if (open) return res.status(409).json({ success: false, message: "A shift is already open. Close it first.", data: open });
     const s = await WardShift.create({
-      user: req.user.id, userName: userName(req),
+      user: req.user.id, userName: await userName(req),
       ward: req.body?.ward || "",
       startedAt: new Date(),
     });
@@ -114,7 +110,7 @@ exports.equipmentIssue = async (req, res) => {
     const body = req.body || {};
     if (!body.equipmentName) return res.status(400).json({ success: false, message: "equipmentName required" });
     body.issuedBy     = req.user.id;
-    body.issuedByName = userName(req);
+    body.issuedByName = await userName(req);
     body.issuedAt     = new Date();
     body.status       = "issued";
     const row = await EquipmentLog.create(body);
@@ -129,7 +125,7 @@ exports.equipmentReturn = async (req, res) => {
     if (row.status !== "issued") return res.status(409).json({ success: false, message: `Already ${row.status}` });
     row.returnedAt         = new Date();
     row.returnedToBy       = req.user.id;
-    row.returnedToName     = userName(req);
+    row.returnedToName     = await userName(req);
     row.conditionOnReturn  = req.body?.conditionOnReturn || "OK";
     row.status             = row.conditionOnReturn === "Lost" ? "lost" : "returned";
     if (req.body?.notes) row.notes = (row.notes ? row.notes + " · " : "") + req.body.notes;
@@ -144,11 +140,12 @@ exports.supplyUpsert = async (req, res) => {
     const dateStr = req.body?.date || new Date().toISOString().slice(0, 10);
     const date = new Date(`${dateStr}T00:00:00`);
     const ward = req.body?.ward || "Main";
+    const recordedByName = await userName(req);
     const update = {
       $set: {
         date, ward,
         recordedBy: req.user.id,
-        recordedByName: userName(req),
+        recordedByName,
         linen: req.body?.linen || {},
         bmw:   req.body?.bmw   || {},
         notes: req.body?.notes || "",
@@ -188,7 +185,7 @@ exports.codeBlueCreate = async (req, res) => {
     const body = req.body || {};
     if (!body.location) return res.status(400).json({ success: false, message: "location required" });
     body.alertedBy     = req.user.id;
-    body.alertedByName = userName(req);
+    body.alertedByName = await userName(req);
     body.alertedAt     = new Date();
     body.outcome       = "ongoing";
     const row = await CodeBlueEvent.create(body);
@@ -203,7 +200,7 @@ exports.codeBlueAddResponder = async (req, res) => {
     const arrivedAt = new Date();
     row.responders.push({
       user: req.user.id,
-      name: userName(req),
+      name: await userName(req),
       role: req.user.role || "",
       arrivedAt,
     });
@@ -249,7 +246,7 @@ exports.mortuaryDeclare = async (req, res) => {
     if (!body.UHID || !body.patientName) return res.status(400).json({ success: false, message: "UHID + patientName required" });
     body.deathDeclaredAt     = body.deathDeclaredAt ? new Date(body.deathDeclaredAt) : new Date();
     body.deathDeclaredBy     = req.user.id;
-    body.deathDeclaredByName = userName(req);
+    body.deathDeclaredByName = await userName(req);
     body.status              = "declared";
     const row = await MortuaryRecord.create(body);
     res.status(201).json({ success: true, data: row });
@@ -258,13 +255,14 @@ exports.mortuaryDeclare = async (req, res) => {
 
 exports.mortuaryShift = async (req, res) => {
   try {
+    const shiftedByName = await userName(req);
     const row = await MortuaryRecord.findByIdAndUpdate(
       req.params.id,
       {
         $set: {
           shiftedToMortuaryAt: new Date(),
           shiftedBy:           req.user.id,
-          shiftedByName:       userName(req),
+          shiftedByName,
           bodyTagId:           req.body?.bodyTagId || "",
           status:              "in-mortuary",
         },
@@ -282,13 +280,14 @@ exports.mortuaryHandover = async (req, res) => {
     if (!body.receivedBy || !body.relationship) {
       return res.status(400).json({ success: false, message: "receivedBy + relationship required" });
     }
+    const handoverByName = await userName(req);
     const row = await MortuaryRecord.findByIdAndUpdate(
       req.params.id,
       {
         $set: {
           handoverAt:       new Date(),
           handoverBy:       req.user.id,
-          handoverByName:   userName(req),
+          handoverByName,
           receivedBy:       body.receivedBy,
           relationship:     body.relationship,
           receiverPhone:    body.receiverPhone || "",

@@ -18,6 +18,7 @@
  *   • cancel:  open to requester OR Admin (controller-side check)
  */
 const WardTask = require("../../models/Clinical/WardTaskModel");
+const resolveUserName = require("../../utils/userName");
 
 /* ── LIST ────────────────────────────────────────────────────── */
 exports.list = async (req, res) => {
@@ -69,7 +70,7 @@ exports.create = async (req, res) => {
   try {
     const body = req.body || {};
     body.requestedBy     = req.user?.id;
-    body.requestedByName = req.user?.fullName || `${req.user?.firstName || ""} ${req.user?.lastName || ""}`.trim() || "Unknown";
+    body.requestedByName = await resolveUserName(req);
     body.requestedByRole = req.user?.role || "";
     body.requestedAt     = new Date();
     body.status          = "open";
@@ -88,7 +89,7 @@ exports.create = async (req, res) => {
 exports.accept = async (req, res) => {
   try {
     const myId   = req.user?.id;
-    const myName = req.user?.fullName || `${req.user?.firstName || ""} ${req.user?.lastName || ""}`.trim() || "Ward Boy";
+    const myName = await resolveUserName(req, "Ward Boy");
     const t = await WardTask.findOneAndUpdate(
       { _id: req.params.id, status: "open" },
       { $set: { status: "assigned", assignedTo: myId, assignedToName: myName, acceptedAt: new Date() } },

@@ -7,25 +7,7 @@
  *   /reports       list / get / create / update / verify
  */
 const { LabTrend, LabReport } = require("../../models/Clinical/labRecordsModels");
-const User = require("../../models/User/userModel");
-
-/* JWT only carries { id, role, employeeId } — so look up the user
-   record once per write to stamp a readable name on createdByName /
-   reportedByName. Falls back to a synthesised name if the DB lookup
-   fails for any reason. */
-async function resolveUserName(req) {
-  // Honour anything the JWT already provided (future-proofing in case
-  // we ever expand the JWT payload).
-  if (req.user?.fullName) return req.user.fullName;
-  const composed = `${req.user?.firstName || ""} ${req.user?.lastName || ""}`.trim();
-  if (composed) return composed;
-  if (!req.user?.id) return "Unknown";
-  try {
-    const u = await User.findById(req.user.id).select("fullName firstName lastName").lean();
-    if (!u) return "Unknown";
-    return u.fullName || `${u.firstName || ""} ${u.lastName || ""}`.trim() || "Unknown";
-  } catch { return "Unknown"; }
-}
+const resolveUserName = require("../../utils/userName");
 
 /* ── Reference panels (single source of truth, served to frontend) ── */
 const PANELS = {
