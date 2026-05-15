@@ -19,6 +19,7 @@ import authFetch    from "../../utils/authFetch";
 import { API_ENDPOINTS } from "../../config/api";
 import BedSectionHeader from "./BedSectionHeader";
 import RequestWardBoyButton from "../ward/RequestWardBoyButton";
+import RequestHousekeepingButton from "../ward/RequestHousekeepingButton";
 import BedActionMenu from "./BedActionMenu";
 import "./bed-mgmt.css";
 
@@ -1810,14 +1811,14 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                               </div>
                             )}
 
-                            {/* Request Ward Boy — only on occupied beds with
-                                resolved patient data. The button is hidden
-                                for roles without ward.create permission so
-                                Lab/Pharmacy/etc. don't see clutter. */}
+                            {/* Request Ward Boy + Cleaning — only on
+                                occupied beds with resolved patient data.
+                                Each button is hidden for roles without
+                                the appropriate create permission. */}
                             {occ && pName && (
                               <div
-                                style={{ marginTop: 6, display: "flex", justifyContent: "flex-end" }}
-                                onClick={(e) => e.stopPropagation()}  /* keep card-click from firing */
+                                style={{ marginTop: 6, display: "flex", justifyContent: "flex-end", gap: 6, flexWrap: "wrap" }}
+                                onClick={(e) => e.stopPropagation()}
                               >
                                 <RequestWardBoyButton
                                   compact
@@ -1826,6 +1827,16 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                                     patientName: pName,
                                     admissionId: adm?._id,
                                     fromLocation: `Bed ${bed.bedNumber}`,
+                                  }}
+                                />
+                                <RequestHousekeepingButton
+                                  compact
+                                  patient={{
+                                    UHID: pInfo.uhid,
+                                    patientName: pName,
+                                    bedNumber: bed.bedNumber,
+                                    roomNumber: bed.roomNumber,
+                                    area: bed.wardName || "",
                                   }}
                                 />
                               </div>

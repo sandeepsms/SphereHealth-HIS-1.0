@@ -35,8 +35,9 @@ export default function RoleDashboardPage() {
   const { user } = useAuth();
   if (!user) return <AdminPage><div style={{ padding: 40 }}>Loading…</div></AdminPage>;
   // Single-page roles — their console is their dashboard.
-  if (user.role === "Dietician") return <Navigate to="/dietitian" replace />;
-  if (user.role === "Ward Boy")  return <Navigate to="/ward-tasks" replace />;
+  if (user.role === "Dietician")    return <Navigate to="/dietitian" replace />;
+  if (user.role === "Ward Boy")     return <Navigate to="/ward-tasks" replace />;
+  if (user.role === "Housekeeping") return <Navigate to="/housekeeping" replace />;
   const roleMeta = ROLES.find(r => r.key === user.role) || ROLES[0];
 
   // Role color name → matches Hero's color prop enum

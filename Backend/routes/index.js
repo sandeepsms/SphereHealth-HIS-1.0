@@ -185,4 +185,7 @@ router.use("/ward-tasks",       require("./Clinical/wardTaskRoutes"));
 // Ward Operations — shift / equipment / supplies / code-blue / mortuary + manager
 router.use("/ward-ops",         require("./Clinical/wardOpsRoutes"));
 
+// Housekeeping — cleaning task board + spillage + inventory + checklist + pest + manager
+router.use("/housekeeping",     require("./Clinical/housekeepingRoutes"));
+
 module.exports = router;

@@ -119,6 +119,8 @@ const AccountsConsole         = lazy(() => import("./pages/accounts/AccountsCons
 const DieticianConsole        = lazy(() => import("./pages/dietitian/DieticianConsole"));
 const WardBoyConsole          = lazy(() => import("./pages/wardboy/WardBoyConsole"));
 const WardManagerDashboard    = lazy(() => import("./pages/wardboy/WardManagerDashboard"));
+const HousekeepingConsole     = lazy(() => import("./pages/housekeeping/HousekeepingConsole"));
+const HousekeepingManagerDashboard = lazy(() => import("./pages/housekeeping/HousekeepingManagerDashboard"));
 
 // Clinical pages
 const NurseOPDQueuePage = lazy(() => import("./pages/nurse/NurseOPDQueuePage"));
@@ -555,6 +557,14 @@ function AppLayout({ collapsed, setCollapsed }) {
             {/* ── Ward Manager KPI dashboard — Admin / Nurse-in-charge ─ */}
             <Route path="/ward-manager" element={
               <RoleGuard action="ward.manage"><WardManagerDashboard /></RoleGuard>
+            } />
+
+            {/* ── Housekeeping console — cleaning tasks + ops ── */}
+            <Route path="/housekeeping" element={
+              <RoleGuard action="house.read"><HousekeepingConsole /></RoleGuard>
+            } />
+            <Route path="/housekeeping-manager" element={
+              <RoleGuard action="house.manage"><HousekeepingManagerDashboard /></RoleGuard>
             } />
 
             {/* ── Universal role dashboard ────────────────────────

@@ -95,6 +95,17 @@ const ACTIONS = {
   "ward.mortuary":         ["Admin", "Doctor", "Nurse", "Ward Boy"],
   "ward.manage":           ["Admin", "Nurse"],                       // KPI dashboard
 
+  // Housekeeping — cleaning task board + spillage + inventory +
+  // NABH cleaning checklist + pest control + manager KPIs
+  "house.read":            ["Admin", "Doctor", "Nurse", "Receptionist", "Housekeeping", "Ward Boy"],
+  "house.create":          ["Admin", "Doctor", "Nurse", "Receptionist", "Housekeeping"],
+  "house.fulfill":         ["Admin", "Housekeeping"],
+  "house.spillage":        ["Admin", "Doctor", "Nurse", "Housekeeping"],
+  "house.inventory":       ["Admin", "Housekeeping"],
+  "house.checklist":       ["Admin", "Housekeeping"],
+  "house.pest":            ["Admin", "Housekeeping"],
+  "house.manage":          ["Admin", "Nurse"],
+
   // Reports
   "reports.financial":     ["Admin", "Accountant"],
   "reports.clinical":      ["Admin", "Doctor"],

@@ -313,10 +313,18 @@ const WARD_BOY_NAV = [{
   path: "/ward-tasks", single: true, roles: ["Ward Boy"],
 }];
 
+// Housekeeping — same single-page-console pattern.
+const HOUSEKEEPING_NAV = [{
+  id: "dashboard", label: "Dashboard",
+  icon: "pi-sparkles", color: "#0d9488", light: "#f0fdfa",
+  path: "/housekeeping", single: true, roles: ["Housekeeping"],
+}];
+
 function filterNav(nav, userRole) {
   if (userRole === ADMIN) return nav; // Admin sees everything unfiltered
-  if (userRole === "Dietician") return DIETICIAN_NAV;
-  if (userRole === "Ward Boy")  return WARD_BOY_NAV;
+  if (userRole === "Dietician")    return DIETICIAN_NAV;
+  if (userRole === "Ward Boy")     return WARD_BOY_NAV;
+  if (userRole === "Housekeeping") return HOUSEKEEPING_NAV;
   return nav
     .filter(section => canSee(section.roles, userRole))
     .map(section => {
