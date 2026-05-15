@@ -1,6 +1,22 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { homePathForRole } from "../config/permissions";
+
+// Paths where the Back button should NOT appear — these are landing
+// pages for one role or another. Going "back" from here would either
+// loop or leave the SPA. (User-requested 13 May 2026: Back button
+// available everywhere except a user's own home.)
+const NO_BACK_PATHS = new Set([
+  "/login",
+  "/dashboard",     // generic role-aware home (Doctor/Nurse/Pharmacist/etc.)
+  "/dietitian",     // Dietician's home
+  "/reception",     // Receptionist's home
+  "/mainpage",      // legacy redirect target
+  "/dashboard1",    // legacy
+  "/dash",          // legacy
+  "/",
+]);
 
 const MODULE_NAMES = {
   "/dashboard":              "Dashboard",
@@ -88,6 +104,25 @@ export default function Header() {
   const dropRef = useRef(null);
 
   const bgColor  = isDoctorPage(pathname) ? "#1e293b" : "#1e40af";
+
+  // Should we show the Back button? Hide on:
+  //   • Login screen
+  //   • Any landing page (catch-all list above)
+  //   • The role's own home — Dietician's /dietitian shouldn't show Back
+  //     even though /dietitian is technically a "module page"
+  //   • Print-mode / receipt windows handle their own chrome
+  const userHome = user ? homePathForRole(user.role) : null;
+  const isHome = NO_BACK_PATHS.has(pathname) || pathname === userHome;
+  const showBack = !!user && !isHome && !pathname.startsWith("/bill-print") && !pathname.startsWith("/print");
+
+  // Native browser back when there IS history; otherwise fall back to
+  // the user's home page so the button never strands the user on a
+  // dead-end (e.g. they opened a deep-link from chat or email).
+  const goBack = () => {
+    if (window.history.length > 1) navigate(-1);
+    else if (userHome) navigate(userHome, { replace: true });
+    else navigate("/dashboard", { replace: true });
+  };
   const timeStr  = time.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   const dateStr  = time.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 
@@ -101,6 +136,24 @@ export default function Header() {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, []);
+
+  // Alt+← keyboard shortcut to go back (mirrors browser default but
+  // also calls our goBack() so the deep-link fallback fires when
+  // history is empty).
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!showBack) return;
+      // Don't hijack if a form control is focused or modifier combo is incomplete.
+      if (e.altKey && e.key === "ArrowLeft") {
+        const tag = (e.target?.tagName || "").toLowerCase();
+        if (tag === "input" || tag === "textarea" || tag === "select") return;
+        e.preventDefault();
+        goBack();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [showBack, pathname, userHome]);
 
   const handleLogout = () => {
     logout();
@@ -116,7 +169,7 @@ export default function Header() {
       boxShadow: "0 2px 12px rgba(0,0,0,.25)",
       fontFamily: "'DM Sans', sans-serif",
     }}>
-      {/* ── Left: Logo + NABH + Module ── */}
+      {/* ── Left: Logo + NABH + Back + Module ── */}
       <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
         <div style={{ width: 28, height: 28, background: "linear-gradient(135deg,#38bdf8,#7c3aed)", borderRadius: 7,
           display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, color: "white", flexShrink: 0 }}>S</div>
@@ -125,6 +178,35 @@ export default function Header() {
         </span>
         <span style={{ background: "rgba(56,189,248,.2)", border: "1px solid rgba(56,189,248,.4)",
           padding: "3px 10px", borderRadius: 20, fontSize: 10, fontWeight: 700, letterSpacing: "1.2px", color: "#7dd3fc" }}>NABH</span>
+
+        {/* Back button — shown on every page EXCEPT the role's own home,
+            login, and print windows. Falls back to home if there's no
+            history (deep-link case). Alt+← keyboard shortcut bound below. */}
+        {showBack && (
+          <button onClick={goBack} title="Back (Alt+←)"
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              background: "rgba(255,255,255,.08)",
+              border: "1px solid rgba(255,255,255,.18)",
+              color: "white",
+              padding: "5px 12px", borderRadius: 999,
+              fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700,
+              cursor: "pointer", transition: "background .15s, border-color .15s",
+              whiteSpace: "nowrap",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background    = "rgba(255,255,255,.18)";
+              e.currentTarget.style.borderColor   = "rgba(255,255,255,.36)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background    = "rgba(255,255,255,.08)";
+              e.currentTarget.style.borderColor   = "rgba(255,255,255,.18)";
+            }}>
+            <i className="pi pi-arrow-left" style={{ fontSize: 11 }} />
+            <span>Back</span>
+          </button>
+        )}
+
         {module && module !== "SphereHealth HIS" && (
           <>
             <span style={{ width: 1, height: 28, background: "#334155", display: "inline-block", marginLeft: 2 }} />
