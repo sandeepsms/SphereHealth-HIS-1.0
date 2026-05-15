@@ -95,12 +95,15 @@ exports.deleteTemplate = async (req, res) => {
 exports.referredPatients = async (req, res) => {
   try {
     const out = [];
-    // 1. Active IPD admissions
+    // 1. Active IPD admissions — correct path is models/Patient/admissionModel
+    //    (NOT models/Admission/...). Earlier silent require failure was the
+    //    reason the endpoint always returned [].
     try {
-      const Admission = require("../../models/Admission/admissionModel");
-      const active = await Admission.find({ status: { $in: ["Active", "Admitted", "active", "admitted"] } })
+      const Admission = require("../../models/Patient/admissionModel");
+      const active = await Admission.find({ status: "Active" })
         .sort({ admissionDate: -1 }).limit(200)
-        .select("UHID patientName admissionDate roomNumber bedNumber wardName doctor ipdNumber")
+        .select("UHID patientName admissionDate roomNumber bedNumber department attendingDoctor admissionNumber wardId")
+        .populate("wardId", "wardName name")
         .lean();
       for (const a of active) {
         out.push({
@@ -108,26 +111,30 @@ exports.referredPatients = async (req, res) => {
           UHID: a.UHID,
           patientName: a.patientName,
           admissionId: a._id,
-          ipdNumber: a.ipdNumber,
-          room: a.roomNumber, bed: a.bedNumber, ward: a.wardName,
+          admissionNumber: a.admissionNumber,
+          room: a.roomNumber,
+          bed:  a.bedNumber,
+          ward: a.wardId?.wardName || a.wardId?.name || "—",
+          department: a.department,
           admittedAt: a.admissionDate,
-          referredBy: a.doctor?.personalInfo?.fullName || a.doctor || "",
+          referredBy: a.attendingDoctor || "",
         });
       }
-    } catch (e) { /* admission model not available, skip */ }
+    } catch (e) { console.error("dietitian referredPatients IPD error:", e.message); }
 
-    // 2. OPD visits with "diet" / "dietary" / "nutrition" keyword in chief complaint
+    // 2. OPD registrations today flagged with diet/nutrition keyword.
+    //    Model is OPDRegistration in models/Patient/OPDModels.js.
     try {
-      const OPDVisit = require("../../models/Patient/OPDVisitModel");
+      const OPDRegistration = require("../../models/Patient/OPDModels");
       const today = new Date(); today.setHours(0,0,0,0);
-      const opds = await OPDVisit.find({
+      const opds = await OPDRegistration.find({
         visitDate: { $gte: today },
         $or: [
-          { chiefComplaint: /diet|nutrition|dietary/i },
-          { reasonForVisit: /diet|nutrition|dietary/i },
+          { chiefComplaint: /diet|nutrition|dietary|weight/i },
+          { diagnosis:      /diabet|hypertens|renal|obes|malnut|cardiac/i },
         ],
       }).sort({ visitDate: -1 }).limit(100)
-        .select("UHID patientName visitDate visitNumber chiefComplaint doctor")
+        .select("UHID patientName visitDate visitNumber chiefComplaint diagnosis department attendingDoctor")
         .lean();
       for (const v of opds) {
         out.push({
@@ -137,11 +144,12 @@ exports.referredPatients = async (req, res) => {
           visitId: v._id,
           visitNumber: v.visitNumber,
           admittedAt: v.visitDate,
-          chiefComplaint: v.chiefComplaint,
-          referredBy: v.doctor?.personalInfo?.fullName || "",
+          chiefComplaint: v.chiefComplaint || v.diagnosis || "",
+          department: v.department,
+          referredBy: v.attendingDoctor || "",
         });
       }
-    } catch (e) { /* OPD model not available, skip */ }
+    } catch (e) { console.error("dietitian referredPatients OPD error:", e.message); }
 
     // 3. Map "has existing plan?" flag — flag patients with active plans
     const uhids = [...new Set(out.map(o => o.UHID))];

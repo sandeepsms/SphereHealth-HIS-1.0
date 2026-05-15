@@ -221,35 +221,71 @@ function PatientListTab({ onOpen }) {
 /* ══════════════════════════════════════════════════════════════
    2. ASSESSMENT & PLAN — form + template picker → POST /plan
 ══════════════════════════════════════════════════════════════ */
-function AssessmentTab({ uhid, patient, onSaved }) {
+const EMPTY_FORM = {
+  height: "", weight: "", waist: "", hip: "",
+  bp: "", bloodSugarFasting: "", bloodSugarPP: "", hba1c: "",
+  hemoglobin: "", cholesterol: "", creatinine: "", potassium: "",
+  conditions: "", allergies: "", medications: "",
+  foodPreference: "vegetarian",
+  dietaryHabits: "", appetite: "good",
+  swallowing: "normal",
+  fluidIntake: "",
+  alcohol: false, smoking: false,
+  physicalActivity: "", recentWeightChange: "",
+  notes: "",
+  customisations: "", planNotes: "",
+  targetCalories: "", targetProtein: "",
+  fluidRestriction: "", saltRestriction: "",
+  startDate: new Date().toISOString().slice(0,10),
+  followUpAt: "",
+};
+
+// BMI WHO tier → { label, color } for both the BMI cell tinting and the
+// "Underweight" / "Overweight" hints below the value.
+function bmiTier(bmi) {
+  if (bmi == null) return { label: "—", color: C.muted, bg: "#f8fafc" };
+  if (bmi < 18.5)   return { label: "Underweight", color: "#b45309", bg: "#fffbeb" };
+  if (bmi < 25)     return { label: "Normal",      color: "#15803d", bg: "#f0fdf4" };
+  if (bmi < 30)     return { label: "Overweight",  color: "#b45309", bg: "#fffbeb" };
+  return                   { label: "Obese",       color: "#b91c1c", bg: "#fef2f2" };
+}
+
+// Heuristic — map a free-text condition like "type-2 diabetes, hypertension"
+// to the most appropriate template category. Used to suggest a default
+// template in the picker once the assessor has typed a condition.
+function suggestCategory(conditions = "") {
+  const c = (conditions || "").toLowerCase();
+  if (/dialys|esrd/.test(c) && /diab/.test(c))  return "renal";   // dialysis takes precedence
+  if (/(ckd|renal|kidney|nephr)/.test(c))       return "renal";
+  if (/tube|ng|peg|dysphag|unconscious/.test(c))return "rt-feed";
+  if (/lactat|postpart|breastfeed/.test(c))     return "lactation";
+  if (/neutropen|chemo|transplant/.test(c))     return "neutropenic";
+  if (/celiac|gluten/.test(c))                  return "gluten-free";
+  if (/post.?op|wound|burn|muscle wast|malnut|hypoalbum/.test(c)) return "high-protein";
+  if (/(diab.*card|card.*diab)/.test(c))        return "diabetic-cardiac";
+  if (/diab/.test(c))                           return "diabetic";
+  if (/card|mi\b|ischem|cad|chf|heart/.test(c)) return "cardiac";
+  if (/hypert|htn|edema|ascites|chf/.test(c))   return "low-salt";
+  if (/pancreat|gallbladder|chole|fatty liver/.test(c)) return "fat-free";
+  if (/ibd|colitis|diarrh|divertic/.test(c))    return "low-fiber";
+  if (/obes|overweight|metabol/.test(c))        return "weight-loss";
+  if (/warfarin|coumadin|anticoag/.test(c))     return "vitamin-k-reference";
+  return null;
+}
+
+function AssessmentTab({ uhid, patient: patientFromList, onSaved }) {
   const { can } = useAuth();
   const canWrite = can("diet.write");
   const [templates, setTemplates] = useState([]);
   const [existing, setExisting]   = useState([]);
   const [chosenTpl, setChosenTpl] = useState("");
   const [saving, setSaving]       = useState(false);
+  const [editingId, setEditingId] = useState(null);   // null = creating new; <id> = editing
+  const [previewTpl, setPreviewTpl] = useState(null); // modal — view template before assigning
+  const [patient, setPatient]     = useState(patientFromList || null);
+  const [form, setForm] = useState(EMPTY_FORM);
 
-  // Assessment form state
-  const [form, setForm] = useState({
-    height: "", weight: "", waist: "", hip: "",
-    bp: "", bloodSugarFasting: "", bloodSugarPP: "", hba1c: "",
-    hemoglobin: "", cholesterol: "", creatinine: "", potassium: "",
-    conditions: "", allergies: "", medications: "",
-    foodPreference: "vegetarian",
-    dietaryHabits: "", appetite: "good",
-    swallowing: "normal",
-    fluidIntake: "",
-    alcohol: false, smoking: false,
-    physicalActivity: "", recentWeightChange: "",
-    notes: "",
-    // Plan side
-    customisations: "", planNotes: "",
-    targetCalories: "", targetProtein: "",
-    fluidRestriction: "", saltRestriction: "",
-    startDate: new Date().toISOString().slice(0,10),
-    followUpAt: "",
-  });
-
+  // Load templates once.
   useEffect(() => {
     (async () => {
       const t = await axios.get(`${API}/dietitian/templates?active=true`, authHdr()).catch(() => null);
@@ -257,26 +293,104 @@ function AssessmentTab({ uhid, patient, onSaved }) {
     })();
   }, []);
 
+  // When UHID changes (new patient picked or page reloaded via deep link):
+  //   1. Reset form to blanks so old patient's data doesn't bleed in.
+  //   2. Resolve patient context — first from props (came via list click),
+  //      otherwise from /dietitian/patients lookup so banner + admissionId
+  //      stay correct on direct URL load.
+  //   3. Load patient's plan history. If an active plan exists, prefill
+  //      the form so "View / Edit" actually edits instead of creating a
+  //      duplicate.
   useEffect(() => {
-    if (!uhid) return;
-    (async () => {
-      const r = await axios.get(`${API}/dietitian/patient/${uhid}/plans`, authHdr()).catch(() => null);
-      setExisting(r?.data?.data || []);
-    })();
-  }, [uhid]);
+    if (!uhid) { setForm(EMPTY_FORM); setExisting([]); setEditingId(null); return; }
+    setForm(EMPTY_FORM); setEditingId(null); setChosenTpl("");
 
+    (async () => {
+      // Resolve patient from props or lookup.
+      if (patientFromList && patientFromList.UHID === uhid) {
+        setPatient(patientFromList);
+      } else {
+        const all = await axios.get(`${API}/dietitian/patients`, authHdr()).catch(() => null);
+        const match = (all?.data?.data || []).find(p => p.UHID === uhid);
+        if (match) setPatient(match);
+      }
+      // Plan history.
+      const r = await axios.get(`${API}/dietitian/patient/${uhid}/plans`, authHdr()).catch(() => null);
+      const plans = r?.data?.data || [];
+      setExisting(plans);
+      // Preload most-recent ACTIVE plan into form so dietitian can review/edit.
+      const last = plans.find(p => p.status === "active") || plans[0];
+      if (last) loadPlanIntoForm(last);
+    })();
+  }, [uhid, patientFromList]);
+
+  const loadPlanIntoForm = (p) => {
+    const a = p.assessment || {};
+    const pl = p.plan || {};
+    setEditingId(p._id);
+    setChosenTpl(pl.templateId || "");
+    setForm({
+      height: a.height ?? "", weight: a.weight ?? "", waist: a.waist ?? "", hip: a.hip ?? "",
+      bp: a.bp ?? "", bloodSugarFasting: a.bloodSugarFasting ?? "", bloodSugarPP: a.bloodSugarPP ?? "", hba1c: a.hba1c ?? "",
+      hemoglobin: a.hemoglobin ?? "", cholesterol: a.cholesterol ?? "", creatinine: a.creatinine ?? "", potassium: a.potassium ?? "",
+      conditions: (a.conditions || []).join(", "),
+      allergies:  (a.allergies  || []).join(", "),
+      medications:(a.medications|| []).join(", "),
+      foodPreference: a.foodPreference || "vegetarian",
+      dietaryHabits: a.dietaryHabits || "",
+      appetite: a.appetite || "good",
+      swallowing: a.swallowing || "normal",
+      fluidIntake: a.fluidIntake ?? "",
+      alcohol: !!a.alcohol, smoking: !!a.smoking,
+      physicalActivity: a.physicalActivity || "",
+      recentWeightChange: a.recentWeightChange ?? "",
+      notes: a.notes || "",
+      customisations: pl.customisations || "",
+      planNotes: pl.notes || "",
+      targetCalories: pl.targetCalories ?? "",
+      targetProtein:  pl.targetProtein  ?? "",
+      fluidRestriction: pl.fluidRestriction ?? "",
+      saltRestriction:  pl.saltRestriction  ?? "",
+      startDate:  (p.startDate || "").slice(0,10) || new Date().toISOString().slice(0,10),
+      followUpAt: (p.followUpAt || "").slice(0,10) || "",
+    });
+  };
+
+  // BMI auto-calc + WHO tier.
   const bmi = useMemo(() => {
     const h = Number(form.height), w = Number(form.weight);
     if (!h || !w) return null;
     const m = h / 100;
     return Number((w / (m * m)).toFixed(1));
   }, [form.height, form.weight]);
+  const bmiInfo = bmiTier(bmi);
 
-  const bmiLabel = bmi == null ? "—"
-    : bmi < 18.5 ? `${bmi} (Underweight)`
-    : bmi < 25   ? `${bmi} (Normal)`
-    : bmi < 30   ? `${bmi} (Overweight)`
-    :              `${bmi} (Obese)`;
+  // Auto-fill target calories/protein from picked template, but only if
+  // they're currently blank — so we don't override a user's manual entry.
+  // Also stash a snapshot of the chosen template for the preview button.
+  const chosenTplObj = useMemo(() => templates.find(t => t._id === chosenTpl), [templates, chosenTpl]);
+  useEffect(() => {
+    if (!chosenTplObj) return;
+    setForm(f => ({
+      ...f,
+      targetCalories: f.targetCalories || chosenTplObj.calories || "",
+      targetProtein:  f.targetProtein  || chosenTplObj.protein  || "",
+    }));
+  }, [chosenTplObj]);
+
+  // Suggested category from typed conditions — bubbles matching templates
+  // to the top of the picker.
+  const suggested = useMemo(() => suggestCategory(form.conditions), [form.conditions]);
+  const sortedTemplates = useMemo(() => {
+    if (!suggested) return templates;
+    return [...templates].sort((a, b) => {
+      const aHit = a.category === suggested;
+      const bHit = b.category === suggested;
+      if (aHit && !bHit) return -1;
+      if (!aHit && bHit) return 1;
+      return 0;
+    });
+  }, [templates, suggested]);
 
   if (!uhid) {
     return (
@@ -338,13 +452,33 @@ function AssessmentTab({ uhid, patient, onSaved }) {
         followUpAt: form.followUpAt || undefined,
         status: "active",
       };
-      await axios.post(`${API}/dietitian/plan`, body, authHdr());
-      toast.success("Diet plan saved and assigned.");
+      if (editingId) {
+        await axios.put(`${API}/dietitian/plan/${editingId}`, body, authHdr());
+        toast.success("Diet plan updated.");
+      } else {
+        await axios.post(`${API}/dietitian/plan`, body, authHdr());
+        toast.success("Diet plan saved and assigned.");
+      }
       onSaved && onSaved();
     } catch (e) {
       toast.error(e?.response?.data?.message || "Save failed");
     }
     setSaving(false);
+  };
+
+  // Print a clean copy of the assigned plan — opens in new window with
+  // the meals snapshot + assessment summary. Kept inside the file so the
+  // template snapshot in plan.meals can be rendered without an extra
+  // round-trip to the server.
+  const printPlan = () => {
+    const last = existing.find(p => p._id === editingId) || existing[0];
+    if (!last) { toast.info("Save the plan first to print it."); return; }
+    const html = renderPrintHTML(last, patient);
+    const w = window.open("", "_blank", "width=800,height=900");
+    if (!w) { toast.error("Pop-up blocked — allow pop-ups to print."); return; }
+    w.document.write(html);
+    w.document.close();
+    setTimeout(() => { w.focus(); w.print(); }, 250);
   };
 
   const u = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -362,12 +496,24 @@ function AssessmentTab({ uhid, patient, onSaved }) {
   return (
     <>
       {/* Patient banner */}
-      <Card title={`Patient · ${uhid}`} color={C.green} icon="pi-user">
+      <Card title={`Patient · ${uhid}`} color={C.green} icon="pi-user"
+        right={
+          editingId
+            ? <Badge value="EDITING EXISTING PLAN" />
+            : (existing.length > 0 ? <Badge value="NEW PLAN" /> : null)
+        }>
         <div style={{ display: "flex", gap: 18, alignItems: "center", flexWrap: "wrap" }}>
           <div style={{ fontSize: 16, fontWeight: 800, color: C.text }}>{patient?.patientName || "—"}</div>
-          {patient?.ward && <span style={{ color: C.muted, fontSize: 12 }}>📍 {patient.ward} / {patient.room}-{patient.bed}</span>}
-          {patient?.referredBy && <span style={{ color: C.muted, fontSize: 12 }}>👨‍⚕️ Referred by {patient.referredBy}</span>}
-          {existing.length > 0 && <Badge value={`${existing.length} previous plan${existing.length > 1 ? "s" : ""}`} />}
+          {patient?.ward && patient.ward !== "—" && (
+            <span style={{ color: C.muted, fontSize: 12 }}>📍 {patient.ward} / {patient.room}-{patient.bed}</span>
+          )}
+          {patient?.department && (
+            <span style={{ color: C.muted, fontSize: 12 }}>🏥 {patient.department}</span>
+          )}
+          {patient?.referredBy && (
+            <span style={{ color: C.muted, fontSize: 12 }}>👨‍⚕️ Referred by {patient.referredBy}</span>
+          )}
+          {existing.length > 0 && <Badge value={`${existing.length} plan${existing.length > 1 ? "s" : ""} on file`} />}
         </div>
       </Card>
 
@@ -376,7 +522,16 @@ function AssessmentTab({ uhid, patient, onSaved }) {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
           <Field label="Height (cm)">{I("height", "number")}</Field>
           <Field label="Weight (kg)">{I("weight", "number")}</Field>
-          <Field label="BMI"><div style={{ padding: "6px 9px", background: bmi ? "#f0fdf4" : "#f8fafc", borderRadius: 6, fontWeight: 800, fontSize: 12.5, color: bmi >= 25 ? C.red : C.green }}>{bmiLabel}</div></Field>
+          <Field label="BMI">
+            <div style={{
+              padding: "6px 9px", background: bmiInfo.bg, borderRadius: 6,
+              fontWeight: 800, fontSize: 12.5, color: bmiInfo.color,
+              border: `1px solid ${bmiInfo.color}30`,
+            }}>
+              {bmi == null ? "—" : `${bmi}`}
+              <span style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 700, opacity: 0.75 }}>{bmiInfo.label}</span>
+            </div>
+          </Field>
           <Field label="Waist (cm)">{I("waist", "number")}</Field>
           <Field label="Hip (cm)">{I("hip", "number")}</Field>
           <Field label="Recent weight Δ (kg, 3 mo)">{I("recentWeightChange", "number")}</Field>
@@ -437,18 +592,59 @@ function AssessmentTab({ uhid, patient, onSaved }) {
       </Card>
 
       {/* Diet plan selection */}
-      <Card title="Diet plan template" color={C.green} icon="pi-book">
+      <Card title="Diet plan template" color={C.green} icon="pi-book"
+        right={suggested && (
+          <span style={{ fontSize: 11, padding: "3px 9px", borderRadius: 999, background: "#f0fdf4", color: "#15803d", fontWeight: 800, border: "1px solid #86efac" }}>
+            <i className="pi pi-sparkles" style={{ fontSize: 10, marginRight: 4 }} />
+            Suggested: {CATEGORY_LABELS[suggested]}
+          </span>
+        )}>
         <Field label="Choose a base template (optional — leave blank for custom plan)">
-          <select value={chosenTpl} onChange={(e) => setChosenTpl(e.target.value)}
-            style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 6, fontSize: 13, background: "#fff" }}>
-            <option value="">— No template / custom plan —</option>
-            {templates.map(t => (
-              <option key={t._id} value={t._id}>
-                {t.name} [{CATEGORY_LABELS[t.category] || t.category}]{t.calories ? ` · ${t.calories} kcal` : ""}{t.protein ? ` · ${t.protein} g protein` : ""}
-              </option>
-            ))}
-          </select>
+          <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
+            <select value={chosenTpl} onChange={(e) => setChosenTpl(e.target.value)}
+              style={{ flex: 1, padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 6, fontSize: 13, background: "#fff" }}>
+              <option value="">— No template / custom plan —</option>
+              {suggested && (
+                <optgroup label="✨ Suggested for typed conditions">
+                  {sortedTemplates.filter(t => t.category === suggested).map(t => (
+                    <option key={t._id} value={t._id}>
+                      {t.name}{t.calories ? ` · ${t.calories} kcal` : ""}{t.protein ? ` · ${t.protein} g protein` : ""}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              <optgroup label={suggested ? "All other templates" : "All templates"}>
+                {sortedTemplates.filter(t => !suggested || t.category !== suggested).map(t => (
+                  <option key={t._id} value={t._id}>
+                    {t.name} [{CATEGORY_LABELS[t.category] || t.category}]{t.calories ? ` · ${t.calories} kcal` : ""}{t.protein ? ` · ${t.protein} g protein` : ""}
+                  </option>
+                ))}
+              </optgroup>
+            </select>
+            <button type="button" disabled={!chosenTplObj}
+              onClick={() => setPreviewTpl(chosenTplObj)}
+              style={{
+                padding: "0 14px", borderRadius: 6, border: `1.5px solid ${chosenTplObj ? C.green : C.border}`,
+                background: chosenTplObj ? "#f0fdf4" : "#fff",
+                color: chosenTplObj ? "#15803d" : C.muted,
+                fontSize: 12, fontWeight: 800, cursor: chosenTplObj ? "pointer" : "not-allowed",
+                whiteSpace: "nowrap",
+              }}>
+              <i className="pi pi-eye" style={{ marginRight: 5 }} />Preview
+            </button>
+          </div>
         </Field>
+
+        {chosenTplObj && (
+          <div style={{ marginTop: 8, padding: "8px 12px", background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 6, fontSize: 12, color: "#166534" }}>
+            <strong>{chosenTplObj.name}</strong> — {chosenTplObj.description}
+            {chosenTplObj.contraindications?.length > 0 && (
+              <div style={{ marginTop: 4, color: "#b91c1c" }}>
+                ⚠️ Contraindicated: {chosenTplObj.contraindications.join("; ")}
+              </div>
+            )}
+          </div>
+        )}
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginTop: 10 }}>
           <Field label="Target calories">{I("targetCalories", "number")}</Field>
@@ -472,10 +668,20 @@ function AssessmentTab({ uhid, patient, onSaved }) {
         </div>
 
         <div style={{ marginTop: 14, display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <PrimaryButton label={canWrite ? "Save & Assign Plan" : "Read-only"}
-            icon="pi-check" color={C.green} onClick={save} busy={saving} disabled={!canWrite} />
+          {editingId && (
+            <button type="button" onClick={printPlan}
+              style={{ padding: "8px 16px", borderRadius: 7, border: `1.5px solid ${C.blue}`, background: "#fff", color: C.blue, fontWeight: 800, fontSize: 12.5, cursor: "pointer" }}>
+              <i className="pi pi-print" style={{ marginRight: 5 }} />Print Plan
+            </button>
+          )}
+          <PrimaryButton
+            label={!canWrite ? "Read-only" : editingId ? "Update Plan" : "Save & Assign Plan"}
+            icon={editingId ? "pi-save" : "pi-check"}
+            color={C.green} onClick={save} busy={saving} disabled={!canWrite} />
         </div>
       </Card>
+
+      {previewTpl && <TemplatePreview tmpl={previewTpl} onClose={() => setPreviewTpl(null)} />}
 
       {existing.length > 0 && (
         <Card title="Previous plans for this patient" color={C.muted} icon="pi-history">
@@ -498,6 +704,90 @@ function AssessmentTab({ uhid, patient, onSaved }) {
       )}
     </>
   );
+}
+
+/* Render a printable HTML page for a saved PatientDietPlan.
+   Self-contained — uses inline CSS so it works in a fresh window.
+   The plan snapshot (plan.meals) is the source of truth; the template
+   could change later but the printed plan stays what was assigned. */
+function renderPrintHTML(p, patient) {
+  const a = p.assessment || {};
+  const pl = p.plan || {};
+  const meals = pl.meals || [];
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+  const today = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" });
+  const mealRows = meals.map(m => `
+    <tr>
+      <td style="font-weight:700;white-space:nowrap;vertical-align:top;padding:8px 12px;border-bottom:1px solid #e5e7eb">
+        ${esc(m.time)}${m.timeHi ? `<div style="font-weight:400;color:#6b7280;font-size:11px">${esc(m.timeHi)}</div>` : ""}
+      </td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb">
+        <ul style="margin:0;padding-left:18px">
+          ${(m.items || []).map(it => `
+            <li style="margin-bottom:3px">
+              ${it.day ? `<strong style="color:#15803d;margin-right:6px">${esc(it.day)}:</strong>` : ""}
+              ${esc(it.en)}
+              ${it.hi ? `<div style="color:#6b7280;font-size:11px">${esc(it.hi)}</div>` : ""}
+              ${it.notes ? `<div style="color:#6b7280;font-size:11px;font-style:italic">${esc(it.notes)}</div>` : ""}
+            </li>`).join("")}
+        </ul>
+      </td>
+    </tr>`).join("");
+  const instr = (pl.instructions || []).concat(pl.customisations ? ["Customisation: " + pl.customisations] : [])
+    .map(s => `<li>${esc(s)}</li>`).join("");
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Diet Plan — ${esc(patient?.patientName || p.UHID)}</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;color:#0f172a;margin:0;padding:24px}
+  h1{font-size:18px;margin:0 0 4px;color:#15803d}
+  h2{font-size:13px;margin:18px 0 6px;color:#374151;text-transform:uppercase;letter-spacing:.5px}
+  .meta{display:flex;justify-content:space-between;margin-bottom:14px;font-size:12px;color:#6b7280;border-bottom:2px solid #15803d;padding-bottom:8px}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;font-size:11.5px;margin-bottom:12px}
+  .summary div{background:#f0fdf4;border:1px solid #86efac;padding:6px 8px;border-radius:5px}
+  .summary b{display:block;color:#15803d;font-size:10px;text-transform:uppercase;margin-bottom:2px}
+  .notes{background:#fffbeb;border:1px solid #fbbf24;padding:10px 12px;border-radius:6px;font-size:12px;margin-top:14px}
+  @media print{ body{padding:14px} }
+</style></head><body>
+<div class="meta">
+  <div><h1>Diet Plan</h1><div>${esc(pl.templateName || "Custom Plan")}${pl.templateCode ? ` (${esc(pl.templateCode)})` : ""}</div></div>
+  <div style="text-align:right">
+    <strong>${esc(patient?.patientName || p.patientName)}</strong><br>
+    UHID: ${esc(p.UHID)}<br>
+    Issued: ${today}
+  </div>
+</div>
+
+<div class="summary">
+  <div><b>Target Calories</b>${pl.targetCalories || "—"} kcal</div>
+  <div><b>Target Protein</b>${pl.targetProtein || "—"} g</div>
+  <div><b>Fluid limit</b>${pl.fluidRestriction || "—"} ml/day</div>
+  <div><b>Salt limit</b>${pl.saltRestriction || "—"} g/day</div>
+</div>
+
+<h2>Assessment</h2>
+<div style="font-size:12px;color:#374151;line-height:1.6">
+  Height ${a.height ?? "—"} cm · Weight ${a.weight ?? "—"} kg · BMI ${a.bmi ?? "—"}
+  ${a.bp ? ` · BP ${esc(a.bp)}` : ""}
+  ${a.bloodSugarFasting ? ` · FBS ${a.bloodSugarFasting}` : ""}${a.hba1c ? ` · HbA1c ${a.hba1c}%` : ""}
+  ${a.creatinine ? ` · Cr ${a.creatinine}` : ""}${a.hemoglobin ? ` · Hb ${a.hemoglobin}` : ""}
+  ${a.conditions?.length ? `<br><strong>Conditions:</strong> ${esc(a.conditions.join(", "))}` : ""}
+  ${a.allergies?.length ? `<br><strong>Allergies:</strong> ${esc(a.allergies.join(", "))}` : ""}
+  ${a.medications?.length ? `<br><strong>Medications:</strong> ${esc(a.medications.join(", "))}` : ""}
+</div>
+
+<h2>Meal Schedule</h2>
+<table>
+  <thead><tr style="background:#f0fdf4"><th style="text-align:left;padding:8px 12px;border-bottom:2px solid #15803d">Time</th><th style="text-align:left;padding:8px 12px;border-bottom:2px solid #15803d">Items</th></tr></thead>
+  <tbody>${mealRows || `<tr><td colspan="2" style="padding:14px;text-align:center;color:#6b7280">Custom plan — no template meals snapshotted.</td></tr>`}</tbody>
+</table>
+
+${instr ? `<div class="notes"><strong>⚠️ Instructions</strong><ul style="margin:6px 0 0;padding-left:18px">${instr}</ul></div>` : ""}
+
+<div style="margin-top:20px;padding-top:10px;border-top:1px solid #e5e7eb;font-size:11px;color:#6b7280;display:flex;justify-content:space-between">
+  <span>Assigned: ${p.assignedAt ? new Date(p.assignedAt).toLocaleDateString("en-IN") : "—"}</span>
+  <span>Follow-up: ${p.followUpAt ? new Date(p.followUpAt).toLocaleDateString("en-IN") : "—"}</span>
+</div>
+</body></html>`;
 }
 
 /* ══════════════════════════════════════════════════════════════
