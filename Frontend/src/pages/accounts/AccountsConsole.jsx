@@ -22,7 +22,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-toastify";
 import {
-  AdminPage, Hero, TabStrip, KPI, Card, Table, EmptyRow, Empty, Badge,
+  AdminPage, Hero, TabStrip, KPI, Card, Table, EmptyRow, Empty, Badge, Field,
   PrimaryButton, C,
 } from "../../Components/admin-theme";
 
@@ -66,7 +66,9 @@ export default function AccountsConsole() {
           { id: "revenue",     label: "Revenue",        icon: "pi-chart-line" },
           { id: "gst",         label: "GST Returns",    icon: "pi-percentage" },
           { id: "outstanding", label: "Outstanding",    icon: "pi-clock" },
+          { id: "bills",       label: "All Bills",      icon: "pi-list" },
           { id: "refunds",     label: "Refunds & Audit",icon: "pi-undo" },
+          { id: "shift",       label: "Shift / Cashier",icon: "pi-user-edit" },
         ]}
       />
 
@@ -75,7 +77,9 @@ export default function AccountsConsole() {
         {tab === "revenue"     && <RevenueTab />}
         {tab === "gst"         && <GSTTab />}
         {tab === "outstanding" && <OutstandingTab />}
+        {tab === "bills"       && <AllBillsTab />}
         {tab === "refunds"     && <RefundsTab />}
+        {tab === "shift"       && <ShiftTab />}
       </div>
     </AdminPage>
   );
@@ -203,49 +207,33 @@ function DayBookTab() {
 ══════════════════════════════════════════════════════════════ */
 function RevenueTab() {
   const navigate = useNavigate();
-  // /billing/summary is a "today snapshot" endpoint — it ignores date params
-  // and returns { todayBills, pendingBills, todayRevenue, tpaPending }.
-  // We aggregate a real date range by calling /billing/collection-summary for
-  // each day in the window (max 31 days). That keeps the API surface unchanged
-  // while giving the Revenue tab proper MTD numbers.
-  const [from, setFrom] = useState(firstOfMonth());
+  // Default window — last 90 days so the page lands on data even on a
+  // hospital where finalised bills are sparse. The user can tighten to
+  // MTD via the date picker.
+  const ninetyAgo = () => { const d = new Date(); d.setDate(d.getDate() - 90); return d.toISOString().slice(0, 10); };
+  const [from, setFrom] = useState(ninetyAgo());
   const [to, setTo]     = useState(todayISO());
-  const [agg, setAgg]   = useState({ collected: 0, gross: 0, pending: 0, txns: 0, days: 0 });
-  const [snapshot, setSnapshot] = useState(null);   // {todayBills, pendingBills, todayRevenue, tpaPending}
-  const [pharmacy, setPharmacy] = useState(null);
+  const [breakdown, setBreakdown] = useState(null);  // /billing/revenue-breakdown payload
+  const [snapshot, setSnapshot] = useState(null);    // /billing/summary today snapshot
+  const [pharmacy, setPharmacy] = useState(null);    // /pharmacy/stats
   const [loading, setLoading] = useState(false);
 
   const refresh = async () => {
     setLoading(true);
     try {
-      // Build inclusive list of dates in window — cap at 31 days to avoid
-      // hammering the API.
-      const dates = [];
-      const start = new Date(from), end = new Date(to);
-      for (let d = new Date(start); d <= end && dates.length < 31; d.setDate(d.getDate() + 1)) {
-        dates.push(d.toISOString().slice(0, 10));
-      }
-      const [perDay, snap, ph] = await Promise.all([
-        Promise.all(dates.map(dt =>
-          axios.get(`${API}/billing/collection-summary?date=${dt}`, authHdr()).then(r => r.data?.summary || {}).catch(() => ({}))
-        )),
+      const [bd, snap, ph] = await Promise.all([
+        axios.get(`${API}/billing/revenue-breakdown?from=${from}&to=${to}`, authHdr()).then(r => r.data).catch(() => null),
         axios.get(`${API}/billing/summary`, authHdr()).then(r => r.data?.data).catch(() => null),
         axios.get(`${API}/pharmacy/stats`, authHdr()).then(r => r.data?.data).catch(() => null),
       ]);
-      const totals = perDay.reduce((acc, s) => ({
-        collected: acc.collected + Number(s.totalCollected || 0),
-        gross:     acc.gross     + Number(s.totalGross     || 0),
-        pending:   acc.pending   + Number(s.totalPending   || 0),
-        txns:      acc.txns      + Number(s.txnCount       || 0),
-        days:      acc.days + 1,
-      }), { collected: 0, gross: 0, pending: 0, txns: 0, days: 0 });
-      setAgg(totals);
+      setBreakdown(bd);
       setSnapshot(snap);
       setPharmacy(ph);
     } catch (e) {}
     setLoading(false);
   };
   useEffect(() => { refresh(); }, [from, to]);
+  const t = breakdown?.totals || {};
 
   return (
     <>
@@ -261,16 +249,15 @@ function RevenueTab() {
           </div>
         }>
         <div style={{ fontSize: 12.5, color: C.muted }}>
-          {agg.days} day window · {from} → {to}
-          {agg.days >= 31 && <span style={{ color: C.amber, fontWeight: 700, marginLeft: 8 }}>· capped at 31 days</span>}
+          {breakdown?.window?.days || Math.ceil((new Date(to) - new Date(from)) / 86400000) + 1} day window · {from} → {to}
         </div>
       </Card>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, margin: "12px 0" }}>
-        <KPI label="Collected (range)"  value={fmtINR(agg.collected)}                          color={C.green}   icon="pi-money-bill" />
-        <KPI label="Gross billed"       value={fmtINR(agg.gross)}                              color={C.blue}    icon="pi-receipt" />
-        <KPI label="Outstanding"        value={fmtINR(agg.pending)}                            color={C.red}     icon="pi-clock" />
-        <KPI label="Transactions"       value={agg.txns}                                       color={C.purple}  icon="pi-list" />
+        <KPI label="Collected (range)"  value={fmtINR(t.paid)}        color={C.green}   icon="pi-money-bill" />
+        <KPI label="Gross billed"       value={fmtINR(t.gross)}       color={C.blue}    icon="pi-receipt" />
+        <KPI label="Outstanding"        value={fmtINR(t.outstanding)} color={C.red}     icon="pi-clock" />
+        <KPI label="Bills counted"      value={t.count ?? 0}          color={C.purple}  icon="pi-list" />
         <KPI label="Pharmacy MTD"       value={fmtINR(pharmacy?.monthSales?.net ?? 0)}         color={C.amber}   icon="pi-box" />
         <KPI label="Pharmacy today"     value={fmtINR(pharmacy?.todaySales?.net ?? 0)}         color={C.orange}  icon="pi-shopping-cart" />
       </div>
@@ -285,19 +272,70 @@ function RevenueTab() {
         </div>
       </Card>
 
+      {/* Service-line + visit-type + payer breakdown — 2x2 grid */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 12 }}>
+        <BreakdownCard title="Service categories"  rows={breakdown?.byCategory}   keyField="category"  color={C.amber}  icon="pi-tag"           total={t.gross || t.paid} valueField="gross" />
+        <BreakdownCard title="Visit types"         rows={breakdown?.byVisitType}  keyField="visitType" color={C.blue}   icon="pi-th-large"      total={t.paid}            valueField="paid" />
+        <BreakdownCard title="Payment / payer type"rows={breakdown?.byPayer}      keyField="payer"     color={C.green}  icon="pi-wallet"        total={t.paid}            valueField="paid" />
+        <BreakdownCard title="Departments"         rows={breakdown?.byDepartment} keyField="department"color={C.purple} icon="pi-sitemap"       total={t.paid}            valueField="paid" />
+      </div>
+
       <div style={{ marginTop: 12 }}>
-        <Card title="Drill down" color={C.amber} icon="pi-chart-bar">
-          <div style={{ fontSize: 12.5, color: C.muted, padding: "0 0 12px" }}>
-            Service-wise revenue breakdown wiring is pending a backend aggregator (<code>/api/billing/revenue-streams</code>).
-          </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <PrimaryButton label="Open Bills List"          icon="pi-list"    color={C.amber}  onClick={() => navigate("/billing")} />
-            <PrimaryButton label="Billing Intelligence"     icon="pi-bolt"    color={C.purple} onClick={() => navigate("/billing-intelligence")} />
-            <PrimaryButton label="Pharmacy Sales Register"  icon="pi-receipt" color={C.orange} onClick={() => navigate("/pharmacy?tab=registers")} />
-          </div>
+        <Card title="Top 20 doctors by collection" color={C.teal} icon="pi-user-edit">
+          {!breakdown?.byDoctor?.length ? (
+            <Empty icon="pi-user-edit" text="No doctor-attributed collection in this window. (System debt: bills created without a `doctor` ref don't appear here.)" />
+          ) : (
+            <Table cols={[{ label: "Doctor" }, { label: "Bills", align: "right" }, { label: "Collected", align: "right" }]}>
+              {breakdown.byDoctor.map((d, i) => (
+                <tr key={i}>
+                  <td style={{ fontWeight: 700 }}>{d.name}</td>
+                  <td style={{ textAlign: "right" }}>{d.count}</td>
+                  <td style={{ textAlign: "right", fontWeight: 800 }}>{fmtINR2(d.paid)}</td>
+                </tr>
+              ))}
+            </Table>
+          )}
         </Card>
       </div>
+
+      <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <PrimaryButton label="Open Bills List"          icon="pi-list"    color={C.amber}  onClick={() => navigate("/billing")} />
+        <PrimaryButton label="Billing Intelligence"     icon="pi-bolt"    color={C.purple} onClick={() => navigate("/billing-intelligence")} />
+        <PrimaryButton label="Pharmacy Sales Register"  icon="pi-receipt" color={C.orange} onClick={() => navigate("/pharmacy?tab=registers")} />
+      </div>
     </>
+  );
+}
+
+// Generic breakdown card — given an array of { <keyField>, count, paid, gross }
+// rows, renders a compact bar-chart-ish table with each row's share of the
+// grand total. Used by RevenueTab × 4 (services, visits, payers, depts).
+function BreakdownCard({ title, rows, keyField, color, icon, total, valueField = "paid" }) {
+  return (
+    <Card title={title} color={color} icon={icon}>
+      {!rows?.length ? (
+        <Empty icon={icon} text="No data in this window." />
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {rows.slice(0, 8).map((r, i) => {
+            const v = Number(r[valueField] || 0);
+            const pct = total > 0 ? (v / total) * 100 : 0;
+            return (
+              <div key={i}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 3 }}>
+                  <span style={{ fontWeight: 700, color: C.text }}>{r[keyField] || "—"}</span>
+                  <span style={{ fontWeight: 800, color }}>{fmtINR2(v)}<span style={{ color: C.muted, fontWeight: 500, marginLeft: 6 }}>{pct.toFixed(1)}%</span></span>
+                </div>
+                <div style={{ height: 6, background: "#f1f5f9", borderRadius: 4, overflow: "hidden" }}>
+                  <div style={{ width: `${pct}%`, height: "100%", background: color, transition: "width .3s" }} />
+                </div>
+              </div>
+            );
+          })}
+          {rows.length > 8 && <div style={{ fontSize: 11, color: C.muted, textAlign: "right", marginTop: 4 }}>+{rows.length - 8} more</div>}
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -403,23 +441,27 @@ function OutstandingTab() {
   const navigate = useNavigate();
   const [tpaCases, setTpaCases] = useState([]);
   const [collection, setCollection] = useState(null);
+  const [aging, setAging] = useState(null);
   const [loading, setLoading] = useState(false);
 
   const refresh = async () => {
     setLoading(true);
     try {
-      const [t, c] = await Promise.all([
+      const [t, c, a] = await Promise.all([
         axios.get(`${API}/billing/tpa-cases`, authHdr()).catch(() => null),
         axios.get(`${API}/billing/collection-summary?date=${todayISO()}`, authHdr()).catch(() => null),
+        axios.get(`${API}/billing/aging`, authHdr()).catch(() => null),
       ]);
       setTpaCases(t?.data?.data || t?.data?.cases || t?.data || []);
       setCollection(c?.data?.summary || null);
+      setAging(a?.data || null);
     } catch (e) {}
     setLoading(false);
   };
   useEffect(() => { refresh(); }, []);
 
   const tpaTotal = useMemo(() => (Array.isArray(tpaCases) ? tpaCases.reduce((s, c) => s + Number(c.outstanding ?? c.balance ?? c.netAmount ?? 0), 0) : 0), [tpaCases]);
+  const bucketColor = { "0-30": C.green, "31-60": C.amber, "61-90": C.orange || C.amber, "90+": C.red };
 
   return (
     <>
@@ -457,11 +499,333 @@ function OutstandingTab() {
         )}
       </Card>
 
+      {/* Aging buckets — 0-30 / 31-60 / 61-90 / 90+ */}
+      <div style={{ marginTop: 14 }}>
+        <Card title={`Aging analysis · as of ${aging?.asOf || todayISO()} · total outstanding ${fmtINR(aging?.totalOutstanding)}`} color={C.amber} icon="pi-clock">
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
+            {(aging?.buckets || [{bucket:"0-30"},{bucket:"31-60"},{bucket:"61-90"},{bucket:"90+"}]).map((b, i) => (
+              <div key={i} style={{
+                padding: 14, borderRadius: 10,
+                background: (bucketColor[b.bucket] || C.muted) + "10",
+                border: `1.5px solid ${(bucketColor[b.bucket] || C.muted) + "40"}`,
+              }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: bucketColor[b.bucket] || C.muted, letterSpacing: ".5px" }}>
+                  {b.bucket} DAYS
+                </div>
+                <div style={{ fontSize: 18, fontWeight: 900, color: C.text, margin: "4px 0" }}>
+                  {fmtINR(b.amount ?? 0)}
+                </div>
+                <div style={{ fontSize: 11, color: C.muted }}>
+                  {b.count ?? 0} bill{(b.count ?? 0) === 1 ? "" : "s"}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      </div>
+
+      {/* Patient credit ledger — non-TPA outstanding bills */}
+      <div style={{ marginTop: 14 }}>
+        <Card title={`Patient credit ledger · ${aging?.patientCredit?.length || 0} bill${(aging?.patientCredit?.length || 0) === 1 ? "" : "s"} with balance due`} color={C.red} icon="pi-exclamation-circle">
+          {!aging?.patientCredit?.length ? (
+            <Empty icon="pi-money-bill" text="No patient credit outstanding. All non-TPA bills are paid in full." />
+          ) : (
+            <Table cols={[
+              { label: "Bill #" }, { label: "Patient" }, { label: "Age" },
+              { label: "Bucket" }, { label: "Gross", align: "right" }, { label: "Paid", align: "right" },
+              { label: "Due", align: "right" }, { label: "Action" },
+            ]}>
+              {aging.patientCredit.slice(0, 30).map((b, i) => (
+                <tr key={i}>
+                  <td style={{ fontFamily: "monospace", fontSize: 11.5 }}>{b.billNumber}</td>
+                  <td style={{ fontWeight: 700 }}>{b.patientName || b.UHID}</td>
+                  <td style={{ color: C.muted, fontSize: 11.5 }}>{b.ageDays}d</td>
+                  <td><Badge value={b.bucket} /></td>
+                  <td style={{ textAlign: "right" }}>{fmtINR2(b.gross)}</td>
+                  <td style={{ textAlign: "right" }}>{fmtINR2(b.paid)}</td>
+                  <td style={{ textAlign: "right", fontWeight: 800, color: C.red }}>{fmtINR2(b.due)}</td>
+                  <td>
+                    <button onClick={() => navigate(`/billing/view/${b.billNumber.length === 8 ? b.UHID : b._id || b.UHID}`)}
+                      style={{ padding: "4px 10px", borderRadius: 5, border: `1px solid ${C.blue}40`, background: "#fff", color: C.blue, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                      Open
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </Table>
+          )}
+        </Card>
+      </div>
+
       <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
         <PrimaryButton label="All TPA Cases" icon="pi-briefcase" color={C.purple} onClick={() => navigate("/tpa-cases")} />
         <PrimaryButton label="Discharge Queue (pending bills)" icon="pi-sign-out" color={C.green} onClick={() => navigate("/discharge-queue")} />
       </div>
     </>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════
+   ALL BILLS — filtered ledger with date / status / payer / search
+══════════════════════════════════════════════════════════════ */
+function AllBillsTab() {
+  const navigate = useNavigate();
+  const [bills, setBills] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [q, setQ] = useState("");
+  const [status, setStatus] = useState("");
+  const [visitType, setVisitType] = useState("");
+  const [payer, setPayer] = useState("");
+  const ninetyAgo = () => { const d = new Date(); d.setDate(d.getDate() - 90); return d.toISOString().slice(0,10); };
+  const [from, setFrom] = useState(ninetyAgo());
+  const [to, setTo]     = useState(todayISO());
+
+  const refresh = async () => {
+    setLoading(true);
+    try {
+      const qs = new URLSearchParams({
+        limit: 100, startDate: from, endDate: to,
+        ...(status ? { status } : {}), ...(visitType ? { visitType } : {}),
+        ...(payer ? { paymentType: payer } : {}), ...(q ? { UHID: q } : {}),
+      });
+      const r = await axios.get(`${API}/billing?${qs}`, authHdr());
+      setBills(r.data?.data || r.data?.bills || []);
+      setTotal(r.data?.pagination?.total ?? (r.data?.data?.length || 0));
+    } catch (e) {}
+    setLoading(false);
+  };
+  useEffect(() => { refresh(); }, [from, to, status, visitType, payer]);
+
+  const Pill = ({ label, value, current, setCurrent, color = C.amber }) => (
+    <button onClick={() => setCurrent(value === current ? "" : value)}
+      style={{
+        padding: "5px 12px", borderRadius: 999,
+        border: `1.5px solid ${value === current ? color : C.border}`,
+        background: value === current ? color + "15" : "#fff",
+        color: value === current ? color : C.muted,
+        fontWeight: 700, fontSize: 11.5, cursor: "pointer",
+      }}>{label}</button>
+  );
+
+  return (
+    <>
+      <Card title="Filter bills" color={C.amber} icon="pi-filter"
+        right={<PrimaryButton label="Refresh" icon="pi-refresh" color={C.amber} onClick={refresh} busy={loading} />}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
+          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)}
+            style={{ padding: "6px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 12.5, fontWeight: 700 }} />
+          <span style={{ color: C.muted, fontSize: 12 }}>to</span>
+          <input type="date" value={to} max={todayISO()} onChange={(e) => setTo(e.target.value)}
+            style={{ padding: "6px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 12.5, fontWeight: 700 }} />
+          <input type="text" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && refresh()}
+            placeholder="UHID…" style={{ flex: 1, minWidth: 140, padding: "6px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 12.5 }} />
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
+          <span style={{ fontSize: 11, fontWeight: 800, color: C.muted, marginRight: 4, paddingTop: 6 }}>STATUS:</span>
+          {["DRAFT","GENERATED","PARTIAL","PAID","CANCELLED","REFUNDED"].map(s =>
+            <Pill key={s} label={s} value={s} current={status} setCurrent={setStatus} color={C.amber} />)}
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
+          <span style={{ fontSize: 11, fontWeight: 800, color: C.muted, marginRight: 4, paddingTop: 6 }}>VISIT:</span>
+          {["OPD","IPD","ER","Day Care","Services"].map(v =>
+            <Pill key={v} label={v} value={v} current={visitType} setCurrent={setVisitType} color={C.blue} />)}
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 11, fontWeight: 800, color: C.muted, marginRight: 4, paddingTop: 6 }}>PAYER:</span>
+          {["CASH","CARD","UPI","TPA","CORPORATE","INSURANCE"].map(p =>
+            <Pill key={p} label={p} value={p} current={payer} setCurrent={setPayer} color={C.green} />)}
+        </div>
+      </Card>
+
+      <div style={{ marginTop: 12 }}>
+        <Card title={`${bills.length} bill${bills.length === 1 ? "" : "s"} ${total > bills.length ? `(of ${total})` : ""}`} color={C.amber} icon="pi-list">
+          {!bills.length ? (
+            <Empty icon="pi-inbox" text="No bills match these filters." />
+          ) : (
+            <Table cols={[
+              { label: "Bill #" }, { label: "Patient" }, { label: "Date" },
+              { label: "Visit" }, { label: "Payer" }, { label: "Status" },
+              { label: "Net", align: "right" }, { label: "Paid", align: "right" }, { label: "Action" },
+            ]}>
+              {bills.map((b, i) => (
+                <tr key={b._id || i}>
+                  <td style={{ fontFamily: "monospace", fontSize: 11.5 }}>{b.billNumber || b._id?.slice(-8)}</td>
+                  <td style={{ fontWeight: 700 }}>{b.patientName || b.UHID || "—"}</td>
+                  <td style={{ color: C.muted, fontSize: 11.5 }}>{b.createdAt ? new Date(b.createdAt).toLocaleDateString("en-IN") : "—"}</td>
+                  <td style={{ color: C.muted, fontSize: 11.5 }}>{b.visitType || "—"}</td>
+                  <td style={{ color: C.muted, fontSize: 11.5 }}>{b.paymentType || "—"}</td>
+                  <td><Badge value={b.billStatus || "—"} /></td>
+                  <td style={{ textAlign: "right" }}>{fmtINR2(b.netAmount ?? b.totalAmount ?? 0)}</td>
+                  <td style={{ textAlign: "right", fontWeight: 700 }}>{fmtINR2(b.advancePaid ?? b.totalPaid ?? 0)}</td>
+                  <td>
+                    <button onClick={() => navigate(`/billing/view/${b._id}`)}
+                      style={{ padding: "4px 10px", borderRadius: 5, border: `1px solid ${C.blue}40`, background: "#fff", color: C.blue, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                      Open
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </Table>
+          )}
+        </Card>
+      </div>
+    </>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════
+   SHIFT / CASHIER — open + close shift + drawer reconciliation
+   Phase 1: UI scaffold backed by localStorage so each cashier can
+   self-track a session even before the persistent backend ships.
+   Phase 2 (TBD): /api/cashier-sessions endpoints.
+══════════════════════════════════════════════════════════════ */
+function ShiftTab() {
+  const [session, setSession] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("his_cashier_session") || "null"); }
+    catch { return null; }
+  });
+  const [openingCash, setOpeningCash] = useState("");
+  const [closingCash, setClosingCash] = useState("");
+  const [closingNotes, setClosingNotes] = useState("");
+  const [today, setToday] = useState(null);
+
+  useEffect(() => {
+    axios.get(`${API}/billing/collection-summary?date=${todayISO()}`, authHdr())
+      .then(r => setToday(r.data?.summary))
+      .catch(() => {});
+  }, []);
+
+  const openShift = () => {
+    if (!openingCash) { toast.error("Enter opening cash"); return; }
+    const s = {
+      openedAt: new Date().toISOString(),
+      openingCash: Number(openingCash),
+      status: "open",
+    };
+    localStorage.setItem("his_cashier_session", JSON.stringify(s));
+    setSession(s);
+    setOpeningCash("");
+    toast.success(`Shift opened · opening ${fmtINR(s.openingCash)}`);
+  };
+
+  const closeShift = () => {
+    if (!session) return;
+    if (!closingCash) { toast.error("Enter closing cash"); return; }
+    const expected = Number(session.openingCash) + Number(today?.byMode?.find(m => /cash/i.test(m.mode))?.amount || 0);
+    const variance = Number(closingCash) - expected;
+    const closed = {
+      ...session,
+      closedAt: new Date().toISOString(),
+      closingCash: Number(closingCash),
+      expectedCash: expected,
+      variance,
+      closingNotes,
+      status: "closed",
+    };
+    // Stash the closed session under a date key so the cashier can re-view
+    // past shifts. Active session slot is cleared.
+    const history = JSON.parse(localStorage.getItem("his_cashier_history") || "[]");
+    history.unshift(closed);
+    localStorage.setItem("his_cashier_history", JSON.stringify(history.slice(0, 30)));
+    localStorage.removeItem("his_cashier_session");
+    setSession(null);
+    setClosingCash("");
+    setClosingNotes("");
+    toast.success(`Shift closed · variance ${variance >= 0 ? "+" : ""}${fmtINR(variance)}`);
+  };
+
+  const cashCollected = today?.byMode?.find(m => /cash/i.test(m.mode))?.amount || 0;
+  const expectedClosing = session ? Number(session.openingCash) + cashCollected : 0;
+  const variance = closingCash ? Number(closingCash) - expectedClosing : 0;
+
+  return (
+    <>
+      <Card title="Cashier shift" color={C.teal} icon="pi-user-edit"
+        right={session
+          ? <Badge value={`Open since ${new Date(session.openedAt).toLocaleTimeString("en-IN")}`} />
+          : <Badge value="No active session" />}>
+        {!session ? (
+          <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+            <Field label="Opening cash in drawer">
+              <input type="number" value={openingCash} onChange={(e) => setOpeningCash(e.target.value)}
+                placeholder="e.g. 2000"
+                style={{ width: 180, padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 13, fontWeight: 700 }} />
+            </Field>
+            <PrimaryButton label="Open Shift" icon="pi-play" color={C.teal} onClick={openShift} />
+            <div style={{ flex: 1, fontSize: 12, color: C.muted, padding: "8px 0" }}>
+              Phase-1 UI — sessions persist in this browser only (local storage). Phase-2 will write to <code>/api/cashier-sessions</code> for cross-device + audit.
+            </div>
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+            <KPI label="Opening cash"      value={fmtINR(session.openingCash)} color={C.muted}  icon="pi-wallet" />
+            <KPI label="Cash collected"    value={fmtINR(cashCollected)}        color={C.green}  icon="pi-money-bill" />
+            <KPI label="Expected closing"  value={fmtINR(expectedClosing)}      color={C.blue}   icon="pi-calculator" />
+            {closingCash && (
+              <KPI label="Variance"          value={`${variance >= 0 ? "+" : ""}${fmtINR(variance)}`}
+                color={Math.abs(variance) < 100 ? C.green : C.red} icon="pi-arrow-up-arrow-down" />
+            )}
+          </div>
+        )}
+      </Card>
+
+      {session && (
+        <div style={{ marginTop: 14 }}>
+          <Card title="Close shift" color={C.red} icon="pi-stop">
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 12 }}>
+              <Field label="Actual cash in drawer">
+                <input type="number" value={closingCash} onChange={(e) => setClosingCash(e.target.value)}
+                  placeholder="Count the drawer"
+                  style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 13, fontWeight: 700 }} />
+              </Field>
+              <Field label="Notes / explanation for variance (optional)">
+                <textarea value={closingNotes} onChange={(e) => setClosingNotes(e.target.value)} rows={2}
+                  placeholder="e.g. ₹500 short — receipt #1234 customer refund without slip."
+                  style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 12.5, fontFamily: "inherit" }} />
+              </Field>
+            </div>
+            <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-end" }}>
+              <PrimaryButton label="Close Shift" icon="pi-stop" color={C.red} onClick={closeShift} disabled={!closingCash} />
+            </div>
+          </Card>
+        </div>
+      )}
+
+      <ShiftHistory />
+    </>
+  );
+}
+
+function ShiftHistory() {
+  const history = (() => {
+    try { return JSON.parse(localStorage.getItem("his_cashier_history") || "[]"); }
+    catch { return []; }
+  })();
+  if (!history.length) return null;
+  return (
+    <div style={{ marginTop: 14 }}>
+      <Card title="Previous shifts (this browser)" color={C.muted} icon="pi-history">
+        <Table cols={[
+          { label: "Opened" }, { label: "Closed" },
+          { label: "Opening", align: "right" }, { label: "Expected", align: "right" },
+          { label: "Closing", align: "right" }, { label: "Variance", align: "right" },
+        ]}>
+          {history.map((s, i) => (
+            <tr key={i}>
+              <td style={{ fontSize: 11.5 }}>{new Date(s.openedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</td>
+              <td style={{ fontSize: 11.5 }}>{new Date(s.closedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</td>
+              <td style={{ textAlign: "right" }}>{fmtINR(s.openingCash)}</td>
+              <td style={{ textAlign: "right" }}>{fmtINR(s.expectedCash)}</td>
+              <td style={{ textAlign: "right" }}>{fmtINR(s.closingCash)}</td>
+              <td style={{ textAlign: "right", fontWeight: 800, color: Math.abs(s.variance) < 100 ? C.green : C.red }}>
+                {s.variance >= 0 ? "+" : ""}{fmtINR(s.variance)}
+              </td>
+            </tr>
+          ))}
+        </Table>
+      </Card>
+    </div>
   );
 }
 

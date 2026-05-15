@@ -14,6 +14,10 @@ router.use(attemptAuth);
 router.get("/",        ctrl.listBills);             // GET  /api/billing?page=1&limit=50&status=&visitType=&UHID=&startDate=&endDate=
 router.get("/summary", ctrl.getSummary);            // GET  /api/billing/summary
 router.get("/collection-summary", ctrl.getCollectionSummary); // GET /api/billing/collection-summary?date=YYYY-MM-DD
+// Accountant-facing aggregators — gated by billing.read on the controller
+// side via requireAction below; these are pure reads.
+router.get("/revenue-breakdown",  requireAction("billing.read"), ctrl.getRevenueBreakdown);  // ?from=&to=
+router.get("/aging",              requireAction("billing.read"), ctrl.getAging);             // ?asOf=
 
 // ── TPA / Insurance workflow ─────────────────────────────────
 router.get ("/tpa-cases",                ctrl.getTPACases);

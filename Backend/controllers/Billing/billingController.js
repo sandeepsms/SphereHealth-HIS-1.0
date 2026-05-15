@@ -215,6 +215,146 @@ exports.getSummary = async (req, res) => {
   }
 };
 
+// ── GET /api/billing/revenue-breakdown?from=YYYY-MM-DD&to=… ────
+// Accountant-facing revenue cuts:
+//   • byCategory     — service-line categories (Consultation / Pharmacy /
+//                      Lab / Room / Procedure / Other) with count + paid
+//                      + gross
+//   • byVisitType    — OPD / IPD / ER / Day Care / Services
+//   • byPayer        — Cash / TPA / Corporate / Government / Insurance
+//   • byDepartment   — Cardiology / Medicine / Ortho etc. (from bill.dept
+//                      fallback to ipd admission)
+//   • byDoctor       — top 20 by collection (for consultant payout base)
+// All numbers are sums over the date window (createdAt between from..to,
+// inclusive). Returns empty arrays when range has no bills — never throws.
+exports.getRevenueBreakdown = async (req, res) => {
+  try {
+    const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+    const from = req.query.from ? new Date(`${req.query.from}T00:00:00`) : new Date(Date.now() - 30 * 86400000);
+    const to   = req.query.to   ? new Date(`${req.query.to}T23:59:59.999`) : new Date();
+    const bills = await PatientBill.find({
+      createdAt: { $gte: from, $lte: to },
+      billStatus: { $nin: ["DRAFT"] },
+    }).lean();
+
+    const inc = (map, key, paid, gross = 0) => {
+      const k = (key || "Other").toString();
+      if (!map[k]) map[k] = { count: 0, paid: 0, gross: 0 };
+      map[k].count += 1;
+      map[k].paid  += Number(paid || 0);
+      map[k].gross += Number(gross || 0);
+    };
+    const byCategory = {};
+    const byVisitType = {};
+    const byPayer = {};
+    const byDepartment = {};
+    const byDoctor = {};
+
+    let grandPaid = 0, grandGross = 0, txnCount = 0;
+    for (const b of bills) {
+      const paid  = Number(b.advancePaid ?? b.totalPaid ?? b.amountPaid ?? 0);
+      const gross = Number(b.netAmount ?? b.netPayable ?? b.grossAmount ?? b.totalAmount ?? 0);
+      grandPaid += paid; grandGross += gross; txnCount += 1;
+      inc(byVisitType, b.visitType || b.patientType || "Other", paid, gross);
+      inc(byPayer,     b.paymentType || "Cash",                  paid, gross);
+      inc(byDepartment,b.department || "Unspecified",            paid, gross);
+
+      // Service-line cut — sum each line item's gross into its category.
+      for (const it of (b.billItems || [])) {
+        const cat = (it.category || it.serviceName || "Other").toString();
+        if (!byCategory[cat]) byCategory[cat] = { count: 0, paid: 0, gross: 0 };
+        byCategory[cat].count += 1;
+        byCategory[cat].gross += Number(it.grossAmount || it.unitPrice * (it.quantity || 1) || 0);
+      }
+
+      if (b.doctor) {
+        const did = String(b.doctor._id || b.doctor);
+        if (!byDoctor[did]) byDoctor[did] = {
+          doctorId: did,
+          name: b.doctor.personalInfo?.fullName || b.doctorName || "Doctor",
+          count: 0, paid: 0,
+        };
+        byDoctor[did].count += 1;
+        byDoctor[did].paid  += paid;
+      }
+    }
+
+    const toArr = (obj, keyName) => Object.entries(obj)
+      .map(([k, v]) => ({ [keyName]: k, ...v }))
+      .sort((a, b) => b.paid - a.paid);
+
+    res.json({
+      success: true,
+      window: { from: from.toISOString().slice(0,10), to: to.toISOString().slice(0,10), days: Math.ceil((to - from) / 86400000) + 1 },
+      totals: { paid: grandPaid, gross: grandGross, outstanding: grandGross - grandPaid, count: txnCount },
+      byCategory:   toArr(byCategory, "category"),
+      byVisitType:  toArr(byVisitType, "visitType"),
+      byPayer:      toArr(byPayer, "payer"),
+      byDepartment: toArr(byDepartment, "department"),
+      byDoctor:     Object.values(byDoctor).sort((a, b) => b.paid - a.paid).slice(0, 20),
+    });
+  } catch (e) {
+    console.error("[billing] getRevenueBreakdown error:", e);
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
+// ── GET /api/billing/aging?asOf=YYYY-MM-DD ────────────────────
+// Receivables-aging cut for the Accountant's collections desk:
+//   • 0-30 days  ·  31-60  ·  61-90  ·  90+
+// Patient-credit ledger: every bill with outstanding > 0, sorted desc,
+// limited to 100. TPA-marked bills go to a separate sub-list so the
+// patient credit list isn't polluted with insurance receivables.
+exports.getAging = async (req, res) => {
+  try {
+    const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+    const asOf = req.query.asOf ? new Date(`${req.query.asOf}T23:59:59.999`) : new Date();
+
+    const open = await PatientBill.find({
+      billStatus: { $in: ["GENERATED", "PARTIAL"] },
+    }).select("billNumber UHID patientName netAmount netPayable grossAmount advancePaid totalPaid amountPaid paymentType billStatus createdAt").lean();
+
+    const buckets = { "0-30": { count: 0, amount: 0 }, "31-60": { count: 0, amount: 0 }, "61-90": { count: 0, amount: 0 }, "90+": { count: 0, amount: 0 } };
+    const patientCredit = [];
+    const tpaCredit     = [];
+
+    for (const b of open) {
+      const paid    = Number(b.advancePaid ?? b.totalPaid ?? b.amountPaid ?? 0);
+      const gross   = Number(b.netAmount ?? b.netPayable ?? b.grossAmount ?? 0);
+      const due     = Math.max(gross - paid, 0);
+      if (due <= 0) continue;
+      const ageDays = Math.floor((asOf - new Date(b.createdAt)) / 86400000);
+      const bucket  = ageDays <= 30 ? "0-30" : ageDays <= 60 ? "31-60" : ageDays <= 90 ? "61-90" : "90+";
+      buckets[bucket].count  += 1;
+      buckets[bucket].amount += due;
+
+      const entry = {
+        billNumber: b.billNumber || String(b._id).slice(-8),
+        UHID: b.UHID, patientName: b.patientName,
+        gross, paid, due, ageDays, bucket,
+        status: b.billStatus, createdAt: b.createdAt,
+      };
+      const isTPA = /tpa|insurance|corporate/i.test(b.paymentType || "");
+      (isTPA ? tpaCredit : patientCredit).push(entry);
+    }
+
+    patientCredit.sort((a, b) => b.due - a.due);
+    tpaCredit.sort((a, b) => b.due - a.due);
+
+    res.json({
+      success: true,
+      asOf: asOf.toISOString().slice(0,10),
+      buckets: Object.entries(buckets).map(([bucket, v]) => ({ bucket, ...v })),
+      totalOutstanding: patientCredit.reduce((s, e) => s + e.due, 0) + tpaCredit.reduce((s, e) => s + e.due, 0),
+      patientCredit: patientCredit.slice(0, 100),
+      tpaCredit:     tpaCredit.slice(0, 100),
+    });
+  } catch (e) {
+    console.error("[billing] getAging error:", e);
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
 // ── GET /api/billing  — paginated bills list (Accountant/Admin) ─
 // Filters: status, visitType, paymentType, UHID, billNumber, startDate, endDate
 exports.listBills = async (req, res) => {
