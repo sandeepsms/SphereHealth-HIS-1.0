@@ -360,6 +360,61 @@ function InvestigationSection({ investigations }) {
   ));
 }
 
+// Dietician's nutritional assessments + assigned diet plans for this
+// patient. Each card shows the assessment vitals, the active template
+// (or "Custom"), target macros, customisations, meal snapshot count,
+// and a follow-up date. Read-only — this page is the doctor / nurse /
+// admin view of the file; writes happen in /dietitian.
+function DietPlansSection({ dietPlans }) {
+  if (!dietPlans?.length) return <Empty icon="🥗" msg="No dietician assessments or diet plans on file" />;
+  return dietPlans.map((d) => {
+    const a = d.assessment || {};
+    const p = d.plan || {};
+    const isActive = d.status === "active";
+    return (
+      <div key={d._id} className="pf-record" style={{ borderLeftColor: isActive ? "#16a34a" : "#94a3b8", borderLeftWidth: 4, borderLeftStyle: "solid" }}>
+        <div className="pf-record__head">
+          <span className="pf-record__title">
+            🥗 {p.templateName || "Custom plan"}{p.templateCode ? <span style={{ marginLeft: 6, fontFamily: "monospace", fontSize: 10, opacity: 0.7 }}>[{p.templateCode}]</span> : null}
+          </span>
+          <span className={`pf-badge pf-badge--${isActive ? "ok" : "warn"}`}>{(d.status || "—").toUpperCase()}</span>
+          <span className="pf-record__time">{fmtDate(d.assignedAt || d.createdAt)}</span>
+        </div>
+        <div className="pf-record__body">
+          {/* Assessment snapshot — only show populated fields */}
+          {(a.height || a.weight || a.bmi || a.bp || a.bloodSugarFasting || a.creatinine || a.conditions?.length) && (
+            <div style={{ marginBottom: 8, padding: "6px 10px", background: "#f0fdf4", borderRadius: 4, fontSize: 12, color: "#166534" }}>
+              <strong>Assessment:</strong>{" "}
+              {a.height && <>H {a.height} cm · </>}
+              {a.weight && <>W {a.weight} kg · </>}
+              {a.bmi && <>BMI <strong>{a.bmi}</strong> · </>}
+              {a.bp && <>BP {a.bp} · </>}
+              {a.bloodSugarFasting && <>FBS {a.bloodSugarFasting} · </>}
+              {a.hba1c && <>HbA1c {a.hba1c}% · </>}
+              {a.creatinine && <>Cr {a.creatinine} · </>}
+              {a.hemoglobin && <>Hb {a.hemoglobin}</>}
+              {a.conditions?.length > 0 && <div style={{ marginTop: 4 }}><strong>Conditions:</strong> {a.conditions.join(", ")}</div>}
+              {a.allergies?.length > 0 && <div><strong>Allergies:</strong> {a.allergies.join(", ")}</div>}
+            </div>
+          )}
+          {/* Plan targets */}
+          <div className="pf-detail-grid">
+            {p.targetCalories != null  && <Field label="Target calories"  value={`${p.targetCalories} kcal/day`} />}
+            {p.targetProtein  != null  && <Field label="Target protein"   value={`${p.targetProtein} g/day`} />}
+            {p.fluidRestriction != null && <Field label="Fluid limit"     value={`${p.fluidRestriction} ml/day`} />}
+            {p.saltRestriction  != null && <Field label="Salt limit"      value={`${p.saltRestriction} g/day`} />}
+            {p.meals?.length > 0       && <Field label="Meal schedule"    value={`${p.meals.length} meals snapshotted`} />}
+            {d.followUpAt              && <Field label="Follow-up"        value={fmtDate(d.followUpAt)} />}
+          </div>
+          {p.customisations && <p style={{ fontSize: 12 }}><strong>Customisations:</strong> {p.customisations}</p>}
+          {p.notes && <p style={{ fontSize: 12 }}><strong>Plan notes:</strong> {p.notes}</p>}
+          {a.foodPreference && <p style={{ fontSize: 11.5, color: "#6b7280", margin: "4px 0 0" }}>Food preference: {a.foodPreference}{a.appetite ? ` · appetite ${a.appetite}` : ""}{a.swallowing && a.swallowing !== "normal" ? ` · swallowing: ${a.swallowing}` : ""}</p>}
+        </div>
+      </div>
+    );
+  });
+}
+
 function MLCSection({ mlc }) {
   if (!mlc?.length) return <Empty icon="⚖" msg="No MLC on file" />;
   return mlc.map((m) => (
@@ -556,6 +611,13 @@ function PrintBody({ data, docInitial, nurseInitial, docOther, nurseOther }) {
         <ConsentSection consents={consents} />
       </PrintSection>
 
+      {/* Dietician — nutritional assessments + assigned plans. Shown
+          whenever any plan exists so the treating doctor / nurse on
+          rounds can see what nutritional orders are in effect. */}
+      <PrintSection title="9a. Dietician — Diet Plans">
+        <DietPlansSection dietPlans={dietPlans} />
+      </PrintSection>
+
       {mlc?.length > 0 && (
         <PrintSection title="10. Medico-Legal Cases">
           <MLCSection mlc={mlc} />
@@ -691,7 +753,7 @@ export default function CompletePatientFilePage() {
   /* Scroll-spy for the sticky nav */
   useEffect(() => {
     if (!data) return;
-    const ids = ["admission","initial","doctor-notes","nurse-notes","orders","vitals","investigations","consents","mlc","handover","discharge","billing","activity","timeline"];
+    const ids = ["admission","initial","doctor-notes","nurse-notes","orders","vitals","investigations","consents","diet","mlc","handover","discharge","billing","activity","timeline"];
     const onScroll = () => {
       for (const id of ids) {
         const el = document.getElementById(id);
@@ -732,7 +794,7 @@ export default function CompletePatientFilePage() {
 
   const { patient, currentAdmission, doctorNotes, nurseNotes, doctorOrders, vitals,
     consents, investigations, mlc, dischargeSummary, bills, activityLog,
-    bedTransfers, shiftHandovers, timeline, completeness } = data;
+    bedTransfers, shiftHandovers, dietPlans, timeline, completeness } = data;
 
   const docInitial   = doctorNotes.filter((n) => /initial/i.test(n.noteType || ""));
   const nurseInitial = nurseNotes.filter((n)  => /initial/i.test(n.noteType || ""));
@@ -748,6 +810,7 @@ export default function CompletePatientFilePage() {
     { id: "vitals",        label: "Vitals + I/O",       icon: "📈", count: vitals.length },
     { id: "investigations",label: "Investigations",     icon: "🧪", count: investigations.length },
     { id: "consents",      label: "Consents",           icon: "📝", count: consents.length },
+    { id: "diet",          label: "Diet Plans",         icon: "🥗", count: dietPlans?.length || 0 },
     { id: "mlc",           label: "MLC",                icon: "⚖", count: mlc.length },
     { id: "handover",      label: "Handovers",          icon: "🔄", count: (bedTransfers?.length || 0) + (shiftHandovers?.length || 0) },
     { id: "discharge",     label: "Discharge",          icon: "🏥", count: dischargeSummary.length },
@@ -835,6 +898,10 @@ export default function CompletePatientFilePage() {
 
             <Section id="consents" icon="📝" title="Consent Forms" sub="NABH PRE.3 / PRE.4 — every consent with full audit trail" count={consents.length}>
               <ConsentSection consents={consents} />
+            </Section>
+
+            <Section id="diet" icon="🥗" title="Dietician — Diet Plans" sub="Nutritional assessment + assigned diet plan with meal snapshot" count={dietPlans?.length || 0}>
+              <DietPlansSection dietPlans={dietPlans} />
             </Section>
 
             <Section id="mlc" icon="⚖" title="Medico-Legal Cases" sub="MLC reports with FIR linkage" count={mlc.length}>

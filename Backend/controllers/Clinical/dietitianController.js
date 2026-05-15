@@ -186,24 +186,29 @@ exports.getPlan = async (req, res) => {
   } catch (e) { res.status(500).json({ success: false, message: e.message }); }
 };
 
+// Re-snapshot the template fields (templateName, templateCode, meals,
+// instructions, target macros) into a plan body whenever the body has a
+// templateId. Used by BOTH create and update so the snapshot stays attached
+// to the plan even when the UI sends back only its editable fields. Earlier
+// (before 13 May 2026) update was a raw spread that stripped templateName
+// every save — patient files then showed "Custom" for plans that were
+// actually built from a template.
+async function snapshotTemplateInto(planBody) {
+  if (!planBody?.templateId) return;
+  const tmpl = await DietPlanTemplate.findById(planBody.templateId).lean();
+  if (!tmpl) return;
+  planBody.templateCode    = planBody.templateCode    || tmpl.code;
+  planBody.templateName    = planBody.templateName    || tmpl.name;
+  planBody.meals           = planBody.meals?.length         ? planBody.meals        : tmpl.meals;
+  planBody.instructions    = planBody.instructions?.length  ? planBody.instructions : tmpl.generalInstructions;
+  planBody.targetCalories  = planBody.targetCalories ?? tmpl.calories;
+  planBody.targetProtein   = planBody.targetProtein  ?? tmpl.protein;
+}
+
 exports.createPlan = async (req, res) => {
   try {
     const body = req.body || {};
-
-    // If a template was selected, snapshot its meals into plan.meals so the
-    // assignment is immutable even if the template is later edited.
-    if (body.plan?.templateId) {
-      const tmpl = await DietPlanTemplate.findById(body.plan.templateId).lean();
-      if (tmpl) {
-        body.plan.templateCode = tmpl.code;
-        body.plan.templateName = tmpl.name;
-        body.plan.meals        = body.plan.meals?.length ? body.plan.meals : tmpl.meals;
-        body.plan.instructions = body.plan.instructions?.length ? body.plan.instructions : tmpl.generalInstructions;
-        body.plan.targetCalories = body.plan.targetCalories ?? tmpl.calories;
-        body.plan.targetProtein  = body.plan.targetProtein  ?? tmpl.protein;
-      }
-    }
-
+    await snapshotTemplateInto(body.plan);
     body.assignedBy        = req.user?.id;
     body.assessment        = body.assessment || {};
     body.assessment.assessedBy = req.user?.id;
@@ -216,9 +221,11 @@ exports.createPlan = async (req, res) => {
 
 exports.updatePlan = async (req, res) => {
   try {
+    const body = req.body || {};
+    await snapshotTemplateInto(body.plan);
     const p = await PatientDietPlan.findByIdAndUpdate(
       req.params.id,
-      { ...req.body, updatedBy: req.user?.id },
+      { ...body, updatedBy: req.user?.id },
       { new: true, runValidators: true }
     ).lean();
     if (!p) return res.status(404).json({ success: false, message: "Plan not found" });

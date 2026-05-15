@@ -29,6 +29,12 @@ const PatientBill        = require("../../models/PatientBillModel/PatientBillMod
 const BillingTrigger     = require("../../models/Billing/BillingTrigger");
 const BedTransfer        = (() => { try { return require("../../models/Patient/bedTransferModel"); } catch { return null; } })();
 const PatientActivityLog = require("../../models/Clinical/PatientActivityLogModel");
+// Dietician — diet plans appear in patient file as a "dietPlans"
+// collection + per-plan entries in the chronological timeline so the
+// treating doctor / nurse on rounds can see what nutritional orders
+// are active.
+const DietitianModels    = (() => { try { return require("../../models/Clinical/DietitianModels"); } catch { return null; } })();
+const PatientDietPlan    = DietitianModels?.PatientDietPlan || null;
 
 // ── Helper: safe collection fetch — never let a single model failure
 // break the whole aggregator. If a query throws (missing model, schema
@@ -77,6 +83,7 @@ exports.getCompleteFile = async (req, res) => {
       nursingAssessments, nursingCarePlans, shiftHandovers, bedTransfers,
       mar, vitals, mlc,
       investigations, bills, billingTriggers, activityLog,
+      dietPlans,
     ] = await Promise.all([
       safe("admissions",       () => Admission.find({ UHID }).sort({ admissionDate: -1 }).lean()),
       safe("doctorNotes",      () => DoctorNotes.find({ patientUHID: UHID }).sort({ visitDate: -1, createdAt: -1 }).lean()),
@@ -95,6 +102,7 @@ exports.getCompleteFile = async (req, res) => {
       safe("bills",              () => PatientBill.find({ UHID }).sort({ createdAt: -1 }).lean()),
       safe("billingTriggers",    () => BillingTrigger.find({ UHID }).sort({ createdAt: -1 }).limit(500).lean()),
       safe("activityLog",        () => PatientActivityLog.find({ UHID }).sort({ createdAt: -1 }).limit(500).lean()),
+      safe("dietPlans",          () => PatientDietPlan ? PatientDietPlan.find({ UHID }).sort({ assignedAt: -1, createdAt: -1 }).lean() : []),
     ]);
 
     const currentAdmission =
@@ -157,6 +165,11 @@ exports.getCompleteFile = async (req, res) => {
       `Vitals recorded — BP ${v.bp?.systolic || "—"}/${v.bp?.diastolic || "—"}, P ${v.pulse || "—"}`,
       { id: v._id, model: "VitalSheet" }));
 
+    dietPlans.forEach((d) => push(d.assignedAt || d.createdAt, "diet-plan",
+      `Diet plan — ${d.plan?.templateName || "Custom"} (${d.status})${d.plan?.targetCalories ? ` · ${d.plan.targetCalories} kcal` : ""}${d.plan?.targetProtein ? ` / ${d.plan.targetProtein} g` : ""}`,
+      { id: d._id, model: "PatientDietPlan" },
+      { status: d.status, templateCode: d.plan?.templateCode }));
+
     activityLog.forEach((a) => push(a.createdAt, "audit",
       `${a.userName || "System"} — ${a.module}/${a.action}${a.area ? ` (${a.area})` : ""}`,
       { id: a._id, model: "PatientActivityLog" },
@@ -177,6 +190,7 @@ exports.getCompleteFile = async (req, res) => {
       vitalsRecorded:      vitals.length > 0 || nurseNotes.some((n) => n.vitals),
       dischargeFinalized:  dischargeSummary.some((d) => d.status === "finalized"),
       handoverDone:        shiftHandovers.length > 0 || bedTransfers.some((t) => t.status === "Complete"),
+      dietPlanned:         dietPlans.some((d) => d.status === "active"),
     };
 
     return res.json({
@@ -201,6 +215,7 @@ exports.getCompleteFile = async (req, res) => {
         bills,
         billingTriggers,
         activityLog,
+        dietPlans,
         timeline,
         completeness,
       },
