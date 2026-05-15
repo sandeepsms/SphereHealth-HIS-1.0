@@ -35,6 +35,12 @@ const PatientActivityLog = require("../../models/Clinical/PatientActivityLogMode
 // are active.
 const DietitianModels    = (() => { try { return require("../../models/Clinical/DietitianModels"); } catch { return null; } })();
 const PatientDietPlan    = DietitianModels?.PatientDietPlan || null;
+// Lab Tech / Radiologist manual data entry — trend sheets + narrative
+// imaging / micro / histopath reports. Optional require so legacy
+// deployments without these models don't 500 the aggregator.
+const LabRecordsModels   = (() => { try { return require("../../models/Clinical/labRecordsModels"); } catch { return null; } })();
+const LabTrend           = LabRecordsModels?.LabTrend  || null;
+const LabReport          = LabRecordsModels?.LabReport || null;
 
 // ── Helper: safe collection fetch — never let a single model failure
 // break the whole aggregator. If a query throws (missing model, schema
@@ -105,6 +111,12 @@ exports.getCompleteFile = async (req, res) => {
       safe("dietPlans",          () => PatientDietPlan ? PatientDietPlan.find({ UHID }).sort({ assignedAt: -1, createdAt: -1 }).lean() : []),
     ]);
 
+    // Lab-records (manual trend sheets + imaging/micro/histopath reports).
+    // Fetched separately so the optional-require null-guard is local — the
+    // main Promise.all above stays uncluttered.
+    const labTrends  = LabTrend  ? await safe("labTrends",  () => LabTrend.find({ UHID }).sort({ createdAt: -1 }).lean())  : [];
+    const labReports = LabReport ? await safe("labReports", () => LabReport.find({ UHID }).sort({ reportDate: -1 }).lean()) : [];
+
     const currentAdmission =
       admissions.find((a) => a.status === "Active") || admissions[0] || null;
 
@@ -165,6 +177,17 @@ exports.getCompleteFile = async (req, res) => {
       `Vitals recorded — BP ${v.bp?.systolic || "—"}/${v.bp?.diastolic || "—"}, P ${v.pulse || "—"}`,
       { id: v._id, model: "VitalSheet" }));
 
+    // Timeline entries for lab trend sheets + narrative reports — gives
+    // the treating doctor a chronological feed of evidence captures.
+    labTrends.forEach((t) => push(t.createdAt, "lab-trend",
+      `Lab trend — ${t.panelName || t.panelType} (${t.tests?.length || 0} tests · ${t.dates?.length || 0} columns)`,
+      { id: t._id, model: "LabTrend" },
+      { status: t.status }));
+    labReports.forEach((r) => push(r.reportDate || r.createdAt, "lab-report",
+      `${r.testName}${r.impression ? " — " + r.impression.slice(0, 60) : ""} (${r.status})`,
+      { id: r._id, model: "LabReport" },
+      { status: r.status, reportType: r.reportType }));
+
     dietPlans.forEach((d) => push(d.assignedAt || d.createdAt, "diet-plan",
       `Diet plan — ${d.plan?.templateName || "Custom"} (${d.status})${d.plan?.targetCalories ? ` · ${d.plan.targetCalories} kcal` : ""}${d.plan?.targetProtein ? ` / ${d.plan.targetProtein} g` : ""}`,
       { id: d._id, model: "PatientDietPlan" },
@@ -216,6 +239,8 @@ exports.getCompleteFile = async (req, res) => {
         billingTriggers,
         activityLog,
         dietPlans,
+        labTrends,
+        labReports,
         timeline,
         completeness,
       },

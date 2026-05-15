@@ -129,6 +129,9 @@ export const ACTIONS = {
   "lab.result-entry":      ["Admin", "Lab Technician"],
   "lab.verify":            ["Admin", "Radiologist", "Doctor"],
   "lab.dispatch":          ["Admin", "Lab Technician"],
+  "lab.records.read":      ["Admin", "Doctor", "Nurse", "Lab Technician", "Radiologist"],
+  "lab.records.write":     ["Admin", "Lab Technician", "Radiologist"],
+  "lab.records.verify":    ["Admin", "Doctor", "Radiologist"],
 
   // Billing
   "billing.read":          ["Admin", "Accountant", "Receptionist", "TPA Coordinator"],

@@ -121,6 +121,7 @@ const WardBoyConsole          = lazy(() => import("./pages/wardboy/WardBoyConsol
 const WardManagerDashboard    = lazy(() => import("./pages/wardboy/WardManagerDashboard"));
 const HousekeepingConsole     = lazy(() => import("./pages/housekeeping/HousekeepingConsole"));
 const HousekeepingManagerDashboard = lazy(() => import("./pages/housekeeping/HousekeepingManagerDashboard"));
+const LabResultsEntry         = lazy(() => import("./pages/lab/LabResultsEntry"));
 
 // Clinical pages
 const NurseOPDQueuePage = lazy(() => import("./pages/nurse/NurseOPDQueuePage"));
@@ -565,6 +566,11 @@ function AppLayout({ collapsed, setCollapsed }) {
             } />
             <Route path="/housekeeping-manager" element={
               <RoleGuard action="house.manage"><HousekeepingManagerDashboard /></RoleGuard>
+            } />
+
+            {/* ── Lab Tech / Radiologist manual data entry ── */}
+            <Route path="/lab-results" element={
+              <RoleGuard action="lab.records.read"><LabResultsEntry /></RoleGuard>
             } />
 
             {/* ── Universal role dashboard ────────────────────────

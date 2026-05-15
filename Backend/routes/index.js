@@ -188,4 +188,7 @@ router.use("/ward-ops",         require("./Clinical/wardOpsRoutes"));
 // Housekeeping — cleaning task board + spillage + inventory + checklist + pest + manager
 router.use("/housekeeping",     require("./Clinical/housekeepingRoutes"));
 
+// Lab records — manual trend sheets + imaging / micro / histopath reports
+router.use("/lab-records",      require("./Clinical/labRecordsRoutes"));
+
 module.exports = router;
