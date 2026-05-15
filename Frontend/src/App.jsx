@@ -116,6 +116,7 @@ const ReceptionEmergencyCases = lazy(() => import("./pages/reception/ReceptionEm
 const ReceptionBedView        = lazy(() => import("./pages/reception/ReceptionBedView"));
 const ReceptionBilling        = lazy(() => import("./pages/reception/ReceptionBilling"));
 const AccountsConsole         = lazy(() => import("./pages/accounts/AccountsConsole"));
+const DieticianConsole        = lazy(() => import("./pages/dietitian/DieticianConsole"));
 
 // Clinical pages
 const NurseOPDQueuePage = lazy(() => import("./pages/nurse/NurseOPDQueuePage"));
@@ -527,6 +528,11 @@ function AppLayout({ collapsed, setCollapsed }) {
             {/* ── Accountant workspace — Day Book / GST / Outstanding / Refunds ─ */}
             <Route path="/accounts" element={
               <RoleGuard allow={["Admin", "Accountant"]}><AccountsConsole /></RoleGuard>
+            } />
+
+            {/* ── Dietician workspace — Patient List / Assessment / Library ─ */}
+            <Route path="/dietitian" element={
+              <RoleGuard action="diet.read"><DieticianConsole /></RoleGuard>
             } />
 
             {/* ── Universal role dashboard ────────────────────────

@@ -135,6 +135,10 @@ export const ACTIONS = {
   "tpa.pre-auth":          ["Admin", "TPA Coordinator", "Receptionist"],
   "tpa.claim":             ["Admin", "TPA Coordinator"],
 
+  // Dietician — patient assessment + diet plan assignment
+  "diet.read":             ["Admin", "Dietician", "Doctor", "Nurse"],
+  "diet.write":            ["Admin", "Dietician"],
+
   // Reports
   "reports.financial":     ["Admin", "Accountant"],
   "reports.clinical":      ["Admin", "Doctor"],

@@ -528,20 +528,48 @@ function SecurityDashboard({ user }) {
 ══════════════════════════════════════════════════════════════════ */
 function CareTeamDashboard({ user, role }) {
   const navigate = useNavigate();
+  const isDietician = role === "Dietician";
+  const [stats, setStats] = useState({});
+  useEffect(() => {
+    if (!isDietician) return;
+    (async () => {
+      try {
+        const r = await axios.get(`${API}/dietitian/stats`, authHdr());
+        setStats(r.data?.data || {});
+      } catch {}
+    })();
+  }, [isDietician]);
+
   return (
     <>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
-        <KPI label="Today's plans" value="—" color={C.green}  icon="pi-list" />
-        <KPI label="Sessions completed" value="—" color={C.teal} icon="pi-check-circle" />
-        <KPI label="Pending consults" value="—" color={C.amber} icon="pi-clock" />
+        {isDietician ? (
+          <>
+            <KPI label="Active diet plans"  value={stats.activePlans ?? "—"}      color={C.green}  icon="pi-check-circle" />
+            <KPI label="Plans created today" value={stats.plansToday ?? "—"}       color={C.blue}   icon="pi-plus-circle" />
+            <KPI label="Follow-ups due"     value={stats.pendingFollowUps ?? "—"} color={C.amber}  icon="pi-clock" />
+            <KPI label="Templates"          value={stats.totalTemplates ?? "—"}   color={C.teal}   icon="pi-book" />
+          </>
+        ) : (
+          <>
+            <KPI label="Today's plans"      value="—" color={C.green}  icon="pi-list" />
+            <KPI label="Sessions completed" value="—" color={C.teal}   icon="pi-check-circle" />
+            <KPI label="Pending consults"   value="—" color={C.amber}  icon="pi-clock" />
+          </>
+        )}
       </div>
 
       <div style={{ display: "grid", gap: 14 }}>
         <Card title="Quick actions" color={C.green} icon="pi-bolt">
-          <QuickActionsGrid items={[
-            { icon: "pi-pen-to-square", label: "Patient assessment", sub: "Initial / follow-up notes",     color: C.green, onClick: () => navigate("/updateVitalSheet") },
-            { icon: "pi-list",          label: "Patient list",        sub: "Active care plans",            color: C.blue,  onClick: () => navigate("/vitalSheet") },
-            { icon: "pi-th-large",      label: "Ward rounds",         sub: "IPD census",                   color: C.teal,  onClick: () => navigate("/bed-visual") },
+          <QuickActionsGrid items={isDietician ? [
+            { icon: "pi-users",         label: "Referred Patients",   sub: "Active IPD + OPD diet-referrals",   color: C.green,  onClick: () => navigate("/dietitian?tab=patients") },
+            { icon: "pi-pen-to-square", label: "Assessment & Plan",   sub: "Nutritional assessment + plan",     color: C.blue,   onClick: () => navigate("/dietitian?tab=assessment") },
+            { icon: "pi-book",          label: "Diet Plan Library",   sub: "17 ready templates by condition",   color: C.purple, onClick: () => navigate("/dietitian?tab=library") },
+            { icon: "pi-th-large",      label: "Bed View",            sub: "IPD census",                        color: C.teal,   onClick: () => navigate("/bed-visual") },
+          ] : [
+            { icon: "pi-pen-to-square", label: "Patient assessment",  sub: "Initial / follow-up notes",         color: C.green,  onClick: () => navigate("/updateVitalSheet") },
+            { icon: "pi-list",          label: "Patient list",         sub: "Active care plans",                color: C.blue,   onClick: () => navigate("/vitalSheet") },
+            { icon: "pi-th-large",      label: "Ward rounds",          sub: "IPD census",                       color: C.teal,   onClick: () => navigate("/bed-visual") },
           ]} />
         </Card>
         <AccessSnapshot role={user.role} />

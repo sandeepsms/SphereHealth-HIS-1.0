@@ -176,4 +176,7 @@ router.use("/equipment",        require("./Equipment/equipmentRoutes"));
 // Pharmacy — drug master, batches, GRN, dispense, sales register
 router.use("/pharmacy",         require("./Pharmacy/pharmacyRoutes"));
 
+// Dietician — diet plan templates + per-patient assessment & assigned plans
+router.use("/dietitian",        require("./Clinical/dietitianRoutes"));
+
 module.exports = router;

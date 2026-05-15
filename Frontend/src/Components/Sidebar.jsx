@@ -222,6 +222,18 @@ const NAV = [
     ],
   },
 
+  /* ── Dietitian — patient nutritional assessment + plan library ── */
+  {
+    id: "dietitian", label: "Nutrition / Diet",
+    icon: "pi-apple", color: "#16a34a", light: "#f0fdf4",
+    roles: [ADMIN, DT, DR, NR],
+    items: [
+      { label: "Referred Patients",  icon: "pi-users",         path: "/dietitian?tab=patients",   badge: "NEW",  roles: [ADMIN, DT, DR, NR] },
+      { label: "Assessment & Plan",  icon: "pi-pen-to-square", path: "/dietitian?tab=assessment",                roles: [ADMIN, DT] },
+      { label: "Diet Plan Library",  icon: "pi-book",          path: "/dietitian?tab=library",                   roles: [ADMIN, DT, DR, NR] },
+    ],
+  },
+
   /* ── Accounts & Finance — dedicated Accountant workspace ── */
   /* Centralises daily collection, GST returns, outstanding (TPA + IPD
      advance), refund / cancellation queue, and the audit trail.
