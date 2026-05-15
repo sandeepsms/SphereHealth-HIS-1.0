@@ -113,12 +113,18 @@ export function TabStrip({ tabs, value, onChange, accent = C.orange, accentL = C
       boxShadow: "inset 0 1px 2px rgba(15,23,42,.03)",
     }}>
       {tabs.map(t => {
-        const active = value === t.key;
+        // Tab identity comes from either `id` (used by newer pages —
+        // Accounts / Dietician) or `key` (legacy pages — Pharmacy /
+        // Hospital Settings). Without this fallback, newer pages never
+        // matched `value === t.key` → no tab ever appeared active and
+        // onChange(undefined) silently broke the controlled state.
+        const tabId = t.id ?? t.key;
+        const active = value === tabId;
         return (
-          <button key={t.key}
+          <button key={tabId}
             role="tab"
             aria-selected={active}
-            onClick={() => onChange(t.key)}
+            onClick={() => onChange(tabId)}
             onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = "#f1f5f9"; }}
             onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
             style={{
@@ -208,15 +214,24 @@ export function Card({ title, color, icon, right, children, padding = 16 }) {
   );
 }
 
+// Table accepts either string headers (legacy) or { label, align } objects
+// (newer pages use these so they can right-align numeric columns). Passing
+// a raw object as a child was a hard crash — "Objects are not valid as a
+// React child" — encountered when DieticianConsole was opened in the
+// browser on 13 May 2026.
 export function Table({ cols, children, compact }) {
   return (
     <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "auto", boxShadow: "0 1px 3px rgba(15,23,42,.04)" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: compact ? 11.5 : 12 }}>
         <thead>
           <tr style={{ background: C.subtle, borderBottom: `1.5px solid ${C.border}` }}>
-            {cols.map((c, i) => (
-              <th key={i} style={{ padding: compact ? "7px 10px" : "9px 12px", textAlign: "left", fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", fontSize: 10, whiteSpace: "nowrap" }}>{c}</th>
-            ))}
+            {cols.map((c, i) => {
+              const label = typeof c === "string" ? c : c?.label ?? "";
+              const align = typeof c === "object" && c?.align ? c.align : "left";
+              return (
+                <th key={i} style={{ padding: compact ? "7px 10px" : "9px 12px", textAlign: align, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", fontSize: 10, whiteSpace: "nowrap" }}>{label}</th>
+              );
+            })}
           </tr>
         </thead>
         <tbody>{children}</tbody>
@@ -227,6 +242,18 @@ export function Table({ cols, children, compact }) {
 
 export function EmptyRow({ span, text }) {
   return <tr><td colSpan={span} style={{ padding: "24px 16px", textAlign: "center", color: C.muted, fontSize: 12, fontStyle: "italic" }}>{text}</td></tr>;
+}
+
+// Empty — block-level empty-state. Use this OUTSIDE a <table> (EmptyRow
+// only works inside a <tbody>; rendering it bare causes "tr cannot be a
+// child of div" hydration errors).
+export function Empty({ text, icon = "pi-inbox" }) {
+  return (
+    <div style={{ padding: "24px 16px", textAlign: "center", color: C.muted, fontSize: 12.5, fontStyle: "italic" }}>
+      <i className={`pi ${icon}`} style={{ fontSize: 24, color: C.border, display: "block", marginBottom: 8 }} />
+      {text}
+    </div>
+  );
 }
 
 export function RowAction({ icon, label, color, onClick, disabled }) {

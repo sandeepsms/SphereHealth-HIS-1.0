@@ -22,7 +22,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-toastify";
 import {
-  AdminPage, Hero, TabStrip, KPI, Card, Table, EmptyRow, Badge,
+  AdminPage, Hero, TabStrip, KPI, Card, Table, EmptyRow, Empty, Badge,
   PrimaryButton, C,
 } from "../../Components/admin-theme";
 
@@ -433,7 +433,7 @@ function OutstandingTab() {
       <Card title="TPA / Insurance cases — outstanding" color={C.purple} icon="pi-briefcase"
         right={<PrimaryButton label="Refresh" icon="pi-refresh" color={C.purple} onClick={refresh} busy={loading} />}>
         {!Array.isArray(tpaCases) || tpaCases.length === 0 ? (
-          <EmptyRow span={1} text="No open TPA cases. Pre-auth submissions appear here once filed." />
+          <Empty icon="pi-briefcase" text="No open TPA cases. Pre-auth submissions appear here once filed." />
         ) : (
           <Table cols={[
             { label: "Bill #" },
@@ -511,7 +511,7 @@ function RefundsTab() {
       <div style={{ marginTop: 12 }}>
         <Card title={`Bills · ${filter}`} color={C.red} icon="pi-list">
           {!Array.isArray(bills) || bills.length === 0 ? (
-            <EmptyRow span={1} text={`No ${filter.toLowerCase()} bills found.`} />
+            <Empty icon="pi-inbox" text={`No ${filter.toLowerCase()} bills found.`} />
           ) : (
             <Table cols={[
               { label: "Bill #" },

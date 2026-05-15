@@ -18,7 +18,7 @@ import { useSearchParams } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-toastify";
 import {
-  AdminPage, Hero, TabStrip, KPI, Card, Table, EmptyRow, Badge, Modal, Field,
+  AdminPage, Hero, TabStrip, KPI, Card, Table, EmptyRow, Empty, Badge, Modal, Field,
   PrimaryButton, SearchInput, C,
 } from "../../Components/admin-theme";
 import { useAuth } from "../../context/AuthContext";
@@ -197,12 +197,12 @@ function PatientListTab({ onOpen }) {
       <Card title="Referred patients" color={C.green} icon="pi-users"
         right={
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <SearchInput value={q} onChange={setQ} placeholder="UHID / name / ward…" />
+            <SearchInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="UHID / name / ward…" />
             <PrimaryButton label="Refresh" icon="pi-refresh" color={C.green} onClick={refresh} busy={loading} />
           </div>
         }>
         {filtered.length === 0 ? (
-          <EmptyRow span={1} text={loading ? "Loading…" : "No referred patients today. Active IPD admissions + OPD diet-referrals appear here."} />
+          <Empty icon="pi-users" text={loading ? "Loading…" : "No referred patients today. Active IPD admissions + OPD diet-referrals appear here."} />
         ) : (
           <Table cols={[
             { label: "Source" },
@@ -867,7 +867,7 @@ function LibraryTab({ onApplyToPatient }) {
       <Card title="Filter & search" color={C.green} icon="pi-filter"
         right={
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <SearchInput value={q} onChange={setQ} placeholder="Search name / indication…" />
+            <SearchInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name / indication…" />
             <PrimaryButton label="Refresh" icon="pi-refresh" color={C.green} onClick={refresh} busy={loading} />
           </div>
         }>
@@ -998,12 +998,12 @@ function ApplyToPatientModal({ tmpl, onClose, onPick }) {
         {tmpl.calories && <span style={{ marginLeft: 8, color: C.muted, fontWeight: 700 }}>· {tmpl.calories} kcal · {tmpl.protein} g protein</span>}
       </div>
       <div style={{ marginBottom: 8 }}>
-        <SearchInput value={q} onChange={setQ} placeholder="UHID / name / ward…" width="100%" />
+        <SearchInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="UHID / name / ward…" width="100%" />
       </div>
       {loading ? (
         <div style={{ padding: 14, textAlign: "center", color: C.muted, fontSize: 12.5 }}>Loading patients…</div>
       ) : filtered.length === 0 ? (
-        <EmptyRow span={1} text="No referred patients found. (Active IPD admissions + OPD diet-referrals show up here.)" />
+        <Empty icon="pi-search" text="No referred patients found. (Active IPD admissions + OPD diet-referrals show up here.)" />
       ) : (
         <div style={{ maxHeight: 360, overflowY: "auto", border: `1px solid ${C.border}`, borderRadius: 6 }}>
           {filtered.map((p, i) => (
