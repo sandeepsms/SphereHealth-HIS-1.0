@@ -167,6 +167,9 @@ router.use("/mlc",              require("./MLC/mlcRoutes"));
 // Admin operational endpoints — daily accrual, etc.
 router.use("/admin-ops",        require("./Admin/adminOpsRoutes"));
 
+// Admin "Mission Control" home — aggregate hospital-wide KPIs + feed
+router.use("/admin-dashboard",  require("./Admin/adminDashboardRoutes"));
+
 // Diabetic chart — RBS readings + sliding-scale insulin per admission
 router.use("/diabetic-chart",   require("./Clinical/diabeticChartRoutes"));
 

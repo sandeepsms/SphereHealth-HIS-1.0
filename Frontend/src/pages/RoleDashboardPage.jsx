@@ -17,6 +17,7 @@ import {
   AdminPage, Hero, KPI, Card, Badge, C,
 } from "../Components/admin-theme";
 import { ROLES, MODULES, modulesForRole, homePathForRole } from "../config/permissions";
+import AdminHome from "./AdminHome";
 
 const API = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
 const authHdr = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem("his_token")}` } });
@@ -38,6 +39,10 @@ export default function RoleDashboardPage() {
   if (user.role === "Dietician")    return <Navigate to="/dietitian" replace />;
   if (user.role === "Ward Boy")     return <Navigate to="/ward-tasks" replace />;
   if (user.role === "Housekeeping") return <Navigate to="/housekeeping" replace />;
+
+  // Admin gets the full mission-control layout (its own hero, KPIs, feed).
+  if (user.role === "Admin") return <AdminHome user={user} />;
+
   const roleMeta = ROLES.find(r => r.key === user.role) || ROLES[0];
 
   // Role color name → matches Hero's color prop enum
@@ -61,7 +66,6 @@ export default function RoleDashboardPage() {
         subtitle={`${roleMeta.label} workspace · ${new Date().toLocaleDateString("en-IN", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}`}
         right={<RoleBadge role={user.role} />} />
 
-      {user.role === "Admin"             && <AdminDashboard user={user} />}
       {user.role === "Doctor"            && <DoctorDashboard user={user} />}
       {user.role === "Nurse"             && <NurseDashboard user={user} />}
       {user.role === "Receptionist"      && <ReceptionDashboard user={user} />}
