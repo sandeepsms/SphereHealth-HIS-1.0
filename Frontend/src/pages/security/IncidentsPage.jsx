@@ -193,9 +193,13 @@ export default function IncidentsPage() {
         )}
       </Card>
 
-      <Modal open={modalOpen} onClose={() => setModalOpen(false)}
+      {modalOpen && (
+      <Modal onClose={() => setModalOpen(false)}
         title="Report new incident"
-        right={<PrimaryButton label={saving ? "Saving…" : "Save"} icon="pi-check" color={C.red} onClick={submit} busy={saving} />}>
+        color={C.red}
+        onSubmit={submit}
+        submitting={saving}
+        submitLabel="Save">
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <Field label="Type" required>
             <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
@@ -231,6 +235,7 @@ export default function IncidentsPage() {
           </div>
         </div>
       </Modal>
+      )}
     </AdminPage>
   );
 }

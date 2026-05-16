@@ -181,9 +181,13 @@ export default function GateLogPage() {
         )}
       </Card>
 
-      <Modal open={modalOpen} onClose={() => setModalOpen(false)}
+      {modalOpen && (
+      <Modal onClose={() => setModalOpen(false)}
         title={`Log gate ${form.direction === "in" ? "entry" : "exit"}`}
-        right={<PrimaryButton label={saving ? "Saving…" : "Save"} icon="pi-check" color={C.amber} onClick={submit} busy={saving} />}>
+        color={C.amber}
+        onSubmit={submit}
+        submitting={saving}
+        submitLabel="Save">
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <Field label="Direction" required>
             <select value={form.direction} onChange={(e) => setForm({ ...form, direction: e.target.value })}>
@@ -231,6 +235,7 @@ export default function GateLogPage() {
           </div>
         </div>
       </Modal>
+      )}
     </AdminPage>
   );
 }
