@@ -513,18 +513,49 @@ function WardOpsDashboard({ user, role }) {
 ══════════════════════════════════════════════════════════════════ */
 function SecurityDashboard({ user }) {
   const navigate = useNavigate();
+  const [passStats, setPassStats] = useState(null);
+  const [gateStats, setGateStats] = useState(null);
+  const [incStats,  setIncStats]  = useState(null);
+
+  // Auto-refresh every 60s. Three small fetches in parallel — each one's
+  // failure (e.g. permission-not-granted) keeps the others' numbers live.
+  useEffect(() => {
+    let cancelled = false;
+    const fetchAll = async () => {
+      const [pass, gate, inc] = await Promise.all([
+        axios.get(`${API}/visitor-passes/stats`, authHdr()).then((r) => r.data?.data).catch(() => null),
+        axios.get(`${API}/gate-log/stats`,       authHdr()).then((r) => r.data?.data).catch(() => null),
+        axios.get(`${API}/incidents/stats`,      authHdr()).then((r) => r.data?.data).catch(() => null),
+      ]);
+      if (cancelled) return;
+      if (pass) setPassStats(pass);
+      if (gate) setGateStats(gate);
+      if (inc)  setIncStats(inc);
+    };
+    fetchAll();
+    const i = setInterval(fetchAll, 60000);
+    return () => { cancelled = true; clearInterval(i); };
+  }, []);
+
+  const v = (obj, key) => (obj == null ? "—" : obj?.[key] ?? 0);
+
   return (
     <>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
-        <KPI label="Passes today"     value="—" color={C.amber}  icon="pi-id-card" />
-        <KPI label="Active visitors"  value="—" color={C.blue}   icon="pi-users" />
-        <KPI label="Expired passes"   value="—" color={C.red}    icon="pi-times-circle" />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 14 }}>
+        <KPI label="Passes today"     value={v(passStats, "passesToday")}     color={C.amber}  icon="pi-id-card" />
+        <KPI label="Active visitors"  value={v(passStats, "activeVisitors")}  color={C.blue}   icon="pi-users" />
+        <KPI label="Expired passes"   value={v(passStats, "expiredPasses")}   color={C.muted}  icon="pi-times-circle" />
+        <KPI label="Gate — today In"  value={v(gateStats, "todayIn")}         color={C.green}  icon="pi-sign-in" />
+        <KPI label="Gate — today Out" value={v(gateStats, "todayOut")}        color={C.amber}  icon="pi-sign-out" />
+        <KPI label="Open incidents"   value={v(incStats,  "openCount")}       color={C.red}    icon="pi-exclamation-triangle" />
       </div>
 
       <div style={{ display: "grid", gap: 14 }}>
         <Card title="Quick actions" color={C.amber} icon="pi-bolt">
           <QuickActionsGrid items={[
-            { icon: "pi-id-card", label: "Visitor passes", sub: "Issue / verify attendant pass", color: C.amber, onClick: () => navigate("/visitor-passes") },
+            { icon: "pi-id-card",             label: "Visitor passes",   sub: "Issue / verify attendant pass",            color: C.amber, onClick: () => navigate("/visitor-passes") },
+            { icon: "pi-shield",              label: "Gate log",         sub: "Log every entry / exit",                    color: C.green, onClick: () => navigate("/gate-log") },
+            { icon: "pi-exclamation-triangle",label: "Incident reports", sub: "Theft / fire / disturbance — full audit",   color: C.red,   onClick: () => navigate("/incidents") },
           ]} />
         </Card>
         <AccessSnapshot role={user.role} />

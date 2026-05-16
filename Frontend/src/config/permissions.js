@@ -102,6 +102,9 @@ export const ACTIONS = {
   "reception.register":    ["Admin", "Receptionist"],
   "reception.discharge":   ["Admin", "Receptionist"],
   "reception.visitor-pass":["Admin", "Receptionist", "Security"],
+  // Security — gate log + incident reports
+  "security.gate-log":        ["Admin", "Security", "Receptionist"],
+  "security.incident-report": ["Admin", "Security"],
 
   // Clinical
   "rx.write":              ["Admin", "Doctor"],

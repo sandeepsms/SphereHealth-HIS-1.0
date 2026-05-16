@@ -31,6 +31,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
+import { useAuth } from "../../context/AuthContext";
 import "./patient-file.css";
 
 const BASE = API_ENDPOINTS.BASE;
@@ -363,10 +364,33 @@ function InvestigationSection({ investigations }) {
 // Dietician's nutritional assessments + assigned diet plans for this
 // patient. Each card shows the assessment vitals, the active template
 // (or "Custom"), target macros, customisations, meal snapshot count,
-// and a follow-up date. Read-only — this page is the doctor / nurse /
-// admin view of the file; writes happen in /dietitian.
-function DietPlansSection({ dietPlans }) {
-  if (!dietPlans?.length) return <Empty icon="🥗" msg="No dietician assessments or diet plans on file" />;
+// and a follow-up date. Read-only display — writes happen in the
+// /dietitian console. When the viewer IS a Dietician, we show an
+// "Edit in Console" CTA that opens the assessment tab pre-scoped to
+// this patient so they can revise or add a plan without losing the
+// clinical context they're reading on this page.
+function DietPlansSection({ dietPlans, uhid, viewerRole }) {
+  const isDietician = viewerRole === "Dietician";
+  const openConsole = (extra = "") => {
+    const u = encodeURIComponent(uhid || "");
+    window.open(`/dietitian?tab=assessment&uhid=${u}${extra}`, "_blank", "noopener,noreferrer");
+  };
+
+  if (!dietPlans?.length) {
+    return (
+      <>
+        <Empty icon="🥗" msg="No dietician assessments or diet plans on file" />
+        {isDietician && uhid && (
+          <div style={{ marginTop: 8, textAlign: "center" }}>
+            <button onClick={() => openConsole()}
+              style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid #16a34a40", background: "#f0fdf4", color: "#16a34a", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+              + New nutritional assessment
+            </button>
+          </div>
+        )}
+      </>
+    );
+  }
   return dietPlans.map((d) => {
     const a = d.assessment || {};
     const p = d.plan || {};
@@ -409,6 +433,14 @@ function DietPlansSection({ dietPlans }) {
           {p.customisations && <p style={{ fontSize: 12 }}><strong>Customisations:</strong> {p.customisations}</p>}
           {p.notes && <p style={{ fontSize: 12 }}><strong>Plan notes:</strong> {p.notes}</p>}
           {a.foodPreference && <p style={{ fontSize: 11.5, color: "#6b7280", margin: "4px 0 0" }}>Food preference: {a.foodPreference}{a.appetite ? ` · appetite ${a.appetite}` : ""}{a.swallowing && a.swallowing !== "normal" ? ` · swallowing: ${a.swallowing}` : ""}</p>}
+          {isDietician && uhid && (
+            <div style={{ marginTop: 8, paddingTop: 6, borderTop: "1px dashed #e5e7eb", textAlign: "right" }}>
+              <button onClick={() => openConsole(d._id ? `&plan=${encodeURIComponent(d._id)}` : "")}
+                style={{ padding: "4px 10px", borderRadius: 5, border: "1px solid #16a34a40", background: "#fff", color: "#16a34a", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                ✏ Edit in console
+              </button>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -714,7 +746,11 @@ export default function CompletePatientFilePage() {
   const { uhid } = useParams();
   const [search] = useSearchParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const role = (search.get("role") || "doctor").toLowerCase();
+  // Real RBAC role from the authenticated user — used to gate role-specific
+  // CTAs (e.g. Dietician's "Edit in console" button on the diet section).
+  const viewerRole = user?.role || "";
   const [data, setData] = useState(null);
   const [err, setErr]   = useState("");
   const [active, setActive] = useState("admission");
@@ -901,7 +937,7 @@ export default function CompletePatientFilePage() {
             </Section>
 
             <Section id="diet" icon="🥗" title="Dietician — Diet Plans" sub="Nutritional assessment + assigned diet plan with meal snapshot" count={dietPlans?.length || 0}>
-              <DietPlansSection dietPlans={dietPlans} />
+              <DietPlansSection dietPlans={dietPlans} uhid={uhid} viewerRole={viewerRole} />
             </Section>
 
             <Section id="mlc" icon="⚖" title="Medico-Legal Cases" sub="MLC reports with FIR linkage" count={mlc.length}>

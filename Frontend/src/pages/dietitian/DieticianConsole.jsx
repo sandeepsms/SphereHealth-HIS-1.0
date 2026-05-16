@@ -14,7 +14,7 @@
  * All backend calls hit /api/dietitian/* (gated behind diet.read / diet.write).
  */
 import React, { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-toastify";
 import {
@@ -154,6 +154,7 @@ export default function DieticianConsole() {
    1. PATIENT LIST — active IPD admissions + flagged OPD
 ══════════════════════════════════════════════════════════════ */
 function PatientListTab({ onOpen }) {
+  const navigate = useNavigate();
   const [rows, setRows] = useState([]);
   const [stats, setStats] = useState({});
   const [q, setQ] = useState("");
@@ -228,10 +229,21 @@ function PatientListTab({ onOpen }) {
                     : <span style={{ fontSize: 11, color: C.muted, fontStyle: "italic" }}>No plan</span>}
                 </td>
                 <td>
-                  <button onClick={() => onOpen(r)}
-                    style={{ padding: "4px 10px", borderRadius: 5, border: `1px solid ${C.green}40`, background: "#fff", color: C.green, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
-                    {r.hasPlan ? "View / Edit" : "Assess"}
-                  </button>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    <button onClick={() => onOpen(r)}
+                      style={{ padding: "4px 10px", borderRadius: 5, border: `1px solid ${C.green}40`, background: "#fff", color: C.green, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                      {r.hasPlan ? "View / Edit" : "Assess"}
+                    </button>
+                    {/* Open the patient's full clinical file in a new tab so the
+                        dietician can review labs, vitals, allergies and other
+                        clinicians' notes before writing or revising the plan. */}
+                    <button
+                      onClick={() => window.open(`/patient-file/${encodeURIComponent(r.UHID)}`, "_blank", "noopener,noreferrer")}
+                      title="Open patient's full clinical file in a new tab"
+                      style={{ padding: "4px 10px", borderRadius: 5, border: `1px solid ${C.blue}40`, background: "#fff", color: C.blue, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                      📄 Open File
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
