@@ -51,6 +51,7 @@ const ADMIN = "Admin";
 const PT    = "Physiotherapist";
 const DT    = "Dietician";
 const MT    = "Maintenance";        // Housekeeping / facilities / equipment
+const SE    = "Security";
 
 /* ══════════════════════════════════════════════════════════════
    MASTER NAV DEFINITION
@@ -94,6 +95,8 @@ const NAV = [
       { label: "Discharge Queue",     icon: "pi-sign-out",          path: "/discharge-queue",      nabh: true,  badge: "NEW",   roles: [ADMIN, RX] },
       { label: "TPA / Insurance",     icon: "pi-shield",            path: "/tpa-cases",            nabh: true,  badge: "NEW",   roles: [ADMIN, RX, TPA, AC] },
       { label: "Visitor Passes",      icon: "pi-id-card",           path: "/visitor-passes",       nabh: true,  badge: "NEW",   roles: [ADMIN, RX] },
+      { label: "Gate Log",            icon: "pi-shield",            path: "/gate-log",                          badge: "NEW",   roles: [ADMIN, SE, RX] },
+      { label: "Incident Reports",    icon: "pi-exclamation-triangle", path: "/incidents",                      badge: "NEW",   roles: [ADMIN, SE] },
     ],
   },
 
