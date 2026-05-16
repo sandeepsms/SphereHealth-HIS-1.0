@@ -44,8 +44,21 @@ const EVENT_SERVICE_MAP = {
   "Equipment:used":         { serviceCode: null, dynamicLookup: true, autoCharge: true,  dailyDedup: false },
 };
 
-// ── Helper: get date key YYYY-MM-DD ──────────────────────────────────────────
-const getDateKey = (d = new Date()) => d.toISOString().slice(0, 10);
+// ── Helper: get date key YYYY-MM-DD in the hospital's local timezone ─────────
+// Previously used `toISOString().slice(0,10)`, which yields a UTC date. India
+// is UTC+5:30, so an order placed between 18:30 UTC and 23:59 UTC on day N
+// (which is 00:00–05:29 IST on day N+1) would land under day N — opening a
+// 5.5-hour window where the dedup'd "once-per-day" bed/insulin charge could
+// either double-fire or get silently skipped around midnight IST.
+// Override with HOSPITAL_TZ in .env if deployed outside India.
+const HOSPITAL_TZ = process.env.HOSPITAL_TZ || "Asia/Kolkata";
+const DATE_KEY_FMT = new Intl.DateTimeFormat("en-CA", {
+  timeZone: HOSPITAL_TZ,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+const getDateKey = (d = new Date()) => DATE_KEY_FMT.format(d);
 
 // ── Helper: find ServiceMaster by code ───────────────────────────────────────
 async function findServiceByCode(code) {
@@ -61,6 +74,39 @@ async function findServiceByName(name, patientType = "IPD") {
     serviceName: regex, isActive: true,
     $or: [{ applicableTo: patientType }, { applicableTo: "ALL" }],
   }).lean();
+}
+
+// ── Helper: batch fuzzy-find a list of service names in a single query ────────
+// Returns a Map<originalName, service|null> preserving the same first-match
+// regex semantics as findServiceByName. Used to collapse per-test N+1 loops
+// in the investigation handlers below.
+async function findServicesByNamesBatch(names, patientType = "IPD") {
+  const result = new Map();
+  const clean = (names || []).filter(Boolean);
+  if (!clean.length) return result;
+
+  const escaped = clean.map((n) =>
+    n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+  );
+  const services = await ServiceMaster.find({
+    isActive: true,
+    $and: [
+      {
+        $or: escaped.map((p) => ({
+          serviceName: { $regex: p, $options: "i" },
+        })),
+      },
+      {
+        $or: [{ applicableTo: patientType }, { applicableTo: "ALL" }],
+      },
+    ],
+  }).lean();
+
+  for (let i = 0; i < clean.length; i++) {
+    const re = new RegExp(escaped[i], "i");
+    result.set(clean[i], services.find((s) => re.test(s.serviceName)) || null);
+  }
+  return result;
 }
 
 // ── Helper: get or create draft bill for admission ────────────────────────────
@@ -364,9 +410,15 @@ async function onInvestigationOrdered(orderDoc) {
   if (!admissionId) return;
 
   const tests = orderDoc.tests || orderDoc.investigations || [];
+  const testNames = tests.map((t) => t.testName || t.name || "").filter(Boolean);
+
+  // Batch-resolve all services in one query (was N+1 — one findServiceByName
+  // per test). For a 30-test panel this collapses 30 round-trips into 1.
+  const serviceByName = await findServicesByNamesBatch(testNames, "IPD");
+
   for (const test of tests) {
     const testName = test.testName || test.name || "";
-    const service  = await findServiceByName(testName, "IPD");
+    const service = serviceByName.get(testName);
     if (!service) continue;
 
     try {
@@ -413,9 +465,18 @@ async function onInvestigationResulted(orderDoc) {
     ? await getOrCreateBill(admissionId, "IPD")
     : null;
 
+  // Batch-resolve services in one query (was N+1 — one findById per trigger).
+  const serviceIds = pendingTriggers
+    .map((t) => t.serviceId)
+    .filter(Boolean);
+  const services = serviceIds.length
+    ? await ServiceMaster.find({ _id: { $in: serviceIds } }).lean()
+    : [];
+  const servicesById = new Map(services.map((s) => [String(s._id), s]));
+
   for (const trigger of pendingTriggers) {
     const service = trigger.serviceId
-      ? await ServiceMaster.findById(trigger.serviceId).lean()
+      ? servicesById.get(String(trigger.serviceId)) || null
       : null;
     if (!service || !bill) continue;
 
