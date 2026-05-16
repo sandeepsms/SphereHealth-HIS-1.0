@@ -10,8 +10,7 @@ const MedicationOnDischargeSchema = new mongoose.Schema(
     route: { type: String, trim: true },
     frequency: { type: String, trim: true },
     duration: { type: String, trim: true },
-    remarks: { type: String },
-  },
+    remarks: { type: String } },
   { _id: true }
 );
 
@@ -20,8 +19,7 @@ const InvestigationSummarySchema = new mongoose.Schema(
     testName: { type: String, trim: true },
     result: { type: String, trim: true },
     date: { type: Date },
-    remarks: { type: String },
-  },
+    remarks: { type: String } },
   { _id: true }
 );
 
@@ -30,8 +28,7 @@ const ProcedureSchema = new mongoose.Schema(
     procedureName: { type: String, trim: true },
     date: { type: Date },
     performedBy: { type: String, trim: true },
-    notes: { type: String },
-  },
+    notes: { type: String } },
   { _id: true }
 );
 
@@ -42,9 +39,8 @@ const DischargeSummarySchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Patient",
       required: true,
-      index: true,
-    },
-    UHID: { type: String, required: true, trim: true, index: true },
+      index: true },
+    UHID: { type: String, required: true, trim: true },
     patientName: { type: String, trim: true },
     age: { type: String },
     gender: { type: String },
@@ -52,9 +48,7 @@ const DischargeSummarySchema = new mongoose.Schema(
 
     admissionId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Admission",
-      index: true,
-    },
+      ref: "Admission" },
     ipdNo: { type: String, index: true },
     admissionDate: { type: Date },
     dischargeDate: { type: Date },
@@ -62,8 +56,7 @@ const DischargeSummarySchema = new mongoose.Schema(
     // ── Treating Team ────────────────────────────────────────
     attendingDoctor: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Doctor",
-    },
+      ref: "Doctor" },
     doctorName: { type: String, trim: true },
     doctorRegNo: { type: String },
     department: { type: String, trim: true },
@@ -90,9 +83,27 @@ const DischargeSummarySchema = new mongoose.Schema(
     conditionOnDischarge: {
       type: String,
       enum: ["Stable", "Improved", "Unchanged", "Deteriorated", "Critical", "LAMA", "Expired"],
-      default: "Stable",
-    },
+      default: "Stable" },
     totalDaysAdmitted: { type: Number, default: 0 },
+    // FIX (audit P17-B5): NABH required fields that were missing entirely.
+    // dischargeType is mandatory per NABH COP.7 — captures the legal mode
+    // of departure (Routine, LAMA, DAMA, Absconded, Referral, Death).
+    dischargeType: {
+      type: String,
+      enum: ["Routine", "LAMA", "DAMA", "Absconded", "Referral", "Death"],
+      default: "Routine",
+    },
+    timeOfDischarge: { type: String, trim: true, default: "" },  // free-text "HH:MM"
+    // Death-related fields (only used when conditionOnDischarge === "Expired"
+    // or dischargeType === "Death")
+    deathDate:       { type: Date,   default: null },
+    deathTime:       { type: String, trim: true, default: "" },
+    causeOfDeath:    { type: String, trim: true, default: "" },
+    immediateCauseOfDeath: { type: String, trim: true, default: "" },
+    antecedentCauseOfDeath:{ type: String, trim: true, default: "" },
+    // Snapshot the active MLR number at finalize-time so historical prints
+    // keep the stamp even if MLC is later closed (audit P17-B7).
+    mlrNumberSnapshot: { type: String, trim: true, default: "" },
 
     // ── Discharge Instructions ───────────────────────────────
     medicationsOnDischarge: [MedicationOnDischargeSchema],
@@ -116,16 +127,13 @@ const DischargeSummarySchema = new mongoose.Schema(
     status: {
       type: String,
       enum: ["draft", "finalized"],
-      default: "draft",
-      index: true,
-    },
+      default: "draft" },
     finalizedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" },
     finalizedByName: { type: String },
     finalizedAt: { type: Date },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" },
-    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" },
-  },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" } },
   { timestamps: true, collection: "discharge_summaries" }
 );
 

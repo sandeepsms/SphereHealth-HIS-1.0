@@ -63,7 +63,6 @@ const DepartmentSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-DepartmentSchema.index({ departmentCode: 1 });
 DepartmentSchema.index({ isActive: 1, displayOrder: 1 });
 
 module.exports =

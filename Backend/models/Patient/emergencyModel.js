@@ -2,8 +2,9 @@ const mongoose = require("mongoose");
 
 const EmergencySchema = new mongoose.Schema(
   {
+    // Proper ObjectId ref so populate works reliably across queries.
     patientId: {
-      type: String,
+      type: mongoose.Schema.Types.ObjectId,
       required: true,
       ref: "Patient",
     },
@@ -11,6 +12,11 @@ const EmergencySchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    // Denormalised so the queue/board can render without populate too
+    patientName: { type: String },
+    age:         { type: Number },
+    gender:      { type: String, enum: ["Male", "Female", "Other"] },
+    contactNumber: { type: String },
     emergencyNumber: {
       type: String,
       unique: true,
@@ -137,9 +143,10 @@ const EmergencySchema = new mongoose.Schema(
       quadriplegia: Boolean,
       details: String,
     },
+    // Filled in by the doctor after examination — not required at intake.
     provisionalDiagnosis: {
       type: String,
-      required: true,
+      default: "",
     },
     finalDiagnosis: String,
     investigationsOrdered: [
@@ -189,6 +196,8 @@ const EmergencySchema = new mongoose.Schema(
       type: String,
       enum: ["Low", "Medium", "High"],
     },
+    // Disposition is decided at the END of the ER stay (doctor sets it).
+    // At intake (receptionist's call) it's not known — so not required.
     disposition: {
       type: String,
       enum: [
@@ -199,8 +208,9 @@ const EmergencySchema = new mongoose.Schema(
         "Absconded",
         "Expired",
         "Observation",
+        "Pending",
       ],
-      required: true,
+      default: "Pending",
     },
     admission: {
       type: mongoose.Schema.Types.ObjectId,
@@ -240,18 +250,26 @@ const EmergencySchema = new mongoose.Schema(
 
 EmergencySchema.index({ patientId: 1, arrivalDate: -1 });
 EmergencySchema.index({ UHID: 1 });
-EmergencySchema.index({ emergencyNumber: 1 });
 EmergencySchema.index({ triageCategory: 1 });
 EmergencySchema.index({ status: 1 });
 EmergencySchema.index({ arrivalDate: -1 });
 
-EmergencySchema.pre("save", async function (next) {
+// Atomic sequence via Counter — replaces `countDocuments()+1` race.
+const { nextSequence: nextSeqER } = require("../../utils/counter");
+
+EmergencySchema.pre("validate", async function (next) {
   if (this.isNew && !this.emergencyNumber) {
-    const count = await mongoose.model("Emergency").countDocuments();
-    const year = new Date().getFullYear();
-    this.emergencyNumber = `ER-${year}-${String(count + 1).padStart(6, "0")}`;
+    try {
+      const year = new Date().getFullYear();
+      const seq  = await nextSeqER(`emergency:${year}`);
+      this.emergencyNumber = `ER-${year}-${String(seq).padStart(6, "0")}`;
+    } catch (err) {
+      return next(err);
+    }
   }
   next();
 });
 
-module.exports = mongoose.model("Emergency", EmergencySchema);
+module.exports =
+  mongoose.models.Emergency ||
+  mongoose.model("Emergency", EmergencySchema);

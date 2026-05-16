@@ -1,0 +1,100 @@
+/**
+ * PharmacySettingsModel.js — singleton config for the pharmacy module.
+ *
+ * mode:
+ *   "in-house"    → invoices print with hospital header/footer
+ *                   (the existing /api/hospital-settings doc is used).
+ *   "outsourced"  → invoices print with this doc's header/footer instead,
+ *                   so a third-party pharmacy can legally bill under its
+ *                   own GSTIN / drug-license / trade name.
+ *
+ * Always exactly one doc — controller upserts on { _id: "default" }.
+ */
+const mongoose = require("mongoose");
+
+const PharmacySettingsSchema = new mongoose.Schema(
+  {
+    _id: { type: String, default: "default" },
+
+    mode: { type: String, enum: ["in-house", "outsourced"], default: "in-house" },
+
+    // Identity (only used when mode === "outsourced")
+    pharmacyName:    { type: String, default: "Hospital Pharmacy" },
+    tagline:         { type: String, default: "" },
+    logo:            { type: String, default: "" },   // data-url or http url
+    showLogoInPrint: { type: Boolean, default: true },
+    showTagline:     { type: Boolean, default: true },
+
+    // Address
+    addressLine1: { type: String, default: "" },
+    addressLine2: { type: String, default: "" },
+    city:         { type: String, default: "" },
+    state:        { type: String, default: "" },
+    pincode:      { type: String, default: "" },
+    country:      { type: String, default: "India" },
+
+    // Contact
+    phone1:  { type: String, default: "" },
+    phone2:  { type: String, default: "" },
+    email:   { type: String, default: "" },
+    website: { type: String, default: "" },
+
+    // Regulatory / tax
+    gstin:           { type: String, default: "" },
+    panNumber:       { type: String, default: "" },
+    drugLicenseNo:   { type: String, default: "" },
+    drugLicenseExp:  { type: Date,   default: null },
+    fssaiNumber:     { type: String, default: "" },
+
+    // Bank (printed on invoice footer for credit / pay-later customers)
+    bankName:    { type: String, default: "" },
+    bankAccount: { type: String, default: "" },
+    ifscCode:    { type: String, default: "" },
+    bankBranch:  { type: String, default: "" },
+    upiId:       { type: String, default: "" },
+
+    // Design
+    headerColor:    { type: String, default: "#ea580c" },   // primary header band
+    accentColor:    { type: String, default: "#c2410c" },   // totals + emphasis
+    // Selected bill template (1-10) — drives the PharmacyBill renderer.
+    // Pharmacy manager picks one in /pharmacy → Settings, every bill
+    // prints in that style unless explicitly overridden in the payload.
+    billTemplate:   { type: Number, default: 1, min: 1, max: 10 },
+    // Default paper size when openPrint(...) is invoked from this module.
+    defaultPaper:   { type: String, enum: ["a4","half-a4","a5"], default: "half-a4" },
+
+    // ── Register-specific print preferences (separate from bill) ──
+    // 1 = Classic Centred (formal, B&W)    2 = Modern Gradient (with logo)
+    // 3 = Compact Strip   4 = Government Stamp (bordered)
+    // 5 = Letterhead (centred + accent rule)
+    registerHeader: { type: Number, default: 1, min: 1, max: 5 },
+    // Visual options that the register printable honours.
+    registerShowLogo:    { type: Boolean, default: true },
+    registerShowGstin:   { type: Boolean, default: true },
+    registerShowDL:      { type: Boolean, default: true },
+    registerShowContact: { type: Boolean, default: true },
+    // Add a "S.No." column at the start of every register table.
+    registerSerialColumn:{ type: Boolean, default: true },
+    // Footer signature row — "Prepared by" + "Checked by" + "Authorised by".
+    registerSignatures:  { type: Boolean, default: true },
+    // Orientation hint for the print toolbar (CSS @page picks this up).
+    // Portrait is the default — fits standard A4 stationery and looks
+    // right for the typical 8-10 column registers. Landscape stays
+    // available for wide registers if the user prefers it.
+    registerOrientation: { type: String, enum: ["portrait","landscape"], default: "portrait" },
+
+    // Invoice footer text
+    footerNote: { type: String, default: "" },
+    termsLine1: { type: String, default: "Goods once sold are not returnable unless seal is intact (within 7 days)." },
+    termsLine2: { type: String, default: "Store medicines as per pack instructions." },
+    termsLine3: { type: String, default: "Subject to local jurisdiction." },
+
+    // Whether to display "in-house" or "outsourced" badge on the invoice
+    showModeBadge: { type: Boolean, default: false },
+
+    updatedBy: { type: String, default: "" },
+  },
+  { timestamps: true, _id: false }
+);
+
+module.exports = mongoose.model("PharmacySettings", PharmacySettingsSchema);

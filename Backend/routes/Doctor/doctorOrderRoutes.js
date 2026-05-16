@@ -52,6 +52,12 @@ router.post("/", async (req, res) => {
 });
 
 // POST /bulk — create multiple orders
+// FIX (audit P14-B5): insertMany({ordered:false}) silently swallows
+// per-document validation failures and the caller only sees the rows that
+// made it in. The frontend would then re-render with "5 orders created"
+// when only 3 actually inserted, and the missing 2 quietly disappeared.
+// Now we report inserted + failed counts with reasons so the UI can flag
+// the bad rows.
 router.post("/bulk", async (req, res) => {
   try {
     const { orders } = req.body;
@@ -70,8 +76,36 @@ router.post("/bulk", async (req, res) => {
       }
       return o;
     });
-    const created = await DoctorOrder.insertMany(enriched, { ordered: false });
-    res.status(201).json({ ok: true, data: created, count: created.length });
+
+    let created = [];
+    const failed = [];
+    try {
+      created = await DoctorOrder.insertMany(enriched, { ordered: false, rawResult: false });
+    } catch (bulkErr) {
+      // Mongoose 8 throws BulkWriteError with .insertedDocs + .writeErrors.
+      created = bulkErr.insertedDocs || [];
+      const writeErrors = bulkErr.writeErrors || bulkErr.result?.result?.writeErrors || [];
+      for (const we of writeErrors) {
+        failed.push({
+          index: we.index ?? we.err?.index,
+          message: we.errmsg || we.err?.errmsg || we.message,
+          row: enriched[we.index ?? we.err?.index],
+        });
+      }
+      // If insertMany threw but produced no clear writeErrors, fall back to
+      // diff-by-length so we don't drop the failure on the floor.
+      if (!writeErrors.length && enriched.length > created.length) {
+        failed.push({ index: -1, message: bulkErr.message, count: enriched.length - created.length });
+      }
+    }
+
+    res.status(failed.length ? 207 : 201).json({
+      ok: failed.length === 0,
+      data: created,
+      count: created.length,
+      failedCount: failed.length,
+      failed,
+    });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message });
   }
@@ -105,10 +139,31 @@ router.get("/:id", async (req, res) => {
 });
 
 // PATCH /:id — general update (status, consent, nurseNotes, stopReason, etc.)
+//
+// FIX (audit P14-B7): legacy PATCH was a wide-open `$set: req.body` —
+// any caller could overwrite hamFlag / twoNurseRequired / orderedBy /
+// administrationRecord / auditLog directly, bypassing every safeguard.
+// Now whitelisted to fields the workflow genuinely needs to mutate from
+// the generic PATCH path. Other changes go through dedicated endpoints
+// (administer / rate-change / step / stop) that enforce business rules.
+const PATCH_ALLOWED = new Set([
+  "status", "stopReason", "stoppedAt", "stoppedBy",
+  "nurseNotes", "consentObtained", "consentNotes",
+  "currentRate", "rateUnit", "infusionStartedAt", "infusionEndedAt",
+  "holdUntil", "holdReason", "delayReason",
+  "remarks", "priority",
+]);
 router.patch("/:id", async (req, res) => {
   try {
+    const safe = {};
+    for (const [k, v] of Object.entries(req.body || {})) {
+      if (PATCH_ALLOWED.has(k)) safe[k] = v;
+    }
+    if (Object.keys(safe).length === 0) {
+      return res.status(400).json({ ok: false, message: "No allowed fields to update — use the dedicated /administer or /rate-change endpoints" });
+    }
     const order = await DoctorOrder.findByIdAndUpdate(
-      req.params.id, { $set: req.body }, { new: true, runValidators: true }
+      req.params.id, { $set: safe }, { new: true, runValidators: true }
     );
     if (!order) return res.status(404).json({ ok: false, message: "Not found" });
     res.json({ ok: true, data: order });
@@ -177,6 +232,7 @@ router.post("/:id/administer", async (req, res) => {
       verifiedBy, fiveRightsChecked,
       holdReason, holdUntil, delayedTo, delayReason,
       prnEffect, prnReassessTime, adverseEvent, adverseDetails,
+      isStatDose, statReason, nextDoseAdjustedAt,
     } = req.body;
 
     if (!scheduledTime || !givenBy || !status)
@@ -190,8 +246,18 @@ router.post("/:id/administer", async (req, res) => {
     if (status === "given" && !fiveRightsChecked)
       return res.status(422).json({ ok: false, message: "5 Rights must be confirmed before marking as given (fiveRightsChecked: true)" });
 
+    // STAT dose: reason mandatory for audit trail
+    if (isStatDose && status === "given" && !statReason)
+      return res.status(422).json({ ok: false, message: "STAT dose requires a reason for NABH documentation (statReason)" });
+
+    // Normalise today's date window (midnight → next midnight UTC)
+    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+    const todayEnd   = new Date(todayStart.getTime() + 86400000);
+
     const entry = {
-      scheduledTime, status,
+      scheduledTime,
+      scheduledDate: req.body.scheduledDate ? new Date(req.body.scheduledDate) : todayStart,
+      status,
       givenAt:   givenAt ? new Date(givenAt) : (status === "given" ? new Date() : undefined),
       givenBy,   doseGiven, routeUsed, siteUsed, notes,
       verifiedBy, verifiedAt: verifiedBy ? new Date() : undefined,
@@ -199,22 +265,73 @@ router.post("/:id/administer", async (req, res) => {
       holdReason, holdUntil, delayedTo, delayReason,
       prnEffect, prnReassessTime,
       adverseEvent: adverseEvent || false, adverseDetails,
+      isStatDose:  isStatDose  || false,
+      statReason:  statReason  || undefined,
+      nextDoseAdjustedAt: nextDoseAdjustedAt || undefined,
     };
 
-    // Find existing pending entry for this time and update, else push new
-    const existing = order.administrationRecord.find(r => r.scheduledTime === scheduledTime);
-    if (existing) {
-      Object.assign(existing, entry);
-    } else {
+    if (isStatDose) {
+      // FIX (audit P14-B1): STAT idempotency — protect against a fat-fingered
+      // double-click producing two STAT records 200ms apart with the same
+      // nurse / drug. Window = 30 seconds, same nurse, same dose, same
+      // status==given. Anything outside that we treat as a deliberate second
+      // STAT (e.g. emergency repeat dose) and accept.
+      if (status === "given") {
+        const recentDuplicate = order.administrationRecord.find(r => {
+          if (!r.isStatDose) return false;
+          if (r.status !== "given") return false;
+          if (r.givenBy !== givenBy) return false;
+          if (!r.givenAt) return false;
+          return (Date.now() - new Date(r.givenAt).getTime()) < 30_000;
+        });
+        if (recentDuplicate) {
+          return res.status(409).json({
+            ok: false,
+            message: "Duplicate STAT dose ignored — same nurse already recorded one within 30 seconds",
+            data: order,
+          });
+        }
+      }
+      // STAT doses are always NEW records — never overwrite a scheduled slot
       order.administrationRecord.push(entry);
+    } else {
+      // Regular: find existing entry for this scheduledTime AND today
+      const existing = order.administrationRecord.find(r => {
+        if (r.isStatDose) return false; // never overwrite a STAT record as a regular slot
+        if (r.scheduledTime !== scheduledTime) return false;
+        if (!r.scheduledDate) return false;
+        const d = new Date(r.scheduledDate);
+        return d >= todayStart && d < todayEnd;
+      });
+      if (existing) Object.assign(existing, entry);
+      else order.administrationRecord.push(entry);
     }
 
     // Update order-level status
     if (status === "hold") order.status = "OnHold";
     if (status === "given") {
-      const allDone = order.administrationRecord.every(r => ["given","skipped","refused"].includes(r.status));
-      if (allDone && order.orderDetails?.frequency !== "Continuous") order.status = "Completed";
+      // For status: count only non-STAT regular records (STAT doses are extras, not part of the course)
+      const regularRecords = order.administrationRecord.filter(r => !r.isStatDose);
+      // FIX (audit P14-B2): if administrationRecord has zero non-STAT entries
+      // (e.g. SOS/PRN order with no scheduled course, or an order created
+      // before scheduledTimes was set), .every() returns TRUE on an empty
+      // array, which would flip the whole order to "Completed" the moment
+      // the first STAT or PRN dose was given. Require at least one regular
+      // slot before considering the course done.
+      const regularDone = regularRecords.length > 0
+        && regularRecords.every(r => ["given","skipped","refused"].includes(r.status));
+      if (regularDone && order.orderDetails?.frequency !== "Continuous") order.status = "Completed";
       else order.status = "InProgress";
+    }
+
+    // STAT audit log
+    if (isStatDose && status === "given") {
+      order.auditLog.push({
+        step: "STAT Dose Administered",
+        doneBy: givenBy,
+        doneAt: new Date(),
+        notes: `STAT reason: ${statReason}${nextDoseAdjustedAt ? ` | Next dose adjusted to ${nextDoseAdjustedAt}` : ""}`,
+      });
     }
 
     // Log adverse event
@@ -241,6 +358,20 @@ router.post("/:id/infusion-rate", async (req, res) => {
     const { changedBy, oldRate, newRate, reason, reasonDetail, verifiedBy, doctorInformed, doctorName } = req.body;
     if (!changedBy || !newRate || !reason)
       return res.status(400).json({ ok: false, message: "changedBy, newRate, reason required" });
+
+    // FIX (audit P14-B3): rate values were accepted as raw strings —
+    // "abc", "-5", "0" all sailed through. Strip units, coerce to number,
+    // reject anything that isn't a positive finite value.
+    const parseRate = (v) => {
+      if (v === null || v === undefined) return NaN;
+      const s = String(v).replace(/[^\d.\-]/g, "");
+      const n = Number(s);
+      return Number.isFinite(n) ? n : NaN;
+    };
+    const newRateNum = parseRate(newRate);
+    if (!Number.isFinite(newRateNum) || newRateNum <= 0) {
+      return res.status(400).json({ ok: false, message: `Invalid newRate: '${newRate}' — must be a positive number (ml/hr)` });
+    }
 
     const order = await DoctorOrder.findById(req.params.id);
     if (!order) return res.status(404).json({ ok: false, message: "Not found" });
@@ -533,58 +664,6 @@ router.post("/seed-demo", async (req, res) => {
     res.status(201).json({ ok: true, message: `${created.length} demo orders created`, data: created });
   } catch (err) {
     res.status(500).json({ ok: false, message: err.message });
-  }
-});
-
-/* ═══════════════════════════════════════════════════
-   DOCTOR — COUNTERSIGN TELEPHONIC ORDER (NABH MOM.1)
-═══════════════════════════════════════════════════ */
-/**
- * POST /:id/countersign
- * Body: { type: "countersign"|"reject", doneBy, notes?, rejectedReason? }
- */
-router.post("/:id/countersign", async (req, res) => {
-  try {
-    const { type, doneBy, notes, rejectedReason } = req.body;
-    if (!type || !doneBy)
-      return res.status(400).json({ ok: false, message: "type and doneBy required" });
-    if (!["countersign", "reject"].includes(type))
-      return res.status(400).json({ ok: false, message: "type must be 'countersign' or 'reject'" });
-
-    const order = await DoctorOrder.findById(req.params.id);
-    if (!order) return res.status(404).json({ ok: false, message: "Not found" });
-    if (order.orderSource !== "Telephonic")
-      return res.status(400).json({ ok: false, message: "Order is not a telephonic order" });
-
-    if (!order.telephonicData) order.telephonicData = {};
-
-    if (type === "countersign") {
-      order.telephonicData.countersignStatus = "countersigned";
-      order.telephonicData.countersignedBy   = doneBy;
-      order.telephonicData.countersignedAt   = new Date();
-      order.telephonicData.countersignNotes  = notes || "";
-      order.auditLog.push({
-        step: "Telephonic Order Countersigned",
-        doneBy, doneAt: new Date(),
-        notes: `Countersigned by Dr. ${doneBy}${notes ? ` — ${notes}` : ""}`,
-      });
-    } else {
-      order.status                          = "Cancelled";
-      order.telephonicData.countersignStatus = "rejected";
-      order.telephonicData.rejectedBy        = doneBy;
-      order.telephonicData.rejectedAt        = new Date();
-      order.telephonicData.rejectedReason    = rejectedReason || "Rejected by doctor";
-      order.auditLog.push({
-        step: "Telephonic Order Rejected",
-        doneBy, doneAt: new Date(),
-        notes: `Rejected by Dr. ${doneBy}: ${rejectedReason || "No reason given"}`,
-      });
-    }
-
-    await order.save();
-    res.json({ ok: true, data: order });
-  } catch (err) {
-    res.status(400).json({ ok: false, message: err.message });
   }
 });
 

@@ -1,16 +1,16 @@
 // ============================================
 // FILE: src/pages/BuildingManagement.jsx
 // ============================================
-import React, { useState, useEffect } from "react";
-import { DataTable } from "primereact/datatable";
-import { Column } from "primereact/column";
-import { Button } from "primereact/button";
-import { InputText } from "primereact/inputtext";
-import { Tag } from "primereact/tag";
-import { Card } from "primereact/card";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Toast } from "primereact/toast";
 import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
+
 import BuildingForm from "../Components/building/BuildingForm";
+import BedSectionHeader from "../Components/bed/BedSectionHeader";
+import {
+  BmStatStrip, BmCard, BmFilter, BmEmpty, BmPill, BmIconBtn,
+  BmAvatar, BmCellStack,
+} from "../Components/bed/BedPrimitives";
 import { buildingService } from "../Services/buildingService";
 
 const BuildingManagement = () => {
@@ -18,144 +18,205 @@ const BuildingManagement = () => {
   const [selectedBuilding, setSelectedBuilding] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [globalFilter, setGlobalFilter] = useState("");
-  const toast = React.useRef(null);
+  const [filter, setFilter] = useState("");
+  const toast = useRef(null);
 
-  useEffect(() => {
-    loadBuildings();
-  }, []);
+  useEffect(() => { loadBuildings(); }, []);
 
   const loadBuildings = async () => {
     setLoading(true);
     try {
       const data = await buildingService.getAllBuildings();
-      setBuildings(data);
-    } catch (error) {
-      toast.current.show({
-        severity: "error",
-        summary: "Error",
-        detail: "Failed to load buildings",
-      });
-    } finally {
-      setLoading(false);
-    }
+      const arr = Array.isArray(data) ? data : data?.data || data?.buildings || [];
+      setBuildings(arr);
+    } catch {
+      toast.current?.show({ severity: "error", summary: "Error", detail: "Failed to load buildings", life: 3000 });
+    } finally { setLoading(false); }
   };
 
-  const handleEdit = (building) => {
-    setSelectedBuilding(building);
-    setShowForm(true);
-  };
-
-  const handleDelete = (building) => {
+  const handleDelete = (b) => {
     confirmDialog({
-      message: `Are you sure you want to delete building ${building.buildingName}?`,
+      message: `Delete building "${b.buildingName}"?`,
       header: "Confirmation",
       icon: "pi pi-exclamation-triangle",
       accept: async () => {
         try {
-          await buildingService.deleteBuilding(building._id);
-          toast.current.show({
-            severity: "success",
-            summary: "Success",
-            detail: "Building deleted successfully",
-          });
+          await buildingService.deleteBuilding(b._id);
+          toast.current?.show({ severity: "success", summary: "Deleted", detail: `${b.buildingName} removed`, life: 2500 });
           loadBuildings();
-        } catch (error) {
-          toast.current.show({
-            severity: "error",
-            summary: "Error",
-            detail: "Failed to delete building",
-          });
+        } catch {
+          toast.current?.show({ severity: "error", summary: "Error", detail: "Failed to delete building", life: 3000 });
         }
       },
     });
   };
 
-  const statusBodyTemplate = (rowData) => {
-    return (
-      <Tag
-        value={rowData.isActive ? "Active" : "Inactive"}
-        severity={rowData.isActive ? "success" : "danger"}
-      />
-    );
-  };
+  const stats = useMemo(() => {
+    const active = buildings.filter(b => b.isActive).length;
+    const floors = buildings.reduce((s, b) => s + (Number(b.totalFloors) || 0), 0);
+    return [
+      { key: "total",  label: "Buildings",       value: buildings.length, icon: "pi-building",     tone: "blue"  },
+      { key: "active", label: "Active",          value: active,            icon: "pi-check-circle", tone: "green" },
+      { key: "floors", label: "Floors (sum)",    value: floors,            icon: "pi-arrows-v",     tone: "amber" },
+    ];
+  }, [buildings]);
 
-  const actionBodyTemplate = (rowData) => {
-    return (
-      <div className="flex gap-2">
-        <Button
-          icon="pi pi-pencil"
-          className="p-button-rounded p-button-success"
-          onClick={() => handleEdit(rowData)}
-        />
-        <Button
-          icon="pi pi-trash"
-          className="p-button-rounded p-button-danger"
-          onClick={() => handleDelete(rowData)}
-        />
-      </div>
+  const filtered = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return buildings;
+    return buildings.filter(b =>
+      (b.buildingName || "").toLowerCase().includes(q) ||
+      (b.buildingCode || "").toLowerCase().includes(q) ||
+      (b.address || "").toLowerCase().includes(q)
     );
-  };
-
-  const header = (
-    <div className="flex flex-wrap gap-2 align-items-center justify-content-between">
-      <h4 className="m-0">Building Management</h4>
-      <span className="p-input-icon-left">
-        <i className="pi pi-search" />
-        <InputText
-          type="search"
-          value={globalFilter}
-          onChange={(e) => setGlobalFilter(e.target.value)}
-          placeholder="Search..."
-        />
-      </span>
-      <Button
-        label="Add Building"
-        icon="pi pi-plus"
-        onClick={() => {
-          setSelectedBuilding(null);
-          setShowForm(true);
-        }}
-      />
-    </div>
-  );
+  }, [buildings, filter]);
 
   return (
-    <div className="p-4">
+    <div className="bm-page">
       <Toast ref={toast} />
       <ConfirmDialog />
 
-      <Card>
-        <DataTable
-          value={buildings}
-          paginator
-          rows={10}
-          loading={loading}
-          globalFilter={globalFilter}
-          header={header}
-          emptyMessage="No buildings found"
-          responsiveLayout="scroll"
-        >
-          <Column field="buildingName" header="Building Name" sortable />
-          <Column field="buildingCode" header="Building Code" sortable />
-          <Column field="totalFloors" header="Total Floors" sortable />
-          <Column field="address" header="Address" />
-          <Column header="Status" body={statusBodyTemplate} sortable />
-          <Column header="Actions" body={actionBodyTemplate} />
-        </DataTable>
-      </Card>
+      <BedSectionHeader
+        title="Buildings"
+        subtitle={`${buildings.length} building${buildings.length === 1 ? "" : "s"} · top of the location hierarchy`}
+        icon="pi-building"
+        actions={
+          <>
+            <button onClick={loadBuildings} disabled={loading}
+              style={{
+                background: "rgba(255,255,255,.15)", color: "#fff",
+                border: "1.5px solid rgba(255,255,255,.4)",
+                fontWeight: 700, borderRadius: 8, padding: "7px 14px", fontSize: 12,
+                cursor: loading ? "wait" : "pointer", fontFamily: "inherit",
+                display: "inline-flex", alignItems: "center", gap: 6,
+              }}>
+              <i className={`pi ${loading ? "pi-spin pi-spinner" : "pi-refresh"}`} /> Refresh
+            </button>
+            <button onClick={() => { setSelectedBuilding(null); setShowForm(true); }}
+              style={{
+                background: "#fff", color: "#0e7490",
+                border: "none", fontWeight: 700,
+                borderRadius: 8, padding: "7px 16px", fontSize: 12,
+                boxShadow: "0 2px 8px rgba(0,0,0,.13)",
+                cursor: "pointer", fontFamily: "inherit",
+                display: "inline-flex", alignItems: "center", gap: 6,
+              }}>
+              <i className="pi pi-plus" /> Add Building
+            </button>
+          </>
+        }
+      />
+
+      <BmStatStrip stats={stats} />
+
+      <BmCard
+        title="Configured Buildings"
+        icon="pi-building"
+        count={filtered.length === buildings.length ? buildings.length : `${filtered.length}/${buildings.length}`}
+        action={<BmFilter value={filter} onChange={setFilter} placeholder="Search by name / code / address…" />}
+      >
+        {loading ? (
+          <BmEmpty icon="pi-spin pi-spinner" title="Loading buildings…" />
+        ) : filtered.length === 0 ? (
+          buildings.length === 0 ? (
+            <BmEmpty
+              icon="pi-building"
+              title="No buildings yet"
+              msg="Add your first building — every floor, ward, room and bed lives under one."
+              ctaLabel="Add Building"
+              ctaIcon="pi-plus"
+              onCta={() => { setSelectedBuilding(null); setShowForm(true); }}
+            />
+          ) : (
+            <BmEmpty icon="pi-search" title="No matches" msg="Try a different search term or clear the filter." />
+          )
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table className="bm-table">
+              <thead>
+                <tr>
+                  <th>Building</th>
+                  <th>Floors · Visual</th>
+                  <th>Address</th>
+                  <th>Status</th>
+                  <th className="right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map(b => {
+                  const floors = Number(b.totalFloors) || 0;
+                  return (
+                    <tr key={b._id}>
+                      <td>
+                        <BmCellStack
+                          avatar={<BmAvatar icon="pi-building" tone="cyan" />}
+                          title={b.buildingName}
+                          sub={b.buildingCode || "—"}
+                        />
+                      </td>
+                      <td>
+                        <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                          <span style={{
+                            background: "linear-gradient(135deg, #cffafe, #a5f3fc)",
+                            color: "#0e7490",
+                            fontWeight: 800, fontSize: 14,
+                            borderRadius: 8, padding: "3px 11px",
+                            minWidth: 32, textAlign: "center",
+                          }}>{floors}</span>
+                          <span className="muted" style={{ fontSize: 11 }}>floor{floors === 1 ? "" : "s"}</span>
+                          {floors > 0 && (
+                            <div style={{ display: "flex", gap: 3, marginLeft: 8 }}>
+                              {Array.from({ length: Math.min(floors, 10) }).map((_, i) => (
+                                <span key={i} style={{
+                                  width: 6, height: 20, borderRadius: 2,
+                                  background: "linear-gradient(180deg, #22d3ee, #0e7490)",
+                                  opacity: 0.55 + (i / Math.max(1, Math.min(floors, 10))) * 0.45,
+                                }} />
+                              ))}
+                              {floors > 10 && <span className="muted" style={{ fontSize: 9, marginLeft: 4, alignSelf: "center" }}>+{floors - 10}</span>}
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                      <td>
+                        {b.address ? (
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                            <i className="pi pi-map-marker" style={{ fontSize: 10, color: "#94a3b8" }} />
+                            {b.address}
+                          </span>
+                        ) : <span className="muted">—</span>}
+                      </td>
+                      <td>
+                        {b.isActive
+                          ? <BmPill tone="ok"     icon="pi-check">Active</BmPill>
+                          : <BmPill tone="danger" icon="pi-times">Inactive</BmPill>}
+                      </td>
+                      <td className="right">
+                        <div className="bm-row-actions">
+                          <BmIconBtn icon="pi-pencil" variant="info"   title="Edit"
+                            onClick={() => { setSelectedBuilding(b); setShowForm(true); }} />
+                          <BmIconBtn icon="pi-trash"  variant="danger" title="Delete"
+                            onClick={() => handleDelete(b)} />
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </BmCard>
 
       <BuildingForm
         visible={showForm}
-        onHide={() => setShowForm(false)}
+        onHide={() => { setShowForm(false); setSelectedBuilding(null); }}
         building={selectedBuilding}
         onSave={() => {
+          setShowForm(false);
+          setSelectedBuilding(null);
           loadBuildings();
-          toast.current.show({
-            severity: "success",
-            summary: "Success",
-            detail: "Building saved successfully",
-          });
+          toast.current?.show({ severity: "success", summary: "Saved", detail: "Building saved", life: 2500 });
         }}
       />
     </div>

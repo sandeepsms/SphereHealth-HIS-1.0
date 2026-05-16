@@ -3,6 +3,10 @@ const opdService = require("../../services/Patient/OPDService");
 class OPDController {
   async createOPDVisit(req, res) {
     try {
+      // OPDService.createOPDVisit already fires onOPDRegistered (creates the
+      // bridging admission AND the consultation charge). The controller-level
+      // auto-billing block here used to fire the SAME event a second time,
+      // double-charging every visit. Removed.
       const visit = await opdService.createOPDVisit(req.body);
       res.status(201).json({ success: true, message: "OPD visit created successfully", data: visit });
     } catch (error) {
@@ -13,6 +17,11 @@ class OPDController {
   async getAllOPDVisits(req, res) {
     try {
       const { page = 1, limit = 50, ...filters } = req.query;
+      // Doctor users see only their own OPD patients (set by attachDoctorProfile
+      // middleware). For nurses, reception, admin — no extra filter is applied.
+      if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
+        filters.doctorId = req.doctorProfile._id;
+      }
       const result = await opdService.getAllOPDVisits(parseInt(page), parseInt(limit), filters);
       res.status(200).json({ success: true, data: result.visits, pagination: result.pagination });
     } catch (error) {
@@ -123,7 +132,12 @@ class OPDController {
   // GET /opd/today  — optionally ?departmentId=&doctorId=&vitalsStatus=
   async getTodayVisits(req, res) {
     try {
-      const visits = await opdService.getTodayVisits(req.query);
+      const q = { ...req.query };
+      // Doctor scope: only this doctor's visits today.
+      if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
+        q.doctorId = req.doctorProfile._id;
+      }
+      const visits = await opdService.getTodayVisits(q);
       res.status(200).json({ success: true, data: visits });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
@@ -134,7 +148,12 @@ class OPDController {
   async getFollowUpDue(req, res) {
     try {
       const { date = new Date() } = req.query;
-      const visits = await opdService.getFollowUpDue(date);
+      // Doctor scope: only their own follow-ups.
+      const opts = {};
+      if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
+        opts.doctorId = req.doctorProfile._id;
+      }
+      const visits = await opdService.getFollowUpDue(date, opts);
       res.status(200).json({ success: true, data: visits });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });

@@ -26,148 +26,6 @@ const C = {
   slate: "#1e293b", pink: "#be185d",
 };
 
-const fld = { padding:"9px 12px", border:"1.5px solid #e2e8f0", borderRadius:8, fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#0f172a", outline:"none", background:"white", width:"100%", boxSizing:"border-box" };
-const sel = { ...fld, cursor:"pointer" };
-const ta  = { ...fld, resize:"vertical", minHeight:80 };
-const lbl = { display:"block", fontSize:11, fontWeight:700, color:"#64748b", textTransform:"uppercase", letterSpacing:".6px", marginBottom:5 };
-
-function Section({ title, icon, color=C.primary, badge, children, defaultOpen=true }) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <div style={{ background:C.card, border:`1.5px solid ${C.border}`, borderRadius:14, marginBottom:16, overflow:"hidden", boxShadow:"0 1px 3px rgba(0,0,0,.04)" }}>
-      <div onClick={()=>setOpen(o=>!o)} style={{ padding:"12px 20px", background:"#f8fafc", borderBottom:open?`1px solid ${C.border}`:"none", display:"flex", alignItems:"center", justifyContent:"space-between", cursor:"pointer", userSelect:"none" }}>
-        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-          <span style={{ width:30, height:30, borderRadius:8, background:color+"18", display:"flex", alignItems:"center", justifyContent:"center" }}>
-            <i className={`pi ${icon}`} style={{ fontSize:13, color }} />
-          </span>
-          <span style={{ fontWeight:700, fontSize:13, color:C.text }}>{title}</span>
-          {badge && <span style={{ background:color+"20", color, fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:8 }}>{badge}</span>}
-        </div>
-        <i className={`pi ${open?"pi-chevron-up":"pi-chevron-down"}`} style={{ fontSize:11, color:C.muted }} />
-      </div>
-      {open && <div style={{ padding:"18px 20px" }}>{children}</div>}
-    </div>
-  );
-}
-
-function Field({ label, children, style }) {
-  return (
-    <div style={style}>
-      {label && <label style={lbl}>{label}</label>}
-      {children}
-    </div>
-  );
-}
-
-function PageHeader({ icon, title, subtitle, gradient, right }) {
-  return (
-    <div style={{ background:gradient, borderRadius:14, padding:"18px 24px", marginBottom:20, display:"flex", justifyContent:"space-between", alignItems:"center", boxShadow:"0 4px 16px rgba(0,0,0,.08)" }}>
-      <div style={{ display:"flex", alignItems:"center", gap:14 }}>
-        <div style={{ width:46, height:46, borderRadius:12, background:"rgba(255,255,255,.2)", display:"flex", alignItems:"center", justifyContent:"center" }}>
-          <i className={`pi ${icon}`} style={{ fontSize:20, color:"#fff" }} />
-        </div>
-        <div>
-          <div style={{ color:"#fff", fontWeight:800, fontSize:18, letterSpacing:"-.3px" }}>{title}</div>
-          <div style={{ color:"rgba(255,255,255,.7)", fontSize:12, marginTop:2 }}>{subtitle}</div>
-        </div>
-      </div>
-      {right && <div>{right}</div>}
-    </div>
-  );
-}
-
-function ScoreBadge({ score, max, label, bg, color }) {
-  return (
-    <div style={{ background:bg, border:`2px solid ${color}`, borderRadius:12, padding:"12px 20px", textAlign:"center", minWidth:100 }}>
-      <div style={{ fontSize:28, fontWeight:900, color, lineHeight:1 }}>{score}</div>
-      <div style={{ fontSize:10, fontWeight:700, color, marginTop:2 }}>/ {max}</div>
-      <div style={{ fontSize:11, color, fontWeight:600, marginTop:4 }}>{label}</div>
-    </div>
-  );
-}
-
-const MORSE_ITEMS = [
-  {
-    key: "falling_history",
-    label: "History of Falling (in past 3 months)",
-    options: [
-      { label: "No", value: 0 },
-      { label: "Yes", value: 25 },
-    ],
-  },
-  {
-    key: "secondary_diagnosis",
-    label: "Secondary Diagnosis",
-    options: [
-      { label: "No", value: 0 },
-      { label: "Yes", value: 15 },
-    ],
-  },
-  {
-    key: "ambulatory_aid",
-    label: "Ambulatory Aid",
-    options: [
-      { label: "None / Bedrest / Nurse Assist", value: 0 },
-      { label: "Crutches / Cane / Walker", value: 15 },
-      { label: "Furniture", value: 30 },
-    ],
-  },
-  {
-    key: "iv_heparin",
-    label: "IV / Heparin Lock",
-    options: [
-      { label: "No", value: 0 },
-      { label: "Yes", value: 20 },
-    ],
-  },
-  {
-    key: "gait",
-    label: "Gait / Transferring",
-    options: [
-      { label: "Normal / Bedrest / Immobile", value: 0 },
-      { label: "Weak", value: 10 },
-      { label: "Impaired", value: 20 },
-    ],
-  },
-  {
-    key: "mental_status",
-    label: "Mental Status",
-    options: [
-      { label: "Knows own ability", value: 0 },
-      { label: "Forgets limitations", value: 15 },
-    ],
-  },
-];
-
-const INTERVENTIONS = {
-  none: [
-    "Ensure call bell within reach",
-    "Educate patient on fall prevention",
-    "Ensure safe environment (dry floors, adequate lighting)",
-    "Reassess if condition changes",
-  ],
-  low: [
-    "Apply yellow fall risk wristband",
-    "Place fall risk sign at bed",
-    "Bed in lowest position, brakes locked",
-    "Call bell within reach at all times",
-    "Non-slip footwear",
-    "Educate patient and family",
-    "Reassess every shift",
-  ],
-  high: [
-    "Apply red high fall risk wristband",
-    "1:1 supervision or sitter if required",
-    "Bed in lowest position, all side rails up",
-    "High fall risk sign at bed and door",
-    "Anti-slip footwear, remove environmental hazards",
-    "Frequent check-ins every 1–2 hours",
-    "Notify physician and document",
-    "Consider physiotherapy referral",
-    "Reassess every 4 hours or with condition change",
-  ],
-};
-
 const defaultScores = Object.fromEntries(MORSE_ITEMS.map(i => [i.key, null]));
 
 function getRisk(score) {
@@ -331,10 +189,10 @@ function FallRiskContent({ patient }) {
         </div>
         <div style={{ marginTop:16, display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
           <Field label="Assessing Nurse">
-            <input style={fld} value={nurseName} onChange={e => setNurseName(e.target.value)} placeholder="Nurse name & designation" />
+            <input className="his-field" value={nurseName} onChange={e => setNurseName(e.target.value)} placeholder="Nurse name & designation" />
           </Field>
           <Field label="Actions Taken / Notes">
-            <input style={fld} value={actionsNote} onChange={e => setActionsNote(e.target.value)} placeholder="e.g. Wristband applied, family educated" />
+            <input className="his-field" value={actionsNote} onChange={e => setActionsNote(e.target.value)} placeholder="e.g. Wristband applied, family educated" />
           </Field>
         </div>
         <div style={{ marginTop:16, display:"flex", alignItems:"center", gap:12, flexWrap:"wrap" }}>

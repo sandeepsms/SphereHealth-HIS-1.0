@@ -1,85 +1,116 @@
-// PatientsTable.jsx - With PatientSearchBar + PatientHistoryModal integrated
-import React, { useEffect, useState, useRef, useCallback } from "react";
-import { DataTable } from "primereact/datatable";
-import { Column } from "primereact/column";
-import { FilterMatchMode } from "primereact/api";
-import { InputText } from "primereact/inputtext";
-import { Button } from "primereact/button";
-import { Dialog } from "primereact/dialog";
+/**
+ * PatientsTable.jsx — All-patients directory page (/allpatient)
+ *
+ * Uses the system-wide rx-* design system (reception-shared.css) instead of
+ * PrimeReact so it matches the rest of the receptionist / admin shell.
+ *
+ * Features:
+ *   • Header with live total + actions (refresh, register)
+ *   • Registration-type KPI tiles (OPD / IPD / ER / Daycare / Services)
+ *   • Tab filter by registration type
+ *   • Free-text search across name / UHID / phone / email
+ *   • Compact table with all clinically-relevant columns
+ *   • Drawer-style modals for view + delete
+ *   • Re-uses PatientHistoryModal for the timeline view
+ */
+
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { Menu } from "primereact/menu";
-import { Toast } from "primereact/toast";
-import { Card } from "primereact/card";
-import { Badge } from "primereact/badge";
-import { Tag } from "primereact/tag";
-import { API_ENDPOINTS } from "../config/api";
+import { toast } from "react-toastify";
 import patientService from "../Services/patient/patientService";
-import PatientSearchBar from "./Search/PatientSearchBar";
-import PatientHistoryModal from "../Components/PatientHistoryModal"; // ✅ NEW
+import PatientHistoryModal from "../Components/PatientHistoryModal";
 import { useAuth } from "../context/AuthContext";
+import "../pages/reception/reception-shared.css";
+import "./clinical/clinical-forms.css";
 
-import "primereact/resources/themes/lara-light-blue/theme.css";
-import "primereact/resources/primereact.min.css";
-import "primeicons/primeicons.css";
-import "../../css/Radiobutton.css";
+const TABS = [
+  { key: "ALL",       label: "All",       icon: "pi-users" },
+  { key: "OPD",       label: "OPD",       icon: "pi-user-plus" },
+  { key: "IPD",       label: "IPD",       icon: "pi-home" },
+  { key: "Emergency", label: "Emergency", icon: "pi-bolt" },
+  { key: "Daycare",   label: "Daycare",   icon: "pi-sun" },
+  { key: "Services",  label: "Services",  icon: "pi-cog" },
+];
 
-function PatientsTable() {
+const fmtDate = (d) => {
+  if (!d) return "—";
+  const x = new Date(d);
+  if (isNaN(x)) return "—";
+  return `${String(x.getDate()).padStart(2, "0")}/${String(x.getMonth() + 1).padStart(2, "0")}/${x.getFullYear()}`;
+};
+
+const fmtDateTime = (d) =>
+  d ? new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
+
+const computeAge = (p) => {
+  if (p.age) return p.age;
+  if (!p.dateOfBirth) return null;
+  const dob = new Date(p.dateOfBirth);
+  if (isNaN(dob)) return null;
+  const diff = Date.now() - dob.getTime();
+  return Math.floor(diff / (1000 * 60 * 60 * 24 * 365.25));
+};
+
+const fullAddress = (p) => {
+  if (!p.address) return "";
+  if (typeof p.address === "string") return p.address;
+  return [
+    p.address.completeAddress,
+    p.address.city,
+    p.address.district,
+    p.address.state,
+    p.address.pincode,
+  ].filter(Boolean).join(", ");
+};
+
+const docLabel = (p) => {
+  const d = p.doctor;
+  if (!d) return "—";
+  if (typeof d === "string") return d;
+  const pi = d.personalInfo || {};
+  const name = [pi.firstName, pi.lastName].filter(Boolean).join(" ");
+  return name ? `Dr. ${name}` : "—";
+};
+
+const deptLabel = (p) => {
+  if (!p.department) return "—";
+  if (typeof p.department === "string") return p.department;
+  return p.department.departmentName || "—";
+};
+
+const tpaLabel = (p) => {
+  if (p.tpa && typeof p.tpa === "object") return p.tpa.tpaName || "TPA";
+  if (p.tpa) return "TPA";
+  return "Cash";
+};
+
+export default function PatientsTable() {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const canRegister = ["Admin", "Receptionist"].includes(user?.role);
-  const [patients, setPatients] = useState([]);
-  const [filters, setFilters] = useState({
-    global: { value: null, matchMode: FilterMatchMode.CONTAINS },
-  });
-  const [loading, setLoading] = useState(true);
-  const [globalFilterValue, setGlobalFilterValue] = useState("");
-  const [deleteDialogVisible, setDeleteDialogVisible] = useState(false);
-  const [viewDialogVisible, setViewDialogVisible] = useState(false);
-  const [selectedPatient, setSelectedPatient] = useState(null);
-  const [historyPatientId, setHistoryPatientId] = useState(null); // ✅ NEW
-  const [historyVisible, setHistoryVisible] = useState(false); // ✅ NEW
+  const canDelete   = user?.role === "Admin";
 
-  const toast = useRef(null);
-  const menuRefs = useRef({});
-  const navigate = useNavigate();
-  const activeMenu = useRef(null);
-  
+  const [patients, setPatients]   = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [tab, setTab]             = useState("ALL");
+  const [search, setSearch]       = useState("");
+  const [page, setPage]           = useState(1);
+  const ROWS_PER_PAGE             = 12;
 
-  /* ── Fetch all patients ── */
-  const getAllPatients = useCallback(async () => {
+  const [viewing, setViewing]     = useState(null);
+  const [deleting, setDeleting]   = useState(null);
+  const [historyFor, setHistoryFor] = useState(null);
+
+  /* ── Fetch all patients ─────────────────────────────────── */
+  const load = useCallback(async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-      let patientsData = [];
-      try {
-        const response = await patientService.getAllPatients();
-        patientsData = response.data || response.patients || response;
-      } catch {
-        const response = await fetch(
-          `${API_ENDPOINTS.PATIENTS}/getAllPatients`,
-        );
-        patientsData = await response.json();
-      }
-      const formatted = (Array.isArray(patientsData) ? patientsData : [])
-        .map((p, i) => ({
-          id: p._id || p.UHID || `p-${i}`,
-          UHID: p.UHID || p.patientId || p._id || `UHID-${i}`,
-          name: p.fullName || p.name || "N/A",
-          phone: p.contactNumber || p.phone || "N/A",
-          email: p.email || "",
-          gender: p.gender || "N/A",
-          birth: p.dateOfBirth || p.birth || null,
-          department: p.department?.departmentName || p.department || "N/A",
-          registrationType: p.registrationType || "OPD",
-          ...p,
-        }))
-        .filter((p) => p.name !== "N/A");
-      setPatients(formatted);
-    } catch {
-      toast.current?.show({
-        severity: "error",
-        summary: "Failed",
-        detail: "No patients found",
-        life: 3000,
-      });
+      const response = await patientService.getAllPatients();
+      const raw = response?.data || response?.patients || response || [];
+      const list = Array.isArray(raw) ? raw : raw.patients || [];
+      setPatients(list);
+    } catch (e) {
+      toast.error("Could not load patient directory");
       setPatients([]);
     } finally {
       setLoading(false);
@@ -87,736 +118,502 @@ function PatientsTable() {
   }, []);
 
   useEffect(() => {
-    getAllPatients();
-    const interval = setInterval(getAllPatients, 60000);
-    return () => clearInterval(interval);
-  }, [getAllPatients]);
+    load();
+    const t = setInterval(load, 60000);
+    return () => clearInterval(t);
+  }, [load]);
 
-  const formatDate = (date) => {
-    if (!date) return <span className="text-400">—</span>;
-    try {
-      const d = new Date(date);
-      return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
-    } catch {
-      return <span className="text-400">—</span>;
+  /* ── Derived data ───────────────────────────────────────── */
+  const counts = useMemo(() => {
+    const c = { ALL: patients.length, OPD: 0, IPD: 0, Emergency: 0, Daycare: 0, Services: 0 };
+    patients.forEach((p) => {
+      const t = p.registrationType || "OPD";
+      if (c[t] != null) c[t] += 1;
+    });
+    return c;
+  }, [patients]);
+
+  const filtered = useMemo(() => {
+    let r = patients;
+    if (tab !== "ALL") r = r.filter((p) => (p.registrationType || "OPD") === tab);
+    const s = search.trim().toLowerCase();
+    if (s) {
+      r = r.filter((p) =>
+        (p.fullName || "").toLowerCase().includes(s) ||
+        (p.UHID     || "").toLowerCase().includes(s) ||
+        (p.contactNumber || "").toLowerCase().includes(s) ||
+        (p.email    || "").toLowerCase().includes(s)
+      );
     }
-  };
+    return r;
+  }, [patients, tab, search]);
 
-  const onGlobalFilterChange = (e) => {
-    const value = e.target.value;
-    const _f = { ...filters };
-    _f.global.value = value;
-    setFilters(_f);
-    setGlobalFilterValue(value);
-  };
+  const totalPages = Math.max(1, Math.ceil(filtered.length / ROWS_PER_PAGE));
+  useEffect(() => { if (page > totalPages) setPage(1); }, [totalPages, page]);
+  const pageRows = filtered.slice((page - 1) * ROWS_PER_PAGE, page * ROWS_PER_PAGE);
 
-  const handleEdit = (rowData) => navigate(`/registration/${rowData._id}`);
-
-  const handleView = async (rowData) => {
-    try {
-      const response = await fetch(`${API_ENDPOINTS.PATIENTS}/${rowData.id}`);
-      const data = await response.json();
-      setSelectedPatient(data.success && data.data ? data.data : rowData);
-    } catch {
-      setSelectedPatient(rowData);
-    }
-    setViewDialogVisible(true);
-  };
-
-  /* ✅ Open history modal */
-  const handleViewHistory = (rowData) => {
-    setHistoryPatientId(rowData._id || rowData.id);
-    setHistoryVisible(true);
-  };
-
-  const handleSearchSelect = (patient) => {
-    setSelectedPatient(patient);
-    setViewDialogVisible(true);
-  };
-
-  const handleDeleteConfirm = (rowData) => {
-    setSelectedPatient(rowData);
-    setDeleteDialogVisible(true);
-  };
+  /* ── Actions ────────────────────────────────────────────── */
+  const handleEdit = (p) =>
+    navigate(`/reception/register?patientId=${p._id}`);
 
   const handleDelete = async () => {
+    if (!deleting) return;
     try {
-      await patientService.deletePatient(selectedPatient.id);
-      toast.current?.show({
-        severity: "success",
-        detail: "Deleted successfully",
-      });
-      getAllPatients();
-    } catch {
-      toast.current?.show({ severity: "error", detail: "Delete failed" });
-    } finally {
-      setDeleteDialogVisible(false);
-      setSelectedPatient(null);
+      await patientService.deletePatient(deleting._id);
+      toast.success("Patient deleted");
+      setDeleting(null);
+      load();
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Delete failed");
     }
   };
 
-  const genderBody = (row) => (
-    <Tag
-      value={row.gender}
-      rounded
-      severity={
-        { Male: "info", Female: "info", Other: "warning" }[row.gender] ||
-        "secondary"
-      }
-    />
-  );
-
-  const regTypeBody = (row) => {
-    const colors = {
-      OPD: "#0891b2",
-      Emergency: "#dc2626",
-      IPD: "#7c3aed",
-      Daycare: "#d97706",
-      Services: "#059669",
-    };
-    const bgs = {
-      OPD: "#e0f2fe",
-      Emergency: "#fee2e2",
-      IPD: "#ede9fe",
-      Daycare: "#fef3c7",
-      Services: "#d1fae5",
-    };
-    const rt = row.registrationType || "OPD";
-    return (
-      <span
-        style={{
-          background: bgs[rt] || "#e0f2fe",
-          color: colors[rt] || "#0891b2",
-          borderRadius: 20,
-          padding: "2px 10px",
-          fontSize: 11,
-          fontWeight: 700,
-        }}
-      >
-        {rt}
-      </span>
-    );
-  };
-
-  const actionBody = (rowData) => {
-    if (!menuRefs.current[rowData.id])
-      menuRefs.current[rowData.id] = React.createRef();
-
-    const items = [
-      {
-        label: "Delete Patient",
-        icon: "pi pi-trash",
-        command: () => handleDeleteConfirm(rowData),
-      },
-      { separator: true },
-      {
-        label: "View History",
-        icon: "pi pi-history",
-        command: () => handleViewHistory(rowData),
-      }, // ✅ NEW
-      { separator: true },
-      {
-        label: "Doctor Details",
-        icon: "pi pi-user",
-        command: () => navigate(`/doctor/${rowData.UHID}`),
-      },
-      {
-        label: "OPD Bill Print",
-        icon: "pi pi-print",
-        command: () => navigate(`/opd/${rowData.UHID}`),
-      },
-      {
-        label: "Bed Management",
-        icon: "pi pi-th-large",
-        command: () => navigate(`/BedManagementSingleFile/${rowData.UHID}`),
-      },
-    ];
-
-    return (
-      <div className="flex justify-content-center align-items-center gap-1">
-        <Button
-          icon="pi pi-eye"
-          severity="info"
-          text
-          rounded
-          size="small"
-          tooltip="View Details"
-          tooltipOptions={{ position: "top" }}
-          onClick={() => handleView(rowData)}
-        />
-        {canRegister && (
-          <Button
-            icon="pi pi-pencil"
-            severity="success"
-            text
-            rounded
-            size="small"
-            tooltip="Edit Patient"
-            tooltipOptions={{ position: "top" }}
-            onClick={() => handleEdit(rowData)}
-          />
-        )}
-        {/* ✅ History button directly in row */}
-        <Button
-          icon="pi pi-history"
-          severity="secondary"
-          text
-          rounded
-          size="small"
-          tooltip="View History"
-          tooltipOptions={{ position: "top" }}
-          onClick={() => handleViewHistory(rowData)}
-        />
-        <div>
-          <Button  
-            icon="pi pi-ellipsis-v"
-            severity="secondary"
-            text
-            rounded
-            size="small"
-            tooltip="More"
-            tooltipOptions={{ position: "top" }}
-            onClick={(e) => menuRefs.current[rowData.id].current.toggle(e)}
-          />
-          <Menu
-            ref={menuRefs.current[rowData.id]}
-            model={items}
-            popup
-            appendTo={document.body}
-          />
-        </div>
-      </div>
-    );
-  };
-
-
-
-  const emailBody = (r) => r.email || <span className="text-400">—</span>;
-
-  const header = (
-    <>
-   
-    <button style={{background:"red", color:"white",padding:"4px", position:"relative" ,bottom:"20px"}} onClick={() => navigate(-1)}>⬅ Back</button>
-    <div
-      className="flex flex-wrap lg:flex-row align-items-center justify-content-between gap-3 p-4 btn-custom mb-2"
-      style={{ color: "white", borderRadius: "12px 12px 0 0" }}
-    >
-       
-      <div className="flex align-items-center gap-3">
-        <i className="pi pi-users text-3xl" />
-        <div>
-          <h1 className="m-0 text-2xl font-bold mb-1">Patients Dashboard</h1>
-          <div className="text-sm opacity-90">
-            Total:{" "}
-            <Badge value={patients.length} severity="info" className="ml-2" />
-          </div>
-        </div>
-      </div>
-      <div className="flex align-items-center gap-2 flex-wrap">
-        <PatientSearchBar
-          onPatientSelect={handleSearchSelect}
-          placeholder="Quick search patient..."
-        />
-        <span
-          className="p-input-icon-left surface-0"
-          style={{ width: "clamp(200px,20vw,280px)" }}
-        >
-          <i className="pi pi-filter text-500" />
-          <InputText
-            value={globalFilterValue}
-            onChange={onGlobalFilterChange}
-            placeholder=" Global Filter table..."
-            className="w-full border-none"
-          />
-        </span>
-        <Button
-          icon="pi pi-refresh"
-          severity="secondary"
-          text
-          rounded
-          tooltip="Refresh"
-          onClick={getAllPatients}
-          loading={loading}
-          size="small"
-          className="text-white"
-        />
-        {canRegister && (
-          <Button
-            icon="pi pi-plus"
-            label="Add Patient"
-            severity="success"
-            size="small"
-            onClick={() => navigate("/registration")}
-            className="border"
-          />
-        )}
-      </div>
-    </div>
-     </>
-  );
-
-  if (loading && patients.length === 0) {
-    return (
-      <div className="min-h-screen flex justify-content-center align-items-center p-6 bg-gray-50">
-        <div className="surface-card p-6 text-center shadow-2 border-round">
-          <span className="loaders" style={{ width: "50px", height: "50px" }} />
-          <h3 className="mt-3 font-bold text-xl">Loading Patients...</h3>
-          <p className="text-500 mt-1">Fetching data from server</p>
-        </div>
-      </div>
-    );
-  }
-
+  /* ── Render ─────────────────────────────────────────────── */
   return (
-    <div
-      className="min-h-screen bg-gray-50 px-4 sm:px-6 lg:px-8"
-      style={{ paddingTop: "1rem", paddingBottom: "2rem" }}
-    >
-      <Toast ref={toast} position="top-right" />
-
-      <Card className="shadow-2 border-round-lg p-2 bg-white">
-        {header}
-        <DataTable
-          value={patients}
-          paginator
-          rows={10}
-          rowsPerPageOptions={[10, 25, 50]}
-          paginatorTemplate="FirstPageLink PrevPageLink CurrentPageReport NextPageLink LastPageLink RowsPerPageDropdown"
-          currentPageReportTemplate="Showing {first} to {last} of {totalRecords} patients"
-          filters={filters}
-          globalFilterFields={["name", "UHID", "phone", "email", "gender"]}
-          filterDisplay="menu"
-          stripedRows
-          removableSort
-          sortMode="single"
-          loading={loading}
-          dataKey="id"
-          emptyMessage={
-            <div className="py-8 text-center">
-              <i className="pi pi-users text-6xl text-300 mb-4 block" />
-              <h3 className="text-3xl font-bold text-900 mb-3">
-                No Patients Found
-              </h3>
-              <p className="text-xl text-600 mb-6">
-                Start by registering your first patient
-              </p>
-              <Button
-                label="Add First Patient"
-                icon="pi pi-plus"
-                severity="success"
-                size="large"
-                onClick={() => navigate("/registration")}
-              />
-            </div>
-          }
-          tableStyle={{ minWidth: "100%" }}
-          className="p-datatable-sm"
-        >
-          <Column
-            field="name"
-            header="Patient Name"
-            sortable
-            filter
-            style={{ minWidth: "200px" }}
-          />
-          <Column
-            field="UHID"
-            header="UHID"
-            sortable
-            filter
-            style={{ minWidth: "130px" }}
-          />
-          <Column
-            field="phone"
-            header="Phone"
-            sortable
-            filter
-            style={{ minWidth: "130px" }}
-          />
-          <Column
-            field="birth"
-            header="DOB"
-            body={(r) => formatDate(r.birth)}
-            sortable
-            style={{ minWidth: "120px" }}
-          />
-          <Column
-            field="gender"
-            header="Gender"
-            sortable
-            filter
-            body={genderBody}
-            style={{ minWidth: "110px" }}
-          />
-          <Column
-            field="registrationType"
-            header="Type"
-            body={regTypeBody}
-            sortable
-            filter
-            style={{ minWidth: "100px" }}
-          />
-          <Column
-            field="email"
-            header="Email"
-            body={emailBody}
-            sortable
-            filter
-            style={{ minWidth: "200px" }}
-          />
-          <Column
-            header="Actions"
-            body={actionBody}
-            style={{ minWidth: "160px", maxWidth: "160px" }}
-            headerStyle={{ textAlign: "center" }}
-            bodyStyle={{ textAlign: "center" }}
-          />
-        </DataTable>
-      </Card>
-
-      {/* ── View Patient Dialog ── */}
-      <Dialog
-        visible={viewDialogVisible}
-        style={{ width: "clamp(500px,60vw,800px)" }}
-        header={
-          <div className="flex align-items-center gap-3">
-            <i className="pi pi-user text-2xl text-primary" />
-            <span className="text-xl font-bold">Patient Details</span>
+    <div className="rx-page">
+      {/* Header */}
+      <div className="rx-header">
+        <div>
+          <div className="rx-header-title">
+            <i className="pi pi-users" /> All Patients Directory
           </div>
-        }
-        modal
-        onHide={() => {
-          setViewDialogVisible(false);
-          setSelectedPatient(null);
-        }}
-        footer={
-          <div className="flex gap-3 justify-content-end">
-            <Button
-              label="View History"
-              icon="pi pi-history"
-              severity="info"
-              outlined
-              onClick={() => {
-                setViewDialogVisible(false);
-                setHistoryPatientId(
-                  selectedPatient?._id || selectedPatient?.id,
-                );
-                setHistoryVisible(true);
-              }}
-            />
-            <Button
-              label="Close"
-              icon="pi pi-times"
-              severity="secondary"
-              outlined
-              onClick={() => setViewDialogVisible(false)}
-            />
-            <Button
-              label="Edit Patient"
-              icon="pi pi-pencil"
-              severity="success"
-              onClick={() => {
-                setViewDialogVisible(false);
-                handleEdit(selectedPatient);
-              }}
-            />
+          <div className="rx-header-meta">
+            Showing <strong>{filtered.length}</strong> of <strong>{patients.length}</strong> patients
+            {search && <> · matching “<strong>{search}</strong>”</>}
           </div>
-        }
-      >
-        {selectedPatient && (
-          <div className="p-4">
-            <div className="grid">
-              <div className="col-12">
-                <h3 className="text-primary mb-3 border-bottom-1 border-300 pb-2">
-                  <i className="pi pi-user mr-2" />
-                  Personal Information
-                </h3>
-              </div>
-              {[
-                {
-                  label: "Full Name",
-                  icon: "pi-user",
-                  value:
-                    selectedPatient.fullName || selectedPatient.name || "N/A",
-                },
-                {
-                  label: "UHID",
-                  icon: "pi-id-card",
-                  value: selectedPatient.UHID || "N/A",
-                },
-                {
-                  label: "Phone",
-                  icon: "pi-phone",
-                  value:
-                    selectedPatient.contactNumber ||
-                    selectedPatient.phone ||
-                    "N/A",
-                },
-                {
-                  label: "Email",
-                  icon: "pi-envelope",
-                  value: selectedPatient.email || "Not provided",
-                },
-                {
-                  label: "Date of Birth",
-                  icon: "pi-calendar",
-                  value: formatDate(
-                    selectedPatient.dateOfBirth || selectedPatient.birth,
-                  ),
-                },
-                {
-                  label: "Gender",
-                  icon: "pi-venus-mars",
-                  value: selectedPatient.gender || "N/A",
-                },
-                {
-                  label: "Blood Group",
-                  icon: "pi-tint",
-                  value: selectedPatient.bloodGroup || "N/A",
-                },
-                {
-                  label: "Marital Status",
-                  icon: "pi-users",
-                  value: selectedPatient.maritalStatus || "N/A",
-                },
-              ].map((f) => (
-                <div key={f.label} className="col-12 md:col-6 mb-3">
-                  <label className="font-semibold text-700 block mb-2">
-                    {f.label}
-                  </label>
-                  <div className="p-3 surface-100 border-round">
-                    <i className={`pi ${f.icon} mr-2 text-500`} />
-                    {f.value}
-                  </div>
-                </div>
-              ))}
-
-              <div className="col-12 mt-3">
-                <h3 className="text-primary mb-3 border-bottom-1 border-300 pb-2">
-                  <i className="pi pi-heart mr-2" />
-                  Medical Information
-                </h3>
-              </div>
-              <div className="col-12 md:col-6 mb-3">
-                <label className="font-semibold text-700 block mb-2">
-                  Department
-                </label>
-                <div className="p-3 surface-100 border-round">
-                  {selectedPatient.department?.departmentName ||
-                    selectedPatient.department ||
-                    "N/A"}
-                </div>
-              </div>
-              <div className="col-12 md:col-6 mb-3">
-                <label className="font-semibold text-700 block mb-2">
-                  Doctor
-                </label>
-                <div className="p-3 surface-100 border-round">
-                  {selectedPatient.doctor?.personalInfo
-                    ? `Dr. ${selectedPatient.doctor.personalInfo.firstName} ${selectedPatient.doctor.personalInfo.lastName}`
-                    : "N/A"}
-                </div>
-              </div>
-              <div className="col-12 md:col-6 mb-3">
-                <label className="font-semibold text-700 block mb-2">
-                  Registration Type
-                </label>
-                <div className="p-3 surface-100 border-round">
-                  <Tag
-                    value={selectedPatient.registrationType || "OPD"}
-                    severity={
-                      selectedPatient.registrationType === "OPD"
-                        ? "info"
-                        : selectedPatient.registrationType === "Emergency"
-                          ? "danger"
-                          : "warning"
-                    }
-                  />
-                </div>
-              </div>
-              <div className="col-12 md:col-6 mb-3">
-                <label className="font-semibold text-700 block mb-2">TPA</label>
-                <div className="p-3 surface-100 border-round">
-                  {selectedPatient.tpa?.tpaName || "Cash Patient"}
-                </div>
-              </div>
-
-              {/* ✅ Visit counts in view dialog */}
-              <div className="col-12 mt-3">
-                <h3 className="text-primary mb-3 border-bottom-1 border-300 pb-2">
-                  <i className="pi pi-chart-bar mr-2" />
-                  Visit Summary
-                </h3>
-              </div>
-              <div className="col-12">
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(3,1fr)",
-                    gap: 10,
-                    marginBottom: 8,
-                  }}
-                >
-                  {[
-                    [
-                      "OPD",
-                      selectedPatient.totalOPDVisits || 0,
-                      "#0891b2",
-                      "#e0f2fe",
-                    ],
-                    [
-                      "Emergency",
-                      selectedPatient.totalEmergencyVisits || 0,
-                      "#dc2626",
-                      "#fee2e2",
-                    ],
-                    [
-                      "IPD",
-                      selectedPatient.totalIPDVisits || 0,
-                      "#7c3aed",
-                      "#ede9fe",
-                    ],
-                  ].map(([l, v, c, bg]) => (
-                    <div
-                      key={l}
-                      style={{
-                        background: bg,
-                        border: `1px solid ${c}30`,
-                        borderRadius: 10,
-                        padding: "10px 12px",
-                        textAlign: "center",
-                      }}
-                    >
-                      <div style={{ fontSize: 22, fontWeight: 900, color: c }}>
-                        {v}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: 11,
-                          color: c,
-                          fontWeight: 700,
-                          marginTop: 2,
-                        }}
-                      >
-                        {l} Visits
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(2,1fr)",
-                    gap: 10,
-                  }}
-                >
-                  {[
-                    [
-                      "Daycare",
-                      selectedPatient.totalDaycareVisits || 0,
-                      "#d97706",
-                      "#fef3c7",
-                    ],
-                    [
-                      "Services",
-                      selectedPatient.totalServicesVisits || 0,
-                      "#059669",
-                      "#d1fae5",
-                    ],
-                  ].map(([l, v, c, bg]) => (
-                    <div
-                      key={l}
-                      style={{
-                        background: bg,
-                        border: `1px solid ${c}30`,
-                        borderRadius: 10,
-                        padding: "10px 12px",
-                        textAlign: "center",
-                      }}
-                    >
-                      <div style={{ fontSize: 22, fontWeight: 900, color: c }}>
-                        {v}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: 11,
-                          color: c,
-                          fontWeight: 700,
-                          marginTop: 2,
-                        }}
-                      >
-                        {l} Visits
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="col-12 mb-3 mt-3">
-                <label className="font-semibold text-700 block mb-2">
-                  Known Allergies
-                </label>
-                <div className="p-3 surface-100 border-round">
-                  {selectedPatient.knownAllergies || "None"}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </Dialog>
-
-      {/* ── Delete Dialog ── */}
-      <Dialog
-        visible={deleteDialogVisible}
-        style={{ width: "clamp(400px,40vw,500px)" }}
-        header="Confirm Delete"
-        modal
-        onHide={() => {
-          setDeleteDialogVisible(false);
-          setSelectedPatient(null);
-        }}
-        footer={
-          <div className="flex gap-3 justify-content-end">
-            <Button
-              label="Cancel"
-              icon="pi pi-times"
-              severity="secondary"
-              outlined
-              onClick={() => setDeleteDialogVisible(false)}
-            />
-            <Button
-              label="Delete Patient"
-              icon="pi pi-trash"
-              severity="danger"
-              onClick={handleDelete}
-            />
-          </div>
-        }
-      >
-        <div className="p-4 text-center">
-          <i className="pi pi-exclamation-triangle text-5xl text-orange-500 mb-4 block" />
-          <h3 className="font-bold text-xl mb-3">
-            Delete <span className="text-red-500">{selectedPatient?.name}</span>
-            ?
-          </h3>
-          <p className="text-600 mb-4">
-            UHID: <code>{selectedPatient?.UHID}</code>
-          </p>
-          <p className="text-500">This action cannot be undone.</p>
         </div>
-      </Dialog>
+        <div className="rx-header-actions">
+          <button className="rx-btn-ghost" onClick={() => navigate(-1)}>
+            <i className="pi pi-arrow-left" /> Back
+          </button>
+          <button className="rx-btn-ghost" onClick={load}>
+            <i className={`pi ${loading ? "pi-spin pi-spinner" : "pi-refresh"}`} /> Refresh
+          </button>
+          {canRegister && (
+            <button className="rx-btn-primary" onClick={() => navigate("/registration")}>
+              <i className="pi pi-user-plus" /> Register Patient
+            </button>
+          )}
+        </div>
+      </div>
 
-      {/* ✅ Patient History Modal */}
+      {/* KPI tiles */}
+      <div className="rx-kpis">
+        <div className="rx-kpi rx-kpi--accent">
+          <div className="rx-kpi-label">Total Patients</div>
+          <div className="rx-kpi-value">{counts.ALL}</div>
+          <div className="rx-kpi-sub">across all registration types</div>
+        </div>
+        <div className="rx-kpi">
+          <div className="rx-kpi-label rx-text-info">OPD</div>
+          <div className="rx-kpi-value rx-text-info">{counts.OPD}</div>
+        </div>
+        <div className="rx-kpi">
+          <div className="rx-kpi-label rx-text-primary">IPD</div>
+          <div className="rx-kpi-value rx-text-primary">{counts.IPD}</div>
+        </div>
+        <div className="rx-kpi">
+          <div className="rx-kpi-label rx-text-danger">Emergency</div>
+          <div className="rx-kpi-value rx-text-danger">{counts.Emergency}</div>
+        </div>
+        <div className="rx-kpi">
+          <div className="rx-kpi-label rx-text-warning">Daycare</div>
+          <div className="rx-kpi-value rx-text-warning">{counts.Daycare}</div>
+        </div>
+        <div className="rx-kpi">
+          <div className="rx-kpi-label rx-text-success">Services</div>
+          <div className="rx-kpi-value rx-text-success">{counts.Services}</div>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="rx-tabs">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            className={`rx-tab ${tab === t.key ? "rx-tab--active" : ""}`}
+            onClick={() => { setTab(t.key); setPage(1); }}
+          >
+            <i className={`pi ${t.icon}`} /> {t.label}
+            <span className="rx-tab-count">{counts[t.key]}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Search */}
+      <div className="rx-search">
+        <i className="pi pi-search" />
+        <input
+          placeholder="Search by name, UHID, phone, or email…"
+          value={search}
+          onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+          autoFocus
+        />
+        {search && (
+          <button className="rx-action-btn" onClick={() => setSearch("")}>
+            <i className="pi pi-times" />
+          </button>
+        )}
+      </div>
+
+      {/* Table */}
+      {loading ? (
+        <div className="rx-empty">
+          <i className="pi pi-spin pi-spinner rx-loader-icon" />
+          <div className="rx-mt-10">Loading patient directory…</div>
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="rx-empty">
+          <span className="rx-empty-icon">😶</span>
+          {search
+            ? <>No patients match “<strong>{search}</strong>”.</>
+            : tab === "ALL"
+              ? "No patients registered yet."
+              : <>No <strong>{tab}</strong> patients in the directory.</>}
+          {canRegister && (
+            <div className="rx-mt-10">
+              <button className="rx-btn-primary" onClick={() => navigate("/registration")}>
+                <i className="pi pi-user-plus" /> Register First Patient
+              </button>
+            </div>
+          )}
+        </div>
+      ) : (
+        <>
+          <div className="rx-table-wrap">
+            <table className="rx-table rx-table--sm">
+              <thead>
+                <tr>
+                  <th>Patient</th>
+                  <th>UHID</th>
+                  <th>Age / Sex</th>
+                  <th>Contact</th>
+                  <th>Type</th>
+                  <th>Doctor</th>
+                  <th>Department</th>
+                  <th>Payment</th>
+                  <th className="rx-text-strong">Visits</th>
+                  <th>Last Visit</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pageRows.map((p) => {
+                  const age = computeAge(p);
+                  const rt = p.registrationType || "OPD";
+                  return (
+                    <tr key={p._id || p.UHID}>
+                      <td>
+                        <div className="rx-cell-name">
+                          {p.title ? <span className="rx-text-muted">{p.title} </span> : null}
+                          <strong>{p.fullName || "—"}</strong>
+                          {p.isMLC && <span className="rx-card-stage rx-card-stage--denied">MLC</span>}
+                        </div>
+                        {p.bloodGroup && p.bloodGroup !== "Unknown" && p.bloodGroup !== "Not Known" && (
+                          <div className="rx-cell-sub">🩸 {p.bloodGroup}</div>
+                        )}
+                      </td>
+                      <td><span className="rx-mono-tag">{p.UHID || "—"}</span></td>
+                      <td>
+                        {age != null ? `${age}y` : "—"}
+                        {p.gender && <span className="rx-text-muted"> · {p.gender[0]}</span>}
+                      </td>
+                      <td>
+                        <div>{p.contactNumber || "—"}</div>
+                        {p.email && <div className="rx-cell-sub">{p.email}</div>}
+                      </td>
+                      <td><RegTypePill rt={rt} /></td>
+                      <td>{docLabel(p)}</td>
+                      <td>{deptLabel(p)}</td>
+                      <td>
+                        <span className={`rx-tariff-pill ${p.tpa ? "" : "rx-text-muted"}`}>
+                          {tpaLabel(p)}
+                        </span>
+                      </td>
+                      <td><VisitChips p={p} /></td>
+                      <td>{fmtDate(p.lastVisitDate)}</td>
+                      <td>
+                        <div className="rx-flex-row">
+                          <button
+                            className="rx-action-btn rx-action-btn--primary"
+                            title="View details"
+                            onClick={() => setViewing(p)}
+                          >
+                            <i className="pi pi-eye" />
+                          </button>
+                          <button
+                            className="rx-action-btn"
+                            title="Visit history"
+                            onClick={() => setHistoryFor(p._id)}
+                          >
+                            <i className="pi pi-history" />
+                          </button>
+                          {canRegister && (
+                            <button
+                              className="rx-action-btn rx-action-btn--success"
+                              title="Edit"
+                              onClick={() => handleEdit(p)}
+                            >
+                              <i className="pi pi-pencil" />
+                            </button>
+                          )}
+                          {canDelete && (
+                            <button
+                              className="rx-action-btn rx-action-btn--danger"
+                              title="Delete"
+                              onClick={() => setDeleting(p)}
+                            >
+                              <i className="pi pi-trash" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination */}
+          <div className="rx-pager">
+            <span className="rx-text-subtle">
+              Showing {(page - 1) * ROWS_PER_PAGE + 1}–{Math.min(page * ROWS_PER_PAGE, filtered.length)} of {filtered.length}
+            </span>
+            <div className="rx-flex-row">
+              <button
+                className="rx-action-btn"
+                disabled={page <= 1}
+                onClick={() => setPage((x) => Math.max(1, x - 1))}
+              >
+                <i className="pi pi-chevron-left" /> Prev
+              </button>
+              <span className="rx-pager-info">Page {page} / {totalPages}</span>
+              <button
+                className="rx-action-btn"
+                disabled={page >= totalPages}
+                onClick={() => setPage((x) => Math.min(totalPages, x + 1))}
+              >
+                Next <i className="pi pi-chevron-right" />
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* View modal */}
+      {viewing && (
+        <ViewPatientModal
+          patient={viewing}
+          onClose={() => setViewing(null)}
+          onEdit={canRegister ? () => { handleEdit(viewing); setViewing(null); } : null}
+          onViewHistory={() => { setHistoryFor(viewing._id); setViewing(null); }}
+        />
+      )}
+
+      {/* Delete modal */}
+      {deleting && (
+        <DeletePatientModal
+          patient={deleting}
+          onCancel={() => setDeleting(null)}
+          onConfirm={handleDelete}
+        />
+      )}
+
+      {/* History modal */}
       <PatientHistoryModal
-        patientId={historyPatientId}
-        visible={historyVisible}
-        onHide={() => {
-          setHistoryVisible(false);
-          setHistoryPatientId(null);
-        }}
+        patientId={historyFor}
+        visible={!!historyFor}
+        onHide={() => setHistoryFor(null)}
       />
     </div>
   );
 }
 
-export default PatientsTable;
+/* ─────────── Reg-type coloured pill ─────────── */
+function RegTypePill({ rt }) {
+  const map = {
+    OPD:       { cls: "rx-card-stage--done",      label: "OPD" },
+    IPD:       { cls: "rx-card-stage--submitted", label: "IPD" },
+    Emergency: { cls: "rx-card-stage--denied",    label: "Emergency" },
+    Daycare:   { cls: "rx-card-stage--pending",   label: "Daycare" },
+    Services:  { cls: "rx-card-stage--approved",  label: "Services" },
+  };
+  const meta = map[rt] || map.OPD;
+  return <span className={`rx-card-stage ${meta.cls}`}>{meta.label}</span>;
+}
+
+/* ─────────── Visit counts (chips) ─────────── */
+function VisitChips({ p }) {
+  const items = [
+    ["O", p.totalOPDVisits        || 0, "opd"],
+    ["I", p.totalIPDVisits        || 0, "ipd"],
+    ["E", p.totalEmergencyVisits  || 0, "er"],
+  ];
+  return (
+    <div className="rx-visit-chips">
+      {items.map(([k, v, variant]) => (
+        <span key={k} className={`rx-visit-chip rx-visit-chip--${variant}`} title={`${k} visits`}>
+          <span className="rx-visit-chip-k">{k}</span>
+          <span className="rx-visit-chip-v">{v}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/* ─────────── View Patient Modal ─────────── */
+function ViewPatientModal({ patient: p, onClose, onEdit, onViewHistory }) {
+  const age = computeAge(p);
+  const addr = fullAddress(p);
+
+  return (
+    <div className="rx-modal-backdrop" onClick={onClose}>
+      <div className="rx-modal rx-modal--wide" onClick={(e) => e.stopPropagation()}>
+        <div className="rx-modal-head">
+          <i className="pi pi-user" />
+          <span className="rx-modal-title">
+            {p.title} {p.fullName} <span className="rx-modal-sub">· UHID {p.UHID}</span>
+          </span>
+          <button className="rx-modal-close" onClick={onClose}>×</button>
+        </div>
+
+        <div className="rx-modal-body">
+          {/* Quick visit-counters strip */}
+          <div className="rx-counter-row">
+            <CounterTile label="OPD"       value={p.totalOPDVisits       || 0} variant="opd" />
+            <CounterTile label="IPD"       value={p.totalIPDVisits       || 0} variant="ipd" />
+            <CounterTile label="ER"        value={p.totalEmergencyVisits || 0} variant="er"  />
+            <CounterTile label="DAY"       value={p.totalDaycareVisits   || 0} variant="opd" />
+            <CounterTile label="SVC"       value={p.totalServicesVisits  || 0} variant="ipd" />
+          </div>
+
+          {/* Personal info */}
+          <SectionHeading icon="pi-user" label="Personal Information" />
+          <div className="rx-detail-grid">
+            <Field label="Full Name"     value={`${p.title || ""} ${p.fullName || ""}`.trim()} />
+            <Field label="UHID"          value={p.UHID} mono />
+            <Field label="Phone"         value={p.contactNumber} />
+            <Field label="Email"         value={p.email} />
+            <Field label="Date of Birth" value={fmtDate(p.dateOfBirth)} />
+            <Field label="Age"           value={age != null ? `${age} years` : "—"} />
+            <Field label="Gender"        value={p.gender} />
+            <Field label="Blood Group"   value={p.bloodGroup} />
+            <Field label="Marital"       value={p.maritalStatus} />
+            <Field label="Reg. Type"     value={<RegTypePill rt={p.registrationType || "OPD"} />} />
+          </div>
+
+          {/* Medical */}
+          <SectionHeading icon="pi-heart" label="Medical & Visit Context" />
+          <div className="rx-detail-grid">
+            <Field label="Doctor"        value={docLabel(p)} />
+            <Field label="Department"    value={deptLabel(p)} />
+            <Field label="Payment"       value={tpaLabel(p)} />
+            <Field label="Policy #"      value={p.policyNumber} />
+            <Field label="Sum Insured"   value={p.sumInsured ? `₹${Number(p.sumInsured).toLocaleString("en-IN")}` : "—"} />
+            <Field label="Last Visit"    value={fmtDateTime(p.lastVisitDate)} />
+            <Field label="MLC"           value={p.isMLC ? "Yes" : "No"} />
+            <Field
+              label="Allergies"
+              value={
+                Array.isArray(p.knownAllergies)
+                  ? (p.knownAllergies.length ? p.knownAllergies.join(", ") : "None")
+                  : (p.knownAllergies || "None")
+              }
+              danger={
+                (Array.isArray(p.knownAllergies) && p.knownAllergies.length > 0) ||
+                (typeof p.knownAllergies === "string" && p.knownAllergies.trim() && p.knownAllergies.trim().toLowerCase() !== "none")
+              }
+              wide
+            />
+            <Field label="Address" value={addr || "—"} wide />
+          </div>
+
+          {/* Companion */}
+          {(p.companionName || p.companionContact) && (
+            <>
+              <SectionHeading icon="pi-users" label="Companion / Next of Kin" />
+              <div className="rx-detail-grid">
+                <Field label="Name"     value={p.companionName} />
+                <Field label="Relation" value={p.companionRelationship} />
+                <Field label="Contact"  value={p.companionContact} />
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="rx-modal-foot">
+          <button className="rx-modal-btn-cancel" onClick={onClose}>Close</button>
+          <button className="rx-modal-btn-primary rx-modal-btn-primary--neutral" onClick={onViewHistory}>
+            <i className="pi pi-history" /> View Full History
+          </button>
+          {onEdit && (
+            <button className="rx-modal-btn-primary rx-modal-btn-primary--success" onClick={onEdit}>
+              <i className="pi pi-pencil" /> Edit Patient
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────── Delete Patient Modal ─────────── */
+function DeletePatientModal({ patient, onCancel, onConfirm }) {
+  return (
+    <div className="rx-modal-backdrop" onClick={onCancel}>
+      <div className="rx-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="rx-modal-head rx-modal-head--danger">
+          <i className="pi pi-exclamation-triangle" />
+          <span className="rx-modal-title">Delete Patient</span>
+          <button className="rx-modal-close" onClick={onCancel}>×</button>
+        </div>
+        <div className="rx-modal-body">
+          <p className="rx-modal-para">
+            You are about to delete <strong>{patient.fullName}</strong> (UHID <span className="rx-mono-tag">{patient.UHID}</span>).
+          </p>
+          <div className="rx-banner rx-banner--danger">
+            <strong>Warning:</strong> The patient is removed from the active directory.
+            Existing visits, bills and clinical records remain intact for audit.
+          </div>
+        </div>
+        <div className="rx-modal-foot">
+          <button className="rx-modal-btn-cancel" onClick={onCancel}>Cancel</button>
+          <button className="rx-modal-btn-primary rx-modal-btn-primary--danger" onClick={onConfirm}>
+            <i className="pi pi-trash" /> Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────── Tiny UI helpers ─────────── */
+function CounterTile({ label, value, variant }) {
+  return (
+    <div className="rx-counter-tile">
+      <div className={`rx-counter-tile-value rx-counter-tile-value--${variant}`}>{value}</div>
+      <div className="rx-counter-tile-label">{label} VISITS</div>
+    </div>
+  );
+}
+
+function SectionHeading({ icon, label }) {
+  return (
+    <div className="rx-section-label">
+      <i className={`pi ${icon}`} /> {label}
+    </div>
+  );
+}
+
+function Field({ label, value, mono, danger, wide }) {
+  const display = (value == null || value === "" || value === "undefined undefined") ? "—" : value;
+  return (
+    <div className={`rx-field ${wide ? "rx-field--wide" : ""}`}>
+      <div className="rx-field-label">{label}</div>
+      <div className={`rx-field-value ${mono ? "rx-mono-tag" : ""} ${danger ? "rx-text-danger" : ""}`}>
+        {display}
+      </div>
+    </div>
+  );
+}

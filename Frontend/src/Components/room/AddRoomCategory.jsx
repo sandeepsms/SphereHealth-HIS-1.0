@@ -9,6 +9,11 @@ import * as yup from "yup";
 import { toast } from "react-toastify";
 
 import { roomCategoryService } from "../../Services/roomCategoryService";
+import BedSectionHeader from "../bed/BedSectionHeader";
+import {
+  BmStatStrip, BmCard, BmFilter, BmEmpty, BmPill, BmIconBtn,
+  BmAvatar, BmCellStack, BmPrice, BmClass, BmChip,
+} from "../bed/BedPrimitives";
 import "primereact/resources/themes/lara-light-blue/theme.css";
 import "primereact/resources/primereact.min.css";
 import "primeicons/primeicons.css";
@@ -40,6 +45,9 @@ function AddRoomCategory() {
   const [filteredList, setFilteredList] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [editing, setEditing] = useState(null);
+  /* Form is hidden by default — opens when user clicks "Add Room Category"
+     or chooses Edit on an existing row. Closes on submit/cancel. */
+  const [showForm, setShowForm] = useState(false);
   const [viewingCategory, setViewingCategory] = useState(null);
   const [deleteDialog, setDeleteDialog] = useState({
     visible: false,
@@ -110,19 +118,17 @@ function AddRoomCategory() {
   const handleSubmit = async (values, { resetForm }) => {
     try {
       if (editing) {
-        console.log("Updating Room Category:", editing._id, values);
         await roomCategoryService.updateCategory(editing._id, values);
         toast.success("Room Category Updated Successfully");
         setEditing(null);
       } else {
-        console.log("Creating Room Category:", values);
         await roomCategoryService.createCategory(values);
         toast.success("Room Category Added Successfully");
       }
       resetForm();
+      setShowForm(false);  // close the panel after a successful save
       await fetchCategories();
     } catch (error) {
-      console.error("Submit error:", error);
       toast.error(
         error?.response?.data?.message || error.message || "Error occurred",
       );
@@ -131,8 +137,8 @@ function AddRoomCategory() {
 
   // ── Edit Handler ──────────────────────────────────────────────────────────
   const handleEdit = (category) => {
-    console.log("Editing category:", category);
     setEditing(category);
+    setShowForm(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -233,594 +239,383 @@ function AddRoomCategory() {
     </div>
   );
 
+  /* Aggregate stats — total / by classification / active */
+  const _stats = (() => {
+    const list = Array.isArray(categoryList) ? categoryList : [];
+    const active = list.filter(c => c.isActive !== false).length;
+    const byClass = new Set(list.map(c => c.classification).filter(Boolean));
+    // Only consider categories that actually have a positive rate set
+    const rates = list
+      .map(c => Number(c.defaultPricing?.perBedDailyRate || 0))
+      .filter(n => Number.isFinite(n) && n > 0);
+    const rateLabel = rates.length === 0
+      ? "—"
+      : rates.length === 1
+        ? `₹${rates[0].toLocaleString("en-IN")}`
+        : `₹${Math.min(...rates).toLocaleString("en-IN")}–${Math.max(...rates).toLocaleString("en-IN")}`;
+    return [
+      { key: "total",   label: "Categories",       value: list.length,   icon: "pi-th-large",     tone: "purple" },
+      { key: "active",  label: "Active",           value: active,         icon: "pi-check-circle", tone: "green"  },
+      { key: "classes", label: "Tier classes",     value: byClass.size,   icon: "pi-tags",         tone: "blue"   },
+      { key: "rates",   label: "Daily rate range", value: rateLabel,      icon: "pi-dollar",       tone: "amber"  },
+    ];
+  })();
+
   return (
-    <div
-      style={{
-        padding: "20px",
-        backgroundColor: "#f5f5f5",
-        minHeight: "100vh",
-      }}
-    >
-      {/* Header */}
-      <div style={{ marginBottom: "20px" }}>
-        <h1
-          style={{
-            fontSize: "28px",
-            fontWeight: 600,
-            color: "#2c3e50",
-            margin: 0,
-          }}
-        >
-          Room Category Management
-        </h1>
-      </div>
+    <div className="bm-page">
+      <BedSectionHeader
+        title="Room Categories"
+        subtitle="Pricing tiers + amenities — Economy, Standard, Premium, Deluxe, VIP"
+        icon="pi-th-large"
+      />
 
-      {/* Add/Edit Form */}
-      <div
-        style={{
-          backgroundColor: "white",
-          borderRadius: "8px",
-          padding: "30px",
-          boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
-          marginBottom: "30px",
-        }}
-      >
-        <h2
-          style={{
-            fontSize: "22px",
-            fontWeight: 600,
-            color: "#2c3e50",
-            marginBottom: "25px",
-          }}
-        >
-          {editing ? "Edit Room Category" : "Add New Room Category"}
-        </h2>
+      <BmStatStrip stats={_stats} />
 
-        <Formik
-          initialValues={{
-            categoryName: editing?.categoryName || "",
-            categoryCode: editing?.categoryCode || "",
-            description: editing?.description || "",
-            roomType: editing?.roomType || "General Ward",
-          }}
-          enableReinitialize
-          validationSchema={validationSchema}
-          onSubmit={handleSubmit}
-        >
-          {({
-            values,
-            errors,
-            touched,
-            handleChange,
-            handleBlur,
-            resetForm,
-            setFieldValue,
-          }) => (
-            <Form>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
-                  gap: "20px",
-                  marginBottom: "25px",
-                }}
-              >
-                {/* Category Name */}
-                <div style={{ display: "flex", flexDirection: "column" }}>
-                  <label
-                    style={{
-                      fontSize: "14px",
-                      fontWeight: 600,
-                      color: "#495057",
-                      marginBottom: "8px",
-                    }}
-                  >
-                    Category Name <span style={{ color: "#dc3545" }}>*</span>
-                  </label>
-                  <InputText
-                    name="categoryName"
-                    value={values.categoryName}
-                    onChange={handleChange}
-                    onBlur={handleBlur}
-                    placeholder="Enter Category Name"
-                    className={
-                      errors.categoryName && touched.categoryName
-                        ? "p-invalid"
-                        : ""
-                    }
-                  />
-                  {errors.categoryName && touched.categoryName && (
-                    <small
-                      style={{
-                        color: "#dc3545",
-                        fontSize: "12px",
-                        marginTop: "5px",
-                      }}
-                    >
-                      {errors.categoryName}
-                    </small>
-                  )}
-                </div>
-
-                {/* Category Code */}
-                <div style={{ display: "flex", flexDirection: "column" }}>
-                  <label
-                    style={{
-                      fontSize: "14px",
-                      fontWeight: 600,
-                      color: "#495057",
-                      marginBottom: "8px",
-                    }}
-                  >
-                    Category Code <span style={{ color: "#dc3545" }}>*</span>
-                  </label>
-                  <InputText
-                    name="categoryCode"
-                    value={values.categoryCode}
-                    onChange={(e) => {
-                      e.target.value = e.target.value.toUpperCase();
-                      handleChange(e);
-                    }}
-                    onBlur={handleBlur}
-                    placeholder="Enter Category Code"
-                    className={
-                      errors.categoryCode && touched.categoryCode
-                        ? "p-invalid"
-                        : ""
-                    }
-                    style={{ textTransform: "uppercase" }}
-                  />
-                  {errors.categoryCode && touched.categoryCode && (
-                    <small
-                      style={{
-                        color: "#dc3545",
-                        fontSize: "12px",
-                        marginTop: "5px",
-                      }}
-                    >
-                      {errors.categoryCode}
-                    </small>
-                  )}
-                </div>
-
-                {/* Room Type Dropdown — FIXED */}
-                <div style={{ display: "flex", flexDirection: "column" }}>
-                  <label
-                    style={{
-                      fontSize: "14px",
-                      fontWeight: 600,
-                      color: "#495057",
-                      marginBottom: "8px",
-                    }}
-                  >
-                    Room Type <span style={{ color: "#dc3545" }}>*</span>
-                  </label>
-                  <Dropdown
-                    name="roomType"
-                    value={values.roomType}
-                    options={ROOM_TYPE_OPTIONS}
-                    onChange={(e) => setFieldValue("roomType", e.value)}
-                    placeholder="Select Room Type"
-                    className={
-                      errors.roomType && touched.roomType ? "p-invalid" : ""
-                    }
-                    style={{ width: "100%" }}
-                  />
-                  {errors.roomType && touched.roomType && (
-                    <small
-                      style={{
-                        color: "#dc3545",
-                        fontSize: "12px",
-                        marginTop: "5px",
-                      }}
-                    >
-                      {errors.roomType}
-                    </small>
-                  )}
-                </div>
-
-                {/* Description */}
-                <div style={{ display: "flex", flexDirection: "column" }}>
-                  <label
-                    style={{
-                      fontSize: "14px",
-                      fontWeight: 600,
-                      color: "#495057",
-                      marginBottom: "8px",
-                    }}
-                  >
-                    Description
-                  </label>
-                  <InputTextarea
-                    name="description"
-                    value={values.description}
-                    onChange={handleChange}
-                    onBlur={handleBlur}
-                    placeholder="Enter Description (optional)"
-                    rows={3}
-                    className={
-                      errors.description && touched.description
-                        ? "p-invalid"
-                        : ""
-                    }
-                  />
-                  {errors.description && touched.description && (
-                    <small
-                      style={{
-                        color: "#dc3545",
-                        fontSize: "12px",
-                        marginTop: "5px",
-                      }}
-                    >
-                      {errors.description}
-                    </small>
-                  )}
-                </div>
-              </div>
-
-              {/* Submit Buttons */}
-              <div style={{ display: "flex", gap: "10px" }}>
-                <Button
-                  type="submit"
-                  label={editing ? "Update Room Category" : "Add Room Category"}
-                  icon="pi pi-check"
-                  className="p-button-success"
-                />
-                {editing && (
-                  <Button
-                    type="button"
-                    label="Cancel"
-                    icon="pi pi-times"
-                    className="p-button-secondary"
-                    onClick={() => {
-                      setEditing(null);
-                      resetForm();
-                    }}
-                  />
-                )}
-              </div>
-            </Form>
-          )}
-        </Formik>
-      </div>
-
-      {/* Search Bar */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: "20px",
-          flexWrap: "wrap",
-          gap: "15px",
-        }}
-      >
-        <div style={{ position: "relative", flex: 1, maxWidth: "400px" }}>
-          <i
-            className="pi pi-search"
-            style={{
-              position: "absolute",
-              left: "12px",
-              top: "50%",
-              transform: "translateY(-50%)",
-              color: "#6c757d",
-              zIndex: 1,
-            }}
-          />
-          <InputText
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Search by name, code, or room type..."
-            style={{ width: "100%", paddingLeft: "40px" }}
-          />
-        </div>
-
-        <div style={{ display: "flex", alignItems: "center", gap: "15px" }}>
-          <label
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "8px",
-              cursor: "pointer",
-              fontSize: "14px",
-              color: "#495057",
-            }}
+      {/* Add / Edit toggle row — keeps the form collapsed until needed */}
+      {!showForm && (
+        <div style={{
+          display: "flex", justifyContent: "flex-end",
+          marginBottom: 14,
+        }}>
+          <button
+            type="button"
+            onClick={() => { setEditing(null); setShowForm(true); }}
+            className="bm-btn bm-btn--primary"
           >
-            <input
-              type="checkbox"
-              checked={showDeleted}
-              onChange={(e) => setShowDeleted(e.target.checked)}
-              style={{ cursor: "pointer" }}
-            />
-            Show Deleted
-          </label>
-
-          <span style={{ color: "#6c757d", fontSize: "14px" }}>
-            Showing {currentItems.length} of {filteredList.length} categories
-          </span>
+            <i className="pi pi-plus" />
+            Add Room Category
+          </button>
         </div>
-      </div>
+      )}
 
-      {/* Table */}
-      <div
-        style={{
-          backgroundColor: "white",
-          borderRadius: "8px",
-          overflow: "hidden",
-          boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
+      {/* ── Add / Edit Form (sectioned, modern inputs) ── */}
+      {showForm && (
+      <Formik
+        initialValues={{
+          categoryName: editing?.categoryName || "",
+          categoryCode: editing?.categoryCode || "",
+          description: editing?.description || "",
+          roomType: editing?.roomType || "General Ward",
         }}
+        enableReinitialize
+        validationSchema={validationSchema}
+        onSubmit={handleSubmit}
       >
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead style={{ backgroundColor: "#17a2b8", color: "white" }}>
-            <tr>
-              {[
-                "ID",
-                "Category Name",
-                "Code",
-                "Room Type",
-                "Description",
-                "Status",
-                "Actions",
-              ].map((h) => (
-                <th
-                  key={h}
-                  style={{
-                    padding: "15px",
-                    textAlign: "left",
-                    fontWeight: 600,
-                    fontSize: "14px",
-                  }}
-                >
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <tr>
-                <td
-                  colSpan="7"
-                  style={{
-                    textAlign: "center",
-                    padding: "40px",
-                    color: "#6c757d",
-                  }}
-                >
-                  <i
-                    className="pi pi-spin pi-spinner"
-                    style={{ fontSize: "2rem" }}
-                  />
-                  <div style={{ marginTop: "10px" }}>Loading categories...</div>
-                </td>
-              </tr>
-            ) : currentItems.length > 0 ? (
-              currentItems.map((cat, index) => (
-                <tr
-                  key={cat._id}
-                  style={{
-                    borderBottom: "1px solid #e9ecef",
-                    transition: "background-color 0.2s",
-                    opacity: cat.isActive === false ? 0.6 : 1,
-                  }}
-                  onMouseEnter={(e) =>
-                    (e.currentTarget.style.backgroundColor = "#f8f9fa")
-                  }
-                  onMouseLeave={(e) =>
-                    (e.currentTarget.style.backgroundColor = "transparent")
-                  }
-                >
-                  <td
-                    style={{
-                      padding: "12px 15px",
-                      fontSize: "14px",
-                      color: "#495057",
-                    }}
-                  >
-                    CAT-{1000 + indexOfFirstItem + index + 1}
-                  </td>
-                  <td
-                    style={{
-                      padding: "12px 15px",
-                      fontSize: "14px",
-                      fontWeight: 600,
-                      color: "#212529",
-                    }}
-                  >
-                    {cat.categoryName}
-                  </td>
-                  <td
-                    style={{
-                      padding: "12px 15px",
-                      fontSize: "14px",
-                      color: "#495057",
-                    }}
-                  >
-                    <span
-                      style={{
-                        backgroundColor: "#17a2b8",
-                        color: "white",
-                        padding: "4px 10px",
-                        borderRadius: "4px",
-                        fontSize: "12px",
-                        fontWeight: 600,
-                      }}
-                    >
-                      {cat.categoryCode}
+        {({
+          values, errors, touched,
+          handleChange, handleBlur,
+          resetForm, setFieldValue,
+        }) => {
+          const invalid = (k) => errors[k] && touched[k];
+          return (
+            <Form>
+              <div className="bm-form-section">
+                <div className="bm-form-section__head bm-form-section__head--pink">
+                  <div className="bm-form-section__icon">
+                    <i className={`pi ${editing ? "pi-pencil" : "pi-plus-circle"}`} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div className="bm-form-section__title">
+                      {editing ? "Edit Room Category" : "Add New Room Category"}
+                    </div>
+                    <div className="bm-form-section__sub">
+                      {editing
+                        ? "Update tier name, code, room type, and description."
+                        : "Define a pricing tier (Economy → VIP) that rooms inherit defaults from."}
+                    </div>
+                  </div>
+                  {editing && (
+                    <span className="bm-pill bm-pill--info">
+                      <i className="pi pi-bookmark" /> Editing
                     </span>
-                  </td>
-                  <td
-                    style={{
-                      padding: "12px 15px",
-                      fontSize: "13px",
-                      color: "#495057",
-                    }}
-                  >
-                    {cat.roomType}
-                  </td>
-                  <td
-                    style={{
-                      padding: "12px 15px",
-                      fontSize: "13px",
-                      color: "#6c757d",
-                      maxWidth: "200px",
-                    }}
-                  >
-                    {cat.description
-                      ? cat.description.substring(0, 50) +
-                        (cat.description.length > 50 ? "..." : "")
-                      : "—"}
-                  </td>
-                  <td style={{ padding: "12px 15px" }}>
-                    <span
-                      style={{
-                        backgroundColor: cat.isActive ? "#d4edda" : "#f8d7da",
-                        color: cat.isActive ? "#155724" : "#721c24",
-                        padding: "4px 10px",
-                        borderRadius: "4px",
-                        fontSize: "12px",
-                        fontWeight: 600,
-                      }}
-                    >
-                      {cat.isActive ? "Active" : "Inactive"}
-                    </span>
-                  </td>
-                  <td style={{ padding: "12px 15px" }}>
-                    <div style={{ display: "flex", gap: "5px" }}>
-                      <Button
-                        icon="pi pi-eye"
-                        className="p-button-rounded p-button-info p-button-text"
-                        onClick={() => setViewingCategory(cat)}
-                        tooltip="View"
-                        tooltipOptions={{ position: "top" }}
-                      />
-                      <Button
-                        icon="pi pi-pencil"
-                        className="p-button-rounded p-button-warning p-button-text"
-                        onClick={() => handleEdit(cat)}
-                        tooltip="Edit"
-                        tooltipOptions={{ position: "top" }}
-                        disabled={cat.isActive === false}
-                      />
-                      <Button
-                        icon={
-                          cat.isActive === false
-                            ? "pi pi-replay"
-                            : "pi pi-trash"
-                        }
-                        className={`p-button-rounded p-button-text ${cat.isActive === false ? "p-button-success" : "p-button-danger"}`}
-                        onClick={() => confirmDelete(cat)}
-                        tooltip={cat.isActive === false ? "Restore" : "Delete"}
-                        tooltipOptions={{ position: "top" }}
+                  )}
+                </div>
+
+                <div className="bm-form-section__body">
+                  <div style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+                    gap: 14,
+                  }}>
+                    {/* Category Name */}
+                    <div className="bm-field">
+                      <label className="bm-label">
+                        <i className="pi pi-bookmark" />
+                        Category Name
+                        <span className="bm-label__req">Required</span>
+                      </label>
+                      <div className={`bm-input ${invalid("categoryName") ? "bm-input--invalid" : ""}`}>
+                        <i className="pi pi-tag bm-input__icon" />
+                        <InputText
+                          name="categoryName"
+                          value={values.categoryName}
+                          onChange={handleChange}
+                          onBlur={handleBlur}
+                          placeholder="e.g. Standard Single Room"
+                        />
+                      </div>
+                      {invalid("categoryName") && (
+                        <small className="bm-error">
+                          <i className="pi pi-exclamation-circle" />
+                          {errors.categoryName}
+                        </small>
+                      )}
+                    </div>
+
+                    {/* Category Code */}
+                    <div className="bm-field">
+                      <label className="bm-label">
+                        <i className="pi pi-hashtag" />
+                        Category Code
+                        <span className="bm-label__req">Required</span>
+                      </label>
+                      <div className={`bm-input ${invalid("categoryCode") ? "bm-input--invalid" : ""}`}>
+                        <i className="pi pi-hashtag bm-input__icon" />
+                        <InputText
+                          name="categoryCode"
+                          value={values.categoryCode}
+                          onChange={(e) => {
+                            e.target.value = (e.target.value || "").toUpperCase();
+                            handleChange(e);
+                          }}
+                          onBlur={handleBlur}
+                          placeholder="e.g. STD-1"
+                          style={{ textTransform: "uppercase", letterSpacing: ".5px" }}
+                        />
+                      </div>
+                      {invalid("categoryCode") && (
+                        <small className="bm-error">
+                          <i className="pi pi-exclamation-circle" />
+                          {errors.categoryCode}
+                        </small>
+                      )}
+                    </div>
+
+                    {/* Room Type */}
+                    <div className="bm-field">
+                      <label className="bm-label">
+                        <i className="pi pi-th-large" />
+                        Room Type
+                        <span className="bm-label__req">Required</span>
+                      </label>
+                      <div className={`bm-input ${invalid("roomType") ? "bm-input--invalid" : ""}`}>
+                        <i className="pi pi-th-large bm-input__icon" />
+                        <Dropdown
+                          name="roomType"
+                          value={values.roomType}
+                          options={ROOM_TYPE_OPTIONS}
+                          onChange={(e) => setFieldValue("roomType", e.value)}
+                          placeholder="Select room type"
+                        />
+                      </div>
+                      {invalid("roomType") && (
+                        <small className="bm-error">
+                          <i className="pi pi-exclamation-circle" />
+                          {errors.roomType}
+                        </small>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Description — full width */}
+                  <div className="bm-field" style={{ marginTop: 14 }}>
+                    <label className="bm-label">
+                      <i className="pi pi-align-left" />
+                      Description <span style={{ color: "#94a3b8", textTransform: "none", letterSpacing: 0, marginLeft: 4, fontWeight: 500, fontSize: 10 }}>(optional)</span>
+                    </label>
+                    <div className={`bm-input ${invalid("description") ? "bm-input--invalid" : ""}`} style={{ alignItems: "flex-start" }}>
+                      <i className="pi pi-align-left bm-input__icon" style={{ paddingTop: 11 }} />
+                      <InputTextarea
+                        name="description"
+                        value={values.description}
+                        onChange={handleChange}
+                        onBlur={handleBlur}
+                        placeholder="What does this category include? Amenities, ideal patient profile, etc."
+                        rows={2}
                       />
                     </div>
-                  </td>
-                </tr>
-              ))
-            ) : (
-              <tr>
-                <td
-                  colSpan="7"
+                    {invalid("description") && (
+                      <small className="bm-error">
+                        <i className="pi pi-exclamation-circle" />
+                        {errors.description}
+                      </small>
+                    )}
+                  </div>
+                </div>
+
+                <div className="bm-form-actions">
+                  <button type="button" className="bm-btn bm-btn--ghost"
+                    onClick={() => { setEditing(null); resetForm(); setShowForm(false); }}>
+                    <i className="pi pi-times" /> Cancel
+                  </button>
+                  <button type="submit" className="bm-btn bm-btn--primary">
+                    <i className={`pi ${editing ? "pi-save" : "pi-plus"}`} />
+                    {editing ? "Save Changes" : "Add Room Category"}
+                  </button>
+                </div>
+              </div>
+            </Form>
+          );
+        }}
+      </Formik>
+      )}
+
+      <BmCard
+        title="Configured Categories"
+        icon="pi-th-large"
+        count={filteredList.length === categoryList.length ? categoryList.length : `${filteredList.length}/${categoryList.length}`}
+        action={
+          <>
+            <label style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              fontSize: 11, fontWeight: 700, color: "#475569",
+              padding: "5px 12px", borderRadius: 999,
+              background: showDeleted ? "#fee2e2" : "#f1f5f9",
+              border: `1px solid ${showDeleted ? "#fca5a5" : "#e2e8f0"}`,
+              cursor: "pointer",
+            }}>
+              <input type="checkbox" checked={showDeleted}
+                onChange={(e) => setShowDeleted(e.target.checked)}
+                style={{ cursor: "pointer", accentColor: "#dc2626" }} />
+              Show deleted
+            </label>
+            <BmFilter value={searchTerm} onChange={setSearchTerm} placeholder="Search by name / code / room type…" />
+          </>
+        }
+      >
+        {loading ? (
+          <BmEmpty icon="pi-spin pi-spinner" title="Loading categories…" />
+        ) : currentItems.length === 0 ? (
+          categoryList.length === 0 ? (
+            <BmEmpty icon="pi-th-large" title="No room categories yet"
+              msg="Categories define pricing tiers (Economy → VIP) used by every room."
+              ctaLabel="Add Room Category" ctaIcon="pi-plus"
+              onCta={() => { setEditing(null); setShowForm(true); window.scrollTo({ top: 0, behavior: "smooth" }); }} />
+          ) : (
+            <BmEmpty icon="pi-search" title="No matches" msg="Try a different search term." />
+          )
+        ) : (
+          <div style={{ padding: 14, display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}>
+            {currentItems.map((cat, index) => {
+              const pricing = cat.defaultPricing || {};
+              const amenities = Array.isArray(cat.defaultAmenities) ? cat.defaultAmenities : [];
+              const isDeleted = cat.isActive === false;
+              return (
+                <div key={cat._id} className="bm-grid-card bm-grid-card--pink"
                   style={{
-                    textAlign: "center",
-                    padding: "40px",
-                    color: "#6c757d",
-                    fontSize: "16px",
-                  }}
-                >
-                  No categories found
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+                    opacity: isDeleted ? 0.6 : 1,
+                    filter: isDeleted ? "grayscale(.3)" : "none",
+                    background: cat.color
+                      ? `linear-gradient(135deg, ${cat.color}10, #fff)`
+                      : undefined,
+                  }}>
+                  <div className="bm-grid-card__head">
+                    <BmAvatar icon="pi-th-large" tone="pink" />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="bm-grid-card__title" style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                        {cat.categoryName}
+                        <span style={{
+                          fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 5,
+                          background: "#fce7f3", color: "#9d174d", letterSpacing: ".4px",
+                        }}>{cat.categoryCode}</span>
+                      </div>
+                      <div className="bm-grid-card__sub">
+                        ID: CAT-{1000 + indexOfFirstItem + index + 1} · {cat.roomType || "—"}
+                      </div>
+                    </div>
+                  </div>
+
+                  {cat.classification && (
+                    <div style={{ margin: "6px 0 8px" }}>
+                      <BmClass value={cat.classification} />
+                    </div>
+                  )}
+
+                  {pricing.perBedDailyRate > 0 && (
+                    <div style={{ marginBottom: 8 }}>
+                      <BmPrice value={pricing.perBedDailyRate} unit="bed/day" />
+                      {(pricing.nursingCharges > 0 || pricing.equipmentCharges > 0) && (
+                        <div className="muted" style={{ fontSize: 10.5, marginTop: 2 }}>
+                          {pricing.nursingCharges > 0   && <>+ ₹{pricing.nursingCharges} nursing </>}
+                          {pricing.equipmentCharges > 0 && <>+ ₹{pricing.equipmentCharges} equipment </>}
+                          {pricing.securityDeposit > 0  && <>· ₹{pricing.securityDeposit} deposit</>}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {(cat.minBeds || cat.maxBeds) && (
+                    <div className="muted" style={{ fontSize: 10.5, marginBottom: 6 }}>
+                      <i className="pi pi-th-large" style={{ marginRight: 4, fontSize: 10 }} />
+                      {cat.minBeds || "—"} to {cat.maxBeds || "—"} beds
+                    </div>
+                  )}
+
+                  {cat.description && (
+                    <div style={{ fontSize: 11.5, color: "#475569", marginBottom: 8, lineHeight: 1.45 }}>
+                      {cat.description.length > 90 ? cat.description.slice(0, 90) + "…" : cat.description}
+                    </div>
+                  )}
+
+                  {amenities.length > 0 && (
+                    <div className="bm-chip-row" style={{ marginBottom: 8 }}>
+                      {amenities.slice(0, 4).map((a, i) => <BmChip key={i} icon="pi-check">{a}</BmChip>)}
+                      {amenities.length > 4 && <BmChip>+{amenities.length - 4}</BmChip>}
+                    </div>
+                  )}
+
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 6, paddingTop: 8, borderTop: "1px dashed #e2e8f0" }}>
+                    <BmPill tone={isDeleted ? "danger" : "ok"} icon={isDeleted ? "pi-times" : "pi-check"}>
+                      {isDeleted ? "Inactive" : "Active"}
+                    </BmPill>
+                    <div className="bm-row-actions">
+                      <BmIconBtn icon="pi-eye"    variant="info"   title="View"   onClick={() => setViewingCategory(cat)} />
+                      <BmIconBtn icon="pi-pencil" variant="info"   title="Edit"   onClick={() => handleEdit(cat)}     disabled={isDeleted} />
+                      <BmIconBtn icon={isDeleted ? "pi-replay" : "pi-trash"} variant={isDeleted ? "info" : "danger"}
+                        title={isDeleted ? "Restore" : "Delete"} onClick={() => confirmDelete(cat)} />
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {/* Pagination */}
         {totalPages > 1 && (
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "center",
-              alignItems: "center",
-              padding: "20px",
-              gap: "8px",
-              borderTop: "1px solid #e9ecef",
-            }}
-          >
-            <Button
-              icon="pi pi-angle-double-left"
-              className="p-button-outlined"
-              onClick={() => setCurrentPage(1)}
-              disabled={currentPage === 1}
-              style={{ minWidth: "40px", height: "40px" }}
-            />
-            <Button
-              icon="pi pi-angle-left"
-              className="p-button-outlined"
-              onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
-              disabled={currentPage === 1}
-              style={{ minWidth: "40px", height: "40px" }}
-            />
-
+          <div style={{
+            display: "flex", justifyContent: "center", alignItems: "center",
+            padding: 14, gap: 6, borderTop: "1px solid #e2e8f0",
+          }}>
+            <BmIconBtn icon="pi-angle-double-left" title="First page"
+              onClick={() => setCurrentPage(1)} disabled={currentPage === 1} />
+            <BmIconBtn icon="pi-angle-left" title="Previous"
+              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} disabled={currentPage === 1} />
             {[...Array(totalPages)].map((_, i) => {
               const page = i + 1;
-              if (
-                page === 1 ||
-                page === totalPages ||
-                (page >= currentPage - 1 && page <= currentPage + 1)
-              ) {
+              if (page === 1 || page === totalPages || (page >= currentPage - 1 && page <= currentPage + 1)) {
                 return (
-                  <Button
-                    key={page}
-                    label={String(page)}
-                    className={currentPage === page ? "" : "p-button-outlined"}
-                    onClick={() => setCurrentPage(page)}
+                  <button key={page} onClick={() => setCurrentPage(page)}
                     style={{
-                      minWidth: "40px",
-                      height: "40px",
-                      backgroundColor:
-                        currentPage === page ? "#17a2b8" : "transparent",
-                      color: currentPage === page ? "white" : "#495057",
-                      borderColor: currentPage === page ? "#17a2b8" : "#dee2e6",
-                    }}
-                  />
+                      minWidth: 32, height: 28, borderRadius: 7,
+                      border: "1.5px solid " + (currentPage === page ? "#db2777" : "#e2e8f0"),
+                      background: currentPage === page ? "#db2777" : "#fff",
+                      color: currentPage === page ? "#fff" : "#475569",
+                      fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit",
+                    }}>{page}</button>
                 );
               } else if (page === currentPage - 2 || page === currentPage + 2) {
-                return (
-                  <span
-                    key={page}
-                    style={{
-                      padding: "8px 5px",
-                      color: "#6c757d",
-                      fontWeight: 600,
-                    }}
-                  >
-                    ...
-                  </span>
-                );
+                return <span key={page} style={{ padding: "0 5px", color: "#94a3b8", fontWeight: 700, fontSize: 11 }}>…</span>;
               }
               return null;
             })}
-
-            <Button
-              icon="pi pi-angle-right"
-              className="p-button-outlined"
-              onClick={() =>
-                setCurrentPage((prev) => Math.min(totalPages, prev + 1))
-              }
-              disabled={currentPage === totalPages}
-              style={{ minWidth: "40px", height: "40px" }}
-            />
-            <Button
-              icon="pi pi-angle-double-right"
-              className="p-button-outlined"
-              onClick={() => setCurrentPage(totalPages)}
-              disabled={currentPage === totalPages}
-              style={{ minWidth: "40px", height: "40px" }}
-            />
+            <BmIconBtn icon="pi-angle-right" title="Next"
+              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} />
+            <BmIconBtn icon="pi-angle-double-right" title="Last page"
+              onClick={() => setCurrentPage(totalPages)} disabled={currentPage === totalPages} />
           </div>
         )}
-      </div>
+      </BmCard>
 
       {/* Delete Confirmation Dialog */}
       <Dialog

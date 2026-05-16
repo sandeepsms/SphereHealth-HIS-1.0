@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, Link } from "react-router-dom";
 import { getPatients } from "../../Services/userService";
 import { Calendar } from "primereact/calendar";
 import { Dropdown } from "primereact/dropdown";
@@ -78,6 +78,17 @@ export default function VitalSheet() {
       setTimeRows(generateTimeSlots(slot));
     }
   }, [slot, editMode]);
+
+  // Bail out cleanly if the route had no :uhid — show a patient picker prompt.
+  if (!uhid && !editMode && !existingRecord) {
+    return (
+      <div className="p-4 text-center">
+        <h3>Pick a patient first</h3>
+        <p>The vital sheet is keyed to a UHID. Open the patient list and choose a patient to record vitals for.</p>
+        <Link to="/allpatient" className="btn btn-primary">Open Patient List</Link>
+      </div>
+    );
+  }
 
 
 
@@ -393,17 +404,25 @@ export default function VitalSheet() {
                         const safe = makeSafeId(v.name);
                         const val = row?.values?.[safe];
 
+                        // FIX (audit P20): the old logic preferred `oldVal`
+                        // unconditionally when a previous value existed,
+                        // making corrections impossible — typos became
+                        // permanent. New behavior: the FRESH input from
+                        // the form wins. Only fall back to oldVal when the
+                        // user has explicitly cleared the field (empty
+                        // string + undefined).
                         const oldVal = existingRecord?.tableData
                           ?.find(r => r.time === time)
                           ?.values?.[v.name];
 
-                        if (oldVal) {
-                          acc[v.name] = oldVal;
-                        } else if (val !== "" && val !== undefined) {
+                        const hasFreshInput = val !== "" && val !== undefined && val !== null;
+                        if (hasFreshInput) {
                           acc[v.name] = {
                             value: Number(val),
-                            unit: v.unit,
+                            unit:  v.unit,
                           };
+                        } else if (oldVal != null) {
+                          acc[v.name] = oldVal;
                         }
 
                         return acc;
@@ -417,7 +436,13 @@ export default function VitalSheet() {
                       return {
                         time,
                         notes: row.notes || "",
-                        nurse: row.nurse || "",
+                        // Backend's resolveNurse now accepts staffId/name
+                        // strings (audit P20 fix) — populate BOTH the legacy
+                        // `nurse` field and the canonical `recordedBy` so
+                        // either is found by the service.
+                        nurse:      row.nurse || "",
+                        recordedBy: row.nurse || "",
+                        nurseName:  row.nurse || "",
                         values: rowValues,
                       };
                     }
@@ -512,12 +537,13 @@ export default function VitalSheet() {
                                       },
                                     });
                                   }}
-                                  disabled={
-                                    editMode &&
-                                    existingRecord?.tableData?.some(
-                                      r => r.time === time && r.values?.[v.name]?.value !== undefined
-                                    )
-                                  }
+                                  /* FIX (audit P20): removed the edit-lock —
+                                     it made every previously-recorded vital
+                                     permanently uneditable, so typos were
+                                     locked in forever. Vitals must be
+                                     correctable per NABH amendment policy
+                                     (an audit trail is the right answer, not
+                                     a hard lock at the UI layer). */
                                 />
 
                               )}

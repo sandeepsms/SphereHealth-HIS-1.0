@@ -1,0 +1,255 @@
+/* ════════════════════════════════════════════════════════════
+   Clinical form primitives — shared across Doctor/Nursing pages
+   Replaces the per-file `fld`, `sel`, `ta`, `lbl` style objects.
+
+   USAGE:
+     <input    className="his-field"    />
+     <select   className="his-select"   />
+     <textarea className="his-textarea" />
+     <label    className="his-label">Field name</label>
+
+     <div className="his-field-group">
+       <label className="his-label">Pulse</label>
+       <input className="his-field" type="number" />
+     </div>
+
+   Variants:
+     .his-field--sm    smaller padding/font
+     .his-field--mono  monospace digits
+     .his-field--ok    green border (validation pass)
+     .his-field--warn  amber border
+     .his-field--err   red border
+
+   Buttons:
+     .his-btn          primary
+     .his-btn--ghost   outlined
+     .his-btn--danger  red
+     .his-btn--success green
+   ════════════════════════════════════════════════════════════ */
+
+/* ── Input / select / textarea ───────────────────────── */
+.his-field,
+.his-select,
+.his-textarea {
+  padding: 10px 14px;
+  border: 1.5px solid var(--his-border, #e2e8f0);
+  border-radius: 9px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13.5px;
+  color: var(--his-text, #0f172a);
+  outline: none;
+  background: #ffffff;
+  width: 100%;
+  box-sizing: border-box;
+  transition: border-color .15s, box-shadow .15s, background .15s;
+}
+.his-field:hover:not(:disabled):not(:focus),
+.his-select:hover:not(:disabled):not(:focus),
+.his-textarea:hover:not(:disabled):not(:focus) {
+  border-color: #cbd5e1;
+  background: #fafbfc;
+}
+.his-field:focus,
+.his-select:focus,
+.his-textarea:focus {
+  border-color: var(--his-accent, #1e40af);
+  box-shadow: 0 0 0 3px rgba(30, 64, 175, .15);
+  background: #ffffff;
+}
+.his-field::placeholder,
+.his-textarea::placeholder {
+  color: #94a3b8;
+  font-style: italic;
+  font-size: 12.5px;
+}
+.his-field:disabled,
+.his-select:disabled,
+.his-textarea:disabled {
+  background: #f8fafc;
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+.his-select { cursor: pointer; appearance: auto; }
+.his-textarea { resize: vertical; min-height: 80px; }
+
+/* Read-only display variant (when input is rendered as text) */
+.his-field--readonly {
+  background: #f8fafc;
+  font-family: 'DM Mono', monospace;
+  font-weight: 700;
+  color: var(--his-accent, #1e40af);
+}
+
+/* Size + style modifiers */
+.his-field--sm   { padding: 5px 8px; font-size: 12px; }
+.his-field--xs   { padding: 4px 6px; font-size: 11px; }
+.his-field--mono { font-family: 'DM Mono', monospace; font-weight: 600; }
+.his-field--ok   { border-color: #10b981; }
+.his-field--warn { border-color: #f59e0b; }
+.his-field--err  { border-color: #ef4444; }
+
+/* ── Label ───────────────────────────────────────────── */
+.his-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--his-muted, #64748b);
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  margin-bottom: 5px;
+  font-family: 'DM Sans', sans-serif;
+}
+.his-label--sm { font-size: 9px; margin-bottom: 2px; letter-spacing: .8px; }
+
+/* ── Field group (label + input stacked) ──────────────── */
+.his-field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+/* ── Buttons ─────────────────────────────────────────── */
+.his-btn,
+.his-btn--ghost,
+.his-btn--danger,
+.his-btn--success {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 18px;
+  border: 1.5px solid transparent;
+  border-radius: 8px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform .12s, box-shadow .15s, background .15s;
+  background: var(--his-accent, #1e40af);
+  color: #ffffff;
+}
+.his-btn:hover,
+.his-btn--ghost:hover,
+.his-btn--danger:hover,
+.his-btn--success:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(30, 64, 175, .22);
+}
+.his-btn:disabled,
+.his-btn--ghost:disabled,
+.his-btn--danger:disabled,
+.his-btn--success:disabled {
+  cursor: not-allowed;
+  opacity: .6;
+  transform: none;
+  box-shadow: none;
+}
+.his-btn--ghost {
+  background: #ffffff;
+  color: var(--his-text, #0f172a);
+  border-color: var(--his-border, #e2e8f0);
+}
+.his-btn--ghost:hover { box-shadow: 0 4px 12px rgba(0,0,0,.08); }
+.his-btn--danger  { background: var(--his-red, #dc2626); }
+.his-btn--danger:hover  { box-shadow: 0 4px 14px rgba(220,38,38,.28); }
+.his-btn--success { background: var(--his-green, #16a34a); }
+.his-btn--success:hover { box-shadow: 0 4px 14px rgba(22,163,74,.28); }
+
+.his-btn--sm,
+.his-btn--ghost.his-btn--sm,
+.his-btn--danger.his-btn--sm,
+.his-btn--success.his-btn--sm { padding: 6px 12px; font-size: 11px; }
+
+/* Dashed add-row button */
+.his-btn--dashed {
+  background: transparent;
+  border: 1.5px dashed var(--his-accent, #1e40af);
+  color: var(--his-accent, #1e40af);
+  padding: 7px 14px;
+  font-size: 12px;
+}
+.his-btn--dashed:hover { background: var(--his-accent-light, #eff6ff); }
+
+/* ── Card surfaces ───────────────────────────────────── */
+.his-card {
+  background: #ffffff;
+  border: 1px solid var(--his-border, #e2e8f0);
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.04);
+}
+.his-card--padded { padding: 16px 20px; }
+
+/* Soft section boxes used inside forms (orange/red/green/blue tint) */
+.his-section {
+  border-radius: 10px;
+  padding: 10px 14px;
+  border: 1.5px solid var(--his-border, #e2e8f0);
+  background: #f8fafc;
+}
+.his-section--ok   { background: #f0fdf4; border-color: #86efac; }
+.his-section--warn { background: #fff7ed; border-color: #fed7aa; }
+.his-section--err  { background: #fef2f2; border-color: #fca5a5; }
+.his-section--info { background: #eff6ff; border-color: #93c5fd; }
+
+.his-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--his-text, #0f172a);
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  margin-bottom: 8px;
+}
+.his-section--ok   .his-section-title { color: #15803d; }
+.his-section--warn .his-section-title { color: #c2410c; }
+.his-section--err  .his-section-title { color: #b91c1c; }
+.his-section--info .his-section-title { color: #1d4ed8; }
+
+/* ── Grid helpers ────────────────────────────────────── */
+.his-grid       { display: grid; gap: 10px; }
+.his-grid--2    { grid-template-columns: 1fr 1fr; }
+.his-grid--3    { grid-template-columns: 1fr 1fr 1fr; }
+.his-grid--4    { grid-template-columns: 1fr 1fr 1fr 1fr; }
+.his-grid--5    { grid-template-columns: repeat(5, 1fr); }
+.his-grid--6    { grid-template-columns: repeat(6, 1fr); }
+.his-grid--auto { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+.his-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* ── Banners (info / warn / err / ok) ────────────────── */
+.his-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1.5px solid transparent;
+}
+.his-banner--err  { background: var(--his-red-light, #fef2f2);    color: var(--his-red, #dc2626);    border-color: #fca5a5; }
+.his-banner--warn { background: #fefce8;                          color: #854d0e;                    border-color: #fde047; }
+.his-banner--ok   { background: var(--his-green-light, #f0fdf4);  color: #15803d;                    border-color: #86efac; }
+.his-banner--info { background: var(--his-accent-light, #eff6ff); color: var(--his-accent, #1e40af); border-color: #93c5fd; }
+
+/* ── Badges / chips ──────────────────────────────────── */
+.his-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border-radius: 20px;
+  font-size: 10px;
+  font-weight: 700;
+  border: 1px solid transparent;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+}
+.his-badge--ok      { background: #dcfce7; color: #15803d; border-color: #86efac; }
+.his-badge--err     { background: var(--his-red-light, #fef2f2); color: var(--his-red, #dc2626); border-color: #fca5a5; }
+.his-badge--warn    { background: #fefce8; color: #854d0e; border-color: #fde047; }
+.his-badge--info    { background: var(--his-accent-light, #eff6ff); color: var(--his-accent, #1e40af); border-color: #93c5fd; }
+.his-badge--neutral { background: #f1f5f9; color: #475569; border-color: #cbd5e1; }

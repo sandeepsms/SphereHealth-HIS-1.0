@@ -181,16 +181,19 @@ class OPDService {
   }
 
   /* ── Follow-up due ── */
-  async getFollowUpDue(date) {
+  async getFollowUpDue(date, opts = {}) {
     const startDate = new Date(date);
     startDate.setHours(0, 0, 0, 0);
     const endDate = new Date(startDate);
     endDate.setDate(endDate.getDate() + 1);
 
-    return OPD.find({
+    const query = {
       followUpRequired: true,
       followUpDate: { $gte: startDate, $lt: endDate },
-    }).populate("doctorId", "personalInfo");
+    };
+    if (opts.doctorId) query.doctorId = opts.doctorId;
+
+    return OPD.find(query).populate("doctorId", "personalInfo");
   }
 
   /* ── Update a visit ── */

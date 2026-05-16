@@ -10,18 +10,15 @@ const ConsentFormSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Patient",
       required: true,
-      index: true,
-    },
-    UHID: { type: String, required: true, trim: true, index: true },
+      index: true },
+    UHID: { type: String, required: true, trim: true },
     patientName: { type: String, trim: true },
     age: { type: String },
     gender: { type: String },
 
     admissionId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Admission",
-      index: true,
-    },
+      ref: "Admission" },
     ipdNo: { type: String, index: true },
 
     // ── Consent Details ──────────────────────────────────────
@@ -42,8 +39,7 @@ const ConsentFormSchema = new mongoose.Schema(
         "OTHER",
       ],
       required: true,
-      index: true,
-    },
+      index: true },
     consentTitle: { type: String, required: true, trim: true },
     procedureDescription: { type: String },
     risksDisclosed: [{ type: String, trim: true }],
@@ -56,11 +52,14 @@ const ConsentFormSchema = new mongoose.Schema(
     interpreterName: { type: String, trim: true },
 
     // ── Consent Giver ────────────────────────────────────────
+    // FIX (audit P18-B1): enum was missing RELATIVE / LEGAL_REP that the
+    // frontend <select> offers, so those values silently failed save and
+    // the user was told "preview mode" instead of a real error. Now
+    // accepts every option the UI exposes.
     consentGivenBy: {
       type: String,
-      enum: ["SELF", "GUARDIAN", "SPOUSE", "PARENT", "SIBLING", "OTHER"],
-      default: "SELF",
-    },
+      enum: ["SELF", "GUARDIAN", "SPOUSE", "PARENT", "SIBLING", "RELATIVE", "LEGAL_REP", "OTHER"],
+      default: "SELF" },
     guardianName: { type: String, trim: true },
     guardianRelation: { type: String, trim: true },
     guardianContact: { type: String, trim: true },
@@ -73,8 +72,7 @@ const ConsentFormSchema = new mongoose.Schema(
     // ── Doctor who explained ─────────────────────────────────
     explainedByDoctor: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Doctor",
-    },
+      ref: "Doctor" },
     explainedByDoctorName: { type: String, trim: true },
     doctorRegNo: { type: String, trim: true },
 
@@ -82,19 +80,36 @@ const ConsentFormSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: ["PENDING", "SIGNED", "REFUSED", "REVOKED"],
-      default: "PENDING",
-      index: true,
-    },
-    signedAt: { type: Date },
+      default: "PENDING" },
+    signedAt:      { type: Date },
+    signedByName:  { type: String, trim: true, default: "" },
+    signedByRole:  { type: String, trim: true, default: "" },
     refusalReason: { type: String },
-    revokedAt: { type: Date },
+    refusedAt:     { type: Date },
+    refusedByName: { type: String, trim: true, default: "" },
+    revokedAt:     { type: Date },
     revokedReason: { type: String },
+    revokedByName: { type: String, trim: true, default: "" },
 
     additionalNotes: { type: String },
 
+    // ── Audit trail (NABH PRE.3 / PRE.4) ─────────────────────
+    // Every state transition (sign / refuse / revoke / amend) appends an
+    // immutable entry — captures who, when, IP, and any free-text reason.
+    auditTrail: [{
+      _id:        false,
+      action:     { type: String, enum: ["CREATED", "UPDATED", "SIGNED", "REFUSED", "REVOKED", "PRINTED"], required: true },
+      at:         { type: Date, default: Date.now },
+      byName:     { type: String, default: "" },
+      byRole:     { type: String, default: "" },
+      byUserId:   { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+      ip:         { type: String, default: "" },
+      userAgent:  { type: String, default: "" },
+      reason:     { type: String, default: "" },
+    }],
+
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" },
-    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" },
-  },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" } },
   { timestamps: true, collection: "consent_forms" }
 );
 

@@ -1,17 +1,35 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Button } from "primereact/button";
-import { Card } from "primereact/card";
-import { Column } from "primereact/column";
 import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
-import { DataTable } from "primereact/datatable";
 import { InputText } from "primereact/inputtext";
-import { Tag } from "primereact/tag";
 import { Toast } from "primereact/toast";
 
 import BedForm from "../Components/bed/BedForm";
+import BedBulkCreateDialog from "../Components/bed/BedBulkCreateDialog";
+import BedSectionHeader from "../Components/bed/BedSectionHeader";
+import {
+  BmStatStrip, BmCard, BmEmpty, BmPill, BmIconBtn,
+  BmAvatar, BmCellStack, BmChip,
+} from "../Components/bed/BedPrimitives";
 import BedStats from "../Components/bed/BedStats";
 import BedVisualLayout from "../Components/bed/BedVisualLayout";
 import { bedService } from "../Services/bedService";
+
+const STATUS_AVATAR = {
+  Available:   { icon: "pi-check-circle",     tone: "green"  },
+  Occupied:    { icon: "pi-user",             tone: "red"    },
+  Maintenance: { icon: "pi-wrench",           tone: "amber"  },
+  Blocked:     { icon: "pi-ban",              tone: "slate"  },
+  Reserved:    { icon: "pi-bookmark",         tone: "blue"   },
+};
+
+const STATUS_TONES = {
+  Available:   "ok",
+  Occupied:    "danger",
+  Maintenance: "warn",
+  Blocked:     "neutral",
+  Reserved:    "info",
+};
 
 /* ─────────────────────────────────────────────── */
 const BedManagement = () => {
@@ -22,6 +40,7 @@ const BedManagement = () => {
   const [globalFilter, setGlobalFilter] = useState("");
   const [viewMode, setViewMode] = useState("table"); // "table" | "visual" | "stats"
   const [showForm, setShowForm] = useState(false);
+  const [showBulk, setShowBulk] = useState(false);
   const [selectedBed, setSelectedBed] = useState(null);
 
   useEffect(() => {
@@ -82,53 +101,30 @@ const BedManagement = () => {
       },
     });
 
-  /* ── column templates ── */
-  const statusTpl = (r) => {
-    const map = {
-      Available: "success",
-      Occupied: "danger",
-      Maintenance: "warning",
-      Blocked: "secondary",
-      Reserved: "info",
-    };
-    return <Tag value={r.status} severity={map[r.status] || "secondary"} />;
-  };
+  /* ── aggregates / filtered ── */
+  const bedStats = React.useMemo(() => {
+    const by = (s) => beds.filter(b => b.status === s).length;
+    return [
+      { key: "total",       label: "Total beds",  value: beds.length,        icon: "pi-th-large",     tone: "slate"  },
+      { key: "occupied",    label: "Occupied",    value: by("Occupied"),     icon: "pi-user",         tone: "red"    },
+      { key: "available",   label: "Available",   value: by("Available"),    icon: "pi-check-circle", tone: "green"  },
+      { key: "reserved",    label: "Reserved",    value: by("Reserved"),     icon: "pi-bookmark",     tone: "blue"   },
+      { key: "maintenance", label: "Maintenance", value: by("Maintenance"),  icon: "pi-wrench",       tone: "amber"  },
+      { key: "blocked",     label: "Blocked",     value: by("Blocked"),      icon: "pi-ban",          tone: "slate"  },
+    ];
+  }, [beds]);
 
-  const locationTpl = (r) => (
-    <div style={{ fontSize: 13, lineHeight: 1.8 }}>
-      <div>
-        <strong>Building:</strong> {r.buildingName || "N/A"}
-      </div>
-      <div>
-        <strong>Floor:</strong> {r.floorNumber || "N/A"}
-      </div>
-      <div>
-        <strong>Ward:</strong> {r.wardName || "N/A"}
-      </div>
-      <div>
-        <strong>Room:</strong> {r.roomNumber || "N/A"}
-      </div>
-    </div>
-  );
-
-  const actionTpl = (r) => (
-    <div style={{ display: "flex", gap: 4 }}>
-      <Button
-        icon="pi pi-pencil"
-        className="p-button-rounded p-button-text p-button-info"
-        onClick={() => handleEdit(r)}
-        tooltip="Edit"
-        tooltipOptions={{ position: "top" }}
-      />
-      <Button
-        icon="pi pi-trash"
-        className="p-button-rounded p-button-text p-button-danger"
-        onClick={() => handleDelete(r)}
-        tooltip="Delete"
-        tooltipOptions={{ position: "top" }}
-      />
-    </div>
-  );
+  const filteredBeds = React.useMemo(() => {
+    const q = (globalFilter || "").trim().toLowerCase();
+    if (!q) return beds;
+    return beds.filter(b =>
+      (b.bedNumber || "").toLowerCase().includes(q) ||
+      (b.buildingName || "").toLowerCase().includes(q) ||
+      (b.wardName || "").toLowerCase().includes(q) ||
+      (b.roomNumber || "").toLowerCase().includes(q) ||
+      (b.status || "").toLowerCase().includes(q)
+    );
+  }, [beds, globalFilter]);
 
   /* ── view tab config ── */
   const TABS = [
@@ -139,174 +135,172 @@ const BedManagement = () => {
 
   /* ── render ── */
   return (
-    <div style={{ padding: 20, background: "#f1f5f9", minHeight: "100vh" }}>
+    <div className="bm-page">
       <Toast ref={toast} />
       <ConfirmDialog />
 
-      {/* ══ TOP HEADER ══════════════════════════════════════════════════ */}
-      <div
-        style={{
-          background: "linear-gradient(135deg,#0891b2 0%,#0e7490 100%)",
-          borderRadius: 12,
-          padding: "14px 22px",
-          marginBottom: 20,
-          display: "flex",
-          flexWrap: "wrap",
-          gap: 14,
-          alignItems: "center",
-          justifyContent: "space-between",
-          boxShadow: "0 4px 18px rgba(8,145,178,.28)",
-        }}
-      >
-        {/* Title */}
-        <h2
-          style={{
-            margin: 0,
-            color: "#fff",
-            fontSize: 20,
-            fontWeight: 700,
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-          }}
-        >
-          <i className="pi pi-th-large" />
-          Bed Management
-        </h2>
+      <BedSectionHeader
+        title="Manage Beds"
+        subtitle="Create, edit, status — table / visual / stats views"
+        icon="pi-list"
+        actions={
+          <>
+            {/* View-mode pills */}
+            <div style={{ display: "flex", background: "rgba(255,255,255,.15)", borderRadius: 9, padding: 3, gap: 3 }}>
+              {TABS.map(({ key, icon, label }) => {
+                const active = viewMode === key;
+                return (
+                  <button key={key} onClick={() => setViewMode(key)}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 6,
+                      padding: "6px 13px", borderRadius: 6, border: "none",
+                      cursor: "pointer", fontSize: 12, fontWeight: 700,
+                      background: active ? "#fff" : "transparent",
+                      color: active ? "#1e293b" : "rgba(255,255,255,.9)",
+                      fontFamily: "inherit",
+                    }}>
+                    <i className={icon} style={{ fontSize: 12 }} /> {label}
+                  </button>
+                );
+              })}
+            </div>
 
-        {/* Tab switcher */}
-        <div
-          style={{
-            display: "flex",
-            background: "rgba(255,255,255,.15)",
-            borderRadius: 9,
-            padding: 3,
-            gap: 3,
-          }}
-        >
-          {TABS.map(({ key, icon, label }) => {
-            const active = viewMode === key;
-            return (
-              <button
-                key={key}
-                onClick={() => setViewMode(key)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "7px 16px",
-                  borderRadius: 6,
-                  border: "none",
-                  cursor: "pointer",
-                  fontSize: 13,
-                  fontWeight: 600,
-                  transition: "all .18s",
-                  background: active ? "#fff" : "transparent",
-                  color: active ? "#0891b2" : "rgba(255,255,255,.88)",
-                  boxShadow: active ? "0 2px 8px rgba(0,0,0,.14)" : "none",
-                }}
-              >
-                <i className={icon} style={{ fontSize: 13 }} />
-                {label}
-              </button>
-            );
-          })}
-        </div>
+            {viewMode === "table" && (
+              <span style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+                <i className="pi pi-search" style={{ position: "absolute", left: 10, color: "rgba(255,255,255,.7)", fontSize: 12, zIndex: 1 }} />
+                <InputText
+                  placeholder="Search beds…"
+                  value={globalFilter}
+                  onChange={(e) => setGlobalFilter(e.target.value)}
+                  style={{
+                    paddingLeft: 30, width: 200,
+                    background: "rgba(255,255,255,.18)",
+                    border: "1px solid rgba(255,255,255,.3)",
+                    borderRadius: 8, color: "#fff", fontSize: 12,
+                  }}
+                />
+              </span>
+            )}
 
-        {/* Search + Add */}
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          {viewMode === "table" && (
-            <span
+            <Button icon="pi pi-clone" label="Bulk Create"
+              onClick={() => setShowBulk(true)}
               style={{
-                position: "relative",
-                display: "inline-flex",
-                alignItems: "center",
-              }}
-            >
-              <i
-                className="pi pi-search"
-                style={{
-                  position: "absolute",
-                  left: 10,
-                  color: "rgba(255,255,255,.7)",
-                  fontSize: 13,
-                  zIndex: 1,
-                }}
-              />
-              <InputText
-                placeholder="Search beds…"
-                value={globalFilter}
-                onChange={(e) => setGlobalFilter(e.target.value)}
-                style={{
-                  paddingLeft: 32,
-                  width: 210,
-                  background: "rgba(255,255,255,.18)",
-                  border: "1px solid rgba(255,255,255,.3)",
-                  borderRadius: 8,
-                  color: "#fff",
-                  fontSize: 13,
-                }}
-              />
-            </span>
-          )}
-          <Button
-            icon="pi pi-plus"
-            label="Add New Bed"
-            onClick={() => {
-              setSelectedBed(null);
-              setShowForm(true);
-            }}
-            style={{
-              background: "#fff",
-              color: "#0891b2",
-              border: "none",
-              fontWeight: 700,
-              borderRadius: 8,
-              padding: "8px 18px",
-              boxShadow: "0 2px 8px rgba(0,0,0,.13)",
-            }}
-          />
-        </div>
-      </div>
+                background: "rgba(255,255,255,.15)", color: "#fff",
+                border: "1.5px solid rgba(255,255,255,.4)",
+                fontWeight: 700, borderRadius: 8, padding: "7px 14px", fontSize: 12,
+              }} />
+
+            <Button icon="pi pi-plus" label="Add New Bed"
+              onClick={() => { setSelectedBed(null); setShowForm(true); }}
+              style={{
+                background: "#fff", color: "#1e293b",
+                border: "none", fontWeight: 700,
+                borderRadius: 8, padding: "7px 16px", fontSize: 12,
+                boxShadow: "0 2px 8px rgba(0,0,0,.13)",
+              }} />
+          </>
+        }
+      />
+
+      {/* Live stats strip — visible across all three views */}
+      <BmStatStrip stats={bedStats} />
 
       {/* ══ TABLE VIEW ══════════════════════════════════════════════════ */}
       {viewMode === "table" && (
-        <Card
-          style={{ borderRadius: 12, boxShadow: "0 2px 12px rgba(0,0,0,.07)" }}
+        <BmCard
+          title="All Beds"
+          icon="pi-list"
+          count={filteredBeds.length === beds.length ? beds.length : `${filteredBeds.length}/${beds.length}`}
         >
-          <DataTable
-            value={beds}
-            loading={loading}
-            paginator
-            rows={10}
-            rowsPerPageOptions={[5, 10, 25, 50]}
-            globalFilter={globalFilter}
-            emptyMessage="No beds found. Click 'Add New Bed' to create one."
-            responsiveLayout="scroll"
-            stripedRows
-            showGridlines
-          >
-            <Column
-              field="bedNumber"
-              header="Bed Number"
-              sortable
-              style={{ fontWeight: 600, minWidth: 130 }}
-            />
-            <Column
-              header="Location"
-              body={locationTpl}
-              style={{ minWidth: 200 }}
-            />
-            <Column
-              header="Status"
-              body={statusTpl}
-              sortable
-              field="status"
-              style={{ minWidth: 120 }}
-            />
-            <Column header="Actions" body={actionTpl} style={{ width: 100 }} />
-          </DataTable>
-        </Card>
+          {loading ? (
+            <BmEmpty icon="pi-spin pi-spinner" title="Loading beds…" />
+          ) : filteredBeds.length === 0 ? (
+            beds.length === 0 ? (
+              <BmEmpty
+                icon="pi-th-large"
+                title="No beds yet"
+                msg="Add your first bed, or use Bulk Create to add many at once."
+                ctaLabel="Add New Bed"
+                ctaIcon="pi-plus"
+                onCta={() => { setSelectedBed(null); setShowForm(true); }}
+              />
+            ) : (
+              <BmEmpty icon="pi-search" title="No matches" msg="Try a different search term or clear the filter." />
+            )
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table className="bm-table">
+                <thead>
+                  <tr>
+                    <th>Bed</th>
+                    <th>Location</th>
+                    <th>Status</th>
+                    <th>Flags &amp; Equipment</th>
+                    <th>Patient</th>
+                    <th className="right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredBeds.map(r => {
+                    const av = STATUS_AVATAR[r.status] || { icon: "pi-th-large", tone: "slate" };
+                    const flags  = Array.isArray(r.isolationFlags) ? r.isolationFlags : [];
+                    const equip  = Array.isArray(r.equipment) ? r.equipment : [];
+                    const hk     = r.housekeeping?.state;
+                    const hkLive = hk && hk !== "Idle";
+                    return (
+                      <tr key={r._id}>
+                        <td>
+                          <BmCellStack
+                            avatar={<BmAvatar icon={av.icon} tone={av.tone} />}
+                            title={r.bedNumber}
+                            sub={r.precautionLevel && r.precautionLevel !== "Standard" ? `${r.precautionLevel} isolation` : ""}
+                          />
+                        </td>
+                        <td>
+                          <div>{r.buildingName || "—"} · Floor {r.floorNumber || "—"}</div>
+                          <div className="muted">{r.wardName || "—"} · Room {r.roomNumber || "—"}</div>
+                        </td>
+                        <td><BmPill tone={STATUS_TONES[r.status] || "neutral"}>{r.status}</BmPill></td>
+                        <td>
+                          {(flags.length === 0 && equip.length === 0 && !hkLive) ? (
+                            <span className="muted">—</span>
+                          ) : (
+                            <div className="bm-chip-row">
+                              {flags.slice(0, 2).map((f, i) => (
+                                <BmChip key={`f${i}`} icon="pi-shield">{f}</BmChip>
+                              ))}
+                              {flags.length > 2 && <BmChip>+{flags.length - 2}</BmChip>}
+                              {hkLive && (
+                                <BmChip icon={hk === "CleaningInProgress" ? "pi-spin pi-spinner" : "pi-bookmark-fill"}>
+                                  {hk.replace(/([A-Z])/g, " $1").trim()}
+                                </BmChip>
+                              )}
+                              {equip.slice(0, 2).map((e, i) => (
+                                <BmChip key={`e${i}`} icon="pi-cog">{e.label || e.type}</BmChip>
+                              ))}
+                              {equip.length > 2 && <BmChip>+{equip.length - 2}</BmChip>}
+                            </div>
+                          )}
+                        </td>
+                        <td>
+                          {r.currentAdmission?.patientId?.fullName
+                            ? <span style={{ fontWeight: 600 }}>{r.currentAdmission.patientId.fullName}</span>
+                            : <span className="muted">—</span>}
+                        </td>
+                        <td className="right">
+                          <div className="bm-row-actions">
+                            <BmIconBtn icon="pi-pencil" variant="info"   title="Edit"   onClick={() => handleEdit(r)} />
+                            <BmIconBtn icon="pi-trash"  variant="danger" title="Delete" onClick={() => handleDelete(r)} />
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </BmCard>
       )}
 
       {/* ══ VISUAL LAYOUT ═══════════════════════════════════════════════ */}
@@ -324,6 +318,22 @@ const BedManagement = () => {
           setSelectedBed(null);
         }}
         onSave={handleSave}
+      />
+
+      {/* ══ BULK CREATE DIALOG (P2 #9) ══════════════════════════════════ */}
+      <BedBulkCreateDialog
+        visible={showBulk}
+        onHide={() => setShowBulk(false)}
+        onSaved={async (count) => {
+          setShowBulk(false);
+          await loadBeds();
+          toast.current?.show({
+            severity: "success",
+            summary: "Bulk create",
+            detail: `${count} bed(s) created`,
+            life: 3000,
+          });
+        }}
       />
     </div>
   );

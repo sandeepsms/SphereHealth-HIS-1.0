@@ -114,7 +114,8 @@ class AdmissionService {
           "0000000000",
         email: patient.email || "",
         ...bedData,
-        department: data.department || "",
+        department:   data.department || "",
+        departmentId: data.departmentId || undefined,
         admissionDate: data.admissionDate
           ? new Date(data.admissionDate)
           : new Date(),
@@ -122,10 +123,22 @@ class AdmissionService {
           ? new Date(data.expectedDischargeDate)
           : undefined,
         reasonForAdmission: data.reasonForAdmission || "",
+        provisionalDiagnosis: data.provisionalDiagnosis || "",
+        specialInstructions:  data.specialInstructions || "",
+        expectedStayDays:     Number(data.expectedStayDays) || 0,
         admissionType: data.admissionType || "Emergency",
-        attendingDoctor: data.attendingDoctor || "",
+        attendingDoctor:   data.attendingDoctor || "",
+        // ref to the doctor's User _id — drives IPD file access control
+        attendingDoctorId: data.attendingDoctorId || undefined,
         estimatedCost: Number(data.estimatedCost) || 0,
         advancePaid: Number(data.advancePaid) || 0,
+        // ER-specific clinical context captured at intake
+        isMLC:         data.isMLC || false,
+        mlcNumber:     data.mlcNumber || "",
+        triageLevel:   data.triageLevel || "",
+        erType:        data.erType || "",
+        modeOfArrival: data.modeOfArrival || "",
+        broughtBy:     data.broughtBy || "",
         status: "Active",
       });
     } catch (err) {
@@ -248,6 +261,10 @@ class AdmissionService {
         $regex: filters.attendingDoctor,
         $options: "i",
       };
+    // ObjectId-based doctor filter (used by role=Doctor auto-scope to
+    // restrict the IPD/Daycare/ER list to that doctor's own admissions).
+    if (filters.attendingDoctorId && mongoose.isValidObjectId(String(filters.attendingDoctorId)))
+      query.attendingDoctorId = new mongoose.Types.ObjectId(String(filters.attendingDoctorId));
     // Accept both ?UHID= and ?uhid= query params
     const uhidFilter = filters.UHID || filters.uhid;
     if (uhidFilter) query.UHID = { $regex: uhidFilter, $options: "i" };
@@ -331,7 +348,20 @@ class AdmissionService {
         $regex: filters.attendingDoctor,
         $options: "i",
       };
+    if (filters.attendingDoctorId && mongoose.isValidObjectId(String(filters.attendingDoctorId)))
+      query.attendingDoctorId = new mongoose.Types.ObjectId(String(filters.attendingDoctorId));
     if (filters.wardId) query.wardId = filters.wardId;
+
+    /* IPD-only filter — `hasBed` is the indexed boolean stamped at
+       admission time that distinguishes a true bedded IPD admission
+       from an OPD visit / day-care / Services billing-only stub that
+       also lives in the Admission collection. Callers asking for
+       "active IPD" should pass `?hasBed=true`. We accept both the raw
+       boolean and the string "true"/"false" for query-string ergonomics. */
+    if (filters.hasBed !== undefined) {
+      const v = filters.hasBed;
+      query.hasBed = v === true || v === "true";
+    }
 
     const bedFilter = filters.bedId || filters.bed;
     if (bedFilter && mongoose.isValidObjectId(String(bedFilter)))

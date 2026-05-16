@@ -1,9 +1,12 @@
 // services/Nurse/nurseNotesService.js
 
 const mongoose = require("mongoose");
-const NurseNotes = require("../../models/Nurse/nurseNotesModel");
-const NurseStaff = require("../../models/Nurse/nurseStaffModel");
-const DoctorNotes = require("../../models/Doctor/doctorNotesModel");
+// FIX (audit P13-B1): actual filenames are PascalCase (NurseNotesModel,
+// NurseStaffModel, DoctorNotesModel). Windows-case-insensitive lookups
+// hid this, but Linux production would 404 these requires at boot.
+const NurseNotes = require("../../models/Nurse/NurseNotesModel");
+const NurseStaff = require("../../models/Nurse/NurseStaffModel");
+const DoctorNotes = require("../../models/Doctor/DoctorNotesModel");
 const Patient = require("../../models/Patient/patientModel");
 const TreatmentChart = require("../../models/Doctor/treatmentChartModel");
 
@@ -11,95 +14,73 @@ const TreatmentChart = require("../../models/Doctor/treatmentChartModel");
    Create / Submit nurse note
 ───────────────────────────────────────────────────────────── */
 const createNurseNote = async (data, nurseUserId) => {
+  // ── Known base fields (stored in dedicated schema columns) ──
+  const BASE_FIELDS = new Set([
+    "patientId","patientUHID","patientName","UHID","admissionNumber",
+    "ipdNo","noteDate","shift","doctorId","generalCondition","vitals",
+    "painScore","painAssessment","ivLine","intakeOutput","ordersExecuted",
+    "nursingCare","remarks","status","noteType","tags","isCriticalEvent",
+    "signature","signedByName","nurseName","nurseEmployeeId","nurseId",
+    "nurseDesignation","nurseStaffId",
+  ]);
+
   const {
-    patientId, patientUHID, patientName: pName,
-    ipdNo, noteDate, shift, doctorId,
+    patientId, ipdNo, noteDate, shift, doctorId,
     generalCondition, vitals, painScore, painAssessment,
-    ivLine, intakeOutput, ordersExecuted, nursingCare,
-    remarks, status,
-    // Extended fields from NursingNotesPage
+    ivLine, intakeOutput, ordersExecuted, nursingCare, remarks, status,
     noteType, tags, isCriticalEvent, signature, signedByName,
-    nurseEmployeeId,
-    nurseSignature,
-    // module-specific payloads
-    ...rest
   } = data;
 
-  // ── Nurse: resolve from User model (app uses User, not old NurseStaff) ──
-  let nurseObjectId = null;
-  let nurseName = data.nurseName || "";
-  let nurseStaffId = nurseEmployeeId || "";
-  let nurseDesignation = "";
-  try {
-    const User = require("../../models/User/userModel");
-    const userDoc = await User.findById(nurseUserId).lean();
-    if (userDoc) {
-      nurseObjectId = userDoc._id;
-      nurseName = userDoc.fullName || `${userDoc.firstName || ""} ${userDoc.lastName || ""}`.trim() || nurseName;
-      nurseStaffId = userDoc.employeeId || nurseEmployeeId || "";
-      nurseDesignation = userDoc.designation || "";
+  // Collect every extra key (module-specific payloads) into noteData
+  // This preserves ALL data regardless of note type — checkboxes, dropdowns,
+  // selected tabs, text inputs — nothing is lost.
+  const noteData = {};
+  for (const [key, val] of Object.entries(data)) {
+    if (!BASE_FIELDS.has(key) && val !== undefined && val !== null) {
+      noteData[key] = val;
     }
-  } catch (_) { /* use data from frontend */ }
+  }
 
-  // ── Patient: accept reference if provided, don't block if not ──
-  let patRef = patientId || undefined;
-  let resolvedPatientName = pName || "";
-  let resolvedPatientUHID = patientUHID || "";
-  if (patRef) {
-    try {
-      const pat = await Patient.findById(patRef).lean();
-      if (pat) {
-        resolvedPatientName = pat.fullName || pName || "";
-        resolvedPatientUHID = pat.UHID || patientUHID || "";
-      }
-    } catch (_) {}
+  // ── Patient — resolve ObjectId from UHID or patientId ──
+  let patient = null;
+  const mongoose = require("mongoose");
+  // Extract the actual patient ObjectId (patientId might be a populated object)
+  const resolvedPatientId = patientId?._id || patientId;
+  if (resolvedPatientId && mongoose.isValidObjectId(String(resolvedPatientId))) {
+    patient = await Patient.findById(resolvedPatientId).catch(() => null);
+  }
+  // Fallback: find by UHID
+  if (!patient && (data.patientUHID || data.UHID)) {
+    patient = await Patient.findOne({ UHID: (data.patientUHID || data.UHID) }).catch(() => null);
+  }
+
+  // ── Nurse — try NurseStaff lookup but don't fail if not found ──
+  let nurse = null;
+  if (nurseUserId && mongoose.isValidObjectId(String(nurseUserId))) {
+    nurse = await NurseStaff.findById(nurseUserId).catch(() => null);
+  }
+  // Fallback: find by staffId
+  if (!nurse && data.nurseEmployeeId) {
+    nurse = await NurseStaff.findOne({ staffId: data.nurseEmployeeId }).catch(() => null);
   }
 
   const noteStatus = status || "submitted";
 
-  // Capture ALL 15 module-specific payloads into moduleData (Mixed field)
-  // so nothing is ever lost — every clinical module is fully preserved
-  const MODULE_KEYS = [
-    "vitals",              // vitals module (full BP/pulse/temp/spo2/gcs/bsl etc.)
-    "neuroAssessment",     // neuro/GCS module
-    "bloodTransfusion",    // blood transfusion module
-    "ivInfusion",          // IV infusion module
-    "intakeOutput",        // intake/output module (full object)
-    "painAssessment",      // pain module (object — different from model's string field)
-    "woundCare",           // wound/dressing module
-    "skinAssessment",      // skin/pressure assessment module
-    "fallRisk",            // Morse fall scale module
-    "procedure",           // procedure/intervention module
-    "discharge",           // discharge/handover module
-    "mewsScore",           // MEWS score module
-    "dailyAssessment",     // daily assessment module
-    "initialAssessment",   // initial assessment module
-    "carePlan",            // care plan module
-    "nutritionalAssessment", // nutrition module
-    "patientEducation",    // patient education module
-  ];
-  const moduleData = {};
-  MODULE_KEYS.forEach(k => { if (data[k] !== undefined) moduleData[k] = data[k]; });
-
   const note = await NurseNotes.create({
-    patient: patRef || undefined,
-    patientName: resolvedPatientName,
-    patientUHID: resolvedPatientUHID,
-    ipdNo: ipdNo || resolvedPatientUHID || "N/A",
+    patient: patient?._id || resolvedPatientId || undefined,
+    patientName: data.patientName || patient?.fullName || "",
+    patientUHID: data.patientUHID || data.UHID || patient?.UHID || "",
+    ipdNo: ipdNo || data.admissionNumber || data.patientUHID || data.UHID || "",
     noteDate: noteDate || new Date(),
-    shift: shift || "morning",
-    nurse: nurseObjectId || undefined,
-    nurseName,
-    nurseEmployeeId: nurseStaffId,
-    nurseStaffId,
-    nurseDesignation,
-    nurseSignature: nurseSignature || undefined,
-    noteType,
-    tags: tags || [],
-    isCriticalEvent: isCriticalEvent || false,
-    signature: signature || undefined,
-    signedByName: signedByName || nurseName || undefined,
-    doctor: doctorId || undefined,
+    shift: shift || "general",
+    nurse: nurse?._id || undefined,
+    nurseName: data.nurseName || nurse?.personalInfo?.fullName || nurse?.nurseName || "",
+    nurseStaffId: nurse?.staffId || "",
+    nurseEmployeeId: data.nurseEmployeeId || "",
+    nurseDesignation: data.nurseDesignation || nurse?.professional?.designation || "",
+    doctor: doctorId || patient?.doctor || null,
+    department: patient?.department || null,
+    noteType: noteType || "general",
     generalCondition: generalCondition || {},
     vitals: vitals || {},
     painScore: painScore || 0,
@@ -108,15 +89,19 @@ const createNurseNote = async (data, nurseUserId) => {
     intakeOutput: intakeOutput || {},
     ordersExecuted: ordersExecuted || [],
     nursingCare: nursingCare || {},
+    noteData: Object.keys(noteData).length ? noteData : undefined,
+    tags: tags || [],
+    isCriticalEvent: isCriticalEvent || false,
+    signature: signature || undefined,
+    signedByName: signedByName || "",
     remarks: remarks || "",
-    moduleData: Object.keys(moduleData).length ? moduleData : undefined,
     status: noteStatus,
     submittedAt: noteStatus === "submitted" ? new Date() : undefined,
-    createdBy: nurseObjectId || undefined,
+    createdBy: nurse?._id || undefined,
   });
 
   // Update TreatmentChart executions
-  if (note.status === "submitted" && ordersExecuted?.length && nurseObjectId) {
+  if (note.status === "submitted" && ordersExecuted?.length && nurse) {
     for (const exec of ordersExecuted) {
       if (!exec.orderId) continue;
       try {
@@ -130,7 +115,10 @@ const createNurseNote = async (data, nurseUserId) => {
             shift: note.shift,
             nurseNoteId: note._id,
           },
-          { _id: nurseObjectId, name: nurseName },
+          {
+            _id: nurse._id,
+            name: nurse.personalInfo?.fullName || nurse.nurseName,
+          },
         );
       } catch (e) {
         console.error("TreatmentChart recordNurseExecution error:", e.message);
@@ -138,7 +126,12 @@ const createNurseNote = async (data, nurseUserId) => {
     }
   }
 
-  return NurseNotes.findById(note._id).lean();
+  return NurseNotes.findById(note._id)
+    .populate("patient", "fullName UHID age gender")
+    .populate("nurse", "personalInfo.fullName staffId professional.designation")
+    .populate("doctor", "personalInfo.fullName doctorId")
+    .populate("department", "departmentName")
+    .lean();
 };
 
 /* ─────────────────────────────────────────────────────────────
@@ -241,6 +234,10 @@ const updateNurseNote = async (id, data, nurseUserId) => {
     e.statusCode = 400;
     throw e;
   }
+  // FIX (audit P13-B3): note.nurse can legitimately be null (NurseStaff
+  // lookup may have failed on create). Skip the auth comparison when no
+  // owner is recorded — any authenticated nurse can edit an unowned note,
+  // which matches existing behaviour for legacy data.
   if (note.nurse && nurseUserId && note.nurse.toString() !== nurseUserId.toString()) {
     const e = new Error("Not authorised");
     e.statusCode = 403;
@@ -277,18 +274,12 @@ const confirmSingleOrder = async (data, nurseUserId) => {
     throw e;
   }
 
-  // Resolve nurse from User model (app uses User, not old NurseStaff)
-  let nurseDoc = null;
-  let nurseName = "";
-  let nurseId = nurseUserId;
-  try {
-    const User = require("../../models/User/userModel");
-    nurseDoc = await User.findById(nurseUserId).lean();
-    if (nurseDoc) {
-      nurseName = nurseDoc.fullName || `${nurseDoc.firstName || ""} ${nurseDoc.lastName || ""}`.trim();
-      nurseId = nurseDoc._id;
-    }
-  } catch (_) {}
+  const nurse = await NurseStaff.findById(nurseUserId);
+  if (!nurse) {
+    const e = new Error("Nurse not found");
+    e.statusCode = 404;
+    throw e;
+  }
 
   const result = await DoctorNotes.updateOne(
     {
@@ -298,7 +289,7 @@ const confirmSingleOrder = async (data, nurseUserId) => {
     {
       $set: {
         "orders.$.nurseStatus": status || "done",
-        "orders.$.nurseConfirmedBy": nurseId,
+        "orders.$.nurseConfirmedBy": nurse._id,
         "orders.$.nurseConfirmedAt": new Date(),
         "orders.$.nurseRemarks": remarks || "",
       },
@@ -311,24 +302,22 @@ const confirmSingleOrder = async (data, nurseUserId) => {
   }
 
   const doctorNote = await DoctorNotes.findById(doctorNoteId).lean();
-  if (doctorNote && nurseId) {
-    try {
-      await TreatmentChart.recordNurseExecution(
-        doctorNote.ipdNo,
-        {
-          orderId,
-          status: status || "done",
-          remarks: remarks || "",
-          executedAt: new Date(),
-          shift: shift || "morning",
-        },
-        { _id: nurseId, name: nurseName },
-      );
-    } catch (_) {}
+  if (doctorNote) {
+    await TreatmentChart.recordNurseExecution(
+      doctorNote.ipdNo,
+      {
+        orderId,
+        status: status || "done",
+        remarks: remarks || "",
+        executedAt: new Date(),
+        shift: shift || "morning",
+      },
+      { _id: nurse._id, name: nurse.personalInfo?.fullName },
+    );
   }
 
   return {
-    confirmedBy: nurseName,
+    confirmedBy: nurse.personalInfo?.fullName,
     status: status || "done",
   };
 };
@@ -348,6 +337,7 @@ const deleteNurseNote = async (id, nurseUserId) => {
     e.statusCode = 400;
     throw e;
   }
+  // FIX (audit P13-B3): allow null-owner notes through (legacy data).
   if (note.nurse && nurseUserId && note.nurse.toString() !== nurseUserId.toString()) {
     const e = new Error("Not authorised");
     e.statusCode = 403;
@@ -355,6 +345,53 @@ const deleteNurseNote = async (id, nurseUserId) => {
   }
   await note.deleteOne();
   return true;
+};
+
+/* ─────────────────────────────────────────────────────────────
+   Blood transfusion helpers (audit P13-B2 — controller references
+   these but they didn't exist in the legacy service, so the two
+   PATCH endpoints always threw TypeError).
+───────────────────────────────────────────────────────────── */
+const addBloodMonitoringEntry = async (noteId, entry) => {
+  const note = await NurseNotes.findById(noteId);
+  if (!note) throw new Error("Nurse note not found");
+  // Persist the monitoring entry under noteData.bloodTransfusion.monitoring[]
+  const path = (note.noteData && note.noteData.bloodTransfusion) || {};
+  const monitoring = Array.isArray(path.monitoring) ? path.monitoring : [];
+  monitoring.push({
+    at: entry?.at || new Date(),
+    pulse: entry?.pulse,
+    bp:    entry?.bp,
+    temp:  entry?.temp,
+    spo2:  entry?.spo2,
+    rr:    entry?.rr,
+    observation: entry?.observation || "",
+    reaction:    entry?.reaction    || "",
+    recordedBy:  entry?.recordedBy  || "",
+  });
+  note.noteData = {
+    ...note.noteData,
+    bloodTransfusion: { ...path, monitoring },
+  };
+  note.markModified("noteData");
+  return note.save();
+};
+
+const updateBloodTransfusionStatus = async (noteId, status, notes = "") => {
+  const note = await NurseNotes.findById(noteId);
+  if (!note) throw new Error("Nurse note not found");
+  const path = (note.noteData && note.noteData.bloodTransfusion) || {};
+  note.noteData = {
+    ...note.noteData,
+    bloodTransfusion: {
+      ...path,
+      status,
+      statusNotes: notes,
+      statusUpdatedAt: new Date(),
+    },
+  };
+  note.markModified("noteData");
+  return note.save();
 };
 
 /* ─────────────────────────────────────────────────────────────
@@ -377,4 +414,6 @@ module.exports = {
   updateNurseNote,
   confirmSingleOrder,
   deleteNurseNote,
+  addBloodMonitoringEntry,
+  updateBloodTransfusionStatus,
 };

@@ -13,6 +13,7 @@ import { Tag } from "primereact/tag";
 import { Divider } from "primereact/divider";
 import { billingService } from "../../Services/billing/billingService";
 import BillPrint from "./BillPrint";
+import { openPrint } from "../../Components/print/openPrint";
 
 const BillGeneration = () => {
   const { prescriptionId, billId } = useParams();
@@ -226,6 +227,58 @@ const BillGeneration = () => {
 
   // 🔥 FIX: Print functionality
   const handlePrint = () => {
+    // ── Unified print system: send bill data through openPrint() so it
+    // picks up the hospital header/footer + paper-size selector and
+    // renders via the FinalBill (IPD) or OPDReceipt template depending
+    // on bill type. Falls back to the legacy popup HTML below if for
+    // any reason openPrint can't be loaded (kept for safety).
+    try {
+      const slug = (String(bill.billType || "").toLowerCase().includes("opd"))
+        ? "opd-receipt" : "final-bill";
+      openPrint(slug, {
+        billNo:       bill.billNumber,
+        receiptNo:    bill.billNumber,
+        invoiceNo:    bill.billNumber,
+        patientName:  bill.patientName,
+        uhid:         bill.UHID,
+        ipdNo:        bill.ipdNo,
+        age:          bill.age,
+        gender:       bill.gender,
+        doctorName:   bill.doctorName || bill.consultantName,
+        consultantName: bill.consultantName,
+        department:   bill.department,
+        visitDate:    bill.visitDate || bill.createdAt,
+        admissionDate: bill.admissionDate,
+        dischargeDate: bill.dischargeDate,
+        totalDays:    bill.totalDays,
+        bedNumber:    bill.bedNumber,
+        wardName:     bill.wardName,
+        finalDiagnosis: bill.finalDiagnosis || bill.diagnosis,
+        tpaName:      bill.tpaName,
+        items: (bill.billItems || []).map(it => ({
+          category: it.category,
+          name:     it.serviceName || it.name,
+          description: it.description,
+          qty:      it.quantity || 1,
+          rate:     it.unitPrice,
+          amount:   it.netAmount,
+        })),
+        discount: bill.discountAmount,
+        tax:      bill.taxAmount,
+        advanceReceived: bill.advanceReceived,
+        tpaPaid: bill.tpaApprovedAmount,
+        payments: Array.isArray(bill.payments) ? bill.payments.map(p => ({
+          date:   p.paidAt || p.date,
+          method: p.paymentMode || p.method,
+          refNo:  p.transactionId,
+          amount: p.amount,
+        })) : [],
+        paymentMethod: (bill.payments || []).slice(-1)[0]?.paymentMode,
+        paymentRef:    (bill.payments || []).slice(-1)[0]?.transactionId,
+      });
+      return;
+    } catch (_) { /* fall back to legacy print path */ }
+
     // Create a new window for printing
     const printWindow = window.open("", "_blank");
 

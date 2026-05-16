@@ -15,27 +15,27 @@ const OrderSchema = new mongoose.Schema(
         "diet",
         "other",
       ],
-      default: "other",
-    },
+      default: "other" },
     instruction: { type: String, trim: true, default: "" },
     route: { type: String },           // free-form — no enum restriction
     frequency: { type: String },
     duration: { type: String },
     notes: { type: String },
 
+    // IV dilution / vehicle — doctor specifies diluent when ordering injectable drugs
+    dilutionVolume: { type: Number },      // ml  e.g. 100
+    dilutionFluid:  { type: String },      // e.g. "NS 0.9%", "DNS", "D5W", "RL"
+
     // Written back by nurseNotesService when nurse confirms
     nurseStatus: {
       type: String,
       enum: ["pending", "done", "skipped", "partial"],
-      default: "pending",
-    },
+      default: "pending" },
     nurseConfirmedBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "NurseStaff",
-    },
+      ref: "NurseStaff" },
     nurseConfirmedAt: { type: Date },
-    nurseRemarks: { type: String },
-  },
+    nurseRemarks: { type: String } },
   { _id: true },
 );
 
@@ -45,8 +45,7 @@ const VitalsSchema = new mongoose.Schema(
     pulse: Number,
     temp: Number,
     rr: Number,
-    spo2: Number,
-  },
+    spo2: Number },
   { _id: false },
 );
 
@@ -60,19 +59,17 @@ const DoctorNotesSchema = new mongoose.Schema(
     },
     patientName: { type: String },
     patientUHID: { type: String },
-    ipdNo: { type: String, required: true, index: true },
+    ipdNo: { type: String, required: true },
 
     visitDate: { type: Date, required: true, default: Date.now },
     shift: {
       type: String,
       enum: ["morning", "afternoon", "evening", "night"],
-      default: "morning",
-    },
+      default: "morning" },
 
     doctor: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-    },
+      ref: "User" },
     doctorName: { type: String },
     doctorId: { type: String },
     doctorRegNo: { type: String },
@@ -84,8 +81,7 @@ const DoctorNotesSchema = new mongoose.Schema(
       subjective: { type: String },
       objective: { type: String },
       assessment: { type: String },
-      plan: { type: String },
-    },
+      plan: { type: String } },
 
     vitals: VitalsSchema,
     investigations: [{ type: String }],
@@ -95,16 +91,42 @@ const DoctorNotesSchema = new mongoose.Schema(
     finalDiagnosis:       { type: String },
     icd10Code:            { type: String },
     icd10Description:     { type: String },
+    // SNOMED CT clinical-finding code — emitted by FHIR export when present.
+    // Optional; ICD-10 stays the primary registry identifier.
+    snomedCode:           { type: String, default: "" },
+    snomedDisplay:        { type: String, default: "" },
 
     status: {
       type: String,
       enum: ["draft", "signed", "amended"],
-      default: "draft",
-    },
+      default: "draft" },
     signedAt: { type: Date },
 
     // Extended NABH fields
-    noteType:     { type: String },                              // "daily","icu","procedure", etc.
+    // FIX (audit P11-B1): noteType is now an enum so the frontend can't slip
+    // a junk value through and end up with un-bucketed notes that no view
+    // filter ever matches. Keep "general" as the default since older notes
+    // were created without a type and validate cleanly against it.
+    noteType: {
+      type: String,
+      enum: [
+        "general",
+        "admission",
+        "progress",
+        "daily",
+        "icu",
+        "procedure",
+        "consultation",
+        "assessment",
+        "discharge",
+        "death",
+        "amendment",
+        "operative",
+        "preop",
+        "postop",
+      ],
+      default: "general",
+    },
     isCritical:   { type: Boolean, default: false },
     tags:         [{ type: String }],
     noteDetails:  { type: mongoose.Schema.Types.Mixed },        // ICU/procedure/consultation specifics
@@ -116,8 +138,7 @@ const DoctorNotesSchema = new mongoose.Schema(
     signedByReg:  { type: String },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" } },
   { timestamps: true, collection: "doctor_notes" },
 );
 
@@ -131,8 +152,7 @@ DoctorNotesSchema.statics.getAllPendingOrders = async function (ipdNo) {
   const notes = await this.find({
     ipdNo,
     "orders.nurseStatus": "pending",
-    status: "signed",
-  })
+    status: "signed" })
     .populate("doctor", "personalInfo doctorId")
     .lean();
 
@@ -146,8 +166,7 @@ DoctorNotesSchema.statics.getAllPendingOrders = async function (ipdNo) {
           noteId: n._id,
           visitDate: n.visitDate,
           doctorName: n.doctorName,
-          doctorId: n.doctorId,
-        });
+          doctorId: n.doctorId });
       });
   });
   return pending;
@@ -157,4 +176,6 @@ DoctorNotesSchema.virtual("pendingOrdersCount").get(function () {
   return this.orders.filter((o) => o.nurseStatus === "pending").length;
 });
 
-module.exports = mongoose.model("DoctorNotes", DoctorNotesSchema);
+module.exports =
+  mongoose.models.DoctorNotes ||
+  mongoose.model("DoctorNotes", DoctorNotesSchema);

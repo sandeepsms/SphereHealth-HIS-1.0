@@ -13,12 +13,17 @@ exports.createPatient = async (req, res) => {
       });
   } catch (error) {
     if (error.code === 11000) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "Patient with this contact number already exists",
-        });
+      // Report the ACTUAL conflicting field, not "contact number".
+      // Patient only has unique indexes on patientId, UHID — never on
+      // contactNumber. Misleading messages confuse the receptionist.
+      const conflictField = Object.keys(error.keyPattern || {})[0]
+        || Object.keys(error.keyValue || {})[0]
+        || "unique field";
+      return res.status(400).json({
+        success: false,
+        message: `Patient with this ${conflictField} already exists`,
+        conflictField,
+      });
     }
     const statusCode = error.message.includes("not found") ? 404 : 400;
     res.status(statusCode).json({ success: false, message: error.message });
@@ -133,15 +138,12 @@ exports.searchPatients = async (req, res) => {
   label: `${p.fullName} | ${p.UHID} | ${p.contactNumber}`,
   value: p._id,
 }));
-console.log("FORMATTED", JSON.stringify(formatted, null, 2));
 
     res.status(200).json({
       success: true,
       data: formatted,
       count: formatted.length,
-      
     });
-    console.log("dddddddddddddd",data);
   } catch (error) {
     res.status(500).json({ success: false, message: error.message, data: [] });
   }

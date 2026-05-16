@@ -13,16 +13,35 @@ const handle = (fn) => async (req, res) => {
 
 class DischargeSummaryController {
   // POST /api/discharge-summary
+  //
+  // FIX (audit P17-B4): legacy code allowed unlimited duplicate creates
+  // per admission — "Save & Print" twice = 2 rows; only the first was
+  // returned by getByAdmission's findOne, so the later edits were silent
+  // data loss. Now upserts by admissionId.
+  //
+  // FIX (audit P17-B6): switched Math.ceil → Math.floor so a 2-hour LAMA
+  // counts as 0 days, not 1 — billing-day inflation eliminated.
   create = handle(async (req, res) => {
     const data = req.body;
 
-    // Compute days admitted
     if (data.admissionDate && data.dischargeDate) {
       const diff = new Date(data.dischargeDate) - new Date(data.admissionDate);
-      data.totalDaysAdmitted = Math.ceil(diff / (1000 * 60 * 60 * 24));
+      // floor(): partial days don't add a billing day. The first day is
+      // already covered by the admission base charge.
+      data.totalDaysAdmitted = Math.max(0, Math.floor(diff / (1000 * 60 * 60 * 24)));
     }
 
-    const summary = await DischargeSummary.create(data);
+    let summary;
+    if (data.admissionId) {
+      // Upsert — second save overwrites the draft instead of orphaning it.
+      summary = await DischargeSummary.findOneAndUpdate(
+        { admissionId: data.admissionId },
+        { $set: data },
+        { new: true, upsert: true, setDefaultsOnInsert: true, runValidators: true },
+      );
+    } else {
+      summary = await DischargeSummary.create(data);
+    }
     return res.status(201).json({ success: true, data: summary });
   });
 
@@ -80,15 +99,35 @@ class DischargeSummaryController {
     );
     if (!summary) return res.status(404).json({ success: false, message: "Discharge summary not found" });
 
-    // Also update the admission record status
+    // Also update the admission record status AND release the bed.
+    // Audit-Pass-17 found the bed was never released on finalize — the bed
+    // stayed Occupied forever, blocking new admissions. Now we free it
+    // atomically (Available + clear patient + clear currentAdmission).
     if (summary.admissionId) {
-      await Admission.findByIdAndUpdate(summary.admissionId, {
-        status: "Discharged",
-        actualDischargeDate: summary.dischargeDate || new Date(),
-        conditionOnDischarge: summary.conditionOnDischarge,
-        dischargeSummary: summary._id.toString(),
-        followUpInstructions: summary.followUpInstructions,
-      });
+      const admission = await Admission.findByIdAndUpdate(
+        summary.admissionId,
+        {
+          status: "Discharged",
+          actualDischargeDate: summary.dischargeDate || new Date(),
+          conditionOnDischarge: summary.conditionOnDischarge,
+          dischargeSummary: summary._id.toString(),
+          followUpInstructions: summary.followUpInstructions,
+        },
+        { new: true },
+      );
+      if (admission?.bedId) {
+        try {
+          const Bed = require("../../models/bedMgmt/bedsModel");
+          await Bed.findByIdAndUpdate(admission.bedId, {
+            $set: {
+              status: "Available",
+              patient: null,
+              currentAdmission: null,
+              lastDischargedAt: new Date(),
+            },
+          });
+        } catch (e) { /* non-fatal — surface in admin alerts */ }
+      }
     }
 
     return res.json({ success: true, data: summary, message: "Discharge summary finalized" });

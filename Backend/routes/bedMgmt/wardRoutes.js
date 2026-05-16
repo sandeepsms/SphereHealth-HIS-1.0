@@ -1,12 +1,14 @@
 const express = require("express");
 const router = express.Router();
 const WardController = require("../../controllers/bedMgmt/wardController");
+const { requireAction } = require("../../middleware/auth");
 
-router.post("/", WardController.createWard);
-router.get("/", WardController.getAllWards);
+// Ward master — Admin only.
+router.get("/",            WardController.getAllWards);
 router.get("/details/:id", WardController.getWardDetails);
-router.get("/:id", WardController.getWardById);
-router.put("/:id", WardController.updateWard);
-router.delete("/:id", WardController.deleteWard);
+router.get("/:id",         WardController.getWardById);
+router.post("/",     requireAction("departments.write"), WardController.createWard);
+router.put("/:id",   requireAction("departments.write"), WardController.updateWard);
+router.delete("/:id",requireAction("departments.write"), WardController.deleteWard);
 
 module.exports = router;

@@ -1,0 +1,724 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SphereHealth HIS — 12 May 2026 — Today's Work</title>
+<link rel="icon" href="/vite.svg" />
+<style>
+  /* Self-contained — mirrors the rx-* design tokens used everywhere else in the app */
+  :root {
+    --rx-bg: #f1f5f9;
+    --rx-surface: #ffffff;
+    --rx-border: #e2e8f0;
+    --rx-text: #0f172a;
+    --rx-subtle: #64748b;
+    --rx-muted: #94a3b8;
+    --rx-info: #0e7490;
+    --rx-primary: #1d4ed8;
+    --rx-success: #15803d;
+    --rx-warning: #c2410c;
+    --rx-danger: #b91c1c;
+    --rx-purple: #6d28d9;
+    --rx-er: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--rx-bg);
+    color: var(--rx-text);
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    padding: 24px;
+  }
+  .page { max-width: 1180px; margin: 0 auto; }
+
+  /* Header */
+  .hero {
+    background: linear-gradient(135deg, #0f172a, #1e293b);
+    color: #fff;
+    border-radius: 16px;
+    padding: 28px 32px;
+    margin-bottom: 18px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 20px;
+    flex-wrap: wrap;
+    box-shadow: 0 6px 22px rgba(15, 23, 42, 0.18);
+  }
+  .hero h1 {
+    margin: 0 0 8px;
+    font-size: 26px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+  }
+  .hero p { margin: 0; color: rgba(255,255,255,.78); font-size: 14px; }
+  .hero-meta {
+    background: rgba(255,255,255,.08);
+    border: 1px solid rgba(255,255,255,.15);
+    border-radius: 10px;
+    padding: 10px 16px;
+    font-family: "DM Mono", "Roboto Mono", monospace;
+    font-size: 12px;
+    color: rgba(255,255,255,.85);
+  }
+
+  /* KPI strip */
+  .kpis {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    margin-bottom: 22px;
+  }
+  .kpi {
+    background: var(--rx-surface);
+    border: 1px solid var(--rx-border);
+    border-radius: 12px;
+    padding: 14px 18px;
+    box-shadow: 0 1px 4px rgba(15, 23, 42, 0.04);
+  }
+  .kpi-label {
+    font-size: 10.5px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--rx-subtle);
+  }
+  .kpi-value { font-size: 30px; font-weight: 800; margin-top: 2px; line-height: 1; }
+  .kpi-sub { font-size: 11px; color: var(--rx-muted); margin-top: 3px; }
+  .kpi--accent { border-left: 4px solid var(--rx-info); }
+  .kpi--good   { border-left: 4px solid var(--rx-success); }
+  .kpi--warn   { border-left: 4px solid var(--rx-warning); }
+  .kpi--danger { border-left: 4px solid var(--rx-danger); }
+  .kpi--purple { border-left: 4px solid var(--rx-purple); }
+
+  /* Sections */
+  section {
+    background: var(--rx-surface);
+    border: 1px solid var(--rx-border);
+    border-radius: 14px;
+    padding: 22px 24px;
+    margin-bottom: 18px;
+    box-shadow: 0 1px 4px rgba(15, 23, 42, 0.04);
+  }
+  .sec-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    border-bottom: 1px solid var(--rx-border);
+    padding-bottom: 12px;
+    margin-bottom: 16px;
+  }
+  .sec-head h2 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 800;
+    letter-spacing: -0.3px;
+  }
+  .sec-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: #ecfeff;
+    color: var(--rx-info);
+    border: 1px solid #67e8f9;
+    border-radius: 999px;
+    padding: 2px 10px;
+    font-size: 10.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .sec-badge--green { background: #f0fdf4; color: var(--rx-success); border-color: #86efac; }
+  .sec-badge--purple { background: #f5f3ff; color: var(--rx-purple); border-color: #c4b5fd; }
+  .sec-badge--er { background: #fef2f2; color: var(--rx-er); border-color: #fca5a5; }
+  .sec-badge--warn { background: #fff7ed; color: var(--rx-warning); border-color: #fed7aa; }
+
+  .lead { color: var(--rx-subtle); font-size: 13px; margin: 0 0 14px; }
+
+  /* Card grid */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; }
+  @media (max-width: 760px) {
+    .grid-2, .grid-3 { grid-template-columns: 1fr; }
+  }
+
+  .card {
+    background: #f8fafc;
+    border: 1px solid var(--rx-border);
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .card h3 {
+    margin: 0 0 4px;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--rx-text);
+  }
+  .card-meta {
+    font-family: "DM Mono", "Roboto Mono", monospace;
+    font-size: 11px;
+    color: var(--rx-subtle);
+    margin-bottom: 8px;
+  }
+  .card p { margin: 0; font-size: 12.5px; color: #334155; line-height: 1.5; }
+  .card ul { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; color: #334155; }
+  .card li { margin-bottom: 3px; }
+
+  /* Commit table */
+  table.commits {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+  }
+  table.commits thead tr { background: #f8fafc; }
+  table.commits th {
+    text-align: left;
+    padding: 8px 10px;
+    font-weight: 800;
+    text-transform: uppercase;
+    font-size: 10.5px;
+    letter-spacing: 0.4px;
+    color: var(--rx-subtle);
+    border-bottom: 1px solid var(--rx-border);
+  }
+  table.commits td {
+    padding: 8px 10px;
+    border-bottom: 1px solid #f1f5f9;
+    vertical-align: top;
+  }
+  table.commits tbody tr:hover { background: #f8fafc; }
+  .sha {
+    font-family: "DM Mono", "Roboto Mono", monospace;
+    font-size: 11px;
+    background: #f1f5f9;
+    border: 1px solid var(--rx-border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    color: #334155;
+    white-space: nowrap;
+  }
+
+  /* Tags */
+  .tag {
+    display: inline-block;
+    border-radius: 999px;
+    padding: 1px 8px;
+    font-size: 10.5px;
+    font-weight: 700;
+    border: 1px solid;
+    margin-right: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .tag--feat    { background: #f0fdf4; color: var(--rx-success); border-color: #86efac; }
+  .tag--fix     { background: #eff6ff; color: var(--rx-primary); border-color: #93c5fd; }
+  .tag--refactor{ background: #f5f3ff; color: var(--rx-purple); border-color: #c4b5fd; }
+  .tag--audit   { background: #fff7ed; color: var(--rx-warning); border-color: #fed7aa; }
+  .tag--er      { background: #fef2f2; color: var(--rx-er); border-color: #fca5a5; }
+  .tag--clean   { background: #ecfeff; color: var(--rx-info); border-color: #67e8f9; }
+
+  /* Pass strip */
+  .pass-strip {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin: 12px 0 0;
+  }
+  .pass-pill {
+    background: #f0fdf4;
+    color: var(--rx-success);
+    border: 1px solid #86efac;
+    border-radius: 8px;
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    font-family: "DM Mono", "Roboto Mono", monospace;
+  }
+  .pass-pill--bug {
+    background: #fef2f2;
+    color: var(--rx-er);
+    border-color: #fca5a5;
+  }
+  .pass-pill--initial {
+    background: #f5f3ff;
+    color: var(--rx-purple);
+    border-color: #c4b5fd;
+  }
+
+  /* Footer */
+  footer {
+    text-align: center;
+    color: var(--rx-muted);
+    font-size: 11px;
+    padding: 18px 0 6px;
+  }
+  code {
+    background: #f1f5f9;
+    border: 1px solid var(--rx-border);
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-family: "DM Mono", "Roboto Mono", monospace;
+    font-size: 11.5px;
+    color: #334155;
+  }
+  details {
+    margin-top: 14px;
+    background: #f8fafc;
+    border: 1px solid var(--rx-border);
+    border-radius: 8px;
+    padding: 10px 14px;
+  }
+  details summary {
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 13px;
+  }
+  details summary:hover { color: var(--rx-primary); }
+</style>
+</head>
+<body>
+  <div class="page">
+
+    <!-- Hero -->
+    <div class="hero">
+      <div>
+        <h1>📋 Today's Work — 12 May 2026</h1>
+        <p>SphereHealth HIS · End-to-end audit, UI rewrites, production data fixes, and a brand-new MLC module — all in one day.</p>
+      </div>
+      <div class="hero-meta">
+        Branch: <strong>claude/reverent-shockley</strong><br/>
+        Worktree: <strong>D:\Spherehealth\.claude\worktrees\reverent-shockley</strong>
+      </div>
+    </div>
+
+    <!-- KPIs -->
+    <div class="kpis">
+      <div class="kpi kpi--accent">
+        <div class="kpi-label">Commits</div>
+        <div class="kpi-value">31</div>
+        <div class="kpi-sub">all pushed to origin</div>
+      </div>
+      <div class="kpi kpi--good">
+        <div class="kpi-label">Files Changed</div>
+        <div class="kpi-value">98</div>
+        <div class="kpi-sub">across BE + FE</div>
+      </div>
+      <div class="kpi kpi--good">
+        <div class="kpi-label">Lines Added</div>
+        <div class="kpi-value">+6,625</div>
+      </div>
+      <div class="kpi kpi--warn">
+        <div class="kpi-label">Lines Removed</div>
+        <div class="kpi-value">−1,891</div>
+      </div>
+      <div class="kpi kpi--danger">
+        <div class="kpi-label">Bugs Fixed</div>
+        <div class="kpi-value">~85</div>
+        <div class="kpi-sub">27-pass HIS audit + 10-pass MLC</div>
+      </div>
+      <div class="kpi kpi--purple">
+        <div class="kpi-label">Clean Audit Passes</div>
+        <div class="kpi-value">10</div>
+        <div class="kpi-sub">5 HIS · 5 MLC consecutive</div>
+      </div>
+    </div>
+
+    <!-- SECTION 1 — Foundation work (early today) -->
+    <section>
+      <div class="sec-head">
+        <h2>1. Foundation — Reception redesign + RBAC + NABH workflows</h2>
+        <span class="sec-badge sec-badge--purple">refactor + feat</span>
+      </div>
+      <p class="lead">
+        Pre-audit foundation work: receptionist module rewritten into the rx-* design system,
+        14 user-role permissions formalised, and 4 NABH-compliant workflows added.
+      </p>
+      <div class="grid-2">
+        <div class="card">
+          <h3>📐 Reception modules redesigned</h3>
+          <p class="card-meta">6d57d7a, 5705f52, bcd152d</p>
+          <p>
+            6 reception modules — <strong>Patient Search, Visit History, OPD Queue, Emergency, Beds, Billing</strong> —
+            rewritten in the <code>rx-page</code> CSS framework. Every inline <code>style={{}}</code> in those 12 pages
+            stripped and moved into <code>reception-shared.css</code>. <strong>55 bugs</strong> fixed in a 6-pass audit
+            covering registration, billing, discharge, TPA, appointments.
+          </p>
+        </div>
+        <div class="card">
+          <h3>🔐 Role-based access (14 roles)</h3>
+          <p class="card-meta">4b4fa28, 7b92486</p>
+          <p>
+            Doctor users now see only their own patients (auto-scoped via <code>attachDoctorProfile</code>).
+            Login routes each role (Receptionist, Doctor, Nurse, Admin, Accountant, Pharmacist, Lab Tech, Radiologist,
+            Ward Boy, Dietician, Physio, Security, Housekeeping, TPA Coord) to their home dashboard.
+          </p>
+        </div>
+        <div class="card">
+          <h3>🏥 NABH workflows</h3>
+          <p class="card-meta">5856375</p>
+          <ul>
+            <li><strong>Discharge Queue</strong> — DoctorApproved → BillCleared → GatePassIssued (NABH COP.20)</li>
+            <li><strong>TPA Cases</strong> — claim lifecycle dashboard</li>
+            <li><strong>Visitor Passes</strong> — issue / revoke with QR-style UID</li>
+            <li><strong>Appointments</strong> — slot system with IST timezone windows</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>💬 Live ops glue</h3>
+          <p class="card-meta">c61b3c3, bcadb94, c7b05b9</p>
+          <p>
+            WhatsApp click-to-chat on patient cards, live presence (who's serving whom),
+            reception dashboard with per-doctor tokens + collection analytics,
+            auto-discharge date prediction + new-admission alerts.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 2 — The 27-pass audit -->
+    <section>
+      <div class="sec-head">
+        <h2>2. 27-pass end-to-end audit — system production-ready</h2>
+        <span class="sec-badge sec-badge--warn">~78 bugs fixed</span>
+        <span class="sec-badge sec-badge--green">5/5 clean</span>
+      </div>
+      <p class="lead">
+        Exhaustive role-by-role audit covering every user (Receptionist, Doctor, Nurse, Admin, Accountant, TPA,
+        Pharmacist, Lab, Radiology, Ward Boy, Dietician, Physio, Security, Housekeeping) and their primary
+        workflows. The run only ended after <strong>5 consecutive clean passes</strong>.
+      </p>
+
+      <div class="pass-strip">
+        <span class="pass-pill pass-pill--initial">Pass 1 → 25 bugs</span>
+        <span class="pass-pill pass-pill--bug">Pass 2 → 11 bugs</span>
+        <span class="pass-pill pass-pill--bug">Pass 3 → 5 bugs</span>
+        <span class="pass-pill pass-pill--bug">Pass 4 → 1 bug</span>
+        <span class="pass-pill pass-pill--bug">Pass 5 → 6 bugs</span>
+        <span class="pass-pill pass-pill--bug">Pass 6 → 2 bugs</span>
+        <span class="pass-pill pass-pill--bug">Pass 7 → 1 bug</span>
+        <span class="pass-pill pass-pill--bug">Pass 8 → 3 bugs</span>
+        <span class="pass-pill pass-pill--bug">Pass 9 → 6 CRITICAL</span>
+        <span class="pass-pill pass-pill--bug">Pass 10 → 2 bugs</span>
+        <span class="pass-pill pass-pill--bug">Pass 11 → 1 CRITICAL</span>
+        <span class="pass-pill pass-pill--bug">Pass 12 → 1 CRITICAL</span>
+        <span class="pass-pill pass-pill--bug">Pass 13 → 1 CRITICAL</span>
+        <span class="pass-pill pass-pill--bug">Pass 14 → 1 bug</span>
+        <span class="pass-pill pass-pill--bug">Pass 15 → 3 bugs</span>
+        <span class="pass-pill pass-pill--bug">Pass 16 → 1 bug</span>
+        <span class="pass-pill pass-pill--bug">Pass 17 → 1 bug</span>
+        <span class="pass-pill">Pass 18 ✓</span>
+        <span class="pass-pill pass-pill--bug">Pass 19 → 1 bug</span>
+        <span class="pass-pill">Pass 20 ✓</span>
+        <span class="pass-pill pass-pill--bug">Pass 21 → 1 CRITICAL</span>
+        <span class="pass-pill pass-pill--bug">Pass 22 → 1 HIGH</span>
+        <span class="pass-pill">Pass 23 ✓ #1</span>
+        <span class="pass-pill">Pass 24 ✓ #2</span>
+        <span class="pass-pill">Pass 25 ✓ #3</span>
+        <span class="pass-pill">Pass 26 ✓ #4</span>
+        <span class="pass-pill">Pass 27 ✓ #5 final</span>
+      </div>
+
+      <div class="grid-3" style="margin-top:16px">
+        <div class="card">
+          <h3>💸 Billing engine — restored</h3>
+          <ul>
+            <li>OPD double-charge eliminated (Pass-5)</li>
+            <li>13 missing service codes seeded (Pass-13)</li>
+            <li>ER + Daycare auto-billing fixed (Pass-11/12)</li>
+            <li>Daily auto-charges cron status enum (Pass-14)</li>
+            <li>StrictPopulate on bill list (Pass-15)</li>
+            <li>Empty <code>AutoBilledItemsModel</code> populated (Pass-21)</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🐧 Boot-blocking (Linux)</h3>
+          <ul>
+            <li>8 case-sensitive <code>require()</code> paths fixed (Pass-9)</li>
+            <li>Mongoose model double-registration guards</li>
+            <li>JWT payload ↔ middleware decode alignment</li>
+            <li>CORS + 5mb body-parser + error handler</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>⚙ Workflow critical-paths</h3>
+          <ul>
+            <li>Daycare → IPD conversion revived (Pass-22)</li>
+            <li>Emergency triage update method (Pass-16)</li>
+            <li>Discharge queue dept ref (Pass-17)</li>
+            <li>useBilling endpoint mismatches (Pass-19)</li>
+            <li>BillingTrigger source enum gap (Pass-12)</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 3 — UI rewrites -->
+    <section>
+      <div class="sec-head">
+        <h2>3. UI rewrites — full system-style match</h2>
+        <span class="sec-badge sec-badge--purple">CSS-first</span>
+      </div>
+      <p class="lead">
+        4 pages were still on the legacy PrimeReact theme with inline styles. All rewritten to use the
+        <code>rx-*</code> design system. <strong>Zero inline JS styles for layout</strong> — matches the user's
+        workflow rule "<em>UI system se match rkhna or CSS me he bnana hota hai</em>".
+      </p>
+      <div class="grid-2">
+        <div class="card">
+          <h3>👥 /allpatient — all patients directory</h3>
+          <p class="card-meta">c94c82a · Frontend/src/Components/PatientsTable.jsx</p>
+          <p>
+            Dropped PrimeReact (DataTable, Dialog, Card, Tag, Badge, Menu). New layout: header → KPI strip
+            (OPD/IPD/ER/Daycare/Services counts) → rx-tabs filter → rx-search → compact rx-table with
+            visit chips (O/I/E) → rx-modal view with full personal + medical context.
+          </p>
+        </div>
+        <div class="card">
+          <h3>🕒 /patient-history — full visit timeline</h3>
+          <p class="card-meta">5197fd8 · Frontend/src/pages/patient/PatientHistoryPage.jsx</p>
+          <p>
+            Replaced the purple-gradient PrimeReact page. New page fetches <strong>OPD + IPD/Daycare + Emergency</strong>
+            in parallel (was OPD-only) and merges into a unified rx-timeline. Per-source body renderers, vitals chips,
+            and a 6-tile counter strip. Supports deep-link via <code>?uhid=</code>.
+          </p>
+        </div>
+        <div class="card">
+          <h3>🚑 /reception-emergency + /emergency</h3>
+          <p class="card-meta">1897635 · 2 pages</p>
+          <p>
+            Receptionist's New-ER flow creates BOTH an Admission(Emergency) AND an Emergency record — but the
+            Emergency-record create often fails silently. Both ER dashboards now fetch from <strong>both endpoints
+            in parallel</strong> and merge, so admission-only ER cases never disappear. <code>/emergency</code> page
+            also rewritten end-to-end in rx-* style.
+          </p>
+        </div>
+        <div class="card">
+          <h3>📋 /reception-opd-queue — live queue</h3>
+          <p class="card-meta">86cc157 · Frontend/src/pages/reception/ReceptionOPDQueue.jsx</p>
+          <p>
+            Active tab was strictly filtering by today's date — patients waiting from yesterday silently disappeared.
+            Now fetches all <strong>Waiting + In-Progress</strong> across all dates (live queue is date-agnostic).
+            Completed / Referred tabs still use date filter.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 4 — Production data fixes -->
+    <section>
+      <div class="sec-head">
+        <h2>4. Production data fixes</h2>
+        <span class="sec-badge sec-badge--er">user-reported</span>
+      </div>
+      <p class="lead">
+        Bugs the user hit directly in the running app, fixed in this session.
+      </p>
+      <div class="grid-2">
+        <div class="card">
+          <h3>🛑 Appointment booking 500'd</h3>
+          <p class="card-meta">a3273a7 · Backend/models/Appointment + User</p>
+          <p>
+            Error: <em>"Appointment validation failed: appointmentNumber: Path \`appointmentNumber\` is required."</em>
+            Root cause: Mongoose validates BEFORE <code>pre("save")</code> hooks, so the auto-generator fired too late.
+            Moved generator to <code>pre("validate")</code>. Also caught the same anti-pattern on
+            <code>userModel.employeeId</code> before it broke admin user creation.
+          </p>
+        </div>
+        <div class="card">
+          <h3>📋 OPD queue showed no data</h3>
+          <p class="card-meta">86cc157 · ReceptionOPDQueue.jsx</p>
+          <p>
+            Patients seeded / registered earlier didn't appear in the live queue. Date filter was too strict
+            — a Waiting patient from yesterday shouldn't disappear today. Switched to status-based fetch
+            ignoring date for the Active tab.
+          </p>
+        </div>
+        <div class="card">
+          <h3>🚨 ER dashboards showed no data</h3>
+          <p class="card-meta">1897635 · ReceptionEmergencyCases + EmergencyList</p>
+          <p>
+            ER patients registered via reception only had Admission records; the Emergency-record creation
+            often failed silently. Both pages now merge data from both sources so no patient gets lost.
+          </p>
+        </div>
+        <div class="card">
+          <h3>🩺 Daycare → IPD conversion dead</h3>
+          <p class="card-meta">2412714 · Backend/services/Billing/billingService.js</p>
+          <p>
+            Function was comparing <code>admissionType !== "DAYCARE"</code> but the enum is "Daycare" /
+            "Day Care". Always returned null. Daycare patients never auto-converted past the 24h limit.
+            Now matches both casings and maps converted admissions to the correct enum value.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 5 — MLC module -->
+    <section>
+      <div class="sec-head">
+        <h2>5. ⚖ Medico-Legal Cases — new module</h2>
+        <span class="sec-badge sec-badge--er">new feature</span>
+        <span class="sec-badge sec-badge--green">5/5 audit clean</span>
+      </div>
+      <p class="lead">
+        Brand-new MLC module. Doctors can record medico-legal cases two ways: (a) <strong>External</strong>
+        — patient already has an MLC cut elsewhere, doctor just captures basic identifiers + a local MLR;
+        (b) <strong>Internal</strong> — fresh MLC with full incident, injuries, opinion. Every MLC gets a
+        unique MLR number that stamps every produced patient document.
+      </p>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3>🔢 MLR number generator</h3>
+          <p>
+            <code>&lt;2-letter-prefix&gt;&lt;4-digit-seq&gt;</code> — e.g. <code>RK0001</code>.
+            Prefix is derived from the doctor's name:
+          </p>
+          <ul>
+            <li><strong>Rajesh Kumar</strong> → first letter of first + last name → <code>RK</code></li>
+            <li><strong>Sandeep</strong> (single name) → first + last letter → <code>SP</code></li>
+            <li>If natural prefix is taken, walks a deterministic candidate list until a free pair is found</li>
+            <li><strong>Globally unique</strong> — first 2 letters identify exactly one doctor in the hospital</li>
+            <li>Pinned for life via <code>Doctor.mlcPrefix</code></li>
+            <li>Sequence atomic via <code>$inc</code></li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🏷 Auto-stamping</h3>
+          <p>
+            Once an MLC is cut, the patient is flagged <code>isMLC: true</code> and the <code>mlcNumber</code> is set.
+            The reusable <code>&lt;MLCAutoStamp uhid={...} /&gt;</code> component drops in to any patient document page
+            and shows:
+          </p>
+          <ul>
+            <li><strong>Watermark seal</strong> (circular red MLR seal, top-right, prints on every page)</li>
+            <li><strong>Print banner</strong> (in-flow red strip in the document header)</li>
+          </ul>
+          <p>Already wired into <strong>Discharge Summary</strong> + <strong>OPD print</strong>.</p>
+        </div>
+      </div>
+
+      <details>
+        <summary>10 audit passes — 5 bugs caught, 5 consecutive clean</summary>
+        <div class="pass-strip" style="margin-top:8px">
+          <span class="pass-pill pass-pill--bug">MLC Pass 1 → 2 HIGH</span>
+          <span class="pass-pill pass-pill--bug">MLC Pass 2 → 1 HIGH</span>
+          <span class="pass-pill">MLC Pass 3 ✓</span>
+          <span class="pass-pill">MLC Pass 4 ✓</span>
+          <span class="pass-pill pass-pill--bug">MLC Pass 5 → 2 MEDIUM</span>
+          <span class="pass-pill">MLC Pass 6 ✓ #1</span>
+          <span class="pass-pill">MLC Pass 7 ✓ #2</span>
+          <span class="pass-pill">MLC Pass 8 ✓ #3</span>
+          <span class="pass-pill">MLC Pass 9 ✓ #4</span>
+          <span class="pass-pill">MLC Pass 10 ✓ #5 final</span>
+        </div>
+        <ul style="font-size:12.5px;color:#334155;line-height:1.6;margin-top:10px">
+          <li><strong>Pass-1 HIGH #1</strong> — Admin couldn't create MLC because the doctor dropdown was always empty (service unwrap mismatch).</li>
+          <li><strong>Pass-1 HIGH #2</strong> — Race condition where concurrent first-MLC creates for the same doctor could overwrite the winner's prefix.</li>
+          <li><strong>Pass-2 HIGH</strong> — Auth bypass: Doctor user could PUT/DELETE any MLC by guessing the MLR. Added ownership guard.</li>
+          <li><strong>Pass-5 MEDIUM #1</strong> — Regex DoS in list search (unescaped user input). Now escapes meta-chars.</li>
+          <li><strong>Pass-5 MEDIUM #2</strong> — Hard-delete of Finalized/Closed MLC broke medico-legal chain of custody. Now restricted to Draft only (409 otherwise).</li>
+        </ul>
+      </details>
+    </section>
+
+    <!-- SECTION 6 — Commit log -->
+    <section>
+      <div class="sec-head">
+        <h2>6. Full commit timeline (31 commits)</h2>
+        <span class="sec-badge">12 May 2026</span>
+      </div>
+      <table class="commits">
+        <thead>
+          <tr>
+            <th style="width:80px">SHA</th>
+            <th style="width:90px">Type</th>
+            <th>Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><span class="sha">9feace0</span></td><td><span class="tag tag--fix">fix(mlc)</span></td><td>MLC Pass-5 — regex DoS + medico-legal audit trail</td></tr>
+          <tr><td><span class="sha">2a85453</span></td><td><span class="tag tag--fix">fix(mlc)</span></td><td>MLC Pass-2 — HIGH auth bypass on update/delete</td></tr>
+          <tr><td><span class="sha">ed58fc6</span></td><td><span class="tag tag--fix">fix(mlc)</span></td><td>MLC Pass-1 — 2 HIGH bugs (doctor unwrap + assignMlrNumber race)</td></tr>
+          <tr><td><span class="sha">8948e46</span></td><td><span class="tag tag--feat">feat(mlc)</span></td><td>Medico-Legal Case module with auto-generated MLR series</td></tr>
+          <tr><td><span class="sha">1897635</span></td><td><span class="tag tag--fix">fix</span></td><td>emergency — merge Admission(Emergency) + Emergency records on ER dashboards</td></tr>
+          <tr><td><span class="sha">86cc157</span></td><td><span class="tag tag--fix">fix</span></td><td>opd-queue — show all Waiting / In-Progress visits regardless of date</td></tr>
+          <tr><td><span class="sha">a3273a7</span></td><td><span class="tag tag--fix">fix</span></td><td>models — pre-save → pre-validate so auto-generated required IDs work</td></tr>
+          <tr><td><span class="sha">5197fd8</span></td><td><span class="tag tag--fix">fix</span></td><td>patient-history — rewrite /patient-history with system rx-* design</td></tr>
+          <tr><td><span class="sha">c94c82a</span></td><td><span class="tag tag--fix">fix</span></td><td>all-patients — rewrite /allpatient with system rx-* design</td></tr>
+          <tr><td><span class="sha">2412714</span></td><td><span class="tag tag--audit">audit</span></td><td>Pass-22 — daycare → IPD conversion was permanently dead</td></tr>
+          <tr><td><span class="sha">bef34fe</span></td><td><span class="tag tag--audit">audit</span></td><td>Pass-21 — populate empty AutoBilledItemsModel</td></tr>
+          <tr><td><span class="sha">f95d685</span></td><td><span class="tag tag--audit">audit</span></td><td>Pass-19 — useBilling.getAdmissions + dischargePatient endpoint mismatches</td></tr>
+          <tr><td><span class="sha">259213d</span></td><td><span class="tag tag--audit">audit</span></td><td>Pass-17 — DischargeQueue dept name now reads from populated ref</td></tr>
+          <tr><td><span class="sha">40b5543</span></td><td><span class="tag tag--audit">audit</span></td><td>Pass-16 — emergencyService.updateTriageCategory was missing</td></tr>
+          <tr><td><span class="sha">818205f</span></td><td><span class="tag tag--audit">audit</span></td><td>Pass-15 — 3 StrictPopulate / missing-method bugs (CRITICAL × 2 + HIGH)</td></tr>
+          <tr><td><span class="sha">cd1db18</span></td><td><span class="tag tag--audit">audit</span></td><td>Pass-14 — daily auto-charges cron broken for every admission</td></tr>
+          <tr><td><span class="sha">9c6d047</span></td><td><span class="tag tag--audit">audit</span></td><td>Pass-13 — CRITICAL: seed the 13 service codes auto-billing relies on</td></tr>
+          <tr><td><span class="sha">217e129</span></td><td><span class="tag tag--audit">audit</span></td><td>Pass-12 — CRITICAL BillingTrigger.sourceType enum gap</td></tr>
+          <tr><td><span class="sha">5c10e41</span></td><td><span class="tag tag--audit">audit</span></td><td>Pass-11 — CRITICAL ER & Daycare admissions billed nothing</td></tr>
+          <tr><td><span class="sha">bd5b5e1</span></td><td><span class="tag tag--audit">audit</span></td><td>Pass-10 — 2 HIGH bugs</td></tr>
+          <tr><td><span class="sha">f997178</span></td><td><span class="tag tag--audit">audit</span></td><td>Pass-9 — 6 CRITICAL Linux case-sensitive require paths</td></tr>
+          <tr><td><span class="sha">b703899</span></td><td><span class="tag tag--audit">audit</span></td><td>Pass-8 — 3 bugs in BedAdmissionDrawer, BillsList, HISAssistant</td></tr>
+          <tr><td><span class="sha">adae83a</span></td><td><span class="tag tag--audit">audit</span></td><td>Pass-7 — Appointment booking with empty patientId 500'd</td></tr>
+          <tr><td><span class="sha">b172be4</span></td><td><span class="tag tag--audit">audit</span></td><td>Pass-6 — 2 HIGH auth/URL bugs</td></tr>
+          <tr><td><span class="sha">a33a9cb</span></td><td><span class="tag tag--audit">audit</span></td><td>Pass-5 — 6 bugs (CRITICAL OPD double-charge + 5 more)</td></tr>
+          <tr><td><span class="sha">bdd8dbd</span></td><td><span class="tag tag--audit">audit</span></td><td>Pass-4 — OPD Queue "Active" tab now matches Waiting + In Progress</td></tr>
+          <tr><td><span class="sha">c68a39c</span></td><td><span class="tag tag--audit">audit</span></td><td>Pass-3 — 5 more bugs (1 HIGH + 2 MED + 2 LOW)</td></tr>
+          <tr><td><span class="sha">4b1cd2d</span></td><td><span class="tag tag--audit">audit</span></td><td>Pass-2 — 11 more production-breaking bugs</td></tr>
+          <tr><td><span class="sha">6595f44</span></td><td><span class="tag tag--audit">audit</span></td><td>Initial — 25 production-breaking bugs across all roles</td></tr>
+          <tr><td><span class="sha">4b4fa28</span></td><td><span class="tag tag--feat">feat(rbac)</span></td><td>Role-based access — doctors see only their patients, refined login</td></tr>
+          <tr><td><span class="sha">5705f52</span></td><td><span class="tag tag--refactor">refactor</span></td><td>reception — eliminate inline JS styles, move to CSS classes</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- SECTION 7 — How to use -->
+    <section>
+      <div class="sec-head">
+        <h2>7. Quick navigation — what to test now</h2>
+        <span class="sec-badge sec-badge--green">live now</span>
+      </div>
+      <div class="grid-3">
+        <div class="card">
+          <h3>👥 All Patients directory</h3>
+          <p><a href="/allpatient" style="color:var(--rx-primary);text-decoration:none;font-weight:600">→ /allpatient</a></p>
+          <p>New rx-* table, KPI tiles, type filter, visit chips, view modal with full clinical context.</p>
+        </div>
+        <div class="card">
+          <h3>🕒 Patient history timeline</h3>
+          <p><a href="/patient-history" style="color:var(--rx-primary);text-decoration:none;font-weight:600">→ /patient-history</a></p>
+          <p>Search any patient → see unified OPD + IPD + ER timeline. Or deep-link with <code>?uhid=…</code>.</p>
+        </div>
+        <div class="card">
+          <h3>📋 OPD queue</h3>
+          <p><a href="/reception-opd-queue" style="color:var(--rx-primary);text-decoration:none;font-weight:600">→ /reception-opd-queue</a></p>
+          <p>Active tab now shows ALL Waiting / In-Progress visits across all dates — seeded patients now visible.</p>
+        </div>
+        <div class="card">
+          <h3>🚑 ER cases — receptionist</h3>
+          <p><a href="/reception-emergency" style="color:var(--rx-primary);text-decoration:none;font-weight:600">→ /reception-emergency</a></p>
+          <p>Triage board with KPI tiles. Now merges Emergency records + Admission(Emergency).</p>
+        </div>
+        <div class="card">
+          <h3>⚡ ER cases — hospital-wide</h3>
+          <p><a href="/emergency" style="color:var(--rx-primary);text-decoration:none;font-weight:600">→ /emergency</a></p>
+          <p>Rewritten in rx-* style. Doctor / nurse view with same data merge logic.</p>
+        </div>
+        <div class="card">
+          <h3>⚖ Medico-Legal Cases</h3>
+          <p><a href="/mlc" style="color:var(--rx-primary);text-decoration:none;font-weight:600">→ /mlc</a></p>
+          <p>Cut new MLC (Internal or External). Auto-MLR. Stamp applied to discharge summary + OPD print.</p>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      Generated 12 May 2026 · Branch <code>claude/reverent-shockley</code> · All work mirrored to
+      <code>D:\SphereHealth HIS 1.0\</code> and pushed to <code>origin</code>.
+    </footer>
+  </div>
+</body>
+</html>

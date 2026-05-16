@@ -1,6 +1,11 @@
 const express = require("express");
 const router = express.Router();
 const emergencyController = require("../../controllers/Patient/emergencyController");
+const { attemptAuth, attachDoctorProfile } = require("../../middleware/auth");
+
+// Soft-auth + doctor profile resolver — list endpoints will auto-restrict
+// to the logged-in doctor's own ER cases. Other roles see everything.
+router.use(attemptAuth, attachDoctorProfile);
 
 router.post("/", emergencyController.createEmergencyVisit);
 router.get("/", emergencyController.getAllEmergencyVisits);
@@ -11,11 +16,14 @@ router.get(
   "/triage/:triageCategory",
   emergencyController.getEmergenciesByTriage
 );
-router.get("/:emergencyNumber", emergencyController.getEmergencyVisitById);
+// `/patient/:patientId` MUST be BEFORE `/:emergencyNumber` — else Express
+// matches the param route first and runs getEmergencyVisitById with
+// emergencyNumber="patient" → 404.
 router.get(
   "/patient/:patientId",
   emergencyController.getPatientEmergencyHistory
 );
+router.get("/:emergencyNumber", emergencyController.getEmergencyVisitById);
 router.put("/:emergencyNumber", emergencyController.updateEmergencyVisit);
 router.delete("/:emergencyNumber", emergencyController.deleteEmergencyVisit);
 router.post(

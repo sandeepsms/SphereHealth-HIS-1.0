@@ -111,6 +111,10 @@ const UserSchema = new mongoose.Schema(
       },
       specialization: String,
       registrationNumber: String,
+      // ABDM Healthcare Professional Registry ID — required by FHIR
+      // bundle export so the Practitioner resource carries the national
+      // identifier alongside the local registration number.
+      hprId:           { type: String, default: "" },
       qualifications: [String],
       experienceYears: Number,
       consultationFee: {
@@ -246,8 +250,6 @@ UserSchema.virtual("age").get(function () {
 });
 
 // Indexes
-UserSchema.index({ employeeId: 1 });
-UserSchema.index({ email: 1 });
 UserSchema.index({ role: 1, status: 1 });
 UserSchema.index({ department: 1 });
 UserSchema.index({ "doctorDetails.specialization": 1 });
@@ -261,8 +263,12 @@ UserSchema.pre("save", function (next) {
   next();
 });
 
-// Pre-save: Generate employeeId
-UserSchema.pre("save", async function (next) {
+// Pre-VALIDATE (not pre-save): Generate employeeId before required-check runs.
+// `employeeId` is `required: true` (line 9), so if we generate it in `pre("save")`
+// Mongoose validates first and rejects the doc with "Path `employeeId` is
+// required." which blocks every user creation. Same anti-pattern as the
+// Appointment bug fixed in appointmentModel.js.
+UserSchema.pre("validate", async function (next) {
   if (this.isNew && !this.employeeId) {
     const count = await mongoose.model("User").countDocuments();
     const year = new Date().getFullYear();

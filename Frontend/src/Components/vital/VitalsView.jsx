@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, Link } from "react-router-dom";
 import { getVitalSheet, deleteVitalSheet } from "../../Services/vital/vitalService";
 import { Button } from "primereact/button";
 
@@ -13,8 +13,19 @@ function VitalsView() {
   const [allRecords, setAllRecords] = useState([]);
 
   useEffect(() => {
-    loadVitals();
-  }, []);
+    if (uhid) loadVitals();
+  }, [uhid]);
+
+  // No UHID → render a small "pick a patient" prompt instead of fetching undefined.
+  if (!uhid) {
+    return (
+      <div className="p-4 text-center">
+        <h3>Pick a patient first</h3>
+        <p>Vitals are keyed to a UHID. Open the patient list and select a patient to view their vitals history.</p>
+        <Link to="/allpatient" className="btn btn-primary">Open Patient List</Link>
+      </div>
+    );
+  }
 
   const loadVitals = async () => {
     const res = await getVitalSheet(uhid);

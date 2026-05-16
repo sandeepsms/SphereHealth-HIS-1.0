@@ -1,4 +1,5 @@
 import { API_ENDPOINTS } from "../config/api";
+import authFetch from "../utils/authFetch";
 
 const API_BASE = API_ENDPOINTS.BEDS;
 
@@ -27,7 +28,7 @@ const normalizeBed = (bed) => {
 export const bedService = {
   getAllBeds: async () => {
     try {
-      const response = await fetch(API_BASE);
+      const response = await authFetch(API_BASE);
       const data = await response.json();
       const beds = Array.isArray(data) ? data : data.data || data.beds || [];
       return beds.map(normalizeBed);
@@ -39,7 +40,7 @@ export const bedService = {
 
   getAvailableBeds: async () => {
     try {
-      const response = await fetch(`${API_BASE}/available`);
+      const response = await authFetch(`${API_BASE}/available`);
       const data = await response.json();
       const beds = Array.isArray(data) ? data : data.data || [];
       return beds.map(normalizeBed);
@@ -51,7 +52,7 @@ export const bedService = {
 
   getBedById: async (id) => {
     try {
-      const response = await fetch(`${API_BASE}/${id}`);
+      const response = await authFetch(`${API_BASE}/${id}`);
       const bed = await response.json();
       return normalizeBed(bed);
     } catch (error) {
@@ -78,7 +79,7 @@ export const bedService = {
       if (!payload.building) throw new Error("Building is required");
       if (!payload.bedNumber) throw new Error("Bed number is required");
 
-      const response = await fetch(API_BASE, {
+      const response = await authFetch(API_BASE, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -110,7 +111,7 @@ export const bedService = {
   updateBed: async (id, data) => {
     try {
       const { pricing, services, ...cleanData } = data;
-      const response = await fetch(`${API_BASE}/${id}`, {
+      const response = await authFetch(`${API_BASE}/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(cleanData),
@@ -133,7 +134,7 @@ export const bedService = {
 
   deleteBed: async (id) => {
     try {
-      const response = await fetch(`${API_BASE}/${id}`, { method: "DELETE" });
+      const response = await authFetch(`${API_BASE}/${id}`, { method: "DELETE" });
       return await response.json();
     } catch (error) {
       console.error("Error:", error);
@@ -143,7 +144,7 @@ export const bedService = {
 
   bookBed: async (id, data) => {
     try {
-      const response = await fetch(`${API_BASE}/${id}/book`, {
+      const response = await authFetch(`${API_BASE}/${id}/book`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
@@ -158,7 +159,7 @@ export const bedService = {
 
   dischargeBed: async (id) => {
     try {
-      const response = await fetch(`${API_BASE}/${id}/discharge`, {
+      const response = await authFetch(`${API_BASE}/${id}/discharge`, {
         method: "POST",
       });
       const bed = await response.json();
@@ -171,7 +172,7 @@ export const bedService = {
 
   updateBedStatus: async (id, status) => {
     try {
-      const response = await fetch(`${API_BASE}/${id}/status`, {
+      const response = await authFetch(`${API_BASE}/${id}/status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status }),

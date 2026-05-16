@@ -21,7 +21,7 @@ import "../../../src/App.css"
  *   <PatientSearchBar onPatientSelect={(p) => fillFormWithPatient(p)} />
  *
  * Usage in PatientsTable header:
- *   <PatientSearchBar onPatientSelect={(p) => navigate(`/registration/${p._id}`)} />
+ *   <PatientSearchBar onPatientSelect={(p) => navigate(`/reception?patientId=${p._id}`)} />
  */
 const PatientSearchBar = ({
   onPatientSelect,

@@ -171,33 +171,39 @@ const OPDSchema = new mongoose.Schema(
 
 OPDSchema.index({ patientId: 1, visitDate: -1 });
 OPDSchema.index({ UHID: 1 });
-OPDSchema.index({ visitNumber: 1 });
 OPDSchema.index({ visitDate: -1 });
 OPDSchema.index({ departmentId: 1, visitDate: -1 });
 OPDSchema.index({ doctorId: 1, visitDate: -1 });
 OPDSchema.index({ vitalsStatus: 1 });
 
-OPDSchema.pre("save", async function (next) {
-  if (this.isNew) {
-    // Auto-generate visitNumber
-    if (!this.visitNumber) {
-      const count = await mongoose.model("OPDRegistration").countDocuments();
-      const year = new Date().getFullYear();
-      this.visitNumber = `OPD-${year}-${String(count + 1).padStart(6, "0")}`;
-    }
+// Use pre("validate") so the auto-generated visit number is populated BEFORE
+// Mongoose's required-check runs (consistent with appointment / emergency /
+// user models). Atomic sequence via the shared Counter collection — replaces
+// the legacy `countDocuments() + 1` race that produced duplicate visitNumbers
+// under concurrent OPD registrations.
+const { nextSequence } = require("../../utils/counter");
 
-    // Daily token number
-    if (!this.tokenNumber) {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const tomorrow = new Date(today);
-      tomorrow.setDate(today.getDate() + 1);
-      const todayCount = await mongoose
-        .model("OPDRegistration")
-        .countDocuments({ visitDate: { $gte: today, $lt: tomorrow } });
-      this.tokenNumber = todayCount + 1;
+OPDSchema.pre("validate", async function (next) {
+  try {
+    if (this.isNew) {
+      if (!this.visitNumber) {
+        const year = new Date().getFullYear();
+        const seq = await nextSequence(`opd:${year}`);
+        this.visitNumber = `OPD-${year}-${String(seq).padStart(6, "0")}`;
+      }
+      if (!this.tokenNumber) {
+        const dateKey = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+        const docKey  = this.doctorId ? String(this.doctorId) : "global";
+        this.tokenNumber = await nextSequence(`opd-token:${dateKey}:${docKey}`);
+      }
     }
+  } catch (err) {
+    return next(err);
   }
+  next();
+});
+
+OPDSchema.pre("save", async function (next) {
 
   // BMI calculation
   if (this.vitals && this.vitals.weight && this.vitals.height) {

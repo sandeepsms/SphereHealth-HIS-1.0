@@ -923,10 +923,14 @@ export default function BedSelectionPanel({ value, onChange, disabled }) {
                                       setTempSel({
                                         bedId: bidStr,
                                         bedNumber: bed.bedNumber,
-                                        roomId: getId(bed.room),
-                                        floorId: getId(bed.floor),
-                                        wardId: getId(bed.ward),
-                                        buildingId: getId(bed.building),
+                                        roomId:    getId(bed.room),
+                                        roomNumber:  bed.roomNumber  || bed.room?.roomNumber  || "",
+                                        floorId:   getId(bed.floor),
+                                        floorNumber: bed.floorNumber ?? bed.floor?.floorNumber ?? "",
+                                        wardId:    getId(bed.ward),
+                                        wardName:    bed.wardName    || bed.ward?.wardName    || "",
+                                        buildingId:  getId(bed.building),
+                                        buildingName:bed.buildingName|| bed.building?.buildingName || "",
                                       });
                                     }}
                                     style={{

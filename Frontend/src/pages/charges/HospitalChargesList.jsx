@@ -1,585 +1,183 @@
-import { useEffect, useState, useRef } from "react";
+/**
+ * HospitalChargesList.jsx — admin page for TPA / insurance charge sheets.
+ *
+ * Redesigned to the latest theme: purple hero band, KPI strip, primary
+ * card with search + status filter + add button + table, and a
+ * full-screen view-details modal rendered with theme primitives.
+ */
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { toast } from "react-toastify";
 import { hospitalChargesService } from "../../Services/charges/hospitalChargesService";
+import {
+  AdminPage, Hero, KPI, Card, Table, EmptyRow, RowAction, Badge,
+  Modal, Field, SearchInput, PrimaryButton, C,
+} from "../../Components/admin-theme";
 
-// PrimeReact Imports
-import { DataTable } from "primereact/datatable";
-import { Column } from "primereact/column";
-import { Button } from "primereact/button";
-import { InputText } from "primereact/inputtext";
-import { Dropdown } from "primereact/dropdown";
-import { Tag } from "primereact/tag";
-import { Toast } from "primereact/toast";
-import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
-import { Dialog } from "primereact/dialog";
+const fmtINR = (n) => `₹${Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 
-function HospitalChargesList() {
+const HospitalChargesList = () => {
   const navigate = useNavigate();
-  const toast = useRef(null);
-  const [charges, setCharges] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [filterActive, setFilterActive] = useState(null);
+  const [rows, setRows]    = useState([]);
+  const [q, setQ]          = useState("");
+  const [statusF, setStatusF] = useState("all"); // all | active | inactive
+  const [loading, setLoad] = useState(false);
+  const [view, setView]    = useState(null);     // charge sheet being viewed
 
-  // ✅ View Modal State
-  const [viewDialogVisible, setViewDialogVisible] = useState(false);
-  const [selectedCharges, setSelectedCharges] = useState(null);
-
-  const statusOptions = [
-    { label: "All", value: null },
-    { label: "Active", value: true },
-    { label: "Inactive", value: false },
-  ];
-
-  useEffect(() => {
-    loadCharges();
-  }, [searchTerm, filterActive]);
-
-  const loadCharges = async () => {
+  useEffect(() => { load(); }, [q, statusF]);
+  const load = async () => {
     try {
-      setLoading(true);
+      setLoad(true);
       const filters = {};
-
-      if (searchTerm) filters.search = searchTerm;
-      if (filterActive !== null) filters.isActive = filterActive;
-
+      if (q.trim())       filters.search = q.trim();
+      if (statusF !== "all") filters.isActive = statusF === "active";
       const data = await hospitalChargesService.getAllHospitalCharges(filters);
-      setCharges(data);
-    } catch (error) {
-      toast.current.show({
-        severity: "error",
-        summary: "Error",
-        detail: "Failed to load hospital charges",
-        life: 3000,
-      });
-    } finally {
-      setLoading(false);
-    }
+      setRows(Array.isArray(data) ? data : []);
+    } catch (e) { toast.error("Failed to load hospital charges"); }
+    finally { setLoad(false); }
   };
 
-  // ✅ View Charges Handler
-  const handleViewCharges = (rowData) => {
-    setSelectedCharges(rowData);
-    setViewDialogVisible(true);
-  };
+  const kpis = useMemo(() => {
+    const active = rows.filter(r => r.isActive).length;
+    const totalLines = rows.reduce((s, r) => s + (r.charges?.length || 0), 0);
+    const totalValue = rows.reduce((s, r) => s + (r.charges || []).reduce((ss, c) => ss + Number(c.totalAmount || c.amount || 0), 0), 0);
+    return { sheets: rows.length, active, lines: totalLines, value: totalValue };
+  }, [rows]);
 
-  const handleToggleStatus = async (id) => {
+  const toggle = async (id) => {
     try {
       await hospitalChargesService.toggleActiveStatus(id);
-      toast.current.show({
-        severity: "success",
-        summary: "Success",
-        detail: "Status updated successfully",
-        life: 3000,
-      });
-      loadCharges();
-    } catch (error) {
-      toast.current.show({
-        severity: "error",
-        summary: "Error",
-        detail: "Failed to toggle status",
-        life: 3000,
-      });
-    }
+      toast.success("Status updated");
+      load();
+    } catch (e) { toast.error("Failed to update status"); }
   };
 
-  const confirmDelete = (id) => {
-    confirmDialog({
-      message: "Are you sure you want to delete this?",
-      header: "Delete Confirmation",
-      icon: "pi pi-exclamation-triangle",
-      accept: () => handleDelete(id),
-      reject: () => {},
-    });
-  };
-
-  const handleDelete = async (id) => {
+  const remove = async (id, name) => {
+    if (!window.confirm(`Delete charge sheet for ${name}? This cannot be undone.`)) return;
     try {
       await hospitalChargesService.deleteHospitalCharges(id);
-      toast.current.show({
-        severity: "success",
-        summary: "Success",
-        detail: "Hospital charges deleted successfully",
-        life: 3000,
-      });
-      loadCharges();
-    } catch (error) {
-      toast.current.show({
-        severity: "error",
-        summary: "Error",
-        detail: "Failed to delete hospital charges",
-        life: 3000,
-      });
-    }
+      toast.success("Charge sheet deleted");
+      load();
+    } catch (e) { toast.error("Failed to delete"); }
   };
-
-  const statusBodyTemplate = (rowData) => {
-    return (
-      <Tag
-        value={rowData.isActive ? "Active" : "Inactive"}
-        severity={rowData.isActive ? "success" : "danger"}
-      />
-    );
-  };
-
-  const chargesCountBodyTemplate = (rowData) => {
-    return <span>{rowData.charges?.length || 0} charges</span>;
-  };
-
-  const actionBodyTemplate = (rowData) => {
-    return (
-      <div className="flex gap-2">
-        {/* ✅ View Button */}
-        <Button
-          icon="pi pi-eye"
-          rounded
-          outlined
-          className="p-button-sm"
-          style={{ color: "#10B981", borderColor: "#10B981" }}
-          onClick={() => handleViewCharges(rowData)}
-          tooltip="View Details"
-          tooltipOptions={{ position: "top" }}
-        />
-        <Button
-          icon="pi pi-pencil"
-          rounded
-          outlined
-          className="p-button-sm"
-          style={{ color: "#4F46E5", borderColor: "#4F46E5" }}
-          onClick={() => navigate(`/hospital-charges/edit/${rowData._id}`)}
-          tooltip="Edit"
-          tooltipOptions={{ position: "top" }}
-        />
-        <Button
-          icon={rowData.isActive ? "pi pi-ban" : "pi pi-check"}
-          rounded
-          outlined
-          className="p-button-sm"
-          style={{ color: "#F59E0B", borderColor: "#F59E0B" }}
-          onClick={() => handleToggleStatus(rowData._id)}
-          tooltip={rowData.isActive ? "Deactivate" : "Activate"}
-          tooltipOptions={{ position: "top" }}
-        />
-        <Button
-          icon="pi pi-trash"
-          rounded
-          outlined
-          className="p-button-sm"
-          style={{ color: "#EF4444", borderColor: "#EF4444" }}
-          onClick={() => confirmDelete(rowData._id)}
-          tooltip="Delete"
-          tooltipOptions={{ position: "top" }}
-        />
-      </div>
-    );
-  };
-
-  const header = (
-    <div className="flex flex-wrap gap-3 align-items-center justify-content-between">
-      <h2 className="m-0" style={{ color: "#1F2937", fontWeight: "600" }}>
-        Hospital Charges
-      </h2>
-      <div className="flex gap-2">
-        <span className="p-input-icon-left">
-          <i className="pi pi-search" />
-          <InputText
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Search by TPA..."
-            className="p-inputtext-sm"
-          />
-        </span>
-        <Dropdown
-          value={filterActive}
-          options={statusOptions}
-          onChange={(e) => setFilterActive(e.value)}
-          placeholder="Filter Status"
-          className="p-inputtext-sm"
-        />
-        <Button
-          label="Add New"
-          icon="pi pi-plus"
-          style={{ backgroundColor: "#4F46E5", borderColor: "#4F46E5" }}
-          onClick={() => navigate("/hospital-charges/create")}
-        />
-      </div>
-    </div>
-  );
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        backgroundColor: "#F9FAFB",
-      }}
-    >
-      <Toast ref={toast} />
-      <ConfirmDialog />
+    <AdminPage>
+      <Hero icon="pi-shield" color="purple"
+        title="Hospital Charges"
+        subtitle="TPA / insurance tariff sheets — drives cashless billing rates" />
 
-      {/* ✅ Main Card - Compact & Clean */}
-      <div
-        style={{
-          backgroundColor: "#FFFFFF",
-          padding: "1rem", // ✅ Reduced padding
-          minHeight: "100vh",
-        }}
-      >
-        <DataTable
-          value={charges}
-          loading={loading}
-          header={header}
-          paginator
-          rows={10}
-          rowsPerPageOptions={[5, 10, 25, 50]}
-          dataKey="_id"
-          emptyMessage="No hospital charges found"
-          stripedRows // ✅ Added zebra stripes
-          size="small" // ✅ Compact table
-          responsiveLayout="scroll"
-        >
-          <Column
-            field="tpaName"
-            header="TPA Name"
-            sortable
-            style={{ minWidth: "200px" }}
-          />
-          <Column
-            field="tpaCode"
-            header="TPA Code"
-            sortable
-            style={{ minWidth: "150px" }}
-          />
-          <Column
-            header="Total Charges"
-            body={chargesCountBodyTemplate}
-            sortable
-            style={{ minWidth: "150px" }}
-          />
-          <Column
-            header="Status"
-            body={statusBodyTemplate}
-            sortable
-            style={{ minWidth: "120px" }}
-          />
-          <Column
-            header="Actions"
-            body={actionBodyTemplate}
-            style={{ minWidth: "200px" }}
-          />
-        </DataTable>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
+        <KPI label="Charge Sheets"   value={kpis.sheets} color={C.purple} icon="pi-shield" />
+        <KPI label="Active"          value={kpis.active} color={C.green}  icon="pi-check-circle" />
+        <KPI label="Total Charges"   value={kpis.lines}  color={C.blue}   icon="pi-list" />
+        <KPI label="Total Value"     value={fmtINR(kpis.value)} color={C.amber} icon="pi-money-bill" />
       </div>
 
-      {/* ✅ View Charges Modal */}
-      <Dialog
-        header={
-          <div>
-            <h3 className="m-0" style={{ color: "#1F2937" }}>
-              Hospital Charges Details
-            </h3>
-            {selectedCharges && (
-              <p
-                className="mt-2 mb-0"
-                style={{ color: "#6B7280", fontSize: "14px" }}
-              >
-                TPA: {selectedCharges.tpaName} ({selectedCharges.tpaCode})
-              </p>
-            )}
+      <Card title="All Charge Sheets" color={C.purple} icon="pi-list"
+        right={
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <SearchInput value={q} onChange={e => setQ(e.target.value)}
+              placeholder="Search by TPA name or code…" width={260} />
+            <select className="his-field" value={statusF} onChange={e => setStatusF(e.target.value)}
+              style={{ width: 130, padding: "7px 10px", fontSize: 12, fontWeight: 700 }}>
+              <option value="all">All status</option>
+              <option value="active">Active only</option>
+              <option value="inactive">Inactive only</option>
+            </select>
+            <PrimaryButton icon="pi-plus" label="Add Charge Sheet" color={C.purple}
+              onClick={() => navigate("/hospital-charges/create")} />
           </div>
         }
-        visible={viewDialogVisible}
-        maximizable
-        style={{
-          width: "95vw",
-          maxWidth: "none",
-        }}
-        contentStyle={{
-          maxHeight: "calc(100vh - 200px)",
-          overflowY: "auto",
-          padding: "1.5rem", // ✅ Better padding
-        }}
-        onHide={() => setViewDialogVisible(false)}
-        modal
-        draggable={false}
-      >
-        {selectedCharges && (
-          <div>
-            {/* TPA Info Section */}
-            <div
-              className="grid mb-4 p-3"
-              style={{
-                backgroundColor: "#F9FAFB",
-                borderRadius: "8px",
-                border: "1px solid #E5E7EB",
-              }}
-            >
-              <div className="col-12 md:col-6 lg:col-3">
-                <p
-                  className="mb-1"
-                  style={{
-                    color: "#6B7280",
-                    fontSize: "12px",
-                    fontWeight: "500",
-                  }}
-                >
-                  TPA NAME
-                </p>
-                <p
-                  className="m-0"
-                  style={{
-                    fontWeight: "600",
-                    color: "#1F2937",
-                    fontSize: "14px",
-                  }}
-                >
-                  {selectedCharges.tpaName}
-                </p>
-              </div>
-              <div className="col-12 md:col-6 lg:col-3">
-                <p
-                  className="mb-1"
-                  style={{
-                    color: "#6B7280",
-                    fontSize: "12px",
-                    fontWeight: "500",
-                  }}
-                >
-                  TPA CODE
-                </p>
-                <p
-                  className="m-0"
-                  style={{
-                    fontWeight: "600",
-                    color: "#1F2937",
-                    fontSize: "14px",
-                  }}
-                >
-                  {selectedCharges.tpaCode}
-                </p>
-              </div>
-              <div className="col-12 md:col-6 lg:col-3">
-                <p
-                  className="mb-1"
-                  style={{
-                    color: "#6B7280",
-                    fontSize: "12px",
-                    fontWeight: "500",
-                  }}
-                >
-                  TOTAL CHARGES
-                </p>
-                <p
-                  className="m-0"
-                  style={{
-                    fontWeight: "600",
-                    color: "#1F2937",
-                    fontSize: "14px",
-                  }}
-                >
-                  {selectedCharges.charges?.length || 0} charges
-                </p>
-              </div>
-              <div className="col-12 md:col-6 lg:col-3">
-                <p
-                  className="mb-1"
-                  style={{
-                    color: "#6B7280",
-                    fontSize: "12px",
-                    fontWeight: "500",
-                  }}
-                >
-                  STATUS
-                </p>
-                <Tag
-                  value={selectedCharges.isActive ? "Active" : "Inactive"}
-                  severity={selectedCharges.isActive ? "success" : "danger"}
-                />
-              </div>
-            </div>
+        padding={0}>
+        <Table cols={["TPA Name", "TPA Code", "Charges", "Total Value", "Status", "Action"]}>
+          {loading
+            ? <EmptyRow span={6} text="Loading…" />
+            : rows.length === 0
+              ? <EmptyRow span={6} text={q || statusF !== "all" ? "No charge sheets match these filters" : "No charge sheets yet — click Add Charge Sheet to create one."} />
+              : rows.map((r, i) => {
+                const sheetTotal = (r.charges || []).reduce((s, c) => s + Number(c.totalAmount || c.amount || 0), 0);
+                return (
+                  <tr key={r._id} style={{ borderTop: `1px solid ${C.border}`, background: i % 2 ? "#fafbfc" : "#fff" }}>
+                    <td style={{ padding: "9px 12px" }}>
+                      <div style={{ fontWeight: 700 }}>{r.tpaName}</div>
+                    </td>
+                    <td style={{ padding: "9px 12px", fontFamily: "DM Mono, monospace", fontSize: 11 }}>{r.tpaCode || "—"}</td>
+                    <td style={{ padding: "9px 12px" }}>
+                      <span style={{ fontWeight: 700 }}>{r.charges?.length || 0}</span>
+                      <span style={{ color: C.muted, fontSize: 10.5, marginLeft: 4 }}>charge{r.charges?.length === 1 ? "" : "s"}</span>
+                    </td>
+                    <td style={{ padding: "9px 12px", fontWeight: 700, color: C.green }}>{fmtINR(sheetTotal)}</td>
+                    <td style={{ padding: "9px 12px" }}>
+                      <Badge value={r.isActive ? "Active" : "Inactive"} palette={r.isActive ? "active" : "inactive"} />
+                    </td>
+                    <td style={{ padding: "7px 12px", whiteSpace: "nowrap" }}>
+                      <RowAction icon="pi-eye"    label="View"   color={C.green}  onClick={() => setView(r)} />
+                      <RowAction icon="pi-pencil" label="Edit"   color={C.blue}   onClick={() => navigate(`/hospital-charges/edit/${r._id}`)} />
+                      <RowAction icon={r.isActive ? "pi-ban" : "pi-check"}
+                        label={r.isActive ? "Off" : "On"}
+                        color={C.amber}
+                        onClick={() => toggle(r._id)} />
+                      <RowAction icon="pi-trash"  label="Delete" color={C.red}    onClick={() => remove(r._id, r.tpaName)} />
+                    </td>
+                  </tr>
+                );
+              })}
+        </Table>
+      </Card>
 
-            {/* Charges List */}
-            <div>
-              <h4
-                className="mb-3"
-                style={{
-                  color: "#374151",
-                  fontSize: "16px",
-                  fontWeight: "600",
-                }}
-              >
-                Charges List ({selectedCharges.charges?.length || 0})
-              </h4>
-
-              {selectedCharges.charges && selectedCharges.charges.length > 0 ? (
-                <div className="flex flex-column gap-3">
-                  {selectedCharges.charges.map((charge, index) => (
-                    <div
-                      key={index}
-                      style={{
-                        backgroundColor: "#FFFFFF",
-                        border: "1px solid #E5E7EB",
-                        borderRadius: "8px",
-                        padding: "1rem",
-                      }}
-                    >
-                      <div className="grid">
-                        <div className="col-12 md:col-6 lg:col-4">
-                          <p
-                            className="mb-1"
-                            style={{
-                              color: "#6B7280",
-                              fontSize: "11px",
-                              fontWeight: "500",
-                              textTransform: "uppercase",
-                            }}
-                          >
-                            Charge Name
-                          </p>
-                          <p
-                            className="m-0"
-                            style={{
-                              fontWeight: "600",
-                              color: "#1F2937",
-                              fontSize: "14px",
-                            }}
-                          >
-                            {charge.chargeName}
-                          </p>
-                        </div>
-                        <div className="col-12 md:col-6 lg:col-2">
-                          <p
-                            className="mb-1"
-                            style={{
-                              color: "#6B7280",
-                              fontSize: "11px",
-                              fontWeight: "500",
-                              textTransform: "uppercase",
-                            }}
-                          >
-                            Charge Type
-                          </p>
-                          <Tag value={charge.chargeType} severity="info" />
-                        </div>
-                        <div className="col-12 md:col-4 lg:col-2">
-                          <p
-                            className="mb-1"
-                            style={{
-                              color: "#6B7280",
-                              fontSize: "11px",
-                              fontWeight: "500",
-                              textTransform: "uppercase",
-                            }}
-                          >
-                            Amount
-                          </p>
-                          <p
-                            className="m-0"
-                            style={{
-                              fontWeight: "600",
-                              color: "#059669",
-                              fontSize: "14px",
-                            }}
-                          >
-                            ₹{charge.amount?.toLocaleString("en-IN") || 0}
-                          </p>
-                        </div>
-                        <div className="col-12 md:col-4 lg:col-2">
-                          <p
-                            className="mb-1"
-                            style={{
-                              color: "#6B7280",
-                              fontSize: "11px",
-                              fontWeight: "500",
-                              textTransform: "uppercase",
-                            }}
-                          >
-                            Discount
-                          </p>
-                          <p
-                            className="m-0"
-                            style={{
-                              fontWeight: "600",
-                              color: "#DC2626",
-                              fontSize: "14px",
-                            }}
-                          >
-                            {charge.discount || 0}%
-                          </p>
-                        </div>
-                        <div className="col-12 md:col-4 lg:col-2">
-                          <p
-                            className="mb-1"
-                            style={{
-                              color: "#6B7280",
-                              fontSize: "11px",
-                              fontWeight: "500",
-                              textTransform: "uppercase",
-                            }}
-                          >
-                            Per Unit
-                          </p>
-                          <Tag value={charge.perUnit} severity="warning" />
-                        </div>
-                        <div className="col-12 md:col-12 lg:col-12">
-                          <div
-                            style={{
-                              marginTop: "0.5rem",
-                              paddingTop: "0.75rem",
-                              borderTop: "1px dashed #E5E7EB",
-                            }}
-                          >
-                            <p
-                              className="mb-1"
-                              style={{
-                                color: "#6B7280",
-                                fontSize: "11px",
-                                fontWeight: "500",
-                                textTransform: "uppercase",
-                              }}
-                            >
-                              Total Amount (After Discount)
-                            </p>
-                            <p
-                              className="m-0"
-                              style={{
-                                fontWeight: "700",
-                                color: "#4F46E5",
-                                fontSize: "18px",
-                              }}
-                            >
-                              ₹
-                              {charge.totalAmount?.toLocaleString("en-IN") || 0}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div
-                  className="text-center p-5"
-                  style={{
-                    backgroundColor: "#F9FAFB",
-                    borderRadius: "8px",
-                    border: "1px dashed #D1D5DB",
-                  }}
-                >
-                  <i
-                    className="pi pi-inbox"
-                    style={{ fontSize: "3rem", color: "#9CA3AF" }}
-                  ></i>
-                  <p
-                    className="mt-3 mb-0"
-                    style={{ color: "#6B7280", fontSize: "14px" }}
-                  >
-                    No charges found
-                  </p>
-                </div>
-              )}
-            </div>
+      {view && (
+        <Modal
+          title={`${view.tpaName} · ${view.tpaCode || ""}`}
+          icon="pi-shield"
+          color={C.purple}
+          onClose={() => setView(null)}
+          hideFooter
+          size={1100}
+        >
+          {/* Summary strip */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, padding: "12px 14px", background: C.subtle, border: `1.5px solid ${C.border}`, borderRadius: 9, marginBottom: 14 }}>
+            <SummaryStat label="TPA Name"      value={view.tpaName} />
+            <SummaryStat label="TPA Code"      value={view.tpaCode || "—"} mono />
+            <SummaryStat label="Total Charges" value={`${view.charges?.length || 0}`} />
+            <SummaryStat label="Status"        value={<Badge value={view.isActive ? "Active" : "Inactive"} palette={view.isActive ? "active" : "inactive"} />} />
           </div>
-        )}
-      </Dialog>
+
+          <div style={{ fontSize: 13, fontWeight: 800, color: C.text, marginBottom: 8 }}>
+            Charges list <span style={{ color: C.muted, fontWeight: 600, fontSize: 11 }}>({view.charges?.length || 0})</span>
+          </div>
+
+          {(view.charges && view.charges.length > 0) ? (
+            <Table cols={["#", "Charge name", "Type", "Amount", "Discount", "Per Unit", "Total"]} compact>
+              {view.charges.map((c, idx) => (
+                <tr key={idx} style={{ borderTop: `1px solid ${C.border}`, background: idx % 2 ? "#fafbfc" : "#fff" }}>
+                  <td style={{ padding: "6px 10px", color: C.muted, fontFamily: "DM Mono, monospace" }}>{idx + 1}</td>
+                  <td style={{ padding: "6px 10px", fontWeight: 700 }}>{c.chargeName}</td>
+                  <td style={{ padding: "6px 10px" }}><Badge value={c.chargeType || "—"} palette="opd" /></td>
+                  <td style={{ padding: "6px 10px", fontWeight: 700 }}>{fmtINR(c.amount)}</td>
+                  <td style={{ padding: "6px 10px", color: C.red, fontWeight: 700 }}>{c.discount || 0}%</td>
+                  <td style={{ padding: "6px 10px" }}><Badge value={c.perUnit || "—"} palette="ipd" /></td>
+                  <td style={{ padding: "6px 10px", fontWeight: 800, color: C.purple, fontSize: 13 }}>{fmtINR(c.totalAmount)}</td>
+                </tr>
+              ))}
+            </Table>
+          ) : (
+            <div style={{ padding: "30px 16px", textAlign: "center", background: C.subtle, border: `1.5px dashed ${C.border}`, borderRadius: 9, color: C.muted }}>
+              <i className="pi pi-inbox" style={{ fontSize: 36, marginBottom: 8, display: "block" }} />
+              No charges defined on this sheet yet.
+            </div>
+          )}
+        </Modal>
+      )}
+    </AdminPage>
+  );
+};
+
+function SummaryStat({ label, value, mono }) {
+  return (
+    <div>
+      <div style={{ fontSize: 9.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 3 }}>{label}</div>
+      <div style={{ fontSize: 13, fontWeight: 700, color: C.text, fontFamily: mono ? "DM Mono, monospace" : undefined }}>{value}</div>
     </div>
   );
 }

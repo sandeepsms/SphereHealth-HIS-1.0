@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
+import "../../Components/clinical/clinical-forms.css";
 import { useFormik } from "formik";
 import AdmittedPatientPanel from "../../Components/clinical/AdmittedPatientPanel";
 import { useAuth } from "../../context/AuthContext";
@@ -27,19 +28,6 @@ const C = {
   orange: "#ea580c", orangeL: "#fff7ed",
 };
 
-const fld = {
-  padding: "9px 12px", border: "1.5px solid #e2e8f0", borderRadius: 8,
-  fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#0f172a",
-  outline: "none", background: "white", width: "100%", boxSizing: "border-box",
-};
-const sel = { ...fld, cursor: "pointer" };
-const ta  = { ...fld, resize: "vertical", minHeight: 80 };
-const lbl = {
-  display: "block", fontSize: 11, fontWeight: 700, color: "#64748b",
-  textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 5,
-};
-
-
 // ─── Section card ─────────────────────────────────────────────────────────────
 function SectionCard({ icon, title, color = C.primary, children }) {
   return (
@@ -67,7 +55,7 @@ function SectionCard({ icon, title, color = C.primary, children }) {
 function Field({ label, children, style }) {
   return (
     <div style={style}>
-      {label && <label style={lbl}>{label}</label>}
+      {label && <label className="his-label">{label}</label>}
       {children}
     </div>
   );
@@ -293,22 +281,22 @@ const NursingHandoverNotes = () => {
             <SectionCard icon="pi-id-card" title="Patient Identification" color={C.primary}>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14 }}>
                 <Field label="UHID">
-                  <input name="uhid" value={formik.values.uhid} onChange={formik.handleChange} placeholder="e.g. SH-26-000001" style={fld} />
+                  <input name="uhid" value={formik.values.uhid} onChange={formik.handleChange} placeholder="e.g. SH-26-000001" className="his-field" />
                 </Field>
                 <Field label="Admission No">
-                  <input name="admissionNo" value={formik.values.admissionNo} onChange={formik.handleChange} placeholder="Admission No" style={fld} />
+                  <input name="admissionNo" value={formik.values.admissionNo} onChange={formik.handleChange} placeholder="Admission No" className="his-field" />
                 </Field>
                 <Field label="Patient Name">
-                  <input name="name" value={formik.values.name} onChange={formik.handleChange} placeholder="Full name" style={fld} />
+                  <input name="name" value={formik.values.name} onChange={formik.handleChange} placeholder="Full name" className="his-field" />
                 </Field>
                 <Field label="Age / Sex">
-                  <input name="ageSex" value={formik.values.ageSex} onChange={formik.handleChange} placeholder="e.g. 45 / Male" style={fld} />
+                  <input name="ageSex" value={formik.values.ageSex} onChange={formik.handleChange} placeholder="e.g. 45 / Male" className="his-field" />
                 </Field>
                 <Field label="Ward / Bed">
-                  <input name="wardBed" value={formik.values.wardBed} onChange={formik.handleChange} placeholder="e.g. Ward 3 / Bed 12" style={fld} />
+                  <input name="wardBed" value={formik.values.wardBed} onChange={formik.handleChange} placeholder="e.g. Ward 3 / Bed 12" className="his-field" />
                 </Field>
                 <Field label="Diagnosis">
-                  <input name="diagnosis" value={formik.values.diagnosis} onChange={formik.handleChange} placeholder="Primary diagnosis" style={fld} />
+                  <input name="diagnosis" value={formik.values.diagnosis} onChange={formik.handleChange} placeholder="Primary diagnosis" className="his-field" />
                 </Field>
               </div>
 
@@ -337,28 +325,28 @@ const NursingHandoverNotes = () => {
             <SectionCard icon="pi-arrows-h" title="Shift Transition" color={C.blue}>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14 }}>
                 <Field label="From Shift">
-                  <select value={formik.values.fromShift} onChange={e => formik.setFieldValue("fromShift", e.target.value)} style={sel}>
+                  <select value={formik.values.fromShift} onChange={e => formik.setFieldValue("fromShift", e.target.value)} className="his-select">
                     <option value="">Select shift…</option>
                     {shiftOptions.map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </Field>
                 <Field label="To Shift">
-                  <select value={formik.values.toShift} onChange={e => formik.setFieldValue("toShift", e.target.value)} style={sel}>
+                  <select value={formik.values.toShift} onChange={e => formik.setFieldValue("toShift", e.target.value)} className="his-select">
                     <option value="">Select shift…</option>
                     {shiftOptions.map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </Field>
                 <Field label="Date">
-                  <input type="date" value={formik.values.date} onChange={e => formik.setFieldValue("date", e.target.value)} style={fld} />
+                  <input type="date" value={formik.values.date} onChange={e => formik.setFieldValue("date", e.target.value)} className="his-field" />
                 </Field>
                 <Field label="Time">
-                  <input type="time" value={formik.values.time} onChange={e => formik.setFieldValue("time", e.target.value)} style={fld} />
+                  <input type="time" value={formik.values.time} onChange={e => formik.setFieldValue("time", e.target.value)} className="his-field" />
                 </Field>
                 <Field label="Outgoing Nurse">
-                  <input placeholder="Outgoing nurse name" value={formik.values.outgoing} onChange={e => formik.setFieldValue("outgoing", e.target.value)} style={fld} />
+                  <input placeholder="Outgoing nurse name" value={formik.values.outgoing} onChange={e => formik.setFieldValue("outgoing", e.target.value)} className="his-field" />
                 </Field>
                 <Field label="Incoming Nurse">
-                  <input placeholder="Incoming nurse name" value={formik.values.incoming} onChange={e => formik.setFieldValue("incoming", e.target.value)} style={fld} />
+                  <input placeholder="Incoming nurse name" value={formik.values.incoming} onChange={e => formik.setFieldValue("incoming", e.target.value)} className="his-field" />
                 </Field>
               </div>
             </SectionCard>
@@ -367,7 +355,7 @@ const NursingHandoverNotes = () => {
             <SectionCard icon="pi-heart" title="Patient Status" color={C.red}>
               <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
                 <div>
-                  <label style={{ ...lbl, marginBottom: 10 }}>Condition</label>
+                  <label className="his-label" style={{ marginBottom: 10 }}>Condition</label>
                   <PillGroup
                     options={["Stable", "Observation", "Critical"]}
                     value={formik.values.condition}
@@ -439,7 +427,7 @@ const NursingHandoverNotes = () => {
                   { label: "Stool",        key: "stool",    opts: simpleOptions },
                 ].map(({ label, key, opts }) => (
                   <Field key={key} label={label}>
-                    <select value={formik.values[key]} onChange={e => formik.setFieldValue(key, e.target.value)} style={sel}>
+                    <select value={formik.values[key]} onChange={e => formik.setFieldValue(key, e.target.value)} className="his-select">
                       <option value="">Select…</option>
                       {opts.map(o => <option key={o} value={o}>{o}</option>)}
                     </select>
@@ -459,8 +447,8 @@ const NursingHandoverNotes = () => {
                 />
               </div>
               <div style={{ marginTop: 16 }}>
-                <label style={lbl}>Additional Instructions / Notes</label>
-                <textarea value={formik.values.notes} onChange={e => formik.setFieldValue("notes", e.target.value)} placeholder="Describe pending tasks, instructions for incoming shift…" style={ta} />
+                <label className="his-label">Additional Instructions / Notes</label>
+                <textarea value={formik.values.notes} onChange={e => formik.setFieldValue("notes", e.target.value)} placeholder="Describe pending tasks, instructions for incoming shift…" className="his-textarea" />
               </div>
             </SectionCard>
 
@@ -468,20 +456,20 @@ const NursingHandoverNotes = () => {
             <SectionCard icon="pi-verified" title="Verification & Sign-off" color={C.slate}>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 14 }}>
                 <Field label="Outgoing Nurse Signature">
-                  <input placeholder="Full name or digital signature" style={fld} onChange={e => formik.setFieldValue("outgoingSignature", e.target.value)} />
+                  <input placeholder="Full name or digital signature" className="his-field" onChange={e => formik.setFieldValue("outgoingSignature", e.target.value)} />
                 </Field>
                 <Field label="Incoming Nurse Signature">
-                  <input placeholder="Full name or digital signature" style={fld} onChange={e => formik.setFieldValue("incomingSignature", e.target.value)} />
+                  <input placeholder="Full name or digital signature" className="his-field" onChange={e => formik.setFieldValue("incomingSignature", e.target.value)} />
                 </Field>
                 <Field label="Doctor Informed">
-                  <select value={formik.values.doctorInformed} onChange={e => formik.setFieldValue("doctorInformed", e.target.value)} style={sel}>
+                  <select value={formik.values.doctorInformed} onChange={e => formik.setFieldValue("doctorInformed", e.target.value)} className="his-select">
                     <option value="">Select…</option>
                     <option value="Not Required">Not Required</option>
                     <option value="Yes">Yes</option>
                   </select>
                 </Field>
                 <Field label="Handover Timestamp">
-                  <input type="datetime-local" style={fld} onChange={e => formik.setFieldValue("handoverTimestamp", e.target.value)} />
+                  <input type="datetime-local" className="his-field" onChange={e => formik.setFieldValue("handoverTimestamp", e.target.value)} />
                 </Field>
               </div>
             </SectionCard>

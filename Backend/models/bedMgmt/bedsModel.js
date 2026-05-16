@@ -68,6 +68,80 @@ const BedSchema = new mongoose.Schema(
       default: true,
     },
     notes: String,
+
+    // ── Infection Prevention & Control (NABH IPC.6) ──
+    // Multiple flags can co-exist on a single bed (e.g. MRSA + Contact).
+    // Visual layout surfaces these as colored rings; admission flow
+    // warns the receptionist when an isolation bed is being assigned.
+    isolationFlags: {
+      type: [String],
+      default: [],
+      enum: [
+        "Contact",
+        "Droplet",
+        "Airborne",
+        "Neutropenic",
+        "MRSA",
+        "COVID",
+        "TB",
+        "VRE",
+        "CRE",
+        "C.diff",
+        "Reverse",
+      ],
+    },
+    // Optional summary level used for at-a-glance filtering
+    precautionLevel: {
+      type: String,
+      enum: ["Standard", "Enhanced", "Strict"],
+      default: "Standard",
+    },
+    isolationStartedAt: { type: Date, default: null },
+    isolationEndsAt:    { type: Date, default: null },
+    isolationNotes:     { type: String, default: "" },
+
+    // ── Housekeeping sub-status (NABH IPC.6 turnover audit) ──
+    // status: "Maintenance" stays the primary bucket; this finer-grained
+    // state lets the dashboard show cleaning queue + SLA timer.
+    housekeeping: {
+      state: {
+        type: String,
+        enum: ["Idle", "CleaningPending", "CleaningInProgress", "CleaningDone", "Inspected"],
+        default: "Idle",
+      },
+      startedAt:  { type: Date, default: null },
+      finishedAt: { type: Date, default: null },
+      assignedTo: { type: String, default: "" },
+    },
+
+    // ── Reservation auto-expiry (P2 #10) ──
+    // When set, a stale Reserved bed auto-flips back to Available
+    // either via the /bedss/reservations/expire-stale endpoint
+    // (cron-callable) or a manual sweep from the dashboard.
+    reservedUntil: { type: Date, default: null },
+    reservedBy:    { type: String, default: "" },
+    reservationReason: { type: String, default: "" },
+
+    // ── Equipment manifest (P2 #12) ──
+    // Tracks fixed equipment attached to this bed. Drives both bed
+    // pricing (per-day surcharges) and audit ("kahan kaunsa ventilator
+    // hai"). Free-form for now; later we'll link to a typed Asset model.
+    equipment: {
+      type: [
+        new mongoose.Schema(
+          {
+            type:        { type: String, required: true },   // e.g. "Ventilator"
+            label:       { type: String, default: "" },      // user-visible name
+            serialNo:    { type: String, default: "" },
+            lastService: { type: Date,   default: null },
+            dailyCharge: { type: Number, default: 0 },
+            notes:       { type: String, default: "" },
+          },
+          { _id: true, timestamps: false },
+        ),
+      ],
+      default: [],
+    },
   },
   {
     timestamps: true,
@@ -76,7 +150,11 @@ const BedSchema = new mongoose.Schema(
   },
 );
 
-BedSchema.index({ room: 1, bedNumber: 1 }, { unique: true });
+// Partial filter so soft-deleted beds (isActive=false) can be re-created.
+BedSchema.index(
+  { room: 1, bedNumber: 1 },
+  { unique: true, partialFilterExpression: { isActive: true } },
+);
 BedSchema.index({ ward: 1, status: 1 });
 BedSchema.index({ building: 1, floor: 1 });
 BedSchema.index({ patient: 1 }, { sparse: true });

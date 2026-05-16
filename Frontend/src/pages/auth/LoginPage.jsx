@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
+import { homePathForRole } from "../../config/permissions";
 
 const ROLE_COLORS = {
   Admin:            "#1e40af",
@@ -28,13 +29,21 @@ export default function LoginPage() {
   const { login } = useAuth();
   const navigate  = useNavigate();
   const location  = useLocation();
-  const from      = location.state?.from?.pathname || "/mainpage";
+  const fromState = location.state?.from?.pathname;
 
   const [email, setEmail]       = useState("");
   const [password, setPassword] = useState("");
   const [showPwd, setShowPwd]   = useState(false);
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState("");
+
+  // Role-aware landing page: each role gets its own home
+  // Removed local landingPageForRole — its routes were stale (Dietician
+  // landed on /vitalSheet, Physio on /updateVitalSheet — both nurse
+  // pages; Pharmacist on /mar — a nursing route; default /mainpage was
+  // the reception-flavoured generic dashboard). Now defers to the
+  // central homePathForRole in permissions.js which sends everyone to
+  // /dashboard (RoleDashboardPage handles per-role layout).
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -43,7 +52,11 @@ export default function LoginPage() {
     setLoading(true);
     try {
       const user = await login(email.trim(), password);
-      navigate(from, { replace: true });
+      // Prefer the page the user was trying to reach before login;
+      // otherwise send them to their role-aware /dashboard.
+      const STALE_REDIRECTS = ["/mainpage", "/dashboard1", "/login"];
+      const dest = fromState && !STALE_REDIRECTS.includes(fromState) ? fromState : homePathForRole(user?.role);
+      navigate(dest, { replace: true });
     } catch (err) {
       setError(err?.response?.data?.message || "Login failed. Please check your credentials.");
     } finally {

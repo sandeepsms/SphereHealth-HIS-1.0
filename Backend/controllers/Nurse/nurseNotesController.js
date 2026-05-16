@@ -29,7 +29,7 @@ class NurseNotesController {
     const note = await nurseNotesService.createNurseNote(data, nurseUserId);
     // ── Auto-billing hook ──────────────────────────────────────
     try {
-      const autoBilling = require("../../services/billing/autoBillingService");
+      const autoBilling = require("../../services/Billing/autoBillingService");
       autoBilling.onNurseNoteSaved(note).catch(() => {});
     } catch {}
     return res.status(201).json({ success: true, data: note });
@@ -119,6 +119,21 @@ class NurseNotesController {
       grouped,
       notes,
     });
+  });
+
+  // PATCH /api/nurse-notes/:id/blood-monitoring  — add a monitoring entry to an active transfusion
+  addBloodMonitoring = handle(async (req, res) => {
+    const { entry } = req.body;
+    if (!entry || typeof entry !== "object")
+      return res.status(400).json({ success: false, message: "entry (object) is required" });
+    const note = await nurseNotesService.addBloodMonitoringEntry(req.params.id, entry);
+    return res.json({ success: true, data: note });
+  });
+
+  // PATCH /api/nurse-notes/:id/blood-status  — complete / stop / react to a transfusion
+  updateBloodStatus = handle(async (req, res) => {
+    const note = await nurseNotesService.updateBloodTransfusionStatus(req.params.id, req.body);
+    return res.json({ success: true, data: note });
   });
 
   // DELETE /api/nurse-notes/:id

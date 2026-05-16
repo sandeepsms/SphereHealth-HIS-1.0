@@ -255,40 +255,66 @@ class BillingService {
   }
 
   // ── 10. Record payment ────────────────────────────────────────
+  // FIX (audit P6-B2): two cashiers receiving payment for the same bill at
+  // the same instant used to race — both read the same snapshot, both pushed
+  // a payment row, the second save() clobbered the first. The schema now has
+  // optimisticConcurrency enabled (rejects stale __v with VersionError); here
+  // we retry the load-modify-save up to 5 times before giving up. Net effect:
+  // concurrent payments serialise correctly and no row is ever lost.
   async recordPayment(
     billId,
     { amount, paymentMode, transactionId, receivedBy, remarks },
   ) {
-    const bill = await PatientBill.findById(billId);
-    if (!bill) throw new Error("Bill not found");
-
-    if (bill.billStatus === "DRAFT") {
-      throw new Error(
-        "Bill abhi DRAFT hai — pehle generateFinalBill() karo, tab payment lo",
-      );
-    }
-    if (bill.billStatus === "PAID") throw new Error("Bill already fully paid");
-    if (bill.billStatus === "CANCELLED")
-      throw new Error("Cancelled bill pe payment nahi ho sakti");
     if (!amount || amount <= 0) throw new Error("Valid amount required");
 
-    bill.payments.push({
-      amount,
-      paymentMode,
-      transactionId,
-      receivedBy,
-      remarks,
-      paidAt: new Date(),
-    });
+    const MAX_RETRIES = 5;
+    let lastErr;
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      const bill = await PatientBill.findById(billId);
+      if (!bill) throw new Error("Bill not found");
 
-    const totalPaid = bill.payments.reduce((s, p) => s + p.amount, 0);
-    bill.advancePaid = totalPaid;
-    bill.balanceAmount = Math.max(0, bill.patientPayableAmount - totalPaid);
-    bill.billStatus = bill.balanceAmount === 0 ? "PAID" : "PARTIAL";
-    if (bill.billStatus === "PAID") bill.paidAt = new Date();
+      if (bill.billStatus === "DRAFT") {
+        throw new Error(
+          "Bill abhi DRAFT hai — pehle generateFinalBill() karo, tab payment lo",
+        );
+      }
+      if (bill.billStatus === "PAID") throw new Error("Bill already fully paid");
+      if (bill.billStatus === "CANCELLED")
+        throw new Error("Cancelled bill pe payment nahi ho sakti");
+      if (bill.billStatus === "REFUNDED")
+        throw new Error("Refunded bill — no further payments allowed");
 
-    await bill.save();
-    return bill;
+      bill.payments.push({
+        amount,
+        paymentMode,
+        transactionId,
+        receivedBy,
+        remarks,
+        paidAt: new Date(),
+      });
+
+      const totalPaid = bill.payments.reduce((s, p) => s + p.amount, 0);
+      bill.advancePaid = totalPaid;
+      bill.balanceAmount = Math.max(0, bill.patientPayableAmount - totalPaid);
+      bill.billStatus = bill.balanceAmount === 0 ? "PAID" : "PARTIAL";
+      if (bill.billStatus === "PAID") bill.paidAt = new Date();
+
+      try {
+        await bill.save();
+        return bill;
+      } catch (err) {
+        // VersionError → another writer hit save() between our read and write.
+        // Retry with a fresh snapshot.
+        if (err?.name === "VersionError") {
+          lastErr = err;
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw new Error(
+      `Payment concurrency conflict after ${MAX_RETRIES} retries: ${lastErr?.message || "unknown"}`,
+    );
   }
 
   // ── 11. Update TPA claim status ───────────────────────────────
@@ -392,16 +418,30 @@ class BillingService {
   // ── 14. Daycare → IPD conversion ──────────────────────────────
   async checkAndHandleDaycareConversion(admissionId) {
     const admission = await Admission.findById(admissionId).populate("patient");
-    if (!admission || admission.admissionType !== "DAYCARE") return null;
+    // Admission.admissionType enum is mixed-case — "Daycare" or "Day Care".
+    // The legacy "DAYCARE" string never matched, so this endpoint always
+    // short-circuited to null and the auto-conversion to IPD never fired.
+    const isDaycare = admission &&
+      ["Daycare", "Day Care"].includes(admission.admissionType);
+    if (!isDaycare) return null;
 
-    const hours = admission.totalHoursAdmitted;
-    const exceeded = hours > admission.daycareMaxHours;
+    // Derive hours since admission — `totalHoursAdmitted` is not a schema
+    // field, so compute on the fly. Default max-hours window is 24h unless
+    // the admission carries an explicit override.
+    const admittedAt = admission.admissionDate || admission.createdAt;
+    const hours = admittedAt
+      ? (Date.now() - new Date(admittedAt).getTime()) / (1000 * 60 * 60)
+      : 0;
+    const maxHours = admission.daycareMaxHours || 24;
+    const exceeded = hours > maxHours;
 
     if (exceeded && !admission.isConvertedToIPD) {
       admission.isConvertedToIPD = true;
       admission.convertedToIPDAt = new Date();
-      admission.conversionReason = `Exceeded ${admission.daycareMaxHours}hr daycare limit`;
-      admission.admissionType = "IPD";
+      admission.conversionReason = `Exceeded ${maxHours}hr daycare limit`;
+      // "Planned" is the closest valid enum value for a converted IPD stay
+      // ("IPD" itself isn't in the admissionType enum).
+      admission.admissionType = "Planned";
       await admission.save();
 
       await PatientBill.updateMany(
@@ -426,14 +466,14 @@ class BillingService {
       return {
         converted: true,
         hours,
-        message: `Patient converted to IPD after ${hours} hours`,
+        message: `Patient converted to IPD after ${hours.toFixed(1)} hours`,
       };
     }
 
     return {
       converted: false,
       hours,
-      remaining: Math.max(0, admission.daycareMaxHours - hours),
+      remaining: Math.max(0, maxHours - hours),
     };
   }
 
@@ -514,9 +554,24 @@ class BillingService {
     const results = [];
     const failed = [];
 
+    // Map Admission.admissionType → PatientBill.visitType enum
+    // (enum: ["OPD","IPD","DAYCARE","EMERGENCY"]).
+    const admTypeToVisitType = {
+      "Planned":   "IPD",
+      "Transfer":  "IPD",
+      "Emergency": "EMERGENCY",
+      "Day Care":  "DAYCARE",
+      "Daycare":   "DAYCARE",
+      "OPD":       "OPD",
+      "Services":  "OPD",
+    };
+
     for (const item of items) {
       try {
-        if (!item.admission || item.admission.status !== "ADMITTED") {
+        // Admission.status enum is ["Active","Discharged","Transferred","Cancelled"].
+        // The legacy check against "ADMITTED" stopped EVERY active admission's
+        // daily auto-charges on the first cron run.
+        if (!item.admission || item.admission.status !== "Active") {
           item.isActive = false;
           await item.save();
           results.push({
@@ -527,9 +582,10 @@ class BillingService {
           continue;
         }
 
+        const visitType = admTypeToVisitType[item.admission.admissionType] || "IPD";
         const bill = await this.getOrCreateDraftBill(
           item.UHID,
-          item.admission.admissionType,
+          visitType,
           item.admission._id,
         );
 

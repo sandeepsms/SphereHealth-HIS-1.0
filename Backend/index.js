@@ -21,6 +21,24 @@ require("./models/Billing/BillingTrigger");
 // Seed nursing consumable master list if empty
 require("./services/nursing/nursingChargesService").seedDefaultItems().catch(() => {});
 
+// ── Daily bed-charge accrual job ────────────────────────────────────────────
+// Auto-bill IPD/Day-Care bed charges once per calendar day. The accrual
+// function uses dailyDedup so it is safe to fire multiple times per day —
+// the second + third invocations are no-ops if today's charge already exists.
+// First run is delayed 60s after boot so the DB connection is up; subsequent
+// runs every 6 hours so a missed midnight tick still catches up the same day.
+const _autoBilling = require("./services/Billing/autoBillingService");
+setTimeout(() => {
+  _autoBilling.runDailyBedChargeAccrual()
+    .then(r => console.log("[daily-accrual] boot:", r))
+    .catch(e => console.error("[daily-accrual] boot error:", e.message));
+}, 60_000);
+setInterval(() => {
+  _autoBilling.runDailyBedChargeAccrual()
+    .then(r => console.log("[daily-accrual]:", r))
+    .catch(e => console.error("[daily-accrual] error:", e.message));
+}, 6 * 60 * 60 * 1000);
+
 const patientRoutes = require("./routes/Patient/patientRoutes");
 // const doctorRoutes = require("./routes/doctorsRoutes");
 // const ServicebillRoutes = require("./routes/ServicebillRoutes");

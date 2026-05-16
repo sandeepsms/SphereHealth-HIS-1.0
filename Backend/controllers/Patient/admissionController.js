@@ -1,4 +1,5 @@
 const AdmissionService = require("../../services/Patient/admissionService");
+const { nextSequence } = require("../../utils/counter");
 
 const handle = (fn) => async (req, res) => {
   try {
@@ -13,6 +14,15 @@ const handle = (fn) => async (req, res) => {
 class AdmissionController {
   createAdmission = handle(async (req, res) => {
     const admission = await AdmissionService.createAdmission(req.body);
+
+    // ── Auto-billing: fire registration + admission + first bed-day charges ──
+    try {
+      const autoBilling = require("../../services/Billing/autoBillingService");
+      autoBilling.onAdmissionCreated(admission).catch((e) =>
+        console.error("Admission auto-billing error:", e.message)
+      );
+    } catch (e) { /* don't block the admission */ }
+
     return res.status(201).json({
       success: true,
       message: "Patient admitted successfully",
@@ -21,7 +31,12 @@ class AdmissionController {
   });
 
   getAllAdmissions = handle(async (req, res) => {
-    const result = await AdmissionService.getAllAdmissions(req.query);
+    const filters = { ...req.query };
+    // Doctor scope: only their own admitted patients (set by attachDoctorProfile)
+    if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
+      filters.attendingDoctorId = req.doctorProfile._id;
+    }
+    const result = await AdmissionService.getAllAdmissions(filters);
     return res.json({ success: true, ...result });
   });
 
@@ -31,12 +46,22 @@ class AdmissionController {
   });
 
   getActiveAdmissions = handle(async (req, res) => {
-    const admissions = await AdmissionService.getActiveAdmissions(req.query);
+    const filters = { ...req.query };
+    if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
+      filters.attendingDoctorId = req.doctorProfile._id;
+    }
+    const admissions = await AdmissionService.getActiveAdmissions(filters);
     return res.json({ success: true, data: admissions });
   });
 
   getTodayAdmissions = handle(async (req, res) => {
-    const admissions = await AdmissionService.getTodayAdmissions();
+    // Doctor scope filters in-memory because getTodayAdmissions() doesn't
+    // accept filters yet — fast enough for "today" lists.
+    let admissions = await AdmissionService.getTodayAdmissions();
+    if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
+      const docId = String(req.doctorProfile._id);
+      admissions = admissions.filter(a => String(a.attendingDoctorId) === docId);
+    }
     return res.json({ success: true, data: admissions });
   });
 
@@ -97,10 +122,15 @@ class AdmissionController {
   });
 
   // GET /api/admissions/my-patients  — Doctor's own IPD patients (requires auth)
+  // Admissions store `attendingDoctorId` as the Doctor model's _id (not the
+  // User _id), so we resolve the doctor profile first and pass THAT id.
   getMyPatients = handle(async (req, res) => {
     if (!req.user?.id) return res.status(401).json({ success: false, message: "Not authenticated" });
+    if (!req.doctorProfile?._id) {
+      return res.status(404).json({ success: false, message: "No linked Doctor record" });
+    }
     const { status = "Active" } = req.query;
-    const admissions = await AdmissionService.getMyIPDPatients(req.user.id, status);
+    const admissions = await AdmissionService.getMyIPDPatients(req.doctorProfile._id, status);
     return res.json({ success: true, data: admissions, count: admissions.length });
   });
 
@@ -352,15 +382,20 @@ class AdmissionController {
    */
   getMyTeamPatients = handle(async (req, res) => {
     const Admission = require("../../models/Patient/admissionModel");
-    const userId = req.user?._id?.toString() || req.user?.id?.toString();
-    const userName = req.user?.name || "";
+    // Admissions store the Doctor model `_id` in `attendingDoctorId` (from
+    // the reception console). req.doctorProfile is set by attachDoctorProfile
+    // when a Doctor user is logged in.
+    if (!req.doctorProfile?._id) {
+      return res.status(404).json({ success: false, message: "No linked Doctor record" });
+    }
+    const doctorId = req.doctorProfile._id.toString();
 
     const [asPrimary, asConsulting] = await Promise.all([
-      Admission.find({ attendingDoctorId: userId, status: "Active" })
+      Admission.find({ attendingDoctorId: doctorId, status: "Active" })
         .select("patientName UHID admissionNumber department admissionDate bedNumber attendingDoctor treatmentTeam")
         .sort({ admissionDate: -1 }),
       Admission.find({
-        "treatmentTeam.doctorId": userId,
+        "treatmentTeam.doctorId": doctorId,
         "treatmentTeam.status": "Active",
         status: "Active",
       }).select("patientName UHID admissionNumber department admissionDate bedNumber attendingDoctor treatmentTeam"),
@@ -371,7 +406,7 @@ class AdmissionController {
     const consultingList = asConsulting
       .filter(a => !asPrimary.some(p => p._id.toString() === a._id.toString()))  // dedup
       .map(a => {
-        const myEntry = a.treatmentTeam.find(m => m.doctorId?.toString() === userId);
+        const myEntry = a.treatmentTeam.find(m => m.doctorId?.toString() === doctorId);
         return { ...a.toObject(), myRole: myEntry?.role || "Consulting Specialist", myConsultEntry: myEntry };
       });
 
@@ -384,6 +419,38 @@ class AdmissionController {
       },
     });
   });
+  /**
+   * POST /:id/nurse-assessment
+   * Body: full nurse-initial-assessment payload (vitals, history, etc.) +
+   * `signoff` object with { name, designation, signedAt, notes, nurseSignature }.
+   * Stores the payload on the admission (NABH IPSG.6 nurse signoff trail)
+   * and flips initialAssessment.nurseCompleted = true.
+   */
+  saveNurseInitialAssessment = handle(async (req, res) => {
+    const Admission = require("../../models/Patient/admissionModel");
+    const admission = await Admission.findById(req.params.id);
+    if (!admission) return res.status(404).json({ success: false, message: "Admission not found" });
+
+    // Persist the full payload on a sub-doc so the assessment is traceable.
+    if (!admission.nurseInitialAssessment || typeof admission.nurseInitialAssessment !== "object") {
+      admission.nurseInitialAssessment = {};
+    }
+    Object.assign(admission.nurseInitialAssessment, req.body || {}, { savedAt: new Date() });
+    admission.markModified("nurseInitialAssessment");
+
+    // Flip the gate flag too.
+    if (!admission.initialAssessment || typeof admission.initialAssessment !== "object") {
+      admission.initialAssessment = {};
+    }
+    admission.initialAssessment.nurseCompleted   = true;
+    admission.initialAssessment.nurseCompletedAt = new Date();
+    admission.initialAssessment.nurseName        = req.body?.signoff?.name || req.body?.nurseName || "";
+    admission.markModified("initialAssessment");
+
+    await admission.save();
+    return res.json({ success: true, data: admission.nurseInitialAssessment });
+  });
+
   /**
    * PUT /:id/initial-assessment
    * Body: { role: "doctor" | "nurse", name: "Dr. XYZ" }
@@ -399,6 +466,10 @@ class AdmissionController {
     if (!admission) return res.status(404).json({ success: false, message: "Admission not found" });
 
     const now = new Date();
+    // Ensure initialAssessment object exists (Mixed type needs explicit init)
+    if (!admission.initialAssessment || typeof admission.initialAssessment !== "object") {
+      admission.initialAssessment = {};
+    }
     if (role === "doctor") {
       admission.initialAssessment.doctorCompleted   = true;
       admission.initialAssessment.doctorCompletedAt = now;
@@ -408,8 +479,190 @@ class AdmissionController {
       admission.initialAssessment.nurseCompletedAt = now;
       admission.initialAssessment.nurseName        = name;
     }
+    // markModified is required for Mixed-type fields so Mongoose tracks the change
+    admission.markModified("initialAssessment");
     await admission.save();
     return res.json({ success: true, message: `${role} initial assessment marked complete`, data: admission.initialAssessment });
+  });
+
+  /* ═══════════════════════════════════════════════════════════
+     DISCHARGE CLEARANCE WORKFLOW  (Receptionist)
+     Stages: NotRequested → DoctorApproved → BillCleared
+              → GatePassIssued → Completed
+  ═══════════════════════════════════════════════════════════ */
+
+  // GET /api/admissions/discharge-queue
+  // Returns the discharge workflow queue:
+  //   • DoctorApproved + BillCleared + GatePassIssued → all returned
+  //   • Completed → only those gate-passed today (so the "Discharged Today"
+  //     tab doesn't grow unbounded over weeks of history).
+  getDischargeQueue = handle(async (req, res) => {
+    const Admission = require("../../models/Patient/admissionModel");
+    const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+    const list = await Admission.find({
+      status: { $in: ["Active", "Discharged"] },
+      $or: [
+        { "dischargeWorkflow.stage": { $in: ["DoctorApproved", "BillCleared", "GatePassIssued"] } },
+        {
+          "dischargeWorkflow.stage": "Completed",
+          "dischargeWorkflow.gatePassIssuedAt": { $gte: startOfToday },
+        },
+      ],
+    })
+      .populate("patientId",     "fullName UHID dateOfBirth age gender contactNumber")
+      .populate("attendingDoctorId", "firstName lastName fullName doctorDetails.specialization")
+      .populate("departmentId",      "departmentName")
+      .sort({ "dischargeWorkflow.doctorApprovedAt": -1 })
+      .lean();
+    return res.json({ success: true, count: list.length, data: list });
+  });
+
+  // POST /api/admissions/:id/doctor-approve-discharge
+  // Called by Doctor after writing discharge summary.
+  // Body: { doctorName, finalBillAmount? }
+  doctorApproveDischarge = handle(async (req, res) => {
+    const Admission = require("../../models/Patient/admissionModel");
+    const adm = await Admission.findById(req.params.id);
+    if (!adm) return res.status(404).json({ success: false, message: "Admission not found" });
+    if (!adm.dischargeWorkflow) adm.dischargeWorkflow = {};
+    adm.dischargeWorkflow.stage              = "DoctorApproved";
+    adm.dischargeWorkflow.doctorApprovedAt   = new Date();
+    adm.dischargeWorkflow.doctorApprovedBy   = req.body.doctorName || "Doctor";
+    if (req.body.finalBillAmount !== undefined)
+      adm.dischargeWorkflow.finalBillAmount = Number(req.body.finalBillAmount) || 0;
+    adm.markModified("dischargeWorkflow");
+    await adm.save();
+    return res.json({ success: true, data: adm.dischargeWorkflow });
+  });
+
+  // POST /api/admissions/:id/clear-final-bill
+  // Receptionist clears the final bill (after payment collected).
+  // Body: { finalBillNumber, finalBillAmount, clearedBy, paymentMode?, transactionId? }
+  // If a PatientBill exists for this admission, also record the payment on it
+  // so the bill's balanceAmount drops to 0 and billStatus becomes PAID.
+  clearFinalBill = handle(async (req, res) => {
+    const Admission   = require("../../models/Patient/admissionModel");
+    const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+    const adm = await Admission.findById(req.params.id);
+    if (!adm) return res.status(404).json({ success: false, message: "Admission not found" });
+    if (!adm.dischargeWorkflow) adm.dischargeWorkflow = {};
+    if (adm.dischargeWorkflow.stage === "NotRequested") {
+      return res.status(400).json({ success: false, message: "Doctor has not yet approved discharge" });
+    }
+    // Idempotency: refuse to re-clear an already-cleared bill so concurrent
+    // receptionists (or accidental retries) don't double-push payment rows
+    // onto the linked PatientBill.
+    if (["BillCleared", "GatePassIssued", "Completed"].includes(adm.dischargeWorkflow.stage)) {
+      return res.status(409).json({
+        success: false,
+        message: `Final bill already cleared on ${adm.dischargeWorkflow.billClearedAt || "an earlier action"}.`,
+      });
+    }
+    adm.dischargeWorkflow.stage           = "BillCleared";
+    adm.dischargeWorkflow.billClearedAt   = new Date();
+    adm.dischargeWorkflow.billClearedBy   = req.body.clearedBy || "Receptionist";
+    if (req.body.finalBillNumber) adm.dischargeWorkflow.finalBillNumber = req.body.finalBillNumber;
+    if (req.body.finalBillAmount !== undefined)
+      adm.dischargeWorkflow.finalBillAmount = Number(req.body.finalBillAmount) || 0;
+    adm.markModified("dischargeWorkflow");
+    await adm.save();
+
+    // Also push a payment row onto the linked IPD/DAYCARE bill so the
+    // patient's outstanding balance reflects the final-bill clearance.
+    // We try (a) admission link, (b) admissionNumber denorm, then
+    // (c) the patient's open IPD/DAYCARE bill — covering bills created
+    // through any of the three paths the system supports.
+    try {
+      const finalAmt = Number(req.body.finalBillAmount) || 0;
+      if (finalAmt > 0) {
+        const openCond = { billStatus: { $nin: ["PAID", "CANCELLED", "REFUNDED"] } };
+        let bill = await PatientBill.findOne({ admission: adm._id, ...openCond });
+        if (!bill && adm.admissionNumber)
+          bill = await PatientBill.findOne({ admissionNumber: adm.admissionNumber, ...openCond });
+        if (!bill && adm.UHID)
+          bill = await PatientBill.findOne({
+            UHID: adm.UHID,
+            visitType: { $in: ["IPD", "DAYCARE"] },
+            ...openCond,
+          });
+        if (bill) {
+          // Validate paymentMode against PaymentSchema enum
+          const ALLOWED = ["CASH", "CARD", "UPI", "CHEQUE", "ONLINE", "TPA_CLAIM"];
+          const reqMode = String(req.body.paymentMode || "CASH").toUpperCase();
+          const mode = ALLOWED.includes(reqMode) ? reqMode : "CASH";
+
+          bill.payments.push({
+            amount:        finalAmt,
+            paymentMode:   mode,
+            transactionId: req.body.transactionId,
+            receivedBy:    req.body.clearedBy || "Reception",
+            remarks:       "Final bill cleared at discharge",
+          });
+          // Status flip happens before save so the pre-save hook (which
+          // honours billStatus when computing balanceAmount) sees the right
+          // value. The hook itself recomputes advancePaid + balanceAmount
+          // using patientPayableAmount, so we don't need manual math here.
+          const paid = bill.payments.reduce((s, p) => s + (p.amount || 0), 0);
+          const patientShare = bill.patientPayableAmount || bill.netAmount || 0;
+          bill.billStatus    = paid + 0.5 >= patientShare ? "PAID" : "PARTIAL";
+          if (bill.billStatus === "PAID") bill.paidAt = new Date();
+          await bill.save();
+        }
+      }
+    } catch (e) { /* don't block discharge clearance on bill update */ }
+
+    return res.json({ success: true, data: adm.dischargeWorkflow });
+  });
+
+  // POST /api/admissions/:id/issue-gate-pass
+  // Final step — receptionist hands gate pass + marks discharge complete.
+  issueGatePass = handle(async (req, res) => {
+    const Admission = require("../../models/Patient/admissionModel");
+    const adm = await Admission.findById(req.params.id);
+    if (!adm) return res.status(404).json({ success: false, message: "Admission not found" });
+    if (!adm.dischargeWorkflow) adm.dischargeWorkflow = {};
+    if (adm.dischargeWorkflow.stage !== "BillCleared" && adm.dischargeWorkflow.stage !== "GatePassIssued") {
+      return res.status(400).json({ success: false, message: "Final bill must be cleared before issuing gate pass" });
+    }
+    // Idempotency: if a gate pass already exists, return it instead of
+    // generating a new one (avoids duplicate GP numbers on retry).
+    if (adm.dischargeWorkflow.stage === "Completed" || adm.dischargeWorkflow.gatePassNumber) {
+      return res.status(409).json({
+        success: false,
+        message: `Gate pass already issued (${adm.dischargeWorkflow.gatePassNumber || "—"})`,
+      });
+    }
+    // Generate gate-pass number: GP-YYYYMMDD-XXXX via atomic Counter
+    // (replaces the legacy countDocuments race that produced duplicates).
+    // The two lines below are kept for backward-compat name shadowing; the
+    // actual value comes from `nextSequence`.
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    const seq = await nextSequence(`gatepass:${dateStr}`);
+    const passNumber = `GP-${dateStr}-${String(seq).padStart(4, "0")}`;
+    adm.dischargeWorkflow.stage             = "Completed";
+    adm.dischargeWorkflow.gatePassNumber    = passNumber;
+    adm.dischargeWorkflow.gatePassIssuedAt  = new Date();
+    adm.dischargeWorkflow.gatePassIssuedBy  = req.body.issuedBy || "Receptionist";
+    adm.status                              = "Discharged";
+    adm.actualDischargeDate                 = new Date();
+    adm.markModified("dischargeWorkflow");
+    await adm.save();
+
+    // Free the bed so the next admission can use it. Mirrors
+    // admissionService.dischargePatient — without this, beds stay stuck
+    // "Occupied" forever after a receptionist-issued gate pass.
+    if (adm.bedId) {
+      try {
+        const Bed = require("../../models/bedMgmt/bedsModel");
+        await Bed.findByIdAndUpdate(adm.bedId, {
+          $set: { status: "Available", currentAdmission: null, patient: null },
+        });
+      } catch (e) {
+        console.error("[issueGatePass] Failed to release bed:", e.message);
+      }
+    }
+
+    return res.json({ success: true, data: adm.dischargeWorkflow });
   });
 }
 

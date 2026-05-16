@@ -2,8 +2,11 @@ const mongoose = require("mongoose");
 
 const BillingTriggerSchema = new mongoose.Schema({
   // ── Patient context ─────────────────────────────────────────
-  admissionId:  { type: mongoose.Schema.Types.ObjectId, ref: "Admission", index: true },
-  opdVisitId:   { type: mongoose.Schema.Types.ObjectId, ref: "OPD" },
+  admissionId:  { type: mongoose.Schema.Types.ObjectId, ref: "Admission" },
+  // OPD visit model is registered as "OPDRegistration" (see
+  // Patient/OPDModels.js). The old `ref: "OPD"` would throw
+  // MissingSchemaError on any populate("opdVisitId") call.
+  opdVisitId:   { type: mongoose.Schema.Types.ObjectId, ref: "OPDRegistration" },
   patientId:    { type: mongoose.Schema.Types.ObjectId, ref: "Patient" },
   UHID:         { type: String, index: true },
   patientType:  { type: String, enum: ["OPD","IPD","EMERGENCY","DAYCARE","ICU"], default: "IPD" },
@@ -17,12 +20,15 @@ const BillingTriggerSchema = new mongoose.Schema({
   totalAmount:  { type: Number, default: 0 },
 
   // ── Clinical source ─────────────────────────────────────────
+  // "Admission", "BedCharge", "Emergency" are fired by autoBillingService
+  // for registration / bed-day / ER-triage charges — without them, those
+  // events silently fail validation and patients are billed nothing.
   sourceType: {
     type: String,
     enum: ["NurseNote","DoctorNote","DoctorAssessment","MAR","InvestigationOrder",
-           "Equipment","CarePlan","Discharge","Procedure","DoctorVisit","Manual","AutoCharge"],
-    required: true,
-  },
+           "Equipment","CarePlan","Discharge","Procedure","DoctorVisit","Manual","AutoCharge",
+           "Admission","BedCharge","Emergency"],
+    required: true },
   sourceDocumentId:    { type: mongoose.Schema.Types.ObjectId },
   sourceDocumentModel: String, // "NurseNote", "DoctorNote", "MAR", etc.
 
@@ -50,9 +56,7 @@ const BillingTriggerSchema = new mongoose.Schema({
   status: {
     type: String,
     enum: ["pending","in_progress","completed","billed","cancelled","voided","skipped"],
-    default: "pending",
-    index: true,
-  },
+    default: "pending" },
 
   // ── Flags ────────────────────────────────────────────────────
   autoCharged:          { type: Boolean, default: false },
@@ -63,10 +67,8 @@ const BillingTriggerSchema = new mongoose.Schema({
   // ── Metadata ─────────────────────────────────────────────────
   shift:      String,
   department: String,
-  notes:      String,
-}, {
-  timestamps: true,
-});
+  notes:      String }, {
+  timestamps: true });
 
 // Compound index for daily dedup
 BillingTriggerSchema.index({ admissionId: 1, serviceCode: 1, dateKey: 1, status: 1 });

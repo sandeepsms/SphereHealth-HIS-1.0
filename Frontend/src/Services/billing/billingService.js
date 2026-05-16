@@ -36,6 +36,43 @@ export const billingService = {
     }
   },
 
+  // ── GET /api/billing  — paginated bills list ──────────────────
+  // Used by Accountant / Admin "Bills List" page.
+  // filters: { status, visitType, paymentType, UHID, billNumber, startDate, endDate }
+  getAllBills: async (filters = {}, page = 1, limit = 50) => {
+    try {
+      const params = new URLSearchParams({ page, limit });
+      Object.entries(filters).forEach(([k, v]) => {
+        if (v !== undefined && v !== null && v !== "") params.set(k, v);
+      });
+      const response = await fetch(`${API_BASE}?${params}`);
+      const data = await response.json();
+      return {
+        bills: (data.data || []).map(normalizeBill),
+        pagination: data.pagination || { total: 0, page, limit, pages: 0 },
+      };
+    } catch (error) {
+      console.error("Error fetching bills list:", error);
+      return { bills: [], pagination: { total: 0, page, limit, pages: 0 } };
+    }
+  },
+
+  // ── GET /api/billing/summary?startDate=...&endDate=... ────────
+  // Alias used by BillsList for the top "stat cards" row.
+  getBillStats: async ({ startDate, endDate } = {}) => {
+    try {
+      const params = new URLSearchParams();
+      if (startDate) params.set("startDate", startDate);
+      if (endDate)   params.set("endDate", endDate);
+      const response = await fetch(`${API_BASE}/summary?${params}`);
+      const data = await response.json();
+      return data.data || data.summary || {};
+    } catch (error) {
+      console.error("Error fetching bill stats:", error);
+      return {};
+    }
+  },
+
   // ── GET /api/billing/uhid/:UHID ───────────────────────────────
   // Patient info + all their bills
   getPatientBills: async (UHID) => {

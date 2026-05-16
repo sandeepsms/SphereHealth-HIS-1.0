@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, Link } from "react-router-dom";
 import { getPatients } from "../../Services/userService";
 import { getVitalSheet, updateVitalSheet } from "../../Services/vital/vitalService";
 import { Formik, Form, Field, ErrorMessage } from "formik";
@@ -12,8 +12,9 @@ export default function UpdateVitalSheet() {
   const [formData, setFormData] = useState(null);
   const toast = useRef(null);
 
-  // Fetch patient details
+  // Fetch patient details (only if UHID was provided in the route)
   useEffect(() => {
+    if (!uhid) return;
     async function fetchPatient() {
       const all = await getPatients();
       const selected = all.find((p) => p.UHID === uhid);
@@ -24,6 +25,7 @@ export default function UpdateVitalSheet() {
 
   // Fetch specific vital sheet by UHID and date
   useEffect(() => {
+    if (!uhid || !date) return;
     async function fetchVital() {
       const res = await getVitalSheet(uhid, date);
       if (res?.success && res.data) {
@@ -33,6 +35,17 @@ export default function UpdateVitalSheet() {
     }
     fetchVital();
   }, [uhid, date]);
+
+  // Show a picker prompt when the route lacks UHID/date params
+  if (!uhid || !date) {
+    return (
+      <div className="p-4 text-center">
+        <h3>Pick a patient first</h3>
+        <p>Vitals are recorded against a specific UHID and date. Open the patient list, click a patient, then choose "Update Vitals" from their visit context.</p>
+        <Link to="/allpatient" className="btn btn-primary">Open Patient List</Link>
+      </div>
+    );
+  }
 
   if (!patient || !formData) return <h3>Loading...</h3>;
 

@@ -34,10 +34,10 @@ const STATS = [
 /* ── All module definitions with role restrictions ── */
 const ALL_MODULES = [
   // Front Desk / Receptionist
-  { label: "New OPD",              icon: "pi-plus-circle",          path: "/registration/OPD",       color: C.teal,   roles: ["Admin","Receptionist"] },
-  { label: "IPD Registration",     icon: "pi-user-plus",            path: "/registration/IPD",       color: C.accent, roles: ["Admin","Receptionist"] },
-  { label: "Emergency",            icon: "pi-exclamation-circle",   path: "/registration/Emergency", color: C.red,    roles: ["Admin","Receptionist","Nurse","Doctor"] },
-  { label: "Daycare",              icon: "pi-sun",                  path: "/registration/Daycare",   color: C.orange, roles: ["Admin","Receptionist"] },
+  { label: "New OPD",              icon: "pi-plus-circle",          path: "/reception",       color: C.teal,   roles: ["Admin","Receptionist"] },
+  { label: "IPD Registration",     icon: "pi-user-plus",            path: "/reception",       color: C.accent, roles: ["Admin","Receptionist"] },
+  { label: "Emergency",            icon: "pi-exclamation-circle",   path: "/reception", color: C.red,    roles: ["Admin","Receptionist","Nurse","Doctor"] },
+  { label: "Daycare",              icon: "pi-sun",                  path: "/reception",   color: C.orange, roles: ["Admin","Receptionist"] },
   { label: "Bed Visual",           icon: "pi-th-large",             path: "/bed-visual",             color: C.purple, roles: ["Admin","Doctor","Nurse","Receptionist"] },
   { label: "Patient Billing",      icon: "pi-receipt",              path: "/patient-billing",        color: C.green,  roles: ["Admin","Receptionist","TPA Coordinator"] },
   // Doctor
@@ -52,7 +52,7 @@ const ALL_MODULES = [
   { label: "MAR",                  icon: "pi-list-check",           path: "/mar",                    color: C.amber,  roles: ["Admin","Nurse","Doctor"] },
   // Admin
   { label: "User Management",      icon: "pi-users",                path: "/admin/users",            color: C.purple, roles: ["Admin"] },
-  { label: "IPD Admission",        icon: "pi-building",             path: "/ipd-admission",          color: C.accent, roles: ["Admin","Receptionist"] },
+  { label: "IPD Admission",        icon: "pi-building",             path: "/reception",          color: C.accent, roles: ["Admin","Receptionist"] },
 ];
 
 /* ── Filter modules by role ── */
@@ -61,17 +61,17 @@ const getModules = (role) => ALL_MODULES.filter(m => m.roles.includes(role));
 /* ── Quick Access per role ── */
 const QUICK_ACCESS_MAP = {
   Admin:            [
-    { label: "New OPD",          icon: "pi-plus-circle",       path: "/registration/OPD",      color: C.teal   },
-    { label: "IPD Admission",    icon: "pi-building",          path: "/ipd-admission",          color: C.accent },
-    { label: "Emergency",        icon: "pi-exclamation-circle",path: "/registration/Emergency", color: C.red    },
+    { label: "New OPD",          icon: "pi-plus-circle",       path: "/reception",      color: C.teal   },
+    { label: "IPD Admission",    icon: "pi-building",          path: "/reception",          color: C.accent },
+    { label: "Emergency",        icon: "pi-exclamation-circle",path: "/reception", color: C.red    },
     { label: "Patient Search",   icon: "pi-search",            path: "/allpatient",             color: C.purple },
     { label: "Patient Billing",  icon: "pi-receipt",           path: "/patient-billing",        color: C.green  },
     { label: "User Management",  icon: "pi-users",             path: "/admin/users",            color: C.purple },
   ],
   Receptionist:     [
-    { label: "New OPD",          icon: "pi-plus-circle",       path: "/registration/OPD",      color: C.teal   },
-    { label: "IPD Admission",    icon: "pi-building",          path: "/ipd-admission",          color: C.accent },
-    { label: "Emergency",        icon: "pi-exclamation-circle",path: "/registration/Emergency", color: C.red    },
+    { label: "New OPD",          icon: "pi-plus-circle",       path: "/reception",      color: C.teal   },
+    { label: "IPD Admission",    icon: "pi-building",          path: "/reception",          color: C.accent },
+    { label: "Emergency",        icon: "pi-exclamation-circle",path: "/reception", color: C.red    },
     { label: "Patient Search",   icon: "pi-search",            path: "/allpatient",             color: C.purple },
     { label: "Patient Billing",  icon: "pi-receipt",           path: "/patient-billing",        color: C.green  },
     { label: "Bed Layout",       icon: "pi-th-large",          path: "/bed-visual",             color: C.amber  },
@@ -155,10 +155,11 @@ export default function MainPage() {
           return d && new Date(d).toDateString() === todayStr;
         });
 
-        // Active IPD admissions
+        // Active IPD admissions — hasBed=true excludes OPD / Day-Care /
+        // Services stubs that also live in the Admission collection.
         let admissions = [];
         try {
-          const admRes = await axios.get(API_ENDPOINTS.ADMISSIONS + "/active");
+          const admRes = await axios.get(API_ENDPOINTS.ADMISSIONS + "/active?hasBed=true");
           admissions = (admRes.data?.data || admRes.data || []).slice(0, 20);
         } catch { /* admissions may not exist yet */ }
 
@@ -295,8 +296,12 @@ export default function MainPage() {
             gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
             gap: 10,
           }}>
-            {modules.map(m => (
-              <button key={m.path} onClick={() => navigate(m.path)}
+            {modules.map((m, i) => (
+              // FIX: duplicate-key warning — many module tiles share the same
+              // path ("/reception" for OPD / IPD / Emergency / Daycare entry
+              // points). Compose the key from label + index so each tile is
+              // uniquely identified to React.
+              <button key={`${m.label}-${i}`} onClick={() => navigate(m.path)}
                 style={{
                   display: "flex", alignItems: "center", gap: 10,
                   padding: "12px 14px", border: `1.5px solid ${m.color}30`,
@@ -345,8 +350,8 @@ export default function MainPage() {
               { label: "Nursing Notes",      icon: "pi-pencil",                 path: "/nursing-notes",            color: C.pink,   desc: "All nursing assessments & notes" },
               { label: "MAR",                icon: "pi-list-check",             path: "/mar",                      color: C.amber,  desc: "Medication administration" },
               { label: "Handover Notes",     icon: "pi-arrow-right-arrow-left", path: "/nursing-handover-notes",   color: C.teal,   desc: "Shift handover documentation" },
-            ].map(item => (
-              <button key={item.path} onClick={() => navigate(item.path)}
+            ].map((item, i) => (
+              <button key={`${item.label}-${i}`} onClick={() => navigate(item.path)}
                 style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px",
                   border: `1.5px solid ${item.color}25`, borderRadius: 10, background: "white",
                   cursor: "pointer", fontFamily: "'DM Sans',sans-serif", textAlign: "left", transition: "all .2s" }}
@@ -567,7 +572,7 @@ export default function MainPage() {
                             <i className="pi pi-eye" style={{ fontSize: 10, marginRight: 4 }} />View
                           </button>
                           {(role === "Admin" || role === "Receptionist") && (
-                            <button onClick={() => navigate(`/registration/IPD/${p._id}`)}
+                            <button onClick={() => navigate(`/reception?patientId=${p._id}&visit=IPD`)}
                               style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${C.border}`,
                                 background: "white", cursor: "pointer", fontSize: 11, fontWeight: 600, color: C.muted }}>
                               <i className="pi pi-file-edit" style={{ fontSize: 10, marginRight: 4 }} />Edit
@@ -605,8 +610,8 @@ export default function MainPage() {
               <span style={{ fontSize: 10, color: "#64748b" }}>Tell us what else to add here</span>
             </div>
             <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 6 }}>
-              {quickAccess.map(item => (
-                <button key={item.path}
+              {quickAccess.map((item, i) => (
+                <button key={`${item.label}-${i}`}
                   onClick={() => { navigate(item.path); setQaOpen(false); }}
                   style={{
                     display: "flex", alignItems: "center", gap: 12,

@@ -1,4 +1,5 @@
 import API_ENDPOINTS from "../config/api";
+import authFetch from "../utils/authFetch";
 
 const extractId = (obj) => {
   if (!obj) return null;
@@ -20,7 +21,7 @@ const normalizeFloor = (floor) => {
 export const floorService = {
   getAllFloors: async () => {
     try {
-      const response = await fetch(API_ENDPOINTS.FLOORS);
+      const response = await authFetch(API_ENDPOINTS.FLOORS);
       const data = await response.json();
       const floors = Array.isArray(data)
         ? data
@@ -34,7 +35,7 @@ export const floorService = {
 
   getFloorById: async (id) => {
     try {
-      const response = await fetch(`${API_ENDPOINTS.FLOORS}/${id}`);
+      const response = await authFetch(`${API_ENDPOINTS.FLOORS}/${id}`);
       const floor = await response.json();
       return normalizeFloor(floor);
     } catch (error) {
@@ -45,7 +46,7 @@ export const floorService = {
 
   getFloorDetails: async (id) => {
     try {
-      const response = await fetch(`${API_ENDPOINTS.FLOORS}/details/${id}`);
+      const response = await authFetch(`${API_ENDPOINTS.FLOORS}/details/${id}`);
       const floor = await response.json();
       return normalizeFloor(floor);
     } catch (error) {
@@ -56,7 +57,7 @@ export const floorService = {
 
   createFloor: async (data) => {
     try {
-      const response = await fetch(API_ENDPOINTS.FLOORS, {
+      const response = await authFetch(API_ENDPOINTS.FLOORS, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
@@ -71,7 +72,7 @@ export const floorService = {
 
   updateFloor: async (id, data) => {
     try {
-      const response = await fetch(`${API_ENDPOINTS.FLOORS}/${id}`, {
+      const response = await authFetch(`${API_ENDPOINTS.FLOORS}/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
@@ -86,7 +87,7 @@ export const floorService = {
 
   deleteFloor: async (id) => {
     try {
-      const response = await fetch(`${API_ENDPOINTS.FLOORS}/${id}`, {
+      const response = await authFetch(`${API_ENDPOINTS.FLOORS}/${id}`, {
         method: "DELETE",
       });
       return await response.json();

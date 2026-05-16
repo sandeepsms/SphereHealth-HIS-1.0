@@ -19,8 +19,11 @@ export const API_ENDPOINTS = {
   // ── TPA & Old Billing ─────────────────────────────────────────
   TPA: `${API_BASE_URL}/tpa`,
   TPA_SERVICES: `${API_BASE_URL}/tpaservice`,
-  TPASERVICEBILL: `${API_BASE_URL}/Servicebilldata/addbill`,
+  // NOTE: Backend mounts this at lowercase `/servicebilldata` — keep both
+  // sides aligned so the route works on case-sensitive Linux deployments.
+  TPASERVICEBILL: `${API_BASE_URL}/servicebilldata/addbill`,
   HOSPITAL_CHARGES: `${API_BASE_URL}/hospital-charges`,
+  HOSPITAL_SETTINGS: `${API_BASE_URL}/hospital-settings`,
 
   // ── Bed Management ────────────────────────────────────────────
   BEDS: `${API_BASE_URL}/bedss`,
@@ -38,6 +41,9 @@ export const API_ENDPOINTS = {
   // ── Doctor & Prescriptions ────────────────────────────────────
   DOCTORPRECEPTION: `${API_BASE_URL}/patients/uhid`,
   PRESCRIPTIONS: `${API_BASE_URL}/prescriptions`,
+
+  // ── Medico-Legal Cases (MLC) ──────────────────────────────────
+  MLC: `${API_BASE_URL}/mlc`,
 
   // ── Search ────────────────────────────────────────────────────
   RegistrationSearch: `${API_BASE_URL}/registartion-search`,

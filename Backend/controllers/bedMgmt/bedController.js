@@ -1,4 +1,6 @@
 const BedService = require("../../services/bedMgmt/bedService");
+const { predictLOS } = require("../../services/bedMgmt/losPredictionService");
+const bedBus = require("../../services/bedMgmt/bedEventBus");
 
 class BedController {
   async createBeds(req, res) {
@@ -176,6 +178,84 @@ class BedController {
         success: false,
         message: error.message,
       });
+    }
+  }
+
+  /* ── Housekeeping (NABH IPC.6) ── */
+  async updateHousekeeping(req, res) {
+    try {
+      const bed = await BedService.updateHousekeeping(req.params.id, req.body);
+      res.json({ success: true, data: bed });
+    } catch (error) {
+      res.status(400).json({ success: false, message: error.message });
+    }
+  }
+
+  async getHousekeepingQueue(req, res) {
+    try {
+      const beds = await BedService.getHousekeepingQueue();
+      res.json({ success: true, count: beds.length, data: beds });
+    } catch (error) {
+      res.status(400).json({ success: false, message: error.message });
+    }
+  }
+
+  /* ── Reservation auto-expiry (P2 #10) ── */
+  async expireStaleReservations(req, res) {
+    try {
+      const result = await BedService.expireStaleReservations();
+      res.json({ success: true, ...result });
+    } catch (error) {
+      res.status(400).json({ success: false, message: error.message });
+    }
+  }
+
+  /* ── Real-time bed status feed (P3 #15 — Server-Sent Events) ──
+       GET /api/bedss/events
+       Holds the HTTP connection open and streams "bed-update" events
+       whenever the bus emits. Browser EventSource auto-reconnects on
+       disconnect. No payload needed beyond the event kind — the
+       client refetches /bedss on receipt. */
+  streamBedEvents(req, res) {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");   // nginx — don't buffer SSE
+    res.flushHeaders?.();
+
+    // Friendly hello so the EventSource readyState flips to OPEN
+    res.write(`event: hello\ndata: ${JSON.stringify({ ok: true, subs: bedBus.subscriberCount() + 1 })}\n\n`);
+
+    const unsubscribe = bedBus.subscribe(res);
+
+    // Keepalive comment every 25 s — keeps proxies / load balancers
+    // from cutting an idle connection. SSE comments start with `:`.
+    const keepalive = setInterval(() => {
+      try { res.write(`: keepalive ${Date.now()}\n\n`); } catch (_) {}
+    }, 25_000);
+
+    req.on("close", () => {
+      clearInterval(keepalive);
+      unsubscribe();
+    });
+  }
+
+  /* ── Predictive LOS (P2 #11) ──
+       Query: ?diagnosis=...&age=...&department=...&isCritical=true
+       Returns median days + basis. Rule-based for now; same shape
+       when we plug in an ML model later. */
+  predictLOS(req, res) {
+    try {
+      const { diagnosis = "", age = 0, department = "", isCritical } = req.query;
+      const result = predictLOS({
+        diagnosis,
+        age: Number(age),
+        department,
+        isCritical: isCritical === "true" || isCritical === true,
+      });
+      res.json({ success: true, data: result });
+    } catch (error) {
+      res.status(400).json({ success: false, message: error.message });
     }
   }
 

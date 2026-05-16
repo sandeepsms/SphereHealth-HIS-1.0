@@ -9,8 +9,7 @@ const NursingInterventionSchema = new mongoose.Schema(
     frequency: { type: String, trim: true },
     responsible: { type: String, trim: true },
     done: { type: Boolean, default: false },
-    remarks: { type: String },
-  },
+    remarks: { type: String } },
   { _id: true }
 );
 
@@ -22,8 +21,7 @@ const NursingProblemSchema = new mongoose.Schema(
     priority: {
       type: String,
       enum: ["HIGH", "MEDIUM", "LOW"],
-      default: "MEDIUM",
-    },
+      default: "MEDIUM" },
     shortTermGoal: { type: String, trim: true },
     longTermGoal: { type: String, trim: true },
     interventions: [NursingInterventionSchema],
@@ -31,10 +29,8 @@ const NursingProblemSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: ["ACTIVE", "RESOLVED", "ON_HOLD"],
-      default: "ACTIVE",
-    },
-    resolvedAt: { type: Date },
-  },
+      default: "ACTIVE" },
+    resolvedAt: { type: Date } },
   { _id: true }
 );
 
@@ -45,24 +41,20 @@ const NursingCarePlanSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Patient",
       required: true,
-      index: true,
-    },
-    UHID: { type: String, required: true, trim: true, index: true },
+      index: true },
+    UHID: { type: String, required: true, trim: true },
     patientName: { type: String, trim: true },
     age: { type: String },
     gender: { type: String },
     admissionId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Admission",
-      index: true,
-    },
-    ipdNo: { type: String, required: true, index: true },
+      ref: "Admission" },
+    ipdNo: { type: String, required: true },
 
     // ── Nursing Team ─────────────────────────────────────────
     primaryNurse: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "NurseStaff",
-    },
+      ref: "NurseStaff" },
     nurseName: { type: String, trim: true },
     attendingDoctor: { type: String, trim: true },
     department: { type: String, trim: true },
@@ -73,52 +65,43 @@ const NursingCarePlanSchema = new mongoose.Schema(
       consciousnessLevel: {
         type: String,
         enum: ["Alert", "Drowsy", "Confused", "Unconscious", "Sedated"],
-        default: "Alert",
-      },
+        default: "Alert" },
       mobility: {
         type: String,
         enum: ["Independent", "Assisted", "Dependent", "Bedridden"],
-        default: "Independent",
-      },
+        default: "Independent" },
       nutritionStatus: {
         type: String,
         enum: ["Good", "Fair", "Poor", "On NGT", "On TPN"],
-        default: "Good",
-      },
+        default: "Good" },
       eliminationPattern: {
         type: String,
         enum: ["Normal", "Constipation", "Diarrhea", "Catheterized", "Colostomy"],
-        default: "Normal",
-      },
+        default: "Normal" },
       selfCareAbility: {
         type: String,
         enum: ["Full", "Partial", "Dependent"],
-        default: "Full",
-      },
+        default: "Full" },
       painPresent: { type: Boolean, default: false },
       painScore: { type: Number, min: 0, max: 10, default: 0 },
       skinCondition: {
         type: String,
         enum: ["Intact", "Wound", "Rash", "Pressure Ulcer", "Edema"],
-        default: "Intact",
-      },
+        default: "Intact" },
       fallRisk: {
         type: String,
         enum: ["Low", "Medium", "High"],
-        default: "Low",
-      },
+        default: "Low" },
       pressureUlcerRisk: {
         type: String,
         enum: ["Low", "Medium", "High"],
-        default: "Low",
-      },
+        default: "Low" },
       ivAccess: { type: Boolean, default: false },
       urinaryCatheter: { type: Boolean, default: false },
       nasogastricTube: { type: Boolean, default: false },
       oxygenSupport: { type: Boolean, default: false },
       oxygenFlowRate: { type: String },
-      additionalNotes: { type: String },
-    },
+      additionalNotes: { type: String } },
 
     // ── Nursing Problems & Interventions ─────────────────────
     nursingProblems: [NursingProblemSchema],
@@ -136,15 +119,12 @@ const NursingCarePlanSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: ["ACTIVE", "COMPLETED", "DISCONTINUED"],
-      default: "ACTIVE",
-      index: true,
-    },
+      default: "ACTIVE" },
     reviewDate: { type: Date },
     completedAt: { type: Date },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "NurseStaff" },
-    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "NurseStaff" },
-  },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "NurseStaff" } },
   { timestamps: true, collection: "nursing_care_plans" }
 );
 

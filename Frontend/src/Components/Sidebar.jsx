@@ -50,6 +50,7 @@ const WB    = "Ward Boy";
 const ADMIN = "Admin";
 const PT    = "Physiotherapist";
 const DT    = "Dietician";
+const MT    = "Maintenance";        // Housekeeping / facilities / equipment
 
 /* ══════════════════════════════════════════════════════════════
    MASTER NAV DEFINITION
@@ -57,25 +58,42 @@ const DT    = "Dietician";
    Each item also carries roles for fine-grained filtering.
 ══════════════════════════════════════════════════════════════ */
 const NAV = [
-  /* ── Dashboard ──────────────────────────────────────── */
+  /* ── Dashboard ──────────────────────────────────────────────
+     /dashboard is the role-aware RoleDashboardPage — it reads
+     user.role and renders the right layout. Previously this pointed
+     to /mainpage which was the receptionist-flavoured MainPage and
+     non-receptionist roles (Dietician, Physio, Accountant, …) saw
+     reception's "New OPD / IPD Registration" cards — a permission
+     breach reported on 13 May 2026. */
   {
     id: "dashboard", label: "Dashboard",
     icon: "pi-home", color: "#1e40af", light: "#eff6ff",
-    path: "/mainpage", single: true, roles: ALL,
+    path: "/dashboard", single: true, roles: ALL,
   },
 
-  /* ── Patient Registration (Reception) ───────────────── */
+  /* ── Reception (NABH front-desk workflow) ───────────── */
+  /* Receptionist gets the full front-desk surface.
+     Admin sees everything for management.
+     Doctor/Nurse only get "Reception Dashboard" link (handy overview) and
+     "Patient Search" — they shouldn't be creating registrations, issuing
+     visitor passes, or working the discharge queue. */
   {
-    id: "registration", label: "Patient Registration",
-    icon: "pi-user-plus", color: "#0891b2", light: "#ecfeff",
-    nabh: true, roles: [ADMIN, RX, DR, NR],
+    id: "registration", label: "Reception",
+    icon: "pi-desktop", color: "#0891b2", light: "#ecfeff",
+    nabh: true, roles: [ADMIN, RX, DR, NR, AC, TPA],
     items: [
-      { label: "IPD Admission",     icon: "pi-plus-circle",         path: "/ipd-admission",       nabh: true,  roles: [ADMIN, RX] },
-      { label: "OPD Registration",  icon: "pi-user-plus",           path: "/opd-register",        nabh: true,  roles: [ADMIN, RX] },
-      { label: "ER Registration",   icon: "pi-bolt",                path: "/emergency/register",  nabh: true,  roles: [ADMIN, RX, DR, NR] },
-      { label: "Patient Search",    icon: "pi-search",              path: "/allpatient",           roles: [ADMIN, RX, DR, NR, PH, LB, RL, AC, PT, DT, TPA] },
-      { label: "Patient Records",   icon: "pi-id-card",             path: "/patients",             roles: [ADMIN, RX, DR, NR, AC, TPA] },
-      { label: "Visit History",     icon: "pi-clock",               path: "/patient-history",      roles: [ADMIN, RX, DR] },
+      { label: "Dashboard",           icon: "pi-chart-line",        path: "/reception",            nabh: true,  badge: "LIVE",  roles: [ADMIN, RX, DR, NR, AC, TPA] },
+      { label: "New Registration",    icon: "pi-user-plus",         path: "/reception/register",   nabh: true,                  roles: [ADMIN, RX] },
+      // RX-flavored Patient Search & Visit History (rx-page style, slimmer)
+      { label: "Patient Search",      icon: "pi-search",            path: "/patient-search",                                   roles: [RX] },
+      { label: "Visit History",       icon: "pi-clock",             path: "/visit-history",                                    roles: [RX] },
+      // Original Patient Search & Visit History — for other roles
+      { label: "Patient Search",      icon: "pi-search",            path: "/allpatient",                                       roles: [ADMIN, DR, NR, AC, TPA] },
+      { label: "Visit History",       icon: "pi-clock",             path: "/patient-history",                                  roles: [ADMIN, DR, NR] },
+      { label: "Appointments",        icon: "pi-calendar-plus",     path: "/appointments",         nabh: true,  badge: "NEW",   roles: [ADMIN, RX] },
+      { label: "Discharge Queue",     icon: "pi-sign-out",          path: "/discharge-queue",      nabh: true,  badge: "NEW",   roles: [ADMIN, RX] },
+      { label: "TPA / Insurance",     icon: "pi-shield",            path: "/tpa-cases",            nabh: true,  badge: "NEW",   roles: [ADMIN, RX, TPA, AC] },
+      { label: "Visitor Passes",      icon: "pi-id-card",           path: "/visitor-passes",       nabh: true,  badge: "NEW",   roles: [ADMIN, RX] },
     ],
   },
 
@@ -85,37 +103,52 @@ const NAV = [
     icon: "pi-building", color: "#059669", light: "#ecfdf5",
     roles: [ADMIN, RX, DR, NR],
     items: [
-      { label: "OPD Queue",          icon: "pi-list",      path: "/opd-queue",         roles: [ADMIN, RX, DR, NR] },
-      { label: "OPD Visits",         icon: "pi-calendar",  path: "/opd-visit",         roles: [ADMIN, RX, DR] },
+      // RX-flavored versions (rx-page style, no clinical fields)
+      { label: "OPD Queue",          icon: "pi-list",      path: "/reception-opd-queue",  roles: [RX] },
+      { label: "Emergency Cases",    icon: "pi-bolt",      path: "/reception-emergency",  roles: [RX] },
+      // Original clinical versions for doctors / nurses / admin
+      { label: "OPD Queue",          icon: "pi-list",      path: "/opd-queue",         roles: [ADMIN, DR, NR] },
       { label: "Doctor OPD Panel",   icon: "pi-desktop",   path: "/doctor-opd-panel",  roles: [ADMIN, DR] },
-      { label: "Emergency Cases",    icon: "pi-bolt",      path: "/emergency",         roles: [ADMIN, RX, DR, NR] },
+      { label: "Emergency Cases",    icon: "pi-bolt",      path: "/emergency",         roles: [ADMIN, DR, NR] },
     ],
   },
 
-  /* ── Service Billing (Reception) ───────────────────── */
-  {
-    id: "service-billing", label: "Service Billing",
-    icon: "pi-dollar", color: "#0891b2", light: "#ecfeff",
-    roles: [ADMIN, RX, AC],
-    items: [
-      { label: "Patient Bill",         icon: "pi-user",     path: "/patient-billing",       roles: [ADMIN, RX, AC] },
-      { label: "Chargeable Services",  icon: "pi-dollar",   path: "/chargeable-services",   roles: [ADMIN, RX, AC] },
-      { label: "Bills List",           icon: "pi-file",     path: "/billing",               roles: [ADMIN, RX, AC] },
-      { label: "Service Master",       icon: "pi-cog",      path: "/service-master",        roles: [ADMIN, RX] },
-    ],
-  },
-
-  /* ── Bed Management (Reception view) ───────────────── */
+  /* ── Bed Management ─────────────────────────────────── */
   {
     id: "beds", label: "Bed Management",
     icon: "pi-table", color: "#475569", light: "#f8fafc",
     roles: [ADMIN, RX, NR, WB],
     items: [
-      { label: "Bed Visual Layout",  icon: "pi-eye",       path: "/bed-visual",   roles: [ADMIN, RX, NR, WB] },
-      { label: "Manage Beds",        icon: "pi-list",      path: "/beds",         roles: [ADMIN, RX, NR] },
-      { label: "Wards",              icon: "pi-home",      path: "/wards",        roles: [ADMIN, RX, NR] },
-      { label: "Rooms",              icon: "pi-box",       path: "/rooms",        roles: [ADMIN, RX] },
-      { label: "Room Category",      icon: "pi-th-large",  path: "/roomcategory", roles: [ADMIN] },
+      // ── Operational (everyone in group sees these) ──
+      // Dashboard doubles as the Bed Management home — KPI strip on top
+      // and a tile grid linking out to every other section.
+      { label: "Home",               icon: "pi-th-large",  path: "/bed-dashboard",  badge: "NEW", roles: [ADMIN, NR, WB] },
+      // Single role-aware Live Bed Map; RX sees read-only mode on the same route
+      { label: "Live Bed Map",       icon: "pi-eye",       path: "/bed-visual",     roles: [ADMIN, RX, NR, WB] },
+      { label: "Bed Transfers",      icon: "pi-arrows-h",  path: "/bed-transfers",  badge: "NEW", roles: [ADMIN, DR, NR] },
+      { label: "Monthly Report",     icon: "pi-file-pdf",  path: "/bed-reports/monthly", badge: "NEW", roles: [ADMIN, NR] },
+      { label: "Manage Beds",        icon: "pi-list",      path: "/beds",           roles: [ADMIN, NR] },
+      // ── Setup & Hierarchy (admin only) ──
+      // These were previously scattered: Wards/Rooms/RoomCategory here,
+      // Buildings/Floors in Settings. Consolidated into one group so the
+      // full Building → Floor → Ward → Room → Bed hierarchy lives together.
+      { label: "Wards",              icon: "pi-home",      path: "/wards",          roles: [ADMIN, NR] },
+      { label: "Rooms",              icon: "pi-box",       path: "/rooms",          roles: [ADMIN] },
+      { label: "Room Categories",    icon: "pi-th-large",  path: "/roomcategory",   roles: [ADMIN] },
+      { label: "Floors",             icon: "pi-arrows-v",  path: "/floors",         roles: [ADMIN] },
+      { label: "Buildings",          icon: "pi-building",  path: "/buildings",      roles: [ADMIN] },
+    ],
+  },
+
+  /* ── Maintenance ─────────────────────────────────────── */
+  {
+    id: "maintenance", label: "Maintenance",
+    icon: "pi-wrench", color: "#d97706", light: "#fffbeb",
+    roles: [ADMIN, MT, WB, NR],
+    items: [
+      { label: "Dashboard",        icon: "pi-th-large",  path: "/maintenance",          badge: "NEW", roles: [ADMIN, MT, WB, NR] },
+      { label: "Equipment Tracker",icon: "pi-box",       path: "/equipment",            badge: "NEW", roles: [ADMIN, MT, NR] },
+      { label: "Live Bed Map",     icon: "pi-eye",       path: "/bed-visual",                         roles: [ADMIN, MT, WB] },
     ],
   },
 
@@ -131,6 +164,7 @@ const NAV = [
       { label: "Emergency Assessment",  icon: "pi-exclamation-circle",path: "/emergency-assessment",   roles: [ADMIN, DR], nabh: true },
       { label: "Discharge Summary",     icon: "pi-sign-out",          path: "/discharge-summary",      roles: [ADMIN, DR], nabh: true },
       { label: "Consent Forms",         icon: "pi-shield",            path: "/consent-forms",          roles: [ADMIN, DR], nabh: true },
+      { label: "Medico-Legal (MLC)",    icon: "pi-shield",            path: "/mlc",                    roles: [ADMIN, DR], nabh: true },
     ],
   },
 
@@ -151,26 +185,16 @@ const NAV = [
     ],
   },
 
-  /* ── Vitals ──────────────────────────────────────────── */
-  {
-    id: "vitals", label: "Vitals",
-    icon: "pi-chart-line", color: "#16a34a", light: "#f0fdf4",
-    roles: [ADMIN, NR, DR, PT],
-    items: [
-      { label: "Update Vitals",  icon: "pi-pencil",    path: "/updateVitalSheet",  roles: [ADMIN, NR, PT] },
-      { label: "Vital Sheet",    icon: "pi-table",     path: "/vitalSheet",        roles: [ADMIN, NR, DR] },
-      { label: "Vitals View",    icon: "pi-chart-bar", path: "/vitalsView",        roles: [ADMIN, NR, DR] },
-    ],
-  },
-
   /* ── Pharmacy / MAR ──────────────────────────────────── */
   {
     id: "pharmacy", label: "Pharmacy / MAR",
     icon: "pi-box", color: "#ea580c", light: "#fff7ed",
     nabh: true, roles: [ADMIN, PH, NR, DR],
     items: [
-      { label: "MAR",              icon: "pi-table",         path: "/mar",   nabh: true, roles: [ADMIN, PH, NR] },
-      { label: "Pharmacy Indent",  icon: "pi-shopping-cart", path: "/mar",               roles: [ADMIN, PH] },
+      // MAR is the canonical record — Doctor reads it (gets to "DR" too)
+      { label: "Pharmacy",         icon: "pi-box",           path: "/pharmacy",        nabh: true, badge: "NEW", roles: [ADMIN, PH] },
+      { label: "MAR",              icon: "pi-table",         path: "/mar",             nabh: true, roles: [ADMIN, PH, NR, DR] },
+      { label: "Diabetic Chart",   icon: "pi-chart-bar",     path: "/diabetic-chart",  nabh: true, badge: "NEW", roles: [ADMIN, NR, DR] },
     ],
   },
 
@@ -180,25 +204,69 @@ const NAV = [
     icon: "pi-search-plus", color: "#0284c7", light: "#f0f9ff",
     roles: [ADMIN, LB, RL, DR],
     items: [
-      { label: "Investigation Orders",  icon: "pi-list",   path: "/investigation-orders",  roles: [ADMIN, LB, RL, DR] },
+      // Lab/Imaging is outsourced — Lab Technician is the single
+      // in-house user who transcribes external reports + maintains
+      // the trend sheets. Radiologist removed 14 May 2026 (role
+      // stays in userModel for future in-house imaging.)
+      { label: "Investigation Orders",  icon: "pi-list",   path: "/investigation-orders",  roles: [ADMIN, LB, DR] },
+      { label: "Manual Lab Entry",      icon: "pi-table",  path: "/lab-results",           badge: "NEW", roles: [ADMIN, LB] },
       { label: "Investigation Master",  icon: "pi-cog",    path: "/investigation-master",  roles: [ADMIN, LB] },
-      { label: "Lab Staff",             icon: "pi-users",  path: "/lab-staff",             roles: [ADMIN] },
     ],
   },
 
-  /* ── Billing & Finance (Accountant / Admin) ─────────── */
+  /* ── Billing & Finance ──────────────────────────────── */
   {
-    id: "billing", label: "Billing & Finance",
+    id: "billing", label: "Billing",
     icon: "pi-receipt", color: "#d97706", light: "#fffbeb",
     roles: [ADMIN, AC, TPA, RX],
     items: [
-      { label: "Patient Bill",          icon: "pi-user",    path: "/patient-billing",       roles: [ADMIN, AC, RX] },
+      // RX-flavored unified billing & payment collection (rx-page style)
+      { label: "Billing & Payments",    icon: "pi-receipt", path: "/reception-billing",     roles: [RX] },
+      // Full billing UIs for accountants / admin
+      { label: "Patient Bill",          icon: "pi-user",    path: "/patient-billing",       roles: [ADMIN, AC, TPA] },
+      { label: "Bills List",            icon: "pi-file",    path: "/billing",               roles: [ADMIN, AC] },
       { label: "Billing Intelligence",  icon: "pi-bolt",    path: "/billing-intelligence",  badge: "AI",  roles: [ADMIN, AC] },
-      { label: "Billing Audit Trail",   icon: "pi-list",    path: "/billing-audit-trail",   badge: "NEW", roles: [ADMIN, AC] },
-      { label: "Bills List",            icon: "pi-file",    path: "/billing",               roles: [ADMIN, AC, RX] },
+      { label: "Billing Audit Trail",   icon: "pi-list",    path: "/billing-audit-trail",                 roles: [ADMIN, AC] },
       { label: "TPA Services",          icon: "pi-briefcase", path: "/addservice",          roles: [ADMIN, TPA, AC] },
       { label: "Chargeable Services",   icon: "pi-dollar",  path: "/chargeable-services",   roles: [ADMIN, AC] },
       { label: "Service Master",        icon: "pi-cog",     path: "/service-master",        roles: [ADMIN] },
+    ],
+  },
+
+  /* ── Dietitian — single Console entry for Doctor/Nurse/Admin ──
+     For Dietician this section is REPLACED entirely by the
+     DIETICIAN_NAV override below (Dashboard → /dietitian). For other
+     roles who need to view diet plans (treating doctor, nurse on rounds,
+     admin oversight) we keep a single "Dietician Console" link — they
+     get the full console where they can read everything, write actions
+     are gated by diet.write at both UI and API levels. */
+  {
+    id: "dietitian", label: "Nutrition / Diet",
+    icon: "pi-apple", color: "#16a34a", light: "#f0fdf4",
+    roles: [ADMIN, DR, NR],   // DT excluded — they get DIETICIAN_NAV instead
+    items: [
+      { label: "Dietician Console",  icon: "pi-apple",  path: "/dietitian",  badge: "NEW",  roles: [ADMIN, DR, NR] },
+    ],
+  },
+
+  /* ── Accounts & Finance — dedicated Accountant workspace ── */
+  /* Centralises daily collection, GST returns, outstanding (TPA + IPD
+     advance), refund / cancellation queue, and the audit trail.
+     Visible to Accountant + Admin; everything inside hits existing
+     billing / pharmacy register endpoints. */
+  {
+    id: "accounts", label: "Accounts & Finance",
+    icon: "pi-wallet", color: "#15803d", light: "#f0fdf4",
+    roles: [ADMIN, AC],
+    items: [
+      // Each item deep-links to a tab in /accounts. The console parent has
+      // no separate sidebar entry — the 5 tabs together ARE the console.
+      { label: "Day Book",             icon: "pi-book",        path: "/accounts?tab=daybook",     badge: "NEW",  roles: [ADMIN, AC] },
+      { label: "Revenue (MTD)",        icon: "pi-chart-line",  path: "/accounts?tab=revenue",                    roles: [ADMIN, AC] },
+      { label: "GST Returns",          icon: "pi-percentage",  path: "/accounts?tab=gst",                        roles: [ADMIN, AC] },
+      { label: "Outstanding",          icon: "pi-clock",       path: "/accounts?tab=outstanding",                roles: [ADMIN, AC] },
+      { label: "Refunds & Audit",      icon: "pi-undo",        path: "/accounts?tab=refunds",                    roles: [ADMIN, AC] },
+      { label: "Pharmacy Sales Reg.",  icon: "pi-receipt",     path: "/pharmacy?tab=registers",                  roles: [ADMIN, AC] },
     ],
   },
 
@@ -209,14 +277,14 @@ const NAV = [
     roles: [ADMIN],   // Admin only
     items: [
       { label: "Hospital Settings",  icon: "pi-building",   path: "/hospital-settings", badge: "NEW" },
+      { label: "Print Templates",    icon: "pi-print",      path: "/print-gallery",     badge: "NEW" },
       { label: "Department",         icon: "pi-sitemap",    path: "/department" },
       { label: "Doctor Management",  icon: "pi-user-edit",  path: "/doctors" },
       { label: "User Management",    icon: "pi-users",      path: "/admin/users" },
+      { label: "Roles & Permissions",icon: "pi-shield",     path: "/admin/roles",       badge: "NEW" },
       { label: "Hospital Charges",   icon: "pi-dollar",     path: "/hospital-charges" },
-      { label: "Buildings",          icon: "pi-building",   path: "/buildings" },
-      { label: "Floors",             icon: "pi-arrows-v",   path: "/floors" },
-      { label: "Rooms",              icon: "pi-box",        path: "/rooms" },
-      { label: "Room Category",      icon: "pi-th-large",   path: "/roomcategory" },
+      // Buildings / Floors / Rooms / Room Categories moved to Bed Management
+      // so the full bed hierarchy lives in one place.
     ],
   },
 ];
@@ -230,8 +298,38 @@ function canSee(roles, userRole) {
   return roles.includes(userRole);
 }
 
+// Dietician-specific stripped sidebar — user requested 13 May 2026 that
+// the Dietician sees ONLY a Dashboard entry, and every dietician sub-
+// task (referred patients, assessment, library) lives as a pill-tab
+// inside the /dietitian console rather than as separate sidebar items.
+// We hard-fork the nav for this role so the rest of the NAV array
+// (which other roles still consume) doesn't need to change.
+const DIETICIAN_NAV = [{
+  id: "dashboard", label: "Dashboard",
+  icon: "pi-apple", color: "#16a34a", light: "#f0fdf4",
+  path: "/dietitian", single: true, roles: ["Dietician"],
+}];
+
+// Ward Boy gets the same single-page treatment — the entire workflow
+// (Available, My Tasks, Today) lives inside the /ward-tasks console.
+const WARD_BOY_NAV = [{
+  id: "dashboard", label: "Dashboard",
+  icon: "pi-user", color: "#0d9488", light: "#f0fdfa",
+  path: "/ward-tasks", single: true, roles: ["Ward Boy"],
+}];
+
+// Housekeeping — same single-page-console pattern.
+const HOUSEKEEPING_NAV = [{
+  id: "dashboard", label: "Dashboard",
+  icon: "pi-sparkles", color: "#0d9488", light: "#f0fdfa",
+  path: "/housekeeping", single: true, roles: ["Housekeeping"],
+}];
+
 function filterNav(nav, userRole) {
   if (userRole === ADMIN) return nav; // Admin sees everything unfiltered
+  if (userRole === "Dietician")    return DIETICIAN_NAV;
+  if (userRole === "Ward Boy")     return WARD_BOY_NAV;
+  if (userRole === "Housekeeping") return HOUSEKEEPING_NAV;
   return nav
     .filter(section => canSee(section.roles, userRole))
     .map(section => {
@@ -402,8 +500,23 @@ export default function Sidebar({ collapsed, setCollapsed }) {
     return init;
   });
 
-  const isActive = (path) =>
-    location.pathname === path || location.pathname.startsWith(path + "/");
+  // Active-state matching is query-aware so deep links like
+  // "/accounts?tab=daybook" highlight only when both the pathname AND the
+  // tab query param match. Without this, every "/accounts?tab=*" sidebar
+  // entry would always appear inactive while "Accounts Console" (path
+  // "/accounts") would always be active regardless of the open tab.
+  const isActive = (path) => {
+    if (!path) return false;
+    const [p, q] = path.split("?");
+    if (location.pathname !== p && !location.pathname.startsWith(p + "/")) return false;
+    if (!q) return true;                  // path has no query → pathname match is enough
+    const want = new URLSearchParams(q);
+    const have = new URLSearchParams(location.search);
+    for (const [k, v] of want) {
+      if (have.get(k) !== v) return false;
+    }
+    return true;
+  };
 
   const toggle = (id) => setOpen(p => ({ ...p, [id]: !p[id] }));
 

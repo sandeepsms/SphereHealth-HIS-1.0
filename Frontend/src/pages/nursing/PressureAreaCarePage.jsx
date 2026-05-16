@@ -28,11 +28,6 @@ const C = {
   yellow: "#ca8a04", yellowL: "#fefce8",
 };
 
-const fld = { padding:"9px 12px", border:"1.5px solid #e2e8f0", borderRadius:8, fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#0f172a", outline:"none", background:"white", width:"100%", boxSizing:"border-box" };
-const sel = { ...fld, cursor:"pointer" };
-const ta  = { ...fld, resize:"vertical", minHeight:80 };
-const lbl = { display:"block", fontSize:11, fontWeight:700, color:"#64748b", textTransform:"uppercase", letterSpacing:".6px", marginBottom:5 };
-
 function Section({ title, icon, color=C.primary, badge, children, defaultOpen=true }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
@@ -55,7 +50,7 @@ function Section({ title, icon, color=C.primary, badge, children, defaultOpen=tr
 function Field({ label, children, style }) {
   return (
     <div style={style}>
-      {label && <label style={lbl}>{label}</label>}
+      {label && <label className="his-label">{label}</label>}
       {children}
     </div>
   );
@@ -356,31 +351,31 @@ function PressureAreaContent({ patient }) {
         {woundLog.map(row => (
           <div key={row.id} style={{ background:"#f8fafc", border:`1.5px solid ${C.border}`, borderRadius:10, padding:"14px 16px", marginBottom:12 }}>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))", gap:10 }}>
-              <Field label="Date"><input type="date" style={fld} value={row.date} onChange={e=>updateWound(row.id,"date",e.target.value)} /></Field>
-              <Field label="Site / Location"><input style={fld} value={row.site} onChange={e=>updateWound(row.id,"site",e.target.value)} placeholder="e.g. Sacrum" /></Field>
+              <Field label="Date"><input type="date" className="his-field" value={row.date} onChange={e=>updateWound(row.id,"date",e.target.value)} /></Field>
+              <Field label="Site / Location"><input className="his-field" value={row.site} onChange={e=>updateWound(row.id,"site",e.target.value)} placeholder="e.g. Sacrum" /></Field>
               <Field label="Stage / Grade">
-                <select style={sel} value={row.stage} onChange={e=>updateWound(row.id,"stage",e.target.value)}>
+                <select className="his-select" value={row.stage} onChange={e=>updateWound(row.id,"stage",e.target.value)}>
                   <option value="">Select</option>
                   {["Stage 1","Stage 2","Stage 3","Stage 4","Unstageable","Deep Tissue"].map(s=><option key={s}>{s}</option>)}
                 </select>
               </Field>
-              <Field label="Size (cm)"><input style={fld} value={row.size} onChange={e=>updateWound(row.id,"size",e.target.value)} placeholder="L x W x D" /></Field>
+              <Field label="Size (cm)"><input className="his-field" value={row.size} onChange={e=>updateWound(row.id,"size",e.target.value)} placeholder="L x W x D" /></Field>
               <Field label="Wound Bed">
-                <select style={sel} value={row.woundBed} onChange={e=>updateWound(row.id,"woundBed",e.target.value)}>
+                <select className="his-select" value={row.woundBed} onChange={e=>updateWound(row.id,"woundBed",e.target.value)}>
                   <option value="">Select</option>
                   {["Granulating","Sloughy","Necrotic","Epithelialising","Mixed"].map(s=><option key={s}>{s}</option>)}
                 </select>
               </Field>
               <Field label="Exudate">
-                <select style={sel} value={row.exudate} onChange={e=>updateWound(row.id,"exudate",e.target.value)}>
+                <select className="his-select" value={row.exudate} onChange={e=>updateWound(row.id,"exudate",e.target.value)}>
                   <option value="">Select</option>
                   {["None","Scant","Moderate","Heavy","Serous","Purulent","Sanguineous"].map(s=><option key={s}>{s}</option>)}
                 </select>
               </Field>
               <Field label="Treatment" style={{ gridColumn:"span 2" }}>
-                <input style={fld} value={row.treatment} onChange={e=>updateWound(row.id,"treatment",e.target.value)} placeholder="Dressing type, medications applied" />
+                <input className="his-field" value={row.treatment} onChange={e=>updateWound(row.id,"treatment",e.target.value)} placeholder="Dressing type, medications applied" />
               </Field>
-              <Field label="Nurse Signature"><input style={fld} value={row.nurse} onChange={e=>updateWound(row.id,"nurse",e.target.value)} placeholder="Name & designation" /></Field>
+              <Field label="Nurse Signature"><input className="his-field" value={row.nurse} onChange={e=>updateWound(row.id,"nurse",e.target.value)} placeholder="Name & designation" /></Field>
             </div>
             <button onClick={()=>removeWound(row.id)} style={{ marginTop:8, padding:"4px 12px", borderRadius:6, border:`1px solid ${C.red}`, background:C.redL, color:C.red, fontSize:11, cursor:"pointer" }}>
               <i className="pi pi-trash" style={{ marginRight:4 }} />Remove

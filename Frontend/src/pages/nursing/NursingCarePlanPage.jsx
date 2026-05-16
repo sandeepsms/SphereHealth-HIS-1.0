@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import "../../Components/clinical/clinical-forms.css";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
@@ -65,23 +66,10 @@ const C = {
   pink: "#be185d", pinkL: "#fdf2f8",
 };
 
-const fld = {
-  padding: "9px 12px", border: "1.5px solid #e2e8f0", borderRadius: 8,
-  fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#0f172a",
-  outline: "none", background: "white", width: "100%", boxSizing: "border-box",
-};
-const sel = { ...fld, cursor: "pointer" };
-const ta = { ...fld, resize: "vertical", minHeight: 80 };
-
-const lbl = {
-  display: "block", fontSize: 11, fontWeight: 700, color: C.muted,
-  textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 5,
-};
-
 function F({ label, required, children, hint, span }) {
   return (
     <div style={span ? { gridColumn: `span ${span}` } : {}}>
-      <label style={lbl}>{label}{required && <span style={{ color: C.red }}> *</span>}</label>
+      <label className="his-label">{label}{required && <span style={{ color: C.red }}> *</span>}</label>
       {children}
       {hint && <div style={{ fontSize: 10, color: C.muted, marginTop: 3 }}>{hint}</div>}
     </div>
@@ -308,10 +296,10 @@ function NursingCarePlanContent({ selectedPatient }) {
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto auto", gap: 12, alignItems: "end" }}>
             <F label="Search by UHID">
-              <input style={fld} value={searchUHID} onChange={e => setSearchUHID(e.target.value)} placeholder="Enter UHID..." />
+              <input className="his-field" value={searchUHID} onChange={e => setSearchUHID(e.target.value)} placeholder="Enter UHID..." />
             </F>
             <F label="or IPD Number">
-              <input style={fld} value={searchIPD} onChange={e => setSearchIPD(e.target.value)} placeholder="Enter IPD No..." />
+              <input className="his-field" value={searchIPD} onChange={e => setSearchIPD(e.target.value)} placeholder="Enter IPD No..." />
             </F>
             <button onClick={search} style={{ padding: "9px 22px", background: C.primary, color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 7 }}>
               {loading ? <i className="pi pi-spin pi-spinner" style={{ fontSize: 13 }} /> : <i className="pi pi-search" style={{ fontSize: 12 }} />}
@@ -350,7 +338,7 @@ function NursingCarePlanContent({ selectedPatient }) {
                 ["department", "Department"],
               ].map(([name, label, req]) => (
                 <F key={name} label={label} required={!!req}>
-                  <input style={fld} name={name} value={form[name]} onChange={e => setForm(p => ({ ...p, [e.target.name]: e.target.value }))} />
+                  <input className="his-field" name={name} value={form[name]} onChange={e => setForm(p => ({ ...p, [e.target.name]: e.target.value }))} />
                 </F>
               ))}
             </div>
@@ -370,7 +358,7 @@ function NursingCarePlanContent({ selectedPatient }) {
                 ["pressureUlcerRisk", "Pressure Ulcer Risk", ["Low", "Medium", "High"]],
               ].map(([field, label, opts]) => (
                 <F key={field} label={label}>
-                  <select style={sel} value={form.admissionAssessment[field]} onChange={e => handleAssessment(field, e.target.value)}>
+                  <select className="his-select" value={form.admissionAssessment[field]} onChange={e => handleAssessment(field, e.target.value)}>
                     {opts.map(o => <option key={o}>{o}</option>)}
                   </select>
                 </F>
@@ -378,7 +366,7 @@ function NursingCarePlanContent({ selectedPatient }) {
             </div>
 
             <div style={{ marginBottom: 14 }}>
-              <div style={lbl}>Devices &amp; Support</div>
+              <div className="his-label">Devices &amp; Support</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                 {[
                   ["ivAccess", "IV Access"],
@@ -395,18 +383,18 @@ function NursingCarePlanContent({ selectedPatient }) {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
               {form.admissionAssessment.painPresent && (
                 <F label="Pain Score (0–10)">
-                  <input type="number" min="0" max="10" style={fld} value={form.admissionAssessment.painScore} onChange={e => handleAssessment("painScore", e.target.value)} />
+                  <input type="number" min="0" max="10" className="his-field" value={form.admissionAssessment.painScore} onChange={e => handleAssessment("painScore", e.target.value)} />
                 </F>
               )}
               {form.admissionAssessment.oxygenSupport && (
                 <F label="O\u2082 Flow Rate" hint="e.g. 4 L/min">
-                  <input style={fld} value={form.admissionAssessment.oxygenFlowRate} onChange={e => handleAssessment("oxygenFlowRate", e.target.value)} placeholder="4L/min" />
+                  <input className="his-field" value={form.admissionAssessment.oxygenFlowRate} onChange={e => handleAssessment("oxygenFlowRate", e.target.value)} placeholder="4L/min" />
                 </F>
               )}
             </div>
 
             <F label="Additional Notes" span={3}>
-              <textarea style={ta} value={form.admissionAssessment.additionalNotes} onChange={e => handleAssessment("additionalNotes", e.target.value)} />
+              <textarea className="his-textarea" value={form.admissionAssessment.additionalNotes} onChange={e => handleAssessment("additionalNotes", e.target.value)} />
             </F>
           </Section>
 
@@ -459,15 +447,15 @@ function NursingCarePlanContent({ selectedPatient }) {
                   <div style={{ padding: "18px" }}>
                     <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
                       <F label="Problem Statement (NANDA)" required>
-                        <input style={fld} value={pr.problemStatement} onChange={e => changeProblem(pi, "problemStatement", e.target.value)} placeholder="e.g. Acute Pain" />
+                        <input className="his-field" value={pr.problemStatement} onChange={e => changeProblem(pi, "problemStatement", e.target.value)} placeholder="e.g. Acute Pain" />
                       </F>
                       <F label="Priority">
-                        <select style={{ ...sel, fontWeight: 700, color: pc.color }} value={pr.priority} onChange={e => changeProblem(pi, "priority", e.target.value)}>
+                        <select className="his-select" style={{ fontWeight: 700, color: pc.color }} value={pr.priority} onChange={e => changeProblem(pi, "priority", e.target.value)}>
                           {["HIGH", "MEDIUM", "LOW", "CRITICAL"].map(v => <option key={v}>{v}</option>)}
                         </select>
                       </F>
                       <F label="Status">
-                        <select style={sel} value={pr.status} onChange={e => changeProblem(pi, "status", e.target.value)}>
+                        <select className="his-select" value={pr.status} onChange={e => changeProblem(pi, "status", e.target.value)}>
                           {["ACTIVE", "RESOLVED", "ON_HOLD"].map(v => <option key={v}>{v}</option>)}
                         </select>
                       </F>
@@ -475,26 +463,26 @@ function NursingCarePlanContent({ selectedPatient }) {
 
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 12, marginBottom: 12 }}>
                       <F label="Related To">
-                        <input style={fld} value={pr.relatedTo} onChange={e => changeProblem(pi, "relatedTo", e.target.value)} />
+                        <input className="his-field" value={pr.relatedTo} onChange={e => changeProblem(pi, "relatedTo", e.target.value)} />
                       </F>
                       <F label="Evidenced By">
-                        <input style={fld} value={pr.evidencedBy} onChange={e => changeProblem(pi, "evidencedBy", e.target.value)} />
+                        <input className="his-field" value={pr.evidencedBy} onChange={e => changeProblem(pi, "evidencedBy", e.target.value)} />
                       </F>
                     </div>
 
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
                       <F label="Short-Term Goal">
-                        <input style={fld} value={pr.shortTermGoal} onChange={e => changeProblem(pi, "shortTermGoal", e.target.value)} placeholder="Goal within 24–48 hours" />
+                        <input className="his-field" value={pr.shortTermGoal} onChange={e => changeProblem(pi, "shortTermGoal", e.target.value)} placeholder="Goal within 24–48 hours" />
                       </F>
                       <F label="Long-Term Goal">
-                        <input style={fld} value={pr.longTermGoal} onChange={e => changeProblem(pi, "longTermGoal", e.target.value)} placeholder="Goal by discharge" />
+                        <input className="his-field" value={pr.longTermGoal} onChange={e => changeProblem(pi, "longTermGoal", e.target.value)} placeholder="Goal by discharge" />
                       </F>
                     </div>
 
                     {/* Interventions */}
                     <div style={{ marginBottom: 14 }}>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                        <div style={lbl}>Nursing Interventions</div>
+                        <div className="his-label">Nursing Interventions</div>
                         <button onClick={() => addIntervention(pi)} style={{ padding: "4px 12px", background: C.blueL, border: `1px solid ${C.blueB}`, borderRadius: 6, color: C.blue, fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
                           + Add Row
                         </button>
@@ -531,13 +519,13 @@ function NursingCarePlanContent({ selectedPatient }) {
           <Section title="Patient Education & Discharge Planning" icon="pi-book" color={C.purple} nabh>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
               <F label="Education Topics" hint="Comma-separated list">
-                <input style={fld} value={form.educationTopics} onChange={e => setForm(p => ({ ...p, educationTopics: e.target.value }))} placeholder="Disease, Medications, Diet, Wound Care..." />
+                <input className="his-field" value={form.educationTopics} onChange={e => setForm(p => ({ ...p, educationTopics: e.target.value }))} placeholder="Disease, Medications, Diet, Wound Care..." />
               </F>
               <F label="Education Barriers">
-                <input style={fld} value={form.educationBarriers} onChange={e => setForm(p => ({ ...p, educationBarriers: e.target.value }))} placeholder="Language, Literacy, Anxiety..." />
+                <input className="his-field" value={form.educationBarriers} onChange={e => setForm(p => ({ ...p, educationBarriers: e.target.value }))} placeholder="Language, Literacy, Anxiety..." />
               </F>
               <F label="Discharge Goals" span={2}>
-                <textarea style={ta} value={form.dischargeGoals} onChange={e => setForm(p => ({ ...p, dischargeGoals: e.target.value }))} placeholder="Patient will be able to..." />
+                <textarea className="his-textarea" value={form.dischargeGoals} onChange={e => setForm(p => ({ ...p, dischargeGoals: e.target.value }))} placeholder="Patient will be able to..." />
               </F>
             </div>
           </Section>

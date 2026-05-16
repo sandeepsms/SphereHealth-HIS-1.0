@@ -15,19 +15,21 @@ const PatientSchema = new mongoose.Schema(
     fullName: { type: String, required: true, trim: true },
     title: {
       type: String,
-      required: true,
-      enum: ["Mr.", "Mrs.", "Miss", "Master", "Baby", "Dr."],
+      enum: ["Mr.", "Mrs.", "Ms.", "Miss", "Master", "Baby", "Dr."],
+      default: "Mr.",
     },
     gender: {
       type: String,
       required: true,
       enum: ["Male", "Female", "Other"],
     },
-    dateOfBirth: { type: Date, required: true },
+    // DOB is required for clinical history but the receptionist may only have
+    // age at intake; we compute one from the other in the pre-save hook.
+    dateOfBirth: { type: Date },
     age: { type: Number },
     maritalStatus: {
       type: String,
-      enum: ["Single", "Married", "Divorced", "Widowed", "Other"],
+      enum: ["Single", "Married", "Divorced", "Widowed", "Other", ""],
     },
 
     contactNumber: { type: String, required: true },
@@ -35,7 +37,7 @@ const PatientSchema = new mongoose.Schema(
 
     address: {
       completeAddress: String,
-      pincode: { type: String, required: true },
+      pincode: { type: String },
       city: String,
       state: String,
       district: String,
@@ -43,25 +45,32 @@ const PatientSchema = new mongoose.Schema(
 
     bloodGroup: {
       type: String,
-      enum: ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "Not Known"],
+      enum: ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "Not Known", "Unknown", ""],
+      default: "Unknown",
     },
-    knownAllergies: { type: String, default: "" },
+    // Receptionist enters as either a comma string or a list of allergens;
+    // we accept both — stored as String for backward-compat with old reports.
+    knownAllergies: { type: mongoose.Schema.Types.Mixed, default: "" },
 
+    // Department / doctor are picked at registration for OPD/IPD but are
+    // optional for walk-in Emergency and lab Services.
     department: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Department",
-      required: true,
     },
     doctor: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Doctor",
-      required: true,
     },
 
+    // GENERAL/TPA/CORPORATE was the legacy enum; the UI uses Cash/TPA/Insurance/Corporate.
+    // Accept both so the existing receptionist console keeps working.
     paymentType: {
       type: String,
-      enum: ["GENERAL", "TPA", "CORPORATE"],
-      default: "GENERAL",
+      // Both legacy upper-case and the receptionist UI's title-case labels
+      // are accepted to avoid breaking either side.
+      enum: ["GENERAL", "TPA", "CORPORATE", "Cash", "Insurance", "Corporate"],
+      default: "Cash",
     },
     tpa: { type: mongoose.Schema.Types.ObjectId, ref: "TPA" },
     policyNumber: String,
@@ -94,9 +103,8 @@ const PatientSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-// Indexes
-PatientSchema.index({ patientId: 1 });
-PatientSchema.index({ UHID: 1 });
+// Indexes — patientId and UHID already get unique indexes via
+// `unique: true` on the field definitions above, no need to re-declare.
 PatientSchema.index({ contactNumber: 1 });
 PatientSchema.index({ paymentType: 1 });
 PatientSchema.index({ tpa: 1 });

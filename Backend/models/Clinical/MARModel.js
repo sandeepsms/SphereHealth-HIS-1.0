@@ -10,18 +10,15 @@ const AdministrationEntrySchema = new mongoose.Schema(
     status: {
       type: String,
       enum: ["GIVEN", "HELD", "REFUSED", "NOT_AVAILABLE", "MISSED"],
-      required: true,
-    },
+      required: true },
     administeredBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "NurseStaff",
-    },
+      ref: "NurseStaff" },
     nurseName: { type: String, trim: true },
     nurseStaffId: { type: String },
     batchNumber: { type: String, trim: true },
     reason: { type: String, trim: true },
-    remarks: { type: String },
-  },
+    remarks: { type: String } },
   { _id: true }
 );
 
@@ -34,8 +31,7 @@ const MARMedicationSchema = new mongoose.Schema(
     route: {
       type: String,
       enum: ["Oral", "IV", "IM", "SC", "SL", "Topical", "Inhalation", "Rectal", "Other"],
-      default: "Oral",
-    },
+      default: "Oral" },
     frequency: { type: String, trim: true },
     scheduledTimes: [{ type: String, trim: true }],
     startDate: { type: Date, required: true },
@@ -50,8 +46,7 @@ const MARMedicationSchema = new mongoose.Schema(
     discontinuedAt: { type: Date },
     discontinuedBy: { type: String },
     discontinueReason: { type: String },
-    administrations: [AdministrationEntrySchema],
-  },
+    administrations: [AdministrationEntrySchema] },
   { _id: true }
 );
 
@@ -62,16 +57,13 @@ const MARSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Patient",
       required: true,
-      index: true,
-    },
-    UHID: { type: String, required: true, trim: true, index: true },
+      index: true },
+    UHID: { type: String, required: true, trim: true },
     patientName: { type: String, trim: true },
     admissionId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Admission",
-      index: true,
-    },
-    ipdNo: { type: String, required: true, index: true },
+      ref: "Admission" },
+    ipdNo: { type: String, required: true },
 
     // ── MAR Date ─────────────────────────────────────────────
     date: { type: Date, required: true, index: true },
@@ -87,12 +79,10 @@ const MARSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: ["ACTIVE", "CLOSED"],
-      default: "ACTIVE",
-    },
+      default: "ACTIVE" },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "NurseStaff" },
-    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "NurseStaff" },
-  },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "NurseStaff" } },
   { timestamps: true, collection: "medication_administration_records" }
 );
 

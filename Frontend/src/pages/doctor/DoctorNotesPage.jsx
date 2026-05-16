@@ -5,6 +5,12 @@ import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
+import PatientHeaderCard from "../../Components/clinical/PatientHeaderCard";
+import "../../Components/clinical/clinical-forms.css";
+// Roadmap follow-up — new dnp-* design system for the recorded-notes
+// timeline. Form modals + save/sign flow remain untouched.
+import "../../pages/patient/patient-file.css";
+import "./note-page-redesign.css";
 import { DoctorAssessmentContent } from "./DoctorAssessmentPage";
 import DoctorOrdersPanel from "../../Components/doctor/DoctorOrdersPanel";
 import TreatmentChart from "../../Components/clinical/TreatmentChart";
@@ -31,10 +37,11 @@ const C = {
   indigo: "#4f46e5",
 };
 
-const fld = { padding: "9px 12px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: C.text, outline: "none", background: "white", width: "100%", boxSizing: "border-box" };
-const sel = { ...fld, cursor: "pointer" };
-const ta  = { ...fld, resize: "vertical", minHeight: 78 };
-const lbl = { display: "block", fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 5 };
+/* Form primitives moved to clinical-forms.css — use:
+   .his-field    (input)     .his-select (select)
+   .his-textarea (textarea)  .his-label  (label)
+   .his-field-group (label+input wrapper)
+*/
 
 /* ── NABH Medication Routes & Frequencies (from Medication Order Sheet) ── */
 const ROUTES = [
@@ -141,8 +148,11 @@ function getShift() {
 /* ── Helpers ── */
 function FL({ label, children, span }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 5, gridColumn: span ? `span ${span}` : undefined }}>
-      <label style={lbl}>{label}</label>
+    <div
+      className="his-field-group"
+      style={span ? { gridColumn: `span ${span}` } : undefined}
+    >
+      <label className="his-label">{label}</label>
       {children}
     </div>
   );
@@ -153,9 +163,9 @@ function SBARBox({ letter, title, color, value, onChange, placeholder }) {
     <div style={{ marginBottom: 10 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
         <span style={{ width: 24, height: 24, borderRadius: 6, background: color + "25", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 13, color }}>{letter}</span>
-        <label style={{ ...lbl, marginBottom: 0, color }}>{title}</label>
+        <label className="his-label" style={{ marginBottom: 0, color }}>{title}</label>
       </div>
-      <textarea style={{ ...ta, minHeight: 64, borderColor: color + "40" }} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} />
+      <textarea className="his-textarea" style={{ minHeight: 64, borderColor: color + "40" }} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} />
     </div>
   );
 }
@@ -182,6 +192,14 @@ function DoctorNotesContent({ selectedPatient }) {
   const [timelineRefresh, setTimelineRefresh] = useState(0);
   const [filterDate,    setFilterDate]    = useState("");   // "" | "today" | "week" | "last7"
   const [editingNote,   setEditingNote]   = useState(null); // draft note being edited
+
+  /* ── Tile / section navigator ──
+       Doctor Notes is broken into 6 tiles. When `activeTile` is null,
+       the user sees the grid of tiles. When set, the matching section
+       expands inline below the patient header and the rest of the
+       sections are hidden. "Back to all sections" returns to the grid.
+       Tile keys: "diagnosis" | "orders" | "mar" | "team" | "addnote" | "timeline" */
+  const [activeTile, setActiveTile] = useState(null);
 
   /* ── Recently admitted patients panel ── */
   const [recentPatients,   setRecentPatients]   = useState([]);
@@ -230,6 +248,31 @@ function DoctorNotesContent({ selectedPatient }) {
   useEffect(() => {
     if (selectedPatient?.UHID) setSearchUHID(selectedPatient.UHID);
   }, [selectedPatient]);
+
+  /* Auto-load when /doctor-notes?uhid=… is opened from /bed-visual */
+  useEffect(() => {
+    const u = new URLSearchParams(window.location.search).get("uhid");
+    if (!u || !u.trim()) return;
+    setSearchUHID(u.trim());
+    (async () => {
+      setLoading(true);
+      try {
+        const { data } = await axios.get(
+          `${API_ENDPOINTS.ADMISSIONS}/active?UHID=${encodeURIComponent(u.trim())}`,
+        );
+        const arr = Array.isArray(data) ? data : data.data || [];
+        const active = arr[0];
+        if (active) {
+          setPatient(active);
+          await fetchNotes(active.ipdNo || active.admissionNumber || active._id);
+        }
+      } catch (_) { /* silent — user can still search manually */ }
+      finally { setLoading(false); }
+    })();
+    // run only once on mount — subsequent in-page UHID switches go
+    // through loadPatient(), not the URL.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /* Fetch patients on mount — primary IPD list + consulting list */
   useEffect(() => {
@@ -434,7 +477,11 @@ function DoctorNotesContent({ selectedPatient }) {
       icd10Code: diag.icd10Code, icd10Description: diag.icd10Description,
       investigations: invx ? invx.split(",").map(s => s.trim()).filter(Boolean) : [],
       orders: orders.map(o => ({
-        type: ["medication","iv_fluid","procedure","diet","other"].includes(o.type) ? o.type : "other",
+        // FIX (audit P12-B1): the legacy whitelist coerced `infusion` and
+        // `investigation` to "other", silently losing the categorisation
+        // downstream (treatment chart, nurse MAR, billing). Whitelist
+        // now matches the <select> options at line 2324.
+        type: ["medication","iv_fluid","infusion","procedure","investigation","diet","nursing","other"].includes(o.type) ? o.type : "other",
         instruction: o.instruction, route: o.route || "", frequency: o.frequency || "",
         duration: o.duration || "", notes: o.notes || "",
       })),
@@ -907,204 +954,25 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
         </div>
       </div>
 
-      {/* ── My Patients Panel — Primary + Consulting tabs ── */}
-      <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden", marginBottom: 14 }}>
-        <div style={{ padding: "10px 16px", borderBottom: `1px solid ${C.border}`, background: "#f8fafc", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-          {/* Tab switcher */}
-          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <span style={{ width: 26, height: 26, borderRadius: 6, background: C.primary + "18", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <i className="pi pi-users" style={{ color: C.primary, fontSize: 12 }} />
-            </span>
-            {[
-              { id: "primary",    label: "My IPD Patients",  count: recentPatients.length,  color: C.primary  },
-              { id: "consulting", label: "Consulting",        count: consultPatients.length, color: "#7c3aed"  },
-            ].map(tab => (
-              <button key={tab.id} onClick={() => setPatientListTab(tab.id)} style={{
-                padding: "4px 12px", borderRadius: 20, border: "none", cursor: "pointer",
-                fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700,
-                background: patientListTab === tab.id ? tab.color : "transparent",
-                color: patientListTab === tab.id ? "#fff" : C.muted,
-                display: "flex", alignItems: "center", gap: 5, transition: ".15s",
-              }}>
-                {tab.label}
-                <span style={{
-                  background: patientListTab === tab.id ? "rgba(255,255,255,.3)" : tab.color + "20",
-                  color: patientListTab === tab.id ? "#fff" : tab.color,
-                  padding: "0px 6px", borderRadius: 10, fontSize: 10,
-                }}>{tab.count}</span>
-              </button>
-            ))}
-          </div>
-          <input value={recentSearch} onChange={e => setRecentSearch(e.target.value.toUpperCase())}
-            placeholder="Search name / UHID…"
-            style={{ ...fld, maxWidth: 200, padding: "5px 10px", fontSize: 11 }} />
-        </div>
 
-        <div style={{ padding: "10px 14px", display: "flex", gap: 8, overflowX: "auto", alignItems: "stretch", minHeight: 80 }}>
-          {recentLoading ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, color: C.muted, fontSize: 12, flex: 1, justifyContent: "center" }}>
-              <i className="pi pi-spin pi-spinner" style={{ fontSize: 16 }} /> Loading patients…
-            </div>
-          ) : (() => {
-            /* Pick active list */
-            const activeList = patientListTab === "consulting" ? consultPatients : recentPatients;
-            const filtered = activeList.filter(p => {
-              if (!recentSearch) return true;
-              const s = recentSearch.toLowerCase();
-              return (p.patientName||p.patientId?.fullName||"").toLowerCase().includes(s) ||
-                     (p.UHID||p.uhid||"").toLowerCase().includes(s);
-            });
-
-            if (filtered.length === 0) return (
-              <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: C.muted, fontSize: 12 }}>
-                <i className="pi pi-inbox" style={{ marginRight: 6, fontSize: 14 }} />
-                {patientListTab === "consulting"
-                  ? "No active consultation requests"
-                  : "No active IPD admissions"}
-              </div>
-            );
-
-            return filtered.map(rp => {
-              const isSelected = patient && (patient._id === rp._id || patient.UHID === rp.UHID);
-              const admHours = rp.admissionDate ? Math.floor((Date.now() - new Date(rp.admissionDate)) / 3600000) : null;
-              const isNew = admHours !== null && admHours < 48;
-              const myRole = rp.myRole || (patientListTab === "consulting" ? rp.myConsultEntry?.role || "Consulting" : "Primary");
-              const accentColor = patientListTab === "consulting" ? "#7c3aed" : C.primary;
-              const urgency = rp.myConsultEntry?.urgency;
-
-              return (
-                <button key={rp._id}
-                  onClick={() => {
-                    setSearchUHID(rp.UHID || rp.uhid || "");
-                    setPatient(rp);
-                    fetchNotes(rp.ipdNo || rp.admissionNumber || rp._id);
-                    toast.success(`Loaded: ${rp.patientName || rp.patientId?.fullName || "Patient"}`);
-                  }}
-                  style={{
-                    flexShrink: 0, width: 180, padding: "10px 12px",
-                    border: `2px solid ${isSelected ? accentColor : isNew ? "#fbbf24" : C.border}`,
-                    borderRadius: 10,
-                    background: isSelected ? (patientListTab === "consulting" ? "#f5f3ff" : C.primaryL) : isNew ? "#fffbeb" : "white",
-                    cursor: "pointer", textAlign: "left", position: "relative", transition: "all .15s",
-                  }}
-                  onMouseEnter={e => { if (!isSelected) e.currentTarget.style.borderColor = accentColor + "80"; }}
-                  onMouseLeave={e => { if (!isSelected) e.currentTarget.style.borderColor = isNew ? "#fbbf24" : C.border; }}>
-
-                  {/* Badges */}
-                  {isNew && !isSelected && (
-                    <span style={{ position: "absolute", top: 6, right: 6, background: "#f59e0b", color: "white", fontSize: 8, fontWeight: 800, padding: "1px 5px", borderRadius: 3, letterSpacing: ".5px" }}>NEW</span>
-                  )}
-                  {isSelected && (
-                    <span style={{ position: "absolute", top: 6, right: 6, background: accentColor, color: "white", fontSize: 8, fontWeight: 800, padding: "1px 5px", borderRadius: 3 }}>OPEN</span>
-                  )}
-                  {urgency && urgency !== "Routine" && !isSelected && (
-                    <span style={{
-                      position: "absolute", top: 6, right: 6,
-                      background: urgency === "Emergent" ? "#dc2626" : "#d97706",
-                      color: "white", fontSize: 8, fontWeight: 800, padding: "1px 5px", borderRadius: 3,
-                    }}>{urgency.toUpperCase()}</span>
-                  )}
-
-                  <div style={{ fontWeight: 700, fontSize: 12, color: isSelected ? accentColor : C.text, marginBottom: 3, paddingRight: 36, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {rp.patientName || rp.patientId?.fullName || "Patient"}
-                  </div>
-                  <div style={{ fontFamily: "monospace", fontSize: 10, color: C.muted, marginBottom: 3 }}>{rp.UHID || rp.uhid}</div>
-                  {/* Role tag */}
-                  <div style={{
-                    fontSize: 9, fontWeight: 700, color: accentColor,
-                    background: accentColor + "15", display: "inline-block",
-                    padding: "1px 6px", borderRadius: 8, marginBottom: 3, letterSpacing: .4,
-                  }}>{myRole}</div>
-                  <div style={{ fontSize: 10, color: C.muted }}>
-                    {rp.bedNumber ? `Bed ${rp.bedNumber}` : rp.department || ""}
-                  </div>
-                  {rp.attendingDoctor && patientListTab === "consulting" && (
-                    <div style={{ fontSize: 9, color: C.muted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      Primary: {rp.attendingDoctor}
-                    </div>
-                  )}
-                  {admHours !== null && (
-                    <div style={{ fontSize: 9, color: isNew ? "#92400e" : C.muted, fontWeight: isNew ? 700 : 400, marginTop: 2 }}>
-                      {admHours < 24 ? `${admHours}h ago` : `${Math.floor(admHours/24)}d ago`}
-                    </div>
-                  )}
-                </button>
-              );
-            });
-          })()}
-        </div>
-      </div>
-
-      {/* ── Patient Search (fallback manual) ── */}
+      {/* ── Patient header (shared component — identical to Nursing) ── */}
       {!patient ? (
-        <div style={{ maxWidth: 560, margin: "0 auto", paddingTop: 4 }}>
-          <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 14, padding: "24px 28px", boxShadow: "0 4px 24px rgba(0,0,0,.06)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-              <div style={{ width: 36, height: 36, borderRadius: 9, background: C.primaryL, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <i className="pi pi-user-plus" style={{ fontSize: 16, color: C.primary }} />
-              </div>
-              <div>
-                <div style={{ fontWeight: 700, fontSize: 15, color: C.slate }}>Load Patient</div>
-                <div style={{ color: C.muted, fontSize: 12 }}>Select from above or enter UHID manually</div>
-              </div>
-            </div>
-            <div style={{ height: 1, background: C.border, margin: "16px 0" }} />
-            <form onSubmit={loadPatient} style={{ display: "flex", gap: 10 }}>
-              <input value={searchUHID} onChange={e => setSearchUHID(e.target.value.toUpperCase())} placeholder="UHID / Admission No..."
-                style={{ ...fld, flex: 1 }} autoFocus />
-              <button type="submit" disabled={loading}
-                style={{ padding: "9px 22px", background: C.primary, color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 7, boxShadow: `0 4px 12px ${C.primary}30` }}>
-                {loading ? <i className="pi pi-spin pi-spinner" style={{ fontSize: 13 }} /> : <i className="pi pi-search" style={{ fontSize: 12 }} />}
-                Load Patient
-              </button>
-            </form>
-          </div>
-        </div>
+        <PatientHeaderCard
+          patient={null}
+          searchUHID={searchUHID}
+          onSearchChange={setSearchUHID}
+          onLoad={loadPatient}
+          loading={loading}
+          loadSubtitle="Select from above or enter UHID manually"
+        />
       ) : (
         <>
-          {/* ── Patient Info Strip ── */}
-          <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: "14px 22px", marginBottom: 14, boxShadow: "0 1px 3px rgba(0,0,0,.04)" }}>
-            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "10px 24px", flex: 1 }}>
-                {[
-                  { label: "UHID",      value: patient.UHID || patient.uhid || searchUHID },
-                  { label: "Name",      value: patient.patientName || patient.patientId?.fullName || "—" },
-                  { label: "Age/Sex",   value: `${patient.age || "?"}Y / ${(patient.gender || "?")[0]?.toUpperCase()}` },
-                  { label: "Ward/Bed",  value: `${patient.wardName || "—"} · Bed ${patient.bedNumber || "—"}` },
-                  { label: "Admission", value: patient.admissionDate ? new Date(patient.admissionDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—" },
-                  { label: "Diagnosis", value: patient.diagnosis || patient.admittingDiagnosis || "—" },
-                  { label: "Consultant",value: patient.doctorName || patient.consultantName || "—" },
-                ].map(f => (
-                  <div key={f.label}>
-                    <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".8px", color: C.muted, marginBottom: 2 }}>{f.label}</div>
-                    <div style={{ fontWeight: 600, color: C.text, fontSize: 12 }}>{f.value}</div>
-                  </div>
-                ))}
-                {patient.bloodGroup && (
-                  <div>
-                    <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".8px", color: C.muted, marginBottom: 2 }}>Blood Group</div>
-                    <div style={{ fontWeight: 800, color: C.red, fontSize: 13, fontFamily: "monospace" }}>{patient.bloodGroup}</div>
-                  </div>
-                )}
-                {(patient.allergies || patient.knownAllergies || []).filter(Boolean).length > 0 && (
-                  <div>
-                    <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".8px", color: C.muted, marginBottom: 2 }}>Allergies</div>
-                    <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                      {(patient.allergies || patient.knownAllergies || []).map(a => (
-                        <span key={a} style={{ background: C.redL, color: C.red, border: "1px solid #fca5a5", padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700 }}>⚠ {a}</span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-              <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "flex-start", flexWrap: "wrap", maxWidth: 260 }}>
-                <button onClick={() => { setPatient(null); setNotes([]); setSearchUHID(""); }}
-                  style={{ padding: "6px 12px", border: `1.5px solid ${C.border}`, borderRadius: 7, background: "white", fontSize: 11, fontWeight: 600, cursor: "pointer", color: C.muted, display: "flex", alignItems: "center", gap: 5 }}>
-                  <i className="pi pi-times" style={{ fontSize: 10 }} /> Change
-                </button>
-              </div>
-            </div>
-          </div>
+          <PatientHeaderCard
+            patient={patient}
+            searchUHID={searchUHID}
+            diagnosis={diag}
+            onChangePatient={() => { setPatient(null); setNotes([]); setSearchUHID(""); }}
+          />
 
           {/* ── Assessment Gate Banner (HARD BLOCK) ── */}
           {gateActive && (
@@ -1136,8 +1004,128 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
             </div>
           )}
 
+          {/* ══ TILE GRID (when no section is active) ════════════════════════
+                Doctor Notes is split into 6 tiles. Click → that section
+                expands inline below. Counts come from already-loaded
+                state (notes, diag, etc.). Sections owned by child
+                components (Orders / MAR / Team) show a generic "Open"
+                until we lift their counts up. */}
+          {patient && !activeTile && (
+            <div className="dnp-tiles-grid" role="navigation" aria-label="Doctor Notes sections">
+              {[
+                {
+                  id: "diagnosis",
+                  title: "Patient Diagnosis",
+                  subtitle: "Provisional → Working → Final + ICD-10",
+                  icon: "pi-bookmark",
+                  color: "#2563eb",
+                  tint: "#dbeafe",
+                  badges: [
+                    diag.provisional || diag.working || diag.final
+                      ? { label: "Filled", tone: "ok" }
+                      : { label: "Empty", tone: "warn" },
+                    diag.status ? { label: diag.status, tone: "info" } : null,
+                  ].filter(Boolean),
+                },
+                {
+                  id: "orders",
+                  title: "Doctor Orders & History",
+                  subtitle: "Active orders + full audit trail (NABH COP.2)",
+                  icon: "pi-list-check",
+                  color: "#7c3aed",
+                  tint: "#ede9fe",
+                  badges: [{ label: "Open", tone: "info" }],
+                },
+                {
+                  id: "mar",
+                  title: "Treatment Chart — Live MAR",
+                  subtitle: "Medication MAR + Infusion monitoring",
+                  icon: "pi-chart-bar",
+                  color: "#db2777",
+                  tint: "#fce7f3",
+                  badges: [{ label: "Open", tone: "info" }],
+                },
+                {
+                  id: "team",
+                  title: "Treatment Team",
+                  subtitle: "Primary consultant + consultations (COP.1)",
+                  icon: "pi-users",
+                  color: "#0d9488",
+                  tint: "#ccfbf1",
+                  badges: [{ label: "Open", tone: "info" }],
+                },
+                {
+                  id: "addnote",
+                  title: "Add a Note",
+                  subtitle: "Shift, Daily Progress, ICU, Procedure, Consultation…",
+                  icon: "pi-plus-circle",
+                  color: "#16a34a",
+                  tint: "#dcfce7",
+                  badges: [
+                    gateActive
+                      ? { label: "Initial Assessment required", tone: "warn" }
+                      : { label: "Ready", tone: "ok" },
+                  ],
+                },
+                {
+                  id: "timeline",
+                  title: "Notes Timeline",
+                  subtitle: "All historical notes + filters",
+                  icon: "pi-history",
+                  color: "#ea580c",
+                  tint: "#ffedd5",
+                  badges: [
+                    { label: `${totalNotes} total`, tone: "info" },
+                    signedNotes > 0 && { label: `${signedNotes} signed`, tone: "ok" },
+                    draftNotes > 0 && { label: `${draftNotes} draft`, tone: "warn" },
+                    todayNotes > 0 && { label: `${todayNotes} today`, tone: "accent" },
+                  ].filter(Boolean),
+                },
+              ].map(t => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setActiveTile(t.id)}
+                  className="dnp-tile"
+                  style={{ "--tile-color": t.color, "--tile-tint": t.tint }}
+                  aria-label={`Open ${t.title}`}
+                >
+                  <div className="dnp-tile__icon">
+                    <i className={`pi ${t.icon}`} />
+                  </div>
+                  <div className="dnp-tile__body">
+                    <div className="dnp-tile__title">{t.title}</div>
+                    <div className="dnp-tile__subtitle">{t.subtitle}</div>
+                    {t.badges.length > 0 && (
+                      <div className="dnp-tile__badges">
+                        {t.badges.map((b, i) => (
+                          <span key={i} className={`dnp-tile__badge dnp-tile__badge--${b.tone}`}>
+                            {b.label}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <i className="pi pi-chevron-right dnp-tile__chevron" aria-hidden />
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* ── Back-to-grid button (when a tile is open) ── */}
+          {patient && activeTile && (
+            <button
+              type="button"
+              onClick={() => setActiveTile(null)}
+              className="dnp-back-btn"
+              aria-label="Back to all sections"
+            >
+              <i className="pi pi-arrow-left" aria-hidden /> All Sections
+            </button>
+          )}
+
           {/* ══ DIAGNOSIS PANEL ══════════════════════════════════════════════ */}
-          {patient && (
+          {patient && activeTile === "diagnosis" && (
             <div style={{ background: "white", border: "1.5px solid #e0e7ef", borderRadius: 14, padding: "18px 22px", marginBottom: 14, boxShadow: "0 2px 10px rgba(37,99,235,.06)" }}>
               {/* Header */}
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
@@ -1245,99 +1233,97 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
           )}
 
           {/* ── Doctor Orders Panel ── */}
-          <DoctorOrdersPanel
-            UHID={patient?.UHID || patient?.uhid || searchUHID}
-            visitId={patient?.ipdNo || patient?.admissionNumber || patient?.visitId}
-            ipdNo={patient?.ipdNo || patient?.admissionNumber}
-            patientName={patient?.patientName || patient?.patientId?.fullName || ""}
-            refreshSignal={ordersRefresh}
-          />
-
-          {/* ── NABH Treatment Chart (Doctor Full View) ── */}
-          <div style={{ marginBottom: 14 }}>
-            <TreatmentChart
+          {activeTile === "orders" && (
+            <DoctorOrdersPanel
               UHID={patient?.UHID || patient?.uhid || searchUHID}
               visitId={patient?.ipdNo || patient?.admissionNumber || patient?.visitId}
+              ipdNo={patient?.ipdNo || patient?.admissionNumber}
               patientName={patient?.patientName || patient?.patientId?.fullName || ""}
-              nurseMode={false}
-              refreshTrigger={ordersRefresh}
+              refreshSignal={ordersRefresh}
             />
-          </div>
+          )}
+
+          {/* ── NABH Treatment Chart (Doctor Full View) ── */}
+          {activeTile === "mar" && (
+            <div style={{ marginBottom: 14 }}>
+              <TreatmentChart
+                UHID={patient?.UHID || patient?.uhid || searchUHID}
+                visitId={patient?.ipdNo || patient?.admissionNumber || patient?.visitId}
+                patientName={patient?.patientName || patient?.patientId?.fullName || ""}
+                nurseMode={false}
+                refreshTrigger={ordersRefresh}
+              />
+            </div>
+          )}
 
           {/* ── Treatment Team / Multi-doctor Consultation (NABH COP.1) ── */}
-          <TreatmentTeamPanel
-            admissionId={patient?._id || patient?.admissionId}
-            patientName={patient?.patientName || patient?.patientId?.fullName || ""}
-            UHID={patient?.UHID || patient?.uhid || searchUHID}
-            refreshTrigger={ordersRefresh}
-          />
+          {activeTile === "team" && (
+            <TreatmentTeamPanel
+              admissionId={patient?._id || patient?.admissionId}
+              patientName={patient?.patientName || patient?.patientId?.fullName || ""}
+              UHID={patient?.UHID || patient?.uhid || searchUHID}
+              refreshTrigger={ordersRefresh}
+            />
+          )}
 
-          {/* ── Shift Selector ── */}
-          <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: "12px 20px", marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px" }}>Shift:</span>
-              <div style={{ display: "flex", gap: 6 }}>
-                {[{id:"morning",label:"Morning",icon:"pi-sun"},{id:"afternoon",label:"Afternoon",icon:"pi-cloud"},{id:"evening",label:"Evening",icon:"pi-moon"},{id:"night",label:"Night",icon:"pi-star"}].map(s => (
-                  <button key={s.id} onClick={() => setShift(s.id)}
-                    style={{ padding: "6px 16px", border: `1.5px solid ${shift === s.id ? C.primary + "60" : C.border}`, borderRadius: 20, background: shift === s.id ? C.primaryL : "white", color: shift === s.id ? C.primary : C.muted, fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}>
-                    <i className={`pi ${s.icon}`} style={{ fontSize: 10 }} />{s.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <button onClick={() => openModal("daily")}
-              style={{ padding: "9px 20px", background: `linear-gradient(135deg,${C.primary},${C.primaryMid})`, color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 7, boxShadow: `0 4px 12px ${C.primary}30` }}>
-              <i className="pi pi-plus" style={{ fontSize: 12 }} /> Daily Progress Note
-            </button>
-          </div>
-
-          {/* ── Module Launcher ── */}
-          <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden", marginBottom: 14 }}>
-            <div style={{ padding: "10px 20px", borderBottom: `1px solid ${C.border}`, background: "#f8fafc", display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ width: 26, height: 26, borderRadius: 6, background: C.primary + "18", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <i className="pi pi-plus-circle" style={{ color: C.primary, fontSize: 12 }} />
-              </span>
-              <span style={{ fontWeight: 700, fontSize: 12, textTransform: "uppercase", letterSpacing: ".8px", color: C.muted }}>Clinical Documentation — NABH</span>
+          {/* ── Add a Note: shift selector + module pill bar ──
+              Tile-gated. Sticky behavior removed because this is the
+              full section view, not chrome floating above another
+              section. Same primitives, just no `dnp-sticky-chrome`. */}
+          {activeTile === "addnote" && (
+          <div className="dnp-addnote-panel pf-tint--doctor">
+            {/* Shift selector + Daily Progress quick action */}
+            <div className="dnp-shift-row">
+              <span className="dnp-shift-row__label">Shift:</span>
+              {[{id:"morning",label:"Morning",icon:"pi-sun"},{id:"afternoon",label:"Afternoon",icon:"pi-cloud"},{id:"evening",label:"Evening",icon:"pi-moon"},{id:"night",label:"Night",icon:"pi-star"}].map(s => (
+                <button key={s.id} onClick={() => setShift(s.id)}
+                  className={`dnp-shift-pill ${shift === s.id ? "dnp-shift-pill--active" : ""}`}>
+                  <i className={`pi ${s.icon}`} style={{ fontSize: 10 }} />{s.label}
+                </button>
+              ))}
+              <button onClick={() => openModal("daily")} className="dnp-shift-row__cta">
+                <i className="pi pi-plus" style={{ fontSize: 12 }} /> Daily Progress Note
+              </button>
             </div>
 
-            {/* Priority modules row */}
-            <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, background: "#fffbeb", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-              <span style={{ fontSize: 10, fontWeight: 700, color: "#92400e", textTransform: "uppercase", letterSpacing: ".6px", whiteSpace: "nowrap" }}>Required / Treatment:</span>
+            {/* Module launcher — single compact pill bar, 2 groups, multi-row wrap */}
+            <div className="dnp-module-bar">
+              <span className="dnp-module-bar__group">Required / Treatment</span>
               {MODULES.filter(m => m.id === "medication" || m.id === "infusion").map(m => {
                 const locked = gateActive && m.id !== "initial";
                 return (
-                  <button key={m.id} onClick={() => openModal(m.id)}
-                    style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 16px", borderRadius: 9, border: `2px solid ${locked ? C.border : m.border}`, fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, cursor: "pointer", background: locked ? "#f1f5f9" : (m.id === "initial" && gateActive ? "#fef3c7" : "white"), color: locked ? C.muted : m.color, transition: "all .2s", position: "relative", opacity: locked ? 0.6 : 1 }}
-                    onMouseEnter={e => { if (!locked) { e.currentTarget.style.background = m.bg; e.currentTarget.style.transform = "translateY(-1px)"; } }}
-                    onMouseLeave={e => { if (!locked) { e.currentTarget.style.background = m.id === "initial" && gateActive ? "#fef3c7" : "white"; e.currentTarget.style.transform = "none"; } }}>
-                    <i className={`pi ${locked ? "pi-lock" : m.icon}`} style={{ fontSize: 13 }} />
+                  <button key={m.id} onClick={() => !locked && openModal(m.id)}
+                    className={`dnp-module-pill ${locked ? "dnp-module-pill--locked" : ""}`}
+                    style={{ "--mod-color": m.color, "--mod-tint": m.bg }}
+                    title={locked ? "Locked — complete Initial Assessment first" : m.label}>
+                    <i className={`pi ${locked ? "pi-lock" : m.icon}`} style={{ fontSize: 12 }} />
                     {m.label}
-                    {m.id === "initial" && gateActive && <span style={{ marginLeft: 4, background: "#d97706", color: "white", fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 3 }}>REQUIRED</span>}
-                    {m.id === "initial" && assessmentDone && <span style={{ marginLeft: 4, background: C.green, color: "white", fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 3 }}>✓ DONE</span>}
+                    {m.id === "initial" && gateActive && <span className="dnp-module-pill__chip dnp-module-pill__chip--required">REQ</span>}
+                    {m.id === "initial" && assessmentDone && <span className="dnp-module-pill__chip dnp-module-pill__chip--done">✓</span>}
                   </button>
                 );
               })}
-            </div>
-
-            {/* All other modules */}
-            <div style={{ padding: "12px 18px", display: "flex", flexWrap: "wrap", gap: 8 }}>
-              <span style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", alignSelf: "center", marginRight: 4 }}>Notes:</span>
+              <span className="dnp-module-bar__divider" aria-hidden />
+              <span className="dnp-module-bar__group">Notes</span>
               {MODULES.filter(m => !m.priority && m.id !== "medication" && m.id !== "infusion").map(m => {
                 const locked = gateActive;
                 return (
-                  <button key={m.id} onClick={() => openModal(m.id)}
-                    style={{ display: "flex", alignItems: "center", gap: 7, padding: "8px 14px", borderRadius: 9, border: `1.5px solid ${locked ? C.border : m.border}`, fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 600, cursor: "pointer", background: "white", color: locked ? C.muted : m.color, transition: "all .2s", position: "relative", opacity: locked ? 0.55 : 1 }}
-                    onMouseEnter={e => { if (!locked) { e.currentTarget.style.background = m.bg; e.currentTarget.style.transform = "translateY(-1px)"; } }}
-                    onMouseLeave={e => { if (!locked) { e.currentTarget.style.background = "white"; e.currentTarget.style.transform = "none"; } }}>
-                    <i className={`pi ${locked ? "pi-lock" : m.icon}`} style={{ fontSize: 13 }} />{m.label}
-                    {m.dot && !locked && <span style={{ position: "absolute", top: -4, right: -4, width: 8, height: 8, background: m.color, borderRadius: "50%", border: "2px solid white" }} />}
+                  <button key={m.id} onClick={() => !locked && openModal(m.id)}
+                    className={`dnp-module-pill ${locked ? "dnp-module-pill--locked" : ""}`}
+                    style={{ "--mod-color": m.color, "--mod-tint": m.bg }}
+                    title={locked ? "Locked — complete Initial Assessment first" : m.label}>
+                    <i className={`pi ${locked ? "pi-lock" : m.icon}`} style={{ fontSize: 12 }} />
+                    {m.label}
+                    {m.dot && !locked && <span className="dnp-module-pill__dot" />}
                   </button>
                 );
               })}
             </div>
           </div>
+          )}
 
           {/* ── Notes Stats Bar ── */}
+          {activeTile === "timeline" && (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
             {[
               { label: "Total Notes", value: totalNotes, icon: "pi-file-edit", color: C.primary, bg: C.primaryL },
@@ -1356,8 +1342,10 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
               </div>
             ))}
           </div>
+          )}
 
           {/* ── Notes Timeline ── */}
+          {activeTile === "timeline" && (
           <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 20px", borderBottom: `1px solid ${C.border}`, background: "#f8fafc", flexWrap: "wrap", gap: 8 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 14 }}>
@@ -1378,7 +1366,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     </button>
                   );
                 })}
-                <select value={filterShift} onChange={e => setFilterShift(e.target.value)} style={{ ...fld, maxWidth: 120, padding: "5px 10px", fontSize: 11 }}>
+                <select value={filterShift} onChange={e => setFilterShift(e.target.value)} className="his-field" style={{ maxWidth: 120, padding: "5px 10px", fontSize: 11 }}>
                   <option value="">All Shifts</option>
                   <option value="morning">Morning</option>
                   <option value="afternoon">Afternoon</option>
@@ -1420,23 +1408,25 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
             </div>
 
             {filteredNotes.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "56px 0", color: C.muted }}>
-                <i className="pi pi-inbox" style={{ fontSize: 32, display: "block", marginBottom: 12, color: "#cbd5e1" }} />
-                <div style={{ fontSize: 13, fontWeight: 600 }}>No doctor notes yet</div>
-                <button onClick={() => openModal("daily")} style={{ marginTop: 10, background: "none", border: "none", color: C.primary, fontWeight: 700, cursor: "pointer", fontSize: 13 }}>
-                  <i className="pi pi-plus" style={{ marginRight: 5, fontSize: 11 }} />Write first progress note
+              <div className="dnp-empty">
+                <div className="dnp-empty__icon"><i className="pi pi-inbox" /></div>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>No doctor notes yet</div>
+                <button onClick={() => openModal("daily")} className="dnp-note__btn dnp-note__btn--primary">
+                  <i className="pi pi-plus" style={{ fontSize: 11 }} />Write first progress note
                 </button>
               </div>
-            ) : dateGroups.map(([dateKey, groupNotes]) => (
-              <div key={dateKey}>
-                {/* ── Date Section Header ── */}
-                <div style={{ padding: "7px 20px", background: "linear-gradient(90deg, #f1f5f9, #f8fafc)", borderBottom: `1px solid ${C.border}`, borderTop: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 2 }}>
-                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: C.primary, flexShrink: 0 }} />
-                  <span style={{ fontSize: 12, fontWeight: 800, color: C.primary }}>{fmtDayHeader(dateKey)}</span>
-                  <span style={{ fontSize: 11, fontWeight: 600, color: C.muted, fontFamily: "monospace" }}>
+            ) : (
+            <div className="dnp-timeline pf-tint--doctor">
+            {dateGroups.map(([dateKey, groupNotes]) => (
+              <div key={dateKey} className="dnp-date-group">
+                {/* ── Date Section Header — dnp-date-header (sticky) ── */}
+                <div className="dnp-date-header">
+                  <div className="dnp-date-header__dot" />
+                  <span className="dnp-date-header__title">{fmtDayHeader(dateKey)}</span>
+                  <span className="dnp-date-header__sub">
                     {new Date(dateKey + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
                   </span>
-                  <span style={{ marginLeft: "auto", background: C.primary + "18", color: C.primary, padding: "1px 8px", borderRadius: 9, fontSize: 10, fontWeight: 700 }}>{groupNotes.length} note{groupNotes.length !== 1 ? "s" : ""}</span>
+                  <span className="dnp-date-header__count">{groupNotes.length} note{groupNotes.length !== 1 ? "s" : ""}</span>
                 </div>
 
                 {/* ── Notes in this date group ── */}
@@ -1580,44 +1570,37 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
 
                   return (
                     <div key={note._id || i}
-                      style={{
-                        margin:"0 16px", padding:"16px 16px 16px 0",
-                        borderBottom: i < groupNotes.length-1 ? `1px solid ${C.border}` : "none",
-                        display:"grid", gridTemplateColumns:"82px 1fr auto", gap:16, alignItems:"start",
-                        borderLeft:`4px solid ${ns.dot}`, paddingLeft:16,
-                        transition:"background .15s, border-radius .15s", cursor:"pointer",
-                      }}
-                      onMouseEnter={e => { e.currentTarget.style.background=`${ns.bg}50`; e.currentTarget.style.borderRadius="12px"; e.currentTarget.style.margin="2px 16px"; }}
-                      onMouseLeave={e => { e.currentTarget.style.background="transparent"; e.currentTarget.style.borderRadius="0"; e.currentTarget.style.margin="0 16px"; }}
+                      className={`dnp-note ${isSigned ? "dnp-note--signed" : "dnp-note--draft"} ${note.isCritical ? "dnp-note--critical" : ""}`}
+                      style={{ "--dnp-accent": ns.color, "--dnp-tint": ns.bg }}
                       onClick={toggleExpand}>
 
-                      {/* ── Time column ── */}
-                      <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:5, paddingTop:2 }}>
-                        <div style={{ background:ns.bg, border:`1.5px solid ${ns.dot}30`, borderRadius:8, padding:"5px 8px", textAlign:"center", minWidth:64 }}>
-                          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:800, color:ns.color, lineHeight:1 }}>{timeStr}</div>
-                          <div style={{ fontSize:8, fontWeight:700, color:ns.color+"aa", textTransform:"uppercase", letterSpacing:".5px", marginTop:3 }}>
+                      {/* ── Time gutter ── */}
+                      <div className="dnp-note__time">
+                        <div className="dnp-note__time-pill">
+                          <div className="dnp-note__time-hh">{timeStr}</div>
+                          <span className="dnp-note__time-shift">
                             {(note.shift||"morning")[0].toUpperCase()+(note.shift||"morning").slice(1)}
-                          </div>
+                          </span>
                         </div>
-                        <div style={{ width:10, height:10, borderRadius:"50%", background:ns.dot, boxShadow:`0 0 0 3px ${ns.dot}30` }} />
+                        <div className="dnp-note__time-dot" />
                       </div>
 
                       {/* ── Body ── */}
-                      <div>
+                      <div className="dnp-note__body">
                         {/* Badge row */}
-                        <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:6, flexWrap:"wrap" }}>
-                          <span style={{ padding:"3px 10px", borderRadius:5, fontSize:10, fontWeight:700, letterSpacing:".5px", background:ns.bg, color:ns.color, display:"flex", alignItems:"center", gap:5, flexShrink:0 }}>
+                        <div className="dnp-note__badge-row">
+                          <span className="dnp-note__type-badge">
                             {mod && <i className={`pi ${mod.icon}`} style={{ fontSize:10 }} />}
                             {mod?.label || "Daily Progress"}
                           </span>
-                          <span style={{ padding:"2px 8px", borderRadius:4, fontSize:9, fontWeight:700, background:isSigned?C.greenL:C.amberL, color:isSigned?C.green:C.amber, border:`1px solid ${isSigned?C.greenB:C.amberB}` }}>
+                          <span className={`dnp-note__status ${isSigned ? "dnp-note__status--signed" : "dnp-note__status--draft"}`}>
                             {isSigned ? "✓ SIGNED" : "DRAFT"}
                           </span>
-                          {note.isCritical && <span style={{ background:C.red, color:"white", padding:"2px 8px", borderRadius:4, fontSize:9, fontWeight:700 }}>⚠ CRITICAL</span>}
-                          {note.doctorName && <span style={{ fontSize:11, color:C.muted, marginLeft:2 }}>{note.doctorName}</span>}
-                          {note.doctorRegNo && <span style={{ fontSize:10, color:C.muted }}>Reg: {note.doctorRegNo}</span>}
+                          {note.isCritical && <span className="dnp-note__status dnp-note__status--critical">⚠ CRITICAL</span>}
+                          {note.doctorName && <span className="dnp-note__author">{note.doctorName}</span>}
+                          {note.doctorRegNo && <span className="dnp-note__author-reg">Reg {note.doctorRegNo}</span>}
                           {!isExpanded && summaryLine && (
-                            <span style={{ fontSize:11, color:C.muted, fontStyle:"italic", marginLeft:4, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:280 }}>— {summaryLine}{summaryLine.length>=60?"…":""}</span>
+                            <span className="dnp-note__summary">— {summaryLine}{summaryLine.length>=60?"…":""}</span>
                           )}
                         </div>
 
@@ -1627,14 +1610,14 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
 
                             {/* SOAP */}
                             {note.soap && (() => {
-                              const sf=[{k:"subjective",l:"S — Subjective",c:C.blue},{k:"objective",l:"O — Objective",c:C.teal},{k:"assessment",l:"A — Assessment",c:C.amber},{k:"plan",l:"P — Plan",c:C.green}].filter(s=>note.soap[s.k]);
+                              const sf=[{k:"subjective",l:"S — Subjective",cls:"s"},{k:"objective",l:"O — Objective",cls:"o"},{k:"assessment",l:"A — Assessment",cls:"a"},{k:"plan",l:"P — Plan",cls:"p"}].filter(s=>note.soap[s.k]);
                               if (!sf.length) return null;
                               return (
-                                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:7, marginBottom:10 }}>
+                                <div className="dnp-soap-grid">
                                   {sf.map(s=>(
-                                    <div key={s.k} style={{ padding:"8px 12px", background:"#f8fafc", borderRadius:7, borderLeft:`3px solid ${s.c}` }}>
-                                      <div style={{ fontSize:9, fontWeight:800, color:s.c, textTransform:"uppercase", letterSpacing:".6px", marginBottom:3 }}>{s.l}</div>
-                                      <div style={{ fontSize:12, color:C.text, lineHeight:1.6 }}>{note.soap[s.k]}</div>
+                                    <div key={s.k} className={`dnp-soap-cell dnp-soap-cell--${s.cls}`}>
+                                      <div className="dnp-soap-cell__head">{s.l}</div>
+                                      <div className="dnp-soap-cell__body">{note.soap[s.k]}</div>
                                     </div>
                                   ))}
                                 </div>
@@ -1643,9 +1626,9 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
 
                             {/* Top-level diagnosis */}
                             {(note.provisionalDiagnosis||note.finalDiagnosis) && (
-                              <div style={{ display:"flex", gap:12, flexWrap:"wrap", marginBottom:8, padding:"6px 10px", background:"#fffbeb", borderRadius:6, border:"1px solid #fde68a" }}>
-                                {note.provisionalDiagnosis && <span style={{ fontSize:12, color:C.text }}><b style={{ color:C.amber }}>Provisional:</b> {note.provisionalDiagnosis}</span>}
-                                {note.finalDiagnosis && <span style={{ fontSize:12, color:C.text }}><b style={{ color:C.green }}>Final:</b> {note.finalDiagnosis}</span>}
+                              <div className="dnp-dx-strip">
+                                {note.provisionalDiagnosis && <span><span className="dnp-dx-strip__label dnp-dx-strip__label--prov">Provisional:</span>{note.provisionalDiagnosis}</span>}
+                                {note.finalDiagnosis && <span><span className="dnp-dx-strip__label dnp-dx-strip__label--final">Final:</span>{note.finalDiagnosis}</span>}
                               </div>
                             )}
 
@@ -1677,12 +1660,12 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                               const vf=[{l:"BP",v:bpStr},{l:"Pulse",v:v.pulse?`${v.pulse}/min`:null},{l:"Temp",v:v.temp?`${v.temp}°F`:null},{l:"SpO₂",v:v.spo2?`${v.spo2}%`:null},{l:"RR",v:v.rr?`${v.rr}/min`:null},{l:"BSL",v:v.bsl?`${v.bsl}mg/dL`:null},{l:"GCS",v:v.gcs?String(v.gcs):null},{l:"Urine",v:v.urine?`${v.urine}mL`:null}].filter(f=>f.v);
                               if (!vf.length) return null;
                               return (
-                                <div style={{ display:"flex", gap:"5px 14px", flexWrap:"wrap", padding:"8px 12px", background:"#eff6ff", borderRadius:7, border:"1px solid #bfdbfe", marginBottom:8 }}>
-                                  <span style={{ fontSize:9, fontWeight:800, textTransform:"uppercase", color:C.blue, alignSelf:"center", minWidth:44 }}>Vitals</span>
+                                <div className="dnp-vitals-strip">
+                                  <span className="dnp-vitals-strip__heading">Vitals</span>
                                   {vf.map(f=>(
-                                    <div key={f.l} style={{ display:"flex", flexDirection:"column", gap:1 }}>
-                                      <span style={{ fontSize:9, fontWeight:700, textTransform:"uppercase", letterSpacing:".5px", color:C.muted }}>{f.l}</span>
-                                      <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, fontWeight:600, color:C.text }}>{f.v}</span>
+                                    <div key={f.l} className="dnp-vitals-strip__item">
+                                      <span className="dnp-vitals-strip__k">{f.l}</span>
+                                      <span className="dnp-vitals-strip__v">{f.v}</span>
                                     </div>
                                   ))}
                                 </div>
@@ -1831,25 +1814,21 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                       </div>
 
                       {/* ── Actions ── */}
-                      <div onClick={e => e.stopPropagation()} style={{ display:"flex", flexDirection:"column", gap:5, alignItems:"flex-end", flexShrink:0 }}>
-                        <button onClick={toggleExpand}
-                          style={{ padding:"5px 12px", border:`1.5px solid ${isExpanded?C.primary+"60":C.border}`, borderRadius:6, background:isExpanded?C.primaryL:"white", fontSize:11, fontWeight:700, cursor:"pointer", color:isExpanded?C.primary:C.muted, display:"flex", alignItems:"center", gap:5, transition:"all .15s", whiteSpace:"nowrap" }}>
+                      <div className="dnp-note__actions" onClick={e => e.stopPropagation()}>
+                        <button className={`dnp-note__btn ${isExpanded ? "dnp-note__btn--primary" : ""}`} onClick={toggleExpand}>
                           <i className={`pi ${isExpanded?"pi-times":"pi-eye"}`} style={{ fontSize:10 }} />
                           {isExpanded ? "Close" : "View"}
                         </button>
-                        <button onClick={() => printNote(note)}
-                          style={{ padding:"4px 10px", border:`1.5px solid ${C.border}`, borderRadius:6, background:"white", fontSize:11, fontWeight:600, cursor:"pointer", color:C.muted, display:"flex", alignItems:"center", gap:4 }}>
+                        <button className="dnp-note__btn" onClick={() => printNote(note)}>
                           <i className="pi pi-print" style={{ fontSize:10 }} /> Print
                         </button>
                         {!isSigned && (
-                          <button onClick={() => openEditModal(note)}
-                            style={{ padding:"4px 10px", border:`1.5px solid ${C.blueB}`, borderRadius:6, background:C.blueL, fontSize:11, fontWeight:700, cursor:"pointer", color:C.blue, display:"flex", alignItems:"center", gap:4 }}>
+                          <button className="dnp-note__btn dnp-note__btn--info" onClick={() => openEditModal(note)}>
                             <i className="pi pi-pencil" style={{ fontSize:10 }} /> Edit
                           </button>
                         )}
                         {!isSigned && (
-                          <button onClick={() => signNote(note._id)}
-                            style={{ padding:"4px 10px", border:`1.5px solid ${C.greenB}`, borderRadius:6, background:C.greenL, fontSize:11, fontWeight:700, cursor:"pointer", color:C.green, display:"flex", alignItems:"center", gap:4 }}>
+                          <button className="dnp-note__btn dnp-note__btn--ok" onClick={() => signNote(note._id)}>
                             <i className="pi pi-check" style={{ fontSize:10 }} /> Sign
                           </button>
                         )}
@@ -1859,7 +1838,10 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                 })}
               </div>
             ))}
+            </div>
+            )}
           </div>
+          )}
         </>
       )}
 
@@ -1912,20 +1894,20 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                       <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Admission Details</div>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
                         <FL label="Mode of Admission">
-                          <select style={sel} value={ia.admissionMode} onChange={e => set("admissionMode", e.target.value)}>
+                          <select className="his-select" value={ia.admissionMode} onChange={e => set("admissionMode", e.target.value)}>
                             {["Planned","Emergency","Transfer","OPD Referral","Day Care"].map(o => <option key={o}>{o}</option>)}
                           </select>
                         </FL>
                         <FL label="Chief Complaint *">
-                          <input style={fld} value={ia.chiefComplaint} placeholder="e.g. Chest pain" onChange={e => set("chiefComplaint", e.target.value)} />
+                          <input className="his-field" value={ia.chiefComplaint} placeholder="e.g. Chest pain" onChange={e => set("chiefComplaint", e.target.value)} />
                         </FL>
                         <FL label="Duration">
-                          <input style={fld} value={ia.duration} placeholder="e.g. 2 days" onChange={e => set("duration", e.target.value)} />
+                          <input className="his-field" value={ia.duration} placeholder="e.g. 2 days" onChange={e => set("duration", e.target.value)} />
                         </FL>
                       </div>
                       <div style={{ marginTop: 10 }}>
                         <FL label="History of Present Illness *">
-                          <textarea style={{ ...ta, minHeight: 72 }} value={ia.hpi} placeholder="Detailed history of the presenting complaint, onset, progression, associated symptoms, relevant negatives…" onChange={e => set("hpi", e.target.value)} />
+                          <textarea className="his-textarea" style={{ minHeight: 72 }} value={ia.hpi} placeholder="Detailed history of the presenting complaint, onset, progression, associated symptoms, relevant negatives…" onChange={e => set("hpi", e.target.value)} />
                         </FL>
                       </div>
                     </div>
@@ -1934,17 +1916,17 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     <div style={{ background: "#f8fafc", borderRadius: 10, padding: "12px 14px", border: `1px solid ${C.border}` }}>
                       <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Past History</div>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                        <FL label="Past Medical History"><textarea style={{ ...ta, minHeight: 48 }} value={ia.pastMedical} placeholder="HTN, DM, CAD, COPD, CKD, prior hospitalizations…" onChange={e => set("pastMedical", e.target.value)} /></FL>
-                        <FL label="Past Surgical History"><textarea style={{ ...ta, minHeight: 48 }} value={ia.pastSurgical} placeholder="Previous operations, procedures, implants…" onChange={e => set("pastSurgical", e.target.value)} /></FL>
-                        <FL label="Current Medications"><textarea style={{ ...ta, minHeight: 48 }} value={ia.currentMeds} placeholder="List all current medications with doses…" onChange={e => set("currentMeds", e.target.value)} /></FL>
+                        <FL label="Past Medical History"><textarea className="his-textarea" style={{ minHeight: 48 }} value={ia.pastMedical} placeholder="HTN, DM, CAD, COPD, CKD, prior hospitalizations…" onChange={e => set("pastMedical", e.target.value)} /></FL>
+                        <FL label="Past Surgical History"><textarea className="his-textarea" style={{ minHeight: 48 }} value={ia.pastSurgical} placeholder="Previous operations, procedures, implants…" onChange={e => set("pastSurgical", e.target.value)} /></FL>
+                        <FL label="Current Medications"><textarea className="his-textarea" style={{ minHeight: 48 }} value={ia.currentMeds} placeholder="List all current medications with doses…" onChange={e => set("currentMeds", e.target.value)} /></FL>
                         <FL label="Allergies *">
-                          <input style={{ ...fld, borderColor: ia.allergies && ia.allergies !== "NKDA" ? C.red : "#e2e8f0" }} value={ia.allergies} placeholder="NKDA or list allergens + reactions" onChange={e => set("allergies", e.target.value)} />
+                          <input className="his-field" style={{ borderColor: ia.allergies && ia.allergies !== "NKDA" ? C.red : "#e2e8f0" }} value={ia.allergies} placeholder="NKDA or list allergens + reactions" onChange={e => set("allergies", e.target.value)} />
                           {ia.allergies && ia.allergies !== "NKDA" && (
                             <div style={{ fontSize: 10, color: C.red, fontWeight: 700, marginTop: 3 }}>⚠ Allergy documented — verify before prescribing</div>
                           )}
                         </FL>
-                        <FL label="Family History"><input style={fld} value={ia.familyHistory} placeholder="Hereditary conditions, sudden cardiac death…" onChange={e => set("familyHistory", e.target.value)} /></FL>
-                        <FL label="Social History"><input style={fld} value={ia.socialHistory} placeholder="Smoking, alcohol, occupation, marital status…" onChange={e => set("socialHistory", e.target.value)} /></FL>
+                        <FL label="Family History"><input className="his-field" value={ia.familyHistory} placeholder="Hereditary conditions, sudden cardiac death…" onChange={e => set("familyHistory", e.target.value)} /></FL>
+                        <FL label="Social History"><input className="his-field" value={ia.socialHistory} placeholder="Smoking, alcohol, occupation, marital status…" onChange={e => set("socialHistory", e.target.value)} /></FL>
                       </div>
                     </div>
 
@@ -1953,7 +1935,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                       <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Vitals on Admission</div>
                       <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8 }}>
                         {[{k:"bp_sys",l:"Systolic BP (mmHg)",ph:"120"},{k:"bp_dia",l:"Diastolic BP (mmHg)",ph:"80"},{k:"pulse",l:"Pulse (/min)",ph:"80"},{k:"temp",l:"Temp (°F)",ph:"98.6"},{k:"spo2",l:"SpO₂ (%)",ph:"98"},{k:"rr",l:"RR (/min)",ph:"16"},{k:"weight",l:"Weight (kg)",ph:"60"},{k:"height",l:"Height (cm)",ph:"165"},{k:"bsl",l:"BSL (mg/dL)",ph:"100"}].map(f => (
-                          <FL key={f.k} label={f.l}><input type="number" style={fld} value={ia[f.k]} placeholder={f.ph} onChange={e => set(f.k, e.target.value)} /></FL>
+                          <FL key={f.k} label={f.l}><input type="number" className="his-field" value={ia[f.k]} placeholder={f.ph} onChange={e => set(f.k, e.target.value)} /></FL>
                         ))}
                       </div>
                     </div>
@@ -1973,17 +1955,17 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                           {k:"oedema",l:"Oedema",opts:["Absent","Pedal (pitting)","Pedal (non-pitting)","Sacral","Generalised"]},
                         ].map(f => (
                           <FL key={f.k} label={f.l}>
-                            <select style={{ ...sel, fontSize: 11 }} value={ia[f.k]} onChange={e => set(f.k, e.target.value)}>
+                            <select className="his-select" style={{ fontSize: 11 }} value={ia[f.k]} onChange={e => set(f.k, e.target.value)}>
                               {f.opts.map(o => <option key={o}>{o}</option>)}
                             </select>
                           </FL>
                         ))}
                       </div>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                        <FL label="Respiratory System"><textarea style={{ ...ta, minHeight: 48 }} value={ia.resp} placeholder="Breath sounds, added sounds, air entry…" onChange={e => set("resp", e.target.value)} /></FL>
-                        <FL label="Cardiovascular System"><textarea style={{ ...ta, minHeight: 48 }} value={ia.cvs} placeholder="S1 S2, murmurs, JVP, peripheral pulses…" onChange={e => set("cvs", e.target.value)} /></FL>
-                        <FL label="Abdomen"><textarea style={{ ...ta, minHeight: 48 }} value={ia.abdomen} placeholder="Inspection, palpation, percussion, auscultation…" onChange={e => set("abdomen", e.target.value)} /></FL>
-                        <FL label="CNS / Neurological"><textarea style={{ ...ta, minHeight: 48 }} value={ia.cns} placeholder="Consciousness, GCS, cranial nerves, motor, sensory…" onChange={e => set("cns", e.target.value)} /></FL>
+                        <FL label="Respiratory System"><textarea className="his-textarea" style={{ minHeight: 48 }} value={ia.resp} placeholder="Breath sounds, added sounds, air entry…" onChange={e => set("resp", e.target.value)} /></FL>
+                        <FL label="Cardiovascular System"><textarea className="his-textarea" style={{ minHeight: 48 }} value={ia.cvs} placeholder="S1 S2, murmurs, JVP, peripheral pulses…" onChange={e => set("cvs", e.target.value)} /></FL>
+                        <FL label="Abdomen"><textarea className="his-textarea" style={{ minHeight: 48 }} value={ia.abdomen} placeholder="Inspection, palpation, percussion, auscultation…" onChange={e => set("abdomen", e.target.value)} /></FL>
+                        <FL label="CNS / Neurological"><textarea className="his-textarea" style={{ minHeight: 48 }} value={ia.cns} placeholder="Consciousness, GCS, cranial nerves, motor, sensory…" onChange={e => set("cns", e.target.value)} /></FL>
                       </div>
                     </div>
 
@@ -1991,10 +1973,10 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     <div style={{ background: "#f8fafc", borderRadius: 10, padding: "12px 14px", border: `1px solid ${C.border}` }}>
                       <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Diagnosis</div>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                        <FL label="Provisional Diagnosis *"><input style={fld} value={ia.provisionalDx} placeholder="Working diagnosis on admission" onChange={e => set("provisionalDx", e.target.value)} /></FL>
-                        <FL label="Differential Diagnosis"><input style={fld} value={ia.differentialDx} placeholder="Differential diagnoses (comma separated)" onChange={e => set("differentialDx", e.target.value)} /></FL>
-                        <FL label="Final Diagnosis (if known)"><input style={fld} value={ia.finalDx} placeholder="Confirmed diagnosis" onChange={e => set("finalDx", e.target.value)} /></FL>
-                        <FL label="ICD-10 Code"><input style={fld} value={ia.icd10} placeholder="e.g. J18.9 — Pneumonia" onChange={e => set("icd10", e.target.value)} /></FL>
+                        <FL label="Provisional Diagnosis *"><input className="his-field" value={ia.provisionalDx} placeholder="Working diagnosis on admission" onChange={e => set("provisionalDx", e.target.value)} /></FL>
+                        <FL label="Differential Diagnosis"><input className="his-field" value={ia.differentialDx} placeholder="Differential diagnoses (comma separated)" onChange={e => set("differentialDx", e.target.value)} /></FL>
+                        <FL label="Final Diagnosis (if known)"><input className="his-field" value={ia.finalDx} placeholder="Confirmed diagnosis" onChange={e => set("finalDx", e.target.value)} /></FL>
+                        <FL label="ICD-10 Code"><input className="his-field" value={ia.icd10} placeholder="e.g. J18.9 — Pneumonia" onChange={e => set("icd10", e.target.value)} /></FL>
                       </div>
                     </div>
 
@@ -2002,8 +1984,8 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     <div style={{ background: "#f8fafc", borderRadius: 10, padding: "12px 14px", border: `1px solid ${C.border}` }}>
                       <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Investigations & Management Plan</div>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                        <FL label="Investigations Ordered"><textarea style={{ ...ta, minHeight: 60 }} value={ia.investigations} placeholder="CBC, CMP, CXR, ECG, Echo, CT, MRI, cultures…" onChange={e => set("investigations", e.target.value)} /></FL>
-                        <FL label="Management Plan *"><textarea style={{ ...ta, minHeight: 60 }} value={ia.managementPlan} placeholder="Treatment goals, monitoring plan, nursing orders, diet, activity, DVT prophylaxis, targets…" onChange={e => set("managementPlan", e.target.value)} /></FL>
+                        <FL label="Investigations Ordered"><textarea className="his-textarea" style={{ minHeight: 60 }} value={ia.investigations} placeholder="CBC, CMP, CXR, ECG, Echo, CT, MRI, cultures…" onChange={e => set("investigations", e.target.value)} /></FL>
+                        <FL label="Management Plan *"><textarea className="his-textarea" style={{ minHeight: 60 }} value={ia.managementPlan} placeholder="Treatment goals, monitoring plan, nursing orders, diet, activity, DVT prophylaxis, targets…" onChange={e => set("managementPlan", e.target.value)} /></FL>
                       </div>
                     </div>
 
@@ -2037,16 +2019,16 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                                   const hamActive = autoHam || row.hamOverride;
                                   return (
                                   <tr key={row.id} style={{ background: row.status === "Stopped" ? "#fef2f2" : hamActive ? "#fff7ed" : "white" }}>
-                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px" }}><input type="datetime-local" style={{ ...fld, fontSize: 10, padding: "4px 6px" }} value={row.datetime} onChange={e => updateMed(row.id, "datetime", e.target.value)} /></td>
-                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 130 }}><input style={{ ...fld, fontSize: 11, padding: "4px 6px", fontWeight: 700 }} value={row.drug} placeholder="Drug name (generic)" onChange={e => updateMed(row.id, "drug", e.target.value)} /></td>
-                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 80 }}><input style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.dose} placeholder="e.g. 500mg" onChange={e => updateMed(row.id, "dose", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px" }}><input type="datetime-local" className="his-field" style={{ fontSize: 10, padding: "4px 6px" }} value={row.datetime} onChange={e => updateMed(row.id, "datetime", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 130 }}><input className="his-field" style={{ fontSize: 11, padding: "4px 6px", fontWeight: 700 }} value={row.drug} placeholder="Drug name (generic)" onChange={e => updateMed(row.id, "drug", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 80 }}><input className="his-field" style={{ fontSize: 11, padding: "4px 6px" }} value={row.dose} placeholder="e.g. 500mg" onChange={e => updateMed(row.id, "dose", e.target.value)} /></td>
                                     <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 100 }}>
-                                      <select style={{ ...sel, fontSize: 11, padding: "4px 6px" }} value={row.route} onChange={e => updateMed(row.id, "route", e.target.value)}>
+                                      <select className="his-select" style={{ fontSize: 11, padding: "4px 6px" }} value={row.route} onChange={e => updateMed(row.id, "route", e.target.value)}>
                                         {ROUTES.map(r => <option key={r}>{r}</option>)}
                                       </select>
                                     </td>
                                     <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 90 }}>
-                                      <select style={{ ...sel, fontSize: 11, padding: "4px 6px" }} value={row.frequency} onChange={e => updateMed(row.id, "frequency", e.target.value)}>
+                                      <select className="his-select" style={{ fontSize: 11, padding: "4px 6px" }} value={row.frequency} onChange={e => updateMed(row.id, "frequency", e.target.value)}>
                                         {FREQ_LIST.map(f => <option key={f}>{f}</option>)}
                                       </select>
                                     </td>
@@ -2055,7 +2037,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                                     </td>
                                     {/* Priority */}
                                     <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 85 }}>
-                                      <select style={{ ...sel, fontSize: 10, padding: "3px 5px", fontWeight: 700, color: row.priority==="STAT"?C.red:row.priority==="Urgent"?C.amber:C.muted }} value={row.priority||"Routine"} onChange={e => updateMed(row.id, "priority", e.target.value)}>
+                                      <select className="his-select" style={{ fontSize: 10, padding: "3px 5px", fontWeight: 700, color: row.priority==="STAT"?C.red:row.priority==="Urgent"?C.amber:C.muted }} value={row.priority||"Routine"} onChange={e => updateMed(row.id, "priority", e.target.value)}>
                                         <option value="Routine">Routine</option>
                                         <option value="Urgent">🔶 Urgent</option>
                                         <option value="STAT">⚡ STAT</option>
@@ -2068,15 +2050,15 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                                         : <input type="checkbox" title="Mark as High Alert Medication (HAM)" checked={!!row.hamOverride} onChange={e => updateMed(row.id, "hamOverride", e.target.checked)}
                                             style={{ width: 14, height: 14, cursor: "pointer", accentColor: C.red }} />}
                                     </td>
-                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 110 }}><input style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.indication} placeholder="e.g. GI prophylaxis" onChange={e => updateMed(row.id, "indication", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 110 }}><input className="his-field" style={{ fontSize: 11, padding: "4px 6px" }} value={row.indication} placeholder="e.g. GI prophylaxis" onChange={e => updateMed(row.id, "indication", e.target.value)} /></td>
                                     <td style={{ border: "1px solid #bfdbfe", padding: "4px" }}>
-                                      <select style={{ ...sel, fontSize: 11, padding: "4px 6px", color: row.status === "Stopped" ? C.red : C.green, fontWeight: 700 }} value={row.status} onChange={e => updateMed(row.id, "status", e.target.value)}>
+                                      <select className="his-select" style={{ fontSize: 11, padding: "4px 6px", color: row.status === "Stopped" ? C.red : C.green, fontWeight: 700 }} value={row.status} onChange={e => updateMed(row.id, "status", e.target.value)}>
                                         <option value="Active">Active</option>
                                         <option value="Stopped">Stopped</option>
                                       </select>
                                     </td>
                                     <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 100 }}>
-                                      <input style={{ ...fld, fontSize: 11, padding: "4px 6px", borderColor: row.status === "Stopped" && !row.stopReason ? C.red : "#e2e8f0" }} value={row.stopReason} placeholder={row.status === "Stopped" ? "Required!" : "—"} onChange={e => updateMed(row.id, "stopReason", e.target.value)} />
+                                      <input className="his-field" style={{ fontSize: 11, padding: "4px 6px", borderColor: row.status === "Stopped" && !row.stopReason ? C.red : "#e2e8f0" }} value={row.stopReason} placeholder={row.status === "Stopped" ? "Required!" : "—"} onChange={e => updateMed(row.id, "stopReason", e.target.value)} />
                                     </td>
                                     <td style={{ border: "1px solid #bfdbfe", padding: "4px" }}>
                                       <button onClick={() => removeMed(row.id)} style={{ width: 22, height: 22, borderRadius: 4, border: "1px solid #fca5a5", background: "#fef2f2", color: C.red, cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
@@ -2121,21 +2103,21 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                                   const hamActive = autoHam || row.hamOverride;
                                   return (
                                   <tr key={row.id} style={{ background: row.status === "Stopped" ? "#fef2f2" : hamActive ? "#fff7ed" : "white" }}>
-                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px" }}><input type="datetime-local" style={{ ...fld, fontSize: 10, padding: "4px 6px" }} value={row.datetime} onChange={e => updateInf(row.id, "datetime", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px" }}><input type="datetime-local" className="his-field" style={{ fontSize: 10, padding: "4px 6px" }} value={row.datetime} onChange={e => updateInf(row.id, "datetime", e.target.value)} /></td>
                                     <td style={{ border: "1px solid #a7f3d0", padding: "4px" }}>
-                                      <select style={{ ...sel, fontSize: 11, padding: "4px 6px" }} value={row.type} onChange={e => updateInf(row.id, "type", e.target.value)}>
+                                      <select className="his-select" style={{ fontSize: 11, padding: "4px 6px" }} value={row.type} onChange={e => updateInf(row.id, "type", e.target.value)}>
                                         {["Fluid","Drug Infusion","Blood","Blood Product","TPN"].map(t => <option key={t}>{t}</option>)}
                                       </select>
                                     </td>
-                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 140 }}><input style={{ ...fld, fontSize: 11, padding: "4px 6px", fontWeight: 700 }} value={row.drugFluid} placeholder="NS 0.9% / Noradrenaline / PRBC" onChange={e => updateInf(row.id, "drugFluid", e.target.value)} /></td>
-                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 110 }}><input style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.dilution} placeholder="e.g. 4mg in 50ml NS" onChange={e => updateInf(row.id, "dilution", e.target.value)} /></td>
-                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 70 }}><input type="number" style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.volume} placeholder="500" onChange={e => updateInf(row.id, "volume", e.target.value)} /></td>
-                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 80 }}><input type="number" style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.rate} placeholder="100" onChange={e => updateInf(row.id, "rate", e.target.value)} /></td>
-                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 120 }}><input style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.titrationGoal} placeholder="MAP > 65 / Hb > 8" onChange={e => updateInf(row.id, "titrationGoal", e.target.value)} /></td>
-                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px" }}><input type="time" style={{ ...fld, fontSize: 11, padding: "4px 6px" }} value={row.startTime} onChange={e => updateInf(row.id, "startTime", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 140 }}><input className="his-field" style={{ fontSize: 11, padding: "4px 6px", fontWeight: 700 }} value={row.drugFluid} placeholder="NS 0.9% / Noradrenaline / PRBC" onChange={e => updateInf(row.id, "drugFluid", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 110 }}><input className="his-field" style={{ fontSize: 11, padding: "4px 6px" }} value={row.dilution} placeholder="e.g. 4mg in 50ml NS" onChange={e => updateInf(row.id, "dilution", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 70 }}><input type="number" className="his-field" style={{ fontSize: 11, padding: "4px 6px" }} value={row.volume} placeholder="500" onChange={e => updateInf(row.id, "volume", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 80 }}><input type="number" className="his-field" style={{ fontSize: 11, padding: "4px 6px" }} value={row.rate} placeholder="100" onChange={e => updateInf(row.id, "rate", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 120 }}><input className="his-field" style={{ fontSize: 11, padding: "4px 6px" }} value={row.titrationGoal} placeholder="MAP > 65 / Hb > 8" onChange={e => updateInf(row.id, "titrationGoal", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #a7f3d0", padding: "4px" }}><input type="time" className="his-field" style={{ fontSize: 11, padding: "4px 6px" }} value={row.startTime} onChange={e => updateInf(row.id, "startTime", e.target.value)} /></td>
                                     {/* Priority */}
                                     <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 85 }}>
-                                      <select style={{ ...sel, fontSize: 10, padding: "3px 5px", fontWeight: 700, color: row.priority==="STAT"?C.red:row.priority==="Urgent"?C.amber:C.muted }} value={row.priority||"Routine"} onChange={e => updateInf(row.id, "priority", e.target.value)}>
+                                      <select className="his-select" style={{ fontSize: 10, padding: "3px 5px", fontWeight: 700, color: row.priority==="STAT"?C.red:row.priority==="Urgent"?C.amber:C.muted }} value={row.priority||"Routine"} onChange={e => updateInf(row.id, "priority", e.target.value)}>
                                         <option value="Routine">Routine</option>
                                         <option value="Urgent">🔶 Urgent</option>
                                         <option value="STAT">⚡ STAT</option>
@@ -2149,13 +2131,13 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                                             style={{ width: 14, height: 14, cursor: "pointer", accentColor: C.red }} />}
                                     </td>
                                     <td style={{ border: "1px solid #a7f3d0", padding: "4px" }}>
-                                      <select style={{ ...sel, fontSize: 11, padding: "4px 6px", color: row.status === "Stopped" ? C.red : C.teal, fontWeight: 700 }} value={row.status} onChange={e => updateInf(row.id, "status", e.target.value)}>
+                                      <select className="his-select" style={{ fontSize: 11, padding: "4px 6px", color: row.status === "Stopped" ? C.red : C.teal, fontWeight: 700 }} value={row.status} onChange={e => updateInf(row.id, "status", e.target.value)}>
                                         <option value="Active">Active</option>
                                         <option value="Stopped">Stopped</option>
                                       </select>
                                     </td>
                                     <td style={{ border: "1px solid #a7f3d0", padding: "4px", minWidth: 100 }}>
-                                      <input style={{ ...fld, fontSize: 11, padding: "4px 6px", borderColor: row.status === "Stopped" && !row.stopReason ? C.red : "#e2e8f0" }} value={row.stopReason} placeholder={row.status === "Stopped" ? "Required!" : "—"} onChange={e => updateInf(row.id, "stopReason", e.target.value)} />
+                                      <input className="his-field" style={{ fontSize: 11, padding: "4px 6px", borderColor: row.status === "Stopped" && !row.stopReason ? C.red : "#e2e8f0" }} value={row.stopReason} placeholder={row.status === "Stopped" ? "Required!" : "—"} onChange={e => updateInf(row.id, "stopReason", e.target.value)} />
                                     </td>
                                     <td style={{ border: "1px solid #a7f3d0", padding: "4px" }}>
                                       <button onClick={() => removeInf(row.id)} style={{ width: 22, height: 22, borderRadius: 4, border: "1px solid #fca5a5", background: "#fef2f2", color: C.red, cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
@@ -2201,16 +2183,16 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                         <tbody>
                           {medOrders.map((row, idx) => (
                             <tr key={row.id} style={{ background: row.status === "Stopped" ? "#fff1f2" : idx % 2 === 0 ? "white" : "#fafcff" }}>
-                              <td style={{ border: `1px solid ${C.blueB}`, padding: "5px" }}><input type="datetime-local" style={{ ...fld, fontSize: 11, padding: "5px 7px" }} value={row.datetime} onChange={e => updateMed(row.id, "datetime", e.target.value)} /></td>
-                              <td style={{ border: `1px solid ${C.blueB}`, padding: "5px", minWidth: 130 }}><input style={{ ...fld, fontSize: 12, padding: "5px 7px", fontWeight: 600 }} value={row.drug} placeholder="Drug name" onChange={e => updateMed(row.id, "drug", e.target.value)} /></td>
-                              <td style={{ border: `1px solid ${C.blueB}`, padding: "5px", minWidth: 90 }}><input style={{ ...fld, fontSize: 12, padding: "5px 7px" }} value={row.dose} placeholder="500mg" onChange={e => updateMed(row.id, "dose", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.blueB}`, padding: "5px" }}><input type="datetime-local" className="his-field" style={{ fontSize: 11, padding: "5px 7px" }} value={row.datetime} onChange={e => updateMed(row.id, "datetime", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.blueB}`, padding: "5px", minWidth: 130 }}><input className="his-field" style={{ fontSize: 12, padding: "5px 7px", fontWeight: 600 }} value={row.drug} placeholder="Drug name" onChange={e => updateMed(row.id, "drug", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.blueB}`, padding: "5px", minWidth: 90 }}><input className="his-field" style={{ fontSize: 12, padding: "5px 7px" }} value={row.dose} placeholder="500mg" onChange={e => updateMed(row.id, "dose", e.target.value)} /></td>
                               <td style={{ border: `1px solid ${C.blueB}`, padding: "5px", minWidth: 110 }}>
-                                <select style={{ ...sel, fontSize: 11, padding: "5px 7px" }} value={row.route} onChange={e => updateMed(row.id, "route", e.target.value)}>
+                                <select className="his-select" style={{ fontSize: 11, padding: "5px 7px" }} value={row.route} onChange={e => updateMed(row.id, "route", e.target.value)}>
                                   {ROUTES.map(r => <option key={r}>{r}</option>)}
                                 </select>
                               </td>
                               <td style={{ border: `1px solid ${C.blueB}`, padding: "5px", minWidth: 100 }}>
-                                <select style={{ ...sel, fontSize: 12, padding: "5px 7px", fontWeight: 700 }} value={row.frequency} onChange={e => updateMed(row.id, "frequency", e.target.value)}>
+                                <select className="his-select" style={{ fontSize: 12, padding: "5px 7px", fontWeight: 700 }} value={row.frequency} onChange={e => updateMed(row.id, "frequency", e.target.value)}>
                                   {FREQ_LIST.map(f => <option key={f}>{f}</option>)}
                                 </select>
                               </td>
@@ -2219,15 +2201,15 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                                   {(FREQ_TIMES[row.frequency] || []).join(" · ")}
                                 </div>
                               </td>
-                              <td style={{ border: `1px solid ${C.blueB}`, padding: "5px", minWidth: 110 }}><input style={{ ...fld, fontSize: 11, padding: "5px 7px" }} value={row.indication} placeholder="Indication" onChange={e => updateMed(row.id, "indication", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.blueB}`, padding: "5px", minWidth: 110 }}><input className="his-field" style={{ fontSize: 11, padding: "5px 7px" }} value={row.indication} placeholder="Indication" onChange={e => updateMed(row.id, "indication", e.target.value)} /></td>
                               <td style={{ border: `1px solid ${C.blueB}`, padding: "5px" }}>
-                                <select style={{ ...sel, fontSize: 12, padding: "5px 7px", color: row.status === "Stopped" ? C.red : C.green, fontWeight: 700 }} value={row.status} onChange={e => updateMed(row.id, "status", e.target.value)}>
+                                <select className="his-select" style={{ fontSize: 12, padding: "5px 7px", color: row.status === "Stopped" ? C.red : C.green, fontWeight: 700 }} value={row.status} onChange={e => updateMed(row.id, "status", e.target.value)}>
                                   <option value="Active">Active</option>
                                   <option value="Stopped">Stopped</option>
                                 </select>
                               </td>
                               <td style={{ border: `1px solid ${C.blueB}`, padding: "5px", minWidth: 120 }}>
-                                <input style={{ ...fld, fontSize: 11, padding: "5px 7px", borderColor: row.status === "Stopped" && !row.stopReason ? C.red : "#e2e8f0", background: row.status === "Stopped" && !row.stopReason ? "#fef2f2" : "white" }} value={row.stopReason} placeholder={row.status === "Stopped" ? "Required ⚠" : "—"} onChange={e => updateMed(row.id, "stopReason", e.target.value)} />
+                                <input className="his-field" style={{ fontSize: 11, padding: "5px 7px", borderColor: row.status === "Stopped" && !row.stopReason ? C.red : "#e2e8f0", background: row.status === "Stopped" && !row.stopReason ? "#fef2f2" : "white" }} value={row.stopReason} placeholder={row.status === "Stopped" ? "Required ⚠" : "—"} onChange={e => updateMed(row.id, "stopReason", e.target.value)} />
                               </td>
                               <td style={{ border: `1px solid ${C.blueB}`, padding: "5px" }}>
                                 <button onClick={() => removeMed(row.id)} title="Remove row" style={{ width: 24, height: 24, borderRadius: 5, border: "1px solid #fca5a5", background: "#fef2f2", color: C.red, cursor: "pointer", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700 }}>×</button>
@@ -2272,26 +2254,26 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                         <tbody>
                           {infOrders.map((row, idx) => (
                             <tr key={row.id} style={{ background: row.status === "Stopped" ? "#fff1f2" : idx % 2 === 0 ? "white" : "#f0fdfa" }}>
-                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px" }}><input type="datetime-local" style={{ ...fld, fontSize: 11, padding: "5px 7px" }} value={row.datetime} onChange={e => updateInf(row.id, "datetime", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px" }}><input type="datetime-local" className="his-field" style={{ fontSize: 11, padding: "5px 7px" }} value={row.datetime} onChange={e => updateInf(row.id, "datetime", e.target.value)} /></td>
                               <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 110 }}>
-                                <select style={{ ...sel, fontSize: 11, padding: "5px 7px" }} value={row.type} onChange={e => updateInf(row.id, "type", e.target.value)}>
+                                <select className="his-select" style={{ fontSize: 11, padding: "5px 7px" }} value={row.type} onChange={e => updateInf(row.id, "type", e.target.value)}>
                                   {["Fluid","Drug Infusion","Blood","Blood Product","TPN"].map(t => <option key={t}>{t}</option>)}
                                 </select>
                               </td>
-                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 140 }}><input style={{ ...fld, fontSize: 12, padding: "5px 7px", fontWeight: 600 }} value={row.drugFluid} placeholder="NS 0.9% / Noradrenaline / PRBC" onChange={e => updateInf(row.id, "drugFluid", e.target.value)} /></td>
-                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 120 }}><input style={{ ...fld, fontSize: 11, padding: "5px 7px" }} value={row.dilution} placeholder="e.g. 2mg in 50ml NS" onChange={e => updateInf(row.id, "dilution", e.target.value)} /></td>
-                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 75 }}><input type="number" style={{ ...fld, fontSize: 12, padding: "5px 7px" }} value={row.volume} placeholder="500" onChange={e => updateInf(row.id, "volume", e.target.value)} /></td>
-                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 90 }}><input type="number" style={{ ...fld, fontSize: 12, padding: "5px 7px" }} value={row.rate} placeholder="100" onChange={e => updateInf(row.id, "rate", e.target.value)} /></td>
-                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 140 }}><input style={{ ...fld, fontSize: 11, padding: "5px 7px" }} value={row.titrationGoal} placeholder="MAP > 65 / Hb > 8" onChange={e => updateInf(row.id, "titrationGoal", e.target.value)} /></td>
-                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px" }}><input type="time" style={{ ...fld, fontSize: 11, padding: "5px 7px" }} value={row.startTime} onChange={e => updateInf(row.id, "startTime", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 140 }}><input className="his-field" style={{ fontSize: 12, padding: "5px 7px", fontWeight: 600 }} value={row.drugFluid} placeholder="NS 0.9% / Noradrenaline / PRBC" onChange={e => updateInf(row.id, "drugFluid", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 120 }}><input className="his-field" style={{ fontSize: 11, padding: "5px 7px" }} value={row.dilution} placeholder="e.g. 2mg in 50ml NS" onChange={e => updateInf(row.id, "dilution", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 75 }}><input type="number" className="his-field" style={{ fontSize: 12, padding: "5px 7px" }} value={row.volume} placeholder="500" onChange={e => updateInf(row.id, "volume", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 90 }}><input type="number" className="his-field" style={{ fontSize: 12, padding: "5px 7px" }} value={row.rate} placeholder="100" onChange={e => updateInf(row.id, "rate", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 140 }}><input className="his-field" style={{ fontSize: 11, padding: "5px 7px" }} value={row.titrationGoal} placeholder="MAP > 65 / Hb > 8" onChange={e => updateInf(row.id, "titrationGoal", e.target.value)} /></td>
+                              <td style={{ border: `1px solid ${C.tealB}`, padding: "5px" }}><input type="time" className="his-field" style={{ fontSize: 11, padding: "5px 7px" }} value={row.startTime} onChange={e => updateInf(row.id, "startTime", e.target.value)} /></td>
                               <td style={{ border: `1px solid ${C.tealB}`, padding: "5px" }}>
-                                <select style={{ ...sel, fontSize: 12, padding: "5px 7px", color: row.status === "Stopped" ? C.red : C.teal, fontWeight: 700 }} value={row.status} onChange={e => updateInf(row.id, "status", e.target.value)}>
+                                <select className="his-select" style={{ fontSize: 12, padding: "5px 7px", color: row.status === "Stopped" ? C.red : C.teal, fontWeight: 700 }} value={row.status} onChange={e => updateInf(row.id, "status", e.target.value)}>
                                   <option value="Active">Active</option>
                                   <option value="Stopped">Stopped</option>
                                 </select>
                               </td>
                               <td style={{ border: `1px solid ${C.tealB}`, padding: "5px", minWidth: 120 }}>
-                                <input style={{ ...fld, fontSize: 11, padding: "5px 7px", borderColor: row.status === "Stopped" && !row.stopReason ? C.red : "#e2e8f0", background: row.status === "Stopped" && !row.stopReason ? "#fef2f2" : "white" }} value={row.stopReason} placeholder={row.status === "Stopped" ? "Required ⚠" : "—"} onChange={e => updateInf(row.id, "stopReason", e.target.value)} />
+                                <input className="his-field" style={{ fontSize: 11, padding: "5px 7px", borderColor: row.status === "Stopped" && !row.stopReason ? C.red : "#e2e8f0", background: row.status === "Stopped" && !row.stopReason ? "#fef2f2" : "white" }} value={row.stopReason} placeholder={row.status === "Stopped" ? "Required ⚠" : "—"} onChange={e => updateInf(row.id, "stopReason", e.target.value)} />
                               </td>
                               <td style={{ border: `1px solid ${C.tealB}`, padding: "5px" }}>
                                 <button onClick={() => removeInf(row.id)} title="Remove row" style={{ width: 24, height: 24, borderRadius: 5, border: "1px solid #fca5a5", background: "#fef2f2", color: C.red, cursor: "pointer", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700 }}>×</button>
@@ -2317,7 +2299,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8 }}>
                       {[{k:"bp_sys",l:"Systolic BP (mmHg)",p:"120"},{k:"bp_dia",l:"Diastolic BP (mmHg)",p:"80"},{k:"pulse",l:"Pulse (/min)",p:"80"},{k:"temp",l:"Temp (°F)",p:"98.6"},{k:"spo2",l:"SpO₂ (%)",p:"98"},{k:"rr",l:"RR (/min)",p:"16"},{k:"bsl",l:"BSL (mg/dL)",p:"110"},{k:"gcs",l:"GCS",p:"E4V5M6"},{k:"urine",l:"Urine (mL/hr)",p:"50"}].map(v => (
                         <FL key={v.k} label={v.l}>
-                          <input type={v.k==="gcs"?"text":"number"} style={{ ...fld, fontSize: 12 }} value={vitals[v.k]} placeholder={v.p} onChange={e => setVitals(p => ({ ...p, [v.k]: e.target.value }))} />
+                          <input type={v.k==="gcs"?"text":"number"} className="his-field" style={{ fontSize: 12 }} value={vitals[v.k]} placeholder={v.p} onChange={e => setVitals(p => ({ ...p, [v.k]: e.target.value }))} />
                         </FL>
                       ))}
                     </div>
@@ -2332,27 +2314,27 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     <div key={s.k}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
                         <span style={{ width: 22, height: 22, borderRadius: 5, background: s.c + "20", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 12, color: s.c }}>{s.k[0].toUpperCase()}</span>
-                        <label style={{ ...lbl, marginBottom: 0, color: s.c }}>{s.l}</label>
+                        <label className="his-label" style={{ marginBottom: 0, color: s.c }}>{s.l}</label>
                       </div>
-                      <textarea style={{ ...ta, minHeight: 72, borderColor: s.c + "40" }} value={soap[s.k]} placeholder={s.ph} onChange={e => setSoap(p => ({ ...p, [s.k]: e.target.value }))} />
+                      <textarea className="his-textarea" style={{ minHeight: 72, borderColor: s.c + "40" }} value={soap[s.k]} placeholder={s.ph} onChange={e => setSoap(p => ({ ...p, [s.k]: e.target.value }))} />
                     </div>
                   ))}
                   {/* Diagnosis */}
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 }}>
-                    <FL label="Provisional Diagnosis"><input style={fld} value={diag.provisional} placeholder="Working diagnosis" onChange={e => setDiag(p => ({ ...p, provisional: e.target.value }))} /></FL>
-                    <FL label="Working Diagnosis"><input style={fld} value={diag.working} placeholder="Current working diagnosis" onChange={e => setDiag(p => ({ ...p, working: e.target.value }))} /></FL>
-                    <FL label="Final Diagnosis"><input style={fld} value={diag.final} placeholder="Confirmed diagnosis" onChange={e => setDiag(p => ({ ...p, final: e.target.value }))} /></FL>
-                    <FL label="ICD-10 Code"><input style={fld} value={diag.icd10Code} placeholder="e.g. J18.9" onChange={e => setDiag(p => ({ ...p, icd10Code: e.target.value }))} /></FL>
-                    <FL label="ICD-10 Description"><input style={fld} value={diag.icd10Description} placeholder="e.g. Unspecified pneumonia" onChange={e => setDiag(p => ({ ...p, icd10Description: e.target.value }))} /></FL>
+                    <FL label="Provisional Diagnosis"><input className="his-field" value={diag.provisional} placeholder="Working diagnosis" onChange={e => setDiag(p => ({ ...p, provisional: e.target.value }))} /></FL>
+                    <FL label="Working Diagnosis"><input className="his-field" value={diag.working} placeholder="Current working diagnosis" onChange={e => setDiag(p => ({ ...p, working: e.target.value }))} /></FL>
+                    <FL label="Final Diagnosis"><input className="his-field" value={diag.final} placeholder="Confirmed diagnosis" onChange={e => setDiag(p => ({ ...p, final: e.target.value }))} /></FL>
+                    <FL label="ICD-10 Code"><input className="his-field" value={diag.icd10Code} placeholder="e.g. J18.9" onChange={e => setDiag(p => ({ ...p, icd10Code: e.target.value }))} /></FL>
+                    <FL label="ICD-10 Description"><input className="his-field" value={diag.icd10Description} placeholder="e.g. Unspecified pneumonia" onChange={e => setDiag(p => ({ ...p, icd10Description: e.target.value }))} /></FL>
                     <FL label="Patient Status">
-                      <select style={sel} value={diag.status} onChange={e => setDiag(p => ({ ...p, status: e.target.value }))}>
+                      <select className="his-select" value={diag.status} onChange={e => setDiag(p => ({ ...p, status: e.target.value }))}>
                         {["Stable","Improving","Unchanged","Deteriorating","Critical","Ready for Discharge"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                   </div>
                   {/* Investigations ordered */}
                   <FL label="Investigations Ordered (comma-separated)">
-                    <input style={fld} value={invx} placeholder="CBC, LFT, Chest X-Ray, USG Abdomen, ECG…" onChange={e => setInvx(e.target.value)} />
+                    <input className="his-field" value={invx} placeholder="CBC, LFT, Chest X-Ray, USG Abdomen, ECG…" onChange={e => setInvx(e.target.value)} />
                   </FL>
                   {/* Inline Orders */}
                   <div style={{ background: "#f8fafc", border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px" }}>
@@ -2366,20 +2348,20 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                       <div style={{ background: "white", border: `1px solid ${C.blueB}`, borderRadius: 8, padding: "10px 12px", marginBottom: 10 }}>
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr 1fr 1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
                           <FL label="Type">
-                            <select style={{ ...sel, fontSize: 12 }} value={orderRow.type} onChange={e => setOrderRow(p => ({ ...p, type: e.target.value }))}>
+                            <select className="his-select" style={{ fontSize: 12 }} value={orderRow.type} onChange={e => setOrderRow(p => ({ ...p, type: e.target.value }))}>
                               {["medication","iv_fluid","procedure","investigation","diet","nursing","other"].map(o=><option key={o} value={o}>{o}</option>)}
                             </select>
                           </FL>
-                          <FL label="Instruction *"><input style={{ ...fld, fontSize: 12 }} value={orderRow.instruction} placeholder="Drug name & dose / order detail" onChange={e => setOrderRow(p => ({ ...p, instruction: e.target.value }))} /></FL>
+                          <FL label="Instruction *"><input className="his-field" style={{ fontSize: 12 }} value={orderRow.instruction} placeholder="Drug name & dose / order detail" onChange={e => setOrderRow(p => ({ ...p, instruction: e.target.value }))} /></FL>
                           <FL label="Route">
-                            <select style={{ ...sel, fontSize: 12 }} value={orderRow.route} onChange={e => setOrderRow(p => ({ ...p, route: e.target.value }))}>
+                            <select className="his-select" style={{ fontSize: 12 }} value={orderRow.route} onChange={e => setOrderRow(p => ({ ...p, route: e.target.value }))}>
                               {["IV","IM","Oral","SC","SL","Topical","Inhalation",""].map(o=><option key={o}>{o||"—"}</option>)}
                             </select>
                           </FL>
-                          <FL label="Frequency"><input style={{ ...fld, fontSize: 12 }} value={orderRow.frequency} placeholder="OD/BD/TDS" onChange={e => setOrderRow(p => ({ ...p, frequency: e.target.value }))} /></FL>
-                          <FL label="Duration"><input style={{ ...fld, fontSize: 12 }} value={orderRow.duration} placeholder="3 days" onChange={e => setOrderRow(p => ({ ...p, duration: e.target.value }))} /></FL>
+                          <FL label="Frequency"><input className="his-field" style={{ fontSize: 12 }} value={orderRow.frequency} placeholder="OD/BD/TDS" onChange={e => setOrderRow(p => ({ ...p, frequency: e.target.value }))} /></FL>
+                          <FL label="Duration"><input className="his-field" style={{ fontSize: 12 }} value={orderRow.duration} placeholder="3 days" onChange={e => setOrderRow(p => ({ ...p, duration: e.target.value }))} /></FL>
                           <FL label="Priority">
-                            <select style={{ ...sel, fontSize: 12, borderColor: orderRow.priority==="STAT"?C.red:orderRow.priority==="URGENT"?C.amber:"#e2e8f0" }} value={orderRow.priority} onChange={e => setOrderRow(p => ({ ...p, priority: e.target.value }))}>
+                            <select className="his-select" style={{ fontSize: 12, borderColor: orderRow.priority==="STAT"?C.red:orderRow.priority==="URGENT"?C.amber:"#e2e8f0" }} value={orderRow.priority} onChange={e => setOrderRow(p => ({ ...p, priority: e.target.value }))}>
                               {["ROUTINE","URGENT","STAT"].map(o=><option key={o}>{o}</option>)}
                             </select>
                           </FL>
@@ -2418,25 +2400,25 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                   <div style={{ background: "#f8fafc", border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px" }}>
                     <div style={{ fontSize: 11, fontWeight: 700, color: C.red, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Ventilator Parameters</div>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8 }}>
-                      <FL label="Mode"><select style={sel} value={icu.ventMode} onChange={e => setIcu(p=>({...p,ventMode:e.target.value}))}>{["CPAP/PSV","SIMV","A/C","BiPAP","PC-AC","VC-AC","Spontaneous","Not Ventilated"].map(o=><option key={o}>{o}</option>)}</select></FL>
-                      <FL label="FiO₂ (%)"><input type="number" min="21" max="100" style={fld} value={icu.fio2} placeholder="40" onChange={e=>setIcu(p=>({...p,fio2:e.target.value}))} /></FL>
-                      <FL label="PEEP (cmH₂O)"><input type="number" style={fld} value={icu.peep} placeholder="5" onChange={e=>setIcu(p=>({...p,peep:e.target.value}))} /></FL>
-                      <FL label="Tidal Vol (mL)"><input type="number" style={fld} value={icu.tv} placeholder="500" onChange={e=>setIcu(p=>({...p,tv:e.target.value}))} /></FL>
-                      <FL label="Set RR (/min)"><input type="number" style={fld} value={icu.ventRR} placeholder="14" onChange={e=>setIcu(p=>({...p,ventRR:e.target.value}))} /></FL>
-                      <FL label="PIP (cmH₂O)"><input type="number" style={fld} value={icu.pip} placeholder="25" onChange={e=>setIcu(p=>({...p,pip:e.target.value}))} /></FL>
-                      <FL label="MAP (mmHg)"><input type="number" style={fld} value={icu.map} placeholder="75" onChange={e=>setIcu(p=>({...p,map:e.target.value}))} /></FL>
-                      <FL label="CVP (cmH₂O)"><input type="number" style={fld} value={icu.cvp} placeholder="10" onChange={e=>setIcu(p=>({...p,cvp:e.target.value}))} /></FL>
+                      <FL label="Mode"><select className="his-select" value={icu.ventMode} onChange={e => setIcu(p=>({...p,ventMode:e.target.value}))}>{["CPAP/PSV","SIMV","A/C","BiPAP","PC-AC","VC-AC","Spontaneous","Not Ventilated"].map(o=><option key={o}>{o}</option>)}</select></FL>
+                      <FL label="FiO₂ (%)"><input type="number" min="21" max="100" className="his-field" value={icu.fio2} placeholder="40" onChange={e=>setIcu(p=>({...p,fio2:e.target.value}))} /></FL>
+                      <FL label="PEEP (cmH₂O)"><input type="number" className="his-field" value={icu.peep} placeholder="5" onChange={e=>setIcu(p=>({...p,peep:e.target.value}))} /></FL>
+                      <FL label="Tidal Vol (mL)"><input type="number" className="his-field" value={icu.tv} placeholder="500" onChange={e=>setIcu(p=>({...p,tv:e.target.value}))} /></FL>
+                      <FL label="Set RR (/min)"><input type="number" className="his-field" value={icu.ventRR} placeholder="14" onChange={e=>setIcu(p=>({...p,ventRR:e.target.value}))} /></FL>
+                      <FL label="PIP (cmH₂O)"><input type="number" className="his-field" value={icu.pip} placeholder="25" onChange={e=>setIcu(p=>({...p,pip:e.target.value}))} /></FL>
+                      <FL label="MAP (mmHg)"><input type="number" className="his-field" value={icu.map} placeholder="75" onChange={e=>setIcu(p=>({...p,map:e.target.value}))} /></FL>
+                      <FL label="CVP (cmH₂O)"><input type="number" className="his-field" value={icu.cvp} placeholder="10" onChange={e=>setIcu(p=>({...p,cvp:e.target.value}))} /></FL>
                     </div>
                   </div>
                   {/* Sedation */}
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
                     <FL label="RASS Score (-5 to +4)">
-                      <select style={{ ...sel, borderColor: Number(icu.rassScore)>1?C.red:Number(icu.rassScore)<-3?C.amber:"#e2e8f0" }} value={icu.rassScore} onChange={e=>setIcu(p=>({...p,rassScore:e.target.value}))}>
+                      <select className="his-select" style={{ borderColor: Number(icu.rassScore)>1?C.red:Number(icu.rassScore)<-3?C.amber:"#e2e8f0" }} value={icu.rassScore} onChange={e=>setIcu(p=>({...p,rassScore:e.target.value}))}>
                         {[{v:"+4",l:"+4 Combative"},{v:"+3",l:"+3 Very Agitated"},{v:"+2",l:"+2 Agitated"},{v:"+1",l:"+1 Restless"},{v:"0",l:"0 Alert & Calm"},{v:"-1",l:"-1 Drowsy"},{v:"-2",l:"-2 Light Sedation"},{v:"-3",l:"-3 Mod Sedation"},{v:"-4",l:"-4 Deep Sedation"},{v:"-5",l:"-5 Unarousable"}].map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
                       </select>
                     </FL>
-                    <FL label="BPS Score (3-12)"><input type="number" min="3" max="12" style={fld} value={icu.bpsScore} placeholder="3 (no pain)" onChange={e=>setIcu(p=>({...p,bpsScore:e.target.value}))} /></FL>
-                    <FL label="Sedation Drugs"><input style={fld} value={icu.sedation} placeholder="Midazolam 2mg/hr, Fentanyl…" onChange={e=>setIcu(p=>({...p,sedation:e.target.value}))} /></FL>
+                    <FL label="BPS Score (3-12)"><input type="number" min="3" max="12" className="his-field" value={icu.bpsScore} placeholder="3 (no pain)" onChange={e=>setIcu(p=>({...p,bpsScore:e.target.value}))} /></FL>
+                    <FL label="Sedation Drugs"><input className="his-field" value={icu.sedation} placeholder="Midazolam 2mg/hr, Fentanyl…" onChange={e=>setIcu(p=>({...p,sedation:e.target.value}))} /></FL>
                   </div>
                   {/* Organ System Review */}
                   <div style={{ background: "#f8fafc", border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px" }}>
@@ -2444,7 +2426,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
                       {[{k:"neuro",l:"Neuro",opts:["Intact","Agitated","Encephalopathy","Sedated","Unconscious"]},{k:"cvs",l:"CVS",opts:["Stable","Hypotensive","Hypertensive","Arrhythmia","Vasopressors On"]},{k:"resp",l:"Respiratory",opts:["Self-ventilating","Supported","Weaning","Extubated","ARDS"]},{k:"renal",l:"Renal",opts:["Adequate","Oliguria","Anuria","On CRRT","AKI"]},{k:"gi",l:"GI/Nutrition",opts:["Active","NGT Feed","TPN","Ileus","GI Bleed"]},{k:"haem",l:"Haematology",opts:["Normal","Anaemia","Coagulopathy","Thrombocytopaenia","Anticoag On"]},{k:"infective",l:"Infection",opts:["None","Suspected Sepsis","Confirmed Sepsis","On Antibiotics","MDRO"]},{k:"vasopressorDetail",l:"Vasopressors",opts:["None","Noradrenaline","Vasopressin","Dopamine","Adrenaline","Multiple"]}].map(s=>(
                         <FL key={s.k} label={s.l}>
-                          <select style={sel} value={icu[s.k]||icu.vasopressorDetail} onChange={e=>setIcu(p=>({...p,[s.k]:e.target.value}))}>
+                          <select className="his-select" value={icu[s.k]||icu.vasopressorDetail} onChange={e=>setIcu(p=>({...p,[s.k]:e.target.value}))}>
                             {s.opts.map(o=><option key={o}>{o}</option>)}
                           </select>
                         </FL>
@@ -2454,17 +2436,17 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                   {/* SOAP + Daily Goals */}
                   {[{k:"subjective",l:"S — Subjective",c:C.blue,ph:"Family update, nursing observations, any complaints noted…"},{k:"objective",l:"O — Objective",c:C.teal,ph:"Exam findings, lines, tubes, wound…"},{k:"assessment",l:"A — Assessment",c:C.amber,ph:"Overall ICU status, organ function assessment…"},{k:"plan",l:"P — Plan",c:C.green,ph:"Orders, changes, weaning plan, family plan…"}].map(s=>(
                     <div key={s.k}>
-                      <label style={{ ...lbl, color: s.c }}>{s.l}</label>
-                      <textarea style={{ ...ta, minHeight: 60, borderColor: s.c + "40" }} value={soap[s.k]} placeholder={s.ph} onChange={e=>setSoap(p=>({...p,[s.k]:e.target.value}))} />
+                      <label className="his-label" style={{ color: s.c }}>{s.l}</label>
+                      <textarea className="his-textarea" style={{ minHeight: 60, borderColor: s.c + "40" }} value={soap[s.k]} placeholder={s.ph} onChange={e=>setSoap(p=>({...p,[s.k]:e.target.value}))} />
                     </div>
                   ))}
                   <FL label="Daily Goals / Targets">
-                    <textarea style={{ ...ta, minHeight: 60, borderColor: `${C.green}40` }} value={icu.dailyGoals} placeholder="Target SpO₂ >95%, MAP >65, urine >0.5ml/kg/hr, pain BPS <6, sedation RASS 0 to -2…" onChange={e=>setIcu(p=>({...p,dailyGoals:e.target.value}))} />
+                    <textarea className="his-textarea" style={{ minHeight: 60, borderColor: `${C.green}40` }} value={icu.dailyGoals} placeholder="Target SpO₂ >95%, MAP >65, urine >0.5ml/kg/hr, pain BPS <6, sedation RASS 0 to -2…" onChange={e=>setIcu(p=>({...p,dailyGoals:e.target.value}))} />
                   </FL>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                    <FL label="Provisional Diagnosis"><input style={fld} value={diag.provisional} placeholder="e.g. Septic shock — ARDS" onChange={e=>setDiag(p=>({...p,provisional:e.target.value}))} /></FL>
+                    <FL label="Provisional Diagnosis"><input className="his-field" value={diag.provisional} placeholder="e.g. Septic shock — ARDS" onChange={e=>setDiag(p=>({...p,provisional:e.target.value}))} /></FL>
                     <FL label="Patient Status">
-                      <select style={sel} value={diag.status} onChange={e=>setDiag(p=>({...p,status:e.target.value}))}>
+                      <select className="his-select" value={diag.status} onChange={e=>setDiag(p=>({...p,status:e.target.value}))}>
                         {["Stable","Improving","Unchanged","Deteriorating","Critical","Moribund"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
@@ -2476,32 +2458,32 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
               {activeModal === "procedure" && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-                    <FL label="Procedure Name *"><input style={fld} value={proc.procedureName} placeholder="e.g. Central venous line insertion" onChange={e=>setProc(p=>({...p,procedureName:e.target.value}))} /></FL>
-                    <FL label="Indication *"><input style={fld} value={proc.indication} placeholder="Reason for procedure" onChange={e=>setProc(p=>({...p,indication:e.target.value}))} /></FL>
-                    <FL label="Time of Procedure *"><input type="time" style={fld} value={proc.time} onChange={e=>setProc(p=>({...p,time:e.target.value}))} /></FL>
+                    <FL label="Procedure Name *"><input className="his-field" value={proc.procedureName} placeholder="e.g. Central venous line insertion" onChange={e=>setProc(p=>({...p,procedureName:e.target.value}))} /></FL>
+                    <FL label="Indication *"><input className="his-field" value={proc.indication} placeholder="Reason for procedure" onChange={e=>setProc(p=>({...p,indication:e.target.value}))} /></FL>
+                    <FL label="Time of Procedure *"><input type="time" className="his-field" value={proc.time} onChange={e=>setProc(p=>({...p,time:e.target.value}))} /></FL>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-                    <FL label="Surgeon / Performer *"><input style={fld} value={proc.surgeon} placeholder="Dr. Name" onChange={e=>setProc(p=>({...p,surgeon:e.target.value}))} /></FL>
-                    <FL label="Assistant"><input style={fld} value={proc.assistant} placeholder="Assisting doctor/nurse" onChange={e=>setProc(p=>({...p,assistant:e.target.value}))} /></FL>
+                    <FL label="Surgeon / Performer *"><input className="his-field" value={proc.surgeon} placeholder="Dr. Name" onChange={e=>setProc(p=>({...p,surgeon:e.target.value}))} /></FL>
+                    <FL label="Assistant"><input className="his-field" value={proc.assistant} placeholder="Assisting doctor/nurse" onChange={e=>setProc(p=>({...p,assistant:e.target.value}))} /></FL>
                     <FL label="Anaesthesia">
-                      <select style={sel} value={proc.anaesthesia} onChange={e=>setProc(p=>({...p,anaesthesia:e.target.value}))}>
+                      <select className="his-select" value={proc.anaesthesia} onChange={e=>setProc(p=>({...p,anaesthesia:e.target.value}))}>
                         {["None (Awake)","Local Anaesthesia","Sedation","Spinal","Epidural","General Anaesthesia"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                     <FL label="Patient Position">
-                      <select style={sel} value={proc.position} onChange={e=>setProc(p=>({...p,position:e.target.value}))}>
+                      <select className="his-select" value={proc.position} onChange={e=>setProc(p=>({...p,position:e.target.value}))}>
                         {["Supine","Left Lateral","Right Lateral","Lithotomy","Prone","Trendelenburg","Semi-Fowler's"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
-                    <FL label="Blood Loss"><input style={fld} value={proc.bloodLoss} placeholder="Minimal / mL" onChange={e=>setProc(p=>({...p,bloodLoss:e.target.value}))} /></FL>
+                    <FL label="Blood Loss"><input className="his-field" value={proc.bloodLoss} placeholder="Minimal / mL" onChange={e=>setProc(p=>({...p,bloodLoss:e.target.value}))} /></FL>
                   </div>
-                  <FL label="Technique / Description *"><textarea style={{ ...ta, minHeight: 80 }} value={proc.technique} placeholder="Step-by-step description of technique used, sterile field maintained…" onChange={e=>setProc(p=>({...p,technique:e.target.value}))} /></FL>
-                  <FL label="Intraoperative Findings"><textarea style={ta} value={proc.findings} placeholder="What was found during the procedure…" onChange={e=>setProc(p=>({...p,findings:e.target.value}))} /></FL>
+                  <FL label="Technique / Description *"><textarea className="his-textarea" style={{ minHeight: 80 }} value={proc.technique} placeholder="Step-by-step description of technique used, sterile field maintained…" onChange={e=>setProc(p=>({...p,technique:e.target.value}))} /></FL>
+                  <FL label="Intraoperative Findings"><textarea className="his-textarea" value={proc.findings} placeholder="What was found during the procedure…" onChange={e=>setProc(p=>({...p,findings:e.target.value}))} /></FL>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                     <FL label="Complications">
-                      <select style={{ ...sel, borderColor: proc.complications!=="None"?C.red:"#e2e8f0" }} value={proc.complications} onChange={e=>setProc(p=>({...p,complications:e.target.value}))}>
+                      <select className="his-select" style={{ borderColor: proc.complications!=="None"?C.red:"#e2e8f0" }} value={proc.complications} onChange={e=>setProc(p=>({...p,complications:e.target.value}))}>
                         {["None","Bleeding","Haematoma","Pneumothorax","Infection","Failed Procedure","Vasovagal","Other"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
@@ -2514,8 +2496,8 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                       </label>
                     </div>
                   </div>
-                  {proc.specimenSent && <FL label="Specimen Type"><input style={fld} value={proc.specimenType} placeholder="e.g. Tissue biopsy, Fluid C&S" onChange={e=>setProc(p=>({...p,specimenType:e.target.value}))} /></FL>}
-                  <FL label="Post-Procedure Instructions"><textarea style={ta} value={proc.postInstructions} placeholder="Monitor site for 1 hour, check vitals every 15 min, CXR post-line…" onChange={e=>setProc(p=>({...p,postInstructions:e.target.value}))} /></FL>
+                  {proc.specimenSent && <FL label="Specimen Type"><input className="his-field" value={proc.specimenType} placeholder="e.g. Tissue biopsy, Fluid C&S" onChange={e=>setProc(p=>({...p,specimenType:e.target.value}))} /></FL>}
+                  <FL label="Post-Procedure Instructions"><textarea className="his-textarea" value={proc.postInstructions} placeholder="Monitor site for 1 hour, check vitals every 15 min, CXR post-line…" onChange={e=>setProc(p=>({...p,postInstructions:e.target.value}))} /></FL>
                 </div>
               )}
 
@@ -2523,20 +2505,20 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
               {activeModal === "consultation" && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-                    <FL label="Consultant Name *"><input style={fld} value={consult.consultantName} placeholder="Dr. Name" onChange={e=>setConsult(p=>({...p,consultantName:e.target.value}))} /></FL>
-                    <FL label="Speciality *"><input style={fld} value={consult.speciality} placeholder="e.g. Cardiology, Nephrology" onChange={e=>setConsult(p=>({...p,speciality:e.target.value}))} /></FL>
-                    <FL label="Reg No."><input style={fld} value={consult.consultantRegNo} placeholder="MCI / State reg. no." onChange={e=>setConsult(p=>({...p,consultantRegNo:e.target.value}))} /></FL>
+                    <FL label="Consultant Name *"><input className="his-field" value={consult.consultantName} placeholder="Dr. Name" onChange={e=>setConsult(p=>({...p,consultantName:e.target.value}))} /></FL>
+                    <FL label="Speciality *"><input className="his-field" value={consult.speciality} placeholder="e.g. Cardiology, Nephrology" onChange={e=>setConsult(p=>({...p,speciality:e.target.value}))} /></FL>
+                    <FL label="Reg No."><input className="his-field" value={consult.consultantRegNo} placeholder="MCI / State reg. no." onChange={e=>setConsult(p=>({...p,consultantRegNo:e.target.value}))} /></FL>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                    <FL label="Referred By"><input style={fld} value={consult.referredBy} placeholder="Attending doctor name" onChange={e=>setConsult(p=>({...p,referredBy:e.target.value}))} /></FL>
-                    <FL label="Reason for Referral *"><input style={fld} value={consult.reason} placeholder="e.g. Chest pain — rule out ACS" onChange={e=>setConsult(p=>({...p,reason:e.target.value}))} /></FL>
+                    <FL label="Referred By"><input className="his-field" value={consult.referredBy} placeholder="Attending doctor name" onChange={e=>setConsult(p=>({...p,referredBy:e.target.value}))} /></FL>
+                    <FL label="Reason for Referral *"><input className="his-field" value={consult.reason} placeholder="e.g. Chest pain — rule out ACS" onChange={e=>setConsult(p=>({...p,reason:e.target.value}))} /></FL>
                   </div>
-                  <FL label="Clinical Summary (for consultant)"><textarea style={ta} value={consult.clinicalSummary} placeholder="Brief history, current condition, relevant investigations…" onChange={e=>setConsult(p=>({...p,clinicalSummary:e.target.value}))} /></FL>
-                  <FL label="Investigations Shared"><input style={fld} value={consult.investigations} placeholder="ECG, Echo, Troponin, CBC…" onChange={e=>setConsult(p=>({...p,investigations:e.target.value}))} /></FL>
-                  <FL label="Consultant's Findings"><textarea style={ta} value={consult.findings} placeholder="Examination findings noted by consultant…" onChange={e=>setConsult(p=>({...p,findings:e.target.value}))} /></FL>
-                  <FL label="Impression / Diagnosis"><input style={fld} value={consult.impression} placeholder="Consultant's diagnostic impression" onChange={e=>setConsult(p=>({...p,impression:e.target.value}))} /></FL>
-                  <FL label="Recommendations *"><textarea style={{ ...ta, minHeight: 80 }} value={consult.recommendations} placeholder="Specific management recommendations from consultant…" onChange={e=>setConsult(p=>({...p,recommendations:e.target.value}))} /></FL>
-                  <FL label="Follow-up Plan"><input style={fld} value={consult.followUp} placeholder="Review in 48hrs / on discharge / as needed" onChange={e=>setConsult(p=>({...p,followUp:e.target.value}))} /></FL>
+                  <FL label="Clinical Summary (for consultant)"><textarea className="his-textarea" value={consult.clinicalSummary} placeholder="Brief history, current condition, relevant investigations…" onChange={e=>setConsult(p=>({...p,clinicalSummary:e.target.value}))} /></FL>
+                  <FL label="Investigations Shared"><input className="his-field" value={consult.investigations} placeholder="ECG, Echo, Troponin, CBC…" onChange={e=>setConsult(p=>({...p,investigations:e.target.value}))} /></FL>
+                  <FL label="Consultant's Findings"><textarea className="his-textarea" value={consult.findings} placeholder="Examination findings noted by consultant…" onChange={e=>setConsult(p=>({...p,findings:e.target.value}))} /></FL>
+                  <FL label="Impression / Diagnosis"><input className="his-field" value={consult.impression} placeholder="Consultant's diagnostic impression" onChange={e=>setConsult(p=>({...p,impression:e.target.value}))} /></FL>
+                  <FL label="Recommendations *"><textarea className="his-textarea" style={{ minHeight: 80 }} value={consult.recommendations} placeholder="Specific management recommendations from consultant…" onChange={e=>setConsult(p=>({...p,recommendations:e.target.value}))} /></FL>
+                  <FL label="Follow-up Plan"><input className="his-field" value={consult.followUp} placeholder="Review in 48hrs / on discharge / as needed" onChange={e=>setConsult(p=>({...p,followUp:e.target.value}))} /></FL>
                 </div>
               )}
 
@@ -2544,23 +2526,23 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
               {activeModal === "preop" && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-                    <FL label="Planned Procedure *"><input style={fld} value={preop.procedure} placeholder="e.g. Laparoscopic appendicectomy" onChange={e=>setPreop(p=>({...p,procedure:e.target.value}))} /></FL>
-                    <FL label="Indication"><input style={fld} value={preop.indication} placeholder="Acute appendicitis" onChange={e=>setPreop(p=>({...p,indication:e.target.value}))} /></FL>
-                    <FL label="Pre-op Diagnosis"><input style={fld} value={preop.preopDiagnosis} placeholder="Confirmed diagnosis" onChange={e=>setPreop(p=>({...p,preopDiagnosis:e.target.value}))} /></FL>
+                    <FL label="Planned Procedure *"><input className="his-field" value={preop.procedure} placeholder="e.g. Laparoscopic appendicectomy" onChange={e=>setPreop(p=>({...p,procedure:e.target.value}))} /></FL>
+                    <FL label="Indication"><input className="his-field" value={preop.indication} placeholder="Acute appendicitis" onChange={e=>setPreop(p=>({...p,indication:e.target.value}))} /></FL>
+                    <FL label="Pre-op Diagnosis"><input className="his-field" value={preop.preopDiagnosis} placeholder="Confirmed diagnosis" onChange={e=>setPreop(p=>({...p,preopDiagnosis:e.target.value}))} /></FL>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 }}>
                     <FL label="ASA Grade *">
-                      <select style={sel} value={preop.asaGrade} onChange={e=>setPreop(p=>({...p,asaGrade:e.target.value}))}>
+                      <select className="his-select" value={preop.asaGrade} onChange={e=>setPreop(p=>({...p,asaGrade:e.target.value}))}>
                         {["ASA I","ASA II","ASA III","ASA IV","ASA V","ASA VI","ASA IE","ASA IIE","ASA IIIE"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                     <FL label="Planned Anaesthesia *">
-                      <select style={sel} value={preop.plannedAnaesthesia} onChange={e=>setPreop(p=>({...p,plannedAnaesthesia:e.target.value}))}>
+                      <select className="his-select" value={preop.plannedAnaesthesia} onChange={e=>setPreop(p=>({...p,plannedAnaesthesia:e.target.value}))}>
                         {["General","Spinal","Epidural","Local","Sedation","Combined Spinal-Epidural"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
-                    <FL label="Blood Group"><input style={fld} value={preop.bloodGroup} placeholder="A+, B-, O+" onChange={e=>setPreop(p=>({...p,bloodGroup:e.target.value}))} /></FL>
-                    <FL label="Allergy Status"><input style={fld} value={preop.allergies} placeholder="NKDA / Drug name" onChange={e=>setPreop(p=>({...p,allergies:e.target.value}))} /></FL>
+                    <FL label="Blood Group"><input className="his-field" value={preop.bloodGroup} placeholder="A+, B-, O+" onChange={e=>setPreop(p=>({...p,bloodGroup:e.target.value}))} /></FL>
+                    <FL label="Allergy Status"><input className="his-field" value={preop.allergies} placeholder="NKDA / Drug name" onChange={e=>setPreop(p=>({...p,allergies:e.target.value}))} /></FL>
                   </div>
                   {/* Investigations Reviewed */}
                   <div style={{ background: "#f8fafc", border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px" }}>
@@ -2574,13 +2556,13 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     </div>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                    <FL label="Co-morbidities"><input style={fld} value={preop.comorbidities} placeholder="DM, HTN, IHD, CKD…" onChange={e=>setPreop(p=>({...p,comorbidities:e.target.value}))} /></FL>
-                    <FL label="Current Medications"><input style={fld} value={preop.currentMeds} placeholder="Metformin held, anticoagulants…" onChange={e=>setPreop(p=>({...p,currentMeds:e.target.value}))} /></FL>
+                    <FL label="Co-morbidities"><input className="his-field" value={preop.comorbidities} placeholder="DM, HTN, IHD, CKD…" onChange={e=>setPreop(p=>({...p,comorbidities:e.target.value}))} /></FL>
+                    <FL label="Current Medications"><input className="his-field" value={preop.currentMeds} placeholder="Metformin held, anticoagulants…" onChange={e=>setPreop(p=>({...p,currentMeds:e.target.value}))} /></FL>
                   </div>
-                  <FL label="Pre-op Orders"><textarea style={ta} value={preop.preopOrders} placeholder="NBM from midnight, IV access, pre-med (Tab Alprazolam 0.5mg HS)…" onChange={e=>setPreop(p=>({...p,preopOrders:e.target.value}))} /></FL>
+                  <FL label="Pre-op Orders"><textarea className="his-textarea" value={preop.preopOrders} placeholder="NBM from midnight, IV access, pre-med (Tab Alprazolam 0.5mg HS)…" onChange={e=>setPreop(p=>({...p,preopOrders:e.target.value}))} /></FL>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                    <FL label="Operating Surgeon"><input style={fld} value={preop.surgeon} placeholder="Dr. Name" onChange={e=>setPreop(p=>({...p,surgeon:e.target.value}))} /></FL>
-                    <FL label="Anaesthetist"><input style={fld} value={preop.anaesthetist} placeholder="Dr. Name" onChange={e=>setPreop(p=>({...p,anaesthetist:e.target.value}))} /></FL>
+                    <FL label="Operating Surgeon"><input className="his-field" value={preop.surgeon} placeholder="Dr. Name" onChange={e=>setPreop(p=>({...p,surgeon:e.target.value}))} /></FL>
+                    <FL label="Anaesthetist"><input className="his-field" value={preop.anaesthetist} placeholder="Dr. Name" onChange={e=>setPreop(p=>({...p,anaesthetist:e.target.value}))} /></FL>
                   </div>
                   <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontWeight:700, fontSize:13, color:preop.consentObtained?C.green:C.red }}>
                     <input type="checkbox" checked={preop.consentObtained} onChange={e=>setPreop(p=>({...p,consentObtained:e.target.checked}))} style={{ accentColor:C.green, width:15, height:15 }} /> Informed Consent Obtained & Witnessed *
@@ -2592,46 +2574,46 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
               {activeModal === "postop" && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                    <FL label="Procedure Performed *"><input style={fld} value={postop.procedurePerformed} placeholder="e.g. Laparoscopic appendicectomy" onChange={e=>setPostop(p=>({...p,procedurePerformed:e.target.value}))} /></FL>
-                    <FL label="Post-op Diagnosis"><input style={fld} value={postop.postopDiagnosis} placeholder="Confirmed post-op diagnosis" onChange={e=>setPostop(p=>({...p,postopDiagnosis:e.target.value}))} /></FL>
+                    <FL label="Procedure Performed *"><input className="his-field" value={postop.procedurePerformed} placeholder="e.g. Laparoscopic appendicectomy" onChange={e=>setPostop(p=>({...p,procedurePerformed:e.target.value}))} /></FL>
+                    <FL label="Post-op Diagnosis"><input className="his-field" value={postop.postopDiagnosis} placeholder="Confirmed post-op diagnosis" onChange={e=>setPostop(p=>({...p,postopDiagnosis:e.target.value}))} /></FL>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 }}>
-                    <FL label="Start Time"><input type="time" style={fld} value={postop.startTime} onChange={e=>setPostop(p=>({...p,startTime:e.target.value}))} /></FL>
-                    <FL label="End Time"><input type="time" style={fld} value={postop.endTime} onChange={e=>setPostop(p=>({...p,endTime:e.target.value}))} /></FL>
-                    <FL label="Surgeon"><input style={fld} value={postop.surgeon} placeholder="Dr. Name" onChange={e=>setPostop(p=>({...p,surgeon:e.target.value}))} /></FL>
-                    <FL label="Anaesthetist"><input style={fld} value={postop.anaesthetist} placeholder="Dr. Name" onChange={e=>setPostop(p=>({...p,anaesthetist:e.target.value}))} /></FL>
+                    <FL label="Start Time"><input type="time" className="his-field" value={postop.startTime} onChange={e=>setPostop(p=>({...p,startTime:e.target.value}))} /></FL>
+                    <FL label="End Time"><input type="time" className="his-field" value={postop.endTime} onChange={e=>setPostop(p=>({...p,endTime:e.target.value}))} /></FL>
+                    <FL label="Surgeon"><input className="his-field" value={postop.surgeon} placeholder="Dr. Name" onChange={e=>setPostop(p=>({...p,surgeon:e.target.value}))} /></FL>
+                    <FL label="Anaesthetist"><input className="his-field" value={postop.anaesthetist} placeholder="Dr. Name" onChange={e=>setPostop(p=>({...p,anaesthetist:e.target.value}))} /></FL>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
                     <FL label="Anaesthesia Used">
-                      <select style={sel} value={postop.anaesthesia} onChange={e=>setPostop(p=>({...p,anaesthesia:e.target.value}))}>
+                      <select className="his-select" value={postop.anaesthesia} onChange={e=>setPostop(p=>({...p,anaesthesia:e.target.value}))}>
                         {["General","Spinal","Epidural","Local","Sedation","Combined"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
-                    <FL label="Blood Loss (mL)"><input type="number" style={fld} value={postop.bloodLoss} placeholder="50" onChange={e=>setPostop(p=>({...p,bloodLoss:e.target.value}))} /></FL>
+                    <FL label="Blood Loss (mL)"><input type="number" className="his-field" value={postop.bloodLoss} placeholder="50" onChange={e=>setPostop(p=>({...p,bloodLoss:e.target.value}))} /></FL>
                     <FL label="Transfusion">
-                      <select style={sel} value={postop.transfusion} onChange={e=>setPostop(p=>({...p,transfusion:e.target.value}))}>
+                      <select className="his-select" value={postop.transfusion} onChange={e=>setPostop(p=>({...p,transfusion:e.target.value}))}>
                         {["None","1 Unit PRC","2 Units PRC","FFP","Platelets","Multiple"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-                    <FL label="Fluids Given (mL)"><input type="number" style={fld} value={postop.fluidsGiven} placeholder="2000" onChange={e=>setPostop(p=>({...p,fluidsGiven:e.target.value}))} /></FL>
-                    <FL label="Urine Output (mL)"><input type="number" style={fld} value={postop.urineOutput} placeholder="400" onChange={e=>setPostop(p=>({...p,urineOutput:e.target.value}))} /></FL>
+                    <FL label="Fluids Given (mL)"><input type="number" className="his-field" value={postop.fluidsGiven} placeholder="2000" onChange={e=>setPostop(p=>({...p,fluidsGiven:e.target.value}))} /></FL>
+                    <FL label="Urine Output (mL)"><input type="number" className="his-field" value={postop.urineOutput} placeholder="400" onChange={e=>setPostop(p=>({...p,urineOutput:e.target.value}))} /></FL>
                     <FL label="Condition Leaving OT">
-                      <select style={{ ...sel, borderColor: postop.conditionLeavingOT==="Critical"?C.red:"#e2e8f0" }} value={postop.conditionLeavingOT} onChange={e=>setPostop(p=>({...p,conditionLeavingOT:e.target.value}))}>
+                      <select className="his-select" style={{ borderColor: postop.conditionLeavingOT==="Critical"?C.red:"#e2e8f0" }} value={postop.conditionLeavingOT} onChange={e=>setPostop(p=>({...p,conditionLeavingOT:e.target.value}))}>
                         {["Stable","Satisfactory","Critical","On Ventilator","Extubated in OT"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
                   </div>
-                  <FL label="Operative Findings"><textarea style={ta} value={postop.operativeFindings} placeholder="What was found intraoperatively…" onChange={e=>setPostop(p=>({...p,operativeFindings:e.target.value}))} /></FL>
+                  <FL label="Operative Findings"><textarea className="his-textarea" value={postop.operativeFindings} placeholder="What was found intraoperatively…" onChange={e=>setPostop(p=>({...p,operativeFindings:e.target.value}))} /></FL>
                   <div style={{ display: "flex", gap: 20 }}>
                     <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontWeight:700, fontSize:13, color:postop.specimenSent?C.blue:C.muted }}>
                       <input type="checkbox" checked={postop.specimenSent} onChange={e=>setPostop(p=>({...p,specimenSent:e.target.checked}))} style={{ accentColor:C.blue, width:15, height:15 }} /> Specimen sent
                     </label>
                   </div>
-                  {postop.specimenSent && <FL label="Specimen Type"><input style={fld} value={postop.specimenType} placeholder="Histopathology / C&S" onChange={e=>setPostop(p=>({...p,specimenType:e.target.value}))} /></FL>}
-                  <FL label="Post-op Orders"><textarea style={ta} value={postop.postopOrders} placeholder="IV fluids, analgesia, monitoring parameters, diet, drain/suction care…" onChange={e=>setPostop(p=>({...p,postopOrders:e.target.value}))} /></FL>
-                  <FL label="Recovery Room Instructions"><input style={fld} value={postop.recoveryInstructions} placeholder="Airway monitoring, vitals Q15, oxygen, call criteria…" onChange={e=>setPostop(p=>({...p,recoveryInstructions:e.target.value}))} /></FL>
+                  {postop.specimenSent && <FL label="Specimen Type"><input className="his-field" value={postop.specimenType} placeholder="Histopathology / C&S" onChange={e=>setPostop(p=>({...p,specimenType:e.target.value}))} /></FL>}
+                  <FL label="Post-op Orders"><textarea className="his-textarea" value={postop.postopOrders} placeholder="IV fluids, analgesia, monitoring parameters, diet, drain/suction care…" onChange={e=>setPostop(p=>({...p,postopOrders:e.target.value}))} /></FL>
+                  <FL label="Recovery Room Instructions"><input className="his-field" value={postop.recoveryInstructions} placeholder="Airway monitoring, vitals Q15, oxygen, call criteria…" onChange={e=>setPostop(p=>({...p,recoveryInstructions:e.target.value}))} /></FL>
                 </div>
               )}
 
@@ -2642,9 +2624,9 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     <i className="pi pi-exclamation-triangle" style={{ fontSize: 13 }} /> Death Summary — NABH MOI.10 · Complete all mandatory fields
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                    <FL label="Date & Time of Death *"><input type="datetime-local" style={fld} value={death.dateTime} onChange={e=>setDeath(p=>({...p,dateTime:e.target.value}))} /></FL>
+                    <FL label="Date & Time of Death *"><input type="datetime-local" className="his-field" value={death.dateTime} onChange={e=>setDeath(p=>({...p,dateTime:e.target.value}))} /></FL>
                     <FL label="Mode of Death *">
-                      <select style={sel} value={death.modeOfDeath} onChange={e=>setDeath(p=>({...p,modeOfDeath:e.target.value}))}>
+                      <select className="his-select" value={death.modeOfDeath} onChange={e=>setDeath(p=>({...p,modeOfDeath:e.target.value}))}>
                         {["Cardiac Arrest","Respiratory Failure","Multi-organ Failure","Septic Shock","Haemorrhage","Renal Failure","Hepatic Failure","CNS Failure","Other"].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </FL>
@@ -2652,16 +2634,16 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                   <div style={{ background: "#f8fafc", border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px" }}>
                     <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Cause of Death (ICD-10 Format)</div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      <FL label="I (a) — Immediate Cause of Death *"><input style={fld} value={death.causeDeath1} placeholder="e.g. Acute myocardial infarction" onChange={e=>setDeath(p=>({...p,causeDeath1:e.target.value}))} /></FL>
-                      <FL label="I (b) — Due to / Underlying Cause *"><input style={fld} value={death.causeDeath2} placeholder="e.g. Coronary artery disease" onChange={e=>setDeath(p=>({...p,causeDeath2:e.target.value}))} /></FL>
-                      <FL label="I (c) — Due to (if applicable)"><input style={fld} value={death.causeDeath3} placeholder="e.g. Hypertension, Diabetes" onChange={e=>setDeath(p=>({...p,causeDeath3:e.target.value}))} /></FL>
-                      <FL label="II — Other Contributing Conditions"><input style={fld} value={death.contributing} placeholder="e.g. Chronic kidney disease, anaemia" onChange={e=>setDeath(p=>({...p,contributing:e.target.value}))} /></FL>
+                      <FL label="I (a) — Immediate Cause of Death *"><input className="his-field" value={death.causeDeath1} placeholder="e.g. Acute myocardial infarction" onChange={e=>setDeath(p=>({...p,causeDeath1:e.target.value}))} /></FL>
+                      <FL label="I (b) — Due to / Underlying Cause *"><input className="his-field" value={death.causeDeath2} placeholder="e.g. Coronary artery disease" onChange={e=>setDeath(p=>({...p,causeDeath2:e.target.value}))} /></FL>
+                      <FL label="I (c) — Due to (if applicable)"><input className="his-field" value={death.causeDeath3} placeholder="e.g. Hypertension, Diabetes" onChange={e=>setDeath(p=>({...p,causeDeath3:e.target.value}))} /></FL>
+                      <FL label="II — Other Contributing Conditions"><input className="his-field" value={death.contributing} placeholder="e.g. Chronic kidney disease, anaemia" onChange={e=>setDeath(p=>({...p,contributing:e.target.value}))} /></FL>
                     </div>
                   </div>
-                  <FL label="Brief Sequence of Events *"><textarea style={{ ...ta, minHeight: 80 }} value={death.sequenceOfEvents} placeholder="Timeline of clinical events leading to death…" onChange={e=>setDeath(p=>({...p,sequenceOfEvents:e.target.value}))} /></FL>
+                  <FL label="Brief Sequence of Events *"><textarea className="his-textarea" style={{ minHeight: 80 }} value={death.sequenceOfEvents} placeholder="Timeline of clinical events leading to death…" onChange={e=>setDeath(p=>({...p,sequenceOfEvents:e.target.value}))} /></FL>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                    <FL label="Family Informed By *"><input style={fld} value={death.familyInformedBy} placeholder="Doctor/nurse name" onChange={e=>setDeath(p=>({...p,familyInformedBy:e.target.value}))} /></FL>
-                    <FL label="Time Family Informed"><input type="time" style={fld} value={death.familyInformedTime} onChange={e=>setDeath(p=>({...p,familyInformedTime:e.target.value}))} /></FL>
+                    <FL label="Family Informed By *"><input className="his-field" value={death.familyInformedBy} placeholder="Doctor/nurse name" onChange={e=>setDeath(p=>({...p,familyInformedBy:e.target.value}))} /></FL>
+                    <FL label="Time Family Informed"><input type="time" className="his-field" value={death.familyInformedTime} onChange={e=>setDeath(p=>({...p,familyInformedTime:e.target.value}))} /></FL>
                   </div>
                   <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
                     {[{k:"familyInformed",l:"Family Informed",c:C.green},{k:"dnrInPlace",l:"DNR Was in Place",c:C.blue},{k:"mlc",l:"MLC Case",c:C.red},{k:"pmAdvised",l:"Post-mortem Advised",c:C.amber},{k:"certificateIssued",l:"Death Certificate Issued",c:C.green}].map(f=>(
@@ -2681,7 +2663,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                   </div>
                   <FL label="Note to be Amended (ID or date)">
                     {notes.filter(n=>n.status==="signed").length > 0 ? (
-                      <select style={sel} value={amendment.originalNoteId} onChange={e=>setAmendment(p=>({...p,originalNoteId:e.target.value}))}>
+                      <select className="his-select" value={amendment.originalNoteId} onChange={e=>setAmendment(p=>({...p,originalNoteId:e.target.value}))}>
                         <option value="">— Select signed note —</option>
                         {notes.filter(n=>n.status==="signed").map(n=>(
                           <option key={n._id} value={n._id}>
@@ -2690,16 +2672,16 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                         ))}
                       </select>
                     ) : (
-                      <input style={fld} value={amendment.originalNoteId} placeholder="Note ID / Date of note being amended" onChange={e=>setAmendment(p=>({...p,originalNoteId:e.target.value}))} />
+                      <input className="his-field" value={amendment.originalNoteId} placeholder="Note ID / Date of note being amended" onChange={e=>setAmendment(p=>({...p,originalNoteId:e.target.value}))} />
                     )}
                   </FL>
                   <FL label="Reason for Amendment *">
-                    <select style={sel} value={amendment.reason} onChange={e=>setAmendment(p=>({...p,reason:e.target.value}))}>
+                    <select className="his-select" value={amendment.reason} onChange={e=>setAmendment(p=>({...p,reason:e.target.value}))}>
                       {["Typographical Error","Clinical Correction","Missing Information","Wrong Medication","Wrong Dose","Clarification Required","Other"].map(o=><option key={o}>{o}</option>)}
                     </select>
                   </FL>
-                  <FL label="Amendment / Correction *"><textarea style={{ ...ta, minHeight: 100 }} value={amendment.correction} placeholder="State the correction clearly. Note: original signed content is preserved in the record. This amendment is added as an addendum with date, time, and signature." onChange={e=>setAmendment(p=>({...p,correction:e.target.value}))} /></FL>
-                  <FL label="Witnessed By *"><input style={fld} value={amendment.witness} placeholder="Name of witnessing doctor/nurse" onChange={e=>setAmendment(p=>({...p,witness:e.target.value}))} /></FL>
+                  <FL label="Amendment / Correction *"><textarea className="his-textarea" style={{ minHeight: 100 }} value={amendment.correction} placeholder="State the correction clearly. Note: original signed content is preserved in the record. This amendment is added as an addendum with date, time, and signature." onChange={e=>setAmendment(p=>({...p,correction:e.target.value}))} /></FL>
+                  <FL label="Witnessed By *"><input className="his-field" value={amendment.witness} placeholder="Name of witnessing doctor/nurse" onChange={e=>setAmendment(p=>({...p,witness:e.target.value}))} /></FL>
                   <div style={{ background: "#fffbeb", border: `1px solid ${C.amberB}`, borderRadius: 7, padding: "10px 14px", fontSize: 12, color: "#92400e" }}>
                     <b>NABH Requirement:</b> This amendment will be signed with your credentials, time-stamped, and appended to the original note. The original remains unaltered in the system audit trail.
                   </div>
@@ -2709,7 +2691,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
               {/* ── Quick Tags ── */}
               {MODULE_TAGS[activeModal]?.length > 0 && (
                 <div style={{ marginTop: 14 }}>
-                  <div style={lbl}>Quick Tags</div>
+                  <div className="his-label">Quick Tags</div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                     {MODULE_TAGS[activeModal].map(t => (
                       <button key={t} onClick={() => toggleTag(t)}
@@ -2746,15 +2728,17 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                 </div>
               </div>
               <div style={{ display: "flex", gap: 8 }}>
-                <button onClick={() => { setActiveModal(null); setEditingNote(null); }} style={{ padding: "9px 20px", border: `1.5px solid ${C.border}`, borderRadius: 8, background: "white", fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, cursor: "pointer", color: C.muted }}>Cancel</button>
-                <button onClick={() => saveNote("draft")} disabled={saving}
-                  style={{ padding: "9px 20px", border: `1.5px solid ${C.amberB}`, borderRadius: 8, background: C.amberL, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer", color: C.amber, display: "flex", alignItems: "center", gap: 6 }}>
-                  <i className={`pi ${editingNote ? "pi-refresh" : "pi-save"}`} style={{ fontSize: 11 }} />
+                <button onClick={() => { setActiveModal(null); setEditingNote(null); }} className="his-btn--ghost">
+                  Cancel
+                </button>
+                <button onClick={() => saveNote("draft")} disabled={saving} className="his-btn--ghost"
+                  style={{ background: C.amberL, color: C.amber, borderColor: C.amberB }}>
+                  <i className={`pi ${editingNote ? "pi-refresh" : "pi-save"}`} />
                   {editingNote ? "Update Draft" : "Save Draft"}
                 </button>
-                <button onClick={() => { if (!signature) { setShowSetup(true); toast.info("Please set your signature first"); return; } saveNote("signed"); }} disabled={saving}
-                  style={{ padding: "9px 28px", background: saving ? "#5eead4" : `linear-gradient(135deg, ${C.primary}, ${C.primaryMid})`, color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 7, boxShadow: `0 4px 12px ${C.primary}35` }}>
-                  <i className={`pi ${saving ? "pi-spin pi-spinner" : "pi-check-circle"}`} style={{ fontSize: 12 }} />
+                <button onClick={() => { if (!signature) { setShowSetup(true); toast.info("Please set your signature first"); return; } saveNote("signed"); }} disabled={saving} className="his-btn"
+                  style={{ background: saving ? "#5eead4" : `linear-gradient(135deg, ${C.primary}, ${C.primaryMid})` }}>
+                  <i className={`pi ${saving ? "pi-spin pi-spinner" : "pi-check-circle"}`} />
                   {saving ? "Saving…" : "Sign & Submit"}
                 </button>
               </div>

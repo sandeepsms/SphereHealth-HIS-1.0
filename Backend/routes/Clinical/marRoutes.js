@@ -1,6 +1,10 @@
 const express = require("express");
 const router = express.Router();
 const ctrl = require("../../controllers/Clinical/marController");
+const { attemptAuth } = require("../../middleware/auth");
+
+// Soft-auth so administer/record actions carry req.user (audit trail).
+router.use(attemptAuth);
 
 router.get("/ipd/:ipdNo", ctrl.getByIPD);
 router.get("/ipd/:ipdNo/date/:date", ctrl.getByIPDAndDate);

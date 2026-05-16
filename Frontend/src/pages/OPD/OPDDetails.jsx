@@ -35,16 +35,13 @@ const OPDDetails = () => {
       <div className="flex justify-content-between align-items-center mb-3">
         <h2>OPD Visit Details</h2>
         <div className="flex gap-2">
-          <Button
-            label="Edit"
-            icon="pi pi-pencil"
-            onClick={() => navigate(`/opd/edit/${visitNumber}`)}
-          />
+          {/* Visit editing isn't supported in this UI (clinical records are
+              edited via doctor notes). Removed the dangling Edit button. */}
           <Button
             label="Back"
             icon="pi pi-arrow-left"
             severity="secondary"
-            onClick={() => navigate("/opd")}
+            onClick={() => navigate(-1)}
           />
         </div>
       </div>

@@ -3,10 +3,30 @@
  * Purple/indigo theme. Tabs: Overview | Clinical Notes | Nursing Records |
  *   Vital Trends | Medications & Orders | Billing | Emergency
  */
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef, lazy } from "react";
+// Roadmap E17 + A2 — Med Reconciliation tab is lazy-loaded (panel-tabs chunk).
+const MedReconciliationTab = lazy(() => import("../../Components/clinical/tabs/MedReconciliationTab"));
 import { useSearchParams, useNavigate } from "react-router-dom";
 import axios from "axios";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
+import PatientFileExport from "../../Components/clinical/PatientFileExport";
+// Phase 2 shell — the pf-* design system, shared with NursePatientPanel.
+// Replaces ~225 lines of inline-styled chrome with a declarative invocation.
+import PatientPanelShell from "../../Components/clinical/PatientPanelShell";
+// Phase 3 — wire role-specific UI events (modal opens, dropdown picks,
+// form submits) into the patient activity log so the file truly captures
+// "har dropdown selection, har button click".
+import { useBoundLogger } from "../../utils/activityLogger";
+import {
+  InitialAssessmentTab,
+  MLCOrDoctorNotesTab,
+  NursingNotesExpandedTab,
+  VitalChartTab,
+  IntakeOutputChartTab,
+  BloodTransfusionRecordsTab,
+  RBSMonitoringTab,
+  HandoverNotesTab,
+} from "../../Components/clinical/PatientPanelTabs";
 
 const BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
 
@@ -23,16 +43,33 @@ const C = {
   card:"#ffffff",    bg:"#f8fafc",       border:"#e2e8f0",
 };
 
+// Tab order per user spec (May-12 patient-panel restructure):
+//   1. Overview — keep the at-a-glance summary
+//   2. Initial Assessment — combined doctor + nursing intake (NABH COP.2/IPSG.6)
+//   3. MLC / Doctor Notes — MLC if cut, otherwise doctor notes timeline
+//   4. Nursing Notes — fully-expanded categorised list
+//   5. Vital Chart — every vital ever recorded, table view
+//   6. Input/Output Chart — daily I/O with totals + net balance
+//   7. Blood Transfusion — every transfusion record
+//   8. RBS Monitoring — sugar readings + antidiabetic doses given
+//   9. Treatment Chart — existing orders + admin audit trail
+//  10. Orders / Medications / Billing / Emergency — kept
 const TABS = [
-  { id:"overview",   label:"📋 Overview"          },
-  { id:"clinical",   label:"🩺 Clinical Notes"    },
-  { id:"nursing",    label:"📝 Nursing Records"   },
-  { id:"vitals",     label:"📈 Vital Trends"      },
-  { id:"meds",       label:"💊 Medications"       },
-  { id:"treatment",  label:"💉 Treatment Chart"   },
-  { id:"orders",     label:"📋 Orders"            },
-  { id:"billing",    label:"💰 Billing"           },
-  { id:"emergency",  label:"🚨 Emergency"         },
+  { id:"overview",   label:"📋 Overview"             },
+  { id:"initial",    label:"🩺 Initial Assessment"   },
+  { id:"mlc",        label:"⚖ MLC / Doctor Notes"   },
+  { id:"nursing",    label:"📝 Nursing Notes"        },
+  { id:"vitals",     label:"📈 Vital Chart"          },
+  { id:"io",         label:"💧 Intake / Output"      },
+  { id:"blood",      label:"🩸 Blood Transfusion"    },
+  { id:"rbs",        label:"🩸 RBS Monitoring"       },
+  { id:"handover",   label:"🔄 Handover Notes"       },
+  { id:"treatment",  label:"💉 Treatment Chart"      },
+  { id:"orders",     label:"📋 Orders"               },
+  { id:"meds",       label:"💊 Medications"          },
+  { id:"medrecon",   label:"⚖ Med Reconciliation"   },
+  { id:"billing",    label:"💰 Billing"              },
+  { id:"emergency",  label:"🚨 Emergency"            },
 ];
 
 /* ── Formatters ─────────────────────────────────────────────────────────────── */
@@ -126,135 +163,192 @@ function OverviewTab({patient, admission, opdVisits=[], billing, doctorNotes=[],
   // Latest vitals from nursing notes
   const latestVitalNote = nursingNotes.find(n=>n.vitals && Object.values(n.vitals).some(v=>v));
   const lv = latestVitalNote?.vitals||{};
+  const hasAllergy = patient?.knownAllergies && !["NKDA","None","—",""].includes(patient.knownAllergies);
+
+  // Vital state classifier — drives green/amber/red tile tints.
+  // Thresholds are conservative; "warn" gives a yellow halo before "danger" goes red.
+  const vitalState = (k, v) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return "neutral";
+    if (k === "pulse") return (n < 50 || n > 120) ? "danger" : (n < 60 || n > 100) ? "warn" : "ok";
+    if (k === "temp")  return (n >= 101)            ? "danger" : (n >= 99.5)         ? "warn" : "ok";
+    if (k === "spo2")  return (n < 90)              ? "danger" : (n < 95)            ? "warn" : "ok";
+    if (k === "rr")    return (n < 10 || n > 24)    ? "danger" : (n < 12 || n > 20)  ? "warn" : "ok";
+    if (k === "bp_sys") return (n < 90 || n > 160)  ? "danger" : (n < 100 || n > 140) ? "warn" : "ok";
+    return "neutral";
+  };
+  const bpSys = lv.bp?.systolic;
 
   return (
-    <div style={{display:"flex",flexDirection:"column",gap:20}}>
+    <div className="pf-tint--doctor" style={{display:"flex",flexDirection:"column",gap:16}}>
       {/* Allergy alert */}
-      {patient?.knownAllergies && patient.knownAllergies !== "NKDA" && patient.knownAllergies !== "None" && (
-        <div style={{padding:"12px 18px",background:C.redL,border:`2px solid ${C.red}`,borderRadius:10,fontSize:13,color:C.red,fontWeight:700,display:"flex",gap:10,alignItems:"center"}}>
-          ⚠️ KNOWN ALLERGIES: {patient.knownAllergies}
+      {hasAllergy && (
+        <div className="pf-alert pf-alert--danger">
+          <span className="pf-alert__icon">⚠️</span>
+          <div className="pf-alert__body">
+            <div className="pf-alert__title">Known Allergies</div>
+            <div className="pf-alert__msg">{patient.knownAllergies}</div>
+          </div>
         </div>
       )}
 
       {/* Pending bed transfer alert */}
       {pendingTransfer && (
-        <div style={{padding:"14px 18px",background:"#fffbeb",border:"2px solid #f59e0b",borderRadius:12,display:"flex",alignItems:"flex-start",gap:14}}>
-          <div style={{fontSize:26,flexShrink:0}}>🔄</div>
-          <div style={{flex:1}}>
-            <div style={{fontWeight:800,fontSize:14,color:"#92400e"}}>
-              Bed Transfer Pending — Awaiting Nurse Handover
-            </div>
-            <div style={{fontSize:12,color:"#a16207",marginTop:4,lineHeight:1.5}}>
-              Transfer initiated to <strong>{pendingTransfer.toBedNumber}</strong> ({pendingTransfer.toWardName}).
+        <div className="pf-alert pf-alert--warn">
+          <span className="pf-alert__icon">🔄</span>
+          <div className="pf-alert__body">
+            <div className="pf-alert__title">Bed Transfer Pending — Awaiting Nurse Handover</div>
+            <div className="pf-alert__msg">
+              Transfer initiated to <strong>{pendingTransfer.toBedNumber}</strong>{pendingTransfer.toWardName ? ` (${pendingTransfer.toWardName})` : ""}.
               Nurse must write handover notes to complete this transfer.
             </div>
-            <div style={{fontSize:11,color:"#a16207",marginTop:6,fontStyle:"italic"}}>
-              Shifting Notes: "{pendingTransfer.shiftingNotes?.slice(0,120)}{pendingTransfer.shiftingNotes?.length>120?"…":""}"
-            </div>
+            {pendingTransfer.shiftingNotes && (
+              <div className="pf-alert__note">
+                Shifting Notes: "{pendingTransfer.shiftingNotes.slice(0, 120)}{pendingTransfer.shiftingNotes.length > 120 ? "…" : ""}"
+              </div>
+            )}
           </div>
-          <button onClick={()=>onCancelTransfer&&onCancelTransfer(pendingTransfer._id)}
-            style={{padding:"7px 14px",background:"#fef3c7",color:"#92400e",border:"1.5px solid #fbbf24",borderRadius:7,fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0}}>
-            Cancel Transfer
+          <button className="pf-alert__btn" onClick={() => onCancelTransfer?.(pendingTransfer._id)}>
+            Cancel
           </button>
         </div>
       )}
 
       {/* Quick stats */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:14}}>
+      <div className="pf-stats-grid">
         {[
-          {label:"Doctor Notes",   val:doctorNotes.length,  icon:"🩺", color:C.primary, bg:C.primaryL},
-          {label:"Signed Notes",   val:signed,               icon:"✅", color:C.green,   bg:C.greenL},
-          {label:"Draft Notes",    val:drafts,               icon:"📝", color:C.amber,   bg:C.amberL},
-          {label:"Critical Events",val:critical,             icon:"⚠️", color:C.red,     bg:C.redL},
-          {label:"Nursing Notes",  val:nurseCount,           icon:"👩‍⚕️", color:C.pink,    bg:C.pinkL},
-          {label:"OPD Visits",     val:opdVisits.length,     icon:"📅", color:C.blue,    bg:C.blueL},
-        ].map(s=>(
-          <div key={s.label} style={{background:s.bg,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 18px",display:"flex",gap:12,alignItems:"center"}}>
-            <span style={{fontSize:26}}>{s.icon}</span>
-            <div>
-              <div style={{fontSize:11,color:C.muted,fontWeight:600,letterSpacing:".3px"}}>{s.label}</div>
-              <div style={{fontSize:22,fontWeight:800,color:s.color}}>{s.val}</div>
+          {label:"Doctor Notes",    val: doctorNotes.length,  icon:"🩺", tint:"primary"},
+          {label:"Signed Notes",    val: signed,              icon:"✅", tint:"ok"},
+          {label:"Draft Notes",     val: drafts,              icon:"📝", tint:"warn"},
+          {label:"Critical Events", val: critical,            icon:"⚠️", tint:"danger"},
+          {label:"Nursing Notes",   val: nurseCount,          icon:"👩‍⚕️", tint:"info"},
+          {label:"OPD Visits",      val: opdVisits.length,    icon:"📅", tint:"neutral"},
+        ].map(s => (
+          <div key={s.label} className={`pf-stat-card pf-stat-card--${s.tint}`}>
+            <div className="pf-stat-card__icon">{s.icon}</div>
+            <div className="pf-stat-card__body">
+              <div className="pf-stat-card__label">{s.label}</div>
+              <div className="pf-stat-card__val">{s.val}</div>
             </div>
           </div>
         ))}
       </div>
 
       {/* Demographics + Admission */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
-        <Card title="👤 Patient Demographics">
-          <InfoRow label="Full Name"      value={`${patient?.title||""} ${patient?.fullName||patient?.patientName||""}`.trim()}/>
-          <InfoRow label="UHID"           value={patient?.UHID||patient?.uhid}/>
-          <InfoRow label="Age / Gender"   value={`${patient?.age||"—"} yrs / ${patient?.gender||"—"}`}/>
-          <InfoRow label="Date of Birth"  value={fmtDate(patient?.dateOfBirth)}/>
-          <InfoRow label="Blood Group"    value={patient?.bloodGroup}/>
-          <InfoRow label="Contact"        value={patient?.contactNumber||patient?.phone}/>
-          <InfoRow label="Payment Type"   value={patient?.paymentType}/>
-        </Card>
-        <Card title="🏥 Admission Details">
-          <InfoRow label="IPD / Adm No."  value={admission?.admissionNumber}/>
-          <InfoRow label="Type"           value={admission?.admissionType}/>
-          <InfoRow label="Attending Dr."  value={admission?.attendingDoctor}/>
-          <InfoRow label="Department"     value={admission?.department}/>
-          <InfoRow label="Bed / Ward"     value={[admission?.bedNumber, admission?.wardName||admission?.ward].filter(Boolean).join(" — ") || "—"}/>
-          <InfoRow label="Admitted"       value={fmtDate(admission?.admissionDate)}/>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginTop:8}}>
-            <span style={{fontSize:13,color:C.muted,minWidth:130}}>Status</span>
-            <SBadge status={admission?.status}/>
+      <div className="pf-overview-grid">
+        <div className="pf-info-card">
+          <div className="pf-info-card__head">
+            <span className="pf-info-card__icon">👤</span>
+            <span className="pf-info-card__title">Patient Demographics</span>
           </div>
-          {["active","admitted"].includes((admission?.status||"").toLowerCase()) && onShiftBed && !pendingTransfer && (
-            <button onClick={onShiftBed}
-              style={{marginTop:14,width:"100%",padding:"9px",background:C.primaryL,color:C.primary,border:`1.5px solid ${C.primaryM}`,borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:7,transition:"all .2s"}}
-              onMouseEnter={e=>{e.currentTarget.style.background=C.primaryM;}}
-              onMouseLeave={e=>{e.currentTarget.style.background=C.primaryL;}}>
-              🔄 Shift Bed
-            </button>
-          )}
-          {pendingTransfer && (
-            <div style={{marginTop:10,padding:"7px 10px",background:"#fffbeb",border:"1.5px solid #fbbf24",borderRadius:7,fontSize:11,color:"#92400e",fontWeight:700}}>
-              🔄 Transfer pending → {pendingTransfer.toBedNumber}
+          <div className="pf-info-card__body">
+            {[
+              ["Full Name",     `${patient?.title || ""} ${patient?.fullName || patient?.patientName || ""}`.trim() || "—"],
+              ["UHID",          patient?.UHID || patient?.uhid],
+              ["Age / Gender",  `${patient?.age || "—"} yrs / ${patient?.gender || "—"}`],
+              ["Date of Birth", fmtDate(patient?.dateOfBirth)],
+              ["Blood Group",   patient?.bloodGroup],
+              ["Contact",       patient?.contactNumber || patient?.phone],
+              ["Payment Type",  patient?.paymentType],
+            ].map(([l, v]) => (
+              <div key={l} className="pf-info-card__row">
+                <span className="pf-info-card__row-label">{l}</span>
+                <span className="pf-info-card__row-value">{v || "—"}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="pf-info-card">
+          <div className="pf-info-card__head">
+            <span className="pf-info-card__icon">🏥</span>
+            <span className="pf-info-card__title">Admission Details</span>
+          </div>
+          <div className="pf-info-card__body">
+            {[
+              ["IPD / Adm No.", admission?.admissionNumber],
+              ["Type",          admission?.admissionType],
+              ["Attending Dr.", admission?.attendingDoctor],
+              ["Department",    admission?.department],
+              ["Bed / Ward",    [admission?.bedNumber, admission?.wardName || admission?.ward].filter(Boolean).join(" — ")],
+              ["Admitted",      fmtDate(admission?.admissionDate)],
+            ].map(([l, v]) => (
+              <div key={l} className="pf-info-card__row">
+                <span className="pf-info-card__row-label">{l}</span>
+                <span className="pf-info-card__row-value">{v || "—"}</span>
+              </div>
+            ))}
+            <div className="pf-info-card__row">
+              <span className="pf-info-card__row-label">Status</span>
+              <span className="pf-info-card__row-value"><SBadge status={admission?.status}/></span>
             </div>
-          )}
-        </Card>
+            {["active","admitted"].includes((admission?.status || "").toLowerCase()) && onShiftBed && !pendingTransfer && (
+              <button className="pf-info-card__action" onClick={onShiftBed}>🔄 Shift Bed</button>
+            )}
+            {pendingTransfer && (
+              <div className="pf-alert pf-alert--warn" style={{marginTop:12,padding:"8px 12px"}}>
+                <span className="pf-alert__icon" style={{fontSize:16}}>🔄</span>
+                <div className="pf-alert__body">
+                  <div className="pf-alert__msg" style={{fontWeight:700}}>Transfer pending → {pendingTransfer.toBedNumber}</div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Latest vitals snapshot */}
       {latestVitalNote && (
-        <Card title={`💓 Latest Vitals — ${fmtDT(latestVitalNote.createdAt)}`}>
-          <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
+        <div className="pf-vitals-block">
+          <div className="pf-vitals-block__head">
+            <span style={{fontSize:18}}>💓</span>
+            <span className="pf-vitals-block__title">Latest Vitals</span>
+            <span className="pf-vitals-block__time">{fmtDT(latestVitalNote.createdAt)}</span>
+          </div>
+          <div className="pf-vitals-block__body">
             {[
-              {label:"BP",     value: bpStr(lv.bp),                    color: C.red},
-              {label:"Pulse",  value: lv.pulse ? `${lv.pulse} /min` : null, color: Number(lv.pulse)>100||Number(lv.pulse)<60 ? C.red : C.green},
-              {label:"Temp",   value: lv.temp  ? `${lv.temp}°F`    : null, color: Number(lv.temp)>99.5 ? C.red : C.green},
-              {label:"SpO₂",  value: lv.spo2  ? `${lv.spo2}%`     : null, color: Number(lv.spo2)<95 ? C.red : C.green},
-              {label:"RR",     value: lv.rr    ? `${lv.rr}/min`    : null, color: Number(lv.rr)>20||Number(lv.rr)<12 ? C.red : C.green},
-              {label:"BSL",    value: lv.bsl   ? `${lv.bsl}mg/dL`  : null, color: C.text},
-              {label:"GCS",    value: lv.gcs   ? String(lv.gcs)    : null, color: C.text},
-            ].filter(f=>f.value).map(f=>(
-              <div key={f.label} style={{background:"#f8fafc",border:`1px solid ${C.border}`,borderRadius:10,padding:"12px 16px",textAlign:"center",minWidth:80}}>
-                <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".5px",marginBottom:4}}>{f.label}</div>
-                <div style={{fontSize:17,fontWeight:800,color:f.color}}>{f.value}</div>
+              {label:"BP",    value: bpStr(lv.bp),                                   unit:" mmHg",  state: vitalState("bp_sys", bpSys)},
+              {label:"Pulse", value: lv.pulse,                                       unit:" bpm",   state: vitalState("pulse", lv.pulse)},
+              {label:"Temp",  value: lv.temp,                                        unit:" °F",    state: vitalState("temp", lv.temp)},
+              {label:"SpO₂",  value: lv.spo2,                                        unit:" %",     state: vitalState("spo2", lv.spo2)},
+              {label:"RR",    value: lv.rr,                                          unit:" /min",  state: vitalState("rr", lv.rr)},
+              {label:"BSL",   value: lv.bsl,                                         unit:" mg/dL", state: "neutral"},
+              {label:"GCS",   value: lv.gcs ? String(lv.gcs) : null,                 unit:"",       state: "neutral"},
+            ].filter(t => t.value != null && t.value !== "" && t.value !== "—" && t.value !== "—/—").map(t => (
+              <div key={t.label} className={`pf-vital-tile pf-vital-tile--${t.state}`}>
+                <div className="pf-vital-tile__label">{t.label}</div>
+                <div className="pf-vital-tile__val">{t.value}<span className="pf-vital-tile__unit">{t.unit}</span></div>
               </div>
             ))}
           </div>
-        </Card>
+          {latestVitalNote.nurseName && (
+            <div className="pf-vitals-block__foot">Recorded by <strong>{latestVitalNote.nurseName}</strong></div>
+          )}
+        </div>
       )}
 
       {/* Recent OPD visits */}
       {opdVisits.length > 0 && (
-        <Card title="📅 Recent OPD Visits">
-          {opdVisits.slice(0,5).map((v,i)=>(
-            <div key={i} style={{padding:"10px 14px",borderRadius:8,border:`1px solid ${C.border}`,background:C.bg,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
-              <div>
-                <div style={{fontWeight:700,fontSize:13,color:C.text}}>{v?.visitNumber||v?._id?.slice(-6)||"—"}</div>
-                <div style={{fontSize:12,color:C.muted,marginTop:2}}>{v?.chiefComplaint||"—"}</div>
+        <div className="pf-info-card">
+          <div className="pf-info-card__head">
+            <span className="pf-info-card__icon">📅</span>
+            <span className="pf-info-card__title">Recent OPD Visits</span>
+          </div>
+          <div className="pf-info-card__body">
+            {opdVisits.slice(0, 5).map((v, i) => (
+              <div key={i} className="pf-order-row" style={{marginBottom: 6}}>
+                <div style={{flex: 1}}>
+                  <div style={{fontWeight: 700, fontSize: 13, color: C.text}}>{v?.visitNumber || v?._id?.slice(-6) || "—"}</div>
+                  <div style={{fontSize: 12, color: C.muted, marginTop: 2}}>{v?.chiefComplaint || "—"}</div>
+                </div>
+                <div style={{textAlign: "right", display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end"}}>
+                  <span style={{fontSize: 11, color: C.muted}}>{fmtDate(v?.visitDate)}</span>
+                  <SBadge status={v?.status}/>
+                </div>
               </div>
-              <div style={{textAlign:"right"}}>
-                <div style={{fontSize:12,color:C.muted}}>{fmtDate(v?.visitDate)}</div>
-                <SBadge status={v?.status}/>
-              </div>
-            </div>
-          ))}
-        </Card>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );
@@ -309,60 +403,7 @@ const DR_FIELD_LBL_DP = {
   causeDeath1:"Cause 1",causeDeath2:"Cause 2",causeDeath3:"Cause 3",
   contributing:"Contributing",sequenceOfEvents:"Sequence",modeOfDeath:"Mode of Death",
   dnrInPlace:"DNR",familyInformed:"Family Informed",correction:"Correction",witness:"Witness",
-  familyInformedBy:"Informed By",familyInformedTime:"Informed At",mlc:"MLC",pmAdvised:"PM Advised",
-  certificateIssued:"Certificate Issued",originalNoteId:"Original Note",
-  consultantRegNo:"Reg No",cbcReviewed:"CBC ✓",ptReviewed:"PT/APTT ✓",ecgReviewed:"ECG ✓",
-  cxrReviewed:"CXR ✓",echoReviewed:"Echo ✓",lftsReviewed:"LFTs ✓",rftReviewed:"RFTs ✓",
-  procedure:"Procedure",preopDiagnosis:"Pre-op Dx",postopDiagnosis:"Post-op Dx",
-  dateTime:"Date/Time",
 };
-
-/* Section maps per non-initial note type */
-const DR_NOTE_SECTIONS_DP = {
-  icu: [
-    {label:"Ventilator Settings",         icon:"pi-sliders-h",        keys:["ventMode","fio2","peep","tv","ventRR","pip"]},
-    {label:"Hemodynamics / Monitoring",   icon:"pi-chart-line",       keys:["map","cvp","rassScore","bpsScore"]},
-    {label:"Sedation / Vasopressors",     icon:"pi-bolt",             keys:["sedation","vasopressors","vasopressorDetail"]},
-    {label:"System Assessment",           icon:"pi-list",             keys:["neuro","cvs","resp","renal","gi","haem","infective"]},
-    {label:"Daily Goals",                 icon:"pi-check-square",     keys:["dailyGoals"]},
-  ],
-  procedure: [
-    {label:"Procedure Details",           icon:"pi-wrench",           keys:["procedureName","indication","time","laterality","surgeon","assistant","anaesthesia","position","consentObtained"]},
-    {label:"Technique & Findings",        icon:"pi-search",           keys:["technique","findings"]},
-    {label:"Outcome",                     icon:"pi-check-circle",     keys:["complications","bloodLoss","specimenSent","specimenType","postInstructions"]},
-  ],
-  consultation: [
-    {label:"Consultation",                icon:"pi-users",            keys:["consultantName","speciality","consultantRegNo","referredBy","reason"]},
-    {label:"Clinical Summary & Findings", icon:"pi-file-edit",        keys:["clinicalSummary","investigations","findings"]},
-    {label:"Impression & Recommendations",icon:"pi-check-circle",     keys:["impression","recommendations","followUp"]},
-  ],
-  preop: [
-    {label:"Patient & Procedure",         icon:"pi-user",             keys:["procedure","indication","preopDiagnosis","asaGrade","plannedAnaesthesia","bloodGroup"]},
-    {label:"Lab Reviews",                 icon:"pi-check-square",     keys:["crossMatch","cbcReviewed","ptReviewed","ecgReviewed","cxrReviewed","echoReviewed","lftsReviewed","rftReviewed"]},
-    {label:"Pre-op Plan",                 icon:"pi-list",             keys:["comorbidities","currentMeds","allergies","consentObtained","surgeon","anaesthetist","preopOrders"]},
-  ],
-  postop: [
-    {label:"Operative Details",           icon:"pi-wrench",           keys:["procedurePerformed","operativeFindings","anaesthesia","surgeon","anaesthetist","startTime","endTime"]},
-    {label:"Fluids & Specimens",          icon:"pi-tint",             keys:["bloodLoss","transfusion","fluidsGiven","urineOutput","specimenSent","specimenType"]},
-    {label:"Post-op Status",              icon:"pi-home",             keys:["postopDiagnosis","conditionLeavingOT","recoveryInstructions","postopOrders"]},
-  ],
-  death: [
-    {label:"Cause of Death",              icon:"pi-exclamation-triangle", keys:["dateTime","causeDeath1","causeDeath2","causeDeath3","contributing"]},
-    {label:"Clinical Sequence",           icon:"pi-file",             keys:["sequenceOfEvents","modeOfDeath"]},
-    {label:"Administrative",              icon:"pi-clipboard",        keys:["dnrInPlace","familyInformed","familyInformedBy","familyInformedTime","mlc","pmAdvised","certificateIssued"]},
-  ],
-  amendment: [
-    {label:"Amendment",                   icon:"pi-pencil",           keys:["originalNoteId","correction","reason","witness"]},
-  ],
-};
-
-/* Long-text fields rendered as paragraphs, not chips */
-const DR_LONG_FIELDS_DP = new Set([
-  "dailyGoals","technique","findings","clinicalSummary","impression","recommendations",
-  "sequenceOfEvents","postInstructions","recoveryInstructions","postopOrders","preopOrders",
-  "comorbidities","correction","reason","operativeFindings","vasopressorDetail",
-]);
-
 const DR_IA_SECTIONS_DP = [
   {label:"Admission Details",    keys:["admissionMode","chiefComplaint","duration","hpi"]},
   {label:"Past History",         keys:["pastMedical","pastSurgical","familyHistory","socialHistory","currentMeds","allergies"]},
@@ -511,12 +552,25 @@ function ClinicalNotesTab({notes=[]}) {
           const infOrds = nd.infusionOrders||[];
           const isInitial = note.noteType==="initial";
 
-          /* Section-based noteDetails (non-initial) */
-          const noteSections = isInitial ? [] : (DR_NOTE_SECTIONS_DP[note.noteType] || []);
-          const coveredKeys  = new Set(noteSections.flatMap(s => s.keys));
-          const uncoveredPairs = isInitial ? [] : Object.entries(nd)
-            .filter(([k]) => !["medicationOrders","infusionOrders"].includes(k) && !coveredKeys.has(k))
-            .filter(([,v]) => { const s = dpIAFmt(v); return s && s.length > 0; });
+          /* Generic noteDetails blocks (non-initial) */
+          const ndBlocks = isInitial ? [] : Object.entries(nd)
+            .filter(([k])=>!["medicationOrders","infusionOrders"].includes(k))
+            .map(([mk,mv])=>{
+              if (!mv) return null;
+              if (Array.isArray(mv)) {
+                const items=mv.filter(Boolean);
+                if (!items.length) return null;
+                return {key:mk,label:DR_FIELD_LBL_DP[mk]||mk,chips:[{label:`${items.length} item(s)`,value:items.map(x=>typeof x==="object"?(x.drug||x.drugFluid||x.procedureName||x.type||"Item"):String(x)).join(" | ")}]};
+              }
+              if (typeof mv!=="object") {
+                const val=dpFmtVal(mv);
+                if (!val) return null;
+                return {key:mk,label:"",chips:[{label:DR_FIELD_LBL_DP[mk]||dpFmtKey(mk),value:val}]};
+              }
+              const chips=Object.entries(mv).map(([k,v2])=>({label:dpFmtKey(k),value:dpFmtVal(v2)})).filter(c=>c.value!==null);
+              if (!chips.length) return null;
+              return {key:mk,label:DR_FIELD_LBL_DP[mk]||mk.replace(/([A-Z])/g," $1").trim(),chips};
+            }).filter(Boolean);
 
           return (
             <div key={noteKey}
@@ -690,68 +744,22 @@ function ClinicalNotesTab({notes=[]}) {
                       {/* Initial Assessment special renderer */}
                       {isInitial && Object.keys(nd).length>0 && <DpInitialDetails nd={nd} nc={nc}/>}
 
-                      {/* Section-based noteDetails renderer (non-initial) */}
-                      {!isInitial && (noteSections.length>0 || uncoveredPairs.length>0) && (
-                        <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:8}}>
-                          {noteSections.map(sec=>{
-                            const pairs = sec.keys
-                              .map(k=>({k, lbl:DR_FIELD_LBL_DP[k]||dpFmtKey(k), val:dpIAFmt(nd[k])}))
-                              .filter(p=>p.val);
-                            if (!pairs.length) return null;
-                            const longPairs  = pairs.filter(p=> DR_LONG_FIELDS_DP.has(p.k));
-                            const shortPairs = pairs.filter(p=>!DR_LONG_FIELDS_DP.has(p.k));
-                            return (
-                              <div key={sec.label} style={{borderRadius:8,overflow:"hidden",border:`1px solid ${nc.dot}30`}}>
-                                <div style={{padding:"5px 12px",background:`${nc.dot}18`,display:"flex",alignItems:"center",gap:7}}>
-                                  <i className={`pi ${sec.icon}`} style={{fontSize:10,color:nc.color}}/>
-                                  <span style={{fontSize:9,fontWeight:800,textTransform:"uppercase",letterSpacing:".7px",color:nc.color}}>{sec.label}</span>
-                                </div>
-                                <div style={{padding:"8px 12px",background:"#fafafa"}}>
-                                  {longPairs.map(p=>(
-                                    <div key={p.k} style={{marginBottom:6}}>
-                                      <span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.muted,display:"block",marginBottom:2}}>{p.lbl}</span>
-                                      <span style={{fontSize:11.5,color:C.text,lineHeight:1.75,wordBreak:"break-word",display:"block"}}>{p.val}</span>
-                                    </div>
-                                  ))}
-                                  {shortPairs.length>0 && (
-                                    <div style={{display:"flex",gap:"5px 16px",flexWrap:"wrap"}}>
-                                      {shortPairs.map(p=>(
-                                        <div key={p.k} style={{display:"flex",flexDirection:"column",gap:1,minWidth:80}}>
-                                          <span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.muted}}>{p.lbl}</span>
-                                          <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:600,color:C.dark}}>{p.val}</span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          }).filter(Boolean)}
-
-                          {/* Uncovered / extra fields fallback */}
-                          {uncoveredPairs.length>0 && (
-                            <div style={{borderRadius:8,overflow:"hidden",border:`1px solid ${C.border}`}}>
-                              <div style={{padding:"5px 12px",background:C.primaryL}}>
-                                <span style={{fontSize:9,fontWeight:800,textTransform:"uppercase",letterSpacing:".7px",color:C.primary}}>Additional Details</span>
-                              </div>
-                              <div style={{padding:"8px 12px",background:"#fafafa"}}>
-                                {uncoveredPairs.filter(([k])=> DR_LONG_FIELDS_DP.has(k)).map(([k,v])=>(
-                                  <div key={k} style={{marginBottom:6}}>
-                                    <span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.muted,display:"block",marginBottom:2}}>{DR_FIELD_LBL_DP[k]||dpFmtKey(k)}</span>
-                                    <span style={{fontSize:11.5,color:C.text,lineHeight:1.75,wordBreak:"break-word",display:"block"}}>{dpIAFmt(v)}</span>
+                      {/* Generic noteDetails renderer (non-initial) */}
+                      {!isInitial && ndBlocks.length>0 && (
+                        <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:8}}>
+                          {ndBlocks.map(({key,label,chips})=>(
+                            <div key={key} style={{padding:"7px 12px",background:"#f9fafb",borderRadius:7,border:`1px solid ${C.border}`}}>
+                              {label&&<div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:nc.color,marginBottom:5}}>{label}</div>}
+                              <div style={{display:"flex",gap:"5px 14px",flexWrap:"wrap"}}>
+                                {chips.map(c=>(
+                                  <div key={c.label} style={{display:"flex",flexDirection:"column",gap:1}}>
+                                    {c.label&&<span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.muted}}>{c.label}</span>}
+                                    <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:500,color:C.dark}}>{c.value}</span>
                                   </div>
                                 ))}
-                                <div style={{display:"flex",gap:"5px 16px",flexWrap:"wrap"}}>
-                                  {uncoveredPairs.filter(([k])=>!DR_LONG_FIELDS_DP.has(k)).map(([k,v])=>(
-                                    <div key={k} style={{display:"flex",flexDirection:"column",gap:1,minWidth:80}}>
-                                      <span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.muted}}>{DR_FIELD_LBL_DP[k]||dpFmtKey(k)}</span>
-                                      <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:600,color:C.dark}}>{dpIAFmt(v)}</span>
-                                    </div>
-                                  ))}
-                                </div>
                               </div>
                             </div>
-                          )}
+                          ))}
                         </div>
                       )}
 
@@ -1188,49 +1196,7 @@ function VitalTrendsTab({vitalSheet=[]}) {
 }
 
 /* ═══════════════════════════════════════════════════════ TAB: MEDICATIONS */
-function MedicationsTab({doctorNotes=[], doctorOrders=[], UHID="", onRefresh=()=>{}}) {
-  const [csSaving, setCsSaving] = useState(null);   // orderId being processed
-  const [rejectModal, setRejectModal] = useState(null);   // { order }
-  const [rejectReason, setRejectReason] = useState("");
-
-  // Pending telephonic countersign
-  const pendingTO = (doctorOrders||[]).filter(o =>
-    o.orderSource === "Telephonic" &&
-    o.telephonicData?.countersignStatus === "pending" &&
-    !["Cancelled","Stopped"].includes(o.status)
-  );
-
-  const handleCountersign = async (order) => {
-    setCsSaving(order._id);
-    try {
-      await axios.patch(`${BASE}/doctor-orders/${order._id}/countersign` .replace("/countersign",""), {
-        telephonicData: { ...order.telephonicData, countersignStatus: "countersigned", countersignedAt: new Date() },
-        auditLog: [...(order.auditLog||[]), { step:"Telephonic Order Countersigned", doneBy:"Doctor", doneAt: new Date(), notes:"Countersigned via Doctor Patient Panel" }],
-      });
-      onRefresh();
-    } catch { /* silent */ }
-    finally { setCsSaving(null); }
-  };
-
-  // Use the dedicated countersign endpoint
-  const countersign = async (order) => {
-    setCsSaving(order._id);
-    try {
-      await axios.post(`${BASE}/doctor-orders/${order._id}/countersign`, { type:"countersign", doneBy:"Doctor" });
-      onRefresh();
-    } catch { /* silent */ } finally { setCsSaving(null); }
-  };
-
-  const rejectTO = async () => {
-    if (!rejectModal) return;
-    setCsSaving(rejectModal._id);
-    try {
-      await axios.post(`${BASE}/doctor-orders/${rejectModal._id}/countersign`, { type:"reject", doneBy:"Doctor", rejectedReason: rejectReason || "Rejected by doctor" });
-      setRejectModal(null); setRejectReason("");
-      onRefresh();
-    } catch { /* silent */ } finally { setCsSaving(null); }
-  };
-
+function MedicationsTab({doctorNotes=[], doctorOrders=[]}) {
   // Collect all medication orders from doctor notes (noteDetails.medicationOrders)
   const medNotes = doctorNotes.filter(n=>n.noteDetails?.medicationOrders?.length>0||n.noteType==="medication");
   // Also collect from doctor orders collection
@@ -1248,187 +1214,102 @@ function MedicationsTab({doctorNotes=[], doctorOrders=[], UHID="", onRefresh=()=
     return !route.includes("iv")||true; // include all
   });
 
-  if (!allMeds.length && !ordMeds.length && !pendingTO.length) return <Empty icon="💊" msg="No medication orders found"/>;
+  if (!allMeds.length && !ordMeds.length) return <Empty icon="💊" msg="No medication orders found"/>;
 
   // Group by status
   const active  = allMeds.filter(m=>(m.status||"Active")==="Active");
   const stopped = allMeds.filter(m=>m.status==="Stopped"||m.status==="Discontinued");
   const other   = allMeds.filter(m=>!["Active","Stopped","Discontinued"].includes(m.status||"Active"));
 
-  const MedTable = ({title,meds,color=C.primary}) => meds.length===0 ? null : (
-    <Card title={title} titleColor={color}>
-      <div style={{overflowX:"auto"}}>
-        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+  // Helper: render one medication-list card using pf-section-card + pf-data-table primitives.
+  const MedTable = ({ title, icon, meds, variant = "" }) => meds.length === 0 ? null : (
+    <div className={`pf-section-card ${variant ? `pf-section-card--${variant}` : ""}`}>
+      <div className="pf-section-card__head">
+        <span className="pf-section-card__icon">{icon}</span>
+        <span className="pf-section-card__title">{title}</span>
+        <span className="pf-section-card__count">{meds.length}</span>
+      </div>
+      <div className="pf-data-table-wrap">
+        <table className="pf-data-table pf-data-table--compact">
           <thead>
-            <tr style={{background:C.primaryL}}>
-              {["Drug","Dose","Route","Frequency","Duration","Indication","Status","Ordered By","Date"].map(h=>(
-                <th key={h} style={{padding:"7px 12px",textAlign:"left",fontWeight:700,color:C.primaryD,borderBottom:`1.5px solid ${C.primaryM}`,whiteSpace:"nowrap",fontSize:10,textTransform:"uppercase"}}>{h}</th>
-              ))}
+            <tr>
+              <th>Drug</th><th>Dose</th><th>Route</th><th>Frequency</th>
+              <th>Duration</th><th>Indication</th><th>Status</th><th>Ordered By</th><th>Date</th>
             </tr>
           </thead>
           <tbody>
-            {meds.map((m,i)=>(
-              <tr key={i} style={{background:i%2?"#fafaf9":C.card,borderBottom:`1px solid ${C.border}`}}>
-                <td style={{padding:"7px 12px",fontWeight:700,color:C.dark}}>{m.drug||m.medicineName||"—"}</td>
-                <td style={{padding:"7px 12px"}}>{m.dose||"—"}</td>
-                <td style={{padding:"7px 12px"}}><Badge color={C.teal} bg={C.tealL}>{m.route||"—"}</Badge></td>
-                <td style={{padding:"7px 12px"}}>{m.frequency||"—"}</td>
-                <td style={{padding:"7px 12px"}}>{m.duration||"—"}</td>
-                <td style={{padding:"7px 12px",maxWidth:140,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.indication||"—"}</td>
-                <td style={{padding:"7px 12px"}}><SBadge status={m.status||"Active"}/></td>
-                <td style={{padding:"7px 12px",fontSize:11,color:C.muted}}>{m.doctorName?"Dr. "+m.doctorName:"—"}</td>
-                <td style={{padding:"7px 12px",fontSize:11,color:C.muted}}>{fmtDate(m.noteDate||m.datetime)}</td>
+            {meds.map((m, i) => (
+              <tr key={i}>
+                <td className="pf-cell-strong">{m.drug || m.medicineName || "—"}</td>
+                <td>{m.dose || "—"}</td>
+                <td><Badge color={C.teal} bg={C.tealL}>{m.route || "—"}</Badge></td>
+                <td>{m.frequency || "—"}</td>
+                <td>{m.duration || "—"}</td>
+                <td style={{ maxWidth: 180, whiteSpace: "normal" }}>{m.indication || "—"}</td>
+                <td><SBadge status={m.status || "Active"}/></td>
+                <td className="pf-cell-muted">{m.doctorName ? "Dr. " + m.doctorName : "—"}</td>
+                <td className="pf-cell-muted">{fmtDate(m.noteDate || m.datetime)}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-    </Card>
+    </div>
   );
 
   return (
-    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+    <div className="pf-tint--doctor" style={{display:"flex",flexDirection:"column",gap:16}}>
+      <MedTable title="Active Medications" icon="💊" meds={active}  variant="ok"/>
+      <MedTable title="Stopped / Discontinued" icon="🚫" meds={stopped} variant="danger"/>
+      <MedTable title="Other Orders"      icon="📋" meds={other}   variant="warn"/>
 
-      {/* ── Pending Telephonic Countersign Queue ── */}
-      {pendingTO.length>0 && (
-        <div style={{borderRadius:12,overflow:"hidden",border:"2px solid #fca5a5",boxShadow:"0 4px 16px rgba(220,38,38,.1)"}}>
-          <div style={{padding:"10px 16px",background:"linear-gradient(135deg,#dc2626,#ef4444)",display:"flex",alignItems:"center",gap:10}}>
-            <span style={{fontSize:18}}>📞</span>
-            <div style={{flex:1}}>
-              <div style={{fontWeight:800,fontSize:13,color:"white"}}>Telephonic Orders — Pending Your Countersign ({pendingTO.length})</div>
-              <div style={{fontSize:10,color:"rgba(255,255,255,.8)"}}>NABH MOM.1 — countersign required within 24 hours of verbal order</div>
-            </div>
+      {/* Doctor Orders MAR */}
+      {ordMeds.length > 0 && (
+        <div className="pf-section-card pf-section-card--info">
+          <div className="pf-section-card__head">
+            <span className="pf-section-card__icon">📋</span>
+            <span className="pf-section-card__title">Doctor Orders — MAR</span>
+            <span className="pf-section-card__count">{ordMeds.length}</span>
           </div>
-          <div style={{display:"flex",flexDirection:"column",gap:0}}>
-            {pendingTO.map((o,i)=>{
-              const d = o.orderDetails||{};
-              const td = o.telephonicData||{};
-              const ham = o.hamFlag;
-              return (
-                <div key={o._id} style={{padding:"12px 16px",background:i%2===0?"#fef2f2":"#fff5f5",borderBottom:i<pendingTO.length-1?"1px solid #fecaca":"none",display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
-                  {/* Drug info */}
-                  <div style={{flex:"1 1 220px",minWidth:180}}>
-                    {ham && <span style={{background:"#fee2e2",color:C.red,borderRadius:4,padding:"1px 6px",fontSize:8,fontWeight:800,marginBottom:4,display:"inline-block"}}>🔴 HAM</span>}
-                    <div style={{fontWeight:700,fontSize:13,color:C.dark}}>{d.medicineName||"—"}</div>
-                    <div style={{fontSize:11,color:C.muted,marginTop:1}}>{d.dose} · {d.route} · {d.frequency}{d.duration?` · ${d.duration}`:""}</div>
-                  </div>
-                  {/* Called by */}
-                  <div style={{flex:"0 0 160px"}}>
-                    <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.muted}}>Called by</div>
-                    <div style={{fontWeight:700,fontSize:12,color:C.dark}}>Dr. {td.doctorName||"?"}</div>
-                    {td.doctorRegNo && <div style={{fontSize:10,color:C.muted}}>Reg: {td.doctorRegNo}</div>}
-                  </div>
-                  {/* Time + nurse */}
-                  <div style={{flex:"0 0 130px"}}>
-                    <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.muted}}>Call time</div>
-                    <div style={{fontWeight:600,fontSize:12,color:C.dark}}>{td.callTime||"—"}</div>
-                    <div style={{fontSize:10,color:C.muted}}>Read-back: {td.readBackBy||"—"}</div>
-                  </div>
-                  {/* Priority */}
-                  <div style={{flex:"0 0 80px",textAlign:"center"}}>
-                    <span style={{padding:"4px 10px",borderRadius:6,fontWeight:800,fontSize:11,background:o.priority==="STAT"?"#fef2f2":o.priority==="Urgent"?"#fffbeb":"#f1f5f9",color:o.priority==="STAT"?C.red:o.priority==="Urgent"?C.amber:C.muted}}>
-                      {o.priority==="STAT"?"⚡ STAT":o.priority==="Urgent"?"🔶 Urgent":"Routine"}
-                    </span>
-                  </div>
-                  {/* Actions */}
-                  <div style={{display:"flex",gap:7,flexShrink:0}}>
-                    <button
-                      disabled={csSaving===o._id}
-                      onClick={()=>countersign(o)}
-                      style={{padding:"7px 16px",background:C.green,color:"white",border:"none",borderRadius:7,fontWeight:700,fontSize:12,cursor:csSaving===o._id?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:5,opacity:csSaving===o._id?.6:1}}>
-                      {csSaving===o._id ? <i className="pi pi-spin pi-spinner" style={{fontSize:11}}/> : <i className="pi pi-check" style={{fontSize:11}}/>}
-                      Countersign
-                    </button>
-                    <button
-                      disabled={csSaving===o._id}
-                      onClick={()=>{setRejectModal(o);setRejectReason("");}}
-                      style={{padding:"7px 13px",background:C.redL,color:C.red,border:`1.5px solid ${C.redB}`,borderRadius:7,fontWeight:700,fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>
-                      <i className="pi pi-times" style={{fontSize:11}}/>
-                      Reject
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Reject modal */}
-      {rejectModal && (
-        <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,.6)",backdropFilter:"blur(4px)",zIndex:3000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={()=>setRejectModal(null)}>
-          <div style={{background:"white",borderRadius:14,width:480,maxWidth:"96vw",overflow:"hidden",boxShadow:"0 20px 50px rgba(0,0,0,.25)"}} onClick={e=>e.stopPropagation()}>
-            <div style={{padding:"12px 18px",background:"linear-gradient(135deg,#dc2626,#ef4444)",color:"white",fontWeight:800,fontSize:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <span>✗ Reject Telephonic Order</span>
-              <button onClick={()=>setRejectModal(null)} style={{background:"rgba(255,255,255,.2)",border:"none",color:"white",cursor:"pointer",borderRadius:5,width:26,height:26}}>×</button>
-            </div>
-            <div style={{padding:"16px 18px",display:"flex",flexDirection:"column",gap:10}}>
-              <div style={{fontSize:13,color:C.dark}}>
-                Rejecting: <strong>{rejectModal.orderDetails?.medicineName}</strong> — called by Dr. {rejectModal.telephonicData?.doctorName}
-              </div>
-              <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                <label style={{fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:C.muted}}>Reason for rejection</label>
-                <textarea
-                  style={{padding:"8px 10px",border:`1.5px solid ${C.border}`,borderRadius:7,fontFamily:"'DM Sans',sans-serif",fontSize:12,resize:"vertical",minHeight:68,outline:"none"}}
-                  placeholder="Order not applicable, patient status changed, wrong drug, etc."
-                  value={rejectReason}
-                  onChange={e=>setRejectReason(e.target.value)}
-                />
-              </div>
-            </div>
-            <div style={{padding:"10px 18px",borderTop:`1px solid ${C.border}`,display:"flex",justifyContent:"flex-end",gap:8,background:"#f8fafc"}}>
-              <button onClick={()=>setRejectModal(null)} style={{padding:"8px 18px",border:`1.5px solid ${C.border}`,borderRadius:7,background:"white",cursor:"pointer",fontWeight:600,fontSize:12,color:C.muted}}>Cancel</button>
-              <button onClick={rejectTO} disabled={csSaving===rejectModal?._id}
-                style={{padding:"8px 18px",background:C.red,color:"white",border:"none",borderRadius:7,fontWeight:700,fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
-                {csSaving===rejectModal?._id ? <i className="pi pi-spin pi-spinner" style={{fontSize:11}}/> : null}
-                Confirm Rejection
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <MedTable title={`💊 Active Medications (${active.length})`} meds={active} color={C.green}/>
-      {stopped.length>0 && <MedTable title={`🚫 Stopped / Discontinued (${stopped.length})`} meds={stopped} color={C.red}/>}
-      {other.length>0   && <MedTable title={`📋 Other Orders (${other.length})`}           meds={other}   color={C.amber}/>}
-      {/* From treatment orders */}
-      {ordMeds.length>0 && (
-        <Card title={`📋 Doctor Orders — MAR (${ordMeds.length})`} titleColor={C.blue}>
-          <div style={{overflowX:"auto"}}>
-            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+          <div className="pf-data-table-wrap">
+            <table className="pf-data-table pf-data-table--compact">
               <thead>
-                <tr style={{background:C.blueL}}>
-                  {["Medicine","Dose","Route","Frequency","Ordered","Given Today","Status"].map(h=>(
-                    <th key={h} style={{padding:"7px 12px",textAlign:"left",fontWeight:700,color:C.blue,borderBottom:`1.5px solid ${C.blueB}`,whiteSpace:"nowrap",fontSize:10,textTransform:"uppercase"}}>{h}</th>
-                  ))}
+                <tr>
+                  <th>Medicine</th><th>Dose</th><th>Route</th><th>Frequency</th>
+                  <th>Ordered</th><th>Given Today</th><th>Status</th>
                 </tr>
               </thead>
               <tbody>
-                {ordMeds.map((o,i)=>{
-                  const d = o.orderDetails||{};
-                  const givenToday = (o.administrationRecord||[]).filter(r=>{
-                    const dt = new Date(r.givenAt||"");
+                {ordMeds.map((o, i) => {
+                  const d = o.orderDetails || {};
+                  const givenToday = (o.administrationRecord || []).filter(r => {
+                    const dt = new Date(r.givenAt || "");
                     const t = new Date();
-                    return dt.getFullYear()===t.getFullYear()&&dt.getMonth()===t.getMonth()&&dt.getDate()===t.getDate();
+                    return dt.getFullYear() === t.getFullYear() && dt.getMonth() === t.getMonth() && dt.getDate() === t.getDate();
                   }).length;
                   return (
-                    <tr key={i} style={{background:i%2?"#f0f4ff":C.card,borderBottom:`1px solid ${C.border}`}}>
-                      <td style={{padding:"7px 12px",fontWeight:700,color:C.dark}}>{d.medicineName||"—"}</td>
-                      <td style={{padding:"7px 12px"}}>{d.dose||"—"}</td>
-                      <td style={{padding:"7px 12px"}}><Badge color={C.teal} bg={C.tealL}>{d.route||"—"}</Badge></td>
-                      <td style={{padding:"7px 12px"}}>{d.frequency||"—"}</td>
-                      <td style={{padding:"7px 12px",fontSize:11,color:C.muted}}>{fmtDate(o.orderedAt||o.createdAt)}</td>
-                      <td style={{padding:"7px 12px"}}>{givenToday>0?<Badge color={C.green} bg={C.greenL}>{givenToday}× given</Badge>:<Badge color={C.amber} bg={C.amberL}>Pending</Badge>}</td>
-                      <td style={{padding:"7px 12px"}}><SBadge status={o.status||"Active"}/></td>
+                    <tr key={i}>
+                      <td className="pf-cell-strong">{d.medicineName || "—"}</td>
+                      <td>{d.dose || "—"}</td>
+                      <td><Badge color={C.teal} bg={C.tealL}>{d.route || "—"}</Badge></td>
+                      <td>{d.frequency || "—"}</td>
+                      <td className="pf-cell-muted">{fmtDate(o.orderedAt || o.createdAt)}</td>
+                      <td>
+                        {givenToday > 0
+                          ? <Badge color={C.green} bg={C.greenL}>{givenToday}× given</Badge>
+                          : <Badge color={C.amber} bg={C.amberL}>Pending</Badge>}
+                      </td>
+                      <td><SBadge status={o.status || "Active"}/></td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
           </div>
-        </Card>
+        </div>
       )}
-      {allMeds.length===0 && ordMeds.length===0 && <Empty icon="💊" msg="No medication orders found"/>}
+
+      {allMeds.length === 0 && ordMeds.length === 0 && <Empty icon="💊" msg="No medication orders found"/>}
     </div>
   );
 }
@@ -1462,62 +1343,80 @@ function OrdersTab({doctorNotes=[]}) {
   const skipped      = ordersOnDate.filter(o=>o.nurseStatus==="skipped");
 
   return (
-    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+    <div className="pf-tint--doctor" style={{display:"flex",flexDirection:"column",gap:14}}>
 
-      {/* ── Date navigator ── */}
-      <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 18px",background:C.amberL,borderRadius:12,border:`1px solid ${C.amberB}`}}>
-        <button onClick={()=>setSelDate(dates[dateIdx+1])} disabled={dateIdx>=dates.length-1}
-          style={{padding:"6px 16px",borderRadius:8,border:`1.5px solid ${C.border}`,background:"white",cursor:dateIdx>=dates.length-1?"not-allowed":"pointer",fontSize:13,fontWeight:700,color:C.amber,opacity:dateIdx>=dates.length-1?0.35:1}}>
+      {/* ── Date navigator (pf-date-nav) ── */}
+      <div className="pf-date-nav">
+        <button
+          className="pf-date-nav__arrow"
+          onClick={() => setSelDate(dates[dateIdx + 1])}
+          disabled={dateIdx >= dates.length - 1}
+        >
           ◀ Prev
         </button>
-        <div style={{flex:1,textAlign:"center"}}>
-          <div style={{fontWeight:800,fontSize:16,color:"#92400e"}}>
-            {selDate===today?"📅 Today — ":""}{new Date(selDate).toLocaleDateString("en-IN",{day:"2-digit",month:"long",year:"numeric"})}
+        <div className="pf-date-nav__title">
+          <div className="pf-date-nav__title-main">
+            {selDate === today ? "📅 Today — " : ""}
+            {new Date(selDate).toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" })}
           </div>
-          <div style={{fontSize:11,color:C.muted,marginTop:2}}>
-            {ordersOnDate.length} order{ordersOnDate.length!==1?"s":""} · {pending.length} pending · {done.length} done{skipped.length?` · ${skipped.length} skipped`:""}
+          <div className="pf-date-nav__title-sub">
+            {ordersOnDate.length} order{ordersOnDate.length !== 1 ? "s" : ""} ·
+            {" "}{pending.length} pending ·
+            {" "}{done.length} done
+            {skipped.length ? ` · ${skipped.length} skipped` : ""}
           </div>
         </div>
-        <button onClick={()=>setSelDate(dates[dateIdx-1])} disabled={dateIdx<=0}
-          style={{padding:"6px 16px",borderRadius:8,border:`1.5px solid ${C.border}`,background:"white",cursor:dateIdx<=0?"not-allowed":"pointer",fontSize:13,fontWeight:700,color:C.amber,opacity:dateIdx<=0?0.35:1}}>
+        <button
+          className="pf-date-nav__arrow"
+          onClick={() => setSelDate(dates[dateIdx - 1])}
+          disabled={dateIdx <= 0}
+        >
           Next ▶
         </button>
       </div>
 
       {/* ── Date chips ── */}
-      {dates.length>1 && (
-        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-          {dates.map(d=>{
-            const cnt=(byDate[d]||[]).length;
-            const isSel=selDate===d;
+      {dates.length > 1 && (
+        <div className="pf-date-chips">
+          {dates.map(d => {
+            const cnt = (byDate[d] || []).length;
+            const isSel = selDate === d;
             return (
-              <button key={d} onClick={()=>setSelDate(d)}
-                style={{padding:"3px 12px",borderRadius:16,border:`1.5px solid ${isSel?C.amber:C.border}`,background:isSel?C.amber:"white",color:isSel?"white":C.muted,fontSize:10,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
-                {d===today?"Today":new Date(d).toLocaleDateString("en-IN",{day:"2-digit",month:"short"})}
-                <span style={{opacity:.8}}>({cnt})</span>
+              <button
+                key={d}
+                className={`pf-date-chip ${isSel ? "pf-date-chip--active" : ""}`}
+                onClick={() => setSelDate(d)}
+              >
+                {d === today ? "Today" : new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}
+                <span style={{ opacity: .8 }}>({cnt})</span>
               </button>
             );
           })}
         </div>
       )}
 
-      {ordersOnDate.length===0
+      {ordersOnDate.length === 0
         ? <Empty icon="📋" msg="No orders recorded on this date"/>
         : (
         <div style={{display:"flex",flexDirection:"column",gap:12}}>
-          {/* Summary pills */}
-          <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-            {[
-              {label:"Total",   val:ordersOnDate.length, color:C.primary, bg:C.primaryL},
-              {label:"Pending", val:pending.length,       color:C.amber,   bg:C.amberL},
-              {label:"Done",    val:done.length,           color:C.green,   bg:C.greenL},
-              {label:"Skipped", val:skipped.length,        color:C.muted,   bg:"#f1f5f9"},
-            ].map(s=>(
-              <div key={s.label} style={{padding:"8px 16px",borderRadius:10,background:s.bg,border:`1px solid ${C.border}`,display:"flex",gap:8,alignItems:"center"}}>
-                <span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:s.color}}>{s.label}</span>
-                <span style={{fontSize:20,fontWeight:800,color:s.color}}>{s.val}</span>
-              </div>
-            ))}
+          {/* Summary pills (pf-pill) */}
+          <div className="pf-pill-row">
+            <div className="pf-pill">
+              <span className="pf-pill__label">Total</span>
+              <span className="pf-pill__val">{ordersOnDate.length}</span>
+            </div>
+            <div className="pf-pill pf-pill--warn">
+              <span className="pf-pill__label">Pending</span>
+              <span className="pf-pill__val">{pending.length}</span>
+            </div>
+            <div className="pf-pill pf-pill--ok">
+              <span className="pf-pill__label">Done</span>
+              <span className="pf-pill__val">{done.length}</span>
+            </div>
+            <div className="pf-pill pf-pill--neutral">
+              <span className="pf-pill__label">Skipped</span>
+              <span className="pf-pill__val">{skipped.length}</span>
+            </div>
           </div>
 
           {/* Orders list */}
@@ -1591,25 +1490,18 @@ function OrdersTab({doctorNotes=[]}) {
 
 /* ═══════════════════════════════════════════════════════ TAB: TREATMENT CHART (MAR) */
 function TreatmentChartTab({doctorOrders=[], doctorNotes=[]}) {
-  /* ── Collect medication/infusion orders from doctorOrders (full model fields) ── */
+  /* ── Collect medication/infusion orders from doctorOrders ── */
   const medOrders = (doctorOrders||[]).map(o=>({
-    _id:             o._id,
-    drug:            o.orderDetails?.medicineName || o.orderDetails?.drugFluid || o.orderDetails?.name || "—",
-    dose:            o.orderDetails?.dose || o.orderDetails?.volume || "—",
-    route:           o.orderDetails?.route || "—",
-    freq:            o.orderDetails?.frequency || o.orderDetails?.rate || "—",
-    status:          o.status||"Active",
-    orderedAt:       o.orderedAt||o.createdAt,
-    doctorName:      o.doctorName||o.orderedBy||"",
-    admins:          o.administrationRecord||[],
-    auditLog:        o.auditLog||[],
-    priority:        o.priority||"Routine",
-    hamFlag:         !!o.hamFlag,
-    twoNurseRequired:!!o.twoNurseRequired,
-    highRisk:        !!o.highRisk,
-    rateChanges:     o.rateChanges||[],
-    orderType:       o.orderType||"",
-    source:          "order",
+    _id:      o._id,
+    drug:     o.orderDetails?.medicineName || o.orderDetails?.drugFluid || o.orderDetails?.name || "—",
+    dose:     o.orderDetails?.dose || o.orderDetails?.volume || "—",
+    route:    o.orderDetails?.route || "—",
+    freq:     o.orderDetails?.frequency || o.orderDetails?.rate || "—",
+    status:   o.status||"Active",
+    orderedAt:o.orderedAt||o.createdAt,
+    doctorName:o.doctorName||o.orderedBy||"",
+    admins:   o.administrationRecord||[],
+    source:   "order",
   })).filter(o=>o.drug&&o.drug!=="—");
 
   /* ── Also pull medication orders embedded in doctor notes ── */
@@ -1630,13 +1522,6 @@ function TreatmentChartTab({doctorOrders=[], doctorNotes=[]}) {
         orderedAt:note.createdAt,
         doctorName:note.doctorName||"",
         admins:[],
-        auditLog:[],
-        priority:"Routine",
-        hamFlag:false,
-        twoNurseRequired:false,
-        highRisk:false,
-        rateChanges:[],
-        orderType:"",
         source:"note",
       });
     });
@@ -1654,27 +1539,21 @@ function TreatmentChartTab({doctorOrders=[], doctorNotes=[]}) {
   });
   const uniqueDates = [...dateSet].sort().reverse();
 
-  const [selDate,       setSelDate]       = useState(uniqueDates[0]||today);
-  const [expandedOrders,setExpandedOrders]= useState({});
+  const [selDate, setSelDate] = useState(uniqueDates[0]||today);
 
   if (!allOrders.length) return <Empty icon="💉" msg="No medication / infusion orders found. Orders created from doctor notes will appear here."/>;
 
-  const dateIdx     = uniqueDates.indexOf(selDate);
-  const ordersOnDate= allOrders.filter(o=>{
+  const dateIdx = uniqueDates.indexOf(selDate);
+
+  /* Orders that were active on the selected date */
+  const ordersOnDate = allOrders.filter(o=>{
     const start = o.orderedAt ? new Date(o.orderedAt).toISOString().slice(0,10) : today;
     return start<=selDate;
   });
+
   const getAdmins = o => o.admins.filter(r=>r.givenAt && new Date(r.givenAt).toISOString().slice(0,10)===selDate);
+
   const dateLabel = d => d===today?"Today":new Date(d).toLocaleDateString("en-IN",{day:"2-digit",month:"short"});
-
-  /* Priority badge style helper */
-  const priBadge = p => {
-    if (p==="STAT")   return {label:"🔴 STAT",   color:"#dc2626",bg:"#fee2e2",border:"#fca5a5"};
-    if (p==="Urgent") return {label:"🟡 URGENT", color:"#d97706",bg:"#fef3c7",border:"#fcd34d"};
-    return                   {label:"ROUTINE",   color:C.muted,  bg:"#f1f5f9",border:C.border};
-  };
-
-  const toggleOrder = id => setExpandedOrders(prev=>({...prev,[id]:!prev[id]}));
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
@@ -1728,193 +1607,50 @@ function TreatmentChartTab({doctorOrders=[], doctorNotes=[]}) {
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
               <thead>
                 <tr style={{background:C.primaryL}}>
-                  {["Priority / Flags","Drug / Fluid","Dose","Route","Freq","Ordered By",`Administrations (${dateLabel(selDate)})`,"Status","Trail"].map(h=>(
+                  {["Drug / Fluid","Dose","Route","Frequency","Ordered By","Start Date",`Administrations (${dateLabel(selDate)})`,"Status"].map(h=>(
                     <th key={h} style={{padding:"9px 12px",textAlign:"left",fontWeight:700,color:C.primaryD,borderBottom:`2px solid ${C.primaryM}`,whiteSpace:"nowrap",fontSize:10,textTransform:"uppercase",letterSpacing:".4px"}}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {ordersOnDate.map((o,i)=>{
-                  const admins   = getAdmins(o);
+                  const admins = getAdmins(o);
                   const isActive = (o.status||"Active")==="Active"||(o.status||"").toLowerCase()==="active";
-                  const pb       = priBadge(o.priority);
-                  const rowKey   = o._id||i;
-                  const expanded = !!expandedOrders[rowKey];
-                  const hasTrail = o.auditLog.length>0 || admins.length>0 || o.rateChanges.length>0;
                   return (
-                    <React.Fragment key={rowKey}>
-                      <tr style={{background:i%2?"#fafaf9":C.card,borderBottom:expanded?`2px solid ${C.primaryM}`:`1px solid ${C.border}`,verticalAlign:"top"}}>
-
-                        {/* Priority + HAM flags */}
-                        <td style={{padding:"10px 12px",minWidth:110}}>
-                          <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                            <span style={{padding:"2px 8px",borderRadius:5,background:pb.bg,color:pb.color,fontWeight:800,fontSize:10,border:`1px solid ${pb.border}`,display:"inline-block",whiteSpace:"nowrap"}}>{pb.label}</span>
-                            {o.hamFlag          && <span style={{padding:"1px 6px",borderRadius:4,background:"#fef3c7",color:"#b45309",fontWeight:700,fontSize:9,border:"1px solid #fcd34d",whiteSpace:"nowrap"}}>⚠ HAM</span>}
-                            {o.highRisk         && <span style={{padding:"1px 6px",borderRadius:4,background:"#fee2e2",color:"#dc2626",fontWeight:700,fontSize:9,border:"1px solid #fca5a5",whiteSpace:"nowrap"}}>🚨 HIGH RISK</span>}
-                            {o.twoNurseRequired && <span style={{padding:"1px 6px",borderRadius:4,background:"#ede9fe",color:"#7c3aed",fontWeight:700,fontSize:9,border:"1px solid #c4b5fd",whiteSpace:"nowrap"}}>👥 2-NURSE</span>}
+                    <tr key={o._id||i} style={{background:i%2?"#fafaf9":C.card,borderBottom:`1px solid ${C.border}`,verticalAlign:"top"}}>
+                      <td style={{padding:"10px 12px",fontWeight:700,color:C.dark,minWidth:140}}>{o.drug}</td>
+                      <td style={{padding:"10px 12px",whiteSpace:"nowrap"}}>{o.dose}</td>
+                      <td style={{padding:"10px 12px"}}><Badge color={C.teal} bg={C.tealL}>{o.route}</Badge></td>
+                      <td style={{padding:"10px 12px",whiteSpace:"nowrap"}}>{o.freq}</td>
+                      <td style={{padding:"10px 12px",color:C.muted,fontSize:11,whiteSpace:"nowrap"}}>{o.doctorName?`Dr. ${o.doctorName}`:"—"}</td>
+                      <td style={{padding:"10px 12px",color:C.muted,fontSize:11,whiteSpace:"nowrap"}}>{fmtDate(o.orderedAt)}</td>
+                      <td style={{padding:"10px 12px",minWidth:180}}>
+                        {admins.length===0 ? (
+                          <span style={{fontSize:10,padding:"2px 10px",borderRadius:4,background:isActive?C.amberL:"#f1f5f9",color:isActive?C.amber:C.muted,fontWeight:700}}>
+                            {isActive?"⏳ Pending":"—"}
+                          </span>
+                        ) : (
+                          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                            {admins.map((a,ai)=>{
+                              const sc = a.status==="given"?C.green:a.status==="missed"?C.red:a.status==="skipped"?C.muted:C.green;
+                              const bg = a.status==="given"?C.greenL:a.status==="missed"?C.redL:a.status==="skipped"?"#f1f5f9":C.greenL;
+                              const icon = a.status==="given"?"✓":a.status==="missed"?"✗":a.status==="skipped"?"↷":"✓";
+                              return (
+                                <div key={ai} style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                                  <span style={{padding:"1px 8px",borderRadius:4,background:bg,color:sc,fontWeight:700,fontSize:10,display:"flex",alignItems:"center",gap:4}}>
+                                    {icon} {(a.status||"given").charAt(0).toUpperCase()+(a.status||"given").slice(1)}
+                                  </span>
+                                  {a.givenAt && <span style={{fontSize:10,color:C.muted,fontFamily:"'DM Mono',monospace"}}>{new Date(a.givenAt).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}</span>}
+                                  {a.givenBy && <span style={{fontSize:10,color:C.dark,fontWeight:500}}>· {a.givenBy}</span>}
+                                  {a.notes   && <span style={{fontSize:10,color:C.muted,fontStyle:"italic"}}>{a.notes}</span>}
+                                </div>
+                              );
+                            })}
                           </div>
-                        </td>
-
-                        {/* Drug */}
-                        <td style={{padding:"10px 12px",fontWeight:700,color:C.dark,minWidth:140}}>{o.drug}</td>
-                        {/* Dose */}
-                        <td style={{padding:"10px 12px",whiteSpace:"nowrap"}}>{o.dose}</td>
-                        {/* Route */}
-                        <td style={{padding:"10px 12px"}}><Badge color={C.teal} bg={C.tealL}>{o.route}</Badge></td>
-                        {/* Freq */}
-                        <td style={{padding:"10px 12px",whiteSpace:"nowrap"}}>{o.freq}</td>
-                        {/* Ordered by */}
-                        <td style={{padding:"10px 12px",color:C.muted,fontSize:11,whiteSpace:"nowrap"}}>{o.doctorName?`Dr. ${o.doctorName}`:"—"}</td>
-
-                        {/* Administrations cell */}
-                        <td style={{padding:"10px 12px",minWidth:210}}>
-                          {admins.length===0 ? (
-                            <span style={{fontSize:10,padding:"2px 10px",borderRadius:4,background:isActive?C.amberL:"#f1f5f9",color:isActive?C.amber:C.muted,fontWeight:700}}>
-                              {isActive?"⏳ Pending":"—"}
-                            </span>
-                          ) : (
-                            <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                              {admins.map((a,ai)=>{
-                                const sc   = a.status==="given"?C.green:a.status==="missed"?C.red:a.status==="skipped"?C.muted:C.green;
-                                const bg   = a.status==="given"?C.greenL:a.status==="missed"?C.redL:a.status==="skipped"?"#f1f5f9":C.greenL;
-                                const icon = a.status==="given"?"✓":a.status==="missed"?"✗":a.status==="skipped"?"↷":"✓";
-                                return (
-                                  <div key={ai} style={{display:"flex",flexDirection:"column",gap:2}}>
-                                    {/* Primary line */}
-                                    <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
-                                      <span style={{padding:"1px 8px",borderRadius:4,background:bg,color:sc,fontWeight:700,fontSize:10}}>{icon} {(a.status||"given").toUpperCase()}</span>
-                                      {a.givenAt && <span style={{fontSize:10,color:C.teal,fontFamily:"'DM Mono',monospace",fontWeight:700}}>{new Date(a.givenAt).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}</span>}
-                                      {a.givenBy && <span style={{fontSize:10,color:C.dark,fontWeight:600}}>· {a.givenBy}</span>}
-                                      {o.priority==="STAT" && <span style={{fontSize:9,padding:"1px 5px",borderRadius:3,background:"#fee2e2",color:"#dc2626",fontWeight:800,border:"1px solid #fca5a5"}}>STAT</span>}
-                                    </div>
-                                    {/* Quick sub-detail */}
-                                    {(a.doseGiven||a.routeUsed||a.siteUsed) && (
-                                      <div style={{fontSize:9,color:C.muted,paddingLeft:4}}>
-                                        {[a.doseGiven&&`Dose: ${a.doseGiven}`,a.routeUsed&&`Route: ${a.routeUsed}`,a.siteUsed&&`Site: ${a.siteUsed}`].filter(Boolean).join(" · ")}
-                                      </div>
-                                    )}
-                                    {a.verifiedBy    && <div style={{fontSize:9,color:"#7c3aed",paddingLeft:4,fontWeight:600}}>✓₂ Verified: {a.verifiedBy}</div>}
-                                    {a.adverseEvent  && <div style={{fontSize:9,color:"#dc2626",paddingLeft:4,fontWeight:700}}>⚠ Adverse: {a.adverseDetails||"reported"}</div>}
-                                    {a.holdReason    && <div style={{fontSize:9,color:"#d97706",paddingLeft:4}}>🔒 Hold: {a.holdReason}</div>}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </td>
-
-                        {/* Status */}
-                        <td style={{padding:"10px 12px"}}><SBadge status={o.status||"Active"}/></td>
-
-                        {/* Expand trail button */}
-                        <td style={{padding:"10px 12px",textAlign:"center"}}>
-                          {hasTrail && (
-                            <button onClick={()=>toggleOrder(rowKey)}
-                              style={{padding:"4px 10px",borderRadius:8,border:`1.5px solid ${C.primary}`,background:expanded?C.primary:"white",color:expanded?"white":C.primary,fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
-                              {expanded?"▲ Hide":"🔍 Trail"}
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-
-                      {/* ── Expanded audit trail ── */}
-                      {expanded && (
-                        <tr style={{background:"#f8faff"}}>
-                          <td colSpan={9} style={{padding:"14px 20px 18px 20px",borderBottom:`2px solid ${C.primaryM}`}}>
-                            <div style={{display:"flex",flexDirection:"column",gap:14}}>
-
-                              {/* NABH Audit Log steps */}
-                              {o.auditLog.length>0 && (
-                                <div>
-                                  <div style={{fontWeight:700,fontSize:11,color:C.primaryD,marginBottom:6,textTransform:"uppercase",letterSpacing:".5px"}}>📋 NABH Workflow Audit Steps</div>
-                                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                                    {o.auditLog.map((s,si)=>(
-                                      <div key={si} style={{display:"flex",gap:10,alignItems:"flex-start",padding:"6px 12px",background:"white",borderRadius:7,border:`1px solid ${C.border}`}}>
-                                        <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:C.teal,fontWeight:700,minWidth:110,flexShrink:0}}>
-                                          {s.doneAt?new Date(s.doneAt).toLocaleString("en-IN",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}):"—"}
-                                        </div>
-                                        <div style={{width:7,height:7,borderRadius:"50%",background:C.primary,flexShrink:0,marginTop:3}}/>
-                                        <div style={{flex:1}}>
-                                          <span style={{fontWeight:700,color:C.dark,fontSize:11}}>{s.step||"Step"}</span>
-                                          {s.doneBy && <span style={{fontSize:10,color:C.muted,marginLeft:6}}>by {s.doneBy}</span>}
-                                          {s.notes  && <div style={{fontSize:10,color:C.muted,fontStyle:"italic",marginTop:2}}>{s.notes}</div>}
-                                        </div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* Full administration detail cards for selected date */}
-                              {admins.length>0 && (
-                                <div>
-                                  <div style={{fontWeight:700,fontSize:11,color:C.primaryD,marginBottom:6,textTransform:"uppercase",letterSpacing:".5px"}}>
-                                    💊 Administration Details — {dateLabel(selDate)}
-                                    {o.priority!=="Routine" && (
-                                      <span style={{marginLeft:8,padding:"2px 8px",borderRadius:5,background:priBadge(o.priority).bg,color:priBadge(o.priority).color,fontWeight:800,fontSize:10,border:`1px solid ${priBadge(o.priority).border}`}}>{priBadge(o.priority).label}</span>
-                                    )}
-                                  </div>
-                                  {admins.map((a,ai)=>{
-                                    const sc=a.status==="given"?C.green:a.status==="missed"?C.red:C.amber;
-                                    return (
-                                      <div key={ai} style={{background:"white",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 14px",marginBottom:6}}>
-                                        {/* Header row */}
-                                        <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:6,flexWrap:"wrap"}}>
-                                          <span style={{fontWeight:800,fontSize:11,color:sc}}>{(a.status||"given").toUpperCase()}</span>
-                                          {a.givenAt && <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:C.teal,fontWeight:700}}>{new Date(a.givenAt).toLocaleString("en-IN",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"})}</span>}
-                                          {a.givenBy && <span style={{fontSize:11,color:C.dark,fontWeight:600}}>by {a.givenBy}</span>}
-                                          {o.priority==="STAT"   && <span style={{padding:"2px 8px",borderRadius:5,background:"#fee2e2",color:"#dc2626",fontWeight:800,fontSize:10,border:"1px solid #fca5a5"}}>🔴 STAT</span>}
-                                          {o.priority==="Urgent" && <span style={{padding:"2px 8px",borderRadius:5,background:"#fef3c7",color:"#d97706",fontWeight:800,fontSize:10,border:"1px solid #fcd34d"}}>🟡 URGENT</span>}
-                                        </div>
-                                        {/* Detail grid */}
-                                        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(190px,1fr))",gap:"4px 16px",fontSize:10,color:C.dark}}>
-                                          {a.scheduledTime && <span><b style={{color:C.muted}}>Scheduled:</b> {new Date(a.scheduledTime).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}</span>}
-                                          {a.doseGiven     && <span><b style={{color:C.muted}}>Dose Given:</b> {a.doseGiven}</span>}
-                                          {a.routeUsed     && <span><b style={{color:C.muted}}>Route Used:</b> {a.routeUsed}</span>}
-                                          {a.siteUsed      && <span><b style={{color:C.muted}}>Site Used:</b> {a.siteUsed}</span>}
-                                          {a.verifiedBy    && (
-                                            <span style={{color:"#7c3aed",fontWeight:600}}>
-                                              <b>2nd Nurse Verified:</b> {a.verifiedBy}
-                                              {a.verifiedAt?` @ ${new Date(a.verifiedAt).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}`:""} ✓
-                                            </span>
-                                          )}
-                                          {a.fiveRightsChecked && <span style={{color:C.green,fontWeight:600}}>✓ 5 Rights Checked</span>}
-                                          {a.prnEffect   && <span><b style={{color:C.muted}}>PRN Effect:</b> {a.prnEffect}</span>}
-                                          {a.delayReason && <span><b style={{color:C.muted}}>Delay Reason:</b> {a.delayReason}</span>}
-                                          {a.holdReason  && <span style={{color:"#d97706",fontWeight:600,gridColumn:"1/-1"}}><b>Hold Reason:</b> {a.holdReason} {a.holdUntil?`(until ${new Date(a.holdUntil).toLocaleString("en-IN",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"})})`:""}</span>}
-                                          {a.notes       && <span style={{gridColumn:"1/-1"}}><b style={{color:C.muted}}>Notes:</b> {a.notes}</span>}
-                                          {a.adverseEvent && <span style={{color:"#dc2626",fontWeight:700,gridColumn:"1/-1"}}>⚠ Adverse Event: {a.adverseDetails||"reported"}</span>}
-                                        </div>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )}
-
-                              {/* Infusion rate changes */}
-                              {o.rateChanges.length>0 && (
-                                <div>
-                                  <div style={{fontWeight:700,fontSize:11,color:C.primaryD,marginBottom:6,textTransform:"uppercase",letterSpacing:".5px"}}>🔄 Infusion Rate Changes</div>
-                                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                                    {o.rateChanges.map((rc,ri)=>(
-                                      <div key={ri} style={{display:"flex",gap:10,alignItems:"center",padding:"5px 12px",background:"white",borderRadius:7,border:`1px solid ${C.border}`,fontSize:10}}>
-                                        <span style={{fontFamily:"'DM Mono',monospace",color:C.teal,fontWeight:700,minWidth:110,flexShrink:0}}>
-                                          {rc.changedAt?new Date(rc.changedAt).toLocaleString("en-IN",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}):"—"}
-                                        </span>
-                                        <span>{rc.oldRate||"—"} → <b>{rc.newRate||"—"}</b></span>
-                                        {rc.changedBy && <span style={{color:C.muted}}>by {rc.changedBy}</span>}
-                                        {rc.reason    && <span style={{color:C.muted,fontStyle:"italic"}}>{rc.reason}</span>}
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </React.Fragment>
+                        )}
+                      </td>
+                      <td style={{padding:"10px 12px"}}><SBadge status={o.status||"Active"}/></td>
+                    </tr>
                   );
                 })}
               </tbody>
@@ -1923,56 +1659,32 @@ function TreatmentChartTab({doctorOrders=[], doctorNotes=[]}) {
         )}
       </div>
 
-      {/* ── Full administration audit log (day summary, time-sorted) ── */}
+      {/* ── Administration audit log ── */}
       {ordersOnDate.some(o=>getAdmins(o).length>0) && (
         <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:16,overflow:"hidden"}}>
           <div style={{padding:"13px 18px",background:C.greenL,borderBottom:`1px solid ${C.border}`,fontWeight:800,fontSize:13,color:C.green}}>
-            ✅ Full Administration Audit Log — {new Date(selDate).toLocaleDateString("en-IN",{day:"2-digit",month:"long",year:"numeric"})}
+            ✅ Administration Audit Log — {new Date(selDate).toLocaleDateString("en-IN",{day:"2-digit",month:"long",year:"numeric"})}
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:0}}>
-            {ordersOnDate
-              .flatMap(o=>getAdmins(o).map(a=>({...a,drug:o.drug,dose:o.dose,route:o.route,priority:o.priority,hamFlag:o.hamFlag,highRisk:o.highRisk})))
-              .sort((a,b)=>new Date(a.givenAt)-new Date(b.givenAt))
-              .map((a,i)=>{
-                const sc=a.status==="given"?C.green:a.status==="missed"?C.red:C.muted;
-                return (
-                  <div key={i} style={{padding:"10px 18px",borderBottom:`1px solid ${C.border}`,background:i%2?"#fafaf9":C.card}}>
-                    {/* Primary line */}
-                    <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>
-                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:C.teal,fontWeight:700,minWidth:50}}>
-                        {a.givenAt?new Date(a.givenAt).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"}):"—"}
-                      </div>
-                      <div style={{width:8,height:8,borderRadius:"50%",background:sc,flexShrink:0}}/>
-                      <div style={{flex:1}}>
-                        <span style={{fontWeight:700,color:C.dark}}>{a.drug}</span>
-                        {a.dose&&a.dose!=="—"&&<span style={{fontSize:11,color:C.muted,marginLeft:6}}>{a.dose}</span>}
-                        {a.route&&a.route!=="—"&&<span style={{fontSize:10,marginLeft:4,padding:"1px 5px",borderRadius:3,background:C.tealL,color:C.teal,fontWeight:600}}>{a.route}</span>}
-                      </div>
-                      {/* Priority badge — always show for STAT/Urgent */}
-                      {a.priority==="STAT"   && <span style={{padding:"2px 8px",borderRadius:5,background:"#fee2e2",color:"#dc2626",fontWeight:800,fontSize:10,border:"1px solid #fca5a5"}}>🔴 STAT</span>}
-                      {a.priority==="Urgent" && <span style={{padding:"2px 8px",borderRadius:5,background:"#fef3c7",color:"#d97706",fontWeight:800,fontSize:10,border:"1px solid #fcd34d"}}>🟡 URGENT</span>}
-                      {a.hamFlag  && <span style={{padding:"1px 6px",borderRadius:4,background:"#fef3c7",color:"#b45309",fontWeight:700,fontSize:9,border:"1px solid #fcd34d"}}>⚠ HAM</span>}
-                      {a.highRisk && <span style={{padding:"1px 6px",borderRadius:4,background:"#fee2e2",color:"#dc2626",fontWeight:700,fontSize:9,border:"1px solid #fca5a5"}}>🚨 HIGH</span>}
-                      <span style={{fontSize:11,fontWeight:700,color:sc}}>{(a.status||"given").toUpperCase()}</span>
-                      <span style={{fontSize:11,color:C.dark,fontWeight:500}}>{a.givenBy||"—"}</span>
-                    </div>
-                    {/* Sub-detail line */}
-                    {(a.verifiedBy||a.doseGiven||a.routeUsed||a.siteUsed||a.fiveRightsChecked||a.adverseEvent||a.holdReason||a.notes||a.prnEffect) && (
-                      <div style={{display:"flex",gap:12,flexWrap:"wrap",marginTop:5,paddingLeft:82,fontSize:10,color:C.muted}}>
-                        {a.doseGiven         && <span>Dose: <b style={{color:C.dark}}>{a.doseGiven}</b></span>}
-                        {a.routeUsed         && <span>Route: <b style={{color:C.dark}}>{a.routeUsed}</b></span>}
-                        {a.siteUsed          && <span>Site: <b style={{color:C.dark}}>{a.siteUsed}</b></span>}
-                        {a.verifiedBy        && <span style={{color:"#7c3aed",fontWeight:600}}>✓₂ Verified: {a.verifiedBy}</span>}
-                        {a.fiveRightsChecked && <span style={{color:C.green,fontWeight:600}}>✓ 5 Rights</span>}
-                        {a.prnEffect         && <span>PRN: {a.prnEffect}</span>}
-                        {a.notes             && <span style={{fontStyle:"italic"}}>{a.notes}</span>}
-                        {a.holdReason        && <span style={{color:"#d97706",fontWeight:600}}>Hold: {a.holdReason}</span>}
-                        {a.adverseEvent      && <span style={{color:"#dc2626",fontWeight:700}}>⚠ Adverse: {a.adverseDetails||"reported"}</span>}
-                      </div>
-                    )}
+            {ordersOnDate.flatMap(o=>getAdmins(o).map(a=>({...a,drug:o.drug,dose:o.dose,route:o.route}))).sort((a,b)=>new Date(a.givenAt)-new Date(b.givenAt)).map((a,i)=>{
+              const sc=a.status==="given"?C.green:a.status==="missed"?C.red:C.muted;
+              return (
+                <div key={i} style={{display:"flex",gap:12,alignItems:"center",padding:"10px 18px",borderBottom:`1px solid ${C.border}`,background:i%2?"#fafaf9":C.card}}>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:C.teal,fontWeight:700,minWidth:50}}>
+                    {a.givenAt?new Date(a.givenAt).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"}):"—"}
                   </div>
-                );
-              })}
+                  <div style={{width:8,height:8,borderRadius:"50%",background:sc,flexShrink:0}}/>
+                  <div style={{flex:1}}>
+                    <span style={{fontWeight:700,color:C.dark}}>{a.drug}</span>
+                    {a.dose&&a.dose!=="—"&&<span style={{fontSize:11,color:C.muted,marginLeft:6}}>{a.dose}</span>}
+                    {a.route&&a.route!=="—"&&<span style={{fontSize:10,marginLeft:4,padding:"1px 5px",borderRadius:3,background:C.tealL,color:C.teal,fontWeight:600}}>{a.route}</span>}
+                  </div>
+                  <span style={{fontSize:11,fontWeight:700,color:sc}}>{(a.status||"given").toUpperCase()}</span>
+                  <span style={{fontSize:11,color:C.muted}}>{a.givenBy||"—"}</span>
+                  {a.notes&&<span style={{fontSize:10,color:C.muted,fontStyle:"italic"}}>{a.notes}</span>}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -1983,60 +1695,80 @@ function TreatmentChartTab({doctorOrders=[], doctorNotes=[]}) {
 /* ═══════════════════════════════════════════════════════ TAB: BILLING */
 function BillingTab({billing}) {
   if (!billing) return <Empty icon="💰" msg="No billing record found"/>;
+  const dueClass = (billing.balanceAmount || 0) > 0 ? "pf-bill-header__kpi pf-bill-header__kpi--due" : "pf-bill-header__kpi";
   return (
-    <div style={{display:"flex",flexDirection:"column",gap:20}}>
-      <div style={{background:`linear-gradient(135deg,${C.primaryD},${C.primary})`,borderRadius:14,padding:"22px 28px",color:"#fff",display:"flex",flexWrap:"wrap",gap:24,justifyContent:"space-between",alignItems:"center"}}>
+    <div className="pf-tint--doctor" style={{display:"flex",flexDirection:"column",gap:16}}>
+      <div className="pf-bill-header">
         <div>
-          <div style={{fontSize:11,opacity:.8,marginBottom:3}}>Bill Number</div>
-          <div style={{fontSize:20,fontWeight:800}}>{billing.billNumber||"—"}</div>
+          <div className="pf-bill-header__id-label">Bill Number</div>
+          <div className="pf-bill-header__id-val">{billing.billNumber || "—"}</div>
         </div>
-        {[{l:"Total",v:fmtCur(billing.netAmount)},{l:"Advance",v:fmtCur(billing.advancePaid)},{l:"Balance Due",v:fmtCur(billing.balanceAmount)}].map(s=>(
-          <div key={s.l} style={{textAlign:"center"}}>
-            <div style={{fontSize:10,opacity:.8,marginBottom:3}}>{s.l}</div>
-            <div style={{fontSize:22,fontWeight:800}}>{s.v}</div>
-          </div>
-        ))}
-        <SBadge status={billing.billStatus}/>
+        <div className="pf-bill-header__kpi">
+          <div className="pf-bill-header__kpi-label">Total</div>
+          <div className="pf-bill-header__kpi-val">{fmtCur(billing.netAmount)}</div>
+        </div>
+        <div className="pf-bill-header__kpi">
+          <div className="pf-bill-header__kpi-label">Advance</div>
+          <div className="pf-bill-header__kpi-val">{fmtCur(billing.advancePaid)}</div>
+        </div>
+        <div className={dueClass}>
+          <div className="pf-bill-header__kpi-label">Balance Due</div>
+          <div className="pf-bill-header__kpi-val">{fmtCur(billing.balanceAmount)}</div>
+        </div>
+        <div><SBadge status={billing.billStatus}/></div>
       </div>
-      <Card title="🧾 Itemised Bill">
-        <div style={{overflowX:"auto"}}>
-          <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+
+      {/* Itemised bill */}
+      <div className="pf-section-card">
+        <div className="pf-section-card__head">
+          <span className="pf-section-card__icon">🧾</span>
+          <span className="pf-section-card__title">Itemised Bill</span>
+          <span className="pf-section-card__count">{(billing.billItems || []).length}</span>
+        </div>
+        <div className="pf-data-table-wrap">
+          <table className="pf-data-table">
             <thead>
-              <tr style={{background:C.primaryL}}>
-                {["#","Service","Category","Amount"].map(h=><th key={h} style={{padding:"8px 12px",textAlign:"left",fontWeight:700,color:C.primaryD,borderBottom:`2px solid ${C.primaryM}`,fontSize:10,textTransform:"uppercase"}}>{h}</th>)}
-              </tr>
+              <tr><th>#</th><th>Service</th><th>Category</th><th style={{textAlign:"right"}}>Amount</th></tr>
             </thead>
             <tbody>
-              {(billing.billItems||[]).map((item,i)=>(
-                <tr key={i} style={{background:i%2?"#fafaf9":C.card,borderBottom:`1px solid ${C.border}`}}>
-                  <td style={{padding:"7px 12px",color:C.muted}}>{i+1}</td>
-                  <td style={{padding:"7px 12px",fontWeight:600}}>{item.serviceName||"—"}</td>
-                  <td style={{padding:"7px 12px"}}><Badge color={C.primary} bg={C.primaryL}>{item.category||"—"}</Badge></td>
-                  <td style={{padding:"7px 12px",fontWeight:700,color:C.primary}}>{fmtCur(item.netAmount)}</td>
+              {(billing.billItems || []).map((item, i) => (
+                <tr key={i}>
+                  <td className="pf-cell-muted">{i + 1}</td>
+                  <td className="pf-cell-strong">{item.serviceName || "—"}</td>
+                  <td><Badge color={C.primary} bg={C.primaryL}>{item.category || "—"}</Badge></td>
+                  <td className="pf-cell-num pf-currency">{fmtCur(item.netAmount)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      </Card>
-      {(billing.payments||[]).length>0 && (
-        <Card title="💳 Payment History">
-          <div style={{overflowX:"auto"}}>
-            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-              <thead><tr style={{background:C.primaryL}}>{["Date","Mode","Amount","Reference"].map(h=><th key={h} style={{padding:"8px 12px",textAlign:"left",fontWeight:700,color:C.primaryD,borderBottom:`2px solid ${C.primaryM}`,fontSize:10,textTransform:"uppercase"}}>{h}</th>)}</tr></thead>
+      </div>
+
+      {(billing.payments || []).length > 0 && (
+        <div className="pf-section-card pf-section-card--ok">
+          <div className="pf-section-card__head">
+            <span className="pf-section-card__icon">💳</span>
+            <span className="pf-section-card__title">Payment History</span>
+            <span className="pf-section-card__count">{billing.payments.length}</span>
+          </div>
+          <div className="pf-data-table-wrap">
+            <table className="pf-data-table">
+              <thead>
+                <tr><th>Date</th><th>Mode</th><th style={{textAlign:"right"}}>Amount</th><th>Reference</th></tr>
+              </thead>
               <tbody>
-                {billing.payments.map((p,i)=>(
-                  <tr key={i} style={{background:i%2?"#fafaf9":C.card,borderBottom:`1px solid ${C.border}`}}>
-                    <td style={{padding:"7px 12px"}}>{fmtDT(p.paidAt||p.date)}</td>
-                    <td style={{padding:"7px 12px"}}>{p.mode||p.paymentMode||"—"}</td>
-                    <td style={{padding:"7px 12px",fontWeight:700,color:C.green}}>{fmtCur(p.amount)}</td>
-                    <td style={{padding:"7px 12px",color:C.muted}}>{p.reference||p.receiptNumber||"—"}</td>
+                {billing.payments.map((p, i) => (
+                  <tr key={i}>
+                    <td>{fmtDT(p.paidAt || p.date)}</td>
+                    <td>{p.mode || p.paymentMode || "—"}</td>
+                    <td className="pf-cell-num pf-currency pf-currency--ok">{fmtCur(p.amount)}</td>
+                    <td className="pf-cell-muted">{p.reference || p.receiptNumber || "—"}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </Card>
+        </div>
       )}
     </div>
   );
@@ -2046,41 +1778,70 @@ function BillingTab({billing}) {
 function EmergencyTab({emergency=[]}) {
   if (!emergency.length) return <Empty icon="🚨" msg="No emergency assessment records found for this patient"/>;
   return (
-    <div style={{display:"flex",flexDirection:"column",gap:16}}>
-      {emergency.map((em,i)=>(
-        <Card key={i} title={`🚨 Emergency Visit — ${fmtDT(em.createdAt||em.arrivalTime)}`} titleColor={C.red}>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
-            <div>
-              <InfoRow label="Emergency No." value={em.emergencyNumber||em._id?.slice(-6)}/>
-              <InfoRow label="Chief Complaint" value={em.chiefComplaint}/>
-              <InfoRow label="Triage Category" value={em.triageCategory||em.acuity}/>
-              <InfoRow label="Arrival Mode"   value={em.arrivalMode}/>
-              <InfoRow label="MLC"            value={em.mlcStatus||em.isMLC?"Yes":"No"}/>
-            </div>
-            <div>
-              {em.vitalsOnArrival && (
-                <div>
-                  <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",marginBottom:8}}>Vitals on Arrival</div>
-                  <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-                    {[
-                      {l:"BP",   v:bpStr(em.vitalsOnArrival?.bp)||`${em.vitalsOnArrival?.bpSys||""}/${em.vitalsOnArrival?.bpDia||""}`},
-                      {l:"Pulse",v:em.vitalsOnArrival?.pulse},
-                      {l:"Temp", v:em.vitalsOnArrival?.temp},
-                      {l:"SpO₂",v:em.vitalsOnArrival?.spo2},
-                    ].filter(f=>f.v&&f.v!=="/").map(f=>(
-                      <div key={f.l} style={{background:C.redL,border:`1px solid ${C.redB}`,borderRadius:8,padding:"8px 12px",textAlign:"center",minWidth:64}}>
-                        <div style={{fontSize:9,fontWeight:700,color:C.muted,textTransform:"uppercase"}}>{f.l}</div>
-                        <div style={{fontSize:15,fontWeight:700,color:C.red}}>{f.v}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
+    <div className="pf-tint--doctor" style={{display:"flex",flexDirection:"column",gap:14}}>
+      {emergency.map((em, i) => (
+        <div key={i} className="pf-section-card pf-section-card--danger">
+          <div className="pf-section-card__head">
+            <span className="pf-section-card__icon">🚨</span>
+            <span className="pf-section-card__title">Emergency Visit</span>
+            <span className="pf-section-card__count">{fmtDT(em.createdAt || em.arrivalTime)}</span>
           </div>
-          {em.clinicalNotes && <div style={{marginTop:12,padding:"10px 14px",background:"#fff7ed",borderRadius:8,fontSize:13,color:"#9a3412",lineHeight:1.7}}><b>Notes:</b> {em.clinicalNotes}</div>}
-          {em.disposition && <div style={{marginTop:8,display:"flex",gap:8,alignItems:"center"}}><span style={{color:C.muted,fontSize:13}}>Disposition:</span><Badge color={C.blue} bg={C.blueL}>{em.disposition}</Badge></div>}
-        </Card>
+          <div className="pf-section-card__body pf-section-card__body--pad">
+            <div className="pf-overview-grid">
+              <div>
+                {[
+                  ["Emergency No.",   em.emergencyNumber || em._id?.slice(-6)],
+                  ["Chief Complaint", em.chiefComplaint],
+                  ["Triage Category", em.triageCategory || em.acuity],
+                  ["Arrival Mode",    em.arrivalMode],
+                  ["MLC",             (em.mlcStatus || em.isMLC) ? "Yes" : "No"],
+                ].map(([l, v]) => (
+                  <div key={l} className="pf-info-card__row">
+                    <span className="pf-info-card__row-label">{l}</span>
+                    <span className="pf-info-card__row-value">{v || "—"}</span>
+                  </div>
+                ))}
+              </div>
+              <div>
+                {em.vitalsOnArrival && (
+                  <>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 8 }}>
+                      Vitals on Arrival
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(86px,1fr))", gap: 8 }}>
+                      {[
+                        {l:"BP",    v: bpStr(em.vitalsOnArrival?.bp) || `${em.vitalsOnArrival?.bpSys||""}/${em.vitalsOnArrival?.bpDia||""}`},
+                        {l:"Pulse", v: em.vitalsOnArrival?.pulse},
+                        {l:"Temp",  v: em.vitalsOnArrival?.temp},
+                        {l:"SpO₂",  v: em.vitalsOnArrival?.spo2},
+                      ].filter(f => f.v && f.v !== "/").map(f => (
+                        <div key={f.l} className="pf-vital-tile pf-vital-tile--danger">
+                          <div className="pf-vital-tile__label">{f.l}</div>
+                          <div className="pf-vital-tile__val">{f.v}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+            {em.clinicalNotes && (
+              <div className="pf-alert pf-alert--warn" style={{ marginTop: 14 }}>
+                <span className="pf-alert__icon">📝</span>
+                <div className="pf-alert__body">
+                  <div className="pf-alert__title">Clinical Notes</div>
+                  <div className="pf-alert__msg">{em.clinicalNotes}</div>
+                </div>
+              </div>
+            )}
+            {em.disposition && (
+              <div style={{ marginTop: 10, display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
+                <span style={{ color: C.muted }}>Disposition:</span>
+                <Badge color={C.blue} bg={C.blueL}>{em.disposition}</Badge>
+              </div>
+            )}
+          </div>
+        </div>
       ))}
     </div>
   );
@@ -2094,6 +1855,9 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
   const [searchInput, setSearchInput] = useState(searchParams.get("uhid")||"");
   const [activeUhid,  setActiveUhid]  = useState(searchParams.get("uhid")||"");
   const [activeTab,   setActiveTab]   = useState("overview");
+  // Ref to the loaded-patient region — used by PatientFileExport
+  // to print / PDF / generate a QR for the currently viewed file.
+  const printAreaRef = useRef(null);
 
   const [patient,       setPatient]       = useState(null);
   const [admission,     setAdmission]     = useState(null);
@@ -2115,6 +1879,15 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
   const [bedsLoading,       setBedsLoading]       = useState(false);
   const [shiftForm,         setShiftForm]         = useState({ toBedId:"", reason:"", shiftingNotes:"" });
   const [shiftSaving,       setShiftSaving]       = useState(false);
+
+  /* ── Activity logger — every shift-bed UI event lands in the audit feed.
+       The backend middleware already captures the actual POST /bed-transfers,
+       but the user wants the intermediate clicks/dropdown selects too.   */
+  const audit = useBoundLogger(patient?.UHID || activeUhid, {
+    module: "PatientPanel.Doctor",
+    admissionId: admission?._id || null,
+    ipdNo: admission?.admissionNumber || "",
+  });
 
   const loadAll = useCallback(async (uhid) => {
     if (!uhid?.trim()) return;
@@ -2240,6 +2013,7 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
 
   /* ── Open Shift Bed modal — fetch available beds ── */
   const openShiftModal = async () => {
+    audit.click("shift-bed.open", { summary: "Doctor opened Shift Bed modal" });
     setShiftForm({ toBedId:"", reason:"", shiftingNotes:"" });
     setShowShiftModal(true);
     setBedsLoading(true);
@@ -2253,8 +2027,12 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
 
   /* ── Submit shift request ── */
   const submitShift = async () => {
-    if (!shiftForm.toBedId)               { alert("Please select a target bed."); return; }
-    if (!shiftForm.shiftingNotes?.trim()) { alert("Shifting notes are required."); return; }
+    if (!shiftForm.toBedId)               { audit.click("shift-bed.submit-blocked", { summary: "Submit blocked — no target bed" }); alert("Please select a target bed."); return; }
+    if (!shiftForm.shiftingNotes?.trim()) { audit.click("shift-bed.submit-blocked", { summary: "Submit blocked — shifting notes empty" }); alert("Shifting notes are required."); return; }
+    audit.submit("shift-bed.submit", {
+      summary: `Doctor submitted bed transfer — target ${shiftForm.toBedId}`,
+      after: { toBedId: shiftForm.toBedId, reason: shiftForm.reason, hasNotes: !!shiftForm.shiftingNotes?.trim() },
+    });
     // Fix: compare as strings to handle ObjectId vs string mismatch
     const targetBed = availableBeds.find(b => String(b._id) === String(shiftForm.toBedId));
     if (!targetBed) { alert("Selected bed not found. Please close and reopen the modal."); return; }
@@ -2286,7 +2064,11 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
 
   /* ── Cancel pending transfer ── */
   const cancelTransfer = async (transferId) => {
-    if (!window.confirm("Cancel this bed transfer? The reserved bed will be released.")) return;
+    if (!window.confirm("Cancel this bed transfer? The reserved bed will be released.")) {
+      audit.click("shift-bed.cancel-dismissed", { summary: "Doctor dismissed cancel confirmation" });
+      return;
+    }
+    audit.cancel("shift-bed.cancel", { summary: `Doctor cancelled pending transfer ${transferId}`, sourceModel: "BedTransfer", sourceId: transferId });
     try {
       await axios.put(`${BASE}/bed-transfers/${transferId}/cancel`);
       setPendingTransfer(null);
@@ -2296,189 +2078,214 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
     }
   };
 
-  return (
-    <div style={{minHeight:"100vh",background:C.bg,fontFamily:"'Inter','DM Sans',sans-serif"}}>
-      {/* ── Header */}
-      <div style={{background:`linear-gradient(135deg,${C.primaryD},${C.primary})`,padding:"16px 28px",display:"flex",alignItems:"center",gap:20,flexWrap:"wrap",boxShadow:"0 4px 20px rgba(124,58,237,.35)"}}>
-        <div style={{display:"flex",alignItems:"center",gap:10,flex:"0 0 auto"}}>
-          <span style={{fontSize:26}}>🩺</span>
-          <div>
-            <div style={{color:"#fff",fontWeight:800,fontSize:17,letterSpacing:"-.2px"}}>Doctor Patient Panel</div>
-            <div style={{color:"#c4b5fd",fontSize:11}}>Full patient file — clinical, vitals & audit</div>
+  // ── Tab dispatch — keeps the per-tab components untouched, just routes by id.
+  const renderTab = (id) => {
+    switch (id) {
+      case "overview":   return <OverviewTab patient={patient} admission={admission} opdVisits={opdVisits} billing={billing} doctorNotes={doctorNotes} nursingNotes={nursingNotes} onShiftBed={openShiftModal} pendingTransfer={pendingTransfer} onCancelTransfer={cancelTransfer}/>;
+      case "initial":    return <InitialAssessmentTab doctorNotes={doctorNotes} nursingNotes={nursingNotes} admission={admission}/>;
+      case "mlc":        return <MLCOrDoctorNotesTab patient={patient} doctorNotes={doctorNotes}/>;
+      case "nursing":    return <NursingNotesExpandedTab nursingNotes={nursingNotes}/>;
+      case "vitals":     return <VitalChartTab nursingNotes={nursingNotes} vitalSheet={vitalSheet}/>;
+      case "io":         return <IntakeOutputChartTab nursingNotes={nursingNotes}/>;
+      case "blood":      return <BloodTransfusionRecordsTab nursingNotes={nursingNotes}/>;
+      case "rbs":        return <RBSMonitoringTab nursingNotes={nursingNotes} doctorOrders={doctorOrders}/>;
+      case "handover":   return <HandoverNotesTab patient={patient} admission={admission} doctorNotes={doctorNotes} nursingNotes={nursingNotes}/>;
+      case "meds":       return <MedicationsTab doctorNotes={doctorNotes} doctorOrders={doctorOrders}/>;
+      case "medrecon":   return <MedReconciliationTab admission={admission} patient={patient}/>;
+      case "treatment":  return <TreatmentChartTab doctorOrders={doctorOrders} doctorNotes={doctorNotes}/>;
+      case "orders":     return <OrdersTab doctorNotes={doctorNotes}/>;
+      case "billing":    return <BillingTab billing={billing}/>;
+      case "emergency":  return <EmergencyTab emergency={emergency}/>;
+      default:           return null;
+    }
+  };
+
+  // ── Tab counters surfaced as pf-tabs__count badges
+  const tabCounts = {
+    mlc:       doctorNotes.length,
+    nursing:   nursingNotes.length,
+    emergency: emergency.length,
+  };
+
+  // ── Doctor's "Shift Bed" extra action in the strip
+  const stripActions = admission && !pendingTransfer ? (
+    <button className="pf-action pf-action--ghost" onClick={openShiftModal} title="Initiate a bed transfer (nurse completes via handover)">
+      🔄 Shift Bed
+    </button>
+  ) : null;
+
+  // ── Assessment gate banner (doctor's initial-assessment gate)
+  const gateBanners = admission ? (
+    !admission.initialAssessment?.doctorCompleted ? (
+      <div className="pf-gate pf-gate--danger">
+        <div className="pf-gate__icon">🔒</div>
+        <div className="pf-gate__body">
+          <div className="pf-gate__title">
+            <span className="pf-gate__tag">Mandatory</span>
+            Initial Assessment not recorded — NABH COP.2
           </div>
-        </div>
-        <div style={{flex:1,display:"flex",gap:10,maxWidth:480,marginLeft:"auto"}}>
-          <input value={searchInput} onChange={e=>setSearchInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleLoad()}
-            placeholder="Enter UHID (e.g. UH-00001)"
-            style={{flex:1,padding:"10px 16px",borderRadius:10,border:"2px solid rgba(255,255,255,.3)",background:"rgba(255,255,255,.12)",color:"#fff",fontSize:14,outline:"none",fontFamily:"inherit",letterSpacing:".5px"}}
-            onFocus={e=>e.target.style.borderColor="rgba(255,255,255,.7)"}
-            onBlur={e=>e.target.style.borderColor="rgba(255,255,255,.3)"}
-          />
-          <button onClick={handleLoad} disabled={loading}
-            style={{padding:"10px 22px",borderRadius:10,border:"none",background:loading?"rgba(255,255,255,.3)":"#fff",color:loading?"#fff":C.primary,fontWeight:700,fontSize:14,cursor:loading?"not-allowed":"pointer",whiteSpace:"nowrap"}}>
-            {loading?"Loading…":"Load Patient"}
+          <div className="pf-gate__msg">
+            Doctor's Initial Assessment must be completed before writing daily notes, ICU notes,
+            or any other documentation for this patient.
+          </div>
+          <button className="pf-gate__btn" onClick={() => navigate(`/doctor-notes?uhid=${activeUhid}`)}>
+            Write Now
           </button>
         </div>
       </div>
-
-      {/* Error */}
-      {error && <div style={{margin:"16px 28px 0",padding:"12px 16px",background:C.redL,border:`1px solid ${C.redB}`,borderRadius:10,color:C.red,fontSize:13}}> ⚠️ {error}</div>}
-
-      {loading && <Spin/>}
-
-      {!loading && loaded && (
-        <>
-          {/* Patient strip */}
-          <div style={{margin:"16px 28px 0",background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:"14px 22px",display:"flex",gap:18,alignItems:"center",flexWrap:"wrap",boxShadow:"0 2px 8px rgba(0,0,0,.05)"}}>
-            <div style={{width:50,height:50,borderRadius:"50%",background:C.primaryM,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>👤</div>
-            <div style={{flex:1,minWidth:180}}>
-              <div style={{fontWeight:800,fontSize:18,color:C.dark}}>{patient?.title?`${patient.title} `:""}{patient?.fullName||admission?.patientName||"—"}</div>
-              <div style={{fontSize:13,color:C.muted,marginTop:2}}>
-                UHID: <strong style={{color:C.primary}}>{activeUhid}</strong>
-                {patient?.age && <span style={{marginLeft:10}}>{patient.age} yrs</span>}
-                {patient?.gender && <span style={{marginLeft:8}}>· {patient.gender}</span>}
-                {patient?.bloodGroup && <span style={{marginLeft:10}}>🩸 {patient.bloodGroup}</span>}
-              </div>
-            </div>
-            <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
-              {admission?.admissionNumber && <Badge color={C.blue} bg={C.blueL}>IPD: {admission.admissionNumber}</Badge>}
-              <SBadge status={admission?.status||"Active"}/>
-              {admission?.department && <span style={{fontSize:12,color:C.muted}}>{admission.department}</span>}
-            </div>
-          </div>
-
-          {/* Tab bar */}
-          <div style={{margin:"16px 28px 0",background:C.card,border:`1px solid ${C.border}`,borderRadius:14,overflow:"hidden",boxShadow:"0 2px 8px rgba(0,0,0,.05)"}}>
-            <div style={{display:"flex",overflowX:"auto",borderBottom:`2px solid ${C.border}`,background:"#fafaf9"}}>
-              {TABS.map(tab=>{
-                const isActive = activeTab===tab.id;
-                return (
-                  <button key={tab.id} onClick={()=>setActiveTab(tab.id)}
-                    style={{padding:"14px 18px",border:"none",background:"transparent",cursor:"pointer",fontSize:13,fontWeight:isActive?700:500,color:isActive?C.primary:C.muted,borderBottom:isActive?`3px solid ${C.primary}`:"3px solid transparent",marginBottom:-2,whiteSpace:"nowrap",transition:"all .15s"}}>
-                    {tab.label}
-                    {tab.id==="clinical"   && doctorNotes.length>0  && <span style={{marginLeft:5,fontSize:10,background:C.primaryM,color:C.primary,borderRadius:10,padding:"0 6px",fontWeight:700}}>{doctorNotes.length}</span>}
-                    {tab.id==="nursing"    && nursingNotes.length>0  && <span style={{marginLeft:5,fontSize:10,background:"#fdf2f8",color:C.pink,borderRadius:10,padding:"0 6px",fontWeight:700}}>{nursingNotes.length}</span>}
-                    {tab.id==="emergency"  && emergency.length>0     && <span style={{marginLeft:5,fontSize:10,background:C.redL,color:C.red,borderRadius:10,padding:"0 6px",fontWeight:700}}>{emergency.length}</span>}
-                  </button>
-                );
-              })}
-            </div>
-            <div style={{padding:"22px 22px",minHeight:200}}>
-              {activeTab==="overview"   && <OverviewTab patient={patient} admission={admission} opdVisits={opdVisits} billing={billing} doctorNotes={doctorNotes} nursingNotes={nursingNotes} onShiftBed={openShiftModal} pendingTransfer={pendingTransfer} onCancelTransfer={cancelTransfer}/>}
-              {activeTab==="clinical"   && <ClinicalNotesTab notes={doctorNotes}/>}
-              {activeTab==="nursing"    && <NursingRecordsTab notes={nursingNotes}/>}
-              {activeTab==="vitals"     && <VitalTrendsTab vitalSheet={vitalSheet}/>}
-              {activeTab==="meds"       && <MedicationsTab doctorNotes={doctorNotes} doctorOrders={doctorOrders} UHID={activeUhid} onRefresh={()=>{ axios.get(`${BASE}/doctor-orders?UHID=${activeUhid}`).then(r=>{ const l=Array.isArray(r.data)?r.data:(r.data?.data||[]); setDoctorOrders(l); }).catch(()=>{}); }}/>}
-              {activeTab==="treatment"  && <TreatmentChartTab doctorOrders={doctorOrders} doctorNotes={doctorNotes}/>}
-              {activeTab==="orders"     && <OrdersTab doctorNotes={doctorNotes}/>}
-              {activeTab==="billing"    && <BillingTab billing={billing}/>}
-              {activeTab==="emergency"  && <EmergencyTab emergency={emergency}/>}
-            </div>
-          </div>
-          <div style={{height:40}}/>
-        </>
-      )}
-
-      {/* Empty state */}
-      {!loading && !loaded && !error && (
-        <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"80px 24px",color:C.muted}}>
-          <div style={{width:80,height:80,borderRadius:"50%",background:C.primaryM,display:"flex",alignItems:"center",justifyContent:"center",fontSize:40,marginBottom:20}}>🩺</div>
-          <div style={{fontSize:20,fontWeight:700,color:C.primaryD,marginBottom:8}}>Enter a Patient UHID</div>
-          <div style={{fontSize:14,maxWidth:360,textAlign:"center",lineHeight:1.7}}>Type a UHID in the search bar and click <strong>Load Patient</strong> to view the complete patient file — clinical notes, vitals, billing, and more.</div>
+    ) : (
+      <div className="pf-gate pf-gate--ok">
+        <div className="pf-gate__body">
+          <div className="pf-gate__title">✅ Initial Assessment completed — full documentation unlocked</div>
         </div>
-      )}
+      </div>
+    )
+  ) : null;
 
-      {/* ── Shift Bed Modal ── */}
-      {showShiftModal && (
-        <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,.6)",backdropFilter:"blur(4px)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
-          onClick={()=>!shiftSaving&&setShowShiftModal(false)}>
-          <div style={{background:"white",borderRadius:16,width:580,maxWidth:"96vw",maxHeight:"90vh",overflowY:"auto",boxShadow:"0 24px 60px rgba(0,0,0,.3)"}}
-            onClick={e=>e.stopPropagation()}>
+  // ── Shift Bed modal (kept as a child of the shell so it overlays everything)
+  const shiftBedModal = showShiftModal && (
+    <div className="pf-modal-backdrop" onClick={() => !shiftSaving && setShowShiftModal(false)}>
+      <div className="pf-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="pf-modal__head">
+          <div>
+            <div className="pf-modal__title">🔄 Shift Patient Bed</div>
+            <div className="pf-modal__sub">Doctor adds shifting notes · Nurse will write handover notes to complete</div>
+          </div>
+          <button
+            className="pf-modal__close"
+            onClick={() => { audit.click("shift-bed.close-x", { summary: "Doctor closed shift-bed modal via ✕" }); setShowShiftModal(false); }}
+            aria-label="close"
+          >✕</button>
+        </div>
 
-            {/* Modal header */}
-            <div style={{padding:"16px 22px",background:`linear-gradient(135deg,${C.primaryD},${C.primary})`,color:"white",borderRadius:"16px 16px 0 0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div>
-                <div style={{fontWeight:800,fontSize:16}}>🔄 Shift Patient Bed</div>
-                <div style={{fontSize:11,opacity:.8,marginTop:2}}>Doctor must add shifting notes · Nurse will write handover notes to complete</div>
-              </div>
-              <button onClick={()=>setShowShiftModal(false)} style={{background:"rgba(255,255,255,.2)",border:"none",color:"white",width:30,height:30,borderRadius:"50%",cursor:"pointer",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
-            </div>
+        <div className="pf-modal__body">
+          {/* Current bed */}
+          <div className="pf-info-box">
+            📍 Current Bed: <strong>{admission?.bedNumber || "Not assigned"}</strong>
+            {(admission?.wardName || admission?.ward) && <span> — {admission.wardName || admission.ward}</span>}
+          </div>
 
-            <div style={{padding:"20px 22px",display:"flex",flexDirection:"column",gap:16}}>
-              {/* Current bed info */}
-              <div style={{padding:"10px 14px",background:C.primaryL,borderRadius:8,fontSize:12,color:C.primary,fontWeight:600}}>
-                📍 Current Bed: <strong>{admission?.bedNumber||"Not assigned"}</strong>
-                {(admission?.wardName||admission?.ward) && <span> — {admission.wardName||admission.ward}</span>}
-              </div>
+          {/* Select new bed */}
+          <div>
+            <label className="pf-flabel pf-flabel--required">Select New Bed *</label>
+            {bedsLoading ? (
+              <div className="pf-fhint">Loading available beds…</div>
+            ) : availableBeds.length === 0 ? (
+              <div className="pf-fhint pf-fhint--error">⚠ No available beds found. All beds are occupied or reserved.</div>
+            ) : (
+              <select
+                className="pf-select"
+                value={shiftForm.toBedId}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  const bed = availableBeds.find((b) => String(b._id) === String(v));
+                  audit.select("shift-bed.toBed", v, {
+                    summary: bed ? `Target bed → ${bed.bedNumber} (${bed.wardName || bed.ward?.name || ""})` : "Target bed cleared",
+                  });
+                  setShiftForm((f) => ({ ...f, toBedId: v }));
+                }}
+              >
+                <option value="">— Select available bed —</option>
+                {availableBeds.map((b) => (
+                  <option key={b._id} value={b._id}>
+                    {b.bedNumber} — {b.wardName || b.ward?.name || ""} {b.roomNumber ? `(Room ${b.roomNumber})` : ""}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
 
-              {/* Select new bed */}
-              <div>
-                <label style={{display:"block",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".6px",marginBottom:6}}>
-                  Select New Bed <span style={{color:C.red}}>*</span>
-                </label>
-                {bedsLoading ? (
-                  <div style={{padding:"12px",color:C.muted,fontSize:13}}>Loading available beds…</div>
-                ) : availableBeds.length === 0 ? (
-                  <div style={{padding:"12px",color:C.red,fontSize:13,background:C.redL,borderRadius:8}}>⚠ No available beds found. All beds are occupied or reserved.</div>
-                ) : (
-                  <select value={shiftForm.toBedId} onChange={e=>setShiftForm(f=>({...f,toBedId:e.target.value}))}
-                    style={{width:"100%",padding:"9px 12px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:13,outline:"none",background:"white",cursor:"pointer"}}>
-                    <option value="">— Select available bed —</option>
-                    {availableBeds.map(b=>(
-                      <option key={b._id} value={b._id}>
-                        {b.bedNumber} — {b.wardName||b.ward?.name||""} {b.roomNumber?`(Room ${b.roomNumber})`:""}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </div>
+          {/* Reason */}
+          <div>
+            <label className="pf-flabel">Reason for Transfer</label>
+            <select
+              className="pf-select"
+              value={shiftForm.reason}
+              onChange={(e) => {
+                audit.select("shift-bed.reason", e.target.value, { summary: `Transfer reason → ${e.target.value || "(cleared)"}` });
+                setShiftForm((f) => ({ ...f, reason: e.target.value }));
+              }}
+            >
+              <option value="">— Select reason —</option>
+              {["Clinical need","ICU transfer","HDU transfer","Ward upgrade","Ward downgrade","Patient request","Isolation required","Bed availability","Discharge planning","Other"].map((r) => (
+                <option key={r} value={r}>{r}</option>
+              ))}
+            </select>
+          </div>
 
-              {/* Reason */}
-              <div>
-                <label style={{display:"block",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".6px",marginBottom:6}}>Reason for Transfer</label>
-                <select value={shiftForm.reason} onChange={e=>setShiftForm(f=>({...f,reason:e.target.value}))}
-                  style={{width:"100%",padding:"9px 12px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:13,outline:"none",background:"white",cursor:"pointer"}}>
-                  <option value="">— Select reason —</option>
-                  {["Clinical need","ICU transfer","HDU transfer","Ward upgrade","Ward downgrade","Patient request","Isolation required","Bed availability","Discharge planning","Other"].map(r=>(
-                    <option key={r} value={r}>{r}</option>
-                  ))}
-                </select>
-              </div>
+          {/* Shifting notes — MANDATORY */}
+          <div>
+            <label className="pf-flabel pf-flabel--required">Shifting Notes * (Required)</label>
+            <textarea
+              className={`pf-textarea ${shiftForm.shiftingNotes ? "" : "pf-textarea--invalid"}`}
+              value={shiftForm.shiftingNotes}
+              onChange={(e) => setShiftForm((f) => ({ ...f, shiftingNotes: e.target.value }))}
+              placeholder="Document the clinical reason for the bed shift, patient's current condition, any special requirements for the new bed/ward, equipment being transferred, etc."
+            />
+            {!shiftForm.shiftingNotes?.trim() && (
+              <div className="pf-fhint pf-fhint--error">⚠ Shifting notes are mandatory. Nurse cannot complete handover without this information.</div>
+            )}
+          </div>
 
-              {/* Shifting notes — MANDATORY */}
-              <div>
-                <label style={{display:"block",fontSize:11,fontWeight:700,color:C.red,textTransform:"uppercase",letterSpacing:".6px",marginBottom:6}}>
-                  Shifting Notes <span style={{color:C.red}}>* (REQUIRED)</span>
-                </label>
-                <textarea value={shiftForm.shiftingNotes} onChange={e=>setShiftForm(f=>({...f,shiftingNotes:e.target.value}))}
-                  placeholder="Document the clinical reason for the bed shift, patient's current condition, any special requirements for the new bed/ward, equipment being transferred, etc."
-                  style={{width:"100%",minHeight:120,padding:"10px 12px",border:`1.5px solid ${shiftForm.shiftingNotes?C.border:C.redB}`,borderRadius:8,fontSize:13,outline:"none",resize:"vertical",boxSizing:"border-box",lineHeight:1.6}}
-                />
-                {!shiftForm.shiftingNotes?.trim() && <div style={{fontSize:11,color:C.red,marginTop:4}}>⚠ Shifting notes are mandatory. Nurse cannot complete handover without this information.</div>}
-              </div>
-
-              {/* Info box */}
-              <div style={{padding:"10px 14px",background:"#fffbeb",border:"1.5px solid #fbbf24",borderRadius:8,fontSize:12,color:"#92400e",lineHeight:1.6}}>
-                <strong>Workflow:</strong> After you submit, the selected bed will be reserved.
-                Nurse must then write <strong>Handover Notes</strong> to complete the transfer and actually move the patient's record to the new bed.
-              </div>
-
-              {/* Actions */}
-              <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
-                <button onClick={()=>setShowShiftModal(false)} disabled={shiftSaving}
-                  style={{padding:"9px 20px",borderRadius:8,border:`1.5px solid ${C.border}`,background:"white",fontSize:13,fontWeight:700,cursor:"pointer",color:C.muted}}>
-                  Cancel
-                </button>
-                <button onClick={submitShift} disabled={shiftSaving||!shiftForm.toBedId||!shiftForm.shiftingNotes?.trim()}
-                  style={{padding:"9px 24px",borderRadius:8,border:"none",background:shiftSaving||!shiftForm.toBedId||!shiftForm.shiftingNotes?.trim()?C.muted:C.primary,color:"white",fontSize:13,fontWeight:700,cursor:shiftSaving||!shiftForm.toBedId||!shiftForm.shiftingNotes?.trim()?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:8}}>
-                  {shiftSaving ? "Initiating…" : "🔄 Initiate Transfer"}
-                </button>
-              </div>
-            </div>
+          {/* Workflow hint */}
+          <div className="pf-info-box">
+            <strong>Workflow:</strong> After you submit, the selected bed will be reserved.
+            Nurse must then write <strong>Handover Notes</strong> to complete the transfer and actually move the patient's record to the new bed.
           </div>
         </div>
-      )}
+
+        <div className="pf-modal__foot">
+          <button
+            className="pf-action pf-action--quiet"
+            onClick={() => { audit.cancel("shift-bed.cancel-button", { summary: "Doctor pressed Cancel on shift-bed modal" }); setShowShiftModal(false); }}
+            disabled={shiftSaving}
+          >
+            Cancel
+          </button>
+          <button
+            className="pf-action pf-action--accent"
+            onClick={submitShift}
+            disabled={shiftSaving || !shiftForm.toBedId || !shiftForm.shiftingNotes?.trim()}
+          >
+            {shiftSaving ? "Initiating…" : "🔄 Initiate Transfer"}
+          </button>
+        </div>
+      </div>
     </div>
+  );
+
+  return (
+    <PatientPanelShell
+      role="doctor"
+      title="Doctor Patient Panel"
+      subtitle="Full patient file — clinical, vitals & audit"
+      icon="🩺"
+      searchValue={searchInput}
+      onSearchChange={setSearchInput}
+      onSearchSubmit={handleLoad}
+      searchPlaceholder="Enter UHID (e.g. UH-00001)"
+      loading={loading}
+      error={error}
+      loaded={loaded}
+      patient={patient}
+      admission={admission}
+      printRef={printAreaRef}
+      stripActions={stripActions}
+      surgicalChecklistEligible={(doctorOrders || []).some(
+        (o) => (o.orderType || "").toLowerCase().includes("procedure")
+            && !["Completed","Cancelled","Stopped"].includes(o.status)
+      )}
+      gateBanners={gateBanners}
+      tabs={TABS}
+      activeTab={activeTab}
+      onTabChange={setActiveTab}
+      tabCounts={tabCounts}
+      renderTab={renderTab}
+      modals={shiftBedModal}
+      emptyIcon="🩺"
+      emptyTitle="Enter a Patient UHID"
+      emptyMsg="Type a UHID in the search bar and click Load Patient to view the complete patient file — clinical notes, vitals, billing, and more."
+    />
   );
 }
 

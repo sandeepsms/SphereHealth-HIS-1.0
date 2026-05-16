@@ -58,6 +58,10 @@ const AdminRecordSchema = new mongoose.Schema({
   // Adverse event
   adverseEvent:   { type: Boolean, default: false },
   adverseDetails: { type: String },
+  // STAT / Emergency dose (given outside the scheduled window)
+  isStatDose:     { type: Boolean, default: false },
+  statReason:     { type: String },
+  nextDoseAdjustedAt: { type: String }, // "HH:MM" — recalculated from STAT givenAt
 }, { _id: false, timestamps: false });
 
 // Infusion rate change log
@@ -202,31 +206,6 @@ const DoctorOrderSchema = new mongoose.Schema({
     notes:  { type: String },
   }],
   currentStepIndex: { type: Number, default: -1 },
-
-  /* ── Telephonic / Verbal Order tracking (NABH MOM.1) ── */
-  orderSource: {
-    type: String,
-    enum: ["Written", "Telephonic", "Electronic"],
-    default: "Written",
-  },
-  telephonicData: {
-    doctorName:        { type: String },
-    doctorRegNo:       { type: String },
-    callTime:          { type: String },        // "HH:MM"
-    readBackDone:      { type: Boolean, default: false },
-    readBackBy:        { type: String },        // nurse who did read-back
-    countersignStatus: {
-      type: String,
-      enum: ["pending", "countersigned", "rejected"],
-      default: "pending",
-    },
-    countersignedBy:   { type: String },
-    countersignedAt:   { type: Date },
-    countersignNotes:  { type: String },
-    rejectedBy:        { type: String },
-    rejectedAt:        { type: Date },
-    rejectedReason:    { type: String },
-  },
 
 }, { timestamps: true, collection: "doctor_orders" });
 

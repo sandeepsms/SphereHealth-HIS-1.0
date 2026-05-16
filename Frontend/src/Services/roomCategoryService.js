@@ -1,4 +1,5 @@
 import API_ENDPOINTS from "../config/api";
+import authFetch from "../utils/authFetch";
 
 const extractId = (obj) => {
   if (!obj) return null;
@@ -19,7 +20,7 @@ const normalizeCategory = (category) => {
 export const roomCategoryService = {
   getAllCategories: async () => {
     try {
-      const response = await fetch(API_ENDPOINTS.ROOM_CATEGORIES);
+      const response = await authFetch(API_ENDPOINTS.ROOM_CATEGORIES);
       const data = await response.json();
       const categories = Array.isArray(data)
         ? data
@@ -33,7 +34,7 @@ export const roomCategoryService = {
 
   getCategoryById: async (id) => {
     try {
-      const response = await fetch(`${API_ENDPOINTS.ROOM_CATEGORIES}/${id}`);
+      const response = await authFetch(`${API_ENDPOINTS.ROOM_CATEGORIES}/${id}`);
       const category = await response.json();
       return normalizeCategory(category);
     } catch (error) {
@@ -44,7 +45,7 @@ export const roomCategoryService = {
 
   createCategory: async (data) => {
     try {
-      const response = await fetch(API_ENDPOINTS.ROOM_CATEGORIES, {
+      const response = await authFetch(API_ENDPOINTS.ROOM_CATEGORIES, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
@@ -59,7 +60,7 @@ export const roomCategoryService = {
 
   updateCategory: async (id, data) => {
     try {
-      const response = await fetch(`${API_ENDPOINTS.ROOM_CATEGORIES}/${id}`, {
+      const response = await authFetch(`${API_ENDPOINTS.ROOM_CATEGORIES}/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
@@ -74,7 +75,7 @@ export const roomCategoryService = {
 
   deleteCategory: async (id) => {
     try {
-      const response = await fetch(`${API_ENDPOINTS.ROOM_CATEGORIES}/${id}`, {
+      const response = await authFetch(`${API_ENDPOINTS.ROOM_CATEGORIES}/${id}`, {
         method: "DELETE",
       });
       return await response.json();
@@ -86,7 +87,7 @@ export const roomCategoryService = {
 
   seedDefaultCategories: async () => {
     try {
-      const response = await fetch(`${API_ENDPOINTS.ROOM_CATEGORIES}/seed`, {
+      const response = await authFetch(`${API_ENDPOINTS.ROOM_CATEGORIES}/seed`, {
         method: "POST",
       });
       const data = await response.json();

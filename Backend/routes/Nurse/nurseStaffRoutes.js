@@ -1,7 +1,7 @@
 // Nurse/routes/nurseStaffRoutes.js
 const express = require("express");
 const router = express.Router();
-const ctrl = require("../../controllers/Nurse/nurseStaffController");
+const ctrl = require("../../controllers/Nurse/NurseStaffController");
 
 router.post("/", ctrl.create);
 router.get("/", ctrl.getAll);

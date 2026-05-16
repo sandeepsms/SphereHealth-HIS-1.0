@@ -98,7 +98,6 @@ NurseStaffSchema.pre("save", async function (next) {
   }
 });
 
-NurseStaffSchema.index({ staffId: 1 });
 NurseStaffSchema.index({ department: 1 });
 NurseStaffSchema.index({ isActive: 1 });
 NurseStaffSchema.index({ "professional.designation": 1 });

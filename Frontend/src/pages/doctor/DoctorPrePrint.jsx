@@ -243,7 +243,7 @@ function DoctorPrePrint() {
             icon="pi pi-arrow-left"
             severity="secondary"
             outlined
-            onClick={() => navigate("/dashboard1")}
+            onClick={() => navigate("/dashboard")}
             size="large"
           />
         </div>

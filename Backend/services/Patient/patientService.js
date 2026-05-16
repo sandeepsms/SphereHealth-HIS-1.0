@@ -22,16 +22,25 @@ class PatientService {
      CREATE — new patient + increment correct counter
   ══════════════════════════════════════════════ */
   async createPatient(patientData) {
-    const department = await Department.findById(patientData.department);
-    if (!department) throw new Error("Department not found");
-
-    const doctor = await Doctor.findById(patientData.doctor);
-    if (!doctor) throw new Error("Doctor not found");
-
-    if (doctor.department.toString() !== patientData.department.toString()) {
-      throw new Error(
-        "Selected doctor does not belong to the selected department",
-      );
+    // Department/doctor are now optional at registration (Emergency walk-ins
+    // and Services bills don't always have them pre-selected). Validate them
+    // only when supplied.
+    if (patientData.department) {
+      const department = await Department.findById(patientData.department);
+      if (!department) throw new Error("Department not found");
+    }
+    if (patientData.doctor) {
+      const doctor = await Doctor.findById(patientData.doctor);
+      if (!doctor) throw new Error("Doctor not found");
+      if (
+        patientData.department &&
+        doctor.department &&
+        doctor.department.toString() !== patientData.department.toString()
+      ) {
+        throw new Error(
+          "Selected doctor does not belong to the selected department",
+        );
+      }
     }
 
     if (patientData.paymentType === "TPA") {
@@ -88,12 +97,16 @@ class PatientService {
     if (tpa) query.tpa = tpa;
 
     if (search) {
+      // Escape regex meta-chars — receptionist often types `+91`, `(98)` etc.
+      // which would throw "Invalid regular expression" and 500 the search.
+      // Also prevents ReDoS-style patterns from blocking the event loop.
+      const esc = String(search).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       query.$or = [
-        { fullName: { $regex: search, $options: "i" } },
-        { patientId: { $regex: search, $options: "i" } },
-        { UHID: { $regex: search, $options: "i" } },
-        { contactNumber: { $regex: search, $options: "i" } },
-        { policyNumber: { $regex: search, $options: "i" } },
+        { fullName: { $regex: esc, $options: "i" } },
+        { patientId: { $regex: esc, $options: "i" } },
+        { UHID: { $regex: esc, $options: "i" } },
+        { contactNumber: { $regex: esc, $options: "i" } },
+        { policyNumber: { $regex: esc, $options: "i" } },
       ];
     }
 
@@ -121,14 +134,18 @@ class PatientService {
   async searchPatients(searchTerm, limit = 10) {
     if (!searchTerm || searchTerm.trim().length < 2) return [];
     const trimmed = searchTerm.trim();
+    // Escape regex meta-chars (same fix as getAllPatients) — phone searches
+    // like "+91…" or "(98)…" would otherwise throw "Invalid regular
+    // expression" and 500 the live patient-search bar.
+    const esc = trimmed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return Patient.find({
       isActive: true,
       $or: [
-        { fullName: { $regex: trimmed, $options: "i" } },
-        { UHID: { $regex: trimmed, $options: "i" } },
-        { contactNumber: { $regex: trimmed, $options: "i" } },
-        { patientId: { $regex: trimmed, $options: "i" } },
-        { email: { $regex: trimmed, $options: "i" } },
+        { fullName: { $regex: esc, $options: "i" } },
+        { UHID: { $regex: esc, $options: "i" } },
+        { contactNumber: { $regex: esc, $options: "i" } },
+        { patientId: { $regex: esc, $options: "i" } },
+        { email: { $regex: esc, $options: "i" } },
       ],
     })
       .populate("department", "departmentName")
@@ -159,7 +176,8 @@ class PatientService {
   async getPatientByUHID(uhid) {
     const patient = await Patient.findOne({ UHID: uhid })
       .populate("department", "departmentName")
-      .populate("doctor", "personalInfo")
+      // Include professional fields so the OPD receipt can show specialty / fee.
+      .populate("doctor", "personalInfo professional")
       .populate("tpa", "tpaName tpaCode phone");
     if (!patient) throw new Error("Patient not found");
     return patient;
@@ -266,7 +284,8 @@ class PatientService {
      Returns visits sorted by date desc
   ══════════════════════════════════════════════ */
   async getPatientHistory(patientId) {
-    const Admission = require("../../models/Admission/admissionModel");
+    // Admission model lives under `models/Patient/` — old path was a dead require.
+    const Admission = require("../../models/Patient/admissionModel");
 
     const [patient, admissions] = await Promise.all([
       Patient.findById(patientId)

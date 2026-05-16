@@ -10,28 +10,23 @@ const {
   getChargesByRoomCategory,
   getTPAByCode,
 } = require("../../controllers/tpa/tpaController");
+const { requireAction } = require("../../middleware/auth");
 
 // Test endpoint
 router.get("/test", (req, res) => {
   res.json({ message: "TPA routes working perfectly!" });
 });
 
-// ✅ GET active TPAs - MUST BE BEFORE /:id route
-router.get("/active", getAllTPAs);
+// Reads — any role allowed to file pre-auth or read billing
+router.get("/active",                          requireAction("billing.read"), getAllTPAs);
+router.get("/code/:code",                      requireAction("billing.read"), getTPAByCode);
+router.get("/",                                requireAction("billing.read"), getAllTPAs);
+router.get("/:id",                             requireAction("billing.read"), getTPAById);
+router.get("/:tpaId/charges/:roomCategoryId",  requireAction("billing.read"), getChargesByRoomCategory);
 
-// ✅ GET TPA by code - MUST BE BEFORE /:id route
-router.get("/code/:code", getTPAByCode);
-
-// General routes
-router.get("/", getAllTPAs);
-router.post("/", createTPA);
-
-// ID-based routes (THESE MUST BE LAST)
-router.get("/:id", getTPAById);
-router.put("/:id", updateTPA);
-router.delete("/:id", deleteTPA);
-
-// Billing helpers
-router.get("/:tpaId/charges/:roomCategoryId", getChargesByRoomCategory);
+// Writes — TPA master only mutated by TPA Coordinator / Admin
+router.post("/",       requireAction("tpa.pre-auth"), createTPA);
+router.put("/:id",     requireAction("tpa.pre-auth"), updateTPA);
+router.delete("/:id",  requireAction("tpa.claim"),    deleteTPA);
 
 module.exports = router;

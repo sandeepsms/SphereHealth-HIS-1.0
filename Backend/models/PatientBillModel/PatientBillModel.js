@@ -32,8 +32,7 @@ const BillItemSchema = new mongoose.Schema(
         "PER_SESSION",
         "PER_PROCEDURE",
         "PER_UNIT",
-      ],
-    },
+      ] },
     quantity: { type: Number, default: 1, min: 0 },
     unitPrice: { type: Number, required: true, min: 0 },
     grossAmount: { type: Number, default: 0 },
@@ -53,8 +52,7 @@ const BillItemSchema = new mongoose.Schema(
     appliedTariff: {
       type: String,
       enum: ["CASH", "TPA", "CORPORATE"],
-      default: "CASH",
-    },
+      default: "CASH" },
 
     isAutoCharged: { type: Boolean, default: false },
     chargeDate: { type: Date, default: Date.now },
@@ -65,8 +63,7 @@ const BillItemSchema = new mongoose.Schema(
     addedBySource: {
       type: String,
       enum: ["Doctor", "Nurse", "Lab", "Radiology", "Reception", "AI-Confirmed", "Auto"],
-      default: "Reception",
-    },
+      default: "Reception" },
     addedBy: { type: String, trim: true },     // name of who added it
     addedByRole: { type: String, trim: true },  // role label for display
     aiSuggested: { type: Boolean, default: false }, // was this charge suggested by AI?
@@ -82,13 +79,11 @@ const PaymentSchema = new mongoose.Schema(
     paymentMode: {
       type: String,
       required: true,
-      enum: ["CASH", "CARD", "UPI", "CHEQUE", "ONLINE", "TPA_CLAIM"],
-    },
+      enum: ["CASH", "CARD", "UPI", "CHEQUE", "ONLINE", "TPA_CLAIM"] },
     transactionId: { type: String, trim: true },
     paidAt: { type: Date, default: Date.now },
     receivedBy: { type: String, trim: true },
-    remarks: { type: String, trim: true },
-  },
+    remarks: { type: String, trim: true } },
   { _id: true },
 );
 
@@ -96,37 +91,35 @@ const PaymentSchema = new mongoose.Schema(
 const PatientBillSchema = new mongoose.Schema(
   {
     // BILL-2026-000001 (auto-generated)
-    billNumber: { type: String, unique: true },
+    // sparse so multiple DRAFT bills (no billNumber yet) don't collide on
+    // the unique index. Only finalised bills get a billNumber.
+    billNumber: { type: String, unique: true, sparse: true },
 
     patient: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Patient",
-      required: true,
-    },
+      required: true },
 
     // Primary lookup key — never changes for a patient
-    UHID: { type: String, required: true, index: true },
+    UHID: { type: String, required: true },
 
     // Linked for IPD / Daycare bills
     admission: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Admission",
-      default: null,
-    },
+      default: null },
     admissionNumber: { type: String, default: null },
 
     visitType: {
       type: String,
       required: true,
-      enum: ["OPD", "IPD", "DAYCARE", "EMERGENCY"],
-    },
+      enum: ["OPD", "IPD", "DAYCARE", "EMERGENCY"] },
 
     // ── Payment Info ───────────────────────────────────────
     paymentType: {
       type: String,
       enum: ["CASH", "TPA", "CORPORATE"],
-      default: "CASH",
-    },
+      default: "CASH" },
     tpa: { type: mongoose.Schema.Types.ObjectId, ref: "TPA", default: null },
     tpaName: { type: String, default: null },
 
@@ -150,8 +143,7 @@ const PatientBillSchema = new mongoose.Schema(
     billStatus: {
       type: String,
       enum: ["DRAFT", "GENERATED", "PARTIAL", "PAID", "CANCELLED", "REFUNDED"],
-      default: "DRAFT",
-    },
+      default: "DRAFT" },
 
     // ── TPA Claim tracking ────────────────────────────────
     tpaClaimStatus: {
@@ -164,8 +156,7 @@ const PatientBillSchema = new mongoose.Schema(
         "REJECTED",
         "PARTIAL_APPROVED",
       ],
-      default: "NOT_APPLICABLE",
-    },
+      default: "NOT_APPLICABLE" },
     tpaClaimNumber: { type: String, trim: true },
     tpaApprovedAmount: { type: Number, default: 0 },
 
@@ -174,22 +165,24 @@ const PatientBillSchema = new mongoose.Schema(
     billGeneratedAt: { type: Date },
     paidAt: { type: Date },
     generatedBy: { type: String, trim: true },
-    remarks: { type: String, trim: true },
-  },
+    remarks: { type: String, trim: true } },
   {
     timestamps: true,
     toJSON: { virtuals: true },
-    toObject: { virtuals: true },
-  },
+    toObject: { virtuals: true } },
 );
+
+// Atomic bill-number sequence via shared Counter (replaces race-prone
+// countDocuments). Generator stays in pre("save") — billNumber isn't
+// `required`, so validation order is irrelevant here.
+const { nextSequence: nextSeqBill } = require("../../utils/counter");
 
 // ── Pre-save: bill number + recalculate all totals ─────────────
 PatientBillSchema.pre("save", async function (next) {
-  // Auto bill number
   if (this.isNew && !this.billNumber) {
-    const count = await this.constructor.countDocuments();
     const year = new Date().getFullYear();
-    this.billNumber = `BILL-${year}-${String(count + 1).padStart(6, "0")}`;
+    const seq  = await nextSeqBill(`bill:${year}`);
+    this.billNumber = `BILL-${year}-${String(seq).padStart(6, "0")}`;
   }
 
   // Recalculate totals from items
@@ -232,10 +225,17 @@ PatientBillSchema.pre("save", async function (next) {
     this.patientPayableAmount = ptPay;
   }
 
-  // Recalculate balance
+  // Recalculate balance. Payment rows can be negative (refunds), so totalPaid
+  // is a net figure. When the bill is fully refunded or cancelled, force the
+  // balance to zero — the receptionist shouldn't see a "balance due" on a
+  // closed-out bill.
   const totalPaid = this.payments.reduce((s, p) => s + p.amount, 0);
   this.advancePaid = totalPaid;
-  this.balanceAmount = Math.max(0, this.patientPayableAmount - totalPaid);
+  if (this.billStatus === "REFUNDED" || this.billStatus === "CANCELLED") {
+    this.balanceAmount = 0;
+  } else {
+    this.balanceAmount = Math.max(0, this.patientPayableAmount - totalPaid);
+  }
 
   next();
 });
@@ -247,6 +247,26 @@ PatientBillSchema.index({ billStatus: 1 });
 PatientBillSchema.index({ visitType: 1 });
 PatientBillSchema.index({ billDate: -1 });
 PatientBillSchema.index({ tpa: 1 });
+
+// FIX (audit P6-B1): partial unique index that prevents two concurrent
+// getOrCreateDraftBill() callers from materialising two DRAFT rows for the
+// same patient+visitType+admission. Previously the find-then-insert pattern
+// was race-prone and on a busy ward we ended up with split draft bills that
+// auto-billing kept hitting at random.
+//
+// `admission` is included in the key — for OPD the admission field is null,
+// and {null, null} pairs are treated as distinct under default indexes, so we
+// have a separate guard below for OPD without admission.
+PatientBillSchema.index(
+  { UHID: 1, visitType: 1, admission: 1 },
+  { unique: true, partialFilterExpression: { billStatus: "DRAFT" } }
+);
+
+// Enable optimistic concurrency — every save() bumps __v and refuses to
+// overwrite a stale snapshot. recordPayment uses this with a retry loop so
+// two cashiers taking payment from the same bill at the same instant can't
+// silently clobber each other's payment row.
+PatientBillSchema.set("optimisticConcurrency", true);
 
 module.exports =
   mongoose.models.PatientBill ||

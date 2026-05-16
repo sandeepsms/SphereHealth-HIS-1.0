@@ -1,436 +1,205 @@
-import React, { useState, useEffect, useRef } from "react";
-import { DataTable } from "primereact/datatable";
-import { Column } from "primereact/column";
-import { Button } from "primereact/button";
-import { Dialog } from "primereact/dialog";
-import { InputText } from "primereact/inputtext";
-import { Dropdown } from "primereact/dropdown";
-import { InputTextarea } from "primereact/inputtextarea";
-import { Toast } from "primereact/toast";
-import { Toolbar } from "primereact/toolbar";
-import { Checkbox } from "primereact/checkbox";
-import { Tag } from "primereact/tag";
-import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
+/**
+ * DepartmentManagement.jsx — admin page for hospital departments.
+ *
+ * Redesigned to the latest theme: orange hero band, KPI strip,
+ * primary card with table + search + add button, modal form with
+ * Field primitives + Check toggles. All styling lives in the shared
+ * admin-theme.jsx primitives — no inline `style` props except for
+ * tiny per-row data-driven cases.
+ */
+import React, { useEffect, useMemo, useState } from "react";
+import { toast } from "react-toastify";
 import { departmentService } from "../../Services/departmentService";
-import "../../styles/department.css";
+import {
+  AdminPage, Hero, KPI, Card, Table, EmptyRow, RowAction, Badge,
+  Modal, Field, Check, SearchInput, PrimaryButton, C,
+} from "../../Components/admin-theme";
+
+const CATEGORIES = ["Clinical", "Surgical", "Diagnostic", "Support Services", "Emergency", "Critical Care"];
+const EMPTY = {
+  departmentName: "", departmentCode: "", description: "", category: "Clinical",
+  opdAvailable: true, ipdAvailable: true, emergencyAvailable: false, isActive: true,
+};
 
 const DepartmentManagement = () => {
-  const [departments, setDepartments] = useState([]);
-  const [departmentDialog, setDepartmentDialog] = useState(false);
-  const [department, setDepartment] = useState(null);
-  const [submitted, setSubmitted] = useState(false);
-  const [globalFilter, setGlobalFilter] = useState("");
-  const [loading, setLoading] = useState(false);
-  const toast = useRef(null);
+  const [rows, setRows]     = useState([]);
+  const [q, setQ]           = useState("");
+  const [loading, setLoad]  = useState(false);
+  const [edit, setEdit]     = useState(null);   // department being edited / null
+  const [adding, setAdding] = useState(false);
 
-  const categoryOptions = [
-    { label: "Clinical", value: "Clinical" },
-    { label: "Surgical", value: "Surgical" },
-    { label: "Diagnostic", value: "Diagnostic" },
-    { label: "Support Services", value: "Support Services" },
-    { label: "Emergency", value: "Emergency" },
-    { label: "Critical Care", value: "Critical Care" },
-  ];
-
-  const emptyDepartment = {
-    departmentName: "",
-    departmentCode: "",
-    description: "",
-    category: "Clinical",
-    opdAvailable: true,
-    ipdAvailable: true,
-    emergencyAvailable: false,
-    isActive: true,
-  };
-
-  useEffect(() => {
-    loadDepartments();
-  }, []);
-
-  const loadDepartments = async () => {
+  useEffect(() => { load(); }, []);
+  const load = async () => {
     try {
-      setLoading(true);
-      const response = await departmentService.getAllDepartments();
-      setDepartments(response.data);
-    } catch (error) {
-      toast.current.show({
-        severity: "error",
-        summary: "Error",
-        detail: "Failed to load departments",
-        life: 3000,
-      });
-    } finally {
-      setLoading(false);
-    }
+      setLoad(true);
+      const r = await departmentService.getAllDepartments();
+      setRows(r.data || []);
+    } catch (e) { toast.error("Failed to load departments"); }
+    finally { setLoad(false); }
   };
 
-  const openNew = () => {
-    setDepartment({ ...emptyDepartment });
-    setSubmitted(false);
-    setDepartmentDialog(true);
-  };
+  const filtered = useMemo(() => {
+    if (!q.trim()) return rows;
+    const rx = new RegExp(q.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    return rows.filter(r => rx.test(r.departmentName || "") || rx.test(r.departmentCode || "") || rx.test(r.category || ""));
+  }, [rows, q]);
 
-  const hideDialog = () => {
-    setSubmitted(false);
-    setDepartmentDialog(false);
-  };
+  // KPIs computed off the unfiltered list so the strip is stable.
+  const kpis = useMemo(() => {
+    const active = rows.filter(r => r.isActive).length;
+    const opd = rows.filter(r => r.opdAvailable).length;
+    const ipd = rows.filter(r => r.ipdAvailable).length;
+    const emergency = rows.filter(r => r.emergencyAvailable).length;
+    return { total: rows.length, active, opd, ipd, emergency };
+  }, [rows]);
 
-  const saveDepartment = async () => {
-    setSubmitted(true);
-
-    if (department.departmentName.trim() && department.departmentCode.trim()) {
-      try {
-        if (department._id) {
-          await departmentService.updateDepartment(department._id, department);
-          toast.current.show({
-            severity: "success",
-            summary: "Success",
-            detail: "Department updated successfully",
-            life: 3000,
-          });
-        } else {
-          await departmentService.createDepartment(department);
-          toast.current.show({
-            severity: "success",
-            summary: "Success",
-            detail: "Department created successfully",
-            life: 3000,
-          });
-        }
-        setDepartmentDialog(false);
-        setDepartment({ ...emptyDepartment });
-        loadDepartments();
-      } catch (error) {
-        toast.current.show({
-          severity: "error",
-          summary: "Error",
-          detail: error.response?.data?.message || "Operation failed",
-          life: 3000,
-        });
-      }
-    }
-  };
-
-  const editDepartment = (dept) => {
-    setDepartment({ ...dept });
-    setDepartmentDialog(true);
-  };
-
-  const confirmDeleteDepartment = (dept) => {
-    confirmDialog({
-      message: `Are you sure you want to deactivate ${dept.departmentName}?`,
-      header: "Confirm",
-      icon: "pi pi-exclamation-triangle",
-      accept: () => deleteDepartment(dept._id),
-    });
-  };
-
-  const deleteDepartment = async (id) => {
+  const remove = async (dept) => {
+    if (!window.confirm(`Deactivate ${dept.departmentName}?`)) return;
     try {
-      await departmentService.deleteDepartment(id);
-      toast.current.show({
-        severity: "success",
-        summary: "Success",
-        detail: "Department deactivated",
-        life: 3000,
-      });
-      loadDepartments();
-    } catch (error) {
-      toast.current.show({
-        severity: "error",
-        summary: "Error",
-        detail: "Failed to deactivate department",
-        life: 3000,
-      });
-    }
+      await departmentService.deleteDepartment(dept._id);
+      toast.success(`${dept.departmentName} deactivated`);
+      load();
+    } catch (e) { toast.error("Failed to deactivate"); }
   };
-
-  const onInputChange = (e, name) => {
-    const val = (e.target && e.target.value) || "";
-    let _department = { ...department };
-    _department[name] = val;
-    setDepartment(_department);
-  };
-
-  const onDropdownChange = (e, name) => {
-    let _department = { ...department };
-    _department[name] = e.value;
-    setDepartment(_department);
-  };
-
-  const onCheckboxChange = (e, name) => {
-    let _department = { ...department };
-    _department[name] = e.checked;
-    setDepartment(_department);
-  };
-
-  const leftToolbarTemplate = () => {
-    return (
-      <Button
-        label="Add Department"
-        icon="pi pi-plus"
-        className="cyan-button"
-        onClick={openNew}
-      />
-    );
-  };
-
-  const rightToolbarTemplate = () => {
-    return (
-      <span className="p-input-icon-left">
-        <i className="pi pi-search" />
-        <InputText
-          type="search"
-          placeholder="Search..."
-          value={globalFilter}
-          onChange={(e) => setGlobalFilter(e.target.value)}
-          style={{ width: "250px" }}
-        />
-      </span>
-    );
-  };
-
-  const actionBodyTemplate = (rowData) => {
-    return (
-      <div style={{ display: "flex", gap: "6px", justifyContent: "center" }}>
-        <Button
-          icon="pi pi-pencil"
-          className="p-button-rounded p-button-text"
-          style={{ color: "#00bcd4" }}
-          onClick={() => editDepartment(rowData)}
-        />
-        <Button
-          icon="pi pi-trash"
-          className="p-button-rounded p-button-text p-button-danger"
-          onClick={() => confirmDeleteDepartment(rowData)}
-        />
-      </div>
-    );
-  };
-
-  const statusBodyTemplate = (rowData) => {
-    return (
-      <Tag
-        value={rowData.isActive ? "Active" : "Inactive"}
-        severity={rowData.isActive ? "success" : "danger"}
-      />
-    );
-  };
-
-  const availabilityBodyTemplate = (rowData) => {
-    return (
-      <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-        {rowData.opdAvailable && <Tag value="OPD" severity="info" />}
-        {rowData.ipdAvailable && <Tag value="IPD" severity="warning" />}
-        {rowData.emergencyAvailable && (
-          <Tag value="Emergency" severity="danger" />
-        )}
-      </div>
-    );
-  };
-
-  const departmentDialogFooter = (
-    <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
-      <Button
-        label="Cancel"
-        icon="pi pi-times"
-        className="p-button-text"
-        onClick={hideDialog}
-      />
-      <Button
-        label="Save"
-        icon="pi pi-check"
-        className="cyan-button"
-        onClick={saveDepartment}
-      />
-    </div>
-  );
 
   return (
-    <div className="department-page">
-      <Toast ref={toast} />
-      <ConfirmDialog />
+    <AdminPage>
+      <Hero icon="pi-building" color="orange"
+        title="Department Management"
+        subtitle="Hospital departments, services, OPD / IPD / Emergency availability" />
 
-      <div className="page-header">
-        <h1>Department Management</h1>
-        <p>Manage hospital departments and their configurations</p>
+      {/* KPI strip */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
+        <KPI label="Total Departments" value={kpis.total}     color={C.orange} icon="pi-building" />
+        <KPI label="Active"             value={kpis.active}    color={C.green}  icon="pi-check-circle" />
+        <KPI label="OPD Available"      value={kpis.opd}       color={C.blue}   icon="pi-user" />
+        <KPI label="IPD Available"      value={kpis.ipd}       color={C.amber}  icon="pi-home" />
+        <KPI label="Emergency"          value={kpis.emergency} color={C.red}    icon="pi-bolt" />
       </div>
 
-      <div className="page-content">
-        <div className="content-card">
-          <Toolbar
-            className="custom-toolbar"
-            left={leftToolbarTemplate}
-            right={rightToolbarTemplate}
-          />
-
-          <div className="table-container">
-            <DataTable
-              value={departments}
-              paginator
-              rows={10}
-              rowsPerPageOptions={[10, 20, 50]}
-              dataKey="_id"
-              loading={loading}
-              globalFilter={globalFilter}
-              emptyMessage="No departments found"
-              scrollable
-              scrollHeight="calc(100vh - 340px)"
-              paginatorTemplate="FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink RowsPerPageDropdown"
-            >
-              <Column
-                field="departmentCode"
-                header="Code"
-                sortable
-                style={{ minWidth: "100px", fontWeight: "600" }}
-              />
-              <Column
-                field="departmentName"
-                header="Department Name"
-                sortable
-                style={{ minWidth: "220px" }}
-              />
-              <Column
-                field="category"
-                header="Category"
-                sortable
-                style={{ minWidth: "150px" }}
-              />
-              <Column
-                header="Availability"
-                body={availabilityBodyTemplate}
-                style={{ minWidth: "180px" }}
-              />
-              <Column
-                header="Status"
-                body={statusBodyTemplate}
-                style={{ minWidth: "100px" }}
-              />
-              <Column
-                body={actionBodyTemplate}
-                header="Actions"
-                style={{ width: "120px", textAlign: "center" }}
-              />
-            </DataTable>
+      <Card title="All Departments" color={C.orange} icon="pi-list"
+        right={
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <SearchInput value={q} onChange={e => setQ(e.target.value)} placeholder="Search code / name / category…" />
+            <PrimaryButton icon="pi-plus" label="Add Department"
+              onClick={() => { setEdit({ ...EMPTY }); setAdding(true); }} />
           </div>
-        </div>
-      </div>
+        }
+        padding={0}>
+        <Table cols={["Code", "Department", "Category", "Availability", "Status", "Action"]}>
+          {loading
+            ? <EmptyRow span={6} text="Loading…" />
+            : filtered.length === 0
+              ? <EmptyRow span={6} text={q ? `No departments match "${q}"` : "No departments yet — click Add Department to create one."} />
+              : filtered.map((d, i) => (
+                <tr key={d._id} style={{ borderTop: `1px solid ${C.border}`, background: i % 2 ? "#fafbfc" : "#fff" }}>
+                  <td style={{ padding: "9px 12px", fontFamily: "DM Mono, monospace", fontWeight: 700 }}>{d.departmentCode}</td>
+                  <td style={{ padding: "9px 12px" }}>
+                    <div style={{ fontWeight: 700 }}>{d.departmentName}</div>
+                    {d.description && <div style={{ fontSize: 10.5, color: C.muted, marginTop: 1 }}>{d.description}</div>}
+                  </td>
+                  <td style={{ padding: "9px 12px", color: C.muted }}>{d.category}</td>
+                  <td style={{ padding: "9px 12px" }}>
+                    <div style={{ display: "inline-flex", gap: 4, flexWrap: "wrap" }}>
+                      {d.opdAvailable       && <Badge value="OPD"       palette="opd" />}
+                      {d.ipdAvailable       && <Badge value="IPD"       palette="ipd" />}
+                      {d.emergencyAvailable && <Badge value="Emergency" palette="emergency" />}
+                      {!d.opdAvailable && !d.ipdAvailable && !d.emergencyAvailable && <span style={{ fontSize: 11, color: C.muted }}>—</span>}
+                    </div>
+                  </td>
+                  <td style={{ padding: "9px 12px" }}>
+                    <Badge value={d.isActive ? "Active" : "Inactive"} palette={d.isActive ? "active" : "inactive"} />
+                  </td>
+                  <td style={{ padding: "7px 12px" }}>
+                    <RowAction icon="pi-pencil" label="Edit" color={C.blue} onClick={() => setEdit({ ...d })} />
+                    <RowAction icon="pi-trash"  label="Off"  color={C.red}  onClick={() => remove(d)} />
+                  </td>
+                </tr>
+              ))}
+        </Table>
+      </Card>
 
-      <Dialog
-        visible={departmentDialog}
-        style={{ width: "600px" }}
-        header={department?._id ? "Edit Department" : "Add New Department"}
-        modal
-        className="department-dialog"
-        footer={departmentDialogFooter}
-        onHide={hideDialog}
-      >
-        <div className="dialog-content">
-          <div className="form-row">
-            <div className="form-field">
-              <label htmlFor="departmentName">
-                Department Name <span className="required">*</span>
-              </label>
-              <InputText
-                id="departmentName"
-                value={department?.departmentName || ""}
-                onChange={(e) => onInputChange(e, "departmentName")}
-                className={
-                  submitted && !department?.departmentName ? "p-invalid" : ""
-                }
-                placeholder="Enter department name"
-              />
-              {submitted && !department?.departmentName && (
-                <small className="p-error">Department name is required</small>
-              )}
-            </div>
-
-            <div className="form-field">
-              <label htmlFor="departmentCode">
-                Department Code <span className="required">*</span>
-              </label>
-              <InputText
-                id="departmentCode"
-                value={department?.departmentCode || ""}
-                onChange={(e) => onInputChange(e, "departmentCode")}
-                className={
-                  submitted && !department?.departmentCode ? "p-invalid" : ""
-                }
-                placeholder="e.g. CARD"
-                style={{ textTransform: "uppercase" }}
-              />
-              {submitted && !department?.departmentCode && (
-                <small className="p-error">Department code is required</small>
-              )}
-            </div>
-          </div>
-
-          <div className="form-field">
-            <label htmlFor="category">Category</label>
-            <Dropdown
-              id="category"
-              value={department?.category}
-              options={categoryOptions}
-              onChange={(e) => onDropdownChange(e, "category")}
-              placeholder="Select Category"
-            />
-          </div>
-
-          <div className="form-field">
-            <label htmlFor="description">Description</label>
-            <InputTextarea
-              id="description"
-              value={department?.description || ""}
-              onChange={(e) => onInputChange(e, "description")}
-              rows={3}
-              placeholder="Enter department description"
-            />
-          </div>
-
-          <div className="checkbox-section">
-            <h4>Department Services</h4>
-            <div className="checkbox-grid">
-              <div className="checkbox-item">
-                <Checkbox
-                  inputId="opdAvailable"
-                  checked={department?.opdAvailable || false}
-                  onChange={(e) => onCheckboxChange(e, "opdAvailable")}
-                />
-                <label htmlFor="opdAvailable">OPD Available</label>
-              </div>
-
-              <div className="checkbox-item">
-                <Checkbox
-                  inputId="ipdAvailable"
-                  checked={department?.ipdAvailable || false}
-                  onChange={(e) => onCheckboxChange(e, "ipdAvailable")}
-                />
-                <label htmlFor="ipdAvailable">IPD Available</label>
-              </div>
-
-              <div className="checkbox-item">
-                <Checkbox
-                  inputId="emergencyAvailable"
-                  checked={department?.emergencyAvailable || false}
-                  onChange={(e) => onCheckboxChange(e, "emergencyAvailable")}
-                />
-                <label htmlFor="emergencyAvailable">Emergency Available</label>
-              </div>
-
-              <div className="checkbox-item">
-                <Checkbox
-                  inputId="isActive"
-                  checked={department?.isActive || false}
-                  onChange={(e) => onCheckboxChange(e, "isActive")}
-                />
-                <label htmlFor="isActive">Active Status</label>
-              </div>
-            </div>
-          </div>
-        </div>
-      </Dialog>
-    </div>
+      {edit && (
+        <DepartmentModal
+          dept={edit}
+          isNew={adding}
+          onClose={() => { setEdit(null); setAdding(false); }}
+          onSaved={() => { setEdit(null); setAdding(false); load(); }} />
+      )}
+    </AdminPage>
   );
 };
+
+function DepartmentModal({ dept, isNew, onClose, onSaved }) {
+  const [form, setForm] = useState({ ...EMPTY, ...dept });
+  const [saving, setSaving] = useState(false);
+  const upd = (k) => (e) => setForm(p => ({ ...p, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value }));
+
+  const submit = async () => {
+    if (!form.departmentName.trim()) { toast.warn("Department name is required"); return; }
+    if (!form.departmentCode.trim()) { toast.warn("Department code is required"); return; }
+    setSaving(true);
+    try {
+      if (form._id) await departmentService.updateDepartment(form._id, form);
+      else          await departmentService.createDepartment(form);
+      toast.success(`${form.departmentName} ${form._id ? "updated" : "created"}`);
+      onSaved();
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Save failed");
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <Modal
+      title={isNew ? "Add New Department" : `Edit · ${form.departmentName}`}
+      icon={isNew ? "pi-plus-circle" : "pi-pencil"}
+      color={C.orange}
+      onClose={onClose}
+      onSubmit={submit}
+      submitting={saving}
+      submitLabel={isNew ? "Create department" : "Save changes"}
+      size={620}
+    >
+      <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 12, marginBottom: 12 }}>
+        <Field label="Department name" required>
+          <input className="his-field" value={form.departmentName} onChange={upd("departmentName")}
+            placeholder="General Medicine" />
+        </Field>
+        <Field label="Department code" required>
+          <input className="his-field" value={form.departmentCode}
+            onChange={(e) => setForm(p => ({ ...p, departmentCode: e.target.value.toUpperCase() }))}
+            placeholder="GMED" style={{ fontFamily: "DM Mono, monospace", letterSpacing: ".5px" }} />
+        </Field>
+      </div>
+
+      <div style={{ marginBottom: 12 }}>
+        <Field label="Category">
+          <select className="his-field" value={form.category} onChange={upd("category")}>
+            {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </Field>
+      </div>
+
+      <div style={{ marginBottom: 12 }}>
+        <Field label="Description">
+          <textarea className="his-textarea" rows={3} value={form.description || ""} onChange={upd("description")}
+            placeholder="Brief description of the department's scope and services." />
+        </Field>
+      </div>
+
+      <div style={{ padding: "12px 14px", background: C.subtle, border: `1.5px solid ${C.border}`, borderRadius: 9 }}>
+        <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 10 }}>
+          Services offered
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10 }}>
+          <Check label="OPD Available"        v={form.opdAvailable}       on={() => setForm(p => ({ ...p, opdAvailable: !p.opdAvailable }))} />
+          <Check label="IPD Available"        v={form.ipdAvailable}       on={() => setForm(p => ({ ...p, ipdAvailable: !p.ipdAvailable }))} />
+          <Check label="Emergency Available"  v={form.emergencyAvailable} on={() => setForm(p => ({ ...p, emergencyAvailable: !p.emergencyAvailable }))} />
+          <Check label="Active"               v={form.isActive}           on={() => setForm(p => ({ ...p, isActive: !p.isActive }))} />
+        </div>
+      </div>
+    </Modal>
+  );
+}
 
 export default DepartmentManagement;

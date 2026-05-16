@@ -8,12 +8,16 @@
 import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
+import { openPrint } from "../../Components/print/openPrint";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import { useAutoSave } from "../../hooks/useAutoSave";
 import { useDigitalSignature } from "../../hooks/useDigitalSignature";
 import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
 import SignaturePad from "../../Components/signature/SignaturePad";
+import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
+import MLCAutoStamp from "../../Components/mlc/MLCAutoStamp";
+import "../../Components/clinical/clinical-forms.css";
 
 const API = `${API_ENDPOINTS.BASE}/discharge-summary`;
 
@@ -301,51 +305,132 @@ const DEPT_TEMPLATES = [
 
 /* ── Design tokens ── */
 const C = {
-  bg: "#f0f2f5", card: "#fff", border: "#e2e6ea",
-  text: "#1a1d23", muted: "#6b7280",
+  bg: "#f0f2f5", card: "#fff", border: "#e2e8f0",
+  text: "#0f172a", muted: "#64748b", subtle: "#f8fafc",
   green: "#16a34a", red: "#dc2626", amber: "#d97706", blue: "#1e40af",
 };
-const fld = {
-  padding: "8px 11px", border: `1.5px solid ${C.border}`, borderRadius: 8,
-  fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: C.text,
-  outline: "none", background: "white", width: "100%", boxSizing: "border-box",
-};
-const ta = { ...fld, resize: "vertical", minHeight: 76 };
-const sel = { ...fld };
 
+/* Hex → soft-tint helpers used by Section / DeptBanner. */
+const hexA = (hex, alpha) => {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.slice(0,2), 16), g = parseInt(h.slice(2,4), 16), b = parseInt(h.slice(4,6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+};
+const hexShade = (hex, amount) => {
+  const h = hex.replace("#", "");
+  const r = Math.max(0, Math.min(255, parseInt(h.slice(0,2), 16) + amount));
+  const g = Math.max(0, Math.min(255, parseInt(h.slice(2,4), 16) + amount));
+  const b = Math.max(0, Math.min(255, parseInt(h.slice(4,6), 16) + amount));
+  return `#${r.toString(16).padStart(2,"0")}${g.toString(16).padStart(2,"0")}${b.toString(16).padStart(2,"0")}`;
+};
+
+/* Field wrapper. Label sits above the input with a thin colour stripe on
+   focus so the active field is obvious without changing layout. */
 function F({ label, required, children, hint }) {
   return (
-    <div>
-      <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 4 }}>
+    <div className="ds-field">
+      <label style={{
+        display: "block",
+        fontSize: 10.5,
+        fontWeight: 700,
+        color: C.muted,
+        textTransform: "uppercase",
+        letterSpacing: ".7px",
+        marginBottom: 6,
+      }}>
         {label}{required && <span style={{ color: C.red, marginLeft: 3 }}>*</span>}
       </label>
       {children}
-      {hint && <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>{hint}</div>}
+      {hint && <div style={{ fontSize: 10, color: C.muted, marginTop: 4, fontStyle: "italic" }}>{hint}</div>}
     </div>
   );
 }
-function G2({ children, gap = 14 }) { return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap }}>{children}</div>; }
-function G3({ children }) { return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>{children}</div>; }
-function G4({ children }) { return <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>{children}</div>; }
 
-function Section({ title, icon, color = C.blue, nabh, children, defaultOpen = true }) {
+/* Responsive grids. The fixed 4-column G4 was squeezing fields on narrow
+   viewports — now uses minmax(180px, 1fr) so it gracefully wraps to 3, 2,
+   1 column. G2 / G3 same approach. */
+function G2({ children, gap = 16 }) {
+  return <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap }}>{children}</div>;
+}
+function G3({ children }) {
+  return <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>{children}</div>;
+}
+function G4({ children }) {
+  return <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14 }}>{children}</div>;
+}
+
+/* Section card. Gradient header in dept colour, subtle inner shadow, NABH
+   pill anchored right, collapsible. */
+function Section({ title, icon, color = C.blue, nabh, sub, children, defaultOpen = true, badge }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div style={{ background: C.card, border: `1.5px solid ${color}25`, borderRadius: 12, overflow: "hidden", marginBottom: 14 }}>
+    <div style={{
+      background: C.card,
+      border: `1px solid ${hexA(color, 0.18)}`,
+      borderRadius: 14,
+      overflow: "hidden",
+      marginBottom: 16,
+      boxShadow: "0 1px 3px rgba(15,23,42,.04), 0 4px 12px rgba(15,23,42,.03)",
+    }}>
       <div onClick={() => setOpen(o => !o)} style={{
-        padding: "10px 18px", background: color + "08", borderBottom: open ? `1px solid ${color}18` : "none",
-        display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer",
+        padding: "14px 20px",
+        background: `linear-gradient(135deg, ${hexA(color, 0.08)}, ${hexA(color, 0.02)})`,
+        borderBottom: open ? `1px solid ${hexA(color, 0.15)}` : "none",
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        cursor: "pointer", gap: 12,
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ width: 26, height: 26, borderRadius: 6, background: color + "20", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <i className={`pi ${icon}`} style={{ fontSize: 12, color }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
+          <span style={{
+            width: 36, height: 36, borderRadius: 10,
+            background: `linear-gradient(135deg, ${color}, ${hexShade(color, -30)})`,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            boxShadow: `0 3px 10px ${hexA(color, 0.35)}`,
+            flexShrink: 0,
+          }}>
+            <i className={`pi ${icon}`} style={{ fontSize: 15, color: "#fff" }} />
           </span>
-          <span style={{ fontWeight: 700, fontSize: 13, color: C.text }}>{title}</span>
-          {nabh && <span style={{ background: "#f5f3ff", color: "#7c3aed", border: "1px solid #c4b5fd", fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 4 }}>NABH</span>}
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 800, fontSize: 14.5, color: C.text, letterSpacing: "-.2px" }}>
+              {title}
+              {nabh && (
+                <span style={{
+                  marginLeft: 10,
+                  background: "#f5f3ff", color: "#7c3aed",
+                  border: "1px solid #c4b5fd",
+                  fontSize: 9.5, fontWeight: 800,
+                  padding: "2px 8px", borderRadius: 4,
+                  textTransform: "uppercase", letterSpacing: ".5px",
+                  verticalAlign: "middle",
+                }}>NABH</span>
+              )}
+              {badge && (
+                <span style={{
+                  marginLeft: 8,
+                  background: hexA(color, 0.12), color,
+                  border: `1px solid ${hexA(color, 0.3)}`,
+                  fontSize: 9.5, fontWeight: 700,
+                  padding: "2px 8px", borderRadius: 4,
+                  verticalAlign: "middle",
+                }}>{badge}</span>
+              )}
+            </div>
+            {sub && (
+              <div style={{ fontSize: 11, color: C.muted, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {sub}
+              </div>
+            )}
+          </div>
         </div>
-        <i className={`pi ${open ? "pi-chevron-up" : "pi-chevron-down"}`} style={{ fontSize: 10, color: C.muted }} />
+        <div style={{
+          width: 28, height: 28, borderRadius: "50%",
+          background: hexA(color, 0.1),
+          display: "flex", alignItems: "center", justifyContent: "center",
+          flexShrink: 0,
+        }}>
+          <i className={`pi ${open ? "pi-chevron-up" : "pi-chevron-down"}`} style={{ fontSize: 11, color }} />
+        </div>
       </div>
-      {open && <div style={{ padding: "16px 18px" }}>{children}</div>}
+      {open && <div style={{ padding: "20px 22px" }}>{children}</div>}
     </div>
   );
 }
@@ -355,40 +440,148 @@ function DeptCard({ dept, selected, onSelect }) {
   const active = selected?.key === dept.key;
   return (
     <button onClick={() => onSelect(dept)} style={{
-      background: active ? dept.color + "12" : "white",
-      border: `2px solid ${active ? dept.color : C.border}`,
-      borderRadius: 12, padding: "14px 12px", cursor: "pointer", textAlign: "left",
-      transition: "all .15s", display: "flex", flexDirection: "column", gap: 6,
+      background: active
+        ? `linear-gradient(135deg, ${hexA(dept.color, 0.08)}, ${hexA(dept.color, 0.02)})`
+        : "white",
+      border: `1.5px solid ${active ? dept.color : C.border}`,
+      borderRadius: 14,
+      padding: "18px 16px",
+      cursor: "pointer",
+      textAlign: "left",
+      transition: "all .15s",
+      display: "flex", flexDirection: "column", gap: 10,
+      boxShadow: active
+        ? `0 6px 20px ${hexA(dept.color, 0.18)}`
+        : "0 1px 3px rgba(15,23,42,.04)",
+      minHeight: 92,
     }}
-      onMouseEnter={e => { if (!active) e.currentTarget.style.borderColor = dept.color + "60"; }}
-      onMouseLeave={e => { if (!active) e.currentTarget.style.borderColor = C.border; }}
+      onMouseEnter={e => {
+        if (!active) {
+          e.currentTarget.style.borderColor = hexA(dept.color, 0.5);
+          e.currentTarget.style.boxShadow = `0 4px 14px ${hexA(dept.color, 0.1)}`;
+          e.currentTarget.style.transform = "translateY(-1px)";
+        }
+      }}
+      onMouseLeave={e => {
+        if (!active) {
+          e.currentTarget.style.borderColor = C.border;
+          e.currentTarget.style.boxShadow = "0 1px 3px rgba(15,23,42,.04)";
+          e.currentTarget.style.transform = "none";
+        }
+      }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ width: 34, height: 34, borderRadius: 9, flexShrink: 0, background: active ? dept.color : dept.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <i className={`pi ${dept.icon}`} style={{ fontSize: 15, color: active ? "white" : dept.color }} />
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <span style={{
+          width: 40, height: 40, borderRadius: 10,
+          background: active
+            ? `linear-gradient(135deg, ${dept.color}, ${hexShade(dept.color, -30)})`
+            : dept.bg,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          flexShrink: 0,
+          boxShadow: active ? `0 4px 10px ${hexA(dept.color, 0.4)}` : "none",
+        }}>
+          <i className={`pi ${dept.icon}`} style={{ fontSize: 17, color: active ? "white" : dept.color }} />
         </span>
-        <div style={{ fontSize: 12, fontWeight: 700, color: active ? dept.color : C.text, lineHeight: 1.3 }}>{dept.label}</div>
+        <div style={{ fontSize: 13, fontWeight: 800, color: active ? dept.color : C.text, lineHeight: 1.3 }}>
+          {dept.label}
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", fontSize: 10, color: C.muted, fontWeight: 600 }}>
+        <span style={{ background: hexA(dept.color, 0.08), color: dept.color, padding: "2px 7px", borderRadius: 4 }}>
+          {dept.template.investigations?.length || 0} inv
+        </span>
+        <span style={{ background: hexA(dept.color, 0.08), color: dept.color, padding: "2px 7px", borderRadius: 4 }}>
+          {dept.template.medications?.length || 0} med
+        </span>
+        <span style={{ background: hexA(dept.color, 0.08), color: dept.color, padding: "2px 7px", borderRadius: 4 }}>
+          {dept.template.procedures?.length || 0} proc
+        </span>
       </div>
     </button>
   );
 }
 
+/* ── Table shell — adds a sticky column header row above the *Row rows ── */
+function TableShell({ cols, color, children, empty }) {
+  return (
+    <div style={{
+      border: `1px solid ${C.border}`, borderRadius: 10, overflow: "hidden",
+      background: "#fff",
+    }}>
+      {/* Header */}
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: cols.map(c => c.w).join(" ") + " auto",
+        gap: 8,
+        padding: "8px 12px",
+        background: `linear-gradient(135deg, ${hexA(color, 0.06)}, ${hexA(color, 0.02)})`,
+        borderBottom: `1px solid ${hexA(color, 0.15)}`,
+        fontSize: 10,
+        fontWeight: 800,
+        textTransform: "uppercase",
+        letterSpacing: ".6px",
+        color: hexShade(color, -20),
+      }}>
+        {cols.map((c, i) => <div key={i}>{c.label}</div>)}
+        <div />
+      </div>
+      {/* Body */}
+      <div style={{ padding: 10 }}>
+        {empty ? (
+          <div style={{
+            padding: "18px 12px", textAlign: "center",
+            color: C.muted, fontSize: 12, fontStyle: "italic",
+          }}>
+            {empty}
+          </div>
+        ) : children}
+      </div>
+    </div>
+  );
+}
+
+const MED_COLS = [
+  { label: "Drug", w: "2fr" }, { label: "Dose", w: "1fr" },
+  { label: "Route", w: "1fr" }, { label: "Frequency", w: "1fr" },
+  { label: "Duration", w: "1fr" }, { label: "Instructions", w: "1.5fr" },
+];
+const INV_COLS = [
+  { label: "Investigation", w: "2fr" }, { label: "Result / Finding", w: "1.5fr" },
+  { label: "Unit", w: "1fr" }, { label: "Status", w: "1fr" },
+];
+const PROC_COLS = [
+  { label: "Procedure", w: "2fr" }, { label: "Date", w: "1fr" },
+  { label: "Surgeon / Operator", w: "1.5fr" }, { label: "Findings", w: "2fr" },
+  { label: "Complications", w: "1.5fr" },
+];
+
 /* ── Medication row ── */
 function MedRow({ med, idx, color, onChange, onRemove }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1.5fr auto", gap: 6, marginBottom: 7, alignItems: "center" }}>
-      <input style={fld} value={med.drug} onChange={e => onChange(idx, "drug", e.target.value)} placeholder="Drug name" />
-      <input style={fld} value={med.dose} onChange={e => onChange(idx, "dose", e.target.value)} placeholder="Dose" />
-      <select style={sel} value={med.route} onChange={e => onChange(idx, "route", e.target.value)}>
+    <div style={{
+      display: "grid",
+      gridTemplateColumns: MED_COLS.map(c => c.w).join(" ") + " auto",
+      gap: 8, marginBottom: 8, alignItems: "center",
+    }}>
+      <input className="his-field" value={med.drug} onChange={e => onChange(idx, "drug", e.target.value)} placeholder="Paracetamol 500mg" />
+      <input className="his-field" value={med.dose} onChange={e => onChange(idx, "dose", e.target.value)} placeholder="1 tab" />
+      <select className="his-select" value={med.route} onChange={e => onChange(idx, "route", e.target.value)}>
         {["Oral","IV","IM","SC","SL","Topical","Inhaled","PR","Nasal"].map(r => <option key={r}>{r}</option>)}
       </select>
-      <select style={sel} value={med.frequency} onChange={e => onChange(idx, "frequency", e.target.value)}>
+      <select className="his-select" value={med.frequency} onChange={e => onChange(idx, "frequency", e.target.value)}>
         {["OD","BD","TDS","QID","SOS","HS","Q4H","Q6H","Q8H","Weekly","Ad lib"].map(f => <option key={f}>{f}</option>)}
       </select>
-      <input style={fld} value={med.duration} onChange={e => onChange(idx, "duration", e.target.value)} placeholder="Duration" />
-      <input style={fld} value={med.instructions} onChange={e => onChange(idx, "instructions", e.target.value)} placeholder="Instructions" />
-      <button onClick={() => onRemove(idx)} style={{ width: 28, height: 28, borderRadius: 6, border: "none", background: "#fef2f2", color: C.red, cursor: "pointer" }}>
-        <i className="pi pi-times" style={{ fontSize: 11 }} />
+      <input className="his-field" value={med.duration} onChange={e => onChange(idx, "duration", e.target.value)} placeholder="5 days" />
+      <input className="his-field" value={med.instructions} onChange={e => onChange(idx, "instructions", e.target.value)} placeholder="After meals" />
+      <button onClick={() => onRemove(idx)} title="Remove" style={{
+        width: 32, height: 32, borderRadius: 8, border: "none",
+        background: "#fef2f2", color: C.red, cursor: "pointer",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        transition: "background .15s",
+      }}
+        onMouseEnter={e => e.currentTarget.style.background = "#fee2e2"}
+        onMouseLeave={e => e.currentTarget.style.background = "#fef2f2"}>
+        <i className="pi pi-trash" style={{ fontSize: 12 }} />
       </button>
     </div>
   );
@@ -397,16 +590,24 @@ function MedRow({ med, idx, color, onChange, onRemove }) {
 /* ── Investigation row ── */
 function InvRow({ inv, idx, color, onChange, onRemove }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "2fr 1.5fr 1fr 1fr auto", gap: 6, marginBottom: 7, alignItems: "center" }}>
-      <input style={fld} value={inv.name} onChange={e => onChange(idx, "name", e.target.value)} placeholder="Investigation name" />
-      <input style={fld} value={inv.result} onChange={e => onChange(idx, "result", e.target.value)} placeholder="Result / Finding" />
-      <input style={fld} value={inv.unit} onChange={e => onChange(idx, "unit", e.target.value)} placeholder="Unit" />
-      <select style={sel} value={inv.status} onChange={e => onChange(idx, "status", e.target.value)}>
+    <div style={{
+      display: "grid",
+      gridTemplateColumns: INV_COLS.map(c => c.w).join(" ") + " auto",
+      gap: 8, marginBottom: 8, alignItems: "center",
+    }}>
+      <input className="his-field" value={inv.name} onChange={e => onChange(idx, "name", e.target.value)} placeholder="CBC, X-ray Chest, …" />
+      <input className="his-field" value={inv.result} onChange={e => onChange(idx, "result", e.target.value)} placeholder="Within normal limits" />
+      <input className="his-field" value={inv.unit} onChange={e => onChange(idx, "unit", e.target.value)} placeholder="—" />
+      <select className="his-select" value={inv.status} onChange={e => onChange(idx, "status", e.target.value)}>
         <option value="">Status</option>
         {["Normal","Abnormal","Critical","Borderline","Pending"].map(s => <option key={s}>{s}</option>)}
       </select>
-      <button onClick={() => onRemove(idx)} style={{ width: 28, height: 28, borderRadius: 6, border: "none", background: "#fef2f2", color: C.red, cursor: "pointer" }}>
-        <i className="pi pi-times" style={{ fontSize: 11 }} />
+      <button onClick={() => onRemove(idx)} title="Remove" style={{
+        width: 32, height: 32, borderRadius: 8, border: "none",
+        background: "#fef2f2", color: C.red, cursor: "pointer",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}>
+        <i className="pi pi-trash" style={{ fontSize: 12 }} />
       </button>
     </div>
   );
@@ -415,14 +616,22 @@ function InvRow({ inv, idx, color, onChange, onRemove }) {
 /* ── Procedure row ── */
 function ProcRow({ proc, idx, onChange, onRemove }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1.5fr 2fr 1.5fr auto", gap: 6, marginBottom: 7, alignItems: "center" }}>
-      <input style={fld} value={proc.name} onChange={e => onChange(idx, "name", e.target.value)} placeholder="Procedure name" />
-      <input style={fld} type="date" value={proc.date} onChange={e => onChange(idx, "date", e.target.value)} />
-      <input style={fld} value={proc.surgeon} onChange={e => onChange(idx, "surgeon", e.target.value)} placeholder="Surgeon / Operator" />
-      <input style={fld} value={proc.findings} onChange={e => onChange(idx, "findings", e.target.value)} placeholder="Key findings" />
-      <input style={fld} value={proc.complications} onChange={e => onChange(idx, "complications", e.target.value)} placeholder="Complications" />
-      <button onClick={() => onRemove(idx)} style={{ width: 28, height: 28, borderRadius: 6, border: "none", background: "#fef2f2", color: C.red, cursor: "pointer" }}>
-        <i className="pi pi-times" style={{ fontSize: 11 }} />
+    <div style={{
+      display: "grid",
+      gridTemplateColumns: PROC_COLS.map(c => c.w).join(" ") + " auto",
+      gap: 8, marginBottom: 8, alignItems: "center",
+    }}>
+      <input className="his-field" value={proc.name} onChange={e => onChange(idx, "name", e.target.value)} placeholder="Procedure name" />
+      <input className="his-field" type="date" value={proc.date} onChange={e => onChange(idx, "date", e.target.value)} />
+      <input className="his-field" value={proc.surgeon} onChange={e => onChange(idx, "surgeon", e.target.value)} placeholder="Dr. …" />
+      <input className="his-field" value={proc.findings} onChange={e => onChange(idx, "findings", e.target.value)} placeholder="Key findings" />
+      <input className="his-field" value={proc.complications} onChange={e => onChange(idx, "complications", e.target.value)} placeholder="None" />
+      <button onClick={() => onRemove(idx)} title="Remove" style={{
+        width: 32, height: 32, borderRadius: 8, border: "none",
+        background: "#fef2f2", color: C.red, cursor: "pointer",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}>
+        <i className="pi pi-trash" style={{ fontSize: 12 }} />
       </button>
     </div>
   );
@@ -430,36 +639,39 @@ function ProcRow({ proc, idx, onChange, onRemove }) {
 
 /* ── Print Modal ── */
 function PrintModal({ data, dept, onClose }) {
+  /* Wired to the unified print system — picks up the hospital
+   * header/footer + paper-size selector automatically. */
   const handlePrint = () => {
-    const w = window.open("", "_blank");
-    const content = document.getElementById("ds-print-content")?.innerHTML || "";
-    w.document.write(`
-      <html><head><title>Discharge Summary</title>
-      <style>
-        * { box-sizing: border-box; }
-        body { font-family: Arial, sans-serif; margin: 20px; font-size: 12px; color: #000; }
-        h1 { font-size: 16px; text-align: center; margin: 0; }
-        .hosp { text-align: center; font-size: 11px; color: #444; margin-bottom: 3px; }
-        .divider { border: none; border-top: 2px solid ${dept?.color || "#333"}; margin: 8px 0; }
-        .section { margin-bottom: 14px; }
-        .section-title { font-weight: bold; font-size: 12px; background: #f3f4f6; padding: 4px 8px; border-left: 3px solid ${dept?.color || "#333"}; margin-bottom: 6px; }
-        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; margin-bottom: 8px; }
-        .grid-4 { display: grid; grid-template-columns: repeat(4,1fr); gap: 6px 12px; margin-bottom: 8px; }
-        .field-label { font-size: 10px; color: #666; font-weight: bold; }
-        .field-value { border-bottom: 1px solid #ccc; padding-bottom: 2px; min-height: 18px; }
-        table { width: 100%; border-collapse: collapse; font-size: 11px; }
-        th { background: ${dept?.color || "#333"}22; padding: 4px 6px; font-weight: bold; text-align: left; border: 1px solid #ddd; }
-        td { padding: 3px 6px; border: 1px solid #ddd; }
-        .sig-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-top: 20px; }
-        .sig-box { border-top: 1.5px solid #000; padding-top: 5px; font-size: 10px; color: #555; }
-        .warn-box { background: #fff3cd; border: 1px solid #ffc107; padding: 8px; border-radius: 4px; font-size: 11px; }
-        ul { margin: 4px 0 0 16px; padding: 0; }
-        li { margin-bottom: 2px; }
-        @media print { body { margin: 10px; } }
-      </style></head><body>${content}</body></html>
-    `);
-    w.document.close();
-    w.print();
+    openPrint("discharge-summary", {
+      summaryNo:           data.summaryNumber,
+      patientName:         data.patientName,
+      uhid:                data.UHID,
+      ipdNo:               data.ipdNo,
+      age:                 data.age,
+      gender:              data.gender,
+      admissionDate:       data.admissionDate,
+      dischargeDate:       data.dischargeDate || new Date().toISOString(),
+      totalDays:           data.totalDays,
+      consultantName:      data.consultantName,
+      bedNumber:           data.bedNumber,
+      wardName:            data.wardName,
+      dischargeType:       data.dischargeType || "Normal",
+      finalDiagnosis:      data.finalDiagnosis,
+      icd10:               data.icd10,
+      icd10Desc:           data.icd10Desc,
+      secondaryDiagnoses:  data.secondaryDiagnoses,
+      chiefComplaints:     data.chiefComplaints,
+      courseOfStay:        data.courseOfStay || data.hospitalCourse,
+      proceduresDone:      data.procedures || data.proceduresDone,
+      investigationsSummary: data.investigationsSummary || data.keyInvestigations,
+      conditionOnDischarge: data.conditionOnDischarge,
+      dischargeMeds:       data.dischargeMeds || data.medications || [],
+      advice:              data.dischargeAdvice ? String(data.dischargeAdvice).split("\n").filter(Boolean) : [],
+      dietAdvice:          data.dietAdvice,
+      followUpDate:        data.followUpDate,
+      followUpDoctor:      data.followUpDoctor || data.consultantName,
+      warningSigns:        data.warningSigns,
+    });
   };
 
   return (
@@ -485,6 +697,9 @@ function PrintModal({ data, dept, onClose }) {
 
         <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
           <div id="ds-print-content">
+            {/* MLC stamp (auto-applied if patient has an active MLC) */}
+            <MLCAutoStamp uhid={data.UHID} variant="banner" />
+            <MLCAutoStamp uhid={data.UHID} />
             {/* Hospital header */}
             <div className="hosp" style={{ textAlign: "center", marginBottom: 6 }}>
               <div style={{ fontWeight: 800, fontSize: 16, textTransform: "uppercase" }}>SphereHealth Hospital</div>
@@ -635,7 +850,7 @@ function PrintModal({ data, dept, onClose }) {
 /* ══════════════════════════════════════
    MAIN PAGE
 ══════════════════════════════════════ */
-export default function DischargeSummaryPage() {
+function DischargeSummaryPageContent({ selectedPatient }) {
   const { user } = useAuth();
   const [view, setView] = useState("catalogue"); // catalogue | form
   const [selectedDept, setSelectedDept] = useState(null);
@@ -696,11 +911,59 @@ export default function DischargeSummaryPage() {
     setView("form");
   };
 
+  // Auto-load when /discharge-summary?uhid=… is opened from /bed-visual.
+  // Reads the optional discharge_context blob from sessionStorage so we
+  // know which bed / admission triggered this flow, and surfaces the
+  // 4-step workflow banner.
+  const [workflowCtx, setWorkflowCtx] = useState(null);
+  useEffect(() => {
+    const u = new URLSearchParams(window.location.search).get("uhid");
+    try {
+      const raw = sessionStorage.getItem("discharge_context");
+      if (raw) setWorkflowCtx(JSON.parse(raw));
+    } catch (_) {}
+    if (u && u.trim()) {
+      setUhid(u.trim());
+      // Defer one tick so the state update flushes before searchPatient
+      // reads it via closure.
+      setTimeout(() => {
+        // Inline the load so we don't have to thread an arg through
+        // searchPatient — it already reads state via closure.
+        const trigger = document.getElementById("ds-load-btn");
+        if (trigger) trigger.click();
+      }, 60);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Auto-fill when patient selected from AdmittedPatientPanel
+  useEffect(() => {
+    if (!selectedPatient) return;
+    const found = selectedPatient;
+    setUhid(found.UHID || "");
+    setPatInfo(found);
+    const admDate = found.admissionDate ? new Date(found.admissionDate) : null;
+    const stayDays = admDate ? Math.ceil((new Date() - admDate) / 86400000) : "";
+    setForm(p => ({
+      ...p,
+      UHID: found.UHID || "",
+      patientName: found.patientName || found.patientId?.fullName || "",
+      ipdNo: found.admissionNumber || "",
+      admissionDate: admDate ? admDate.toLocaleDateString("en-IN") : "",
+      stayDays,
+      department: found.department || p.department,
+      doctorName: found.attendingDoctor || p.doctorName,
+      contactNumber: found.contactNumber || "",
+    }));
+    toast.success(`Patient loaded: ${found.patientName || found.UHID}`);
+  }, [selectedPatient?._id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const searchPatient = async () => {
     if (!uhid.trim()) return;
     setSearching(true);
     try {
-      const res = await axios.get(`${API_ENDPOINTS.BASE}/admissions/active`, { headers });
+      // Discharge summary is IPD-only — never show OPD visits here.
+      const res = await axios.get(`${API_ENDPOINTS.BASE}/admissions/active?hasBed=true`, { headers });
       const list = Array.isArray(res.data?.data) ? res.data.data : [];
       const found = list.find(a => a.UHID === uhid.trim().toUpperCase() || a.admissionNumber === uhid.trim());
       if (found) {
@@ -708,16 +971,37 @@ export default function DischargeSummaryPage() {
         const admDate = found.admissionDate ? new Date(found.admissionDate) : null;
         const disDate = new Date();
         const stayDays = admDate ? Math.ceil((disDate - admDate) / 86400000) : "";
+        // Resolve nested patient (admissionService may or may not
+        // populate the patientId ref). Fall back to a direct GET if the
+        // age / gender / DOB are missing.
+        let pat = (found.patientId && typeof found.patientId === "object") ? found.patientId : null;
+        if ((!pat || !pat.gender) && found.UHID) {
+          try {
+            const r = await axios.get(`${API_ENDPOINTS.BASE}/patients/uhid/${encodeURIComponent(found.UHID)}`, { headers });
+            pat = r?.data?.data || r?.data || pat;
+          } catch (_) { /* keep whatever we have */ }
+        }
+        const ageNow = pat?.age
+          || (pat?.dateOfBirth ? Math.max(0, Math.floor((Date.now() - new Date(pat.dateOfBirth).getTime()) / (365.25 * 86400000))) : "");
         setForm(p => ({
           ...p,
-          UHID: found.UHID,
-          patientName: found.patientName || found.patientId?.fullName || "",
-          ipdNo: found.admissionNumber || "",
-          admissionDate: admDate ? admDate.toLocaleDateString("en-IN") : "",
+          UHID:           found.UHID,
+          patientName:    found.patientName || pat?.fullName || found.patientId?.fullName || "",
+          age:            ageNow ? String(ageNow) : p.age,
+          gender:         pat?.gender || found.gender || p.gender,
+          contactNumber:  pat?.contactNumber || pat?.phone || found.contactNumber || p.contactNumber,
+          ipdNo:          found.admissionNumber || "",
+          // Date <input type="date"> needs ISO YYYY-MM-DD; the old
+          // toLocaleDateString("en-IN") returned "14/05/2026" and the
+          // browser silently rendered the input empty.
+          admissionDate:  admDate ? admDate.toISOString().slice(0, 10) : "",
           stayDays,
-          department: found.department || p.department,
-          doctorName: found.attendingDoctor || p.doctorName,
-          contactNumber: found.contactNumber || "",
+          department:     found.department || p.department,
+          doctorName:     found.attendingDoctor || found.attendingDoctorId?.fullName || p.doctorName,
+          doctorRegNo:    found.attendingDoctorId?.doctorDetails?.registrationNumber
+                          || found.attendingDoctorRegNo
+                          || p.doctorRegNo,
+          admittingDiagnosis: found.provisionalDiagnosis || p.admittingDiagnosis,
         }));
         // Restore auto-save draft if available
         const dKey = `sphere_draft_discharge_${found._id}`;
@@ -767,13 +1051,20 @@ export default function DischargeSummaryPage() {
 
   const openPrint = () => setPrintData({ ...form, medications, investigations, procedures });
 
+  const [lastSavedId, setLastSavedId] = useState(null);
+  const [finalizing, setFinalizing]   = useState(false);
+
   const handleSave = async () => {
     if (!form.UHID) { toast.warn("Load a patient first"); return; }
     setSaving(true);
     try {
       const payload = { ...form, deptTemplate: selectedDept?.key, medications, investigations, procedures };
-      await axios.post(API, payload, { headers });
-      toast.success("Discharge summary saved");
+      const r = await axios.post(API, payload, { headers });
+      // Capture the freshly-created summary _id so the Finalize button
+      // knows which document to flip + which admission to discharge.
+      const newId = r?.data?.data?._id || r?.data?._id || null;
+      if (newId) setLastSavedId(newId);
+      toast.success("Discharge summary saved as DRAFT — click Finalize to discharge");
       clearDraft();
       openPrint();
     } catch (err) {
@@ -785,6 +1076,31 @@ export default function DischargeSummaryPage() {
         toast.error(err.response?.data?.message || "Save failed");
       }
     } finally { setSaving(false); }
+  };
+
+  // FIX (audit P17): the Finalize button was missing. Without it, the
+  // admission stayed "Admitted" forever and the bed was never released.
+  // This calls PATCH /api/discharge-summary/:id/finalize which the
+  // backend now wires through to:
+  //   • DischargeSummary.status = "finalized"
+  //   • Admission.status        = "Discharged"
+  //   • Bed.status               = "Available" (with patient/currentAdmission cleared)
+  const handleFinalize = async () => {
+    if (!lastSavedId) {
+      toast.warn("Save the summary as a draft first, then click Finalize");
+      return;
+    }
+    if (!window.confirm("Finalize this discharge summary?\n\nThis will:\n  • Mark the admission as Discharged\n  • Release the bed back to Available\n  • Lock the summary against further edits")) return;
+
+    setFinalizing(true);
+    try {
+      const finalizedByName = user?.fullName || form.doctorName || "Doctor";
+      await axios.patch(`${API}/${lastSavedId}/finalize`, { finalizedByName }, { headers });
+      toast.success("Discharge finalized — patient discharged, bed released");
+      // Stay on the page in read-only "finalized" mode; the user can still print
+    } catch (err) {
+      toast.error(err.response?.data?.message || "Finalize failed");
+    } finally { setFinalizing(false); }
   };
 
   const color = selectedDept?.color || C.blue;
@@ -828,24 +1144,189 @@ export default function DischargeSummaryPage() {
         </div>
       </div>
 
-      {/* ── Patient search (always visible) ── */}
-      <div style={{ background: C.card, borderRadius: 12, padding: "12px 18px", marginBottom: 14, border: `1.5px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <i className="pi pi-search" style={{ color: C.muted, fontSize: 14 }} />
-        <input value={uhid} onChange={e => setUhid(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && searchPatient()}
-          style={{ ...fld, flex: 1, minWidth: 220 }} placeholder="Enter UHID / Admission No. to load patient…" />
-        <button onClick={searchPatient} disabled={searching} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: searching ? C.muted : C.blue, color: "white", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
-          {searching ? "Searching…" : "Load Patient"}
-        </button>
-        {patInfo && (
-          <div style={{ display: "flex", gap: 12, fontSize: 12, color: C.text, flexWrap: "wrap" }}>
-            <span><b>Patient:</b> {form.patientName}</span>
-            <span><b>UHID:</b> {form.UHID}</span>
-            <span><b>IPD:</b> {form.ipdNo}</span>
-            <span><b>Stay:</b> {form.stayDays} days</span>
+      {/* ══ Patient identity card ────────────────────────────────────────
+         Two states:
+           • EMPTY  — full-width search bar to load a patient by UHID
+           • LOADED — gradient hero card showing patient avatar, name,
+                      key facts, with a "change patient" toggle that
+                      flips back to the search bar.
+      ═══════════════════════════════════════════════════════════════════ */}
+      {!patInfo ? (
+        <div style={{
+          background: C.card, borderRadius: 12, padding: "14px 18px",
+          marginBottom: 14, border: `1.5px solid ${C.border}`,
+          display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+        }}>
+          <div style={{
+            width: 32, height: 32, borderRadius: 8, background: "#eff6ff",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            flexShrink: 0,
+          }}>
+            <i className="pi pi-search" style={{ color: C.blue, fontSize: 14 }} />
           </div>
-        )}
-      </div>
+          <input value={uhid} onChange={e => setUhid(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && searchPatient()}
+            className="his-field" style={{ flex: 1, minWidth: 220 }}
+            placeholder="Enter UHID / Admission No. to load patient…" />
+          <button id="ds-load-btn" onClick={searchPatient} disabled={searching}
+            style={{
+              padding: "9px 22px", borderRadius: 8, border: "none",
+              background: searching ? C.muted : C.blue, color: "white",
+              fontWeight: 700, fontSize: 12, cursor: "pointer",
+            }}>
+            {searching ? "Searching…" : <><i className="pi pi-arrow-circle-right" style={{ marginRight: 6 }} />Load Patient</>}
+          </button>
+        </div>
+      ) : (
+        <div style={{
+          background: "linear-gradient(135deg,#1e40af,#0e7490)",
+          borderRadius: 12, padding: "14px 18px", marginBottom: 14,
+          display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap",
+          color: "#fff", boxShadow: "0 4px 14px rgba(30,64,175,.25)",
+        }}>
+          {/* Avatar initial */}
+          <div style={{
+            width: 50, height: 50, borderRadius: "50%",
+            background: "rgba(255,255,255,.2)", border: "2px solid rgba(255,255,255,.35)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 20, fontWeight: 800, flexShrink: 0,
+          }}>
+            {(form.patientName || "?").trim().charAt(0).toUpperCase()}
+          </div>
+
+          {/* Name + key facts */}
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: "-.2px" }}>
+              {form.patientName || "—"}
+            </div>
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 4, fontSize: 11.5, opacity: .92 }}>
+              <span><b style={{ opacity: .75 }}>UHID</b> · {form.UHID}</span>
+              <span><b style={{ opacity: .75 }}>IPD</b> · {form.ipdNo || "—"}</span>
+              {(form.age || form.gender) && (
+                <span><b style={{ opacity: .75 }}>Age/Sex</b> · {[form.age && `${form.age}Y`, form.gender].filter(Boolean).join(" / ") || "—"}</span>
+              )}
+              <span><b style={{ opacity: .75 }}>Stay</b> · {form.stayDays ? `${form.stayDays} days` : "—"}</span>
+              {form.doctorName && <span><b style={{ opacity: .75 }}>Doctor</b> · {form.doctorName}</span>}
+              {workflowCtx?.bedNumber && <span><b style={{ opacity: .75 }}>Bed</b> · {workflowCtx.bedNumber}</span>}
+            </div>
+          </div>
+
+          {/* Change patient */}
+          <button
+            onClick={() => { setPatInfo(null); setUhid(""); }}
+            style={{
+              padding: "8px 14px", borderRadius: 8,
+              background: "rgba(255,255,255,.15)", border: "1.5px solid rgba(255,255,255,.3)",
+              color: "#fff", fontWeight: 700, fontSize: 11.5,
+              cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
+            }}>
+            <i className="pi pi-refresh" style={{ fontSize: 11 }} />
+            Change
+          </button>
+        </div>
+      )}
+
+      {/* ══ Discharge workflow strip — compact horizontal pipeline ════════
+         4 steps: Doctor → Nurse → Reception → Finalize. Each pill is
+         clickable (when applicable). Step 1 turns green on Save, gating
+         Step 4 (Finalize) which actually flips the admission.
+      ═══════════════════════════════════════════════════════════════════ */}
+      {patInfo && (() => {
+        const done1 = !!lastSavedId;
+        const STEP_COLORS = {
+          doctor:    { bg: "#2563eb", soft: "#eff6ff", border: "#bfdbfe" },
+          nurse:     { bg: "#db2777", soft: "#fdf2f8", border: "#fbcfe8" },
+          reception: { bg: "#0891b2", soft: "#ecfeff", border: "#a5f3fc" },
+          finalize:  { bg: "#15803d", soft: "#f0fdf4", border: "#86efac" },
+          done:      { bg: "#16a34a", soft: "#dcfce7", border: "#86efac" },
+        };
+        const Pill = ({ n, role, label, sub, isDone, isActive, onClick, disabled }) => {
+          const c = isDone ? STEP_COLORS.done : STEP_COLORS[role];
+          return (
+            <div onClick={!disabled && onClick ? onClick : undefined}
+              style={{
+                flex: "1 1 220px",
+                background: isDone || isActive ? c.soft : "#f8fafc",
+                border: `1.5px solid ${isDone || isActive ? c.border : "#e2e8f0"}`,
+                borderRadius: 10,
+                padding: "10px 12px",
+                display: "flex", alignItems: "center", gap: 10,
+                cursor: disabled ? "not-allowed" : (onClick ? "pointer" : "default"),
+                opacity: disabled && !isDone ? 0.6 : 1,
+                transition: "transform .15s, box-shadow .15s",
+                position: "relative",
+              }}
+              onMouseEnter={(e) => { if (!disabled && onClick) e.currentTarget.style.boxShadow = "0 4px 14px rgba(0,0,0,.08)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "none"; }}
+            >
+              <div style={{
+                width: 28, height: 28, borderRadius: "50%",
+                background: c.bg, color: "#fff",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontWeight: 800, fontSize: 12, flexShrink: 0,
+              }}>
+                {isDone ? <i className="pi pi-check" style={{ fontSize: 12 }} /> : n}
+              </div>
+              <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
+                <div style={{ fontSize: 11.5, fontWeight: 800, color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {label}
+                </div>
+                <div style={{ fontSize: 10, color: "#64748b", marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {sub}
+                </div>
+              </div>
+              {onClick && !disabled && (
+                <i className="pi pi-arrow-right" style={{ fontSize: 10, color: c.bg, flexShrink: 0 }} />
+              )}
+            </div>
+          );
+        };
+
+        return (
+          <div style={{
+            background: "white",
+            border: "1px solid #e2e8f0", borderRadius: 12,
+            padding: "10px 14px", marginBottom: 14,
+            display: "flex", alignItems: "center", gap: 10,
+            boxShadow: "0 1px 3px rgba(0,0,0,.04)",
+          }}>
+            <div style={{
+              display: "flex", flexDirection: "column", alignItems: "center",
+              gap: 1, paddingRight: 12, borderRight: "1px solid #e2e8f0",
+              minWidth: 90,
+            }}>
+              <i className="pi pi-list" style={{ color: "#475569", fontSize: 13 }} />
+              <div style={{ fontSize: 9.5, fontWeight: 800, color: "#475569", textTransform: "uppercase", letterSpacing: ".4px" }}>
+                Workflow
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, flex: 1, flexWrap: "wrap" }}>
+              <Pill n={1} role="doctor"
+                label="Discharge summary"
+                sub={done1 ? "Saved · DRAFT" : "Fill below + Save"}
+                isDone={done1} isActive={!done1} />
+              <Pill n={2} role="nurse"
+                label="Nursing note"
+                sub="Hand-off + advice"
+                isActive={done1}
+                disabled={!form.UHID}
+                onClick={() => { window.location.href = `/nursing-notes?uhid=${encodeURIComponent(form.UHID)}&mode=discharge`; }} />
+              <Pill n={3} role="reception"
+                label="Final payment"
+                sub="TPA / cash settlement"
+                isActive={done1}
+                disabled={!form.UHID}
+                onClick={() => { window.location.href = `/discharge-queue?uhid=${encodeURIComponent(form.UHID)}`; }} />
+              <Pill n={4} role="finalize"
+                label="Finalize & free bed"
+                sub={done1 ? "Discharge + release" : "Save first"}
+                isActive={done1}
+                disabled={!lastSavedId || finalizing || saving}
+                onClick={handleFinalize} />
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ══ CATALOGUE ══ */}
       {view === "catalogue" && (
@@ -863,15 +1344,55 @@ export default function DischargeSummaryPage() {
       {/* ══ FORM ══ */}
       {view === "form" && selectedDept && (
         <div>
-          {/* Dept banner */}
-          <div style={{ background: selectedDept.color + "10", border: `1.5px solid ${selectedDept.color}30`, borderRadius: 12, padding: "12px 18px", marginBottom: 14, display: "flex", alignItems: "center", gap: 12 }}>
-            <span style={{ width: 38, height: 38, borderRadius: 10, background: selectedDept.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <i className={`pi ${selectedDept.icon}`} style={{ fontSize: 18, color: selectedDept.color }} />
+          {/* Dept banner — gradient hero strip with template stats */}
+          <div style={{
+            background: `linear-gradient(135deg, ${selectedDept.color}, ${hexShade(selectedDept.color, -40)})`,
+            borderRadius: 14,
+            padding: "16px 22px",
+            marginBottom: 18,
+            display: "flex",
+            alignItems: "center",
+            gap: 16,
+            color: "#fff",
+            boxShadow: `0 4px 16px ${hexA(selectedDept.color, 0.3)}`,
+            flexWrap: "wrap",
+          }}>
+            <span style={{
+              width: 48, height: 48, borderRadius: 12,
+              background: "rgba(255,255,255,.22)",
+              border: "1.5px solid rgba(255,255,255,.35)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              flexShrink: 0,
+            }}>
+              <i className={`pi ${selectedDept.icon}`} style={{ fontSize: 22, color: "#fff" }} />
             </span>
-            <div>
-              <div style={{ fontWeight: 800, fontSize: 14, color: selectedDept.color }}>{selectedDept.label} — Discharge Summary</div>
-              <div style={{ fontSize: 11, color: C.muted }}>NABH COP.7 — Pre-loaded with department-specific template</div>
+            <div style={{ flex: 1, minWidth: 200 }}>
+              <div style={{ fontWeight: 800, fontSize: 17, letterSpacing: "-.2px" }}>
+                {selectedDept.label} <span style={{ opacity: .85, fontWeight: 600 }}>· Discharge Summary</span>
+              </div>
+              <div style={{ fontSize: 11.5, opacity: .85, marginTop: 3, display: "flex", gap: 12, flexWrap: "wrap" }}>
+                <span><i className="pi pi-verified" style={{ fontSize: 10, marginRight: 4 }} />NABH COP.7</span>
+                <span>·</span>
+                <span>{selectedDept.template.investigations?.length || 0} investigations</span>
+                <span>·</span>
+                <span>{selectedDept.template.medications?.length || 0} medications</span>
+                <span>·</span>
+                <span>{selectedDept.template.procedures?.length || 0} procedures pre-loaded</span>
+              </div>
             </div>
+            <button
+              onClick={() => setView("catalogue")}
+              style={{
+                padding: "9px 16px", borderRadius: 8,
+                background: "rgba(255,255,255,.18)",
+                border: "1.5px solid rgba(255,255,255,.3)",
+                color: "#fff", fontWeight: 700, fontSize: 12,
+                cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
+              }}
+            >
+              <i className="pi pi-th-large" style={{ fontSize: 11 }} />
+              Change template
+            </button>
           </div>
 
           {/* Patient Details */}
@@ -879,36 +1400,36 @@ export default function DischargeSummaryPage() {
             <G4>
               <F label="UHID" required>
                 <div style={{ display: "flex", gap: 6 }}>
-                  <input style={{ ...fld, flex: 1 }} value={form.UHID} onChange={upd("UHID")} />
+                  <input className="his-field" style={{ flex: 1 }} value={form.UHID} onChange={upd("UHID")} />
                   <button onClick={searchPatient} style={{ padding: "8px 10px", borderRadius: 7, border: "none", background: color, color: "white", cursor: "pointer" }}>
                     <i className="pi pi-search" />
                   </button>
                 </div>
               </F>
-              <F label="Patient Name" required><input style={fld} value={form.patientName} onChange={upd("patientName")} /></F>
-              <F label="Age"><input style={fld} value={form.age} onChange={upd("age")} placeholder="e.g. 45 years" /></F>
+              <F label="Patient Name" required><input className="his-field" value={form.patientName} onChange={upd("patientName")} /></F>
+              <F label="Age"><input className="his-field" value={form.age} onChange={upd("age")} placeholder="e.g. 45 years" /></F>
               <F label="Gender">
-                <select style={sel} value={form.gender} onChange={upd("gender")}>
+                <select className="his-select" value={form.gender} onChange={upd("gender")}>
                   <option value="">Select</option>
                   {["Male","Female","Other"].map(g => <option key={g}>{g}</option>)}
                 </select>
               </F>
-              <F label="Contact Number"><input style={fld} value={form.contactNumber} onChange={upd("contactNumber")} /></F>
-              <F label="IPD Number"><input style={fld} value={form.ipdNo} onChange={upd("ipdNo")} /></F>
-              <F label="Admission Date"><input style={fld} type="date" value={form.admissionDate} onChange={upd("admissionDate")} /></F>
-              <F label="Discharge Date"><input style={fld} type="date" value={form.dischargeDate} onChange={upd("dischargeDate")} /></F>
-              <F label="Duration of Stay"><input style={{ ...fld, background: "#f8fafc", fontWeight: 700 }} value={form.stayDays ? `${form.stayDays} days` : ""} readOnly /></F>
-              <F label="Consultant / Doctor" required><input style={fld} value={form.doctorName} onChange={upd("doctorName")} /></F>
-              <F label="Reg. No."><input style={fld} value={form.doctorRegNo} onChange={upd("doctorRegNo")} /></F>
+              <F label="Contact Number"><input className="his-field" value={form.contactNumber} onChange={upd("contactNumber")} /></F>
+              <F label="IPD Number"><input className="his-field" value={form.ipdNo} onChange={upd("ipdNo")} /></F>
+              <F label="Admission Date"><input className="his-field" type="date" value={form.admissionDate} onChange={upd("admissionDate")} /></F>
+              <F label="Discharge Date"><input className="his-field" type="date" value={form.dischargeDate} onChange={upd("dischargeDate")} /></F>
+              <F label="Duration of Stay"><input className="his-field" style={{ background: "#f8fafc", fontWeight: 700 }} value={form.stayDays ? `${form.stayDays} days` : ""} readOnly /></F>
+              <F label="Consultant / Doctor" required><input className="his-field" value={form.doctorName} onChange={upd("doctorName")} /></F>
+              <F label="Reg. No."><input className="his-field" value={form.doctorRegNo} onChange={upd("doctorRegNo")} /></F>
               <F label="Condition on Discharge">
-                <select style={sel} value={form.conditionOnDischarge} onChange={upd("conditionOnDischarge")}>
+                <select className="his-select" value={form.conditionOnDischarge} onChange={upd("conditionOnDischarge")}>
                   {["Stable","Improved","Critical","LAMA","Expired","Transferred"].map(c => <option key={c}>{c}</option>)}
                 </select>
               </F>
             </G4>
             <div style={{ marginTop: 12 }}>
               <F label="Co-consultants">
-                <input style={fld} value={form.consultants} onChange={upd("consultants")} placeholder="e.g. Dr. Sharma (Cardiology), Dr. Gupta (Nephrology)" />
+                <input className="his-field" value={form.consultants} onChange={upd("consultants")} placeholder="e.g. Dr. Sharma (Cardiology), Dr. Gupta (Nephrology)" />
               </F>
             </div>
           </Section>
@@ -917,18 +1438,18 @@ export default function DischargeSummaryPage() {
           <Section title="Diagnosis" icon="pi-file-check" color={color} nabh>
             <G2>
               <F label="Admitting / Provisional Diagnosis" required>
-                <textarea style={ta} value={form.admittingDiagnosis} onChange={upd("admittingDiagnosis")}
+                <textarea className="his-textarea" value={form.admittingDiagnosis} onChange={upd("admittingDiagnosis")}
                   placeholder={selectedDept.template.admissionReasonPrompt} />
               </F>
               <F label="Final Diagnosis (Discharge)" required>
-                <textarea style={ta} value={form.finalDiagnosis} onChange={upd("finalDiagnosis")}
+                <textarea className="his-textarea" value={form.finalDiagnosis} onChange={upd("finalDiagnosis")}
                   placeholder={selectedDept.template.dischargeDiagnosisPrompt} />
               </F>
             </G2>
             <G2 gap={12}>
-              <F label="ICD-10 Code"><input style={fld} value={form.icdCode} onChange={upd("icdCode")} placeholder="e.g. J18.0, I21.1" /></F>
+              <F label="ICD-10 Code"><input className="his-field" value={form.icdCode} onChange={upd("icdCode")} placeholder="e.g. J18.0, I21.1" /></F>
               <F label="Co-morbidities / Background History">
-                <input style={fld} value={form.comorbidities} onChange={upd("comorbidities")} placeholder="e.g. T2DM, HTN, CKD Stage 3" />
+                <input className="his-field" value={form.comorbidities} onChange={upd("comorbidities")} placeholder="e.g. T2DM, HTN, CKD Stage 3" />
               </F>
             </G2>
           </Section>
@@ -936,18 +1457,18 @@ export default function DischargeSummaryPage() {
           {/* History & Course */}
           <Section title="Clinical Summary" icon="pi-book" color={color} nabh>
             <F label="History of Presenting Illness">
-              <textarea style={{ ...ta, minHeight: 90 }} value={form.historyOfPresentIllness} onChange={upd("historyOfPresentIllness")}
+              <textarea className="his-textarea" style={{ minHeight: 90 }} value={form.historyOfPresentIllness} onChange={upd("historyOfPresentIllness")}
                 placeholder={selectedDept.template.admissionReasonPrompt} />
             </F>
             <div style={{ marginTop: 12 }}>
               <F label="Hospital Course & Treatment" required>
-                <textarea style={{ ...ta, minHeight: 110 }} value={form.courseInHospital} onChange={upd("courseInHospital")}
+                <textarea className="his-textarea" style={{ minHeight: 110 }} value={form.courseInHospital} onChange={upd("courseInHospital")}
                   placeholder={selectedDept.template.coursePrompt} />
               </F>
             </div>
             <div style={{ marginTop: 12 }}>
               <F label="Significant Clinical Findings">
-                <textarea style={ta} value={form.significantFindings} onChange={upd("significantFindings")}
+                <textarea className="his-textarea" value={form.significantFindings} onChange={upd("significantFindings")}
                   placeholder="Vitals at discharge, notable examination findings…" />
               </F>
             </div>
@@ -958,22 +1479,22 @@ export default function DischargeSummaryPage() {
             <Section title="Operative Details" icon="pi-wrench" color={color}>
               <G3>
                 <F label="Procedure Performed">
-                  <input style={fld} value={form.operativeProcedure} onChange={upd("operativeProcedure")} placeholder="e.g. Laparoscopic Appendicectomy" />
+                  <input className="his-field" value={form.operativeProcedure} onChange={upd("operativeProcedure")} placeholder="e.g. Laparoscopic Appendicectomy" />
                 </F>
                 <F label="Type of Anaesthesia">
-                  <select style={sel} value={form.anaesthesiaType} onChange={upd("anaesthesiaType")}>
+                  <select className="his-select" value={form.anaesthesiaType} onChange={upd("anaesthesiaType")}>
                     <option value="">Select</option>
                     {["General Anaesthesia","Spinal Anaesthesia","Epidural","Local Anaesthesia","MAC/Sedation"].map(a => <option key={a}>{a}</option>)}
                   </select>
                 </F>
                 <F label="Operative Findings">
-                  <input style={fld} value={form.operativeFindings} onChange={upd("operativeFindings")} placeholder="Key intraoperative findings" />
+                  <input className="his-field" value={form.operativeFindings} onChange={upd("operativeFindings")} placeholder="Key intraoperative findings" />
                 </F>
               </G3>
               {selectedDept.key === "ORTHOPAEDICS" && (
                 <div style={{ marginTop: 10 }}>
                   <F label="Implant / Hardware Details">
-                    <input style={fld} value={form.implantDetails} onChange={upd("implantDetails")} placeholder="e.g. Titanium IM nail 10x380mm, DHS 135° — Lot No. XYZ123" />
+                    <input className="his-field" value={form.implantDetails} onChange={upd("implantDetails")} placeholder="e.g. Titanium IM nail 10x380mm, DHS 135° — Lot No. XYZ123" />
                   </F>
                 </div>
               )}
@@ -984,16 +1505,16 @@ export default function DischargeSummaryPage() {
             <Section title="Obstetric / Neonatal Details" icon="pi-heart-fill" color={color}>
               <G3>
                 <F label="Mode of Delivery">
-                  <select style={sel} value={form.deliveryType} onChange={upd("deliveryType")}>
+                  <select className="his-select" value={form.deliveryType} onChange={upd("deliveryType")}>
                     <option value="">Select</option>
                     {["Normal Vaginal Delivery","LSCS","Forceps Delivery","Vacuum Delivery","Pre-term","IUFD"].map(d => <option key={d}>{d}</option>)}
                   </select>
                 </F>
                 <F label="Baby Details">
-                  <input style={fld} value={form.babyDetails} onChange={upd("babyDetails")} placeholder="e.g. Live male, 3.1 kg, APGAR 9/10, full term" />
+                  <input className="his-field" value={form.babyDetails} onChange={upd("babyDetails")} placeholder="e.g. Live male, 3.1 kg, APGAR 9/10, full term" />
                 </F>
                 <F label="Neonatal Notes">
-                  <input style={fld} value={form.neonatalNotes} onChange={upd("neonatalNotes")} placeholder="NICU admission, jaundice, feeding…" />
+                  <input className="his-field" value={form.neonatalNotes} onChange={upd("neonatalNotes")} placeholder="NICU admission, jaundice, feeding…" />
                 </F>
               </G3>
             </Section>
@@ -1003,10 +1524,10 @@ export default function DischargeSummaryPage() {
             <Section title="Growth & Immunisation" icon="pi-chart-bar" color={color}>
               <G3>
                 <F label="Weight / Height / Head Circumference">
-                  <input style={fld} value={form.growthPercentile} onChange={upd("growthPercentile")} placeholder="e.g. Wt 15kg (50th %ile), Ht 95cm" />
+                  <input className="his-field" value={form.growthPercentile} onChange={upd("growthPercentile")} placeholder="e.g. Wt 15kg (50th %ile), Ht 95cm" />
                 </F>
                 <F label="Immunisation Given During Admission">
-                  <input style={fld} value={form.immunisationGiven} onChange={upd("immunisationGiven")} placeholder="e.g. OPV dose 2, Vitamin A" />
+                  <input className="his-field" value={form.immunisationGiven} onChange={upd("immunisationGiven")} placeholder="e.g. OPV dose 2, Vitamin A" />
                 </F>
               </G3>
             </Section>
@@ -1016,10 +1537,10 @@ export default function DischargeSummaryPage() {
             <Section title="Cardiac Investigations" icon="pi-chart-line" color={color}>
               <G3>
                 <F label="Echocardiogram EF (%)">
-                  <input style={fld} value={form.echoEF} onChange={upd("echoEF")} placeholder="e.g. 45%" />
+                  <input className="his-field" value={form.echoEF} onChange={upd("echoEF")} placeholder="e.g. 45%" />
                 </F>
                 <F label="ECG on Discharge">
-                  <input style={fld} value={form.ecgOnDischarge} onChange={upd("ecgOnDischarge")} placeholder="e.g. Sinus rhythm, no ST changes" />
+                  <input className="his-field" value={form.ecgOnDischarge} onChange={upd("ecgOnDischarge")} placeholder="e.g. Sinus rhythm, no ST changes" />
                 </F>
               </G3>
             </Section>
@@ -1029,10 +1550,10 @@ export default function DischargeSummaryPage() {
             <Section title="Neurological Status" icon="pi-bolt" color={color}>
               <G3>
                 <F label="Stroke Type / EEG Findings">
-                  <input style={fld} value={form.strokeType} onChange={upd("strokeType")} placeholder="e.g. Ischaemic Stroke, MCA territory" />
+                  <input className="his-field" value={form.strokeType} onChange={upd("strokeType")} placeholder="e.g. Ischaemic Stroke, MCA territory" />
                 </F>
                 <F label="NIHSS / GCS on Discharge">
-                  <input style={fld} value={form.nihssOnDischarge} onChange={upd("nihssOnDischarge")} placeholder="e.g. NIHSS 4, GCS 14" />
+                  <input className="his-field" value={form.nihssOnDischarge} onChange={upd("nihssOnDischarge")} placeholder="e.g. NIHSS 4, GCS 14" />
                 </F>
               </G3>
             </Section>
@@ -1042,59 +1563,79 @@ export default function DischargeSummaryPage() {
             <Section title="Oncology Details" icon="pi-filter" color={color}>
               <G3>
                 <F label="Tumour / Disease Stage">
-                  <input style={fld} value={form.tumorStage} onChange={upd("tumorStage")} placeholder="e.g. Stage IIIA, cT3N1M0" />
+                  <input className="his-field" value={form.tumorStage} onChange={upd("tumorStage")} placeholder="e.g. Stage IIIA, cT3N1M0" />
                 </F>
                 <F label="Next Chemo / OPD Date">
-                  <input style={fld} type="date" value={form.nextChemoDate} onChange={upd("nextChemoDate")} />
+                  <input className="his-field" type="date" value={form.nextChemoDate} onChange={upd("nextChemoDate")} />
                 </F>
               </G3>
             </Section>
           )}
 
           {/* Investigations */}
-          <Section title="Key Investigations" icon="pi-list" color={color} nabh>
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 1.5fr 1fr 1fr auto", gap: 6, marginBottom: 8, padding: "4px 0" }}>
-              {["Investigation","Result","Unit","Status",""].map(h => (
-                <div key={h} style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>{h}</div>
+          <Section title="Key Investigations" icon="pi-list" color={color} nabh
+            sub={`${investigations.length} investigation${investigations.length === 1 ? "" : "s"} recorded`}
+            badge={investigations.length ? `${investigations.length}` : null}>
+            <TableShell cols={INV_COLS} color={color}
+              empty={investigations.length === 0 ? "No investigations recorded — click Add to start." : null}>
+              {investigations.map((inv, idx) => (
+                <InvRow key={idx} inv={inv} idx={idx} color={color} onChange={updateInv} onRemove={removeInv} />
               ))}
-            </div>
-            {investigations.map((inv, idx) => (
-              <InvRow key={idx} inv={inv} idx={idx} color={color} onChange={updateInv} onRemove={removeInv} />
-            ))}
-            <button onClick={addInv} style={{ padding: "6px 14px", borderRadius: 7, border: `1.5px dashed ${color}50`, background: color + "06", color, fontWeight: 600, fontSize: 12, cursor: "pointer", marginTop: 4 }}>
-              <i className="pi pi-plus" style={{ marginRight: 5, fontSize: 10 }} />Add Investigation
+            </TableShell>
+            <button onClick={addInv} style={{
+              padding: "10px 18px", borderRadius: 8,
+              border: `1.5px dashed ${hexA(color, 0.4)}`,
+              background: hexA(color, 0.04), color,
+              fontWeight: 700, fontSize: 12, cursor: "pointer",
+              marginTop: 12, transition: "all .15s",
+              display: "inline-flex", alignItems: "center", gap: 7,
+            }}
+              onMouseEnter={e => { e.currentTarget.style.background = hexA(color, 0.1); e.currentTarget.style.borderStyle = "solid"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = hexA(color, 0.04); e.currentTarget.style.borderStyle = "dashed"; }}>
+              <i className="pi pi-plus" style={{ fontSize: 10 }} />Add Investigation
             </button>
           </Section>
 
           {/* Procedures */}
-          <Section title="Procedures Performed" icon="pi-cog" color={color} defaultOpen={procedures.length > 0}>
-            {procedures.length > 0 && (
-              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1.5fr 2fr 1.5fr auto", gap: 6, marginBottom: 8 }}>
-                {["Procedure","Date","Surgeon","Findings","Complications",""].map(h => (
-                  <div key={h} style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>{h}</div>
-                ))}
-              </div>
-            )}
-            {procedures.map((proc, idx) => (
-              <ProcRow key={idx} proc={proc} idx={idx} onChange={updateProc} onRemove={removeProc} />
-            ))}
-            <button onClick={addProc} style={{ padding: "6px 14px", borderRadius: 7, border: `1.5px dashed ${color}50`, background: color + "06", color, fontWeight: 600, fontSize: 12, cursor: "pointer", marginTop: 4 }}>
-              <i className="pi pi-plus" style={{ marginRight: 5, fontSize: 10 }} />Add Procedure
+          <Section title="Procedures Performed" icon="pi-cog" color={color}
+            sub={`${procedures.length} procedure${procedures.length === 1 ? "" : "s"} during stay`}
+            badge={procedures.length ? `${procedures.length}` : null}
+            defaultOpen={procedures.length > 0}>
+            <TableShell cols={PROC_COLS} color={color}
+              empty={procedures.length === 0 ? "No procedures performed during stay." : null}>
+              {procedures.map((proc, idx) => (
+                <ProcRow key={idx} proc={proc} idx={idx} onChange={updateProc} onRemove={removeProc} />
+              ))}
+            </TableShell>
+            <button onClick={addProc} style={{
+              padding: "10px 18px", borderRadius: 8,
+              border: `1.5px dashed ${hexA(color, 0.4)}`,
+              background: hexA(color, 0.04), color,
+              fontWeight: 700, fontSize: 12, cursor: "pointer",
+              marginTop: 12, display: "inline-flex", alignItems: "center", gap: 7,
+            }}>
+              <i className="pi pi-plus" style={{ fontSize: 10 }} />Add Procedure
             </button>
           </Section>
 
           {/* Discharge Medications */}
-          <Section title="Discharge Medications" icon="pi-box" color={color} nabh>
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1.5fr auto", gap: 6, marginBottom: 8 }}>
-              {["Drug","Dose","Route","Frequency","Duration","Instructions",""].map(h => (
-                <div key={h} style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>{h}</div>
+          <Section title="Discharge Medications" icon="pi-box" color={color} nabh
+            sub={`${medications.length} medication${medications.length === 1 ? "" : "s"} prescribed on discharge`}
+            badge={medications.length ? `${medications.length}` : null}>
+            <TableShell cols={MED_COLS} color={color}
+              empty={medications.length === 0 ? "No discharge medications yet — click Add to start." : null}>
+              {medications.map((med, idx) => (
+                <MedRow key={idx} med={med} idx={idx} color={color} onChange={updateMed} onRemove={removeMed} />
               ))}
-            </div>
-            {medications.map((med, idx) => (
-              <MedRow key={idx} med={med} idx={idx} color={color} onChange={updateMed} onRemove={removeMed} />
-            ))}
-            <button onClick={addMed} style={{ padding: "6px 14px", borderRadius: 7, border: `1.5px dashed ${color}50`, background: color + "06", color, fontWeight: 600, fontSize: 12, cursor: "pointer", marginTop: 4 }}>
-              <i className="pi pi-plus" style={{ marginRight: 5, fontSize: 10 }} />Add Medication
+            </TableShell>
+            <button onClick={addMed} style={{
+              padding: "10px 18px", borderRadius: 8,
+              border: `1.5px dashed ${hexA(color, 0.4)}`,
+              background: hexA(color, 0.04), color,
+              fontWeight: 700, fontSize: 12, cursor: "pointer",
+              marginTop: 12, display: "inline-flex", alignItems: "center", gap: 7,
+            }}>
+              <i className="pi pi-plus" style={{ fontSize: 10 }} />Add Medication
             </button>
           </Section>
 
@@ -1102,18 +1643,18 @@ export default function DischargeSummaryPage() {
           <Section title="Discharge Advice" icon="pi-info-circle" color={color} nabh>
             <G2>
               <F label="Diet Advice">
-                <textarea style={ta} value={form.dietAdvice} onChange={upd("dietAdvice")} />
+                <textarea className="his-textarea" value={form.dietAdvice} onChange={upd("dietAdvice")} />
               </F>
               <F label="Activity / Exercise Advice">
-                <textarea style={ta} value={form.activityAdvice} onChange={upd("activityAdvice")} />
+                <textarea className="his-textarea" value={form.activityAdvice} onChange={upd("activityAdvice")} />
               </F>
               {(selectedDept.key === "SURGERY" || selectedDept.key === "GYNAECOLOGY" || selectedDept.key === "ORTHOPAEDICS") && (
                 <F label="Wound Care Instructions">
-                  <textarea style={ta} value={form.woundCare} onChange={upd("woundCare")} placeholder="Dressing frequency, signs of infection to watch…" />
+                  <textarea className="his-textarea" value={form.woundCare} onChange={upd("woundCare")} placeholder="Dressing frequency, signs of infection to watch…" />
                 </F>
               )}
               <F label="Special Instructions">
-                <textarea style={ta} value={form.specialInstructions} onChange={upd("specialInstructions")}
+                <textarea className="his-textarea" value={form.specialInstructions} onChange={upd("specialInstructions")}
                   placeholder={selectedDept.template.specialInstructionsPrompt} />
               </F>
             </G2>
@@ -1133,13 +1674,13 @@ export default function DischargeSummaryPage() {
                   ))}
                 </div>
               </F>
-              <F label="Follow-up Date"><input style={fld} type="date" value={form.followUpDate} onChange={upd("followUpDate")} /></F>
-              <F label="Follow-up Doctor"><input style={fld} value={form.followUpDoctor} onChange={upd("followUpDoctor")} /></F>
-              <F label="Department / OPD"><input style={fld} value={form.followUpDepartment} onChange={upd("followUpDepartment")} /></F>
+              <F label="Follow-up Date"><input className="his-field" type="date" value={form.followUpDate} onChange={upd("followUpDate")} /></F>
+              <F label="Follow-up Doctor"><input className="his-field" value={form.followUpDoctor} onChange={upd("followUpDoctor")} /></F>
+              <F label="Department / OPD"><input className="his-field" value={form.followUpDepartment} onChange={upd("followUpDepartment")} /></F>
             </G4>
             <div style={{ marginTop: 12 }}>
               <F label="Follow-up Instructions">
-                <input style={fld} value={form.followUpInstructions} onChange={upd("followUpInstructions")}
+                <input className="his-field" value={form.followUpInstructions} onChange={upd("followUpInstructions")}
                   placeholder="e.g. Fasting blood sugar on follow-up. Bring all reports." />
               </F>
             </div>
@@ -1152,7 +1693,7 @@ export default function DischargeSummaryPage() {
               NABH requirement: Patients must be informed of warning signs that require immediate emergency care.
             </div>
             <F label="When to Return to Emergency">
-              <textarea style={{ ...ta, minHeight: 90 }} value={form.emergencyWarnings} onChange={upd("emergencyWarnings")} />
+              <textarea className="his-textarea" style={{ minHeight: 90 }} value={form.emergencyWarnings} onChange={upd("emergencyWarnings")} />
             </F>
           </Section>
 
@@ -1169,8 +1710,12 @@ export default function DischargeSummaryPage() {
               <button onClick={openPrint} style={{ padding: "9px 20px", borderRadius: 8, border: `1.5px solid ${color}`, background: "white", color, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
                 <i className="pi pi-eye" style={{ marginRight: 6 }} />Preview
               </button>
-              <button onClick={handleSave} disabled={saving} style={{ padding: "9px 24px", borderRadius: 8, border: "none", background: saving ? C.muted : color, color: "white", fontWeight: 700, fontSize: 13, cursor: saving ? "not-allowed" : "pointer" }}>
-                {saving ? "Saving…" : <><i className="pi pi-save" style={{ marginRight: 6 }} />Save & Print</>}
+              <button onClick={handleSave} disabled={saving || finalizing} style={{ padding: "9px 24px", borderRadius: 8, border: "none", background: saving ? C.muted : color, color: "white", fontWeight: 700, fontSize: 13, cursor: saving ? "not-allowed" : "pointer" }}>
+                {saving ? "Saving…" : <><i className="pi pi-save" style={{ marginRight: 6 }} />Save Draft</>}
+              </button>
+              <button onClick={handleFinalize} disabled={finalizing || saving || !lastSavedId} style={{ padding: "9px 24px", borderRadius: 8, border: "none", background: finalizing ? C.muted : "#15803d", color: "white", fontWeight: 700, fontSize: 13, cursor: finalizing || !lastSavedId ? "not-allowed" : "pointer", opacity: !lastSavedId ? 0.55 : 1 }}
+                      title={lastSavedId ? "Finalize, discharge patient, release bed" : "Save the draft first"}>
+                {finalizing ? "Finalizing…" : <><i className="pi pi-check" style={{ marginRight: 6 }} />Finalize &amp; Discharge</>}
               </button>
             </div>
           </div>
@@ -1184,5 +1729,14 @@ export default function DischargeSummaryPage() {
         />
       )}
     </div>
+  );
+}
+
+export default function DischargeSummaryPage() {
+  const [sel, setSel] = useState(null);
+  return (
+    <ClinicalLayout onPatientSelect={setSel} selectedId={sel?._id} pageType="discharge">
+      <DischargeSummaryPageContent selectedPatient={sel} />
+    </ClinicalLayout>
   );
 }

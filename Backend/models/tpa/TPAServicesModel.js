@@ -25,12 +25,18 @@ const ServiceSchema = new mongoose.Schema(
           required: [true, "Amount is required"],
           min: [0, "Amount must be positive"],
         },
+        // FIX (audit P7-B7): the legacy cap of 20% silently rejected
+        // diagnostics + radiology rate cards (commonly 30-50%). Cap raised
+        // to 100 (anything above is a data-entry error, not a policy
+        // violation). Use a separate `discountOverrideReason` field to
+        // flag >50% rates for audit review.
         Discount: {
           type: Number,
           default: 0,
           min: [0, "Discount cannot be negative"],
-          max: [20, "Discount cannot exceed 20%"],
+          max: [100, "Discount cannot exceed 100%"],
         },
+        discountOverrideReason: { type: String, default: "" },
         Totalamount: {
           type: Number,
           required: [true, "Total amount is required"],
@@ -53,7 +59,9 @@ ServiceSchema.pre("save", function (next) {
   if (this.services && this.services.length > 0) {
     this.services.forEach((item) => {
       if (item.Amount && item.Discount !== undefined) {
-        const discount = Math.min(item.Discount, 20);
+        // Allow up to 100% (audit P7-B7) — was capped to 20 which clipped
+        // legitimate diagnostic discounts.
+        const discount = Math.max(0, Math.min(item.Discount, 100));
         item.Totalamount = item.Amount - (item.Amount * discount) / 100;
       }
     });
@@ -61,4 +69,6 @@ ServiceSchema.pre("save", function (next) {
   next();
 });
 
-module.exports = mongoose.model("TPAServices", ServiceSchema);
+module.exports =
+  mongoose.models.TPAServices ||
+  mongoose.model("TPAServices", ServiceSchema);

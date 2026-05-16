@@ -1,4 +1,5 @@
 import API_ENDPOINTS from "../config/api";
+import authFetch from "../utils/authFetch";
 
 const extractId = (obj) => {
   if (!obj) return null;
@@ -28,7 +29,7 @@ export const wardService = {
         ? `${API_ENDPOINTS.WARDS}?${queryParams}`
         : API_ENDPOINTS.WARDS;
 
-      const response = await fetch(url);
+      const response = await authFetch(url);
       const result = await response.json();
 
       console.log("Raw API response:", result);
@@ -56,7 +57,7 @@ export const wardService = {
     try {
       console.log("Fetching ward by ID:", id);
 
-      const response = await fetch(`${API_ENDPOINTS.WARDS}/${id}`);
+      const response = await authFetch(`${API_ENDPOINTS.WARDS}/${id}`);
       const result = await response.json();
 
       console.log("Ward by ID response:", result);
@@ -73,7 +74,7 @@ export const wardService = {
     try {
       console.log("Fetching ward details:", id);
 
-      const response = await fetch(`${API_ENDPOINTS.WARDS}/details/${id}`);
+      const response = await authFetch(`${API_ENDPOINTS.WARDS}/details/${id}`);
       const result = await response.json();
 
       console.log("Ward details response:", result);
@@ -106,7 +107,7 @@ export const wardService = {
 
       console.log("Transformed payload:", payload);
 
-      const response = await fetch(API_ENDPOINTS.WARDS, {
+      const response = await authFetch(API_ENDPOINTS.WARDS, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -149,7 +150,7 @@ export const wardService = {
 
       console.log("Transformed payload:", payload);
 
-      const response = await fetch(`${API_ENDPOINTS.WARDS}/${id}`, {
+      const response = await authFetch(`${API_ENDPOINTS.WARDS}/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -176,7 +177,7 @@ export const wardService = {
     try {
       console.log("Deleting ward:", id);
 
-      const response = await fetch(`${API_ENDPOINTS.WARDS}/${id}`, {
+      const response = await authFetch(`${API_ENDPOINTS.WARDS}/${id}`, {
         method: "DELETE",
       });
 

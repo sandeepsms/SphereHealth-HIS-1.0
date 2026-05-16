@@ -1,6 +1,7 @@
 // frontend/pages/services/ChargeableServices.jsx
 // Manages dynamic chargeable services organized by domain (OPD, IPD, Emergency, DayCare, Common)
 import React, { useState, useEffect, useRef } from "react";
+import { API_ENDPOINTS } from "../../config/api";
 
 // PrimeReact Imports
 import { Card } from "primereact/card";
@@ -185,9 +186,7 @@ export default function ChargeableServices() {
   const loadTPA = async () => {
     try {
       const { data } = await import("axios").then((m) =>
-        m.default.get(
-          `${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/tpa`
-        )
+        m.default.get(API_ENDPOINTS.TPA)
       );
       setTpaList(
         (data.data || []).map((t) => ({ label: t.tpaName, value: t._id }))

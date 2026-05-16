@@ -88,7 +88,38 @@ const DoctorSchema = new mongoose.Schema(
       emergency: { type: Number, default: 0 },
     },
 
+    /* ── Live availability (manually set by the doctor) ── */
+    availability: {
+      status: {
+        type: String,
+        enum: ["Available", "InConsultation", "OnBreak", "OnLeave", "Offline"],
+        default: "Offline",
+      },
+      note: { type: String, default: "" },         // e.g. "Back by 2 PM"
+      currentlyServing: { type: Number, default: 0 }, // current OPD token #
+      updatedAt: { type: Date, default: Date.now },
+    },
+
     isActive: { type: Boolean, default: true },
+
+    // Link to the User account that this doctor logs in with.
+    // Set by the doctor-seed script so role-based filtering on OPD / IPD /
+    // ER / Daycare can use `req.user.id` → Doctor → patients.
+    loginUserId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      index: true,
+      default: null,
+    },
+
+    // ── MLC (Medico-Legal Case) — per-doctor MLR series ──────────
+    // 2-letter prefix derived from the doctor's name (e.g. "Rajesh Kumar"→"RK",
+    // single name "Sandeep"→"SP"). Assigned lazily on first MLC creation and
+    // pinned for life so MLR numbers stay stable. Globally unique so the
+    // first two letters of any MLR number identify exactly one doctor.
+    mlcPrefix: { type: String, uppercase: true, sparse: true, unique: true },
+    // Per-doctor running counter for MLR numbers (RK0001, RK0002, …).
+    mlcSeq:    { type: Number, default: 0 },
   },
   { timestamps: true }
 );
@@ -129,7 +160,6 @@ DoctorSchema.pre("save", async function (next) {
 });
 
 // Indexes
-DoctorSchema.index({ doctorId: 1 });
 DoctorSchema.index({ "professional.specialization": 1 });
 DoctorSchema.index({ department: 1 });
 DoctorSchema.index({ isActive: 1 });

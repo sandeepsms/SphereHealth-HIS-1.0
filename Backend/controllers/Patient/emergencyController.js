@@ -1,8 +1,36 @@
 const emergencyService = require("../../services/Patient/emergencyService");
+
+/* ── Role-scope helper ───────────────────────────────────────────
+   Restrict ER list output to the logged-in doctor's own cases. ER records
+   carry `attendingDoctorId` (ObjectId) and `consultantIncharge` (name) —
+   match either so legacy rows without the ObjectId still resolve.        */
+function scopeERByDoctor(req, list) {
+  if (!(req.user?.role === "Doctor" && req.doctorProfile?._id)) return list;
+  const docId   = String(req.doctorProfile._id);
+  const docName = req.doctorProfile.personalInfo?.fullName || "";
+  return list.filter(e =>
+    String(e.attendingDoctorId || "") === docId ||
+    (docName && e.consultantIncharge && e.consultantIncharge.includes(docName))
+  );
+}
+
 class EmergencyController {
   async createEmergencyVisit(req, res) {
     try {
       const visit = await emergencyService.createEmergencyVisit(req.body);
+
+      // ── Auto-billing: fire ER triage charge ──
+      try {
+        const autoBilling = require("../../services/Billing/autoBillingService");
+        const Admission   = require("../../models/Patient/admissionModel");
+        const admission =
+          (visit.UHID && (await Admission.findOne({ UHID: visit.UHID, admissionType: "Emergency" }).sort({ createdAt: -1 })))
+          || { _id: visit._id, UHID: visit.UHID, patientId: visit.patientId, department: null };
+        autoBilling.onEmergencyVisitCreated(visit, admission).catch((e) =>
+          console.error("ER auto-billing error:", e.message)
+        );
+      } catch (e) { /* don't block visit creation */ }
+
       res.status(201).json({
         success: true,
         message: "Emergency visit created successfully",
@@ -24,9 +52,11 @@ class EmergencyController {
         parseInt(limit),
         filters
       );
+      // Doctor-scope: only the logged-in doctor's own ER cases
+      const visits = scopeERByDoctor(req, result.visits || []);
       res.status(200).json({
         success: true,
-        data: result.visits,
+        data: visits,
         pagination: result.pagination,
       });
     } catch (error) {
@@ -246,48 +276,28 @@ class EmergencyController {
 
   async getActiveEmergencies(req, res) {
     try {
-      const emergencies = await emergencyService.getActiveEmergencies();
-      res.status(200).json({
-        success: true,
-        data: emergencies,
-      });
+      const all = await emergencyService.getActiveEmergencies();
+      res.status(200).json({ success: true, data: scopeERByDoctor(req, all) });
     } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: error.message,
-      });
+      res.status(500).json({ success: false, message: error.message });
     }
   }
 
   async getEmergenciesByTriage(req, res) {
     try {
-      const emergencies = await emergencyService.getEmergenciesByTriage(
-        req.params.triageCategory
-      );
-      res.status(200).json({
-        success: true,
-        data: emergencies,
-      });
+      const all = await emergencyService.getEmergenciesByTriage(req.params.triageCategory);
+      res.status(200).json({ success: true, data: scopeERByDoctor(req, all) });
     } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: error.message,
-      });
+      res.status(500).json({ success: false, message: error.message });
     }
   }
 
   async getTodayEmergencies(req, res) {
     try {
-      const emergencies = await emergencyService.getTodayEmergencies();
-      res.status(200).json({
-        success: true,
-        data: emergencies,
-      });
+      const all = await emergencyService.getTodayEmergencies();
+      res.status(200).json({ success: true, data: scopeERByDoctor(req, all) });
     } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: error.message,
-      });
+      res.status(500).json({ success: false, message: error.message });
     }
   }
 
@@ -296,7 +306,7 @@ class EmergencyController {
       const cases = await emergencyService.getMLCCases();
       res.status(200).json({
         success: true,
-        data: cases,
+        data: scopeERByDoctor(req, cases),
       });
     } catch (error) {
       res.status(500).json({

@@ -246,8 +246,13 @@ class TPAServiceService {
         throw new Error("TPA Service not found");
       }
 
-      if (!serviceData.serviceName) {
-        throw new Error("serviceName is required");
+      // FIX (audit P7-B4): the model field is `Name` (capital N) but the
+      // legacy code referenced `serviceName` everywhere — the addService
+      // endpoint was permanently dead. Accept either alias from the
+      // caller and normalise onto the model's `Name` field.
+      const incomingName = serviceData.serviceName || serviceData.Name;
+      if (!incomingName) {
+        throw new Error("Service name is required");
       }
       if (!serviceData.serviceType) {
         throw new Error("serviceType is required");
@@ -259,15 +264,15 @@ class TPAServiceService {
       }
 
       const exists = tpaService.services.some(
-        (s) =>
-          s.serviceName.toLowerCase() === serviceData.serviceName.toLowerCase(),
+        (s) => (s.Name || s.serviceName || "").toLowerCase() === incomingName.toLowerCase(),
       );
 
       if (exists) {
         throw new Error("Service already exists in this TPA Service");
       }
 
-      tpaService.services.push(serviceData);
+      // Normalise both legacy and new keys so storage is consistent.
+      tpaService.services.push({ ...serviceData, Name: incomingName });
       await tpaService.save();
 
       return tpaService.populate("tpaId", "tpaName tpaCode");

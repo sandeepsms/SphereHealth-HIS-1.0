@@ -67,10 +67,10 @@ async function findServiceByName(name, patientType = "IPD") {
 async function getOrCreateBill(admissionId, patientType) {
   const admission = await Admission.findById(admissionId).lean();
   if (!admission) return null;
-  const BillingService = require("./billingService");
-  const svc = new BillingService();
+  // billingService.js exports an INSTANCE — use directly, no `new`.
+  const billingService = require("./billingService");
   try {
-    return await svc.getOrCreateDraftBill(
+    return await billingService.getOrCreateDraftBill(
       admission.UHID,
       patientType || "IPD",
       admissionId.toString()
@@ -109,6 +109,15 @@ async function addItemToBill(bill, service, quantity, source, trigger) {
 
     const freshBill = await PatientBill.findById(bill._id);
     if (!freshBill) return null;
+    // FIX (audit P6-B3): auto-billing was happily pushing new line items onto
+    // bills that were already PAID / CANCELLED / REFUNDED, retroactively
+    // making the patient's "settled" bill look unpaid. Closed bills are now
+    // immutable — caller (createTrigger) decides what to do with the skipped
+    // event (typically it'll spin up a new draft on the next admission day).
+    if (["PAID", "CANCELLED", "REFUNDED"].includes(freshBill.billStatus)) {
+      console.warn(`[AutoBilling] skipping addItemToBill — bill ${freshBill._id} is ${freshBill.billStatus}`);
+      return null;
+    }
     freshBill.billItems.push(item);
     await freshBill.save();
     const savedItem = freshBill.billItems[freshBill.billItems.length - 1];
@@ -707,6 +716,191 @@ async function onOPDAssessmentSaved(opdVisit, admission, doctorName, assessmentI
   });
 }
 
+/**
+ * Called when an IPD / Day Care / Emergency admission is created
+ * (from ReceptionConsole or AdmissionController).
+ *
+ * Fires the initial admission/registration charges:
+ *   - Registration fee
+ *   - Admission charge (per type)
+ *   - First bed-day charge (deferred to daily cron in practice)
+ */
+async function onAdmissionCreated(admissionDoc) {
+  if (!admissionDoc?._id) return [];
+  const triggers = [];
+  // Map Admission.admissionType → BillingTrigger.patientType + PatientBill.visitType
+  // enums. Both target enums use UPPERCASE values; the old "ER"/"DC" codes
+  // silently failed validation and produced ZERO triggers & ZERO bills.
+  const typeCode = {
+    "Planned":   "IPD",
+    "Emergency": "EMERGENCY",
+    "Day Care":  "DAYCARE",
+    "Daycare":   "DAYCARE",
+    "Transfer":  "IPD",
+    "OPD":       "OPD",
+    "Services":  "OPD",
+  }[admissionDoc.admissionType] || "IPD";
+
+  // 1. Registration fee
+  triggers.push(
+    await createTrigger({
+      admissionId:         admissionDoc._id,
+      patientId:           admissionDoc.patientId,
+      UHID:                admissionDoc.UHID,
+      patientType:         typeCode,
+      serviceCode:         `REG-${typeCode}`,
+      serviceName:         `${typeCode} Registration Fee`,
+      quantity:            1,
+      sourceType:          "Admission",
+      sourceDocumentId:    admissionDoc._id,
+      sourceDocumentModel: "Admission",
+      orderedBy:           admissionDoc.createdBy || "Reception",
+      orderedByRole:       "Receptionist",
+      orderDetails:        `${admissionDoc.admissionType} admission registration`,
+      autoCharge:          true,
+      department:          admissionDoc.department,
+      notes:               `Admitted: ${admissionDoc.reasonForAdmission || ""}`,
+    }).catch((e) => { console.error("Registration fee trigger error:", e.message); return null; })
+  );
+
+  // 2. Admission charge (one-time)
+  triggers.push(
+    await createTrigger({
+      admissionId:         admissionDoc._id,
+      patientId:           admissionDoc.patientId,
+      UHID:                admissionDoc.UHID,
+      patientType:         typeCode,
+      serviceCode:         `ADM-${typeCode}`,
+      serviceName:         `${typeCode} Admission Charge`,
+      quantity:            1,
+      sourceType:          "Admission",
+      sourceDocumentId:    admissionDoc._id,
+      sourceDocumentModel: "Admission",
+      orderedBy:           "System",
+      orderedByRole:       "System",
+      orderDetails:        `Initial ${admissionDoc.admissionType} admission charge`,
+      autoCharge:          true,
+      department:          admissionDoc.department,
+    }).catch((e) => { console.error("Admission charge trigger error:", e.message); return null; })
+  );
+
+  // 3. First bed-day charge (if IPD/Daycare) — daily cron handles subsequent days
+  if (typeCode === "IPD" || typeCode === "DAYCARE") {
+    triggers.push(
+      await createTrigger({
+        admissionId:         admissionDoc._id,
+        patientId:           admissionDoc.patientId,
+        UHID:                admissionDoc.UHID,
+        patientType:         typeCode,
+        serviceCode:         `BED-DAY-${typeCode}`,
+        serviceName:         `${typeCode} Bed Charge (Day 1)`,
+        quantity:            1,
+        sourceType:          "BedCharge",
+        sourceDocumentId:    admissionDoc._id,
+        sourceDocumentModel: "Admission",
+        orderedBy:           "System",
+        orderedByRole:       "System",
+        orderDetails:        `Daily bed charge for ${admissionDoc.admissionType}`,
+        autoCharge:          true,
+        dailyDedup:          true,
+        department:          admissionDoc.department,
+      }).catch((e) => { console.error("Bed-day trigger error:", e.message); return null; })
+    );
+  }
+
+  return triggers.filter(Boolean);
+}
+
+/**
+ * Called when an Emergency visit is created (in parallel with onAdmissionCreated).
+ * Fires the ER-specific triage/observation charge.
+ */
+async function onEmergencyVisitCreated(emergencyVisit, admission) {
+  if (!admission?._id) return null;
+  return createTrigger({
+    admissionId:         admission._id,
+    patientId:           admission.patientId,
+    UHID:                admission.UHID,
+    // PatientBill.visitType enum is "EMERGENCY" — "ER" silently failed
+    // validation and emergency triage was never billed.
+    patientType:         "EMERGENCY",
+    serviceCode:         "ER-TRIAGE",
+    serviceName:         `Emergency Triage (${emergencyVisit.triageCategory || "Yellow"})`,
+    quantity:            1,
+    sourceType:          "Emergency",
+    sourceDocumentId:    emergencyVisit._id,
+    sourceDocumentModel: "Emergency",
+    orderedBy:           "Reception",
+    orderedByRole:       "Receptionist",
+    orderDetails:        `Triage: ${emergencyVisit.triageCategory} | ${emergencyVisit.presentingComplaint || ""}`,
+    autoCharge:          true,
+    department:          admission.department,
+    notes:               `MLC: ${emergencyVisit.isMLC ? emergencyVisit.mlcNumber || "Yes" : "No"} | Mode: ${emergencyVisit.modeOfArrival || ""}`,
+  });
+}
+
+/**
+ * Daily bed-charge accrual.
+ *
+ * For every IPD / Day-Care admission that is still Active, fire a
+ * BED-DAY-* trigger with dailyDedup. The dedup logic inside
+ * createTrigger() ensures the same admission cannot be charged more
+ * than once per calendar day, so this is safe to call repeatedly
+ * (e.g. every 6 hours).
+ *
+ * Returns { active, fired, skipped } counts.
+ */
+async function runDailyBedChargeAccrual() {
+  const active = await Admission.find({
+    status: "Active",
+    admissionType: { $in: ["Planned", "Emergency", "Day Care", "Daycare", "Transfer"] },
+  }).lean();
+
+  const typeMap = {
+    Planned:   "IPD",
+    Emergency: "EMERGENCY",
+    "Day Care":"DAYCARE",
+    Daycare:   "DAYCARE",
+    Transfer:  "IPD",
+  };
+
+  let fired = 0, skipped = 0, errors = 0;
+  for (const adm of active) {
+    const typeCode = typeMap[adm.admissionType] || "IPD";
+    if (typeCode !== "IPD" && typeCode !== "DAYCARE") continue;
+
+    const startMs = new Date(adm.admissionDate || adm.createdAt).getTime();
+    const dayN = Math.max(1, Math.floor((Date.now() - startMs) / 86400000) + 1);
+
+    try {
+      const r = await createTrigger({
+        admissionId:         adm._id,
+        patientId:           adm.patientId,
+        UHID:                adm.UHID,
+        patientType:         typeCode,
+        serviceCode:         `BED-DAY-${typeCode}`,
+        serviceName:         `${typeCode} Bed Charge (Day ${dayN})`,
+        quantity:            1,
+        sourceType:          "BedCharge",
+        sourceDocumentId:    adm._id,
+        sourceDocumentModel: "Admission",
+        orderedBy:           "System",
+        orderedByRole:       "System",
+        orderDetails:        `Auto daily bed accrual — Day ${dayN}`,
+        autoCharge:          true,
+        dailyDedup:          true,
+        department:          adm.department,
+      });
+      if (r?.skipped) skipped++;
+      else if (r?.trigger) fired++;
+    } catch (e) {
+      errors++;
+      console.error(`[daily-accrual] admission ${adm._id}:`, e.message);
+    }
+  }
+  return { active: active.length, fired, skipped, errors, at: new Date() };
+}
+
 module.exports = {
   onNurseNoteSaved,
   onDoctorNoteSaved,
@@ -722,4 +916,9 @@ module.exports = {
   onOPDRegistered,
   onOPDVitalsRecorded,
   onOPDAssessmentSaved,
+  // Admission/ER handlers
+  onAdmissionCreated,
+  onEmergencyVisitCreated,
+  // Daily accrual (callable from cron + admin endpoint)
+  runDailyBedChargeAccrual,
 };

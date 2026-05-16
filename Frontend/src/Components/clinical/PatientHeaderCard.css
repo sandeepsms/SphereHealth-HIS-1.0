@@ -1,0 +1,307 @@
+/* ════════════════════════════════════════════════════════════
+   PatientHeaderCard — shared across Doctor & Nursing panels
+   All visual styling lives here (no inline JSX styles).
+   Design tokens from his-design.css.
+   ════════════════════════════════════════════════════════════ */
+
+/* Loader / empty card (shown before patient is selected) */
+.phc-load-wrap {
+  max-width: 560px;
+  margin: 0 auto;
+  padding-top: 8px;
+}
+.phc-load-card {
+  background: var(--his-card, #ffffff);
+  border: 1.5px solid var(--his-border, #e2e6ea);
+  border-radius: 14px;
+  padding: 24px 28px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, .06);
+}
+.phc-load-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.phc-load-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  background: var(--his-accent-light, #eff6ff);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--his-accent, #1e40af);
+  font-size: 16px;
+}
+.phc-load-title { font-weight: 700; font-size: 15px; color: #1f2937; }
+.phc-load-sub   { color: var(--his-muted, #6b7280); font-size: 12px; }
+.phc-load-divider {
+  height: 1px;
+  background: var(--his-border, #e2e6ea);
+  margin: 16px 0;
+}
+.phc-load-form {
+  display: flex;
+  gap: 10px;
+}
+.phc-load-input {
+  flex: 1;
+  padding: 9px 12px;
+  border: 1.5px solid var(--his-border, #e2e6ea);
+  border-radius: 8px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px;
+  outline: none;
+}
+.phc-load-input:focus { border-color: var(--his-accent, #1e40af); }
+.phc-load-btn {
+  padding: 9px 22px;
+  background: var(--his-accent, #1e40af);
+  color: #fff;
+  border: 0;
+  border-radius: 8px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  box-shadow: 0 4px 12px rgba(30, 64, 175, .25);
+}
+.phc-load-btn[disabled] { cursor: not-allowed; opacity: .6; }
+
+/* ═════ Patient banner (after patient loaded) ═════ */
+.phc-card {
+  background: var(--his-card, #ffffff);
+  border: 1px solid var(--his-border, #e2e6ea);
+  border-radius: 16px;
+  margin-bottom: 14px;
+  overflow: hidden;
+  box-shadow: 0 2px 12px rgba(15, 118, 110, .08);
+}
+.phc-accent-bar {
+  height: 4px;
+  background: linear-gradient(90deg, var(--his-accent, #1e40af), var(--his-teal, #0d9488), #34d399);
+}
+.phc-body { padding: 18px 22px; }
+
+.phc-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.phc-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex: 1;
+  min-width: 0;
+}
+.phc-avatar {
+  flex-shrink: 0;
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--his-accent, #1e40af), var(--his-teal, #0d9488));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(30, 64, 175, .25);
+}
+.phc-avatar-text {
+  font-size: 20px;
+  font-weight: 900;
+  color: #fff;
+  letter-spacing: -1px;
+}
+.phc-info { flex: 1; min-width: 0; }
+
+.phc-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 5px;
+}
+.phc-name {
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--his-text, #1a1d23);
+}
+
+/* Chips: admission type / blood / day-stay */
+.phc-chip {
+  padding: 2px 10px;
+  border-radius: 20px;
+  font-size: 10px;
+  font-weight: 700;
+  border: 1px solid transparent;
+}
+.phc-chip-ipd       { background: #f5f3ff; color: #7c3aed; border-color: #c4b5fd; }
+.phc-chip-emergency { background: #fef2f2; color: #dc2626; border-color: #fca5a5; }
+.phc-chip-daycare   { background: #eff6ff; color: #1d4ed8; border-color: #93c5fd; }
+.phc-chip-blood {
+  background: var(--his-red-light, #fef2f2);
+  color: var(--his-red, #dc2626);
+  border-color: #fca5a5;
+  font-family: 'DM Mono', monospace;
+}
+.phc-chip-day {
+  background: #f0fdf4;
+  color: #15803d;
+  border-color: #86efac;
+}
+
+.phc-meta-row {
+  display: flex;
+  gap: 6px 20px;
+  flex-wrap: wrap;
+}
+.phc-meta {
+  font-size: 12px;
+  color: var(--his-muted, #6b7280);
+}
+.phc-meta strong {
+  font-weight: 700;
+  color: var(--his-text, #1a1d23);
+}
+.phc-meta-id {
+  font-weight: 700;
+  color: var(--his-accent, #1e40af);
+  font-family: 'DM Mono', monospace;
+}
+
+/* Right side action buttons */
+.phc-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.phc-btn {
+  padding: 7px 13px;
+  border-radius: 9px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: #fff;
+  border: 1.5px solid var(--his-border, #e2e6ea);
+  color: var(--his-text, #1a1d23);
+  transition: transform .15s, box-shadow .15s;
+}
+.phc-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(30, 64, 175, .15);
+}
+.phc-btn-accent {
+  background: var(--his-accent-light, #eff6ff);
+  color: var(--his-accent, #1e40af);
+  border-color: rgba(30, 64, 175, .25);
+  box-shadow: 0 2px 8px rgba(30, 64, 175, .15);
+}
+.phc-btn-accent:hover {
+  box-shadow: 0 4px 14px rgba(30, 64, 175, .25);
+}
+.phc-btn-danger {
+  background: var(--his-red-light, #fef2f2);
+  color: var(--his-red, #dc2626);
+  border-color: #fca5a5;
+}
+.phc-btn-danger:hover {
+  box-shadow: 0 4px 14px rgba(220, 38, 38, .2);
+}
+.phc-btn i { font-size: 11px; }
+
+/* Footer strip: consultant + diagnosis + allergies */
+.phc-footer {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--his-border, #e2e6ea);
+  display: flex;
+  gap: 8px 24px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.phc-footer-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.phc-footer-label {
+  font-size: 12px;
+  color: var(--his-muted, #6b7280);
+}
+.phc-footer-value {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--his-text, #1a1d23);
+}
+.phc-footer-icon {
+  font-size: 11px;
+  color: var(--his-muted, #6b7280);
+}
+
+/* Allergies */
+.phc-allergies {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.phc-allergy-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--his-red, #dc2626);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.phc-allergy-chip {
+  background: var(--his-red-light, #fef2f2);
+  color: var(--his-red, #dc2626);
+  border: 1px solid #fca5a5;
+  padding: 2px 9px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* Diagnosis row (doctor-specific extra fields) */
+.phc-dx-grid {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--his-border, #e2e6ea);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px 24px;
+}
+.phc-dx-item { min-width: 0; }
+.phc-dx-label {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .8px;
+  color: var(--his-muted, #6b7280);
+  margin-bottom: 2px;
+}
+.phc-dx-value {
+  font-weight: 600;
+  color: var(--his-text, #1a1d23);
+  font-size: 12px;
+}
+
+/* Small responsive tweak */
+@media (max-width: 720px) {
+  .phc-actions { width: 100%; justify-content: flex-start; }
+  .phc-avatar { width: 48px; height: 48px; border-radius: 12px; }
+  .phc-name { font-size: 15px; }
+}

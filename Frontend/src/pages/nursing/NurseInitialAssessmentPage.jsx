@@ -29,14 +29,6 @@ const C = {
   pink: "#be185d", pinkL: "#fdf2f8",
 };
 
-const fld = {
-  padding: "9px 12px", border: "1.5px solid #e2e8f0", borderRadius: 8,
-  fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#0f172a",
-  outline: "none", background: "white", width: "100%", boxSizing: "border-box",
-};
-const sel = { ...fld, cursor: "pointer" };
-const ta  = { ...fld, resize: "vertical", minHeight: 80 };
-
 /* ── Section card ── */
 function Section({ title, icon, color = C.primary, badge, nabh, children, defaultOpen = true }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -193,8 +185,9 @@ function VitalCard({ label, value, unit, placeholder, onChange, type = "number",
         <span style={{ fontSize: 10, fontWeight: 700, color, textTransform: "uppercase", letterSpacing: ".5px" }}>{label}</span>
       </div>
       <input
+        className="his-field"
         style={{
-          ...fld, background: "white", border: `1.5px solid ${color}30`,
+          border: `1.5px solid ${color}30`,
           fontWeight: 700, fontSize: 15, color,
         }}
         type={type} step={step} value={value} onChange={onChange}
@@ -514,8 +507,9 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
           value={uhid}
           onChange={e => setUhid(e.target.value)}
           onKeyDown={e => e.key === "Enter" && handleSearch()}
+          className="his-field"
           style={{
-            ...fld, flex: 1, minWidth: 220, maxWidth: 320,
+            flex: 1, minWidth: 220, maxWidth: 320,
             border: `1.5px solid ${C.primary}40`, borderRadius: 9,
           }}
           placeholder="Enter UHID or Admission No. and press Enter…"
@@ -607,25 +601,25 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
       <Section title="Patient Identification & Assessment Details" icon="pi-id-card" color={C.primary} nabh>
         <G3>
           <F label="Assessment Date & Time" required>
-            <input style={fld} type="datetime-local" defaultValue={assessedAt} readOnly />
+            <input className="his-field" type="datetime-local" defaultValue={assessedAt} readOnly />
           </F>
           <F label="Nurse Name" required>
             <input
-              style={fld} value={signoff.nurseName}
+              className="his-field" value={signoff.nurseName}
               onChange={e => setSignoff(p => ({ ...p, nurseName: e.target.value }))}
               placeholder="Full name of assessing nurse"
             />
           </F>
           <F label="Nurse ID / Registration No.">
             <input
-              style={fld} value={signoff.nurseId}
+              className="his-field" value={signoff.nurseId}
               onChange={e => setSignoff(p => ({ ...p, nurseId: e.target.value }))}
               placeholder="Employee ID"
             />
           </F>
           <F label="Designation">
             <select
-              style={sel} value={signoff.designation}
+              className="his-select" value={signoff.designation}
               onChange={e => setSignoff(p => ({ ...p, designation: e.target.value }))}
             >
               {["Staff Nurse","Senior Staff Nurse","Charge Nurse","Head Nurse","Nursing Supervisor","ICU Nurse"].map(d => (
@@ -681,11 +675,11 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
             <div style={{ fontSize: 10, color: C.muted }}>Auto-calculated</div>
           </div>
           <F label="Blood Glucose (mg/dL)">
-            <input style={fld} type="number" value={vitals.glucometer}
+            <input className="his-field" type="number" value={vitals.glucometer}
               onChange={upd(setVitals)("glucometer")} placeholder="mg/dL" />
           </F>
           <F label="GCS Score (3–15)">
-            <input style={fld} type="number" min="3" max="15" value={vitals.gcs}
+            <input className="his-field" type="number" min="3" max="15" value={vitals.gcs}
               onChange={upd(setVitals)("gcs")} placeholder="15 = fully conscious" />
           </F>
         </div>
@@ -699,17 +693,17 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
 
         <G3>
           <F label="Level of Consciousness">
-            <select style={sel} value={vitals.consciousnessLevel} onChange={upd(setVitals)("consciousnessLevel")}>
+            <select className="his-select" value={vitals.consciousnessLevel} onChange={upd(setVitals)("consciousnessLevel")}>
               {["Alert","Verbal Response","Pain Response","Unresponsive","Sedated"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
           <F label="Pupil Reaction">
-            <select style={sel} value={vitals.pupils} onChange={upd(setVitals)("pupils")}>
+            <select className="his-select" value={vitals.pupils} onChange={upd(setVitals)("pupils")}>
               {["Equal & Reacting","Unequal","Non-Reactive","Sluggish"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
           <F label="Oxygen Support">
-            <select style={sel} value={systems.oxygenSupport} onChange={upd(setSystems)("oxygenSupport")}>
+            <select className="his-select" value={systems.oxygenSupport} onChange={upd(setSystems)("oxygenSupport")}>
               {["No","Nasal Prongs","Face Mask","Non-Rebreather Mask","Ventilator","CPAP","BiPAP"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
@@ -720,36 +714,36 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
       <Section title="General Appearance & Nutrition" icon="pi-eye" color={C.green} nabh>
         <G3>
           <F label="Nutrition Risk">
-            <select style={sel} value={nutrition.nutritionRisk} onChange={upd(setNutrition)("nutritionRisk")}>
+            <select className="his-select" value={nutrition.nutritionRisk} onChange={upd(setNutrition)("nutritionRisk")}>
               {["Low","Moderate","High"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
           <F label="Hydration Status">
-            <select style={sel} value={nutrition.hydrationStatus} onChange={upd(setNutrition)("hydrationStatus")}>
+            <select className="his-select" value={nutrition.hydrationStatus} onChange={upd(setNutrition)("hydrationStatus")}>
               {["Adequate","Mild dehydration","Moderate dehydration","Severe dehydration"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
           <F label="Feeding Method">
-            <select style={sel} value={nutrition.feedingMethod} onChange={upd(setNutrition)("feedingMethod")}>
+            <select className="his-select" value={nutrition.feedingMethod} onChange={upd(setNutrition)("feedingMethod")}>
               {["Oral","NG Tube","PEG","TPN","IV Fluids only","NPO"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
           <F label="Swallowing Difficulty">
-            <select style={sel} value={nutrition.swallowingDifficulty} onChange={upd(setNutrition)("swallowingDifficulty")}>
+            <select className="his-select" value={nutrition.swallowingDifficulty} onChange={upd(setNutrition)("swallowingDifficulty")}>
               {["No","Mild","Moderate","Severe — NPO"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
           <F label="Dietary Restrictions">
-            <input style={fld} value={nutrition.dietaryRestrictions}
+            <input className="his-field" value={nutrition.dietaryRestrictions}
               onChange={upd(setNutrition)("dietaryRestrictions")}
               placeholder="e.g. Diabetic diet, Low sodium…" />
           </F>
           <F label="Last Meal Time">
-            <input style={fld} type="datetime-local" value={nutrition.lastMealTime}
+            <input className="his-field" type="datetime-local" value={nutrition.lastMealTime}
               onChange={upd(setNutrition)("lastMealTime")} />
           </F>
           <F label="Known Food Allergies">
-            <input style={fld} value={nutrition.allergies}
+            <input className="his-field" value={nutrition.allergies}
               onChange={upd(setNutrition)("allergies")}
               placeholder="None / list specific items" />
           </F>
@@ -760,17 +754,17 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
       <Section title="Neurological Assessment" icon="pi-bolt" color={C.blue} nabh>
         <G3>
           <F label="Neurological Status">
-            <select style={sel} value={systems.neuroStatus} onChange={upd(setSystems)("neuroStatus")}>
+            <select className="his-select" value={systems.neuroStatus} onChange={upd(setSystems)("neuroStatus")}>
               {["Normal","Confused","Disoriented","Lethargic","Obtunded","Stuporous","Comatose"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
           <F label="Level of Consciousness">
-            <select style={sel} value={vitals.consciousnessLevel} onChange={upd(setVitals)("consciousnessLevel")}>
+            <select className="his-select" value={vitals.consciousnessLevel} onChange={upd(setVitals)("consciousnessLevel")}>
               {["Alert","Verbal Response","Pain Response","Unresponsive","Sedated"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
           <F label="GCS Total Score">
-            <input style={fld} type="number" min="3" max="15" value={vitals.gcs}
+            <input className="his-field" type="number" min="3" max="15" value={vitals.gcs}
               onChange={upd(setVitals)("gcs")} placeholder="3–15" />
           </F>
         </G3>
@@ -782,7 +776,7 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
         </div>
         <div style={{ marginTop: 14 }}>
           <F label="Neurological Notes" hint="Orientation, behavior, speech, focal deficits">
-            <input style={fld} value={systems.neuroNotes} onChange={upd(setSystems)("neuroNotes")}
+            <input className="his-field" value={systems.neuroNotes} onChange={upd(setSystems)("neuroNotes")}
               placeholder="Any abnormal findings…" />
           </F>
         </div>
@@ -792,22 +786,22 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
       <Section title="Cardiovascular Assessment" icon="pi-heart" color={C.red} nabh>
         <G4>
           <F label="Heart Sounds">
-            <select style={sel} value={systems.heartSounds} onChange={upd(setSystems)("heartSounds")}>
+            <select className="his-select" value={systems.heartSounds} onChange={upd(setSystems)("heartSounds")}>
               {["Normal","Murmur","Irregular","Muffled","S3/S4 Gallop"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
           <F label="Capillary Refill">
-            <select style={sel} value={systems.capRefill} onChange={upd(setSystems)("capRefill")}>
+            <select className="his-select" value={systems.capRefill} onChange={upd(setSystems)("capRefill")}>
               {["< 2 sec","> 2 sec","Delayed"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
           <F label="Peripheral Pulse">
-            <select style={sel} value={systems.peripheralPulse} onChange={upd(setSystems)("peripheralPulse")}>
+            <select className="his-select" value={systems.peripheralPulse} onChange={upd(setSystems)("peripheralPulse")}>
               {["Present","Absent","Weak","Bounding"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
           <F label="CV Notes">
-            <input style={fld} value={systems.cvNotes} onChange={upd(setSystems)("cvNotes")}
+            <input className="his-field" value={systems.cvNotes} onChange={upd(setSystems)("cvNotes")}
               placeholder="Palpitations, chest pain…" />
           </F>
         </G4>
@@ -817,22 +811,22 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
       <Section title="Respiratory Assessment" icon="pi-cloud" color={C.primary} nabh>
         <G3>
           <F label="Breathing Pattern">
-            <select style={sel} value={systems.respiratoryPattern} onChange={upd(setSystems)("respiratoryPattern")}>
+            <select className="his-select" value={systems.respiratoryPattern} onChange={upd(setSystems)("respiratoryPattern")}>
               {["Normal","Labored","Shallow","Deep","Cheyne-Stokes","Kussmaul"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
           <F label="Breath Sounds">
-            <select style={sel} value={systems.breathSounds} onChange={upd(setSystems)("breathSounds")}>
+            <select className="his-select" value={systems.breathSounds} onChange={upd(setSystems)("breathSounds")}>
               {["Clear","Crackles","Wheezes","Rhonchi","Absent","Diminished"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
           <F label="Oxygen Support">
-            <select style={sel} value={systems.oxygenSupport} onChange={upd(setSystems)("oxygenSupport")}>
+            <select className="his-select" value={systems.oxygenSupport} onChange={upd(setSystems)("oxygenSupport")}>
               {["No","Nasal Prongs","Face Mask","Non-Rebreather Mask","Ventilator","CPAP","BiPAP"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
           <F label="Respiratory Notes">
-            <input style={fld} value={systems.respiratoryNotes} onChange={upd(setSystems)("respiratoryNotes")}
+            <input className="his-field" value={systems.respiratoryNotes} onChange={upd(setSystems)("respiratoryNotes")}
               placeholder="Cough, sputum, dyspnea…" />
           </F>
         </G3>
@@ -842,21 +836,21 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
       <Section title="Gastrointestinal Assessment" icon="pi-circle" color={C.amber} nabh>
         <G4>
           <F label="Abdomen">
-            <select style={sel} value={systems.abdomen} onChange={upd(setSystems)("abdomen")}>
+            <select className="his-select" value={systems.abdomen} onChange={upd(setSystems)("abdomen")}>
               {["Soft","Distended","Rigid","Tender","Guarding"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
           <F label="Bowel Sounds">
-            <select style={sel} value={systems.bowelSounds} onChange={upd(setSystems)("bowelSounds")}>
+            <select className="his-select" value={systems.bowelSounds} onChange={upd(setSystems)("bowelSounds")}>
               {["Present","Absent","Hyperactive","Hypoactive"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
           <F label="Last Bowel Movement">
-            <input style={fld} type="date" value={systems.lastBowelMovement}
+            <input className="his-field" type="date" value={systems.lastBowelMovement}
               onChange={upd(setSystems)("lastBowelMovement")} />
           </F>
           <F label="GI Notes">
-            <input style={fld} value={systems.giNotes} onChange={upd(setSystems)("giNotes")}
+            <input className="his-field" value={systems.giNotes} onChange={upd(setSystems)("giNotes")}
               placeholder="Nausea, vomiting, appetite…" />
           </F>
         </G4>
@@ -867,17 +861,17 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
         <SubSystem title="Musculoskeletal" color={C.purple} icon="pi-arrows-alt">
           <G3>
             <F label="Mobility">
-              <select style={sel} value={systems.mobility} onChange={upd(setSystems)("mobility")}>
+              <select className="his-select" value={systems.mobility} onChange={upd(setSystems)("mobility")}>
                 {["Independent","Requires assistance","Dependent","Bedbound"].map(v => <option key={v}>{v}</option>)}
               </select>
             </F>
             <F label="Assistive Device">
-              <select style={sel} value={systems.assistiveDevice} onChange={upd(setSystems)("assistiveDevice")}>
+              <select className="his-select" value={systems.assistiveDevice} onChange={upd(setSystems)("assistiveDevice")}>
                 {["None","Walker","Crutches","Cane","Wheelchair","Bedrest"].map(v => <option key={v}>{v}</option>)}
               </select>
             </F>
             <F label="Notes">
-              <input style={fld} value={systems.musculoNotes} onChange={upd(setSystems)("musculoNotes")}
+              <input className="his-field" value={systems.musculoNotes} onChange={upd(setSystems)("musculoNotes")}
                 placeholder="Range of motion, contractures…" />
             </F>
           </G3>
@@ -886,22 +880,22 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
         <SubSystem title="Skin Integrity" color={C.pink} icon="pi-star">
           <G4>
             <F label="Skin Color">
-              <select style={sel} value={systems.skinColor} onChange={upd(setSystems)("skinColor")}>
+              <select className="his-select" value={systems.skinColor} onChange={upd(setSystems)("skinColor")}>
                 {["Normal","Pale","Jaundiced","Cyanotic","Flushed","Mottled"].map(v => <option key={v}>{v}</option>)}
               </select>
             </F>
             <F label="Skin Turgor">
-              <select style={sel} value={systems.skinTurgor} onChange={upd(setSystems)("skinTurgor")}>
+              <select className="his-select" value={systems.skinTurgor} onChange={upd(setSystems)("skinTurgor")}>
                 {["Normal","Poor","Very Poor"].map(v => <option key={v}>{v}</option>)}
               </select>
             </F>
             <F label="Skin Intact">
-              <select style={sel} value={systems.skinIntact} onChange={upd(setSystems)("skinIntact")}>
+              <select className="his-select" value={systems.skinIntact} onChange={upd(setSystems)("skinIntact")}>
                 {["Yes","No"].map(v => <option key={v}>{v}</option>)}
               </select>
             </F>
             <F label="Edema">
-              <select style={sel} value={systems.edema} onChange={upd(setSystems)("edema")}>
+              <select className="his-select" value={systems.edema} onChange={upd(setSystems)("edema")}>
                 {["No","Pitting +1","Pitting +2","Pitting +3","Pitting +4","Non-pitting"].map(v => <option key={v}>{v}</option>)}
               </select>
             </F>
@@ -910,11 +904,11 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
             <div style={{ marginTop: 12 }}>
               <G2>
                 <F label="Wound / Lesion Location">
-                  <input style={fld} value={systems.woundLocation} onChange={upd(setSystems)("woundLocation")}
+                  <input className="his-field" value={systems.woundLocation} onChange={upd(setSystems)("woundLocation")}
                     placeholder="e.g. Left heel, sacrum…" />
                 </F>
                 <F label="Wound Description">
-                  <input style={fld} value={systems.woundDescription} onChange={upd(setSystems)("woundDescription")}
+                  <input className="his-field" value={systems.woundDescription} onChange={upd(setSystems)("woundDescription")}
                     placeholder="Size, color, drainage, stage…" />
                 </F>
               </G2>
@@ -955,15 +949,15 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
           {systems.ivAccess !== "No" && (
             <G3>
               <F label="IV Site">
-                <input style={fld} value={systems.ivSite} onChange={upd(setSystems)("ivSite")}
+                <input className="his-field" value={systems.ivSite} onChange={upd(setSystems)("ivSite")}
                   placeholder="e.g. Right forearm" />
               </F>
               <F label="Cannula Size">
-                <input style={fld} value={systems.ivSize} onChange={upd(setSystems)("ivSize")}
+                <input className="his-field" value={systems.ivSize} onChange={upd(setSystems)("ivSize")}
                   placeholder="e.g. 18G" />
               </F>
               <F label="Insertion Date">
-                <input style={fld} type="date" value={systems.ivInsertedDate}
+                <input className="his-field" type="date" value={systems.ivInsertedDate}
                   onChange={upd(setSystems)("ivInsertedDate")} />
               </F>
             </G3>
@@ -1018,32 +1012,32 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
       <Section title="Psychosocial Assessment" icon="pi-comments" color={C.purple} nabh>
         <G3>
           <F label="Emotional Status">
-            <select style={sel} value={psycho.emotionalStatus} onChange={upd(setPsycho)("emotionalStatus")}>
+            <select className="his-select" value={psycho.emotionalStatus} onChange={upd(setPsycho)("emotionalStatus")}>
               {["Calm","Anxious","Fearful","Depressed","Agitated","Angry","Withdrawn"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
           <F label="Cognitive Status">
-            <select style={sel} value={psycho.cognitiveStatus} onChange={upd(setPsycho)("cognitiveStatus")}>
+            <select className="his-select" value={psycho.cognitiveStatus} onChange={upd(setPsycho)("cognitiveStatus")}>
               {["Oriented x3","Oriented x2","Oriented x1","Disoriented","Confused","Impaired"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
           <F label="Cooperation Level">
-            <select style={sel} value={psycho.cooperationLevel} onChange={upd(setPsycho)("cooperationLevel")}>
+            <select className="his-select" value={psycho.cooperationLevel} onChange={upd(setPsycho)("cooperationLevel")}>
               {["Cooperative","Uncooperative","Requires encouragement","Unable to assess"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
           <F label="Anxiety Level">
-            <select style={sel} value={psycho.anxietyLevel} onChange={upd(setPsycho)("anxietyLevel")}>
+            <select className="his-select" value={psycho.anxietyLevel} onChange={upd(setPsycho)("anxietyLevel")}>
               {["None","Mild","Moderate","Severe"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
           <F label="Language Barrier">
-            <select style={sel} value={psycho.languageBarrier} onChange={upd(setPsycho)("languageBarrier")}>
+            <select className="his-select" value={psycho.languageBarrier} onChange={upd(setPsycho)("languageBarrier")}>
               {["No","Yes — Interpreter needed"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
           <F label="Social Support">
-            <select style={sel} value={psycho.socialSupport} onChange={upd(setPsycho)("socialSupport")}>
+            <select className="his-select" value={psycho.socialSupport} onChange={upd(setPsycho)("socialSupport")}>
               {["Family Present","Friend Present","Caregiver Present","Alone","No Support"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
@@ -1075,7 +1069,7 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
               { key: "frictionShear",     label: "Friction & Shear",   opts: [["1","Problem"],["2","Potential Problem"],["3","No Apparent Problem"]] },
             ].map(({ key, label, opts }) => (
               <F key={key} label={label}>
-                <select style={sel} value={braden[key]} onChange={e => setBraden(p => ({ ...p, [key]: e.target.value }))}>
+                <select className="his-select" value={braden[key]} onChange={e => setBraden(p => ({ ...p, [key]: e.target.value }))}>
                   {opts.map(([v, l]) => <option key={v} value={v}>{v} — {l}</option>)}
                 </select>
               </F>
@@ -1107,7 +1101,7 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
               { key: "mentalStatus",       label: "Mental Status",         opts: [["0","Oriented"],["15","Forgets Limitations"]] },
             ].map(({ key, label, opts }) => (
               <F key={key} label={label}>
-                <select style={sel} value={morse[key]} onChange={e => setMorse(p => ({ ...p, [key]: e.target.value }))}>
+                <select className="his-select" value={morse[key]} onChange={e => setMorse(p => ({ ...p, [key]: e.target.value }))}>
                   {opts.map(([v, l]) => <option key={v} value={v}>{v} — {l}</option>)}
                 </select>
               </F>
@@ -1131,39 +1125,39 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
       <Section title="Patient Education & Discharge Planning" icon="pi-sign-out" color={C.slateMid} nabh>
         <G3>
           <F label="Lives Alone">
-            <select style={sel} value={discharge.livesAlone} onChange={upd(setDischarge)("livesAlone")}>
+            <select className="his-select" value={discharge.livesAlone} onChange={upd(setDischarge)("livesAlone")}>
               {["No","Yes"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
           <F label="Primary Caregiver">
-            <select style={sel} value={discharge.caregiver} onChange={upd(setDischarge)("caregiver")}>
+            <select className="his-select" value={discharge.caregiver} onChange={upd(setDischarge)("caregiver")}>
               {["Family","Spouse","Child","Paid Caregiver","None"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
           <F label="Home Support Available">
-            <select style={sel} value={discharge.homeSupportAvailable} onChange={upd(setDischarge)("homeSupportAvailable")}>
+            <select className="his-select" value={discharge.homeSupportAvailable} onChange={upd(setDischarge)("homeSupportAvailable")}>
               {["Yes","No","Unknown"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
           <F label="Social Work Referral Needed">
-            <select style={sel} value={discharge.socialWorkReferral} onChange={upd(setDischarge)("socialWorkReferral")}>
+            <select className="his-select" value={discharge.socialWorkReferral} onChange={upd(setDischarge)("socialWorkReferral")}>
               {["No","Yes"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
           <F label="Anticipated Discharge Needs">
-            <input style={fld} value={discharge.anticipatedDischargeNeeds}
+            <input className="his-field" value={discharge.anticipatedDischargeNeeds}
               onChange={upd(setDischarge)("anticipatedDischargeNeeds")}
               placeholder="Home nursing, physiotherapy, dressing…" />
           </F>
           <F label="Education Needed">
-            <input style={fld} value={discharge.educationNeeded}
+            <input className="his-field" value={discharge.educationNeeded}
               onChange={upd(setDischarge)("educationNeeded")}
               placeholder="Medication, diet, wound care…" />
           </F>
         </G3>
         <div style={{ marginTop: 14 }}>
           <F label="Discharge Plan Notes">
-            <textarea style={ta} value={discharge.dischargePlanNotes}
+            <textarea className="his-textarea" value={discharge.dischargePlanNotes}
               onChange={upd(setDischarge)("dischargePlanNotes")}
               placeholder="Any additional discharge planning observations…" />
           </F>

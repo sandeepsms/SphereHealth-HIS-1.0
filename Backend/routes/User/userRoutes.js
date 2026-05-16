@@ -1,44 +1,42 @@
 const express = require("express");
 const router = express.Router();
 const userController = require("../../controllers/User/userController");
+const { authenticate, requireAction } = require("../../middleware/auth");
 
-router.post("/", userController.createUser);
+/* All /users endpoints sit BELOW the global `authenticate` mount in
+   routes/index.js, so req.user is always populated here. Each route
+   now declares the action it requires; the central permissions map
+   (Backend/config/permissions.js) decides which roles may pass.
+   Today every users.* action is Admin-only, but that becomes a
+   one-file change if HR/Receptionist roles ever need partial access. */
 
-router.get("/", userController.getAllUsers);
+// ─── Read endpoints — Admin only ───────────────────────────────
+router.get("/",                              requireAction("users.read"), userController.getAllUsers);
+router.get("/stats",                         requireAction("users.read"), userController.getUserStats);
+router.get("/search",                        requireAction("users.read"), userController.searchUsers);
+router.get("/doctors",                       requireAction("users.read"), userController.getAllDoctors);
+router.get("/nurses",                        requireAction("users.read"), userController.getAllNurses);
+router.get("/doctors/specialization/:specialization", requireAction("users.read"), userController.getDoctorsBySpecialization);
+router.get("/department/:departmentId",      requireAction("users.read"), userController.getStaffByDepartment);
+router.get("/department/:departmentId/hod",  requireAction("users.read"), userController.getHOD);
+router.get("/employee/:employeeId",          requireAction("users.read"), userController.getUserByEmployeeId);
 
-router.get("/stats", userController.getUserStats);
+// ─── Self-service password change (any authenticated user) ─────
+// MUST be declared BEFORE the param routes — otherwise Express matches
+// `/:id` first and runs updateUser with id="change-password". The
+// controller reads req.user.id, so authentication is the only gate.
+router.put("/change-password",               authenticate, userController.changePassword);
 
-router.get("/search", userController.searchUsers);
+// ─── Read-by-id ────────────────────────────────────────────────
+router.get("/:id",                           requireAction("users.read"), userController.getUserById);
 
-router.get("/doctors", userController.getAllDoctors);
-
-router.get("/nurses", userController.getAllNurses);
-
-router.get(
-  "/doctors/specialization/:specialization",
-  userController.getDoctorsBySpecialization
-);
-
-router.get("/department/:departmentId", userController.getStaffByDepartment);
-
-router.get("/department/:departmentId/hod", userController.getHOD);
-
-router.post("/hod/assign", userController.assignHOD);
-
-router.get("/employee/:employeeId", userController.getUserByEmployeeId);
-
-router.get("/:id", userController.getUserById);
-
-router.put("/:id", userController.updateUser);
-
-router.put("/:id/deactivate", userController.deactivateUser);
-
-router.put("/:id/activate", userController.activateUser);
-
-router.put("/:id/reset-password", userController.adminResetPassword);
-
-router.patch("/:id/signature", userController.adminSetSignature);
-
-router.put("/change-password", userController.changePassword);
+// ─── Write endpoints — Admin only ──────────────────────────────
+router.post("/",                             requireAction("users.write"),          userController.createUser);
+router.post("/hod/assign",                   requireAction("users.write"),          userController.assignHOD);
+router.put("/:id",                           requireAction("users.write"),          userController.updateUser);
+router.put("/:id/deactivate",                requireAction("users.deactivate"),     userController.deactivateUser);
+router.put("/:id/activate",                  requireAction("users.deactivate"),     userController.activateUser);
+router.put("/:id/reset-password",            requireAction("users.reset-password"), userController.adminResetPassword);
+router.patch("/:id/signature",               requireAction("users.signature"),      userController.adminSetSignature);
 
 module.exports = router;

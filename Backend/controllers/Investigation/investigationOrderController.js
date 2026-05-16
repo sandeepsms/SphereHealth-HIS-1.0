@@ -5,7 +5,7 @@ exports.create = async (req, res) => {
     const data = await svc.createOrder(req.body);
     // ── Auto-billing hook ──────────────────────────────────────
     try {
-      const autoBilling = require("../../services/billing/autoBillingService");
+      const autoBilling = require("../../services/Billing/autoBillingService");
       autoBilling.onInvestigationOrdered(data).catch(() => {});
     } catch {}
     res.status(201).json({ success: true, data });
@@ -66,7 +66,7 @@ exports.enterResults = async (req, res) => {
     const data = await svc.enterResults(req.params.id, req.body);
     // ── Auto-billing hook ──────────────────────────────────────
     try {
-      const autoBilling = require("../../services/billing/autoBillingService");
+      const autoBilling = require("../../services/Billing/autoBillingService");
       autoBilling.onInvestigationResulted(data).catch(() => {});
     } catch {}
     res.json({ success: true, data });
@@ -89,7 +89,7 @@ exports.verify = async (req, res) => {
     const data = await svc.verifyResults(req.params.id, req.body);
     // ── Auto-billing hook ──────────────────────────────────────
     try {
-      const autoBilling = require("../../services/billing/autoBillingService");
+      const autoBilling = require("../../services/Billing/autoBillingService");
       autoBilling.onInvestigationResulted(data).catch(() => {});
     } catch {}
     res.json({ success: true, data });

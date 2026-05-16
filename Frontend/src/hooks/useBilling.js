@@ -1,8 +1,13 @@
 // frontend/hooks/useBilling.js
 import { useState, useCallback } from "react";
 import axios from "axios";
+import { API_ENDPOINTS } from "../config/api";
 
-const BASE = `${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api`;
+// API_ENDPOINTS.BASE already includes the `/api` segment so callers can
+// just append the resource path. Previous code used VITE_API_URL which
+// the rest of the app doesn't set — production builds were pointing at
+// localhost.
+const BASE = API_ENDPOINTS.BASE;
 
 // ═══════════════════════════════════════════════════════════════
 // useBilling Hook
@@ -136,18 +141,24 @@ export function useBilling() {
   const createAdmission = (data) =>
     call(() => axios.post(`${BASE}/admissions`, data).then((r) => r.data.data));
 
+  // Backend mounts `GET /api/admissions` with a `?UHID=` filter — there's no
+  // dedicated `/admissions/uhid/:UHID` route. Unwrap `admissions` (paginated
+  // service shape) with `data` as fallback.
   const getAdmissions = (UHID) =>
     call(() =>
-      axios.get(`${BASE}/admissions/uhid/${UHID}`).then((r) => r.data.data),
+      axios.get(`${BASE}/admissions`, { params: { UHID } })
+        .then((r) => r.data?.admissions || r.data?.data || [])
     );
 
   const getAllAdmissions = (params = {}) =>
     call(() => axios.get(`${BASE}/admissions`, { params }).then((r) => r.data));
 
+  // Backend uses POST for discharge, not PUT — using PUT 404'd with
+  // "Route not found" so the receptionist's discharge button silently failed.
   const dischargePatient = (id, data) =>
     call(() =>
       axios
-        .put(`${BASE}/admissions/${id}/discharge`, data)
+        .post(`${BASE}/admissions/${id}/discharge`, data)
         .then((r) => r.data.data),
     );
 

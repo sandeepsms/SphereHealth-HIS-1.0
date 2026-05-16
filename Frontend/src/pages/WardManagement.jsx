@@ -1,77 +1,58 @@
-import React, { useState, useEffect } from "react";
-import { DataTable } from "primereact/datatable";
-import { Column } from "primereact/column";
-import { Button } from "primereact/button";
-import { InputText } from "primereact/inputtext";
-import { Tag } from "primereact/tag";
-import { Card } from "primereact/card";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Toast } from "primereact/toast";
 import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
+
 import WardForm from "../Components/ward/WardForm";
+import BedSectionHeader from "../Components/bed/BedSectionHeader";
+import {
+  BmStatStrip, BmCard, BmFilter, BmEmpty, BmPill, BmIconBtn,
+  BmBar, BmAvatar, BmCellStack, BmChip,
+} from "../Components/bed/BedPrimitives";
 import { wardService } from "../Services/wardService";
+
+/* ── Ward type → icon + avatar tone ── */
+const WARD_TYPE_ICON = {
+  General:    { icon: "pi-home",         tone: "blue"   },
+  ICU:        { icon: "pi-heart-fill",   tone: "red"    },
+  NICU:       { icon: "pi-heart",        tone: "pink"   },
+  CCU:        { icon: "pi-heart-fill",   tone: "red"    },
+  Emergency:  { icon: "pi-bolt",         tone: "amber"  },
+  Pediatric:  { icon: "pi-users",        tone: "orange" },
+  Maternity:  { icon: "pi-heart",        tone: "pink"   },
+  Surgical:   { icon: "pi-bookmark",     tone: "purple" },
+  Isolation:  { icon: "pi-shield",       tone: "red"    },
+  HDU:        { icon: "pi-chart-line",   tone: "amber"  },
+  Private:    { icon: "pi-star",         tone: "amber"  },
+  "Day Care": { icon: "pi-sun",          tone: "teal"   },
+};
 
 const WardManagement = () => {
   const [wards, setWards] = useState([]);
   const [selectedWard, setSelectedWard] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [globalFilter, setGlobalFilter] = useState("");
-  const toast = React.useRef(null);
+  const [filter, setFilter] = useState("");
+  const toast = useRef(null);
 
-  useEffect(() => {
-    console.log("Component mounted, loading wards...");
-    loadWards();
-  }, []);
+  useEffect(() => { loadWards(); }, []);
 
   const loadWards = async () => {
     setLoading(true);
     try {
-      console.log("Fetching wards from API...");
       const data = await wardService.getAllWards();
-      console.log("Raw API response:", data);
-
       let wardsArray = [];
+      if (Array.isArray(data)) wardsArray = data;
+      else if (data && Array.isArray(data.data))  wardsArray = data.data;
+      else if (data && Array.isArray(data.wards)) wardsArray = data.wards;
 
-      // Handle different response formats
-      if (Array.isArray(data)) {
-        wardsArray = data;
-      } else if (data && Array.isArray(data.data)) {
-        wardsArray = data.data;
-      } else if (data && Array.isArray(data.wards)) {
-        wardsArray = data.wards;
-      } else {
-        console.warn("Unexpected data format:", data);
-      }
-
-      console.log("Processed wards array:", wardsArray);
-      console.log("Total wards found:", wardsArray.length);
-
-      // Map the data to extract populated fields
-      const mappedWards = wardsArray.map((ward) => {
-        console.log("Processing ward:", ward);
-        return {
-          ...ward,
-          buildingName:
-            ward.building?.buildingName || ward.buildingName || "N/A",
-          floorName: ward.floor?.floorName || ward.floorName || "N/A",
-          floorNumber: ward.floor?.floorNumber || ward.floorNumber || "N/A",
-        };
-      });
-
-      console.log("Mapped wards:", mappedWards);
+      const mappedWards = wardsArray.map((ward) => ({
+        ...ward,
+        buildingName: ward.building?.buildingName || ward.buildingName || "—",
+        floorName:    ward.floor?.floorName       || ward.floorName     || "—",
+        floorNumber:  ward.floor?.floorNumber     || ward.floorNumber   || "—",
+      }));
       setWards(mappedWards);
-
-      if (mappedWards.length > 0) {
-        toast.current?.show({
-          severity: "success",
-          summary: "Success",
-          detail: `Loaded ${mappedWards.length} ward(s)`,
-          life: 2000,
-        });
-      }
     } catch (error) {
-      console.error("Error loading wards:", error);
-      console.error("Error details:", error.response?.data);
       setWards([]);
       toast.current?.show({
         severity: "error",
@@ -84,213 +65,210 @@ const WardManagement = () => {
     }
   };
 
-  const handleEdit = (ward) => {
-    console.log("Editing ward:", ward);
-    setSelectedWard(ward);
-    setShowForm(true);
-  };
+  /* ── Aggregates for the stat strip ── */
+  const stats = useMemo(() => {
+    const active = wards.filter(w => w.isActive).length;
+    const totalRooms = wards.reduce((s, w) => s + (Number(w.totalRooms) || 0), 0);
+    const totalBeds  = wards.reduce((s, w) => s + (Number(w.totalBeds)  || 0), 0);
+    const types = new Set(wards.map(w => w.wardType).filter(Boolean));
+    return [
+      { key: "wards",  label: "Total wards",      value: wards.length, icon: "pi-home",      tone: "blue"  },
+      { key: "active", label: "Active",           value: active,        icon: "pi-check-circle", tone: "green" },
+      { key: "rooms",  label: "Rooms (sum)",      value: totalRooms,    icon: "pi-box",       tone: "purple" },
+      { key: "beds",   label: "Beds (sum)",       value: totalBeds,     icon: "pi-th-large",  tone: "amber" },
+      { key: "types",  label: "Ward types",       value: types.size,    icon: "pi-tag",       tone: "slate" },
+    ];
+  }, [wards]);
+
+  /* ── Filtered rows ── */
+  const filtered = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return wards;
+    return wards.filter(w =>
+      (w.wardName || "").toLowerCase().includes(q) ||
+      (w.wardCode || "").toLowerCase().includes(q) ||
+      (w.wardType || "").toLowerCase().includes(q) ||
+      (w.buildingName || "").toLowerCase().includes(q) ||
+      String(w.floorNumber || "").toLowerCase().includes(q)
+    );
+  }, [wards, filter]);
 
   const handleDelete = (ward) => {
     confirmDialog({
-      message: `Are you sure you want to delete ward ${ward.wardName}?`,
+      message: `Are you sure you want to delete ward "${ward.wardName}"?`,
       header: "Confirmation",
       icon: "pi pi-exclamation-triangle",
       accept: async () => {
         try {
-          console.log("Deleting ward:", ward._id);
           await wardService.deleteWard(ward._id);
-          toast.current?.show({
-            severity: "success",
-            summary: "Success",
-            detail: "Ward deleted successfully",
-            life: 3000,
-          });
+          toast.current?.show({ severity: "success", summary: "Deleted", detail: `Ward ${ward.wardName} removed`, life: 3000 });
           loadWards();
-        } catch (error) {
-          console.error("Error deleting ward:", error);
-          toast.current?.show({
-            severity: "error",
-            summary: "Error",
-            detail: "Failed to delete ward",
-            life: 3000,
-          });
+        } catch {
+          toast.current?.show({ severity: "error", summary: "Error", detail: "Failed to delete ward", life: 3000 });
         }
       },
     });
   };
 
   const handleSave = () => {
-    console.log("Ward saved, reloading wards...");
     setShowForm(false);
     setSelectedWard(null);
-    loadWards(); // Reload wards
-    toast.current?.show({
-      severity: "success",
-      summary: "Success",
-      detail: "Ward saved successfully",
-      life: 3000,
-    });
+    loadWards();
+    toast.current?.show({ severity: "success", summary: "Saved", detail: "Ward saved", life: 2500 });
   };
-
-  const handleFormHide = () => {
-    console.log("Form hidden");
-    setShowForm(false);
-    setSelectedWard(null);
-  };
-
-  const wardTypeBodyTemplate = (rowData) => {
-     return <Tag value={rowData.wardType || "N/A"}   severity={rowData.wardType === "Emergency" ? "danger" : "info"}/>;
-  
-  };
-
-  const statusBodyTemplate = (rowData) => {
-    return (
-      <Tag
-        value={rowData.isActive ? "Active" : "Inactive"}
-        severity={rowData.isActive ? "success" : "danger"}
-        icon={rowData.isActive ? "pi pi-check" : "pi pi-times"}
-      />
-    );
-  };
-
-  const actionBodyTemplate = (rowData) => {
-    return (
-      <div className="flex gap-2">
-        <Button
-          icon="pi pi-pencil"
-          className="p-button-rounded p-button-success p-button-sm"
-          onClick={() => handleEdit(rowData)}
-          tooltip="Edit"
-          tooltipOptions={{ position: "top" }}
-        />
-        <Button
-          icon="pi pi-trash"
-          className="p-button-rounded p-button-danger p-button-sm"
-          onClick={() => handleDelete(rowData)}
-          tooltip="Delete"
-          tooltipOptions={{ position: "top" }}
-        />
-      </div>
-    );
-  };
-
-  const header = (
-    <div className="flex flex-wrap gap-2 align-items-center justify-content-between">
-      <div>
-        <h4 className="m-0">Ward Management</h4>
-        <p className="text-sm text-600 mt-1">Total Wards: {wards.length}</p>
-      </div>
-      <div className="flex gap-2 align-items-center">
-        <span className="p-input-icon-left">
-          <i className="pi pi-search" />
-          <InputText
-            type="search"
-            value={globalFilter}
-            onChange={(e) => setGlobalFilter(e.target.value)}
-            placeholder="Search..."
-          />
-        </span>
-        <Button
-          icon="pi pi-refresh"
-          className="p-button-outlined"
-          onClick={loadWards}
-          loading={loading}
-          tooltip="Refresh"
-          tooltipOptions={{ position: "top" }}
-        />
-        <Button
-          label="Add Ward"
-          icon="pi pi-plus"
-          onClick={() => {
-            setSelectedWard(null);
-            setShowForm(true);
-          }}
-          className="p-button-success"
-        />
-      </div>
-    </div>
-  );
 
   return (
-    <div className="p-4" style={{ marginTop: "80px" }}>
+    <div className="bm-page">
       <Toast ref={toast} />
       <ConfirmDialog />
 
-      <Card className="shadow-1">
-        <DataTable
-          value={wards}
-          paginator
-          rows={10}
-          rowsPerPageOptions={[5, 10, 25, 50]}
-          loading={loading}
-          globalFilter={globalFilter}
-          header={header}
-          emptyMessage="No wards found. Click 'Add Ward' to create one."
-          responsiveLayout="scroll"
-          stripedRows
-          showGridlines
-        >
-          <Column
-            field="wardName"
-            header="Ward Name"
-            sortable
-            style={{ minWidth: "200px" }}
-          />
-          <Column
-            field="wardCode"
-            header="Ward Code"
-            sortable
-            style={{ width: "120px", fontWeight: "bold" }}
-          />
-          <Column
-            field="wardType"
-            header="Ward Type"
-            body={wardTypeBodyTemplate}
-            sortable
-            style={{ width: "150px" }}
-          />
-          <Column
-            field="floorNumber"
-            header="Floor"
-            sortable
-            style={{ width: "100px" }}
-          />
-          <Column
-            field="buildingName"
-            header="Building"
-            sortable
-            style={{ width: "150px" }}
-          />
-          <Column
-            field="totalRooms"
-            header="Total Rooms"
-            sortable
-            style={{ width: "120px", textAlign: "center" }}
-          />
-          <Column
-            field="totalBeds"
-            header="Total Beds"
-            sortable
-            style={{ width: "120px", textAlign: "center" }}
-          />
-          <Column
-            field="isActive"
-            header="Status"
-            body={statusBodyTemplate}
-            sortable
-            style={{ width: "120px", textAlign: "center" }}
-          />
-          <Column
-            header="Actions"
-            body={actionBodyTemplate}
-            style={{ width: "120px", textAlign: "center" }}
-          />
-        </DataTable>
-      </Card>
+      <BedSectionHeader
+        title="Wards"
+        subtitle={`${wards.length} ward${wards.length === 1 ? "" : "s"} configured · NABH COP.2 location hierarchy`}
+        icon="pi-home"
+        actions={
+          <>
+            <button onClick={loadWards} disabled={loading}
+              style={{
+                background: "rgba(255,255,255,.15)", color: "#fff",
+                border: "1.5px solid rgba(255,255,255,.4)",
+                fontWeight: 700, borderRadius: 8, padding: "7px 14px", fontSize: 12,
+                cursor: loading ? "wait" : "pointer", fontFamily: "inherit",
+                display: "inline-flex", alignItems: "center", gap: 6,
+              }}>
+              <i className={`pi ${loading ? "pi-spin pi-spinner" : "pi-refresh"}`} /> Refresh
+            </button>
+            <button onClick={() => { setSelectedWard(null); setShowForm(true); }}
+              style={{
+                background: "#fff", color: "#1e40af",
+                border: "none", fontWeight: 700,
+                borderRadius: 8, padding: "7px 16px", fontSize: 12,
+                boxShadow: "0 2px 8px rgba(0,0,0,.13)",
+                cursor: "pointer", fontFamily: "inherit",
+                display: "inline-flex", alignItems: "center", gap: 6,
+              }}>
+              <i className="pi pi-plus" /> Add Ward
+            </button>
+          </>
+        }
+      />
+
+      <BmStatStrip stats={stats} />
+
+      <BmCard
+        title="Configured Wards"
+        icon="pi-home"
+        count={filtered.length === wards.length ? wards.length : `${filtered.length}/${wards.length}`}
+        action={<BmFilter value={filter} onChange={setFilter} placeholder="Search wards by name / code / type / building…" />}
+      >
+        {loading ? (
+          <BmEmpty icon="pi-spin pi-spinner" title="Loading wards…" />
+        ) : filtered.length === 0 ? (
+          wards.length === 0 ? (
+            <BmEmpty
+              icon="pi-inbox"
+              title="No wards yet"
+              msg="Wards group rooms under a floor. Add your first ward to get started."
+              ctaLabel="Add Ward"
+              ctaIcon="pi-plus"
+              onCta={() => { setSelectedWard(null); setShowForm(true); }}
+            />
+          ) : (
+            <BmEmpty icon="pi-search" title="No matches" msg="Try a different search term or clear the filter." />
+          )
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table className="bm-table">
+              <thead>
+                <tr>
+                  <th>Ward</th>
+                  <th>Type</th>
+                  <th>Location</th>
+                  <th className="right">Rooms</th>
+                  <th>Beds · Occupancy</th>
+                  <th>Facilities</th>
+                  <th>Status</th>
+                  <th className="right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map(w => {
+                  const meta = WARD_TYPE_ICON[w.wardType] || { icon: "pi-home", tone: "blue" };
+                  const totalBeds = Number(w.totalBeds) || 0;
+                  const occBeds   = Number(w.occupiedBeds) || 0;
+                  const facilities = Array.isArray(w.facilities) ? w.facilities : [];
+                  return (
+                    <tr key={w._id}>
+                      <td>
+                        <BmCellStack
+                          avatar={<BmAvatar icon={meta.icon} tone={meta.tone} />}
+                          title={w.wardName}
+                          sub={w.wardCode || "—"}
+                        />
+                      </td>
+                      <td>
+                        {w.wardType
+                          ? <BmPill tone={w.wardType === "Emergency" || w.wardType === "ICU" || w.wardType === "Isolation" ? "danger" : "info"}>{w.wardType}</BmPill>
+                          : <span className="muted">—</span>}
+                      </td>
+                      <td>
+                        <div>{w.buildingName}</div>
+                        <div className="muted">Floor {w.floorNumber}</div>
+                      </td>
+                      <td className="right">
+                        <strong>{w.totalRooms ?? 0}</strong>
+                      </td>
+                      <td>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <strong>{totalBeds}</strong>
+                          <span className="muted" style={{ fontSize: 11 }}>
+                            bed{totalBeds === 1 ? "" : "s"}
+                          </span>
+                          {totalBeds > 0 && occBeds > 0 && (
+                            <BmBar value={occBeds} max={totalBeds} width={70} showLabel={false} />
+                          )}
+                        </div>
+                        {Number(w.dailyCharge) > 0 && (
+                          <div className="muted" style={{ fontSize: 10, marginTop: 3 }}>
+                            ₹{Number(w.dailyCharge).toLocaleString("en-IN")}/day
+                          </div>
+                        )}
+                      </td>
+                      <td>
+                        {facilities.length === 0 ? (
+                          <span className="muted">—</span>
+                        ) : (
+                          <div className="bm-chip-row">
+                            {facilities.slice(0, 2).map((f, i) => <BmChip key={i}>{f}</BmChip>)}
+                            {facilities.length > 2 && <BmChip>+{facilities.length - 2}</BmChip>}
+                          </div>
+                        )}
+                      </td>
+                      <td>
+                        {w.isActive
+                          ? <BmPill tone="ok"     icon="pi-check">Active</BmPill>
+                          : <BmPill tone="danger" icon="pi-times">Inactive</BmPill>}
+                      </td>
+                      <td className="right">
+                        <div className="bm-row-actions">
+                          <BmIconBtn icon="pi-pencil" variant="info"   title="Edit"
+                            onClick={() => { setSelectedWard(w); setShowForm(true); }} />
+                          <BmIconBtn icon="pi-trash"  variant="danger" title="Delete"
+                            onClick={() => handleDelete(w)} />
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </BmCard>
 
       <WardForm
         visible={showForm}
-        onHide={handleFormHide}
+        onHide={() => { setShowForm(false); setSelectedWard(null); }}
         ward={selectedWard}
         onSave={handleSave}
       />

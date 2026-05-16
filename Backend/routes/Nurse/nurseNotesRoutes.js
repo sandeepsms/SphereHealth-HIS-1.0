@@ -13,7 +13,9 @@ router.post("/", ctrl.createNote);
 router.get("/", ctrl.getNotesByQuery);
 router.get("/:id", ctrl.getNoteById);
 router.put("/:id", ctrl.updateNote);
-router.patch("/:id/confirm-order", ctrl.confirmOrder);
+router.patch("/:id/confirm-order",    ctrl.confirmOrder);
+router.patch("/:id/blood-monitoring", ctrl.addBloodMonitoring);
+router.patch("/:id/blood-status",     ctrl.updateBloodStatus);
 router.delete("/:id", ctrl.deleteNote);
 
 module.exports = router;

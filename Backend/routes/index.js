@@ -53,6 +53,11 @@ const bedTransferRoutes = require("./Patient/bedTransferRoutes");
 const dischargeSummaryRoutes = require("./Clinical/dischargeSummaryRoutes");
 const consentFormRoutes = require("./Clinical/consentFormRoutes");
 const nursingCarePlanRoutes = require("./Nurse/nursingCarePlanRoutes");
+const nursingAssessmentsRoutes = require("./Nurse/nursingAssessmentsRoutes");
+// Path is lowercase 'ai' — uppercase 'AI' folder was a Windows
+// case-insensitive duplicate that shadowed this on case-sensitive
+// Linux deploys, shipping the old stub instead of the real Groq impl.
+const aiRoutes = require("./ai/aiRoutes");
 const marRoutes = require("./Clinical/marRoutes");
 const vitalSheetRoutes = require("./Vitals/vitalSheetRoutes");
 
@@ -60,8 +65,26 @@ const vitalSheetRoutes = require("./Vitals/vitalSheetRoutes");
 // ROUTE REGISTRATION
 // ═════════════════════════════════════════════════════════════
 
-// Auth & Users
+// ── Auth shim ────────────────────────────────────────────────
+// `/auth/*` is the only public surface (login, register, forgot-password).
+// Every other mount below this line gets `authenticate` as a baseline so
+// no controller is reachable by anonymous traffic. Individual routes can
+// still demand specific roles via `authorize(...)`.
+const { authenticate } = require("../middleware/auth");
+
 router.use("/auth", authRoutes);
+
+// ── Everything below requires a valid JWT ────────────────────
+router.use(authenticate);
+
+// ── Patient-file activity audit (auto-capture POST/PUT/PATCH/DELETE) ─
+// Mounted right after authenticate so req.user is populated and BEFORE
+// any feature router so every mutating call gets a chance to be logged
+// to PatientActivityLog. Failures are async + soft — they never block
+// the original request.
+const activityLogger = require("../services/Clinical/activityLogger");
+router.use(activityLogger.middleware());
+
 router.use("/users", userRoutes);
 
 // Bed Management
@@ -110,9 +133,65 @@ router.use("/investigation-orders", investigationOrderRoutes);
 router.use("/discharge-summary", dischargeSummaryRoutes);
 router.use("/consent-forms", consentFormRoutes);
 router.use("/nursing-care-plans", nursingCarePlanRoutes);
+router.use("/nursing-assessments", nursingAssessmentsRoutes);
+router.use("/ai", aiRoutes);
 router.use("/mar", marRoutes);
 router.use("/nursing-charges", nursingChargesRoutes);
 router.use("/hospital-settings", hospitalSettingsRoutes);
 router.use("/vitalsheet", vitalSheetRoutes);
+
+// ── Patient File — Complete aggregator + activity feed ───────
+router.use("/patient-file",     require("./Clinical/patientFileRoutes"));
+
+// ── Roadmap A1–A5 + D14: patient-safety gates ────────────────
+router.use("/safety",           require("./Clinical/safetyRoutes"));
+
+// ── Roadmap E20: live SSE updates ────────────────────────────
+router.use("/live-updates",     require("./Clinical/liveUpdatesRoutes"));
+
+// ── Roadmap D16: per-action 2FA (OTP gate) ───────────────────
+router.use("/2fa",              require("./Clinical/twoFactorRoutes"));
+
+// ── Roadmap A2: Medication Reconciliation (NABH MOM.4d) ──────
+router.use("/med-reconciliation", require("./Clinical/medReconciliationRoutes"));
+
+// Live presence (who's serving whom)
+router.use("/presence",         require("./Presence/presenceRoutes"));
+// NABH visitor management
+router.use("/visitor-passes",   require("./VisitorPass/visitorPassRoutes"));
+// Appointment booking (OPD slot system)
+router.use("/appointments",     require("./Appointment/appointmentRoutes"));
+// Medico-Legal Cases — MLC reports + auto-generated MLR numbers per doctor
+router.use("/mlc",              require("./MLC/mlcRoutes"));
+
+// Admin operational endpoints — daily accrual, etc.
+router.use("/admin-ops",        require("./Admin/adminOpsRoutes"));
+
+// Admin "Mission Control" home — aggregate hospital-wide KPIs + feed
+router.use("/admin-dashboard",  require("./Admin/adminDashboardRoutes"));
+
+// Diabetic chart — RBS readings + sliding-scale insulin per admission
+router.use("/diabetic-chart",   require("./Clinical/diabeticChartRoutes"));
+
+// Equipment inventory + homecare loan tracker + service history
+router.use("/equipment",        require("./Equipment/equipmentRoutes"));
+
+// Pharmacy — drug master, batches, GRN, dispense, sales register
+router.use("/pharmacy",         require("./Pharmacy/pharmacyRoutes"));
+
+// Dietician — diet plan templates + per-patient assessment & assigned plans
+router.use("/dietitian",        require("./Clinical/dietitianRoutes"));
+
+// Ward Boy — task board (transport / equipment / sample / errand)
+router.use("/ward-tasks",       require("./Clinical/wardTaskRoutes"));
+
+// Ward Operations — shift / equipment / supplies / code-blue / mortuary + manager
+router.use("/ward-ops",         require("./Clinical/wardOpsRoutes"));
+
+// Housekeeping — cleaning task board + spillage + inventory + checklist + pest + manager
+router.use("/housekeeping",     require("./Clinical/housekeepingRoutes"));
+
+// Lab records — manual trend sheets + imaging / micro / histopath reports
+router.use("/lab-records",      require("./Clinical/labRecordsRoutes"));
 
 module.exports = router;
