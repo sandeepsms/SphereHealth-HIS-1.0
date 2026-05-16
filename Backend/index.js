@@ -1,7 +1,29 @@
+require("dotenv").config();
 const express = require("express");
 const connectDB = require("./config/db");
 const cors = require("cors");
-require("dotenv").config();
+
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+  console.error(
+    "FATAL: JWT_SECRET is missing or too short (<32 chars). " +
+      "Set a strong random value in Backend/.env before starting the server."
+  );
+  process.exit(1);
+}
+
+const allowedOrigins = (process.env.CORS_ORIGINS || "http://localhost:5173")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+const corsOptions = {
+  origin(origin, cb) {
+    if (!origin) return cb(null, true);
+    if (allowedOrigins.includes(origin)) return cb(null, true);
+    return cb(new Error(`CORS: origin '${origin}' not allowed`));
+  },
+  credentials: true,
+};
 
 const app = express();
 
@@ -45,7 +67,7 @@ const patientRoutes = require("./routes/Patient/patientRoutes");
 // const BedRoutes = require("./routes/Bedroutes");
 // const WardchargesRoutes = require("./routes/WardchargesRoutes");
 
-app.use(cors());
+app.use(cors(corsOptions));
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true, limit: "5mb" }));
 

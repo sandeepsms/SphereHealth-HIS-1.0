@@ -1,10 +1,18 @@
 const express = require("express");
 const router = express.Router();
 const jwt = require("jsonwebtoken");
+const bcrypt = require("bcryptjs");
 const User = require("../../models/User/userModel");
 
-const JWT_SECRET = process.env.JWT_SECRET || "spherehealth_his_secret_2025";
+const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_EXPIRES = process.env.JWT_EXPIRES || "8h";
+
+// Pre-computed bcrypt hash used when the user lookup misses, so the response
+// time stays constant and an attacker can't enumerate valid emails by timing.
+const TIMING_DUMMY_HASH =
+  "$2a$10$CwTycUXWue0Thq9StjUM0uJ8.OQXxa3GqVbzqo0TQk0JqLZw3pPYK";
+
+const INVALID_CREDENTIALS = "Invalid email or password";
 
 /* ── POST /api/auth/login ── */
 router.post("/login", async (req, res) => {
@@ -14,15 +22,22 @@ router.post("/login", async (req, res) => {
       return res.status(400).json({ message: "Email and password are required" });
 
     const user = await User.findOne({ email: email.toLowerCase().trim() });
-    if (!user)
-      return res.status(401).json({ message: "Invalid email or password" });
 
-    if (!user.isActive || user.status === "Inactive" || user.status === "Terminated" || user.status === "Suspended")
-      return res.status(403).json({ message: "Account is inactive. Contact administrator." });
+    // Always run a bcrypt compare — dummy hash on miss — to keep timing flat.
+    const passwordHash = user ? user.password : TIMING_DUMMY_HASH;
+    const isMatch = await bcrypt.compare(password, passwordHash);
 
-    const isMatch = await user.comparePassword(password);
-    if (!isMatch)
-      return res.status(401).json({ message: "Invalid email or password" });
+    const inactive =
+      user &&
+      (!user.isActive ||
+        user.status === "Inactive" ||
+        user.status === "Terminated" ||
+        user.status === "Suspended");
+
+    // Collapse all failure modes (no user / wrong password / inactive) into a
+    // single generic response so the auth surface doesn't leak account state.
+    if (!user || !isMatch || inactive)
+      return res.status(401).json({ message: INVALID_CREDENTIALS });
 
     // Update last login
     user.lastLogin = new Date();
