@@ -95,8 +95,6 @@ const NAV = [
       { label: "Discharge Queue",     icon: "pi-sign-out",          path: "/discharge-queue",      nabh: true,  badge: "NEW",   roles: [ADMIN, RX] },
       { label: "TPA / Insurance",     icon: "pi-shield",            path: "/tpa-cases",            nabh: true,  badge: "NEW",   roles: [ADMIN, RX, TPA, AC] },
       { label: "Visitor Passes",      icon: "pi-id-card",           path: "/visitor-passes",       nabh: true,  badge: "NEW",   roles: [ADMIN, RX] },
-      { label: "Gate Log",            icon: "pi-shield",            path: "/gate-log",                          badge: "NEW",   roles: [ADMIN, SE, RX] },
-      { label: "Incident Reports",    icon: "pi-exclamation-triangle", path: "/incidents",                      badge: "NEW",   roles: [ADMIN, SE] },
     ],
   },
 
@@ -249,6 +247,38 @@ const NAV = [
     roles: [ADMIN, DR, NR],   // DT excluded — they get DIETICIAN_NAV instead
     items: [
       { label: "Dietician Console",  icon: "pi-apple",  path: "/dietitian",  badge: "NEW",  roles: [ADMIN, DR, NR] },
+    ],
+  },
+
+  /* ── Ward Boy — task board + manager view ─────────────────────
+     Same hard-fork pattern as Dietician — the role itself sees the
+     WARD_BOY_NAV single-page console. Admin / Receptionist / Nurse
+     get visibility into the task board through this section so they
+     can see what's queued, what's in progress, and (Admin) the
+     manager dashboard for aggregate metrics. */
+  {
+    id: "wardboy", label: "Ward Boy",
+    icon: "pi-user", color: "#0d9488", light: "#f0fdfa",
+    roles: [ADMIN, RX, NR, DR],
+    items: [
+      { label: "Task Board",          icon: "pi-list",   path: "/ward-tasks",   roles: [ADMIN, RX, NR, DR] },
+      { label: "Ward Manager",        icon: "pi-chart-bar", path: "/ward-manager", roles: [ADMIN] },
+    ],
+  },
+
+  /* ── Security — visitor passes + gate logs + incident reports ─
+     Mirrors the Dietician/Ward Boy pattern: Security users see the
+     SECURITY_NAV hard-fork (4-entry workspace), Admin sees this
+     section so the security surface is discoverable from the main
+     nav rather than buried under Reception. */
+  {
+    id: "security", label: "Security",
+    icon: "pi-lock", color: "#374151", light: "#f9fafb",
+    roles: [ADMIN, SE],
+    items: [
+      { label: "Visitor Passes",   icon: "pi-id-card",              path: "/visitor-passes", roles: [ADMIN, SE] },
+      { label: "Gate Log",         icon: "pi-shield",               path: "/gate-log",       badge: "NEW", roles: [ADMIN, SE] },
+      { label: "Incident Reports", icon: "pi-exclamation-triangle", path: "/incidents",      badge: "NEW", roles: [ADMIN, SE] },
     ],
   },
 
