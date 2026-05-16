@@ -2,8 +2,10 @@ const mongoose = require("mongoose");
 
 const PatientSchema = new mongoose.Schema(
   {
-    patientId: { type: String, unique: true },
-    UHID: { type: String, unique: true },
+    // sparse so newly-created Patients (before patientId/UHID is assigned by
+    // the pre-save hook) don't collide on the unique index with each other.
+    patientId: { type: String, unique: true, sparse: true },
+    UHID:      { type: String, unique: true, sparse: true },
 
     registrationType: {
       type: String,
@@ -26,7 +28,9 @@ const PatientSchema = new mongoose.Schema(
     // DOB is required for clinical history but the receptionist may only have
     // age at intake; we compute one from the other in the pre-save hook.
     dateOfBirth: { type: Date },
-    age: { type: Number },
+    // Bounds catch typos (250-yr-old patient, negative age) at validation time
+    // rather than silently letting pediatric-only rules / dosing checks misfire.
+    age: { type: Number, min: 0, max: 150 },
     maritalStatus: {
       type: String,
       enum: ["Single", "Married", "Divorced", "Widowed", "Other", ""],

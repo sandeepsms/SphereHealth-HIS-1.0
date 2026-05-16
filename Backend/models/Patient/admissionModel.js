@@ -217,6 +217,42 @@ const AdmissionSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
+// State-machine guard: enforce legal status transitions. Without this any
+// caller can flip status from a terminal state back to Active (silently
+// reopening a Discharged or Cancelled admission), or skip the discharge
+// workflow entirely.
+//   ──> Active is the only non-terminal state.
+//   ──> Discharged / Cancelled are TERMINAL — no exit.
+//   ──> Transferred can return to Active (resumed care on a new bed).
+const LEGAL_STATUS_TRANSITIONS = {
+  Active:      new Set(["Active", "Discharged", "Transferred", "Cancelled"]),
+  Transferred: new Set(["Transferred", "Active", "Discharged", "Cancelled"]),
+  Discharged:  new Set(["Discharged"]),
+  Cancelled:   new Set(["Cancelled"]),
+};
+AdmissionSchema.pre("save", function (next) {
+  if (this.isNew) return next();
+  if (!this.isModified("status")) return next();
+  const prev = this.$__.originalStatus;
+  // We stored the original status in post('init'); if missing (manual
+  // construct), skip the check — there's no baseline to compare to.
+  if (!prev) return next();
+  const allowed = LEGAL_STATUS_TRANSITIONS[prev];
+  if (allowed && !allowed.has(this.status)) {
+    return next(
+      new Error(
+        `Illegal admission status transition: ${prev} → ${this.status}. ` +
+          `From "${prev}", allowed states are: ${[...allowed].join(", ")}.`,
+      ),
+    );
+  }
+  next();
+});
+AdmissionSchema.post("init", function () {
+  // Snapshot the loaded status so pre('save') can detect mutations.
+  this.$__.originalStatus = this.status;
+});
+
 // Indexes
 AdmissionSchema.index({ UHID: 1 });
 AdmissionSchema.index({ patientId: 1 });

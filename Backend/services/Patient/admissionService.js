@@ -8,21 +8,19 @@ const mongoose = require("mongoose");
 const Admission = require("../../models/Patient/admissionModel");
 const Bed = require("../../models/bedMgmt/bedsModel");
 const Patient = require("../../models/Patient/patientModel");
+const { nextSequence } = require("../../utils/counter");
 
 class AdmissionService {
   async _generateAdmissionNumber() {
+    // Atomic counter via utils/counter.js — replaces the previous
+    // findOne+sort+slice pattern, which raced under concurrent admissions
+    // and could produce duplicate admissionNumbers when two receptionists
+    // hit Save in the same tick.
     const now = new Date();
     const yy = now.getFullYear().toString().slice(-2);
     const mm = String(now.getMonth() + 1).padStart(2, "0");
     const prefix = `ADM${yy}${mm}`;
-    const last = await Admission.findOne({
-      admissionNumber: { $regex: `^${prefix}` },
-    })
-      .sort({ admissionNumber: -1 })
-      .lean();
-    const seq = last
-      ? (parseInt(last.admissionNumber.slice(-4), 10) || 0) + 1
-      : 1;
+    const seq = await nextSequence(`admission:${yy}${mm}`);
     return `${prefix}${String(seq).padStart(4, "0")}`;
   }
 
