@@ -54,7 +54,9 @@ class AdmissionService {
 
     const patient = await this._findPatient(data.patientId, data.UHID);
 
-    // ✅ Only block duplicate if existing ACTIVE bed-admission exists
+    // Only block duplicate if an active bed-admission already exists. We read
+    // outside the transaction — the bed-allocation guard below is the true
+    // race-condition gate.
     if (data.bedId) {
       const existing = await Admission.findOne({
         patientId: patient._id,
@@ -70,91 +72,122 @@ class AdmissionService {
     }
 
     const admissionNumber = await this._generateAdmissionNumber();
-    let bedData = {};
 
-    // ✅ Allocate bed only if bedId provided
-    if (data.bedId) {
-      const bed = await Bed.findOneAndUpdate(
-        { _id: data.bedId, status: "Available" },
-        { $set: { status: "Occupied" } },
-        { new: true },
-      ).populate("room ward floor building");
+    // Atomic path on a replica-set MongoDB (prod); on a standalone dev box,
+    // fall through to sequential writes with a best-effort rollback. Mirrors
+    // the pattern in services/MLC/mlcService.js.
+    const session = await mongoose.startSession().catch(() => null);
+    const useTx = !!session && (session.client?.s?.options?.replicaSet ||
+                                session.client?.options?.replicaSet);
 
-      if (!bed) {
-        const bedCheck = await Bed.findById(data.bedId).lean();
-        if (!bedCheck) throw new Error("Bed not found");
-        throw new Error(
-          `Bed ${bedCheck.bedNumber} is not available (current status: ${bedCheck.status}).`,
+    const run = async (s) => {
+      let bedData = {};
+      if (data.bedId) {
+        const bed = await Bed.findOneAndUpdate(
+          { _id: data.bedId, status: "Available" },
+          { $set: { status: "Occupied" } },
+          { new: true, session: s || undefined },
+        ).populate("room ward floor building");
+
+        if (!bed) {
+          const bedCheck = await Bed.findById(data.bedId).lean();
+          if (!bedCheck) throw new Error("Bed not found");
+          throw new Error(
+            `Bed ${bedCheck.bedNumber} is not available (current status: ${bedCheck.status}).`,
+          );
+        }
+
+        bedData = {
+          bedId: bed._id,
+          bedNumber: bed.bedNumber,
+          roomNumber: bed.room?.roomNumber || "",
+          roomId: bed.room?._id || null,
+          wardId: bed.ward?._id || null,
+          floorId: bed.floor?._id || null,
+          buildingId: bed.building?._id || null,
+          hasBed: true,
+        };
+      }
+
+      const [created] = await Admission.create(
+        [
+          {
+            admissionNumber,
+            UHID: patient.UHID || String(patient._id),
+            patientId: patient._id,
+            patientName: this._patientName(patient),
+            contactNumber:
+              patient.contactNumber ||
+              patient.phone ||
+              patient.mobile ||
+              "0000000000",
+            email: patient.email || "",
+            ...bedData,
+            department:   data.department || "",
+            departmentId: data.departmentId || undefined,
+            admissionDate: data.admissionDate
+              ? new Date(data.admissionDate)
+              : new Date(),
+            expectedDischargeDate: data.expectedDischargeDate
+              ? new Date(data.expectedDischargeDate)
+              : undefined,
+            reasonForAdmission: data.reasonForAdmission || "",
+            provisionalDiagnosis: data.provisionalDiagnosis || "",
+            specialInstructions:  data.specialInstructions || "",
+            expectedStayDays:     Number(data.expectedStayDays) || 0,
+            admissionType: data.admissionType || "Emergency",
+            attendingDoctor:   data.attendingDoctor || "",
+            // ref to the doctor's User _id — drives IPD file access control
+            attendingDoctorId: data.attendingDoctorId || undefined,
+            estimatedCost: Number(data.estimatedCost) || 0,
+            advancePaid: Number(data.advancePaid) || 0,
+            // ER-specific clinical context captured at intake
+            isMLC:         data.isMLC || false,
+            mlcNumber:     data.mlcNumber || "",
+            triageLevel:   data.triageLevel || "",
+            erType:        data.erType || "",
+            modeOfArrival: data.modeOfArrival || "",
+            broughtBy:     data.broughtBy || "",
+            status: "Active",
+          },
+        ],
+        { session: s || undefined },
+      );
+
+      if (data.bedId) {
+        await Bed.findByIdAndUpdate(
+          data.bedId,
+          { $set: { currentAdmission: created._id } },
+          { session: s || undefined },
         );
       }
 
-      bedData = {
-        bedId: bed._id,
-        bedNumber: bed.bedNumber,
-        roomNumber: bed.room?.roomNumber || "",
-        roomId: bed.room?._id || null,
-        wardId: bed.ward?._id || null,
-        floorId: bed.floor?._id || null,
-        buildingId: bed.building?._id || null,
-        hasBed: true,
-      };
-    }
+      return created;
+    };
 
     let admission;
     try {
-      admission = await Admission.create({
-        admissionNumber,
-        UHID: patient.UHID || String(patient._id),
-        patientId: patient._id,
-        patientName: this._patientName(patient),
-        contactNumber:
-          patient.contactNumber ||
-          patient.phone ||
-          patient.mobile ||
-          "0000000000",
-        email: patient.email || "",
-        ...bedData,
-        department:   data.department || "",
-        departmentId: data.departmentId || undefined,
-        admissionDate: data.admissionDate
-          ? new Date(data.admissionDate)
-          : new Date(),
-        expectedDischargeDate: data.expectedDischargeDate
-          ? new Date(data.expectedDischargeDate)
-          : undefined,
-        reasonForAdmission: data.reasonForAdmission || "",
-        provisionalDiagnosis: data.provisionalDiagnosis || "",
-        specialInstructions:  data.specialInstructions || "",
-        expectedStayDays:     Number(data.expectedStayDays) || 0,
-        admissionType: data.admissionType || "Emergency",
-        attendingDoctor:   data.attendingDoctor || "",
-        // ref to the doctor's User _id — drives IPD file access control
-        attendingDoctorId: data.attendingDoctorId || undefined,
-        estimatedCost: Number(data.estimatedCost) || 0,
-        advancePaid: Number(data.advancePaid) || 0,
-        // ER-specific clinical context captured at intake
-        isMLC:         data.isMLC || false,
-        mlcNumber:     data.mlcNumber || "",
-        triageLevel:   data.triageLevel || "",
-        erType:        data.erType || "",
-        modeOfArrival: data.modeOfArrival || "",
-        broughtBy:     data.broughtBy || "",
-        status: "Active",
-      });
-    } catch (err) {
-      // Rollback bed on failure
-      if (data.bedId) {
-        await Bed.findByIdAndUpdate(data.bedId, {
-          $set: { status: "Available", currentAdmission: null },
+      if (useTx) {
+        await session.withTransaction(async () => {
+          admission = await run(session);
         });
+      } else {
+        try {
+          admission = await run(null);
+        } catch (err) {
+          // No-transaction fallback: revert the bed allocation if it
+          // succeeded before the failure. Best-effort — the catch swallows
+          // rollback errors so the original cause still surfaces.
+          if (data.bedId) {
+            await Bed.findByIdAndUpdate(data.bedId, {
+              $set: { status: "Available", currentAdmission: null },
+            }).catch(() => {});
+          }
+          throw err;
+        }
       }
-      throw err;
-    }
-
-    if (data.bedId) {
-      await Bed.findByIdAndUpdate(data.bedId, {
-        $set: { currentAdmission: admission._id },
-      });
+    } finally {
+      session?.endSession();
     }
 
     return admission;
@@ -168,23 +201,57 @@ class AdmissionService {
         `Cannot discharge — admission status is already "${admission.status}"`,
       );
 
-    await Bed.findByIdAndUpdate(admission.bedId, {
-      $set: { status: "Available", currentAdmission: null, patient: null },
-    });
+    const session = await mongoose.startSession().catch(() => null);
+    const useTx = !!session && (session.client?.s?.options?.replicaSet ||
+                                session.client?.options?.replicaSet);
 
-    admission.status = "Discharged";
-    admission.actualDischargeDate = dischargeData.actualDischargeDate
-      ? new Date(dischargeData.actualDischargeDate)
-      : new Date();
-    admission.dischargeNotes = dischargeData.dischargeNotes || "";
-    admission.dischargeSummary = dischargeData.dischargeSummary || "";
-    admission.followUpInstructions = dischargeData.followUpInstructions || "";
-    if (dischargeData.conditionOnDischarge)
-      admission.conditionOnDischarge = dischargeData.conditionOnDischarge;
-    if (dischargeData.totalCost !== undefined && dischargeData.totalCost !== "")
-      admission.totalCost = Number(dischargeData.totalCost);
+    const run = async (s) => {
+      // bedId is nullable for OPD/Emergency admissions; guard before touching.
+      if (admission.bedId) {
+        await Bed.findByIdAndUpdate(
+          admission.bedId,
+          { $set: { status: "Available", currentAdmission: null, patient: null } },
+          { session: s || undefined },
+        );
+      }
 
-    await admission.save();
+      admission.status = "Discharged";
+      admission.actualDischargeDate = dischargeData.actualDischargeDate
+        ? new Date(dischargeData.actualDischargeDate)
+        : new Date();
+      admission.dischargeNotes = dischargeData.dischargeNotes || "";
+      admission.dischargeSummary = dischargeData.dischargeSummary || "";
+      admission.followUpInstructions = dischargeData.followUpInstructions || "";
+      if (dischargeData.conditionOnDischarge)
+        admission.conditionOnDischarge = dischargeData.conditionOnDischarge;
+      if (dischargeData.totalCost !== undefined && dischargeData.totalCost !== "")
+        admission.totalCost = Number(dischargeData.totalCost);
+
+      await admission.save({ session: s || undefined });
+    };
+
+    try {
+      if (useTx) {
+        await session.withTransaction(() => run(session));
+      } else {
+        try {
+          await run(null);
+        } catch (err) {
+          // No-transaction fallback: if admission.save failed after the bed
+          // was freed, re-occupy the bed so we don't leave a phantom-free
+          // slot under the still-Active admission.
+          if (admission.bedId) {
+            await Bed.findByIdAndUpdate(admission.bedId, {
+              $set: { status: "Occupied", currentAdmission: admission._id },
+            }).catch(() => {});
+          }
+          throw err;
+        }
+      }
+    } finally {
+      session?.endSession();
+    }
+
     return admission;
   }
 
@@ -215,38 +282,114 @@ class AdmissionService {
     if (!admission) throw new Error("Admission not found");
     if (admission.status !== "Active")
       throw new Error("Admission is not active");
+    if (String(admission.bedId) === String(newBedId))
+      throw new Error("New bed is the same as current bed");
 
-    const newBed = await Bed.findOneAndUpdate(
-      { _id: newBedId, status: "Available" },
-      { $set: { status: "Occupied", currentAdmission: admissionId } },
-      { new: true },
-    );
+    const oldBedId = admission.bedId;
 
-    if (!newBed) {
-      const check = await Bed.findById(newBedId).lean();
-      if (!check) throw new Error("New bed not found");
-      throw new Error(
-        `New bed ${check.bedNumber} is not available (status: ${check.status})`,
+    const session = await mongoose.startSession().catch(() => null);
+    const useTx = !!session && (session.client?.s?.options?.replicaSet ||
+                                session.client?.options?.replicaSet);
+
+    const run = async (s) => {
+      const newBed = await Bed.findOneAndUpdate(
+        { _id: newBedId, status: "Available" },
+        { $set: { status: "Occupied", currentAdmission: admissionId } },
+        { new: true, session: s || undefined },
       );
+
+      if (!newBed) {
+        const check = await Bed.findById(newBedId).lean();
+        if (!check) throw new Error("New bed not found");
+        throw new Error(
+          `New bed ${check.bedNumber} is not available (status: ${check.status})`,
+        );
+      }
+
+      if (oldBedId) {
+        await Bed.findByIdAndUpdate(
+          oldBedId,
+          { $set: { status: "Available", currentAdmission: null, patient: null } },
+          { session: s || undefined },
+        );
+      }
+
+      admission.transferHistory = admission.transferHistory || [];
+      admission.transferHistory.push({
+        fromBed: oldBedId,
+        toBed: newBedId,
+        reason: reason || "",
+        date: new Date(),
+      });
+      admission.bedId = newBed._id;
+      admission.bedNumber = newBed.bedNumber;
+      admission.roomId = newBed.room || null;
+      admission.wardId = newBed.ward || null;
+      admission.floorId = newBed.floor || null;
+      await admission.save({ session: s || undefined });
+    };
+
+    try {
+      if (useTx) {
+        await session.withTransaction(() => run(session));
+      } else {
+        // Multi-step rollback for the no-transaction path: track which step
+        // succeeded so we revert in reverse order on failure.
+        let newBedOccupied = false;
+        let oldBedFreed = false;
+        try {
+          const newBed = await Bed.findOneAndUpdate(
+            { _id: newBedId, status: "Available" },
+            { $set: { status: "Occupied", currentAdmission: admissionId } },
+            { new: true },
+          );
+          if (!newBed) {
+            const check = await Bed.findById(newBedId).lean();
+            if (!check) throw new Error("New bed not found");
+            throw new Error(
+              `New bed ${check.bedNumber} is not available (status: ${check.status})`,
+            );
+          }
+          newBedOccupied = true;
+
+          if (oldBedId) {
+            await Bed.findByIdAndUpdate(oldBedId, {
+              $set: { status: "Available", currentAdmission: null, patient: null },
+            });
+            oldBedFreed = true;
+          }
+
+          admission.transferHistory = admission.transferHistory || [];
+          admission.transferHistory.push({
+            fromBed: oldBedId,
+            toBed: newBedId,
+            reason: reason || "",
+            date: new Date(),
+          });
+          admission.bedId = newBed._id;
+          admission.bedNumber = newBed.bedNumber;
+          admission.roomId = newBed.room || null;
+          admission.wardId = newBed.ward || null;
+          admission.floorId = newBed.floor || null;
+          await admission.save();
+        } catch (err) {
+          if (oldBedFreed && oldBedId) {
+            await Bed.findByIdAndUpdate(oldBedId, {
+              $set: { status: "Occupied", currentAdmission: admissionId },
+            }).catch(() => {});
+          }
+          if (newBedOccupied) {
+            await Bed.findByIdAndUpdate(newBedId, {
+              $set: { status: "Available", currentAdmission: null },
+            }).catch(() => {});
+          }
+          throw err;
+        }
+      }
+    } finally {
+      session?.endSession();
     }
 
-    await Bed.findByIdAndUpdate(admission.bedId, {
-      $set: { status: "Available", currentAdmission: null, patient: null },
-    });
-
-    admission.transferHistory = admission.transferHistory || [];
-    admission.transferHistory.push({
-      fromBed: admission.bedId,
-      toBed: newBedId,
-      reason: reason || "",
-      date: new Date(),
-    });
-    admission.bedId = newBed._id;
-    admission.bedNumber = newBed.bedNumber;
-    admission.roomId = newBed.room || null;
-    admission.wardId = newBed.ward || null;
-    admission.floorId = newBed.floor || null;
-    await admission.save();
     return admission;
   }
 
