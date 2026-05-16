@@ -14,7 +14,7 @@ import { InputNumber } from "primereact/inputnumber";
 import { InputSwitch } from "primereact/inputswitch";
 import { TabView, TabPanel } from "primereact/tabview";
 
-const API = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
+import { API_BASE_URL as API } from "../../config/api";
 
 const CATEGORIES = [
   "PATHOLOGY",

@@ -1,4 +1,7 @@
-const API_BASE_URL =
+// Single source of truth for the backend base URL. Set VITE_API_BASE_URL in
+// .env / .env.production to point at the real host; the fallback is the dev
+// loopback so a fresh `npm run dev` works out of the box without env config.
+export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
 
 export const API_ENDPOINTS = {

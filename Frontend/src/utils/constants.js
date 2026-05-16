@@ -97,4 +97,5 @@ export const SERVICE_UNITS = [
   { label: "One-time", value: "One-time" },
 ];
 
-export const API_BASE_URL = "http://localhost:5000/api";
+// Re-export from the single source of truth so legacy imports keep working.
+export { API_BASE_URL } from "../config/api";

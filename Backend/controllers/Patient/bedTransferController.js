@@ -39,10 +39,12 @@ exports.createTransfer = async (req, res) => {
       });
     }
 
-    // Verify target bed is available
+    // Verify target bed is available. 409 (not 400) — the request body is
+    // well-formed; the conflict is in resource state (bed currently in use
+    // or being held by someone else).
     const targetBed = await Bed.findOne({ _id: toBedId, status: "Available" });
     if (!targetBed) {
-      return res.status(400).json({
+      return res.status(409).json({
         success: false,
         message: "Selected bed is not available for transfer",
       });

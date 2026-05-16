@@ -1,4 +1,6 @@
 const mongoose = require("mongoose");
+const { toNum, toDec, decimalToNumber } = require("../../utils/money");
+const Dec = mongoose.Schema.Types.Decimal128;
 
 // ═══════════════════════════════════════════════════════════════
 // PATIENT BILL MODEL
@@ -34,20 +36,28 @@ const BillItemSchema = new mongoose.Schema(
         "PER_UNIT",
       ] },
     quantity: { type: Number, default: 1, min: 0 },
-    unitPrice: { type: Number, required: true, min: 0 },
-    grossAmount: { type: Number, default: 0 },
+    // Money fields use Decimal128 so storage doesn't drift (see utils/money.js).
+    // Percentages stay Number — they're not currency.
+    unitPrice: { type: Dec, required: true },
+    grossAmount: { type: Dec, default: () => toDec(0) },
     discountPercent: { type: Number, default: 0, min: 0, max: 100 },
-    discountAmount: { type: Number, default: 0 },
-    netAmount: { type: Number, default: 0 },
+    discountAmount: { type: Dec, default: () => toDec(0) },
+    netAmount: { type: Dec, default: () => toDec(0) },
 
     // TPA split (filled only when paymentType === TPA)
-    tpaPayableAmount: { type: Number, default: 0 },
-    patientPayableAmount: { type: Number, default: 0 },
+    // tpaPercent: when > 0, recomputed every save as `lineTotal * pct/100`.
+    //             Use this when the policy covers a percentage of the bill.
+    // tpaPayableAmount: caller-supplied absolute amount; used when tpaPercent
+    //             is 0/unset. Capped at lineTotal so patientPayable never
+    //             goes negative if discounts shrink lineTotal below the cap.
+    tpaPercent:        { type: Number, default: 0, min: 0, max: 100 },
+    tpaPayableAmount:  { type: Dec, default: () => toDec(0) },
+    patientPayableAmount: { type: Dec, default: () => toDec(0) },
 
     // Tax
     isTaxable: { type: Boolean, default: false },
     taxPercent: { type: Number, default: 0 },
-    taxAmount: { type: Number, default: 0 },
+    taxAmount: { type: Dec, default: () => toDec(0) },
 
     appliedTariff: {
       type: String,
@@ -75,7 +85,7 @@ const BillItemSchema = new mongoose.Schema(
 // ── Payment record ─────────────────────────────────────────────
 const PaymentSchema = new mongoose.Schema(
   {
-    amount: { type: Number, required: true },
+    amount: { type: Dec, required: true },
     paymentMode: {
       type: String,
       required: true,
@@ -127,14 +137,14 @@ const PatientBillSchema = new mongoose.Schema(
     billItems: [BillItemSchema],
 
     // ── Calculated totals (recalculated on every save) ────
-    grossAmount: { type: Number, default: 0 },
-    totalDiscount: { type: Number, default: 0 },
-    taxAmount: { type: Number, default: 0 },
-    netAmount: { type: Number, default: 0 },
-    tpaPayableAmount: { type: Number, default: 0 },
-    patientPayableAmount: { type: Number, default: 0 },
-    advancePaid: { type: Number, default: 0 },
-    balanceAmount: { type: Number, default: 0 },
+    grossAmount:          { type: Dec, default: () => toDec(0) },
+    totalDiscount:        { type: Dec, default: () => toDec(0) },
+    taxAmount:            { type: Dec, default: () => toDec(0) },
+    netAmount:            { type: Dec, default: () => toDec(0) },
+    tpaPayableAmount:     { type: Dec, default: () => toDec(0) },
+    patientPayableAmount: { type: Dec, default: () => toDec(0) },
+    advancePaid:          { type: Dec, default: () => toDec(0) },
+    balanceAmount:        { type: Dec, default: () => toDec(0) },
 
     // ── Payments ──────────────────────────────────────────
     payments: [PaymentSchema],
@@ -158,7 +168,7 @@ const PatientBillSchema = new mongoose.Schema(
       ],
       default: "NOT_APPLICABLE" },
     tpaClaimNumber: { type: String, trim: true },
-    tpaApprovedAmount: { type: Number, default: 0 },
+    tpaApprovedAmount: { type: Dec, default: () => toDec(0) },
 
     // ── Dates & Audit ─────────────────────────────────────
     billDate: { type: Date, default: Date.now },
@@ -168,8 +178,12 @@ const PatientBillSchema = new mongoose.Schema(
     remarks: { type: String, trim: true } },
   {
     timestamps: true,
-    toJSON: { virtuals: true },
-    toObject: { virtuals: true } },
+    // Serialize Decimal128 → Number on the wire so the existing frontend
+    // (which does .toFixed(), arithmetic, etc.) keeps working as-is. The
+    // database still stores the precise Decimal128 value — only the JSON
+    // representation is flattened.
+    toJSON:   { virtuals: true, transform: decimalToNumber },
+    toObject: { virtuals: true, transform: decimalToNumber } },
 );
 
 // Atomic bill-number sequence via shared Counter (replaces race-prone
@@ -193,48 +207,67 @@ PatientBillSchema.pre("save", async function (next) {
       tpaPay = 0,
       ptPay = 0;
 
+    // Money fields are Decimal128 at rest; convert to Number for arithmetic,
+    // then back to Decimal128 (with 2-dp rounding) before writing. Accumulators
+    // stay Number for speed and convert at the end.
     this.billItems.forEach((item) => {
-      item.grossAmount = item.unitPrice * item.quantity;
-      item.discountAmount = (item.grossAmount * item.discountPercent) / 100;
-      item.netAmount = item.grossAmount - item.discountAmount;
-      item.taxAmount = item.isTaxable
-        ? (item.netAmount * item.taxPercent) / 100
-        : 0;
+      const unit = toNum(item.unitPrice);
+      const qty  = toNum(item.quantity);
+      const gAmt = unit * qty;
+      const dAmt = (gAmt * toNum(item.discountPercent)) / 100;
+      const nAmt = gAmt - dAmt;
+      const tAmt = item.isTaxable ? (nAmt * toNum(item.taxPercent)) / 100 : 0;
+      const lineTotal = nAmt + tAmt;
 
-      const lineTotal = item.netAmount + item.taxAmount;
+      item.grossAmount    = toDec(gAmt);
+      item.discountAmount = toDec(dAmt);
+      item.netAmount      = toDec(nAmt);
+      item.taxAmount      = toDec(tAmt);
 
+      let tpaShare = 0;
+      let ptShare = lineTotal;
       if (this.paymentType === "TPA") {
-        item.patientPayableAmount = lineTotal - item.tpaPayableAmount;
+        if (toNum(item.tpaPercent) > 0) {
+          // Percentage-based: recompute fresh from the (possibly-changed) lineTotal.
+          tpaShare = (lineTotal * toNum(item.tpaPercent)) / 100;
+        } else {
+          // Caller-supplied absolute cap; clamp at lineTotal so the patient
+          // side can never go negative when discounts shrink the total.
+          tpaShare = Math.min(toNum(item.tpaPayableAmount), lineTotal);
+        }
+        ptShare = Math.max(0, lineTotal - tpaShare);
       } else {
-        item.tpaPayableAmount = 0;
-        item.patientPayableAmount = lineTotal;
+        tpaShare = 0;
+        ptShare = lineTotal;
       }
+      item.tpaPayableAmount     = toDec(tpaShare);
+      item.patientPayableAmount = toDec(ptShare);
 
-      gross += item.grossAmount;
-      disc += item.discountAmount;
-      tax += item.taxAmount;
-      tpaPay += item.tpaPayableAmount;
-      ptPay += item.patientPayableAmount;
+      gross  += gAmt;
+      disc   += dAmt;
+      tax    += tAmt;
+      tpaPay += tpaShare;
+      ptPay  += ptShare;
     });
 
-    this.grossAmount = gross;
-    this.totalDiscount = disc;
-    this.taxAmount = tax;
-    this.netAmount = gross - disc + tax;
-    this.tpaPayableAmount = tpaPay;
-    this.patientPayableAmount = ptPay;
+    this.grossAmount          = toDec(gross);
+    this.totalDiscount        = toDec(disc);
+    this.taxAmount            = toDec(tax);
+    this.netAmount            = toDec(gross - disc + tax);
+    this.tpaPayableAmount     = toDec(tpaPay);
+    this.patientPayableAmount = toDec(ptPay);
   }
 
   // Recalculate balance. Payment rows can be negative (refunds), so totalPaid
   // is a net figure. When the bill is fully refunded or cancelled, force the
   // balance to zero — the receptionist shouldn't see a "balance due" on a
   // closed-out bill.
-  const totalPaid = this.payments.reduce((s, p) => s + p.amount, 0);
-  this.advancePaid = totalPaid;
+  const totalPaid = this.payments.reduce((s, p) => s + toNum(p.amount), 0);
+  this.advancePaid = toDec(totalPaid);
   if (this.billStatus === "REFUNDED" || this.billStatus === "CANCELLED") {
-    this.balanceAmount = 0;
+    this.balanceAmount = toDec(0);
   } else {
-    this.balanceAmount = Math.max(0, this.patientPayableAmount - totalPaid);
+    this.balanceAmount = toDec(Math.max(0, toNum(this.patientPayableAmount) - totalPaid));
   }
 
   next();

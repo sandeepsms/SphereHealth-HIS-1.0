@@ -11,7 +11,7 @@
  *
  * Backend: /api/ward-tasks/* — gated by ward.read / ward.fulfill.
  */
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-toastify";
@@ -22,7 +22,7 @@ import {
 import { useAuth } from "../../context/AuthContext";
 import { ShiftTab, EquipmentTab, SuppliesTab, CodeBlueTab, MortuaryTab } from "./WardBoyConsoleTabs";
 
-const API = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
+import { API_BASE_URL as API } from "../../config/api";
 const authHdr = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem("his_token")}` } });
 
 const TYPE_LABEL = {
@@ -83,11 +83,13 @@ export default function WardBoyConsole() {
   }, [params]);
 
   const [stats, setStats] = useState({});
-  const refreshStats = async () => {
+  // useCallback stabilises identity so the interval-spawning effect can list
+  // refreshStats in its deps without re-creating the interval on every render.
+  const refreshStats = useCallback(async () => {
     try { const r = await axios.get(`${API}/ward-tasks/stats`, authHdr()); setStats(r.data?.data || {}); }
     catch {}
-  };
-  useEffect(() => { refreshStats(); const i = setInterval(refreshStats, 30000); return () => clearInterval(i); }, []);
+  }, []);
+  useEffect(() => { refreshStats(); const i = setInterval(refreshStats, 30000); return () => clearInterval(i); }, [refreshStats]);
 
   return (
     <AdminPage>
@@ -142,7 +144,7 @@ function AvailableTab({ onChange }) {
   const [loading, setLoading] = useState(false);
   const [typeFilter, setTypeFilter] = useState("");
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     setLoading(true);
     try {
       const qs = new URLSearchParams({ status: "open" });
@@ -154,8 +156,8 @@ function AvailableTab({ onChange }) {
       setRows(sorted);
     } catch (e) {}
     setLoading(false);
-  };
-  useEffect(() => { refresh(); const i = setInterval(refresh, 30000); return () => clearInterval(i); }, [typeFilter]);
+  }, [typeFilter]);
+  useEffect(() => { refresh(); const i = setInterval(refresh, 30000); return () => clearInterval(i); }, [refresh]);
 
   const accept = async (t) => {
     try {
@@ -203,7 +205,7 @@ function MyTasksTab({ onChange }) {
   const [loading, setLoading] = useState(false);
   const [completing, setCompleting] = useState(null);  // task currently in completion modal
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     setLoading(true);
     try {
       const [a, b] = await Promise.all([
@@ -213,8 +215,8 @@ function MyTasksTab({ onChange }) {
       setRows([...b, ...a]);  // in-progress first
     } catch (e) {}
     setLoading(false);
-  };
-  useEffect(() => { refresh(); const i = setInterval(refresh, 30000); return () => clearInterval(i); }, []);
+  }, []);
+  useEffect(() => { refresh(); const i = setInterval(refresh, 30000); return () => clearInterval(i); }, [refresh]);
 
   const start = async (t) => {
     try {

@@ -16,17 +16,28 @@ class AdmissionController {
     const admission = await AdmissionService.createAdmission(req.body);
 
     // ── Auto-billing: fire registration + admission + first bed-day charges ──
+    // Previously this was fire-and-forget so a billing failure left the
+    // patient looking admitted with zero charges and the response said
+    // "successfully". We now await and surface the outcome in the body so
+    // reception can see whether downstream charges actually fired —
+    // without failing the admission itself (clinical record takes priority).
+    let billing = { fired: false, error: null };
     try {
       const autoBilling = require("../../services/Billing/autoBillingService");
-      autoBilling.onAdmissionCreated(admission).catch((e) =>
-        console.error("Admission auto-billing error:", e.message)
-      );
-    } catch (e) { /* don't block the admission */ }
+      const triggers = await autoBilling.onAdmissionCreated(admission);
+      billing = { fired: true, triggerCount: triggers?.length || 0, error: null };
+    } catch (e) {
+      console.error("Admission auto-billing error:", e?.message || e);
+      billing = { fired: false, error: e?.message || "Auto-billing failed" };
+    }
 
     return res.status(201).json({
       success: true,
-      message: "Patient admitted successfully",
+      message: billing.fired
+        ? "Patient admitted successfully"
+        : "Patient admitted, but auto-billing did not fire — review charges manually",
       data: admission,
+      billing,
     });
   });
 

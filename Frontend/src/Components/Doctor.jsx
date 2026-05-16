@@ -1,5 +1,6 @@
 import { useFormik } from "formik";
 import React, { useEffect, useState, useRef } from "react";
+import { API_BASE_URL } from "../config/api";
 import logo from "../assets/BIMSLOGO.png";
 import "../../css/doctor.css";
 import { InputText } from "primereact/inputtext";
@@ -38,8 +39,6 @@ export default function Doctor() {
   const { UHID } = useParams();
   const formRef = useRef();
 
-  console.log("----rr", TpaId);
-
   const load = () => {
     setLoading(true);
     setTimeout(() => {
@@ -54,7 +53,6 @@ export default function Doctor() {
         setTpaId(res.TPAid);
         setMLC(res.MLC);
         setDetail(res);
-        console.log("Patient datassssss:", res);
       })
       .catch((err) => {
         console.error("Error fetching patient:", err);
@@ -66,17 +64,13 @@ export default function Doctor() {
     const fetchData = async () => {
       try {
         const Testdata = await axios.get(
-          "http://localhost:5000/api/Servicebilldata/getAllTestNames",
+          `${API_BASE_URL}/Servicebilldata/getAllTestNames`,
         );
-        // setTestDetail(Testdata.data); // .data use करना जरूरी है
-        console.log("API Response:", Testdata.data);
-
         const formattedData = Testdata.data.map((item) => ({
           label: item.tpa_name,
           value: String(item._id),
         }));
         setTestName(formattedData);
-        console.log("selectedPerson", selectedPerson);
       } catch (error) {
         console.error("Error fetching data:", error);
       }

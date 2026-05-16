@@ -122,13 +122,14 @@ class UserController {
     }
   }
 
-  // Get all doctors
+  // Get all doctors (paginated)
   async getAllDoctors(req, res) {
     try {
-      const doctors = await userService.getAllDoctors(req.query);
+      const { doctors, pagination } = await userService.getAllDoctors(req.query);
       res.status(200).json({
         success: true,
         count: doctors.length,
+        pagination,
         data: doctors,
       });
     } catch (error) {

@@ -19,7 +19,10 @@ const EmergencySchema = new mongoose.Schema(
     contactNumber: { type: String },
     emergencyNumber: {
       type: String,
+      // sparse so brand-new ER visits (before the number is generated) don't
+      // collide on the unique index when several are created in the same tick.
       unique: true,
+      sparse: true,
     },
     arrivalDate: {
       type: Date,

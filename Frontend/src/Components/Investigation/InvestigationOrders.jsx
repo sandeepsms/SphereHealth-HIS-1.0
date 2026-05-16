@@ -15,7 +15,7 @@ import { InputTextarea } from "primereact/inputtextarea";
 import { MultiSelect } from "primereact/multiselect";
 import { ProgressBar } from "primereact/progressbar";
 
-const API = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
+import { API_BASE_URL as API } from "../../config/api";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const ORDER_STATUS = {
