@@ -4,6 +4,7 @@ const Admission = require("../../models/Patient/admissionModel");
 const ServiceMaster = require("../../models/ServiceMaster/serviceMasterModel");
 const ServicePricing = require("../../models/ServicePricing/ServicePricingModel");
 const AutoBilledItems = require("../../models/PatientBillModel/AutoBilledItemsModel");
+const { toNum } = require("../../utils/money");
 
 async function generateBillNumber() {
   const today = new Date();
@@ -205,19 +206,28 @@ class BillingService {
     const item = bill.billItems.id(itemId);
     if (!item) throw new Error("Bill item not found");
 
-    item.quantity = quantity;
-    item.grossAmount = item.unitPrice * quantity;
-    item.discountAmount =
-      (item.grossAmount * (item.discountPercent || 0)) / 100;
-    item.netAmount = item.grossAmount - item.discountAmount;
-    item.taxAmount = item.isTaxable
-      ? (item.netAmount * (item.taxPercent || 0)) / 100
+    // Money fields are Decimal128 — do the math in Number space, then assign.
+    // Mongoose auto-casts Number → Decimal128 on assignment, and the bill
+    // pre-save hook will recompute everything (so even if we missed a field
+    // here, the persisted state stays consistent).
+    const unit = toNum(item.unitPrice);
+    const grossAmount = unit * quantity;
+    const discountAmount = (grossAmount * (toNum(item.discountPercent) || 0)) / 100;
+    const netAmount = grossAmount - discountAmount;
+    const taxAmount = item.isTaxable
+      ? (netAmount * (toNum(item.taxPercent) || 0)) / 100
       : 0;
-    const lineTotal = item.netAmount + item.taxAmount;
+    const lineTotal = netAmount + taxAmount;
+
+    item.quantity = quantity;
+    item.grossAmount = grossAmount;
+    item.discountAmount = discountAmount;
+    item.netAmount = netAmount;
+    item.taxAmount = taxAmount;
 
     if (bill.paymentType === "TPA") {
       const tpaLimit = item.tpaApprovedLimitPerUnit
-        ? item.tpaApprovedLimitPerUnit * quantity
+        ? toNum(item.tpaApprovedLimitPerUnit) * quantity
         : lineTotal;
       item.tpaPayableAmount = Math.min(tpaLimit, lineTotal);
       item.patientPayableAmount = lineTotal - item.tpaPayableAmount;
@@ -293,10 +303,11 @@ class BillingService {
         paidAt: new Date(),
       });
 
-      const totalPaid = bill.payments.reduce((s, p) => s + p.amount, 0);
-      bill.advancePaid = totalPaid;
-      bill.balanceAmount = Math.max(0, bill.patientPayableAmount - totalPaid);
-      bill.billStatus = bill.balanceAmount === 0 ? "PAID" : "PARTIAL";
+      const totalPaid = bill.payments.reduce((s, p) => s + toNum(p.amount), 0);
+      const balance = Math.max(0, toNum(bill.patientPayableAmount) - totalPaid);
+      bill.advancePaid   = totalPaid;
+      bill.balanceAmount = balance;
+      bill.billStatus    = balance === 0 ? "PAID" : "PARTIAL";
       if (bill.billStatus === "PAID") bill.paidAt = new Date();
 
       try {
