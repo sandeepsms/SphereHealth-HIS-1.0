@@ -41,8 +41,14 @@ const BillItemSchema = new mongoose.Schema(
     netAmount: { type: Number, default: 0 },
 
     // TPA split (filled only when paymentType === TPA)
-    tpaPayableAmount: { type: Number, default: 0 },
-    patientPayableAmount: { type: Number, default: 0 },
+    // tpaPercent: when > 0, recomputed every save as `lineTotal * pct/100`.
+    //             Use this when the policy covers a percentage of the bill.
+    // tpaPayableAmount: caller-supplied absolute amount; used when tpaPercent
+    //             is 0/unset. Capped at lineTotal so patientPayable never
+    //             goes negative if discounts shrink lineTotal below the cap.
+    tpaPercent:        { type: Number, default: 0, min: 0, max: 100 },
+    tpaPayableAmount:  { type: Number, default: 0, min: 0 },
+    patientPayableAmount: { type: Number, default: 0, min: 0 },
 
     // Tax
     isTaxable: { type: Boolean, default: false },
@@ -193,18 +199,32 @@ PatientBillSchema.pre("save", async function (next) {
       tpaPay = 0,
       ptPay = 0;
 
-    this.billItems.forEach((item) => {
-      item.grossAmount = item.unitPrice * item.quantity;
-      item.discountAmount = (item.grossAmount * item.discountPercent) / 100;
-      item.netAmount = item.grossAmount - item.discountAmount;
-      item.taxAmount = item.isTaxable
-        ? (item.netAmount * item.taxPercent) / 100
-        : 0;
+    // 2-decimal rounding helper — keeps line math from drifting visibly even
+    // while underlying storage is still float. (Full Decimal128 migration is
+    // a separate change; see follow-up commit.)
+    const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
-      const lineTotal = item.netAmount + item.taxAmount;
+    this.billItems.forEach((item) => {
+      item.grossAmount    = r2(item.unitPrice * item.quantity);
+      item.discountAmount = r2((item.grossAmount * item.discountPercent) / 100);
+      item.netAmount      = r2(item.grossAmount - item.discountAmount);
+      item.taxAmount      = r2(item.isTaxable
+        ? (item.netAmount * item.taxPercent) / 100
+        : 0);
+
+      const lineTotal = r2(item.netAmount + item.taxAmount);
 
       if (this.paymentType === "TPA") {
-        item.patientPayableAmount = lineTotal - item.tpaPayableAmount;
+        // If tpaPercent is set, recompute the absolute TPA share fresh on
+        // every save so it stays aligned with the (possibly-changed) discount
+        // and tax. Otherwise treat tpaPayableAmount as a caller-supplied cap
+        // and clamp it to lineTotal so the patient side never goes negative.
+        if (Number(item.tpaPercent) > 0) {
+          item.tpaPayableAmount = r2((lineTotal * Number(item.tpaPercent)) / 100);
+        } else {
+          item.tpaPayableAmount = Math.min(Number(item.tpaPayableAmount) || 0, lineTotal);
+        }
+        item.patientPayableAmount = r2(Math.max(0, lineTotal - item.tpaPayableAmount));
       } else {
         item.tpaPayableAmount = 0;
         item.patientPayableAmount = lineTotal;
@@ -217,12 +237,12 @@ PatientBillSchema.pre("save", async function (next) {
       ptPay += item.patientPayableAmount;
     });
 
-    this.grossAmount = gross;
-    this.totalDiscount = disc;
-    this.taxAmount = tax;
-    this.netAmount = gross - disc + tax;
-    this.tpaPayableAmount = tpaPay;
-    this.patientPayableAmount = ptPay;
+    this.grossAmount = r2(gross);
+    this.totalDiscount = r2(disc);
+    this.taxAmount = r2(tax);
+    this.netAmount = r2(gross - disc + tax);
+    this.tpaPayableAmount = r2(tpaPay);
+    this.patientPayableAmount = r2(ptPay);
   }
 
   // Recalculate balance. Payment rows can be negative (refunds), so totalPaid
