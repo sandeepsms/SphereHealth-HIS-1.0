@@ -107,6 +107,37 @@ const PatientForm = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    // Pre-submit validation so the user gets a single clear message and the
+    // server doesn't have to fail the request with a 400 + Mongoose error
+    // map. Backend still validates — this is just for fast feedback.
+    const requiredFields = [
+      ["fullName",      "Full name"],
+      ["gender",        "Gender"],
+      ["contactNumber", "Contact number"],
+    ];
+    const missing = requiredFields.filter(([k]) => !String(formData[k] || "").trim());
+    if (missing.length) {
+      toast.current?.show({
+        severity: "warn",
+        summary: "Missing required fields",
+        detail: missing.map(([, label]) => label).join(", "),
+        life: 4000,
+      });
+      return;
+    }
+
+    const phoneOk = /^\d{10,15}$/.test(String(formData.contactNumber).replace(/\D/g, ""));
+    if (!phoneOk) {
+      toast.current?.show({
+        severity: "warn",
+        summary: "Invalid contact number",
+        detail: "Enter a 10–15 digit phone number.",
+        life: 4000,
+      });
+      return;
+    }
+
     setLoading(true);
 
     const submitData = {
