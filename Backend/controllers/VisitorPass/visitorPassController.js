@@ -132,3 +132,33 @@ exports.activeCount = handle(async (req, res) => {
   const count = await VisitorPass.countDocuments({ status: "Active" });
   return res.json({ success: true, count });
 });
+
+/* GET /api/visitor-passes/stats
+   Three KPIs for the Security dashboard in one round-trip. */
+exports.stats = handle(async (req, res) => {
+  // First, transition any stale Active passes whose window has closed.
+  await VisitorPass.updateMany(
+    { status: "Active", validUntil: { $lt: new Date() } },
+    { $set: { status: "Expired" } },
+  );
+
+  // Hospital-local "today" — UTC slice would put the IST midnight cutoff
+  // in the wrong place (see autoBillingService HOSPITAL_TZ for the same
+  // reasoning).
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+
+  const [passesToday, activeVisitors, expiredPasses] = await Promise.all([
+    VisitorPass.countDocuments({ createdAt: { $gte: startOfDay } }),
+    VisitorPass.countDocuments({ status: "Active" }),
+    // "Expired passes" — pass window closed AND still on file today (we
+    // don't surface ancient expired passes; the gate-pass auditor uses
+    // listPasses for the full history view).
+    VisitorPass.countDocuments({ status: "Expired", validUntil: { $gte: startOfDay } }),
+  ]);
+
+  return res.json({
+    success: true,
+    data: { passesToday, activeVisitors, expiredPasses },
+  });
+});

@@ -513,12 +513,30 @@ function WardOpsDashboard({ user, role }) {
 ══════════════════════════════════════════════════════════════════ */
 function SecurityDashboard({ user }) {
   const navigate = useNavigate();
+  const [stats, setStats] = useState(null);
+  // Auto-refresh every 60s so the gate desk sees passes-today / active-visitor
+  // counts drift in near-real-time without a manual reload.
+  useEffect(() => {
+    let cancelled = false;
+    const fetchStats = async () => {
+      try {
+        const r = await axios.get(`${API}/visitor-passes/stats`, authHdr());
+        if (!cancelled) setStats(r.data?.data || null);
+      } catch { /* leave previous value so the dashboard doesn't flicker to dashes */ }
+    };
+    fetchStats();
+    const i = setInterval(fetchStats, 60000);
+    return () => { cancelled = true; clearInterval(i); };
+  }, []);
+
+  const k = (n) => (stats == null ? "—" : n ?? 0);
+
   return (
     <>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
-        <KPI label="Passes today"     value="—" color={C.amber}  icon="pi-id-card" />
-        <KPI label="Active visitors"  value="—" color={C.blue}   icon="pi-users" />
-        <KPI label="Expired passes"   value="—" color={C.red}    icon="pi-times-circle" />
+        <KPI label="Passes today"     value={k(stats?.passesToday)}    color={C.amber}  icon="pi-id-card" />
+        <KPI label="Active visitors"  value={k(stats?.activeVisitors)} color={C.blue}   icon="pi-users" />
+        <KPI label="Expired passes"   value={k(stats?.expiredPasses)}  color={C.red}    icon="pi-times-circle" />
       </div>
 
       <div style={{ display: "grid", gap: 14 }}>

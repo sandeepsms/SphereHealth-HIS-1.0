@@ -5,6 +5,7 @@ const ctrl    = require("../../controllers/VisitorPass/visitorPassController");
 router.post("/",                  ctrl.issuePass);
 router.get ("/",                  ctrl.listPasses);
 router.get ("/active-count",      ctrl.activeCount);
+router.get ("/stats",             ctrl.stats);
 router.post("/:id/return",        ctrl.returnPass);
 router.post("/:id/revoke",        ctrl.revokePass);
 
