@@ -3,13 +3,13 @@
   "configurations": [
     {
       "name": "Backend (Express)",
-      "runtimeExecutable": "npm",
+      "runtimeExecutable": "npm.cmd",
       "runtimeArgs": ["run", "start", "--prefix", "Backend"],
       "port": 5000
     },
     {
       "name": "Frontend (Vite)",
-      "runtimeExecutable": "npm",
+      "runtimeExecutable": "npm.cmd",
       "runtimeArgs": ["run", "dev", "--prefix", "Frontend"],
       "port": 5173
     }

@@ -1,6 +1,6 @@
 const jwt = require("jsonwebtoken");
 
-const JWT_SECRET = process.env.JWT_SECRET || "spherehealth_his_secret_2025";
+const JWT_SECRET = process.env.JWT_SECRET;
 
 /* ── Verify JWT token ──
    Supports both the Authorization: Bearer header (preferred) and
