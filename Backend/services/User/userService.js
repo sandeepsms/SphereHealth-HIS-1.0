@@ -173,7 +173,8 @@ class UserService {
     return user;
   }
 
-  // Get all doctors
+  // Get all doctors (paginated — previously returned the entire active-doctor
+  // list which could grow unbounded on multi-branch hospitals)
   async getAllDoctors(query = {}) {
     const { department, specialization, designation } = query;
 
@@ -191,12 +192,24 @@ class UserService {
       filter["doctorDetails.designation"] = designation;
     }
 
-    const doctors = await User.find(filter)
-      .select("-password")
-      .populate("department", "name code category")
-      .sort({ "doctorDetails.experienceYears": -1 });
+    const page  = Math.max(1, parseInt(query.page) || 1);
+    const limit = Math.min(500, Math.max(1, parseInt(query.limit) || 100));
+    const skip  = (page - 1) * limit;
 
-    return doctors;
+    const [doctors, total] = await Promise.all([
+      User.find(filter)
+        .select("-password")
+        .populate("department", "name code category")
+        .sort({ "doctorDetails.experienceYears": -1 })
+        .skip(skip)
+        .limit(limit),
+      User.countDocuments(filter),
+    ]);
+
+    return {
+      doctors,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+    };
   }
 
   // Get all nurses

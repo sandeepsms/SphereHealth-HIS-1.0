@@ -1,11 +1,21 @@
 const Form = require("../models/OpdrModel");
 
-exports.OPDform = async (req, res) => {
-  console.log(req);
-  try {
-    const Registrationform = new Form(req.body);
-    console.log("backend data", Registrationform);
+// Minimum fields the OPD intake form needs to be persistable. Anything
+// beyond this is optional and just gets stored as-given.
+const REQUIRED_FIELDS = ["UHID", "fullName", "contactNumber", "gender"];
 
+exports.OPDform = async (req, res) => {
+  try {
+    const body = req.body || {};
+    const missing = REQUIRED_FIELDS.filter((k) => !body[k] || String(body[k]).trim() === "");
+    if (missing.length) {
+      return res.status(400).json({
+        success: false,
+        message: `Missing required field(s): ${missing.join(", ")}`,
+      });
+    }
+
+    const Registrationform = new Form(body);
     await Registrationform.save();
     res.status(201).json({
       success: true,
@@ -13,7 +23,9 @@ exports.OPDform = async (req, res) => {
       data: Registrationform,
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    // Mongoose validation failures → 400, anything else → 500.
+    const status = error?.name === "ValidationError" ? 400 : 500;
+    res.status(status).json({ success: false, message: error.message });
   }
 };
 

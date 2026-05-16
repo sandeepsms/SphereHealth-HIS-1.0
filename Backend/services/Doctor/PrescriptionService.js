@@ -254,30 +254,64 @@ class PrescriptionService {
     const tpaId = patientData.tpa?._id || patientData.tpa || null;
     const items = [];
 
-    for (const inv of prescription.investigations) {
-      let invId = inv.investigationId;
+    // ── Batch 1: resolve unknown investigationName → invId in a single query
+    //    (was N+1 — one InvestigationMaster.findOne per investigation).
+    const namesToLookup = prescription.investigations
+      .filter((inv) => !inv.investigationId && inv.investigationName)
+      .map((inv) => inv.investigationName);
 
-      if (!invId) {
-        const found = await InvestigationMaster.findOne({
-          $or: [
-            {
-              investigationName: {
-                $regex: `^${inv.investigationName}$`,
-                $options: "i",
-              },
-            },
-            {
-              shortName: {
-                $regex: `^${inv.investigationName}$`,
-                $options: "i",
-              },
-            },
-          ],
-          isActive: true,
-        });
-        if (found) invId = found._id;
+    const nameToMaster = new Map();
+    if (namesToLookup.length) {
+      const escaped = namesToLookup.map((n) =>
+        n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+      );
+      const foundList = await InvestigationMaster.find({
+        isActive: true,
+        $or: escaped.flatMap((p) => [
+          { investigationName: { $regex: `^${p}$`, $options: "i" } },
+          { shortName:         { $regex: `^${p}$`, $options: "i" } },
+        ]),
+      });
+      for (const reqName of namesToLookup) {
+        const lc = reqName.toLowerCase();
+        const m = foundList.find(
+          (f) =>
+            f.investigationName?.toLowerCase() === lc ||
+            f.shortName?.toLowerCase() === lc,
+        );
+        if (m) nameToMaster.set(reqName, m);
       }
+    }
 
+    // Resolve each investigation to a (possibly-null) invId.
+    const resolved = prescription.investigations.map((inv) => ({
+      inv,
+      invId:
+        inv.investigationId ||
+        nameToMaster.get(inv.investigationName)?._id ||
+        null,
+    }));
+
+    // ── Batch 2: fetch ALL InvestigationMaster docs in one query, and resolve
+    //    pricing in parallel (was N+1 + N — one findById + one getPriceFor
+    //    per investigation, sequentially).
+    const knownIds = resolved.map((r) => r.invId).filter(Boolean);
+    const uniqIds = [...new Set(knownIds.map(String))];
+
+    const [mastersList, pricings] = await Promise.all([
+      uniqIds.length
+        ? InvestigationMaster.find({ _id: { $in: uniqIds } })
+        : Promise.resolve([]),
+      Promise.all(
+        uniqIds.map((id) =>
+          InvestigationPricing.getPriceFor(id, paymentType, tpaId),
+        ),
+      ),
+    ]);
+    const masterById = new Map(mastersList.map((m) => [String(m._id), m]));
+    const pricingById = new Map(uniqIds.map((id, i) => [id, pricings[i]]));
+
+    for (const { inv, invId } of resolved) {
       if (!invId) {
         items.push({
           investigationId: new mongoose.Types.ObjectId(),
@@ -293,12 +327,8 @@ class PrescriptionService {
         continue;
       }
 
-      const master = await InvestigationMaster.findById(invId);
-      const pricing = await InvestigationPricing.getPriceFor(
-        invId,
-        paymentType,
-        tpaId,
-      );
+      const master = masterById.get(String(invId));
+      const pricing = pricingById.get(String(invId));
 
       items.push({
         investigationId: invId,
