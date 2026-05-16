@@ -22,7 +22,7 @@ import {
 import { useAuth } from "../../context/AuthContext";
 import { ShiftTab, EquipmentTab, SuppliesTab, CodeBlueTab, MortuaryTab } from "./WardBoyConsoleTabs";
 
-const API = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
+import { API_BASE_URL as API } from "../../config/api";
 const authHdr = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem("his_token")}` } });
 
 const TYPE_LABEL = {

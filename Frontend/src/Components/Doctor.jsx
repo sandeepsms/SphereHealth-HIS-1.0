@@ -1,5 +1,6 @@
 import { useFormik } from "formik";
 import React, { useEffect, useState, useRef } from "react";
+import { API_BASE_URL } from "../config/api";
 import logo from "../assets/BIMSLOGO.png";
 import "../../css/doctor.css";
 import { InputText } from "primereact/inputtext";
@@ -66,7 +67,7 @@ export default function Doctor() {
     const fetchData = async () => {
       try {
         const Testdata = await axios.get(
-          "http://localhost:5000/api/Servicebilldata/getAllTestNames",
+          `${API_BASE_URL}/Servicebilldata/getAllTestNames`,
         );
         // setTestDetail(Testdata.data); // .data use करना जरूरी है
         console.log("API Response:", Testdata.data);

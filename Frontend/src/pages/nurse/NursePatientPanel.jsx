@@ -25,7 +25,7 @@ import {
   HandoverNotesTab,
 } from "../../Components/clinical/PatientPanelTabs";
 
-const BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
+import { API_BASE_URL as BASE } from "../../config/api";
 
 /* ── Design tokens — teal/green theme matching NursingNotes ── */
 const C = {

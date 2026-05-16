@@ -17,7 +17,7 @@ import {
   Table, EmptyRow, RowAction, C,
 } from "../../Components/admin-theme";
 
-const API_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
+import { API_BASE_URL as API_URL } from "../../config/api";
 
 const TABS = [
   { key: "identity", label: "Identity & Branding", icon: "pi-image" },

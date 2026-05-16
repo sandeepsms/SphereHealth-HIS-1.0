@@ -17,7 +17,7 @@ import { serviceMasterService } from "../../Services/Servicemasterservice/servic
 import { admissionService } from "../../Services/admissionService";
 import BedSelectionPanel from "../bed/BedSelectionPanel";
 
-const API = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
+import { API_BASE_URL as API } from "../../config/api";
 
 // ── Dropdown options ─────────────────────────────────────────
 const SCHEDULE_OPTS = [
