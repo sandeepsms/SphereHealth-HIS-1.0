@@ -222,7 +222,9 @@ function DoctorDashboard({ user }) {
       const today = new Date().toISOString().slice(0, 10);
       const [opd, adm] = await Promise.all([
         axios.get(`${API}/opd?from=${today}&to=${today}`, authHdr()).catch(() => null),
-        axios.get(`${API}/admissions/active`, authHdr()).catch(() => null),
+        // IPD-only: Admission collection also stores OPD / Day-Care
+        // stubs, so without hasBed=true the count over-reports IPD.
+        axios.get(`${API}/admissions/active?hasBed=true`, authHdr()).catch(() => null),
       ]);
       setStats({
         opdToday: opd?.data?.data?.length ?? opd?.data?.length ?? "—",

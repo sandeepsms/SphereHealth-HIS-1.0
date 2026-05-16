@@ -33,7 +33,9 @@ export default function VisitorPasses() {
     try {
       const [pRes, aRes] = await Promise.allSettled([
         axios.get(`${API_ENDPOINTS.BASE}/visitor-passes`),
-        axios.get(`${API_ENDPOINTS.BASE}/admissions/active`),
+        // Visitor passes are issued for attendants of bedded patients
+        // — never for OPD walk-ins. Filter to IPD only.
+        axios.get(`${API_ENDPOINTS.BASE}/admissions/active?hasBed=true`),
       ]);
       if (pRes.status === "fulfilled") setList(pRes.value.data?.data || []);
       if (aRes.status === "fulfilled") {

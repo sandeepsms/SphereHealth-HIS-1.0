@@ -352,6 +352,17 @@ class AdmissionService {
       query.attendingDoctorId = new mongoose.Types.ObjectId(String(filters.attendingDoctorId));
     if (filters.wardId) query.wardId = filters.wardId;
 
+    /* IPD-only filter — `hasBed` is the indexed boolean stamped at
+       admission time that distinguishes a true bedded IPD admission
+       from an OPD visit / day-care / Services billing-only stub that
+       also lives in the Admission collection. Callers asking for
+       "active IPD" should pass `?hasBed=true`. We accept both the raw
+       boolean and the string "true"/"false" for query-string ergonomics. */
+    if (filters.hasBed !== undefined) {
+      const v = filters.hasBed;
+      query.hasBed = v === true || v === "true";
+    }
+
     const bedFilter = filters.bedId || filters.bed;
     if (bedFilter && mongoose.isValidObjectId(String(bedFilter)))
       query.bedId = new mongoose.Types.ObjectId(String(bedFilter));

@@ -67,7 +67,11 @@ router.get("/overview", requireAction("users.read"), async (req, res) => {
       HospitalSettings.findOne().lean().catch(() => null),
       User.countDocuments({ isActive: true }).catch(() => 0),
       Patient.estimatedDocumentCount().catch(() => 0),
-      Admission.countDocuments({ status: "Active" }).catch(() => 0),
+      // IPD-active = beds actually occupied by an admitted patient.
+      // The Admission collection also stores OPD / Day-Care / Services
+      // rows (admissionType varies) — without `hasBed: true` we'd
+      // double-count them as IPD. See models/Patient/admissionModel.js.
+      Admission.countDocuments({ status: "Active", hasBed: true }).catch(() => 0),
       OPD.countDocuments({ visitDate: { $gte: today, $lt: tomorrow } }).catch(() => 0),
       OPD.countDocuments({ visitDate: { $gte: yesterday, $lt: today } }).catch(() => 0),
       Bed.aggregate([{ $group: { _id: "$status", n: { $sum: 1 } } }]).catch(() => []),
@@ -94,7 +98,7 @@ router.get("/overview", requireAction("users.read"), async (req, res) => {
       ]).catch(() => []),
       Admission.find({ admissionDate: { $gte: yesterday } })
         .sort({ admissionDate: -1 }).limit(8)
-        .select("patientName UHID admissionDate department admissionType status").lean().catch(() => []),
+        .select("patientName UHID admissionDate department admissionType status hasBed").lean().catch(() => []),
       Admission.find({ status: "Discharged", dischargeDate: { $gte: yesterday } })
         .sort({ dischargeDate: -1 }).limit(6)
         .select("patientName UHID dischargeDate department").lean().catch(() => []),
@@ -109,8 +113,9 @@ router.get("/overview", requireAction("users.read"), async (req, res) => {
         { $group: { _id: "$department", n: { $sum: 1 } } },
         { $sort: { n: -1 } }, { $limit: 8 },
       ]).catch(() => []),
+      // Same "real IPD only" predicate as above — group by department.
       Admission.aggregate([
-        { $match: { status: "Active" } },
+        { $match: { status: "Active", hasBed: true } },
         { $group: { _id: "$department", n: { $sum: 1 } } },
         { $sort: { n: -1 } }, { $limit: 8 },
       ]).catch(() => []),
@@ -151,12 +156,22 @@ router.get("/overview", requireAction("users.read"), async (req, res) => {
     /* Build the unified activity feed */
     const activity = [];
     for (const a of recentAdmissions) {
+      // Distinguish IPD admissions from OPD / Day-Care visits that also
+      // live in the Admission collection — verb + icon + colour all
+      // change based on whether a bed was actually assigned.
+      const isIPD = !!a.hasBed;
+      const isOPD = a.admissionType === "OPD";
       activity.push({
-        kind: "admission",
-        title: `${a.patientName || "Patient"} admitted`,
-        sub: `${a.department || "—"} · ${a.admissionType || "IPD"} · ${a.UHID || ""}`,
+        kind:  isIPD ? "admission" : isOPD ? "opd-visit" : "visit",
+        title: isIPD
+          ? `${a.patientName || "Patient"} admitted (IPD)`
+          : isOPD
+            ? `${a.patientName || "Patient"} — OPD visit`
+            : `${a.patientName || "Patient"} — ${a.admissionType || "visit"}`,
+        sub:  `${a.department || "—"} · ${a.admissionType || ""} · ${a.UHID || ""}`,
         when: a.admissionDate,
-        icon: "pi-home", color: "blue",
+        icon: isIPD ? "pi-home" : "pi-user-edit",
+        color: isIPD ? "blue" : "purple",
       });
     }
     for (const d of recentDischarges) {

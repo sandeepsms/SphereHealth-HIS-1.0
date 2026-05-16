@@ -432,7 +432,10 @@ export default function AdmittedPatientPanel({ onPatientSelect, selectedId, page
       const token   = localStorage.getItem("his_token");
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const [activeRes, discRes] = await Promise.allSettled([
-        axios.get(`${API}/admissions/active`,           { headers }),
+        // IPD-only — this panel is literally "Admitted patients", so
+        // we must exclude OPD / Day-Care / Services rows that live
+        // in the Admission collection without a bed.
+        axios.get(`${API}/admissions/active?hasBed=true`,           { headers }),
         axios.get(`${API}/admissions/discharges/today`, { headers }),
       ]);
       if (activeRes.status === "fulfilled") {

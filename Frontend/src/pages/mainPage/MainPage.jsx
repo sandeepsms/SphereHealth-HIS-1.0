@@ -155,10 +155,11 @@ export default function MainPage() {
           return d && new Date(d).toDateString() === todayStr;
         });
 
-        // Active IPD admissions
+        // Active IPD admissions — hasBed=true excludes OPD / Day-Care /
+        // Services stubs that also live in the Admission collection.
         let admissions = [];
         try {
-          const admRes = await axios.get(API_ENDPOINTS.ADMISSIONS + "/active");
+          const admRes = await axios.get(API_ENDPOINTS.ADMISSIONS + "/active?hasBed=true");
           admissions = (admRes.data?.data || admRes.data || []).slice(0, 20);
         } catch { /* admissions may not exist yet */ }
 

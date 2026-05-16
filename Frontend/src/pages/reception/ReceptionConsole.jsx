@@ -251,16 +251,17 @@ export default function ReceptionConsole() {
         ]);
         const admList = adm?.data || adm || [];
         const opdList = opdToday?.data?.data || opdToday?.data || [];
-        // IPD count = anything that's NOT Day Care or Emergency. Includes
-        // Planned admissions, ward Transfers, re-admissions, and rows with
-        // a missing admissionType (defaults to "Emergency" on the model so
-        // those still show up under ER, which is correct).
+        // IPD = an admission with a bed actually assigned (`hasBed` is
+        // the indexed boolean on admissionModel.js). The previous logic
+        // filtered by admissionType exclusion which mis-categorised
+        // OPD / Daycare / Services rows (all of which now also live in
+        // the Admission collection) as IPD. See models/Patient/admissionModel.js.
         setStats({
           opd:  Array.isArray(opdList) ? opdList.length : 0,
-          ipd:  admList.filter(a => !["Day Care", "Emergency"].includes(a.admissionType)).length,
-          dc:   admList.filter(a => a.admissionType === "Day Care").length,
+          ipd:  admList.filter(a => a.hasBed === true).length,
+          dc:   admList.filter(a => a.admissionType === "Day Care" || a.admissionType === "Daycare").length,
           er:   admList.filter(a => a.admissionType === "Emergency").length,
-          svc:  0,    // could be wired to a service-bills count API later
+          svc:  admList.filter(a => a.admissionType === "Services").length,
           beds: "—",  // computed via beds API later
         });
       } catch (e) { /* silent */ }

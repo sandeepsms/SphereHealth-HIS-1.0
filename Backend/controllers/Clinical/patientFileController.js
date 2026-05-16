@@ -134,10 +134,18 @@ exports.getCompleteFile = async (req, res) => {
       });
     };
 
-    admissions.forEach((a) => push(a.admissionDate || a.createdAt, "admission",
-      `Admitted — ${a.admissionType || "IPD"} — ${a.reasonForAdmission || ""}`,
-      { id: a._id, model: "Admission" },
-      { dischargedAt: a.dischargeDate }));
+    admissions.forEach((a) => {
+      // The Admission collection holds OPD / Day-Care / Services rows
+      // too — only call them "Admitted" when a bed was actually given.
+      const isBedded = a.hasBed === true;
+      const headline = isBedded
+        ? `Admitted — ${a.admissionType || "IPD"} — ${a.reasonForAdmission || ""}`
+        : `${a.admissionType || "Visit"} — ${a.reasonForAdmission || ""}`;
+      push(a.admissionDate || a.createdAt, isBedded ? "admission" : "visit",
+        headline,
+        { id: a._id, model: "Admission" },
+        { dischargedAt: a.dischargeDate, admissionType: a.admissionType });
+    });
 
     doctorNotes.forEach((n) => push(n.visitDate || n.createdAt, "doctor-note",
       `Dr ${n.doctorName || ""} — ${n.noteType || "progress"} note`,

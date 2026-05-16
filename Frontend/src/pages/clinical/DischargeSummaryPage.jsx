@@ -962,7 +962,8 @@ function DischargeSummaryPageContent({ selectedPatient }) {
     if (!uhid.trim()) return;
     setSearching(true);
     try {
-      const res = await axios.get(`${API_ENDPOINTS.BASE}/admissions/active`, { headers });
+      // Discharge summary is IPD-only — never show OPD visits here.
+      const res = await axios.get(`${API_ENDPOINTS.BASE}/admissions/active?hasBed=true`, { headers });
       const list = Array.isArray(res.data?.data) ? res.data.data : [];
       const found = list.find(a => a.UHID === uhid.trim().toUpperCase() || a.admissionNumber === uhid.trim());
       if (found) {

@@ -117,7 +117,8 @@ export default function DiabeticChartPage() {
 
   const loadPatient = async (uhid) => {
     try {
-      const res = await axios.get(`${API_ENDPOINTS.BASE}/admissions/active?UHID=${encodeURIComponent(uhid)}`, { headers });
+      // Sliding-scale insulin charting is IPD-only — prefer a bedded admission.
+      const res = await axios.get(`${API_ENDPOINTS.BASE}/admissions/active?hasBed=true&UHID=${encodeURIComponent(uhid)}`, { headers });
       const list = Array.isArray(res.data) ? res.data : res.data?.data || [];
       const adm  = list[0];
       if (!adm) { toast.warn("No active admission for that UHID"); return; }
