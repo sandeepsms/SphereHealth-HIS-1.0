@@ -33,6 +33,12 @@ const ACTIONS = {
   "reception.discharge":   ["Admin", "Receptionist"],
   "reception.visitor-pass":["Admin", "Receptionist", "Security"],
 
+  // Security — gate log + incident reports. Receptionist gets read access
+  // through the dashboard widgets they share with Security; Admin gets
+  // everything by default elsewhere but the explicit list keeps it grep-able.
+  "security.gate-log":        ["Admin", "Security", "Receptionist"],
+  "security.incident-report": ["Admin", "Security"],
+
   // Clinical
   "rx.write":              ["Admin", "Doctor"],
   // Accountant added so /pharmacy/stats and /pharmacy/registers/* (the GST

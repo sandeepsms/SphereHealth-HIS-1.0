@@ -194,4 +194,8 @@ router.use("/housekeeping",     require("./Clinical/housekeepingRoutes"));
 // Lab records — manual trend sheets + imaging / micro / histopath reports
 router.use("/lab-records",      require("./Clinical/labRecordsRoutes"));
 
+// Security — gate log + incident reports
+router.use("/gate-log",         require("./Security/gateLogRoutes"));
+router.use("/incidents",        require("./Security/incidentReportRoutes"));
+
 module.exports = router;

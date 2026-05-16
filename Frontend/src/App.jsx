@@ -129,6 +129,8 @@ const NursePatientPanel = lazy(() => import("./pages/nurse/NursePatientPanel"));
 const DoctorOPDPanelPage = lazy(() => import("./pages/doctor/DoctorOPDPanelPage"));
 const PatientHistoryPage = lazy(() => import("./pages/patient/PatientHistoryPage"));
 const CompletePatientFilePage = lazy(() => import("./pages/patient/CompletePatientFilePage"));
+const GateLogPage = lazy(() => import("./pages/security/GateLogPage"));
+const IncidentsPage = lazy(() => import("./pages/security/IncidentsPage"));
 const MARPage = lazy(() => import("./pages/clinical/MARPage"));
 const DiabeticChartPage = lazy(() => import("./pages/clinical/DiabeticChartPage"));
 const MaintenanceDashboardPage = lazy(() => import("./pages/maintenance/MaintenanceDashboardPage"));
@@ -463,6 +465,12 @@ function AppLayout({ collapsed, setCollapsed }) {
             } />
             <Route path="/visitor-passes" element={
               <RoleGuard action="reception.visitor-pass"><VisitorPasses /></RoleGuard>
+            } />
+            <Route path="/gate-log" element={
+              <RoleGuard action="security.gate-log"><GateLogPage /></RoleGuard>
+            } />
+            <Route path="/incidents" element={
+              <RoleGuard action="security.incident-report"><IncidentsPage /></RoleGuard>
             } />
             <Route path="/tpa-cases" element={
               <RoleGuard allow={["Admin", "TPA Coordinator", "Receptionist", "Accountant"]}><TPACases /></RoleGuard>

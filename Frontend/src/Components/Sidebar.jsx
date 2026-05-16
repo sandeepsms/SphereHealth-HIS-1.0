@@ -325,11 +325,23 @@ const HOUSEKEEPING_NAV = [{
   path: "/housekeeping", single: true, roles: ["Housekeeping"],
 }];
 
+// Security — small focused workspace: dashboard, visitor passes, gate
+// log, incident reports. Mirrors the Dietician/Ward Boy hard-fork
+// pattern so the rest of the NAV array doesn't need to know about
+// Security at all.
+const SECURITY_NAV = [
+  { id: "dashboard",      label: "Dashboard",        icon: "pi-home",                color: "#374151", light: "#f9fafb", path: "/dashboard",      single: true, roles: ["Security"] },
+  { id: "visitor-passes", label: "Visitor Passes",   icon: "pi-id-card",             color: "#f59e0b", light: "#fffbeb", path: "/visitor-passes", single: true, roles: ["Security"] },
+  { id: "gate-log",       label: "Gate Log",         icon: "pi-shield",              color: "#10b981", light: "#ecfdf5", path: "/gate-log",       single: true, roles: ["Security"], badge: "NEW" },
+  { id: "incidents",      label: "Incident Reports", icon: "pi-exclamation-triangle",color: "#ef4444", light: "#fef2f2", path: "/incidents",      single: true, roles: ["Security"], badge: "NEW" },
+];
+
 function filterNav(nav, userRole) {
   if (userRole === ADMIN) return nav; // Admin sees everything unfiltered
   if (userRole === "Dietician")    return DIETICIAN_NAV;
   if (userRole === "Ward Boy")     return WARD_BOY_NAV;
   if (userRole === "Housekeeping") return HOUSEKEEPING_NAV;
+  if (userRole === "Security")     return SECURITY_NAV;
   return nav
     .filter(section => canSee(section.roles, userRole))
     .map(section => {
