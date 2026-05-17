@@ -741,6 +741,300 @@ function ProcedurePanel({ data }) {
   );
 }
 
+/* ── VITAL SHEET / STANDALONE VITALS NOTE ──────────────────────── */
+function matchVitals(data) {
+  // Strong signature: BP fields + at least one other vital. Don't trigger
+  // on the inline `vitals` sub-object that lives on every note — that's
+  // already rendered by VitalsInline. Only match a flat top-level note
+  // that exists to record vitals.
+  if (!data || typeof data !== "object" || Array.isArray(data)) return false;
+  const have = new Set(Object.keys(data).map((k) => k.toLowerCase()));
+  if (!(have.has("bp_sys") || have.has("bp_dia"))) return false;
+  // Require ≥2 of: pulse / temp / spo2 / rr / gcs / bsl / painScore / o2Device
+  let other = 0;
+  for (const k of ["pulse", "temp", "spo2", "rr", "gcs", "bsl", "painscore", "o2flow", "o2device", "position", "weight"]) {
+    if (have.has(k)) other++;
+  }
+  return other >= 2;
+}
+function VitalsPanel({ data }) {
+  const bp_s = lc(data, "bp_sys"), bp_d = lc(data, "bp_dia");
+  const pulse = lc(data, "pulse"), temp = lc(data, "temp"), spo2 = lc(data, "spo2"), rr = lc(data, "rr");
+  const gcs = lc(data, "gcs"), bsl = lc(data, "bsl"), pain = lc(data, "painScore");
+  const o2Flow = lc(data, "o2Flow"), o2Dev = lc(data, "o2Device");
+  // Quick triage: critical vital flags
+  const flags = [];
+  const p = Number(pulse); if (Number.isFinite(p) && (p < 50 || p > 120)) flags.push({ k: "Pulse", v: p });
+  const sysN = Number(bp_s); if (Number.isFinite(sysN) && (sysN < 90 || sysN > 180)) flags.push({ k: "Sys BP", v: sysN });
+  const spoN = Number(spo2); if (Number.isFinite(spoN) && spoN < 92) flags.push({ k: "SpO₂", v: spoN });
+  const rrN  = Number(rr);   if (Number.isFinite(rrN)  && (rrN < 10 || rrN > 24)) flags.push({ k: "RR", v: rrN });
+  return (
+    <div style={{
+      marginTop: 4, padding: "8px 12px", borderRadius: 6,
+      background: "linear-gradient(180deg, #eff6ff 0%, #fff 30%)",
+      border: "1px solid #bfdbfe", borderLeft: "4px solid #2563eb",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12.5, fontWeight: 800, color: "#1d4ed8" }}>📊 VITALS</span>
+        {flags.map((f, i) => (
+          <span key={i} style={{ padding: "1px 8px", borderRadius: 4, fontSize: 10.5, fontWeight: 800,
+            background: "#fee2e2", color: "#b91c1c", border: "1px solid #fca5a5" }}>⚠ {f.k}: {f.v}</span>
+        ))}
+        {lc(data, "position") && <span style={{ padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "#dbeafe", color: "#1e40af" }}>{lc(data, "position")}</span>}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: "3px 14px", fontSize: 11.5, fontFamily: "monospace" }}>
+        {(bp_s || bp_d) && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700, fontFamily: "system-ui" }}>BP:</span> <b>{bp_s ?? "?"}/{bp_d ?? "?"}</b> mmHg</div>}
+        {pulse  != null && pulse  !== "" && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700, fontFamily: "system-ui" }}>Pulse:</span> <b>{pulse}</b>/min</div>}
+        {temp   != null && temp   !== "" && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700, fontFamily: "system-ui" }}>Temp:</span> <b>{temp}</b>°F</div>}
+        {rr     != null && rr     !== "" && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700, fontFamily: "system-ui" }}>RR:</span> <b>{rr}</b>/min</div>}
+        {spo2   != null && spo2   !== "" && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700, fontFamily: "system-ui" }}>SpO₂:</span> <b>{spo2}</b>%</div>}
+        {gcs    != null && gcs    !== "" && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700, fontFamily: "system-ui" }}>GCS:</span> <b>{gcs}</b>/15</div>}
+        {bsl    != null && bsl    !== "" && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700, fontFamily: "system-ui" }}>BSL:</span> <b>{bsl}</b> mg/dL</div>}
+        {pain   != null && pain   !== "" && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700, fontFamily: "system-ui" }}>Pain:</span> <b>{pain}</b>/10</div>}
+        {lc(data, "weight") && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700, fontFamily: "system-ui" }}>Weight:</span> {lc(data, "weight")} kg</div>}
+        {(o2Flow || (o2Dev && o2Dev !== "None")) && (
+          <div style={{ gridColumn: "1 / -1" }}>
+            <span style={{ color: "var(--pf-muted)", fontWeight: 700, fontFamily: "system-ui" }}>O₂:</span> <b>{o2Flow || ""}</b>{o2Flow && o2Dev ? " L/min · " : ""}{o2Dev || ""}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── INTAKE / OUTPUT ────────────────────────────────────────────── */
+function matchIO(data) {
+  if (!matchKeys(data, ["oral", "ivFluids", "bloodProducts", "urineOutput", "drainOutput", "nasogastric", "emesis", "bloodLoss"], 2)) return false;
+  // Disambiguate from IV (which has `fluid` not `ivFluids`).
+  if (lc(data, "fluid") && lc(data, "rate")) return false;
+  return true;
+}
+function IOPanel({ data }) {
+  const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+  const oral = num(lc(data, "oral"));
+  const ivF  = num(lc(data, "ivFluids"));
+  const blP  = num(lc(data, "bloodProducts"));
+  const urn  = num(lc(data, "urineOutput"));
+  const drn  = num(lc(data, "drainOutput"));
+  const ngt  = num(lc(data, "nasogastric"));
+  const eme  = num(lc(data, "emesis"));
+  const bld  = num(lc(data, "bloodLoss"));
+  const totalIn  = oral + ivF + blP;
+  const totalOut = urn + drn + ngt + eme + bld;
+  const net = totalIn - totalOut;
+  const netColor = net > 500 ? "#ca8a04" : net < -500 ? "#dc2626" : "#16a34a";
+  return (
+    <div style={{
+      marginTop: 4, padding: "8px 12px", borderRadius: 6,
+      background: "linear-gradient(180deg, #ecfdf5 0%, #fff 30%)",
+      border: "1px solid #a7f3d0", borderLeft: "4px solid #0d9488",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12.5, fontWeight: 800, color: "#0f766e" }}>💧 INTAKE / OUTPUT</span>
+        <span style={{ padding: "2px 10px", borderRadius: 4, fontSize: 11, fontWeight: 800,
+          background: `${netColor}18`, color: netColor, border: `1px solid ${netColor}50` }}>
+          Net: {net >= 0 ? "+" : ""}{net} ml
+        </span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, fontSize: 11.5 }}>
+        <div style={{ padding: "6px 8px", background: "#f0fdf4", borderRadius: 4, border: "1px dashed #86efac" }}>
+          <div style={{ fontSize: 9.5, fontWeight: 800, color: "#15803d", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 3 }}>INTAKE ({totalIn} ml)</div>
+          {oral > 0 && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Oral:</span> {oral} ml</div>}
+          {ivF  > 0 && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>IV fluids:</span> {ivF} ml</div>}
+          {blP  > 0 && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Blood prod.:</span> {blP} ml</div>}
+        </div>
+        <div style={{ padding: "6px 8px", background: "#fef2f2", borderRadius: 4, border: "1px dashed #fca5a5" }}>
+          <div style={{ fontSize: 9.5, fontWeight: 800, color: "#b91c1c", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 3 }}>OUTPUT ({totalOut} ml)</div>
+          {urn > 0 && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Urine:</span> {urn} ml</div>}
+          {drn > 0 && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Drain:</span> {drn} ml</div>}
+          {ngt > 0 && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>NGT:</span> {ngt} ml</div>}
+          {eme > 0 && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Emesis:</span> {eme} ml</div>}
+          {bld > 0 && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Blood loss:</span> {bld} ml</div>}
+        </div>
+      </div>
+      {lc(data, "notes") && <div style={{ marginTop: 4, fontSize: 11, color: "var(--pf-muted)", fontStyle: "italic" }}>{lc(data, "notes")}</div>}
+    </div>
+  );
+}
+
+/* ── DAILY ASSESSMENT ───────────────────────────────────────────── */
+function matchDaily(data) {
+  return matchKeys(data, ["neuroStatus", "respiratoryStatus", "cardiovascularStatus", "giStatus", "guStatus", "musculoskeletalStatus", "skinStatus"], 3);
+}
+function DailyAssessmentPanel({ data }) {
+  const systems = [
+    ["Neuro",  lc(data, "neuroStatus")],
+    ["Resp",   lc(data, "respiratoryStatus")],
+    ["CVS",    lc(data, "cardiovascularStatus")],
+    ["GI",     lc(data, "giStatus")],
+    ["GU",     lc(data, "guStatus")],
+    ["MSK",    lc(data, "musculoskeletalStatus")],
+    ["Skin",   lc(data, "skinStatus")],
+  ].filter(([, v]) => v);
+  const intvs = Object.entries(data)
+    .filter(([k, v]) => k.startsWith("int") && v === true)
+    .map(([k]) => titleCase(k.replace(/^int/, "")));
+  return (
+    <div style={{
+      marginTop: 4, padding: "8px 12px", borderRadius: 6,
+      background: "linear-gradient(180deg, #fefce8 0%, #fff 30%)",
+      border: "1px solid #fde68a", borderLeft: "4px solid #ca8a04",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12.5, fontWeight: 800, color: "#a16207" }}>📅 DAILY ASSESSMENT</span>
+      </div>
+      {systems.length > 0 && (
+        <div style={{ marginBottom: 6 }}>
+          <div style={{ fontSize: 9.5, fontWeight: 800, color: "#a16207", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 3 }}>SYSTEM-WISE STATUS</div>
+          <div style={{ display: "grid", gridTemplateColumns: "60px 1fr", gap: "2px 8px", fontSize: 11, paddingLeft: 8, borderLeft: "2px solid #fde68a" }}>
+            {systems.map(([label, val]) => (
+              <React.Fragment key={label}>
+                <span style={{ fontWeight: 700, color: "#a16207" }}>{label}</span>
+                <span>{val}</span>
+              </React.Fragment>
+            ))}
+          </div>
+        </div>
+      )}
+      {intvs.length > 0 && (
+        <div>
+          <div style={{ fontSize: 9.5, fontWeight: 800, color: "#a16207", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 3 }}>INTERVENTIONS DONE ({intvs.length})</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+            {intvs.map((t) => (
+              <span key={t} style={{
+                padding: "1px 7px", borderRadius: 4, fontSize: 10.5, fontWeight: 700,
+                background: "#fff", color: "#a16207", border: "1px solid #fde68a",
+              }}>✓ {t}</span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── NUTRITION ASSESSMENT ───────────────────────────────────────── */
+function matchNutrition(data) {
+  return matchKeys(data, ["bmi", "nutritionScore", "diseaseScore", "dietType", "feedingMode", "appetite", "swallowing", "caloriesToday", "proteinToday", "dietitianReferral"], 3);
+}
+function NutritionPanel({ data }) {
+  // MUST screening total: bmiLow(0/1/2) + weightLoss(0/1/2) + reducedIntake(0/1/2) + seriouslyIll(0/2)
+  const must = (v) => { const n = Number(v); return Number.isFinite(n) ? n : (v === true ? 2 : 0); };
+  const mustTotal = must(lc(data, "bmiLow")) + must(lc(data, "weightLoss")) + must(lc(data, "reducedIntake")) + must(lc(data, "seriouslyIll"));
+  const mustBand = mustTotal === 0 ? { l: "Low risk", c: "#16a34a" }
+                 : mustTotal === 1 ? { l: "Medium risk", c: "#ca8a04" }
+                 :                    { l: "High risk", c: "#dc2626" };
+  return (
+    <div style={{
+      marginTop: 4, padding: "8px 12px", borderRadius: 6,
+      background: "linear-gradient(180deg, #f0fdfa 0%, #fff 30%)",
+      border: "1px solid #99f6e4", borderLeft: "4px solid #0d9488",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12.5, fontWeight: 800, color: "#0f766e" }}>🥗 NUTRITION</span>
+        {(lc(data, "bmi") || mustTotal > 0) && (
+          <span style={{ padding: "2px 9px", borderRadius: 4, fontSize: 11, fontWeight: 800,
+            background: `${mustBand.c}18`, color: mustBand.c, border: `1px solid ${mustBand.c}50` }}>
+            MUST {mustTotal} · {mustBand.l}
+          </span>
+        )}
+        {lc(data, "dietitianReferral") && <span style={{ padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "#fef3c7", color: "#92400e" }}>📨 Dietitian referral</span>}
+        {lc(data, "fluidRestriction") && <span style={{ padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "#dbeafe", color: "#1e40af" }}>💧 Fluid restricted</span>}
+        {lc(data, "ngtPresent") && <span style={{ padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "#fef3c7", color: "#92400e" }}>NGT</span>}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "3px 14px", fontSize: 11.5 }}>
+        {lc(data, "bmi")     && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>BMI:</span> <b>{lc(data, "bmi")}</b></div>}
+        {lc(data, "weight")  && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Weight:</span> {lc(data, "weight")} kg</div>}
+        {lc(data, "height")  && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Height:</span> {lc(data, "height")} cm</div>}
+        {lc(data, "midArmCirc") && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>MAC:</span> {lc(data, "midArmCirc")} cm</div>}
+        {lc(data, "dietType") && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Diet:</span> <b>{lc(data, "dietType")}</b></div>}
+        {lc(data, "consistency") && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Consistency:</span> {lc(data, "consistency")}</div>}
+        {lc(data, "appetite") && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Appetite:</span> {lc(data, "appetite")}</div>}
+        {lc(data, "swallowing") && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Swallowing:</span> {lc(data, "swallowing")}</div>}
+        {lc(data, "feedingMode") && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Feeding:</span> {lc(data, "feedingMode")}</div>}
+        {lc(data, "fluidLimit") && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Fluid limit:</span> {lc(data, "fluidLimit")} ml/d</div>}
+      </div>
+      {(lc(data, "caloriesToday") || lc(data, "proteinToday") || lc(data, "fluidToday")) && (
+        <div style={{ marginTop: 6, padding: "4px 8px", background: "#fff", borderRadius: 4, border: "1px dashed #99f6e4", fontSize: 11, display: "flex", gap: 16, flexWrap: "wrap", fontFamily: "monospace" }}>
+          <span style={{ color: "#0f766e", fontWeight: 800, fontFamily: "system-ui" }}>TODAY:</span>
+          {lc(data, "caloriesToday") && <span><b>{lc(data, "caloriesToday")}</b> kcal</span>}
+          {lc(data, "proteinToday")  && <span><b>{lc(data, "proteinToday")}</b> g protein</span>}
+          {lc(data, "fluidToday")    && <span><b>{lc(data, "fluidToday")}</b> ml fluid</span>}
+        </div>
+      )}
+      {lc(data, "referralReason") && (
+        <div style={{ marginTop: 4, fontSize: 11, color: "var(--pf-muted)" }}><b>Referral reason:</b> {lc(data, "referralReason")}</div>
+      )}
+    </div>
+  );
+}
+
+/* ── PATIENT EDUCATION ──────────────────────────────────────────── */
+function matchEducation(data) {
+  return matchKeys(data, ["educator", "topics", "methods", "language", "understanding", "barriers", "response", "sessionNotes", "nextSessionDate"], 3);
+}
+function EducationPanel({ data }) {
+  const understanding = lc(data, "understanding") || "";
+  const undColor = /excellent|good/i.test(understanding) ? "#16a34a"
+                 : /fair|partial/i.test(understanding) ? "#ca8a04"
+                 : /poor|none/i.test(understanding) ? "#dc2626"
+                 : "#64748b";
+  const arr = (v) => Array.isArray(v) ? v.filter(Boolean) : (v ? [v] : []);
+  return (
+    <div style={{
+      marginTop: 4, padding: "8px 12px", borderRadius: 6,
+      background: "linear-gradient(180deg, #faf5ff 0%, #fff 30%)",
+      border: "1px solid #e9d5ff", borderLeft: "4px solid #9333ea",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12.5, fontWeight: 800, color: "#6b21a8" }}>📚 PATIENT EDUCATION</span>
+        {understanding && (
+          <span style={{ padding: "2px 9px", borderRadius: 4, fontSize: 10.5, fontWeight: 800,
+            background: `${undColor}18`, color: undColor, border: `1px solid ${undColor}50` }}>
+            {understanding.toUpperCase()} UNDERSTANDING
+          </span>
+        )}
+        {lc(data, "response") && (
+          <span style={{ padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "#f3e8ff", color: "#6b21a8" }}>{lc(data, "response")}</span>
+        )}
+        {lc(data, "language") && <span style={{ padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "#fff", color: "#6b21a8", border: "1px solid #e9d5ff" }}>{lc(data, "language")}</span>}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "3px 14px", fontSize: 11.5, marginBottom: 6 }}>
+        {lc(data, "date")     && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Date:</span> {lc(data, "date")}</div>}
+        {lc(data, "educator") && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Educator:</span> <b>{lc(data, "educator")}</b></div>}
+        {lc(data, "nextSessionDate") && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Next session:</span> {lc(data, "nextSessionDate")}</div>}
+      </div>
+      {arr(lc(data, "topics")).length > 0 && (
+        <div style={{ marginBottom: 4 }}>
+          <div style={{ fontSize: 9.5, fontWeight: 800, color: "#6b21a8", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>TOPICS COVERED</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+            {arr(lc(data, "topics")).map((t) => (
+              <span key={t} style={{ padding: "1px 7px", borderRadius: 4, fontSize: 10.5, fontWeight: 700, background: "#fff", color: "#6b21a8", border: "1px solid #e9d5ff" }}>{t}</span>
+            ))}
+          </div>
+        </div>
+      )}
+      {arr(lc(data, "methods")).length > 0 && (
+        <div style={{ marginBottom: 4 }}>
+          <div style={{ fontSize: 9.5, fontWeight: 800, color: "#6b21a8", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>METHODS</div>
+          <div style={{ fontSize: 11 }}>{arr(lc(data, "methods")).join(", ")}</div>
+        </div>
+      )}
+      {arr(lc(data, "barriers")).length > 0 && (
+        <div style={{ marginBottom: 4 }}>
+          <div style={{ fontSize: 9.5, fontWeight: 800, color: "#b91c1c", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>BARRIERS</div>
+          <div style={{ fontSize: 11, color: "#b91c1c" }}>{arr(lc(data, "barriers")).join(", ")}</div>
+        </div>
+      )}
+      {lc(data, "sessionNotes") && (
+        <div style={{ marginTop: 4, padding: "4px 8px", background: "#fff", borderRadius: 4, border: "1px dashed #e9d5ff", fontSize: 11, fontStyle: "italic", color: "var(--pf-muted)" }}>
+          {lc(data, "sessionNotes")}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── SBAR / SHIFT HANDOVER ──────────────────────────────────────── */
 function matchSBAR(data) {
   return matchKeys(data, ["situation", "background", "assessment", "recommendation"], 3);
@@ -978,6 +1272,11 @@ function MixedFields({ data }) {
   if (matchWound(data))     return <WoundPanel data={data} />;
   if (matchPain(data))      return <PainPanel data={data} />;
   if (matchIV(data))        return <IVPanel data={data} />;
+  if (matchEducation(data)) return <EducationPanel data={data} />;
+  if (matchNutrition(data)) return <NutritionPanel data={data} />;
+  if (matchDaily(data))     return <DailyAssessmentPanel data={data} />;
+  if (matchIO(data))        return <IOPanel data={data} />;
+  if (matchVitals(data))    return <VitalsPanel data={data} />;
 
   // If THIS object looks like a known clinical scoring scale (Braden,
   // Morse, MEWS, GCS), render the dedicated panel instead of the
