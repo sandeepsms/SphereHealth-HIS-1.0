@@ -63,4 +63,14 @@ router.delete("/:billId/items/:itemId", ctrl.removeItem); // DELETE /api/billing
 // since it materially changes ledger state.
 router.post("/backfill-registration", requireAction("billing.refund"), ctrl.backfillRegistrationBills);
 
+// ── ANH package management ───────────────────────────────────────────
+// Preview is a safe read — any authenticated user can call it. Attach
+// and Detach change ledger state, so gated to billing.refund tier
+// (Accountant / Admin / Receptionist with elevated permission).
+router.post("/packages/preview", ctrl.previewPackageMatch);
+router.post("/admissions/:admissionId/attach-package",
+  requireAction("billing.refund"), ctrl.attachPackageToAdmission);
+router.post("/admissions/:admissionId/detach-package",
+  requireAction("billing.refund"), ctrl.detachPackageFromAdmission);
+
 module.exports = router;

@@ -213,7 +213,35 @@ const AdmissionSchema = new mongoose.Schema(
     // Full nurse initial-assessment payload (vitals, history, sign-off).
     // Stored as Mixed so the NABH-required free-text + structured fields
     // both round-trip without a deep schema declaration.
-    nurseInitialAssessment: { type: mongoose.Schema.Types.Mixed, default: {} } },
+    nurseInitialAssessment: { type: mongoose.Schema.Types.Mixed, default: {} },
+
+    // ── ANH PACKAGE BINDING ───────────────────────────────────────────
+    // When an admission's diagnosis matches a ServiceMaster PACKAGE row
+    // (via diagnosisTags), the matcher snaps that package onto the
+    // admission so:
+    //   * onAdmissionCreated fires a single PKG-* trigger immediately
+    //     (one-time charge for surgical packages, day-1 charge for MMP).
+    //   * runDailyBedChargeAccrual fires the package PER_DAY rate
+    //     instead of separate BED-/NURSING-/INVESTIGATION- triggers
+    //     while day-N ≤ maxLOSDays.
+    //   * After maxLOSDays the admission falls back to non-package
+    //     room + nursing + per-investigation billing.
+    // Empty when no package matched (default flow continues).
+    package: {
+      serviceCode:        { type: String, trim: true, default: null },   // e.g. "PKG-MED-MMP-2"
+      serviceId:          { type: mongoose.Schema.Types.ObjectId, ref: "ServiceMaster", default: null },
+      packageName:        { type: String, trim: true, default: null },
+      packageType:        { type: String, enum: ["PER_DAY", "PER_PROCEDURE", null], default: null },
+      tierUsed:           { type: String, enum: ["generalWard", "semiPrivate", "private", null], default: null },
+      unitPrice:          { type: Number, default: 0, min: 0 },          // snap-at-attach price for audit
+      maxLOSDays:         { type: Number, default: 0, min: 0 },          // 0 = uncapped
+      attachedAt:         { type: Date,   default: null },
+      attachedBy:         { type: String, default: null },
+      matchedDiagnosis:   { type: String, default: null },               // diagnosis text that triggered match
+      matchScore:         { type: Number, default: 0 },                  // for debugging / audit
+      autoAttached:       { type: Boolean, default: false },             // true = matcher fired; false = manual
+    },
+  },
   { timestamps: true },
 );
 

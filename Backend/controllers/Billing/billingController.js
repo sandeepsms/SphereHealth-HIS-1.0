@@ -817,6 +817,100 @@ exports.getCollectionSummary = async (req, res, next) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────
+// ANH PACKAGE — preview / attach / detach
+// ─────────────────────────────────────────────────────────────────────
+
+// POST /api/billing/packages/preview  { diagnosis: "..." }
+// Dry-run lookup — show what the matcher would pick for a given diagnosis
+// text. Used by the receptionist's admission form to confirm before
+// committing.
+exports.previewPackageMatch = async (req, res) => {
+  try {
+    const autoBilling = require("../../services/Billing/autoBillingService");
+    const diagnosis = String(req.body?.diagnosis || "").trim();
+    if (!diagnosis) return res.status(400).json({ success: false, message: "diagnosis required" });
+    const pkg = await autoBilling.findMatchingPackage(diagnosis);
+    if (!pkg) return res.json({ success: true, matched: false, tokens: autoBilling.tokenize(diagnosis) });
+    return res.json({
+      success: true,
+      matched: true,
+      tokens: pkg._matchedTokens,
+      matchScore: pkg._matchScore,
+      package: {
+        serviceCode: pkg.serviceCode,
+        serviceName: pkg.serviceName,
+        billingType: pkg.billingType,
+        tierPricing: pkg.tierPricing,
+        maxLOSDays:  pkg.maxLOSDays,
+        inclusions:  pkg.inclusions,
+        exclusions:  pkg.exclusions,
+        speciality:  pkg.speciality,
+        diagnosisTags: pkg.diagnosisTags,
+      },
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e?.message || "Preview failed" });
+  }
+};
+
+// POST /api/billing/admissions/:admissionId/attach-package  { serviceCode }
+// Manual override — receptionist / accountant attaches a package to an
+// existing admission. Replaces any prior package binding.
+exports.attachPackageToAdmission = async (req, res) => {
+  try {
+    const Admission     = require("../../models/Patient/admissionModel");
+    const ServiceMaster = require("../../models/ServiceMaster/serviceMasterModel");
+    const autoBilling   = require("../../services/Billing/autoBillingService");
+
+    const { admissionId } = req.params;
+    const { serviceCode } = req.body || {};
+    if (!serviceCode) return res.status(400).json({ success: false, message: "serviceCode required" });
+
+    const adm = await Admission.findById(admissionId);
+    if (!adm) return res.status(404).json({ success: false, message: "Admission not found" });
+    const pkg = await ServiceMaster.findOne({ serviceCode: serviceCode.toUpperCase(), category: "PACKAGE", isActive: true }).lean();
+    if (!pkg) return res.status(404).json({ success: false, message: `Package ${serviceCode} not found` });
+
+    const trigger = await autoBilling.attachPackageToAdmission(adm, pkg, {
+      auto: false,
+      attachedBy: req.user?.employeeId || req.user?.fullName || "Staff",
+      matchedDiagnosis: adm.provisionalDiagnosis || adm.reasonForAdmission || "",
+    });
+    if (!trigger) return res.status(500).json({ success: false, message: "Package attach failed" });
+
+    res.json({
+      success: true,
+      package: { serviceCode: pkg.serviceCode, packageName: pkg.serviceName, billingType: pkg.billingType },
+      trigger: { _id: trigger._id, billed: trigger.billed, billId: trigger.billId },
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e?.message || "Attach failed" });
+  }
+};
+
+// POST /api/billing/admissions/:admissionId/detach-package
+// Drop the package binding so future daily-cron runs revert to standard
+// bed + nursing + per-investigation billing. Existing posted line items
+// are NOT removed — those need manual cancel via the bill UI.
+exports.detachPackageFromAdmission = async (req, res) => {
+  try {
+    const Admission = require("../../models/Patient/admissionModel");
+    const adm = await Admission.findById(req.params.admissionId);
+    if (!adm) return res.status(404).json({ success: false, message: "Admission not found" });
+    adm.package = {
+      serviceCode: null, serviceId: null, packageName: null, packageType: null,
+      tierUsed: null, unitPrice: 0, maxLOSDays: 0,
+      attachedAt: null, attachedBy: null, matchedDiagnosis: null,
+      matchScore: 0, autoAttached: false,
+    };
+    await adm.save();
+    res.json({ success: true, message: "Package detached. Future days will bill at room+nursing+investigation rates." });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e?.message || "Detach failed" });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────
 // POST /api/billing/backfill-registration
 //
 // One-shot admin endpoint that walks every Patient whose `totalOPDVisits`
