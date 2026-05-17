@@ -86,6 +86,7 @@ export default function ReceptionBilling() {
   const [settleTarget, setSettleTarget] = useState(null);   // GENERATED/PARTIAL bill being adjusted at counter
   const [showBulkCollect, setShowBulkCollect] = useState(false);  // "Collect All Dues" modal on Outstanding KPI
   const [showBulkSettle,  setShowBulkSettle]  = useState(false);  // "Settle All" modal on Outstanding KPI
+  const [showNewBill,     setShowNewBill]     = useState(false);  // "New Bill" creator (ad-hoc DRAFT)
   const [todayCollection, setTodayCollection] = useState(null);
   // ── Advance-deposit state — fetched alongside bills on every load.
   //    advances: full ledger; unspentAdv: aggregated remaining balance
@@ -678,6 +679,25 @@ export default function ReceptionBilling() {
           <div className="rx-split-list">
             {/* Bills column */}
             <div>
+              {/* Bills list header — exposes a "New Bill" action so the
+                  cashier can spin up a fresh DRAFT when the doctor adds
+                  an ad-hoc charge (e.g. RBS after the previous bill was
+                  already settled). Backend's getOrCreateDraftBill is
+                  idempotent: if there's already a DRAFT for the same
+                  (UHID, visitType, admission), it returns the existing
+                  one instead of duplicating. */}
+              <div className="rx-bill-list-head">
+                <div className="rx-bill-list-head-title">
+                  <i className="pi pi-list" /> Bills
+                  {bills.length > 0 && <span className="rx-bill-list-count">{bills.length}</span>}
+                </div>
+                <button className="rx-action-btn rx-action-btn--primary"
+                        onClick={() => setShowNewBill(true)}
+                        title="Create a fresh DRAFT bill for ad-hoc charges">
+                  <i className="pi pi-plus" /> New Bill
+                </button>
+              </div>
+
               {bills.length === 0 ? (
                 <div className="rx-empty">
                   <span className="rx-empty-icon">📑</span>
@@ -805,6 +825,30 @@ export default function ReceptionBilling() {
             setShowBulkSettle(false);
             await load(uhid);
             if (openCollectAfter) setShowBulkCollect(true);
+          }}
+        />
+      )}
+
+      {showNewBill && patient && (
+        <NewBillModal
+          uhid={uhid}
+          patient={patient}
+          existingBills={bills}
+          onClose={() => setShowNewBill(false)}
+          onCreated={async (newBill) => {
+            setShowNewBill(false);
+            await load(uhid);
+            // Auto-select the freshly-created DRAFT in the right pane
+            // and pop the Add Service picker so the cashier can tack on
+            // the ad-hoc charge (e.g. RBS) in one continuous flow.
+            if (newBill?._id) {
+              const r = await axios.get(`${API_ENDPOINTS.BILLING}/${newBill._id}`).catch(() => null);
+              const fresh = r?.data?.data || r?.data;
+              if (fresh) {
+                setActiveBill(fresh);
+                setAddSvcTarget(fresh);
+              }
+            }
           }}
         />
       )}
@@ -1493,6 +1537,112 @@ function SettlementModal({ bill, onClose, onDone }) {
           <button className="rx-modal-btn-primary rx-modal-btn-primary--success"
                   onClick={() => submit(true)} disabled={saving}>
             <i className={`pi ${saving ? "pi-spin pi-spinner" : "pi-wallet"}`} /> Save &amp; Take Payment
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ───────────────────────────────────────────────────────────── */
+/* NewBillModal — create a fresh DRAFT bill for ad-hoc charges
+   AFTER the patient's previous bills are already settled. Common
+   scenario: doctor adds an RBS or dressing during follow-up; the
+   existing OPD/IPD bill is PAID, so the cashier needs a clean
+   slate. Backend uses getOrCreateDraftBill which is idempotent:
+   if a DRAFT for the same (UHID, visitType, admission) already
+   exists, it returns that one — so this is also a safe "open
+   the current DRAFT" shortcut.                                    */
+
+function NewBillModal({ uhid, patient, existingBills = [], onClose, onCreated }) {
+  // Default to OPD because that's the most common ad-hoc case
+  // (follow-up consults, walk-in tests). If the patient has an
+  // active admission we'll auto-show IPD as a one-tap alternative.
+  const [visitType, setVisitType] = useState("OPD");
+  const [saving, setSaving] = useState(false);
+
+  // Surface the existing DRAFT (if any) so the cashier doesn't
+  // accidentally try to create a duplicate. Backend would just
+  // return the same row anyway, but showing it up front is
+  // clearer.
+  const existingDraft = useMemo(
+    () => existingBills.find(b => b.visitType === visitType && b.billStatus === "DRAFT"),
+    [existingBills, visitType],
+  );
+
+  const ADHOC_TYPES = [
+    { key: "OPD",       label: "OPD",       icon: "pi-user-plus", color: "#06b6d4" },
+    { key: "IPD",       label: "IPD",       icon: "pi-home",      color: "#7c3aed" },
+    { key: "DAYCARE",   label: "Day Care",  icon: "pi-sun",       color: "#d97706" },
+    { key: "EMERGENCY", label: "Emergency", icon: "pi-bolt",      color: "#dc2626" },
+  ];
+
+  const submit = async () => {
+    setSaving(true);
+    try {
+      const { data } = await axios.post(`${API_ENDPOINTS.BILLING}/create`, {
+        UHID:      uhid,
+        visitType,
+      });
+      const newBill = data?.data || data;
+      toast.success(
+        existingDraft
+          ? "Existing DRAFT reopened — add services to continue"
+          : `New DRAFT bill created (${visitType})`,
+      );
+      onCreated(newBill);
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Could not create bill");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="rx-modal-backdrop" onClick={onClose}>
+      <div className="rx-modal" onClick={e => e.stopPropagation()}>
+        <div className="rx-modal-head rx-modal-head--primary">
+          <i className="pi pi-plus" />
+          <span className="rx-modal-title">
+            New Bill — {patient?.fullName || uhid}
+          </span>
+          <button className="rx-modal-close" onClick={onClose}>×</button>
+        </div>
+        <div className="rx-modal-body">
+          <div className="rx-banner rx-banner--info">
+            Spins up a fresh DRAFT bill so you can add ad-hoc services
+            (e.g. RBS, dressing, nebulisation) the doctor just ordered.
+            <br />After creation, the Add Service picker opens right away.
+          </div>
+
+          <div className="his-field-group">
+            <label className="his-label">Visit Type *</label>
+            <div className="rx-grid-5">
+              {ADHOC_TYPES.map(t => (
+                <button key={t.key} type="button"
+                        className={`rx-slot ${visitType === t.key ? "rx-slot--selected" : ""}`}
+                        onClick={() => setVisitType(t.key)}>
+                  <i className={`pi ${t.icon}`} /> {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {existingDraft && (
+            <div className="rx-banner rx-banner--warning">
+              ⚠ A DRAFT {visitType} bill already exists
+              ({existingDraft.billNumber || "no #"}, ₹{Number(existingDraft.netAmount) || 0}).
+              Clicking Create will reopen it — services you add go onto
+              that draft, not a new row.
+            </div>
+          )}
+        </div>
+        <div className="rx-modal-foot">
+          <button className="rx-modal-btn-cancel" onClick={onClose}>Cancel</button>
+          <button className="rx-modal-btn-primary rx-modal-btn-primary--success"
+                  onClick={submit} disabled={saving}>
+            <i className={`pi ${saving ? "pi-spin pi-spinner" : "pi-check"}`} />
+            {existingDraft ? " Reopen DRAFT" : " Create DRAFT Bill"}
           </button>
         </div>
       </div>

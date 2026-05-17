@@ -221,6 +221,36 @@
 }
 .rx-action-btn--danger:hover { background: #fee2e2; }
 
+/* Bills list header on the patient billing page — title on the
+   left, "New Bill" CTA on the right. Same row keeps the actionable
+   space visually attached to the list below. */
+.rx-bill-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.rx-bill-list-head-title {
+  font-size: 12px;
+  font-weight: 800;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.rx-bill-list-head-title i { color: #0891b2; }
+.rx-bill-list-count {
+  background: #f1f5f9;
+  color: #475569;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-family: 'DM Mono', monospace;
+}
+
 /* Inline amount pill on action buttons — used by Full Payment so the
    receptionist sees the exact rupee figure on the button itself before
    clicking. Keeps a single visual unit on the toolbar even when the

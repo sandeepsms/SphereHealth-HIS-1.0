@@ -10,6 +10,7 @@ import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
 import { openPrint } from "../../Components/print/openPrint";
 import { useAuth } from "../../context/AuthContext";
+import ActivePatientDirectory from "../../Components/ActivePatientDirectory";
 import "./reception-shared.css";
 import "../../Components/clinical/clinical-forms.css";
 
@@ -111,6 +112,31 @@ export default function VisitorPasses() {
         </div>
       </div>
 
+      {/* Active-patient directory — defaults to IPD because visitor passes
+          are only issued for bedded patients. Today's admits float to the
+          top so the receptionist can issue an attendant pass without
+          digging. Clicking a card pre-fills the Issue Pass modal with
+          that patient's admission selected. */}
+      <ActivePatientDirectory
+        autoLoad
+        defaultType="IPD"
+        typesToShow={["IPD", "Daycare", "Emergency", "ALL"]}
+        emptyHintNoun="admitted"
+        onPick={(p) => {
+          // Find the admission row for this patient (already loaded in
+          // state for the IssuePassModal dropdown) and pre-select it.
+          const adm = admissions.find(a =>
+            a.UHID === p.UHID || a.patient?.UHID === p.UHID ||
+            String(a.patient) === String(p._id),
+          );
+          if (!adm) {
+            toast.warning(`${p.fullName} has no active admission — pass not issuable`);
+            return;
+          }
+          setIssueOpen(adm._id);
+        }}
+      />
+
       <div className="rx-tabs">
         {["Active", "Returned", "Expired", "Revoked"].map(s => (
           <button key={s} className={`rx-tab ${tab === s ? "rx-tab--active" : ""}`} onClick={() => setTab(s)}>
@@ -176,6 +202,11 @@ export default function VisitorPasses() {
       {issueOpen && (
         <IssuePassModal
           admissions={admissions}
+          // When `issueOpen` is a string (admission _id), pre-select that
+          // patient in the dropdown — set via the directory pick handler
+          // above. When it's just `true` (header CTA), the modal opens
+          // empty as before.
+          initialAdmissionId={typeof issueOpen === "string" ? issueOpen : ""}
           onClose={() => setIssueOpen(false)}
           onIssued={(pass) => { setIssueOpen(false); load(); printPass(pass); }}
           userName={user?.fullName || user?.name || "Receptionist"}
@@ -186,8 +217,14 @@ export default function VisitorPasses() {
 }
 
 /* ─────────── Issue Pass Modal ─────────── */
-function IssuePassModal({ admissions, onClose, onIssued, userName }) {
-  const [admissionId, setAdmissionId] = useState("");
+function IssuePassModal({ admissions, onClose, onIssued, userName, initialAdmissionId }) {
+  // Pre-select the admission when the modal was opened by clicking a
+  // patient card in the directory above. Falls back to the empty
+  // placeholder so the "— Select admitted patient —" option still
+  // shows when launched via the header CTA.
+  const [admissionId, setAdmissionId] = useState(
+    typeof initialAdmissionId === "string" ? initialAdmissionId : "",
+  );
   const [attendantName, setAttendantName] = useState("");
   const [relation, setRelation] = useState("Son");
   const [phone, setPhone] = useState("");
