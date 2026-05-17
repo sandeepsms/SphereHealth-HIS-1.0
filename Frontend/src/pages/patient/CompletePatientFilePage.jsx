@@ -185,6 +185,34 @@ function AdmissionSection({ admission }) {
   );
 }
 
+/** Role-aware "+ Add new" CTA shown above section content.
+ *  - viewerRole: the authenticated user's role
+ *  - allow: array of roles that should see this CTA
+ *  - href: target path; `{UHID}` token substituted, query-string preserved
+ *  - color: button accent (matches the role's theme)
+ *  - label: button text
+ *  Renders nothing for any role not in `allow`. Opens in a new tab so the
+ *  reader's place in the file is preserved while they author the new entry,
+ *  matching the pattern set by DietPlansSection.
+ */
+function RoleAddCTA({ viewerRole, uhid, allow, href, color, label, icon = "+" }) {
+  if (!uhid || !allow.includes(viewerRole)) return null;
+  const url = href.replace("{UHID}", encodeURIComponent(uhid));
+  return (
+    <div style={{ margin: "0 0 10px", textAlign: "right" }}>
+      <button onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
+        style={{
+          padding: "5px 12px", borderRadius: 6,
+          border: `1px solid ${color}40`,
+          background: `${color}08`, color,
+          fontSize: 11.5, fontWeight: 700, cursor: "pointer",
+        }}>
+        {icon} {label}
+      </button>
+    </div>
+  );
+}
+
 function NoteList({ notes, kind, emptyMsg }) {
   if (!notes?.length) return <Empty msg={emptyMsg || "No records yet"} />;
   return notes.map((n) => (
@@ -907,24 +935,46 @@ export default function CompletePatientFilePage() {
 
             <Section id="initial" icon="🩺" title="Initial Assessment" sub="NABH COP.2 + IPSG.6 — combined intake">
               <h4 style={{ margin: "0 0 8px", color: "var(--pf-accent-d)" }}>Doctor — Initial Assessment</h4>
+              <RoleAddCTA viewerRole={viewerRole} uhid={uhid}
+                allow={["Doctor"]} href="/ipd-assessment/{UHID}"
+                color="#7c3aed" label="Add Doctor IA in console" icon="✏" />
               <NoteList notes={docInitial} kind="doctor" emptyMsg="Doctor initial assessment not recorded" />
               <h4 style={{ margin: "16px 0 8px", color: "var(--pf-accent-d)" }}>Nursing — Initial Assessment</h4>
+              <RoleAddCTA viewerRole={viewerRole} uhid={uhid}
+                allow={["Nurse"]} href="/nurse-initial-assessment?uhid={UHID}"
+                color="#db2777" label="Add Nursing IA in console" icon="✏" />
               <NoteList notes={nurseInitial} kind="nurse" emptyMsg="Nursing initial assessment not recorded" />
             </Section>
 
             <Section id="doctor-notes" icon="👨‍⚕️" title="Doctor Notes" sub="Progress, ICU, procedure, consultation" count={docOther.length}>
+              <RoleAddCTA viewerRole={viewerRole} uhid={uhid}
+                allow={["Doctor"]} href="/doctor-notes?uhid={UHID}"
+                color="#7c3aed" label="New doctor note" />
               <NoteList notes={docOther} kind="doctor" emptyMsg="No doctor notes" />
             </Section>
 
             <Section id="nurse-notes" icon="👩‍⚕️" title="Nursing Notes" sub="Categorised — every shift entry" count={nurseOther.length}>
+              <RoleAddCTA viewerRole={viewerRole} uhid={uhid}
+                allow={["Nurse"]} href="/nursing-notes?uhid={UHID}"
+                color="#db2777" label="New nursing note" />
               <NoteList notes={nurseOther} kind="nurse" emptyMsg="No nursing notes" />
             </Section>
 
             <Section id="orders" icon="💊" title="Orders + MAR" sub="Medications, IV, procedures — with admin trail" count={doctorOrders.length}>
+              <RoleAddCTA viewerRole={viewerRole} uhid={uhid}
+                allow={["Doctor"]} href="/doctor-notes?uhid={UHID}&tab=orders"
+                color="#7c3aed" label="New order" />
+              <RoleAddCTA viewerRole={viewerRole} uhid={uhid}
+                allow={["Nurse"]} href="/mar?uhid={UHID}"
+                color="#db2777" label="Open MAR" icon="💊" />
               <OrdersSection orders={doctorOrders} />
             </Section>
 
             <Section id="vitals" icon="📈" title="Vital Trends" sub="Every vital recorded — both dedicated sheet + embedded in nursing notes">
+              <RoleAddCTA viewerRole={viewerRole} uhid={uhid}
+                allow={["Nurse", "Doctor"]}
+                href={`/updateVitalSheet/{UHID}/${new Date().toISOString().slice(0,10)}`}
+                color="#0d9488" label="Record vitals (today)" icon="📈" />
               <VitalsSection vitals={vitals} nurseNotes={nurseNotes} />
             </Section>
 
