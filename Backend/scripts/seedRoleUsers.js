@@ -172,7 +172,9 @@ async function run() {
     console.log(`  ${created ? "✓" : "↺"} ${user.fullName.padEnd(28)}  ${staff.email.padEnd(34)}  (${staff.role})`);
   }
 
-  console.log(`\n  All passwords (newly-created users): ${DEFAULT_PASSWORD}`);
+  // Password not logged (security audit B-07). Operator can read
+  // DEFAULT_PASSWORD from this file's top-level constant if needed.
+  console.log(`\n  Default password is set on newly-created users — see DEFAULT_PASSWORD const in this script.`);
   console.log("  Existing users retain their old password.\n");
 
   await mongoose.disconnect();

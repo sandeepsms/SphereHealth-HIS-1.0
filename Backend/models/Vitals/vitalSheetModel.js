@@ -5,12 +5,26 @@ const mongoose = require("mongoose");
 
 const VitalEntrySchema = new mongoose.Schema(
   {
-    time: { type: String, required: true }, // e.g. "06:00", "14:00"
+    // "06:00", "14:00" — strict HH:MM format. The previous bare String
+    // accepted "99:99" / "-1:00" / "abc" silently (patient-safety audit
+    // A-05). Validator anchors a 24-hour wall clock.
+    time: {
+      type: String,
+      required: true,
+      validate: {
+        validator: (v) => /^([01]\d|2[0-3]):[0-5]\d$/.test(v || ""),
+        message: (p) => `time "${p.value}" is not a valid HH:MM (24h)`,
+      },
+    },
     values: {
       type: Map,
       of: new mongoose.Schema(
         {
-          value: { type: Number, default: 0 },
+          // Cap the value field to physiologically plausible bounds. The
+          // sheet collects mixed units (BP, pulse, temp, glucose, weight)
+          // so the envelope is intentionally wide — but no negatives, no
+          // unbounded upper. Patient-safety audit A-05.
+          value: { type: Number, default: 0, min: 0, max: 100000 },
           unit: { type: String, required: true },
         },
         { _id: false },

@@ -30,8 +30,8 @@ NABH / DPDP auditor can replay the trail end-to-end.
 | A-02 | Prescription vitals (BP, pulse, temp, RR, SPO2) accept NaN/negative | HIGH | models/Doctor/prescription.js:42–49 | **FIXED** | 2026-05-17 | Live `temp:50` rejected by Mongoose validation |
 | A-03 | Nurse vitals fields lack min/max ranges | HIGH | models/Nurse/NurseNotesModel.js:6–16 | **FIXED** | 2026-05-17 | Live `pulse:-100` returns validation error |
 | A-04 | I/O sheet accepts negative ml | HIGH | models/Nurse/NurseNotesModel.js:40–49 | **FIXED** | 2026-05-17 | min/max 0–20000 added |
-| A-05 | Vital sheet `value` lacks bounds | MEDIUM | models/Vitals/vitalSheetModel.js:11–14 | BACKLOG | — | — |
-| A-06 | Prescription `age` & `gender` not enum-constrained | MEDIUM | models/Doctor/prescription.js:13–14 | BACKLOG | — | — |
+| A-05 | Vital sheet `value` lacks bounds | MEDIUM | models/Vitals/vitalSheetModel.js | **FIXED** | 2026-05-17 (r5) | `value` min:0 max:100000; `time` HH:MM regex; live `"99:99"` rejected |
+| A-06 | Prescription `age` & `gender` not enum-constrained | MEDIUM | models/Doctor/prescription.js | **FIXED** | 2026-05-17 (r5) | age:0–150, gender enum; live `age:200, gender:"Xen"` → validation error on both |
 | A-07 | Medication `route` accepts arbitrary text | MEDIUM | models/Doctor/prescription.js:59 | **FIXED** | 2026-05-17 | Enum added (Oral, IV, IM, SC, SL, PR, PV, Topical, Inhalation, ...) |
 | A-08 | Admission + auto-bill chain not in a transaction | HIGH | controllers/Patient/admissionController.js:15–42 | BACKLOG | — | Wider rewrite — out of scope this pass |
 | A-09 | Bed transfer multi-doc write lacks session | MEDIUM | models/Patient/bedTransferModel.js | BACKLOG | — | — |
@@ -60,7 +60,7 @@ open — backlogged for the next pass.
 | B-04 | IDOR on `GET /api/patients/:id` (no ownership check) | HIGH | services/Patient/patientService.js:164–170 | BACKLOG | — | Requires per-doctor attribution rewrite |
 | B-05 | `ipd.discharge` grants Receptionist | HIGH | config/permissions.js:50 | **FIXED** | 2026-05-17 | Removed from action; mirror in frontend |
 | B-06 | `DELETE /api/admissions/:id` has no `requireAction` guard | HIGH | routes/Patient/admissionRoutes.js:49 | **FIXED** | 2026-05-17 | requireAction("ipd.delete"), Admin-only |
-| B-07 | Seed scripts print user passwords to stdout | MEDIUM | scripts/seedUsers.js, seedRoleUsers.js | BACKLOG | — | Dev-only scripts; flagged in code |
+| B-07 | Seed scripts print user passwords to stdout | MEDIUM | scripts/seedUsers.js, seedRoleUsers.js | **FIXED** | 2026-05-17 (r5) | Passwords redacted from console; operator can still read SEED_USERS / DEFAULT_PASSWORD constants if needed |
 | B-08 | 2FA controller logs OTP + phone + token to console | HIGH | controllers/Clinical/twoFactorController.js:78 | **FIXED** | 2026-05-17 | Phone masked, OTP/token redacted from logs |
 | B-09 | No rate-limit on `/auth/login`, OTP, search endpoints | HIGH | routes/Auth/authRoutes.js | **FIXED** | 2026-05-17 | express-rate-limit added; live 11th login → 429 |
 | B-10 | No `jti` / revocation list | LOW | routes/Auth/authRoutes.js | BACKLOG | — | Mitigated by 8h expiry |
@@ -122,7 +122,7 @@ edit (A-15) remain open — listed in re-audit backlog.
 | F-01 | `dischargePatient()` doesn't check `billCleared` before status flip | HIGH | services/Patient/admissionService.js:194 | **FIXED** | 2026-05-17 | Live discharge w/o clearance → 409 with clear msg + allowOverride path |
 | F-02 | Lab results editable post-verification | HIGH | models/Investigation/InvestigationOrderModel.js | **FIXED** | 2026-05-17 | post-init snapshot + pre-save lock — editing a VERIFIED item throws |
 | F-03 | Pharmacy pre-flight stock check non-atomic | MEDIUM | controllers/Pharmacy/pharmacyController.js:391 | BACKLOG | — | — |
-| F-04 | Drug expiry check uses UTC `new Date()` | MEDIUM | controllers/Pharmacy/pharmacyController.js:279 | BACKLOG | — | — |
+| F-04 | Drug expiry check uses UTC `new Date()` | MEDIUM | controllers/Pharmacy/pharmacyController.js | **FIXED** | 2026-05-17 (r5) | IST-aware "start of today" boundary via Intl.DateTimeFormat + Asia/Kolkata |
 | F-05 | Bill items still editable in PARTIAL state | MEDIUM | services/Billing/billingService.js | **FIXED** | 2026-05-17 (r3) | Freeze list expanded to GENERATED/PARTIAL/PAID/CANCELLED/REFUNDED; mutation throws 409 |
 | F-06 | Appointment NoShow→Booked race allows overlap | MEDIUM | models/Appointment/appointmentModel.js:59 | BACKLOG | — | — |
 | F-07 | Prescription editable post-dispense | LOW | models/Doctor/prescription.js:54 | BACKLOG | — | — |

@@ -10,8 +10,12 @@ const prescriptionSchema = new mongoose.Schema(
     },
     UHID: { type: String, required: true, uppercase: true },
     patientName: String,
-    age: Number,
-    gender: String,
+    // Patient-safety audit A-06: bounded age (0–150 mirrors patientModel)
+    // and gender enum keep paediatric-dosing logic and pregnancy-flag
+    // workflows reliable. "Other" is included so non-binary patients
+    // and missing data flow through without throwing.
+    age: { type: Number, min: 0, max: 150 },
+    gender: { type: String, enum: ["Male", "Female", "Other", ""], default: "" },
     contactNumber: String,
     fatherName: String,
     department: String,

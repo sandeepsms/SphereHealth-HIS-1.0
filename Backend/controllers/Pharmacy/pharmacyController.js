@@ -271,12 +271,23 @@ async function fifoConsume(drugId, qty) {
   for (let pass = 0; pass < MAX_PASSES && need > 0; pass++) {
     // Re-query each pass so we always see live `remaining` after races.
     // Exclude already-tried-and-empty batches.
+    // IST-aware "start of today" comparison (business audit F-04). The
+    // previous `new Date()` compared against UTC instant, which drifted
+    // the "is this expired?" boundary by 5h30m around midnight IST. A
+    // batch expiring on "today IST" would silently flip to "expired" the
+    // instant the server's UTC date rolled, even though the pharmacist's
+    // calendar still said today. We now anchor on the IST day boundary.
+    const HOSPITAL_TZ = process.env.HOSPITAL_TZ || "Asia/Kolkata";
+    const istKey = new Intl.DateTimeFormat("en-CA", {
+      timeZone: HOSPITAL_TZ, year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date());
+    const istStartOfToday = new Date(`${istKey}T00:00:00+05:30`);
     const where = {
       drugId, isActive: true, remaining: { $gt: 0 },
       // Block expired batches at dispense time (D&C compliance) —
       // the GRN endpoint already refuses expiry < today on receipt,
       // but a previously-receivable batch may have expired since.
-      expiryDate: { $gte: new Date() },
+      expiryDate: { $gte: istStartOfToday },
     };
     if (triedBatchIds.size > 0) where._id = { $nin: [...triedBatchIds] };
 
