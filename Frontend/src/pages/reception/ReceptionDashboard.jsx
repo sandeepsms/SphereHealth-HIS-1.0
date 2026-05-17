@@ -43,6 +43,16 @@ const fmtCurExact = (n) => `₹${(Number(n) || 0).toLocaleString("en-IN", { mini
 const today = () => new Date().toISOString().slice(0, 10);
 const fmtDateLong = (d) => new Date(d).toLocaleDateString("en-IN", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
 
+// Plain-English description of what a fellow receptionist is currently
+// doing — used by the presence strip. Extracted out of the JSX to avoid
+// the nested ternary that the audit flagged.
+const presenceDoing = (p) => {
+  if (p.action === "registering" && p.currentResource?.label) return `registering ${p.currentResource.label}`;
+  if (p.action === "editing"     && p.currentResource?.label) return `editing ${p.currentResource.label}`;
+  if (p.action === "viewing-dashboard") return "on dashboard";
+  return p.action || "idle";
+};
+
 export default function ReceptionDashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -57,22 +67,47 @@ export default function ReceptionDashboard() {
   useReceptionistPresence({ type: "idle", action: "viewing-dashboard" });
 
   /* ─── Load data ─── */
-  const load = useCallback(async (silent = false) => {
+  // AbortController guards the dashboard's 3 parallel fetches against
+  // setState-on-unmount when the user navigates away during the request
+  // (audit E-05). Each axios call gets the same signal; the cleanup
+  // function in the consuming useEffect aborts them.
+  const load = useCallback(async (silent = false, signal = undefined) => {
     if (!silent) setLoading(true);
     try {
+      const cfg = signal ? { signal } : {};
       const [colRes, qRes, pRes] = await Promise.allSettled([
-        axios.get(`${API_ENDPOINTS.BASE}/billing/collection-summary`, { params: { date } }),
-        axios.get(`${API_ENDPOINTS.BASE}/doctors/dashboard/queues`),
-        axios.get(`${API_ENDPOINTS.BASE}/presence/active`),
+        axios.get(`${API_ENDPOINTS.BASE}/billing/collection-summary`, { ...cfg, params: { date } }),
+        axios.get(`${API_ENDPOINTS.BASE}/doctors/dashboard/queues`, cfg),
+        axios.get(`${API_ENDPOINTS.BASE}/presence/active`, cfg),
       ]);
+      if (signal?.aborted) return;
       if (colRes.status === "fulfilled") setCollection(colRes.value.data);
       if (qRes.status === "fulfilled")   setQueues(qRes.value.data?.data || []);
       if (pRes.status === "fulfilled")   setPresence(pRes.value.data?.data || []);
-    } catch (e) { /* silent */ }
-    finally { setLoading(false); }
+      // Surface individual failures (audit E-06). Individual rejections
+      // don't blow up the page (Promise.allSettled) but the operator
+      // deserves to know if doctor queue / presence didn't load.
+      if (colRes.status === "rejected" && !axios.isCancel(colRes.reason)) {
+        console.error("[ReceptionDashboard] collection-summary:", colRes.reason?.message);
+      }
+      if (qRes.status === "rejected" && !axios.isCancel(qRes.reason)) {
+        console.error("[ReceptionDashboard] doctor queues:", qRes.reason?.message);
+      }
+      if (pRes.status === "rejected" && !axios.isCancel(pRes.reason)) {
+        console.error("[ReceptionDashboard] presence:", pRes.reason?.message);
+      }
+    } catch (e) {
+      if (!axios.isCancel(e)) console.error("[ReceptionDashboard] load:", e?.message);
+    } finally {
+      if (!signal?.aborted) setLoading(false);
+    }
   }, [date]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const ac = new AbortController();
+    load(false, ac.signal);
+    return () => ac.abort();
+  }, [load]);
 
   // Auto-refresh every 20s + on window focus (only when viewing today)
   useEffect(() => {
@@ -132,20 +167,54 @@ export default function ReceptionDashboard() {
           <div className="rd-topbar-meta">{fmtDateLong(date)}{isToday && " · Live"}</div>
         </div>
         <div className="rd-date-picker">
-          <label>DATE</label>
+          <label>Date</label>
           <input type="date" value={date} onChange={e => setDate(e.target.value)} />
         </div>
         <div className="rd-topbar-actions">
           <button className="rd-btn-ghost" onClick={() => load()} title="Refresh">
             <i className="pi pi-refresh" /> Refresh
           </button>
-          <button className="rd-btn-ghost" onClick={() => window.print()} title="Print closing">
-            <i className="pi pi-print" /> Print Closing
-          </button>
+          {/* `Print Closing` button removed — raw `window.print()` printed
+              the entire app shell (sidebar, top nav, menu) producing an
+              unusable page. End-of-day closing report belongs in a
+              dedicated `/reception/closing-report` route with its own
+              print stylesheet. */}
           <button className="rd-btn-primary" onClick={() => navigate("/reception/register")}>
             <i className="pi pi-plus" /> New Registration
           </button>
         </div>
+      </div>
+
+      {/* ── Quick actions — common destinations one tap away ──
+          Placed right under the topbar so the receptionist doesn't have
+          to scroll into a card to start a workflow. Each tile is a
+          plain button with an icon + label; navigation happens via
+          react-router so the page transition uses the SPA route. */}
+      <div className="rd-quick-actions">
+        <button className="rd-qa-tile" onClick={() => navigate("/reception/register")}>
+          <i className="pi pi-user-plus" />
+          <span>New Registration</span>
+        </button>
+        <button className="rd-qa-tile" onClick={() => navigate("/patient-search")}>
+          <i className="pi pi-search" />
+          <span>Patient Search</span>
+        </button>
+        <button className="rd-qa-tile" onClick={() => navigate("/appointments")}>
+          <i className="pi pi-calendar-plus" />
+          <span>Appointments</span>
+        </button>
+        <button className="rd-qa-tile" onClick={() => navigate("/reception-billing")}>
+          <i className="pi pi-receipt" />
+          <span>Billing & Payments</span>
+        </button>
+        <button className="rd-qa-tile" onClick={() => navigate("/visitor-passes")}>
+          <i className="pi pi-id-card" />
+          <span>Visitor Passes</span>
+        </button>
+        <button className="rd-qa-tile" onClick={() => navigate("/discharge-queue")}>
+          <i className="pi pi-sign-out" />
+          <span>Discharge Queue</span>
+        </button>
       </div>
 
       {/* ── Live Receptionist Presence strip ── */}
@@ -162,12 +231,7 @@ export default function ReceptionDashboard() {
               <div key={p.userId} className={`rd-presence-chip ${isMe ? "rd-presence-chip--me" : ""}`}>
                 <span className="rd-presence-dot" />
                 <span className="rd-presence-name">{p.userName}{isMe ? " (you)" : ""}</span>
-                <span className="rd-presence-doing">
-                  {p.action === "registering" && p.currentResource?.label ? `registering ${p.currentResource.label}` :
-                   p.action === "editing"     && p.currentResource?.label ? `editing ${p.currentResource.label}` :
-                   p.action === "viewing-dashboard" ? "on dashboard" :
-                   p.action || "idle"}
-                </span>
+                <span className="rd-presence-doing">{presenceDoing(p)}</span>
                 <span className="rd-presence-ago">{secondsAgo < 60 ? `${secondsAgo}s ago` : `${Math.floor(secondsAgo/60)}m ago`}</span>
               </div>
             );
@@ -182,13 +246,19 @@ export default function ReceptionDashboard() {
           <span className="rd-stat-value">{fmtCur(totalCollected)}</span>
           <span className="rd-stat-sub">{txnCount} transaction{txnCount !== 1 ? "s" : ""}</span>
         </div>
-        {["OPD","IPD","DC","ER","Services"].map(t => (
-          <div key={t} className={`rd-stat rd-stat--${t.toLowerCase()}`}>
-            <span className="rd-stat-label">{t === "DC" ? "Day Care" : t}</span>
-            <span className="rd-stat-value">{fmtCur(byVisitMap[t]?.amount || 0)}</span>
-            <span className="rd-stat-sub">{byVisitMap[t]?.count || 0} visits</span>
-          </div>
-        ))}
+        {/* `Services` tile drops out when zero — most clinics don't sell
+            standalone services from reception so the empty tile was just
+            visual noise. OPD/IPD/DC/ER always render even at zero so
+            the layout stays predictable shift-to-shift. */}
+        {["OPD","IPD","DC","ER","Services"]
+          .filter(t => t !== "Services" || (byVisitMap[t]?.amount || 0) > 0 || (byVisitMap[t]?.count || 0) > 0)
+          .map(t => (
+            <div key={t} className={`rd-stat rd-stat--${t.toLowerCase()}`}>
+              <span className="rd-stat-label">{t === "DC" ? "Day Care" : t}</span>
+              <span className="rd-stat-value">{fmtCur(byVisitMap[t]?.amount || 0)}</span>
+              <span className="rd-stat-sub">{byVisitMap[t]?.count || 0} visits</span>
+            </div>
+          ))}
       </div>
 
       {/* ── Two-column grid ── */}
@@ -305,14 +375,18 @@ export default function ReceptionDashboard() {
           </div>
         </div>
 
-        {/* ── Outstanding + Per-receptionist (shift handover) ── */}
+        {/* ── Outstanding dues — action-needed alerts ──
+            Previously this was mashed together with the per-receptionist
+            shift-handover split. Now split into two cards: this one
+            shows live items needing attention (TPA pending, IPD
+            advance dues). It's the receptionist's pending-action
+            list — a TPA total >0 means a coordinator owes follow-up. */}
         <div className="rd-card">
           <div className="rd-card-head">
             <div className="rd-card-icon rd-card-icon--actions"><i className="pi pi-exclamation-circle" /></div>
-            <span className="rd-card-title">Outstanding · Shift Handover</span>
+            <span className="rd-card-title">Outstanding Dues</span>
           </div>
           <div className="rd-card-body">
-
             {advanceDue > 0 && (
               <div className="rd-alert">
                 <i className="pi pi-wallet rd-alert-icon" />
@@ -333,22 +407,35 @@ export default function ReceptionDashboard() {
                 All clear — no pending dues
               </div>
             )}
+          </div>
+        </div>
 
-            <div className="rd-rx-collection">
-              <div className="rd-stat-label rd-stat-label--sp">RECEPTIONIST-WISE COLLECTION (today)</div>
-              {(collection?.byReceptionist || []).length === 0 ? (
-                <div className="rd-empty rd-empty--tiny">No transactions yet</div>
-              ) : (collection.byReceptionist || []).map(r => (
-                <div key={r.id} className="rd-doc-rev-row">
-                  <div>
-                    <span className="rd-doc-rev-name">{r.name}</span>
-                  </div>
-                  <span className="rd-doc-rev-count">{r.count} {r.count === 1 ? "txn" : "txns"}</span>
-                  <span className="rd-doc-rev-amount">{fmtCur(r.amount)}</span>
+        {/* ── Shift Handover — per-receptionist collection split ──
+            Analytical, end-of-shift view: how much each receptionist
+            collected today. Used to reconcile cash drawer at handover.
+            Sits in its own card now so the layout doesn't lump it with
+            live action items above. */}
+        <div className="rd-card">
+          <div className="rd-card-head">
+            <div className="rd-card-icon rd-card-icon--patients"><i className="pi pi-users" /></div>
+            <span className="rd-card-title">Shift Handover — Per-Receptionist</span>
+            <span className="rd-card-meta">{(collection?.byReceptionist || []).length}</span>
+          </div>
+          <div className="rd-card-body">
+            {(collection?.byReceptionist || []).length === 0 ? (
+              <div className="rd-empty rd-empty--small">
+                <span className="rd-empty-icon">🧾</span>
+                No transactions yet today
+              </div>
+            ) : (collection.byReceptionist || []).map(r => (
+              <div key={r.id} className="rd-doc-rev-row">
+                <div>
+                  <span className="rd-doc-rev-name">{r.name}</span>
                 </div>
-              ))}
-            </div>
-
+                <span className="rd-doc-rev-count">{r.count} {r.count === 1 ? "txn" : "txns"}</span>
+                <span className="rd-doc-rev-amount">{fmtCur(r.amount)}</span>
+              </div>
+            ))}
           </div>
         </div>
 

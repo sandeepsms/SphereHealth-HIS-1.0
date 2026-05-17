@@ -69,6 +69,40 @@
   font-family: inherit;
 }
 
+/* ─── Quick actions strip ───
+   Six tappable tiles sitting under the topbar so the receptionist can
+   jump to the most-used routes without scrolling into a card. Auto-fit
+   grid so the row wraps gracefully on narrow screens / sidebar-open
+   viewports. */
+.rd-quick-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.rd-qa-tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  color: #0f172a;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+.rd-qa-tile:hover {
+  background: #ecfeff;
+  border-color: #0891b2;
+  transform: translateY(-1px);
+}
+.rd-qa-tile .pi { color: #0891b2; font-size: 16px; }
+
 /* ─── Grid layout ─── */
 .rd-grid {
   display: grid;
