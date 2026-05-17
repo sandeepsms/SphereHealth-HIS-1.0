@@ -91,6 +91,21 @@ export default function ReceptionBilling() {
   const [advances,      setAdvances]      = useState([]);
   const [unspentAdv,    setUnspentAdv]    = useState(0);
   const [showAdvDlg,    setShowAdvDlg]    = useState(false);
+  // ── Smart search + active-patient directory ────────────────────
+  //   searchQ        — text in the search box (name / UHID / phone)
+  //   searchResults  — live dropdown matches (debounced 250ms)
+  //   searchOpen     — toggles the dropdown visibility
+  //   directory      — patients of the currently selected type
+  //   listType       — "ALL" / "OPD" / "IPD" / "Daycare" / "Emergency" / "Services"
+  //   directoryLoading — spinner while the tab list refreshes
+  const [searchQ,         setSearchQ]         = useState("");
+  const [searchResults,   setSearchResults]   = useState([]);
+  const [searchOpen,      setSearchOpen]      = useState(false);
+  const [searchBusy,      setSearchBusy]      = useState(false);
+  const [directory,       setDirectory]       = useState([]);
+  const [listType,        setListType]        = useState("OPD");
+  const [directoryLoading,setDirectoryLoading]= useState(false);
+  const searchDebRef = React.useRef(null);
 
   const load = useCallback(async (uhidArg) => {
     if (!uhidArg) return;
@@ -119,6 +134,65 @@ export default function ReceptionBilling() {
   }, []);
 
   useEffect(() => { if (paramUhid) load(paramUhid); }, [paramUhid, load]);
+
+  // ── Live search — fires 250ms after the user stops typing. ─────
+  // The /patients/search endpoint searches name + UHID + contact +
+  // patientId + email simultaneously, so the cashier can type any
+  // identifier without having to pick which one in advance.
+  useEffect(() => {
+    if (searchDebRef.current) clearTimeout(searchDebRef.current);
+    const q = (searchQ || "").trim();
+    if (q.length < 2) { setSearchResults([]); return; }
+    const ac = new AbortController();
+    searchDebRef.current = setTimeout(async () => {
+      setSearchBusy(true);
+      try {
+        const { data } = await axios.get(
+          `${API_ENDPOINTS.PATIENTS}/search?q=${encodeURIComponent(q)}&limit=12`,
+          { signal: ac.signal },
+        );
+        if (!ac.signal.aborted) setSearchResults(data?.data || data || []);
+      } catch (e) {
+        if (!axios.isCancel(e)) console.warn("[ReceptionBilling] search:", e?.message);
+      } finally {
+        if (!ac.signal.aborted) setSearchBusy(false);
+      }
+    }, 250);
+    return () => { ac.abort(); if (searchDebRef.current) clearTimeout(searchDebRef.current); };
+  }, [searchQ]);
+
+  // ── Directory loader — refreshed whenever listType changes. ────
+  // Pulls active patients of the selected registrationType (or all,
+  // sorted by createdAt desc). Limit 60 keeps the grid responsive on
+  // larger hospitals while still showing everyone for a small site.
+  useEffect(() => {
+    const ac = new AbortController();
+    setDirectoryLoading(true);
+    const params = new URLSearchParams({ limit: "60" });
+    if (listType !== "ALL") params.set("registrationType", listType);
+    axios.get(`${API_ENDPOINTS.PATIENTS}?${params.toString()}`, { signal: ac.signal })
+      .then(({ data }) => {
+        if (ac.signal.aborted) return;
+        const rows = data?.patients || data?.data || (Array.isArray(data) ? data : []);
+        setDirectory(Array.isArray(rows) ? rows : []);
+      })
+      .catch((e) => { if (!axios.isCancel(e)) console.warn("[ReceptionBilling] directory:", e?.message); })
+      .finally(() => { if (!ac.signal.aborted) setDirectoryLoading(false); });
+    return () => ac.abort();
+  }, [listType]);
+
+  // Helper — load a patient row when the user clicks anywhere in the
+  // search dropdown or directory grid. Updates URL too so a refresh
+  // re-loads the same patient.
+  const pickPatient = (p) => {
+    if (!p?.UHID) return;
+    setUhid(p.UHID);
+    setSearchQ("");
+    setSearchOpen(false);
+    setSearchResults([]);
+    load(p.UHID);
+    navigate(`/reception-billing/${encodeURIComponent(p.UHID)}`, { replace: true });
+  };
 
   // Today's collection summary — small live tile.
   // Response shape: { success, date, summary: { totalCollected, totalGross, ... } }
@@ -218,27 +292,99 @@ export default function ReceptionBilling() {
         </div>
       </div>
 
-      {/* UHID search bar */}
-      <div className="rx-search rx-mb-14">
-        <i className="pi pi-id-card" />
-        <input
-          placeholder="Enter UHID (e.g. UH0001) and press Enter"
-          value={uhid}
-          onChange={e => setUhid(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && load(uhid)}
-        />
-        <button className="rx-btn-primary rx-btn-compact" onClick={() => load(uhid)}>
-          <i className="pi pi-search" /> Load
-        </button>
+      {/* Smart search bar — name / UHID / phone. Live dropdown of
+          matches as the receptionist types (min 2 chars). */}
+      <div style={{ position: "relative", marginBottom: 14 }}>
+        <div className="rx-search" style={{ marginBottom: 0 }}>
+          <i className="pi pi-search" />
+          <input
+            placeholder="Search by name, UHID, or mobile number…"
+            value={searchQ}
+            onChange={e => { setSearchQ(e.target.value); setSearchOpen(true); }}
+            onFocus={() => setSearchOpen(true)}
+            onBlur={() => setTimeout(() => setSearchOpen(false), 180)}   // delay so click on dropdown registers
+            onKeyDown={e => {
+              if (e.key === "Enter") {
+                if (searchResults.length === 1) pickPatient(searchResults[0]);
+                else if ((searchQ || "").trim().toUpperCase().startsWith("UH")) {
+                  load(searchQ.trim().toUpperCase());
+                  setSearchOpen(false);
+                }
+              } else if (e.key === "Escape") {
+                setSearchOpen(false);
+              }
+            }}
+          />
+          {searchBusy && <i className="pi pi-spin pi-spinner" style={{ color: "#94a3b8" }} />}
+        </div>
+
+        {searchOpen && searchQ.trim().length >= 2 && (
+          <div className="rx-search-dropdown" style={{
+            position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0,
+            background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10,
+            boxShadow: "0 8px 24px rgba(15, 23, 42, 0.12)", maxHeight: 380,
+            overflowY: "auto", zIndex: 50,
+          }}>
+            {searchResults.length === 0 && !searchBusy ? (
+              <div style={{ padding: "16px 14px", color: "#94a3b8", fontSize: 13, textAlign: "center" }}>
+                No patient matches "{searchQ}"
+              </div>
+            ) : (
+              searchResults.map(p => (
+                <button key={p._id}
+                        onMouseDown={() => pickPatient(p)}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 10,
+                          width: "100%", padding: "8px 12px", border: 0,
+                          borderBottom: "1px solid #f1f5f9", background: "#fff",
+                          cursor: "pointer", textAlign: "left", fontFamily: "inherit",
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.background = "#f8fafc"}
+                        onMouseLeave={e => e.currentTarget.style.background = "#fff"}>
+                  <div style={{
+                    width: 32, height: 32, borderRadius: "50%",
+                    background: "linear-gradient(135deg, #0891b2, #06b6d4)",
+                    color: "#fff", fontWeight: 800, fontSize: 12,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                  }}>
+                    {String(p.fullName || "?").trim().split(/\s+/).slice(0,2).map(x => x[0] || "").join("").toUpperCase()}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, color: "#0f172a", fontSize: 13 }}>
+                      {p.title ? `${p.title} ` : ""}{p.fullName}
+                    </div>
+                    <div style={{ fontSize: 11, color: "#64748b", display: "flex", gap: 10, flexWrap: "wrap" }}>
+                      <span className="rx-mono-tag rx-mono-tag--subtle">{p.UHID}</span>
+                      {p.contactNumber && <span>📱 {p.contactNumber}</span>}
+                      {p.age != null && <span>{p.age}y · {p.gender || "—"}</span>}
+                    </div>
+                  </div>
+                  {p.registrationType && (
+                    <span className="rx-mode-pill" style={{ fontSize: 10, padding: "2px 8px" }}>
+                      {p.registrationType}
+                    </span>
+                  )}
+                </button>
+              ))
+            )}
+          </div>
+        )}
       </div>
 
       {loading ? (
         <div className="rx-empty"><i className="pi pi-spin pi-spinner rx-loader-icon" /></div>
       ) : !patient ? (
-        <div className="rx-empty">
-          <span className="rx-empty-icon">🧾</span>
-          Enter a UHID above to view & manage that patient's bills.
-        </div>
+        /* ── Active-patient directory ──────────────────────────────
+           No patient picked yet. Show a tabbed list of currently
+           active patients filtered by registration type so the
+           cashier can click a row instead of typing a UHID. */
+        <PatientDirectory
+          listType={listType}
+          setListType={setListType}
+          rows={directory}
+          loading={directoryLoading}
+          onPick={pickPatient}
+        />
       ) : (
         <>
           {/* Patient summary */}
@@ -962,6 +1108,135 @@ function receiptHTML(bill, patient) {
 
 function escapeHtml(s = "") {
   return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   PatientDirectory — tabbed list of active patients by registration
+   type. Renders when no patient is selected, so the cashier sees the
+   day's customers right away (typical OPD volume) and clicks a row
+   instead of typing a UHID.
+═══════════════════════════════════════════════════════════════ */
+function PatientDirectory({ listType, setListType, rows, loading, onPick }) {
+  // Tabs mirror the registrationType enum on Patient model.
+  const TYPES = [
+    { key: "OPD",       label: "OPD",        icon: "pi-user-plus",     color: "#06b6d4" },
+    { key: "IPD",       label: "IPD",        icon: "pi-home",          color: "#7c3aed" },
+    { key: "Daycare",   label: "Day Care",   icon: "pi-sun",           color: "#d97706" },
+    { key: "Emergency", label: "Emergency",  icon: "pi-bolt",          color: "#dc2626" },
+    { key: "Services",  label: "Services",   icon: "pi-cog",           color: "#0e7490" },
+    { key: "ALL",       label: "All Types",  icon: "pi-list",          color: "#475569" },
+  ];
+
+  return (
+    <>
+      {/* Tab strip */}
+      <div style={{
+        display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap",
+        background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12,
+        padding: 6,
+      }}>
+        {TYPES.map(t => {
+          const active = listType === t.key;
+          return (
+            <button
+              key={t.key}
+              onClick={() => setListType(t.key)}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 6,
+                padding: "8px 14px", border: 0, borderRadius: 8,
+                background: active ? `linear-gradient(135deg, ${t.color}, ${t.color}dd)` : "transparent",
+                color: active ? "#fff" : "#475569",
+                fontFamily: "inherit", fontSize: 12, fontWeight: 700,
+                cursor: "pointer", transition: "all 0.15s ease",
+              }}
+              onMouseEnter={e => { if (!active) e.currentTarget.style.background = "#f1f5f9"; }}
+              onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}
+            >
+              <i className={`pi ${t.icon}`} style={{ fontSize: 12 }} /> {t.label}
+            </button>
+          );
+        })}
+        <span style={{
+          marginLeft: "auto", padding: "8px 12px", fontSize: 11,
+          fontWeight: 700, color: "#64748b", letterSpacing: 0.3,
+        }}>
+          {loading ? "Loading…" : `${rows.length} patient${rows.length === 1 ? "" : "s"}`}
+        </span>
+      </div>
+
+      {/* Patient grid */}
+      {loading && rows.length === 0 ? (
+        <div className="rx-empty"><i className="pi pi-spin pi-spinner rx-loader-icon" /></div>
+      ) : rows.length === 0 ? (
+        <div className="rx-empty">
+          <span className="rx-empty-icon">👥</span>
+          No active {listType === "ALL" ? "" : listType} patients yet today.
+        </div>
+      ) : (
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(310px, 1fr))",
+          gap: 10,
+        }}>
+          {rows.map(p => (
+            <button
+              key={p._id}
+              onClick={() => onPick(p)}
+              style={{
+                display: "flex", alignItems: "center", gap: 10,
+                padding: "10px 12px",
+                background: "#fff", border: "1px solid #e2e8f0",
+                borderRadius: 10, cursor: "pointer",
+                fontFamily: "inherit", textAlign: "left",
+                transition: "all 0.15s ease",
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.borderColor = "#06b6d4";
+                e.currentTarget.style.boxShadow = "0 4px 12px rgba(8, 145, 178, 0.12)";
+                e.currentTarget.style.transform = "translateY(-1px)";
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.borderColor = "#e2e8f0";
+                e.currentTarget.style.boxShadow = "none";
+                e.currentTarget.style.transform = "none";
+              }}
+            >
+              <div style={{
+                width: 38, height: 38, borderRadius: "50%",
+                background: "linear-gradient(135deg, #0891b2, #06b6d4)",
+                color: "#fff", fontWeight: 800, fontSize: 13,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                flexShrink: 0,
+              }}>
+                {String(p.fullName || "?").trim().split(/\s+/).slice(0,2).map(x => x[0] || "").join("").toUpperCase()}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  fontWeight: 700, color: "#0f172a", fontSize: 13,
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                }}>
+                  {p.title ? `${p.title} ` : ""}{p.fullName}
+                </div>
+                <div style={{ fontSize: 11, color: "#64748b", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 2 }}>
+                  <span className="rx-mono-tag rx-mono-tag--subtle">{p.UHID}</span>
+                  {p.contactNumber && <span>📱 {p.contactNumber}</span>}
+                </div>
+                <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>
+                  {p.age != null && `${p.age}y · `}{p.gender || ""}
+                  {p.lastVisitDate && ` · Last visit ${new Date(p.lastVisitDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}`}
+                </div>
+              </div>
+              {p.registrationType && (
+                <span className="rx-mode-pill" style={{ fontSize: 10, padding: "2px 8px", flexShrink: 0 }}>
+                  {p.registrationType}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </>
+  );
 }
 
 /* ═══════════════════════════════════════════════════════════════
