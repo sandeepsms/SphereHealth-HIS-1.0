@@ -610,14 +610,26 @@ exports.returnItems = async (req, res) => {
       refundGst      += gstAmt;
       refundDiscount += disc;
 
-      // Restore stock to the original batch (FIFO didn't matter here —
-      // we know exactly which batch each item came from).
+      // Restore stock to the original batch atomically (re-audit r7
+      // follow-up: the previous load-then-save pattern raced with
+      // concurrent dispenses and could clobber `remaining`). The
+      // `quantityIn` is a fixed-on-receipt invariant so we just bump
+      // `quantityOut` down and `remaining` up — both deltas are pure
+      // $inc operations, so concurrent updates compose correctly.
       if (orig.batchId) {
-        const b = await DrugBatch.findById(orig.batchId);
-        if (b) {
-          b.quantityOut = Math.max(0, (b.quantityOut || 0) - qty);
-          b.remaining   = Math.max(0, (b.quantityIn || 0) - (b.quantityOut || 0));
-          await b.save();
+        const restored = await DrugBatch.findOneAndUpdate(
+          { _id: orig.batchId, isActive: true, quantityOut: { $gte: qty } },
+          { $inc: { quantityOut: -qty, remaining: qty } },
+          { new: true },
+        );
+        if (!restored) {
+          // Batch is missing, disabled, or already at zero quantityOut —
+          // shouldn't happen unless someone hand-edited Mongo, but logging
+          // beats silently swallowing the failure.
+          console.error(
+            `[Pharmacy] returnItems: could not restore qty=${qty} to batch ${orig.batchId} ` +
+            `(possibly inactive or already reset). Sale ${sale._id} return continues.`,
+          );
         }
       }
     }
@@ -720,23 +732,18 @@ exports.addItems = async (req, res) => {
       }
     }
 
-    // Pre-flight stock check
-    for (const it of items) {
-      const have = await DrugBatch.aggregate([
-        { $match: { drugId: new mongoose.Types.ObjectId(it.drugId), isActive: true, remaining: { $gt: 0 } } },
-        { $group: { _id: null, total: { $sum: "$remaining" } } },
-      ]);
-      const total = have[0]?.total || 0;
-      if (total < Number(it.quantity)) {
-        return res.status(409).json({ success: false, message: `Insufficient stock for ${it.drugName} — need ${it.quantity}, have ${total}` });
-      }
-    }
-
-    // Consume FIFO and build added-items array (mirror of dispense)
+    // Pre-flight DELETED — same TOCTOU bug as dispense() (re-audit
+    // round-7 follow-up). fifoConsume's atomic predicate is now the
+    // single source of truth; cross-item rollback below unrolls
+    // already-reserved stock if a later item runs short OR if
+    // sale.save() fails (e.g. parent-bill validation kicks).
     const addedItems = [];
     let subTotal = 0, totalGst = 0, totalDisc = 0;
+    const consumedAll = []; // [{batchId, qty}] across all items, for rollback
+    try {
     for (const it of items) {
       const used = await fifoConsume(it.drugId, Number(it.quantity));
+      for (const u of used) consumedAll.push({ batchId: u.batch._id, qty: u.used });
       for (const u of used) {
         const qty   = u.used;
         const unit  = Number(it.unitPrice || u.batch.salePrice || 0);
@@ -813,6 +820,23 @@ exports.addItems = async (req, res) => {
     await sale.save();
 
     res.json({ success: true, data: { sale, supplementRecord } });
+    } catch (consumeErr) {
+      // Cross-item rollback identical to dispense() (re-audit r7
+      // follow-up). Unrolls every reservation so addItems() is
+      // all-or-nothing.
+      for (const c of consumedAll) {
+        try {
+          await DrugBatch.findByIdAndUpdate(c.batchId, {
+            $inc: { quantityOut: -c.qty, remaining: c.qty },
+          });
+        } catch (rbErr) {
+          console.error("[Pharmacy] addItems rollback failed for batch",
+            String(c.batchId), ":", rbErr.message);
+        }
+      }
+      const status = /^Insufficient stock/i.test(consumeErr.message || "") ? 409 : 500;
+      return res.status(status).json({ success: false, message: consumeErr.message });
+    }
   } catch (e) { sendErr(res, e); }
 };
 

@@ -154,9 +154,18 @@ exports.completeHandover = async (req, res) => {
       });
     }
 
-    // Perform the actual bed switch directly
-    // Note: toBed is "Reserved" (not "Available") because doctor reserved it on initiation.
-    // We accept Reserved|Available here to complete the move.
+    // Perform the actual bed switch directly. NOTE: handover is now
+    // ordered to minimise the "patient in two beds" / "bed orphaned"
+    // window if a step fails mid-sequence (re-audit r7 follow-up):
+    //   1. Occupy the new bed (atomic, predicate-guarded)
+    //   2. Update the admission to point at the new bed (the source of
+    //      truth — if this fails we roll back step 1)
+    //   3. Release the old bed
+    //   4. Mark transfer Complete
+    //
+    // toBed is "Reserved" because initiation reserved it; we accept
+    // Reserved|Available here so a deferred handover where the bed got
+    // re-marked Available still works.
     const newBed = await Bed.findOneAndUpdate(
       { _id: transfer.toBedId, status: { $in: ["Reserved", "Available"] } },
       { $set: { status: "Occupied", currentAdmission: transfer.admissionId } },
@@ -169,33 +178,62 @@ exports.completeHandover = async (req, res) => {
       });
     }
 
-    // Release the old bed
+    // Step 2: update the admission. If THIS fails (validation kicks,
+    // network blip, etc.) the new-bed flip in step 1 must roll back
+    // or we get a "patient in two beds" / "phantom occupied bed"
+    // inconsistency — clinical confusion + bed-management leak.
+    let admission;
+    try {
+      admission = await Admission.findById(transfer.admissionId);
+      if (admission) {
+        admission.transferHistory = admission.transferHistory || [];
+        admission.transferHistory.push({
+          fromBed: transfer.fromBedId || null,
+          toBed:   transfer.toBedId,
+          reason:  transfer.reason || "Bed Transfer with Handover",
+          date:    new Date(),
+        });
+        admission.bedId     = newBed._id;
+        admission.bedNumber = newBed.bedNumber;
+        admission.wardName  = newBed.wardName  || admission.wardName;
+        admission.roomId    = newBed.room      || null;
+        admission.wardId    = newBed.ward      || null;
+        admission.floorId   = newBed.floor     || null;
+        await admission.save();
+      }
+    } catch (admErr) {
+      // Roll back step 1: undo the new-bed occupation. Best-effort —
+      // if the rollback itself fails the admin still gets a clear 500
+      // with the original error message and the offending bed _id in
+      // server logs for manual recovery.
+      try {
+        await Bed.findByIdAndUpdate(transfer.toBedId, {
+          $set: { status: "Reserved", currentAdmission: null },
+        });
+      } catch (rbErr) {
+        console.error(
+          `[BedTransfer] handover rollback failed for bed ${transfer.toBedId}:`,
+          rbErr.message,
+        );
+      }
+      return res.status(500).json({
+        success: false,
+        message: `Admission update failed — bed was not switched. ${admErr.message}`,
+      });
+    }
+
+    // Step 3: release the old bed. From this point any failure leaves
+    // a consistent-but-stale state (admission already points at the
+    // new bed; old bed will be reaped by the next nurse-action).
     if (transfer.fromBedId) {
       await Bed.findByIdAndUpdate(transfer.fromBedId, {
         $set: { status: "Available", currentAdmission: null, patient: null },
-      });
+      }).catch((e) => console.error(
+        `[BedTransfer] failed to release fromBed ${transfer.fromBedId}:`, e.message,
+      ));
     }
 
-    // Update the admission record
-    const admission = await Admission.findById(transfer.admissionId);
-    if (admission) {
-      admission.transferHistory = admission.transferHistory || [];
-      admission.transferHistory.push({
-        fromBed: transfer.fromBedId || null,
-        toBed:   transfer.toBedId,
-        reason:  transfer.reason || "Bed Transfer with Handover",
-        date:    new Date(),
-      });
-      admission.bedId     = newBed._id;
-      admission.bedNumber = newBed.bedNumber;
-      admission.wardName  = newBed.wardName  || admission.wardName;
-      admission.roomId    = newBed.room      || null;
-      admission.wardId    = newBed.ward      || null;
-      admission.floorId   = newBed.floor     || null;
-      await admission.save();
-    }
-
-    // Mark transfer complete
+    // Step 4: mark transfer complete
     transfer.handoverNotes = handoverNotes.trim();
     transfer.handoverBy    = handoverBy    || "";
     transfer.handoverById  = handoverById  || null;

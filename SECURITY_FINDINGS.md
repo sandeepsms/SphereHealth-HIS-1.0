@@ -196,6 +196,14 @@ edit (A-15) remain open — listed in re-audit backlog.
 | R5-F-02 | `alerts` (90-day expiry horizon + "now") still used raw UTC | MEDIUM | controllers/Pharmacy/pharmacyController.js:1414–1415, 1441 | **FIXED** | 2026-05-17 (r6) | Both `now` and `horizon` now `istStartOfToday()` / `istStartOfDayPlus(90)` |
 | R5-Hint | Hoisted IST helpers to `utils/queryGuards.js` so other timezone-sensitive comparisons (autoBilling already had its own copy) can reuse | — | utils/queryGuards.js | **FIXED** | 2026-05-17 (r6) | Live: 30/90-day diffs are exactly N × 86400000 ms |
 
+### Round-7 new findings + fixes
+
+| ID | Title | Severity | Files | Status | Fixed-on | Verifier |
+| -- | ----- | -------- | ----- | ------ | -------- | -------- |
+| R7-F-01 | `pharmacy.addItems()` had the SAME TOCTOU pre-flight aggregate + no cross-item rollback as the F-03 fix had missed | **HIGH** | controllers/Pharmacy/pharmacyController.js:725–813 | **FIXED** | 2026-05-17 (r8) | Pre-flight removed; cross-item rollback identical to dispense() |
+| R7-F-02 | `pharmacy.returnItems()` restored stock via non-atomic load+save loop — partial undo on failure | MEDIUM | controllers/Pharmacy/pharmacyController.js:615–622 | **FIXED** | 2026-05-17 (r8) | `findOneAndUpdate({quantityOut: {$gte: qty}, isActive: true}, $inc)` with structured log on failure |
+| R7-A-01 | `bedTransfer.completeHandover` multi-doc sequence (new bed → admission → old bed → transfer) had no rollback if admission.save() failed mid-sequence | MEDIUM | controllers/Patient/bedTransferController.js:160–204 | **FIXED** | 2026-05-17 (r8) | Sequence re-ordered (newBed → admission → oldBed → transfer); admission.save() failure rolls back newBed flip via `try/catch` |
+
 ### Summary of fix-round 1 (2026-05-17)
 
 **Sections fully addressed:**
