@@ -2159,6 +2159,246 @@ function PrintSection({ title, children }) {
   );
 }
 
+/* ── Scoring Trends — one timeline-table per scale across time ─────
+   Walks every nurse note (and the admission-stored nurseInitialAssessment)
+   looking for objects that match a known scoring scale, then groups the
+   hits by scale and renders a date · shift · total · risk table per scale
+   so the bedside team can see trajectory at a glance. */
+function ScoringTrendsSection({ nurseNotes = [], doctorNotes = [], currentAdmission }) {
+  // Collect (scaleId, date, shift, by, data) tuples.
+  const hits = [];
+  const consider = (data, when, shift, by) => {
+    if (!isMeaningful(data)) return;
+    // Direct scale match on the object itself.
+    const direct = matchScale(data);
+    if (direct) hits.push({ scaleId: direct.title, scale: direct, when, shift, by, data });
+    // Walk one level down: noteData.braden, noteData.fallRisk, etc.
+    if (typeof data === "object" && !Array.isArray(data)) {
+      for (const v of Object.values(data)) {
+        if (v && typeof v === "object" && !Array.isArray(v)) {
+          const nested = matchScale(v);
+          if (nested) hits.push({ scaleId: nested.title, scale: nested, when, shift, by, data: v });
+        }
+      }
+    }
+  };
+  for (const n of nurseNotes) {
+    consider(n.noteData, n.visitDate || n.noteDate || n.createdAt, n.shift, n.nurseName);
+  }
+  for (const n of doctorNotes) {
+    consider(n.noteDetails, n.visitDate || n.createdAt, n.shift, n.doctorName);
+  }
+  // Admission-stored Nurse IA may carry a Braden / Morse payload too.
+  consider(currentAdmission?.nurseInitialAssessment, currentAdmission?.admissionDate, "admission", "Nurse");
+
+  if (!hits.length) return <Empty icon="📊" msg="No scoring scales recorded yet" />;
+
+  // Group by scaleId, sort newest-first within group.
+  const byScale = {};
+  for (const h of hits) {
+    if (!byScale[h.scaleId]) byScale[h.scaleId] = { scale: h.scale, rows: [] };
+    byScale[h.scaleId].rows.push(h);
+  }
+  for (const g of Object.values(byScale)) {
+    g.rows.sort((a, b) => new Date(b.when) - new Date(a.when));
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {Object.values(byScale).map(({ scale, rows }) => (
+        <div key={scale.title} style={{
+          padding: "8px 12px", borderRadius: 6,
+          border: `1px solid ${scale.accent}30`, borderLeft: `4px solid ${scale.accent}`,
+          background: "#fff",
+        }}>
+          <div style={{ fontSize: 11.5, fontWeight: 800, color: scale.accent,
+            textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>
+            {scale.title} <span style={{ fontWeight: 600, color: "var(--pf-muted)" }}>· {rows.length} entr{rows.length === 1 ? "y" : "ies"}</span>
+          </div>
+          <table className="pf-table pf-table--compact" style={{ width: "100%", fontSize: 11 }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left" }}>Date</th>
+                <th style={{ textAlign: "left" }}>Shift</th>
+                <th style={{ textAlign: "left" }}>By</th>
+                {Object.keys(scale.items).map((code) => (
+                  <th key={code} style={{ textAlign: "center", fontFamily: "monospace" }}>{code.toUpperCase()}</th>
+                ))}
+                <th style={{ textAlign: "center" }}>Total</th>
+                <th style={{ textAlign: "left" }}>Risk</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => {
+                const lookup = Object.fromEntries(
+                  Object.entries(r.data).map(([k, v]) => [k.toLowerCase(), v]),
+                );
+                const itemKeys = Object.keys(scale.items);
+                const values = itemKeys.map((c) => lookup[c.toLowerCase()]);
+                const nums = values.map((v) => Number(v)).filter((n) => Number.isFinite(n));
+                const total = nums.length === itemKeys.length ? nums.reduce((a, b) => a + b, 0) : null;
+                const interp = total != null && scale.interpret ? scale.interpret(total) : null;
+                return (
+                  <tr key={i}>
+                    <td style={{ fontFamily: "monospace", fontSize: 10.5 }}>{fmtDate(r.when)}</td>
+                    <td style={{ fontSize: 10.5, textTransform: "capitalize" }}>{r.shift || "—"}</td>
+                    <td style={{ fontSize: 10.5 }}>{r.by || "—"}</td>
+                    {values.map((v, j) => (
+                      <td key={j} style={{ textAlign: "center", fontFamily: "monospace" }}>{v == null || v === "" ? "—" : v}</td>
+                    ))}
+                    <td style={{ textAlign: "center", fontWeight: 800, fontFamily: "monospace", color: interp?.color }}>{total == null ? "—" : total}</td>
+                    <td>
+                      {interp && (
+                        <span style={{ padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 700,
+                          background: `${interp.color}15`, color: interp.color, border: `1px solid ${interp.color}40` }}>
+                          {interp.risk}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ── Complete Timeline — every clinical event, grouped date → shift ─
+   The "story view" of the patient's stay. Merges doctor notes, nurse
+   notes, doctor orders, investigations, consents, diet plans, bed
+   transfers, and the admission event itself into one sorted list,
+   then renders date headers and shift sub-headers so the file reads
+   chronologically. Each entry re-uses the existing NoteList / Section
+   visual language. */
+const SHIFT_ORDER = { morning: 0, afternoon: 1, evening: 2, night: 3, general: 4, "": 9 };
+const dateKey = (d) => d ? new Date(d).toISOString().slice(0, 10) : "0000-00-00";
+
+function TimelineSection({ data }) {
+  const events = [];
+  const push = (kind, title, when, shift, by, payload) =>
+    when && events.push({ kind, title, when: new Date(when), shift: (shift || "").toLowerCase(), by, payload });
+
+  for (const n of data.doctorNotes  || []) push("doctor-note", `Doctor — ${n.noteType || "note"}`, n.visitDate || n.createdAt, n.shift, n.doctorName, n);
+  for (const n of data.nurseNotes   || []) push("nurse-note",  `Nurse — ${n.noteType || "note"}`,  n.visitDate || n.noteDate || n.createdAt, n.shift, n.nurseName, n);
+  for (const o of data.doctorOrders || []) push("order",       `Order — ${o.orderDetails?.medicineName || o.orderType || "—"}`, o.orderedAt || o.createdAt, null, o.orderedBy || o.doctorName, o);
+  for (const i of data.investigations || []) push("lab",       `Lab order — ${(i.items || []).length} test(s)`, i.createdAt, null, i.doctorName, i);
+  for (const c of data.consents     || []) push("consent",     `Consent — ${c.consentTitle || c.consentType}`, c.createdAt, null, c.signedByName || c.consentGivenBy, c);
+  for (const d of data.dietPlans    || []) push("diet",        `Diet plan — ${d.plan?.templateName || "Custom"}`, d.assignedAt || d.createdAt, null, d.assignedByName, d);
+  for (const t of data.bedTransfers || []) push("transfer",    `Bed transfer — ${t.fromBed} → ${t.toBed}`, t.createdAt, null, t.requestedBy, t);
+  for (const h of data.shiftHandovers || []) push("handover",  `Shift handover`, h.createdAt, h.shift, h.fromNurseName || h.byName, h);
+  for (const m of data.mlc          || []) push("mlc",         `MLC — ${m.natureOfInjury || "report"}`, m.createdAt, null, m.doctorName, m);
+  if (data.currentAdmission?.admissionDate) {
+    push("admission", `Admission — ${data.currentAdmission.admissionType}`, data.currentAdmission.admissionDate, null, data.currentAdmission.createdBy, data.currentAdmission);
+  }
+  if (data.currentAdmission?.actualDischargeDate) {
+    push("discharge", `Discharge`, data.currentAdmission.actualDischargeDate, null, data.currentAdmission.dischargedBy, data.currentAdmission);
+  }
+  if (data.dischargeSummary?.signedAt || data.dischargeSummary?.createdAt) {
+    push("discharge-summary", "Discharge summary signed", data.dischargeSummary.signedAt || data.dischargeSummary.createdAt, null, data.dischargeSummary.signedByName, data.dischargeSummary);
+  }
+
+  if (!events.length) return <Empty icon="📜" msg="No events on file yet" />;
+
+  // Group by date (newest first), then by shift order.
+  const byDate = {};
+  for (const e of events) {
+    const k = dateKey(e.when);
+    if (!byDate[k]) byDate[k] = [];
+    byDate[k].push(e);
+  }
+  const dates = Object.keys(byDate).sort((a, b) => b.localeCompare(a));
+  for (const k of dates) {
+    byDate[k].sort((a, b) => {
+      const sa = SHIFT_ORDER[a.shift] ?? 9;
+      const sb = SHIFT_ORDER[b.shift] ?? 9;
+      if (sa !== sb) return sa - sb;
+      return a.when - b.when;
+    });
+  }
+
+  const KIND_META = {
+    "doctor-note":       { icon: "👨‍⚕️", color: "#7c3aed" },
+    "nurse-note":        { icon: "👩‍⚕️", color: "#db2777" },
+    "order":             { icon: "💊", color: "#ea580c" },
+    "lab":               { icon: "🧪", color: "#0284c7" },
+    "consent":           { icon: "📝", color: "#ca8a04" },
+    "diet":              { icon: "🥗", color: "#16a34a" },
+    "transfer":          { icon: "🛏",  color: "#0d9488" },
+    "handover":          { icon: "🔄", color: "#0284c7" },
+    "mlc":               { icon: "⚖",  color: "#dc2626" },
+    "admission":         { icon: "🏥", color: "#2563eb" },
+    "discharge":         { icon: "🚪", color: "#0d9488" },
+    "discharge-summary": { icon: "📄", color: "#0d9488" },
+  };
+
+  return (
+    <div className="pf-timeline">
+      {dates.map((dk) => {
+        const date = new Date(byDate[dk][0].when);
+        const dateStr = date.toLocaleDateString("en-IN", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
+        // Group within date by shift label for sub-headers.
+        const byShift = {};
+        for (const e of byDate[dk]) {
+          const sk = e.shift || "general";
+          if (!byShift[sk]) byShift[sk] = [];
+          byShift[sk].push(e);
+        }
+        const shifts = Object.keys(byShift).sort((a, b) => (SHIFT_ORDER[a] ?? 9) - (SHIFT_ORDER[b] ?? 9));
+        return (
+          <div key={dk} style={{ marginBottom: 14 }}>
+            <div style={{
+              position: "sticky", top: 0, zIndex: 1, background: "#fff",
+              padding: "6px 10px", borderRadius: 6,
+              border: "1px solid #c7d2fe", borderLeft: "4px solid #4f46e5",
+              marginBottom: 6, fontSize: 12.5, fontWeight: 800, color: "#3730a3",
+              display: "flex", justifyContent: "space-between", alignItems: "center",
+            }}>
+              <span>📅 {dateStr}</span>
+              <span style={{ fontSize: 10.5, color: "var(--pf-muted)", fontWeight: 600 }}>{byDate[dk].length} event{byDate[dk].length !== 1 ? "s" : ""}</span>
+            </div>
+            {shifts.map((sk) => (
+              <div key={sk} style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: "var(--pf-muted)",
+                  textTransform: "uppercase", letterSpacing: 0.6, margin: "4px 0 4px 8px" }}>
+                  Shift: {sk}
+                </div>
+                <div style={{ paddingLeft: 8, borderLeft: "2px dashed #e5e7eb", display: "flex", flexDirection: "column", gap: 4 }}>
+                  {byShift[sk].map((e, i) => {
+                    const meta = KIND_META[e.kind] || { icon: "•", color: "#64748b" };
+                    return (
+                      <div key={i} style={{
+                        display: "grid", gridTemplateColumns: "55px 18px 1fr", gap: 8,
+                        padding: "4px 8px", borderRadius: 4,
+                        border: `1px solid ${meta.color}20`, background: "#fff",
+                        borderLeft: `3px solid ${meta.color}`,
+                        alignItems: "baseline",
+                      }}>
+                        <span style={{ fontFamily: "monospace", fontSize: 10.5, color: "var(--pf-muted)" }}>
+                          {e.when.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                        <span style={{ fontSize: 12 }}>{meta.icon}</span>
+                        <span style={{ fontSize: 11.5 }}>
+                          <b style={{ color: meta.color }}>{e.title}</b>
+                          {e.by && <span style={{ color: "var(--pf-muted)" }}> · {e.by}</span>}
+                          {e.payload?.status && <span style={{ marginLeft: 6, padding: "0 6px", borderRadius: 3, fontSize: 9.5, fontWeight: 700,
+                            background: "#f1f5f9", color: "var(--pf-muted)" }}>{e.payload.status}</span>}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function PrintFooter({ uhid, role }) {
   // Roadmap F23 — per-page QR back-link. The browser repeats this footer
   // via @page running-element on every printed page, so any single page
@@ -2294,7 +2534,9 @@ export default function CompletePatientFilePage() {
     { id: "discharge",     label: "Discharge",          icon: "🏥", count: dischargeSummary.length },
     { id: "billing",       label: "Billing",            icon: "💰", count: bills.length },
     { id: "activity",      label: "Activity Log",       icon: "🪵", count: activityLog.length },
-    { id: "timeline",      label: "Timeline",           icon: "📅", count: timeline.length },
+    { id: "scoring",       label: "Scoring Trends",     icon: "📊", count: null },
+    { id: "full-timeline", label: "Complete Timeline",  icon: "📜", count: null },
+    { id: "timeline",      label: "UI Timeline",        icon: "📅", count: timeline.length },
   ];
 
   // ── Print-mode renders a clean linear A4 document with letterhead. No
@@ -2484,6 +2726,14 @@ export default function CompletePatientFilePage() {
 
             <Section id="activity" icon="🪵" title="Activity Log" sub="Every click, edit, dropdown selection — full UI audit feed" count={activityLog.length}>
               <ActivityFeed activityLog={activityLog} />
+            </Section>
+
+            <Section id="scoring" icon="📊" title="Scoring Trends" sub="Braden / Morse / MEWS / GCS — every entry, by date and shift, with total & risk band">
+              <ScoringTrendsSection nurseNotes={nurseNotes} doctorNotes={doctorNotes} currentAdmission={currentAdmission} />
+            </Section>
+
+            <Section id="full-timeline" icon="📜" title="Complete Timeline" sub="Every clinical event — date → shift → time. Print-ready chronological view.">
+              <TimelineSection data={data} />
             </Section>
 
             <Section id="timeline" icon="📅" title="Unified Timeline" sub="Every record across every model, chronologically" count={timeline.length}>
