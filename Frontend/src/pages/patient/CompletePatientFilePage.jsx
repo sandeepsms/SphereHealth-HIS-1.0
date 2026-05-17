@@ -2399,6 +2399,194 @@ function TimelineSection({ data }) {
   );
 }
 
+/* ── Intake / Output Sheet ──────────────────────────────────────────
+   Pulls every I/O entry from across all nurse notes (and the admission's
+   nurseInitialAssessment if it carried any) and renders the classic ICU
+   I/O chart grouped by date → shift, with daily totals + running net
+   balance so the dietician / doctor / nurse can read fluid balance at a
+   glance. */
+const IO_INTAKE_KEYS = ["oral", "ivFluids", "bloodProducts"];
+const IO_OUTPUT_KEYS = ["urineOutput", "drainOutput", "nasogastric", "emesis", "bloodLoss"];
+const IO_INTAKE_LABELS = { oral: "Oral", ivFluids: "IV fluids", bloodProducts: "Blood prod." };
+const IO_OUTPUT_LABELS = { urineOutput: "Urine", drainOutput: "Drain", nasogastric: "NGT", emesis: "Emesis", bloodLoss: "Blood loss" };
+const IO_ALL_KEYS = [...IO_INTAKE_KEYS, ...IO_OUTPUT_KEYS];
+const ioNumber = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+
+function ioRowFrom(noteData) {
+  if (!noteData || typeof noteData !== "object") return null;
+  const row = {};
+  let any = false;
+  // Direct fields on noteData
+  for (const k of IO_ALL_KEYS) {
+    if (noteData[k] != null && noteData[k] !== "") { row[k] = ioNumber(noteData[k]); any = any || row[k] > 0; }
+  }
+  // Also check nested intakeOutput shape (some forms store it as a sub-object)
+  const io = noteData.intakeOutput || noteData.io;
+  if (io && typeof io === "object") {
+    for (const k of IO_ALL_KEYS) {
+      if (io[k] != null && io[k] !== "") {
+        const n = ioNumber(io[k]);
+        if (!row[k]) row[k] = n;
+        any = any || n > 0;
+      }
+    }
+    if (io.notes) row._notes = io.notes;
+  }
+  if (noteData.notes && !row._notes) row._notes = noteData.notes;
+  return any ? row : null;
+}
+
+function IOSheetSection({ nurseNotes = [], currentAdmission }) {
+  const events = [];
+  for (const n of nurseNotes) {
+    const row = ioRowFrom(n.noteData);
+    if (!row) continue;
+    events.push({
+      when: new Date(n.visitDate || n.noteDate || n.createdAt),
+      shift: (n.shift || "general").toLowerCase(),
+      by: n.nurseName || "—",
+      noteType: n.noteType,
+      row,
+    });
+  }
+  // Admission's nurseInitialAssessment can carry an I/O block too.
+  const iaRow = ioRowFrom(currentAdmission?.nurseInitialAssessment);
+  if (iaRow) events.push({
+    when: new Date(currentAdmission?.admissionDate),
+    shift: "admission", by: "Nurse (IA)", noteType: "initial", row: iaRow,
+  });
+
+  if (!events.length) return <Empty icon="💧" msg="No intake / output recorded yet" />;
+
+  // Group date → shift
+  const byDate = {};
+  for (const e of events) {
+    const dk = dateKey(e.when);
+    if (!byDate[dk]) byDate[dk] = { date: e.when, byShift: {} };
+    const sk = e.shift || "general";
+    if (!byDate[dk].byShift[sk]) byDate[dk].byShift[sk] = [];
+    byDate[dk].byShift[sk].push(e);
+  }
+  // Sort dates newest first; sort entries within a shift by time
+  const dateKeys = Object.keys(byDate).sort((a, b) => b.localeCompare(a));
+  for (const dk of dateKeys) {
+    for (const sk of Object.keys(byDate[dk].byShift)) {
+      byDate[dk].byShift[sk].sort((a, b) => a.when - b.when);
+    }
+  }
+
+  // Aggregate totals helper
+  const sumRows = (rows) => {
+    const tot = { in: 0, out: 0, parts: {} };
+    for (const e of rows) {
+      for (const k of IO_INTAKE_KEYS) {
+        const v = e.row[k] || 0;
+        tot.in += v;
+        tot.parts[k] = (tot.parts[k] || 0) + v;
+      }
+      for (const k of IO_OUTPUT_KEYS) {
+        const v = e.row[k] || 0;
+        tot.out += v;
+        tot.parts[k] = (tot.parts[k] || 0) + v;
+      }
+    }
+    return tot;
+  };
+
+  const TH = { padding: "4px 6px", textAlign: "right", fontSize: 10, fontWeight: 800, color: "var(--pf-muted)", textTransform: "uppercase", letterSpacing: 0.4 };
+  const TD = { padding: "3px 6px", textAlign: "right", fontFamily: "monospace", fontSize: 11 };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {dateKeys.map((dk) => {
+        const dayEntries = Object.values(byDate[dk].byShift).flat();
+        const dayTotals = sumRows(dayEntries);
+        const dayNet = dayTotals.in - dayTotals.out;
+        const netColor = dayNet > 500 ? "#ca8a04" : dayNet < -500 ? "#dc2626" : "#16a34a";
+        const date = byDate[dk].date;
+        const shifts = Object.keys(byDate[dk].byShift).sort((a, b) => (SHIFT_ORDER[a] ?? 9) - (SHIFT_ORDER[b] ?? 9));
+
+        return (
+          <div key={dk} style={{ border: "1px solid #99f6e4", borderRadius: 6, borderLeft: "4px solid #0d9488", overflow: "hidden" }}>
+            <div style={{
+              padding: "6px 12px", background: "linear-gradient(90deg, #ecfdf5 0%, #fff 60%)",
+              display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6,
+            }}>
+              <div style={{ fontSize: 12.5, fontWeight: 800, color: "#0f766e" }}>
+                📅 {date.toLocaleDateString("en-IN", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}
+              </div>
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 800, background: "#dcfce7", color: "#166534" }}>IN: {dayTotals.in} ml</span>
+                <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 800, background: "#fee2e2", color: "#b91c1c" }}>OUT: {dayTotals.out} ml</span>
+                <span style={{ padding: "2px 10px", borderRadius: 4, fontSize: 11.5, fontWeight: 800,
+                  background: `${netColor}18`, color: netColor, border: `1px solid ${netColor}50` }}>
+                  NET: {dayNet >= 0 ? "+" : ""}{dayNet} ml
+                </span>
+              </div>
+            </div>
+
+            {shifts.map((sk) => {
+              const rows = byDate[dk].byShift[sk];
+              const t = sumRows(rows);
+              const sNet = t.in - t.out;
+              return (
+                <div key={sk} style={{ padding: "6px 10px", borderTop: "1px dashed #99f6e4" }}>
+                  <div style={{ fontSize: 10, fontWeight: 800, color: "#0f766e", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>
+                    Shift: {sk} <span style={{ color: "var(--pf-muted)", fontWeight: 600 }}>· {rows.length} entr{rows.length === 1 ? "y" : "ies"}</span>
+                  </div>
+                  <div style={{ overflowX: "auto" }}>
+                    <table className="pf-table pf-table--compact" style={{ width: "100%", minWidth: 720 }}>
+                      <thead>
+                        <tr>
+                          <th style={{ ...TH, textAlign: "left" }}>Time</th>
+                          {IO_INTAKE_KEYS.map((k) => <th key={k} style={TH}>{IO_INTAKE_LABELS[k]}</th>)}
+                          {IO_OUTPUT_KEYS.map((k) => <th key={k} style={TH}>{IO_OUTPUT_LABELS[k]}</th>)}
+                          <th style={TH}>Net</th>
+                          <th style={{ ...TH, textAlign: "left" }}>Notes</th>
+                          <th style={{ ...TH, textAlign: "left" }}>By</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((e, i) => {
+                          const rIn  = IO_INTAKE_KEYS.reduce((s, k) => s + (e.row[k] || 0), 0);
+                          const rOut = IO_OUTPUT_KEYS.reduce((s, k) => s + (e.row[k] || 0), 0);
+                          const rNet = rIn - rOut;
+                          return (
+                            <tr key={i}>
+                              <td style={{ ...TD, textAlign: "left" }}>{e.when.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</td>
+                              {IO_INTAKE_KEYS.map((k) => <td key={k} style={{ ...TD, color: e.row[k] ? "#15803d" : "#cbd5e1" }}>{e.row[k] || "—"}</td>)}
+                              {IO_OUTPUT_KEYS.map((k) => <td key={k} style={{ ...TD, color: e.row[k] ? "#b91c1c" : "#cbd5e1" }}>{e.row[k] || "—"}</td>)}
+                              <td style={{ ...TD, fontWeight: 800, color: rNet > 0 ? "#15803d" : rNet < 0 ? "#b91c1c" : "#64748b" }}>{rNet >= 0 ? "+" : ""}{rNet}</td>
+                              <td style={{ ...TD, textAlign: "left", fontFamily: "system-ui", fontStyle: e.row._notes ? "normal" : "italic", color: e.row._notes ? "inherit" : "#cbd5e1" }}>
+                                {e.row._notes || "—"}
+                              </td>
+                              <td style={{ ...TD, textAlign: "left", fontFamily: "system-ui", fontSize: 10.5, color: "var(--pf-muted)" }}>{e.by}</td>
+                            </tr>
+                          );
+                        })}
+                        <tr style={{ background: "#f0fdfa", fontWeight: 800 }}>
+                          <td style={{ ...TD, textAlign: "left", fontFamily: "system-ui", fontSize: 10.5, color: "#0f766e", textTransform: "uppercase", letterSpacing: 0.4 }}>Shift totals</td>
+                          {IO_INTAKE_KEYS.map((k) => <td key={k} style={{ ...TD, color: "#15803d" }}>{t.parts[k] || "—"}</td>)}
+                          {IO_OUTPUT_KEYS.map((k) => <td key={k} style={{ ...TD, color: "#b91c1c" }}>{t.parts[k] || "—"}</td>)}
+                          <td style={{ ...TD, color: sNet >= 0 ? "#15803d" : "#b91c1c" }}>{sNet >= 0 ? "+" : ""}{sNet}</td>
+                          <td style={{ ...TD, textAlign: "left", fontFamily: "system-ui", fontSize: 10.5, color: "#0f766e" }}>
+                            In: <b>{t.in}</b> ml · Out: <b>{t.out}</b> ml
+                          </td>
+                          <td></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function PrintFooter({ uhid, role }) {
   // Roadmap F23 — per-page QR back-link. The browser repeats this footer
   // via @page running-element on every printed page, so any single page
@@ -2526,6 +2714,7 @@ export default function CompletePatientFilePage() {
     { id: "nurse-notes",   label: "Nurse Notes",        icon: "👩‍⚕️", count: nurseOther.length },
     { id: "orders",        label: "Orders + MAR",       icon: "💊", count: doctorOrders.length },
     { id: "vitals",        label: "Vitals + I/O",       icon: "📈", count: vitals.length },
+    { id: "io-sheet",      label: "Intake / Output Sheet", icon: "💧", count: null },
     { id: "investigations",label: "Investigations",     icon: "🧪", count: investigations.length },
     { id: "consents",      label: "Consents",           icon: "📝", count: consents.length },
     { id: "diet",          label: "Diet Plans",         icon: "🥗", count: dietPlans?.length || 0 },
@@ -2653,6 +2842,10 @@ export default function CompletePatientFilePage() {
                 allow={["Nurse"]} href="/mar?uhid={UHID}"
                 color="#db2777" label="Open MAR" icon="💊" />
               <OrdersSection orders={doctorOrders} />
+            </Section>
+
+            <Section id="io-sheet" icon="💧" title="Intake / Output Sheet" sub="All I/O entries across nursing notes — grouped date → shift, with daily totals and net balance. Print-ready.">
+              <IOSheetSection nurseNotes={nurseNotes} currentAdmission={currentAdmission} />
             </Section>
 
             <Section id="vitals" icon="📈" title="Vital Trends" sub="Every vital recorded — both dedicated sheet + embedded in nursing notes">
