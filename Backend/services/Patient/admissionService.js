@@ -199,6 +199,20 @@ class AdmissionService {
         `Cannot discharge — admission status is already "${admission.status}"`,
       );
 
+    // BEFORE flipping status, fire today's bed + nursing-daily charges
+    // one last time so the day-of-discharge always makes it onto the bill.
+    // The daily-accrual cron stops touching this admission the moment its
+    // status leaves "Active", so without this flush an overnight discharge
+    // would lose the final day's bed + nursing fee.
+    try {
+      const autoBilling = require("../Billing/autoBillingService");
+      await autoBilling.flushDailyChargesForAdmission(admission);
+    } catch (e) {
+      // Bill-side hiccups shouldn't block a clinical discharge — log and
+      // continue. The cashier still has the bill open for manual review.
+      console.error("[Discharge] flushDailyCharges error:", e.message);
+    }
+
     const session = await mongoose.startSession().catch(() => null);
     const useTx = !!session && (session.client?.s?.options?.replicaSet ||
                                 session.client?.options?.replicaSet);
