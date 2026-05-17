@@ -235,7 +235,7 @@ async function addItemToBill(bill, service, quantity, source, trigger) {
       netAmount:       totalAmt,
       tpaPayableAmount:     bill.paymentType === "TPA" ? totalAmt : 0,
       patientPayableAmount: bill.paymentType === "TPA" ? 0 : totalAmt,
-      chargeDate:      new Date(),
+      chargeDate:      source.chargeDate ? new Date(source.chargeDate) : new Date(),
       appliedTariff:   bill.paymentType || "CASH",
       remarks:         source.remarks || `Auto-billed via ${source.sourceType}`,
       addedBySource:   source.addedBySource || "Auto",
@@ -286,10 +286,13 @@ async function createTrigger(config) {
     autoCharge = false, dailyDedup = false, requiresConfirmation = false,
     dedupByDoctor = false, // NEW — when true, dedup key includes doctor identity
     unitPriceOverride,     // NEW — bed/nursing daily rates from room category
+    overrideDateKey,       // NEW — historical backfill uses past dateKey while
+                           //       keeping the dailyDedup guard intact
+    chargeDate,            // NEW — bill-item chargeDate (defaults to today)
     shift, department, notes,
   } = config;
 
-  const dateKey = getDateKey();
+  const dateKey = overrideDateKey || getDateKey();
 
   // Daily dedup check. Doctor-round charges set dedupByDoctor=true so two
   // consulting doctors on the same day each get their own line (NABH
@@ -386,6 +389,7 @@ async function createTrigger(config) {
         remarks:    `${sourceType} — ${orderDetails || serviceName || serviceCode}`,
         sourceType,
         unitPriceOverride,
+        chargeDate,
       }, trigger);
 
       if (result) {
@@ -1245,6 +1249,169 @@ async function flushDailyChargesForAdmission(admission, { typeCode } = {}) {
   return { bedFired, nurseFired, skipped };
 }
 
+/**
+ * Backfill bed + nursing for every day from admissionDate to today,
+ * plus orphaned doctor notes, nurse notes and nursing-consumable entries
+ * that were saved BEFORE the auto-billing redesign hooked their save
+ * paths. Idempotent — the `dailyDedup` and per-source dedup guards inside
+ * createTrigger prevent duplicate charges if called twice.
+ *
+ * Called automatically by `billingService.getOrCreateDraftBill` when a
+ * NEW draft bill is created for an active admission, so the moment a user
+ * opens the AI billing page for a long-running admission the bill reflects
+ * the entire stay (bed × N days + nursing × N days + every visit on file).
+ *
+ * Returns { days, bedFired, nurseFired, doctorFired, nurseNoteFired,
+ *           consumableFired, skipped, errors }.
+ */
+async function backfillAdmissionCharges(admission) {
+  const result = {
+    days: 0, bedFired: 0, nurseFired: 0,
+    doctorFired: 0, nurseNoteFired: 0, consumableFired: 0,
+    skipped: 0, errors: 0,
+  };
+  if (!admission?._id) return result;
+  // Only backfill while the admission is open. A discharged or cancelled
+  // admission's bill is the discharge-day snapshot; we don't retroactively
+  // add charges to a closed event.
+  if (admission.status !== "Active" && admission.status !== "Transferred") {
+    console.log(`[Backfill] skipping ADM ${admission.admissionNumber} — status=${admission.status}`);
+    return result;
+  }
+
+  const typeMap = {
+    Planned: "IPD", Emergency: "EMERGENCY", "Day Care": "DAYCARE",
+    Daycare: "DAYCARE", Transfer: "IPD",
+  };
+  const tc = typeMap[admission.admissionType] || "IPD";
+
+  const rates = await resolveBedAndNursingRates(admission);
+  const catTag = rates.categoryCode ? `-${rates.categoryCode}` : "";
+  console.log(
+    `[Backfill] ADM ${admission.admissionNumber} (${tc}) — room=${rates.roomType || "?"}/${rates.categoryName || rates.categoryCode || "?"}`,
+    `bed=₹${rates.bedRate} nursing=₹${rates.nursingRate}`,
+  );
+
+  // ── 1. Bed + nursing day-by-day from admissionDate → today ──────────────────
+  if (rates.bedRate > 0 || rates.nursingRate > 0) {
+    const startDate = new Date(admission.admissionDate || admission.createdAt);
+    if (!isNaN(startDate.getTime())) {
+      const todayKey = getDateKey();
+      // Anchor cursor at noon to dodge DST edges; we only care about the
+      // calendar-day buckets in IST anyway.
+      const cursor = new Date(startDate);
+      cursor.setHours(12, 0, 0, 0);
+
+      let safety = 0;
+      while (safety++ < 400) {
+        const dateKey = getDateKey(cursor);
+        if (dateKey > todayKey) break;
+        result.days++;
+        const dayN = result.days;
+
+        if (rates.bedRate > 0) {
+          try {
+            const r = await createTrigger({
+              admissionId:         admission._id,
+              patientId:           admission.patientId,
+              UHID:                admission.UHID,
+              patientType:         tc,
+              serviceCode:         `BED${catTag}`,
+              serviceName:         `Bed Charge — ${rates.categoryName || rates.roomType || tc} (Day ${dayN})`,
+              quantity:            1,
+              unitPriceOverride:   rates.bedRate,
+              sourceType:          "BedCharge",
+              sourceDocumentId:    admission._id,
+              sourceDocumentModel: "Admission",
+              orderedBy:           "System",
+              orderedByRole:       "System",
+              orderDetails:        `Backfill bed accrual — Day ${dayN} (${dateKey}) — ${rates.categoryName || rates.roomType || "category"} @ ₹${rates.bedRate}/day`,
+              autoCharge:          true,
+              dailyDedup:          true,
+              department:          admission.department,
+              overrideDateKey:     dateKey,
+              chargeDate:          new Date(cursor),
+            });
+            if (r?.skipped) result.skipped++;
+            else if (r?.trigger) result.bedFired++;
+          } catch (e) { result.errors++; console.error("[Backfill] bed:", e.message); }
+        }
+
+        if (rates.nursingRate > 0) {
+          try {
+            const r = await createTrigger({
+              admissionId:         admission._id,
+              patientId:           admission.patientId,
+              UHID:                admission.UHID,
+              patientType:         tc,
+              serviceCode:         `NURSING${catTag}`,
+              serviceName:         `Nursing Care — ${rates.categoryName || rates.roomType || tc} (Day ${dayN})`,
+              quantity:            1,
+              unitPriceOverride:   rates.nursingRate,
+              sourceType:          "BedCharge",
+              sourceDocumentId:    admission._id,
+              sourceDocumentModel: "Admission",
+              orderedBy:           "System",
+              orderedByRole:       "System",
+              orderDetails:        `Backfill nursing care — Day ${dayN} (${dateKey}) — ${rates.categoryName || rates.roomType || "category"} @ ₹${rates.nursingRate}/day`,
+              autoCharge:          true,
+              dailyDedup:          true,
+              department:          admission.department,
+              overrideDateKey:     dateKey,
+              chargeDate:          new Date(cursor),
+            });
+            if (r?.skipped) result.skipped++;
+            else if (r?.trigger) result.nurseFired++;
+          } catch (e) { result.errors++; console.error("[Backfill] nursing:", e.message); }
+        }
+
+        cursor.setDate(cursor.getDate() + 1);
+      }
+    }
+  }
+
+  // ── 2. Existing doctor notes (per-shift round / consult charges) ────────────
+  try {
+    const DoctorNote = require("../../models/Doctor/DoctorNotesModel");
+    const notes = await DoctorNote.find({ admissionId: admission._id }).lean();
+    for (const note of notes) {
+      try {
+        await onDoctorNoteSaved(note);
+        result.doctorFired++;
+      } catch (e) { result.errors++; console.error("[Backfill] doctor note:", e.message); }
+    }
+  } catch (e) {
+    // DoctorNote model may live under a different path in some installs —
+    // log but don't abort the rest of the backfill.
+    console.warn("[Backfill] DoctorNote model not loaded:", e.message);
+  }
+
+  // ── 3. Existing nurse notes (skip — charges fire only on note types with
+  //       a serviceCode mapping, and re-firing them risks dup-on-non-daily
+  //       codes that lack a per-source dedup key. Coverage is good enough
+  //       from forward-only fire-on-save going forward.)
+
+  // ── 4. Existing nursing consumables (NursingChargeEntry) ────────────────────
+  try {
+    const NursingChargeEntry = require("../../models/nursing/NursingChargeEntry");
+    const entries = await NursingChargeEntry.find({
+      admissionId: admission._id,
+      status: "active",
+      billed: { $ne: true },
+    }).lean();
+    for (const entry of entries) {
+      try {
+        await onEquipmentCharged(entry);
+        result.consumableFired++;
+      } catch (e) { result.errors++; console.error("[Backfill] consumable:", e.message); }
+    }
+  } catch (e) {
+    console.warn("[Backfill] NursingChargeEntry model not loaded:", e.message);
+  }
+
+  return result;
+}
+
 module.exports = {
   onNurseNoteSaved,
   onDoctorNoteSaved,
@@ -1266,4 +1433,6 @@ module.exports = {
   // Daily accrual + on-demand flush (admission discharge calls flushDailyChargesForAdmission)
   flushDailyChargesForAdmission,
   runDailyBedChargeAccrual,
+  // Retroactive backfill (bill creation calls this for active admissions)
+  backfillAdmissionCharges,
 };

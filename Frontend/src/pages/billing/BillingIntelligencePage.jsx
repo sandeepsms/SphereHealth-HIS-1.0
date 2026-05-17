@@ -272,7 +272,9 @@ export default function BillingIntelligencePage() {
           headers: authHeader(),
         });
         setNurseServices(Array.isArray(data) ? data : data.data || []);
-      } catch { /* silent */ }
+      } catch (e) {
+        console.error("[BillingIntel] nurse-services catalogue:", e?.response?.data?.message || e.message);
+      }
     })();
   }, [patientType]);
 
@@ -309,11 +311,20 @@ export default function BillingIntelligencePage() {
         setPatient(adm.patientId || { fullName: adm.patientName, UHID: adm.UHID });
         showToast(`${adm.patientName || "Patient"} loaded — ${ptype} bill ready`);
       } else {
-        // OPD fallback
-        const ptRes = await axios.get(`${API_ENDPOINTS.PATIENTS}?uhid=${searchVal.trim()}`, { headers: authHeader() });
-        const ptArr = Array.isArray(ptRes.data) ? ptRes.data : ptRes.data?.data || [];
-        const pt = ptArr[0];
-        if (!pt) { showToast("No patient found for this UHID", "error"); return; }
+        // OPD fallback — use the dedicated /uhid/:uhid endpoint. The
+        // generic /api/patients?uhid=... does NOT support uhid as a
+        // query string filter (returns a paginated list of all patients
+        // and silently grabs the wrong one), so we use the dedicated
+        // single-patient route instead.
+        const uhid = encodeURIComponent(searchVal.trim());
+        let pt = null;
+        try {
+          const ptRes = await axios.get(`${API_ENDPOINTS.PATIENTS}/uhid/${uhid}`, { headers: authHeader() });
+          pt = ptRes.data?.data || ptRes.data;
+        } catch (e) {
+          if (e?.response?.status !== 404) console.error("[BillingIntel] patient lookup:", e.message);
+        }
+        if (!pt || !pt._id) { showToast("No patient found for this UHID", "error"); return; }
         setPatient(pt);
         setPatientType("OPD");
         const billRes = await axios.post(`${API_ENDPOINTS.BILLING}/create`, {
@@ -334,7 +345,9 @@ export default function BillingIntelligencePage() {
     try {
       const { data } = await axios.get(`${API_ENDPOINTS.BILLING}/${bill._id}`, { headers: authHeader() });
       setBill(data?.data || data);
-    } catch { /* silent */ }
+    } catch (e) {
+      console.error("[BillingIntel] refresh bill:", e?.response?.data?.message || e.message);
+    }
   }, [bill?._id]);
 
   // ── Toggle nurse service selection ────────────────────────────────────────

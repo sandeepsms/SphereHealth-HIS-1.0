@@ -45,7 +45,31 @@ class BillingService {
     if (admissionId) filter.admission = admissionId;
 
     let bill = await PatientBill.findOne(filter);
-    if (bill) return bill;
+    if (bill) {
+      // Existing DRAFT bill — top up any missed days/visits (e.g. today's
+      // bed + nursing if the nightly cron hasn't fired yet). Idempotent
+      // via dailyDedup, so safe to call on every open.
+      if (admissionId) {
+        try {
+          const adm = await Admission.findById(admissionId).lean();
+          if (adm && (adm.status === "Active" || adm.status === "Transferred")) {
+            const autoBilling = require("./autoBillingService");
+            const r = await autoBilling.backfillAdmissionCharges(adm);
+            console.log(
+              `[Billing] top-up backfill for ADM ${adm.admissionNumber}:`,
+              `bed=${r.bedFired} nursing=${r.nurseFired}`,
+              `doctor=${r.doctorFired} consumables=${r.consumableFired}`,
+              `skipped=${r.skipped} errors=${r.errors}`,
+            );
+            const refreshed = await PatientBill.findById(bill._id);
+            if (refreshed) bill = refreshed;
+          }
+        } catch (e) {
+          console.error("[Billing] top-up backfill failed:", e.message);
+        }
+      }
+      return bill;
+    }
 
     const billData = {
       patient: patient._id,
@@ -69,6 +93,30 @@ class BillingService {
     try {
       bill = new PatientBill(billData);
       await bill.save();
+      // Newly-created bill for an active admission — backfill bed, nursing
+      // and any orphaned doctor-note / consumable charges that piled up
+      // before the auto-billing engine had a bill to write to. Idempotent
+      // (createTrigger dedup guards make repeat calls a no-op).
+      if (admissionId) {
+        try {
+          const adm = await Admission.findById(admissionId).lean();
+          if (adm && (adm.status === "Active" || adm.status === "Transferred")) {
+            const autoBilling = require("./autoBillingService");
+            const r = await autoBilling.backfillAdmissionCharges(adm);
+            console.log(
+              `[Billing] backfill for ADM ${adm.admissionNumber}:`,
+              `bed=${r.bedFired} nursing=${r.nurseFired}`,
+              `doctor=${r.doctorFired} consumables=${r.consumableFired}`,
+              `skipped=${r.skipped} errors=${r.errors}`,
+            );
+            // Re-fetch so the freshly-billed items are returned to caller
+            const refreshed = await PatientBill.findById(bill._id);
+            if (refreshed) bill = refreshed;
+          }
+        } catch (e) {
+          console.error("[Billing] backfill failed (bill still created):", e.message);
+        }
+      }
       return bill;
     } catch (err) {
       if (err.code === 11000) {
