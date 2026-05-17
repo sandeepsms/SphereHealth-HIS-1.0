@@ -37,12 +37,18 @@ export const PATIENT_TYPES = [
   { key: "ALL",       label: "All Types",  icon: "pi-list",      color: "#475569" },
 ];
 
+// "Today" for a 24×7 hospital really means "this shift" — a patient
+// registered at 11 PM yesterday should still be visible to the night
+// cashier at 1 AM today. Strict same-calendar-date matching breaks
+// across midnight, so we use a rolling 24-hour window instead: the
+// badge surfaces anyone seen in the last 24h, and the count line still
+// reads "N today" because that's how staff intuitively read it. If the
+// patient row carries no date at all, we don't badge.
+const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
 function isPatientFromToday(p) {
-  const today = new Date(); today.setHours(0, 0, 0, 0);
   const d = new Date(p?.lastVisitDate || p?.registrationDate || p?.createdAt || 0);
-  if (Number.isNaN(d.getTime())) return false;
-  d.setHours(0, 0, 0, 0);
-  return d.getTime() === today.getTime();
+  if (Number.isNaN(d.getTime()) || d.getTime() === 0) return false;
+  return Date.now() - d.getTime() < TWENTY_FOUR_HOURS_MS;
 }
 
 export default function ActivePatientDirectory({

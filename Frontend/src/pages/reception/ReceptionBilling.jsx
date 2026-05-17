@@ -22,6 +22,7 @@ import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
 import { openPrint } from "../../Components/print/openPrint";
 import { useAuth } from "../../context/AuthContext";
+import ActivePatientDirectory from "../../Components/ActivePatientDirectory";
 import "./reception-shared.css";
 
 const fmtCur  = (n) => `₹${(Number(n) || 0).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
@@ -527,8 +528,10 @@ export default function ReceptionBilling() {
         /* ── Active-patient directory ──────────────────────────────
            No patient picked yet. Show a tabbed list of currently
            active patients filtered by registration type so the
-           cashier can click a row instead of typing a UHID. */
-        <PatientDirectory
+           cashier can click a row instead of typing a UHID.
+           Rendered via the shared <ActivePatientDirectory> so the
+           TODAY badge + 24h window logic lives in exactly one file. */
+        <ActivePatientDirectory
           listType={listType}
           setListType={setListType}
           rows={directory}
@@ -2216,112 +2219,6 @@ function ShortcutRow({ keys, label }) {
   );
 }
 
-/* ═══════════════════════════════════════════════════════════════
-   PatientDirectory — tabbed list of active patients by registration
-   type. Renders when no patient is selected, so the cashier sees the
-   day's customers right away (typical OPD volume) and clicks a row
-   instead of typing a UHID.
-═══════════════════════════════════════════════════════════════ */
-function PatientDirectory({ listType, setListType, rows, loading, onPick }) {
-  // Tabs mirror the registrationType enum on Patient model.
-  const TYPES = [
-    { key: "OPD",       label: "OPD",        icon: "pi-user-plus", color: "#06b6d4" },
-    { key: "IPD",       label: "IPD",        icon: "pi-home",      color: "#7c3aed" },
-    { key: "Daycare",   label: "Day Care",   icon: "pi-sun",       color: "#d97706" },
-    { key: "Emergency", label: "Emergency",  icon: "pi-bolt",      color: "#dc2626" },
-    { key: "Services",  label: "Services",   icon: "pi-cog",       color: "#0e7490" },
-    { key: "ALL",       label: "All Types",  icon: "pi-list",      color: "#475569" },
-  ];
-
-  // "Today" detection — same logic used on PatientLookupPage so the
-  // two pages render identical highlights. Falls back through lastVisitDate
-  // → registrationDate → createdAt because not every patient row carries
-  // all three.
-  const isToday = (p) => {
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const d = new Date(p?.lastVisitDate || p?.registrationDate || p?.createdAt || 0);
-    if (Number.isNaN(d.getTime())) return false;
-    d.setHours(0, 0, 0, 0);
-    return d.getTime() === today.getTime();
-  };
-  const todayCount = rows.filter(isToday).length;
-
-  return (
-    <>
-      {/* Tab strip — uses the same class names as PatientLookupPage's
-          ActivePatientDirectory so the two pages share one CSS rulebook
-          (no inline styles per workflow_no_inline_styles.md). */}
-      <div className="pl-idle-tabs">
-        {TYPES.map(t => {
-          const active = listType === t.key;
-          return (
-            <button
-              key={t.key}
-              onClick={() => setListType(t.key)}
-              className={`pl-idle-tab ${active ? "pl-idle-tab--active" : ""}`}
-              style={active ? { background: `linear-gradient(135deg, ${t.color}, ${t.color}dd)` } : undefined}
-            >
-              <i className={`pi ${t.icon}`} /> {t.label}
-            </button>
-          );
-        })}
-        <span className="pl-idle-count">
-          {loading ? "Loading…" : (
-            <>
-              <strong>{rows.length}</strong> patient{rows.length === 1 ? "" : "s"}
-              {todayCount > 0 && <> · <span className="pl-idle-today-count">{todayCount} today</span></>}
-            </>
-          )}
-        </span>
-      </div>
-
-      {/* Patient grid */}
-      {loading && rows.length === 0 ? (
-        <div className="rx-empty"><i className="pi pi-spin pi-spinner rx-loader-icon" /></div>
-      ) : rows.length === 0 ? (
-        <div className="rx-empty">
-          <span className="rx-empty-icon">👥</span>
-          No active {listType === "ALL" ? "" : listType} patients yet today.
-        </div>
-      ) : (
-        <div className="pl-idle-grid">
-          {rows.map(p => {
-            const today = isToday(p);
-            return (
-              <button
-                key={p._id}
-                onClick={() => onPick(p)}
-                className={`pl-idle-card ${today ? "pl-idle-card--today" : ""}`}
-                title={`Open ${p.fullName} (${p.UHID})`}
-              >
-                {today && <span className="pl-idle-badge">TODAY</span>}
-                <div className="pl-idle-avatar">
-                  {String(p.fullName || "?").trim().split(/\s+/).slice(0,2).map(x => x[0] || "").join("").toUpperCase()}
-                </div>
-                <div className="pl-idle-info">
-                  <div className="pl-idle-name">
-                    {p.title ? `${p.title} ` : ""}{p.fullName}
-                  </div>
-                  <div className="pl-idle-meta">
-                    <span className="rx-mono-tag rx-mono-tag--subtle">{p.UHID}</span>
-                    {p.contactNumber && <span>📱 {p.contactNumber}</span>}
-                  </div>
-                  <div className="pl-idle-sub">
-                    {p.age != null && `${p.age}y · `}{p.gender || ""}
-                    {p.lastVisitDate && ` · Last visit ${new Date(p.lastVisitDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}`}
-                  </div>
-                </div>
-                {p.registrationType && (
-                  <span className="rx-mode-pill pl-idle-pill">{p.registrationType}</span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </>
-  );
-}
 
 /* ═══════════════════════════════════════════════════════════════
    AddServiceModal — searchable ServiceMaster picker for DRAFT bills
