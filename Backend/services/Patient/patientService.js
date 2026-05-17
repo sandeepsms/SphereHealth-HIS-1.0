@@ -114,7 +114,10 @@ class PatientService {
           consultantName: patient.doctor?.personalInfo?.fullName || "",
           chiefComplaint: patientData.chiefComplaint || "Initial Registration",
           visitDate:      new Date(),
-          visitType:      "OPD",
+          // OPDRegistration.visitType enum is `["First Visit", "Follow-up", "Routine Checkup"]`
+          // — NOT the visit-CATEGORY ("OPD"/"IPD"/etc). First registration
+          // is always First Visit; follow-ups go through their own form.
+          visitType:      "First Visit",
           paymentType:    patient.paymentType || "GENERAL",
         });
       } catch (e) {

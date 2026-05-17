@@ -83,11 +83,28 @@ class OPDService {
       });
 
       // Fire audit trigger: OPD Registration (consultation fee)
+      //
+      // We AWAIT this now instead of fire-and-forget. Why: the receptionist
+      // expects the OPD bill to exist by the time the next screen loads
+      // (patient lookup, billing console, etc.). Fire-and-forget meant the
+      // trigger materialised the bill ~100ms after the 201 response, and
+      // any error inside addItemToBill went to console.error rather than
+      // surfacing — so a misconfigured ServiceMaster row would silently
+      // drop the entire OPD-CON line item with no breadcrumb on the bill.
+      //
+      // The cost is small: onOPDRegistered does one createTrigger + one
+      // getOrCreateDraftBill + one addItemToBill — sub-100ms locally. The
+      // outer try{}catch still keeps registration non-blocking; if billing
+      // throws, the patient still gets registered, with the gap logged.
       try {
         const { logErr } = require("../../utils/logErr");
         const autoBilling = require("../Billing/autoBillingService");
         if (autoBilling.onOPDRegistered) {
-          autoBilling.onOPDRegistered(savedOPD, admission).catch(logErr("autoBilling", `onOPDRegistered ${savedOPD?._id}`));
+          try {
+            await autoBilling.onOPDRegistered(savedOPD, admission);
+          } catch (billErr) {
+            logErr("autoBilling", `onOPDRegistered ${savedOPD?._id}`)(billErr);
+          }
         }
       } catch (e) {
         const { logErr } = require("../../utils/logErr");
