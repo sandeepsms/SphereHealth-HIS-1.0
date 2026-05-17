@@ -413,22 +413,71 @@ function BloodTransfusionPanel({ data }) {
         )}
       </div>
 
-      {(preVitals || postVitals) && (
-        <div style={{
-          display: "grid", gridTemplateColumns: "60px 1fr", gap: "2px 8px",
-          fontSize: 11, padding: "6px 8px", background: "#fff",
-          borderRadius: 4, border: "1px dashed #fecaca",
-        }}>
-          {preVitals && (<>
-            <span style={{ fontWeight: 800, color: "#b91c1c" }}>PRE</span>
-            <span style={{ fontFamily: "monospace" }}>{preVitals}</span>
-          </>)}
-          {postVitals && (<>
-            <span style={{ fontWeight: 800, color: "#b91c1c" }}>POST</span>
-            <span style={{ fontFamily: "monospace" }}>{postVitals}</span>
-          </>)}
-        </div>
-      )}
+      {(() => {
+        // Stitch together every vitals reading the form captured, in time
+        // order: PRE → in-transfusion monitoring entries (15 min, 30 min,
+        // 60 min, …) → POST. Each entry shows the time label + BP/Pulse/Temp.
+        const rows = [];
+        if (preVitals) rows.push({ label: "PRE", vitals: preVitals });
+
+        // Modern shape: noteData.intra = [{ atMin, bp_sys, bp_dia, pulse, temp }, …]
+        // Legacy shape: noteData.monitoring = same
+        // Fallback: explicit mon15_*, mon30_*, mon60_* keys
+        const intraArr = lc(data, "intra") || lc(data, "monitoring") || [];
+        if (Array.isArray(intraArr)) {
+          for (const row of intraArr) {
+            if (!row || typeof row !== "object") continue;
+            const parts = [
+              (row.bp_sys || row.bp_dia) && `BP ${row.bp_sys ?? "?"}/${row.bp_dia ?? "?"}`,
+              row.pulse && `Pulse ${row.pulse}`,
+              row.temp  && `Temp ${row.temp}°F`,
+              row.spo2  && `SpO2 ${row.spo2}%`,
+            ].filter(Boolean);
+            if (!parts.length) continue;
+            const min = row.atMin ?? row.at ?? row.minute ?? row.t;
+            rows.push({
+              label: min != null ? `+${min} min` : (row.label || "Intra"),
+              vitals: parts.join("  ·  "),
+            });
+          }
+        }
+        // Loose-key fallback: any mon15_BP_sys / mon30_Pulse / etc.
+        const looseTimes = new Set();
+        for (const k of Object.keys(data)) {
+          const m = k.match(/^mon(\d+)_/i);
+          if (m) looseTimes.add(Number(m[1]));
+        }
+        for (const t of [...looseTimes].sort((a, b) => a - b)) {
+          const bp_s = lc(data, `mon${t}_BP_sys`);
+          const bp_d = lc(data, `mon${t}_BP_dia`);
+          const p    = lc(data, `mon${t}_Pulse`);
+          const tem  = lc(data, `mon${t}_Temp`);
+          const parts = [
+            (bp_s || bp_d) && `BP ${bp_s ?? "?"}/${bp_d ?? "?"}`,
+            p && `Pulse ${p}`,
+            tem && `Temp ${tem}°F`,
+          ].filter(Boolean);
+          if (parts.length) rows.push({ label: `+${t} min`, vitals: parts.join("  ·  ") });
+        }
+
+        if (postVitals) rows.push({ label: "POST", vitals: postVitals });
+        if (!rows.length) return null;
+
+        return (
+          <div style={{
+            display: "grid", gridTemplateColumns: "70px 1fr", gap: "2px 8px",
+            fontSize: 11, padding: "6px 8px", background: "#fff",
+            borderRadius: 4, border: "1px dashed #fecaca",
+          }}>
+            {rows.map((r, i) => (
+              <React.Fragment key={i}>
+                <span style={{ fontWeight: 800, color: "#b91c1c" }}>{r.label}</span>
+                <span style={{ fontFamily: "monospace" }}>{r.vitals}</span>
+              </React.Fragment>
+            ))}
+          </div>
+        );
+      })()}
     </div>
   );
 }
