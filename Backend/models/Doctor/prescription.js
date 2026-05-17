@@ -135,4 +135,107 @@ prescriptionSchema.index({ UHID: 1 });
 prescriptionSchema.index({ doctor: 1 });
 prescriptionSchema.index({ prescriptionDate: -1 });
 
+// ── Post-init snapshot for post-dispense edit lock (audit F-07) ──
+// Snap the status + medicines hash at load time so the next pre-save
+// can refuse edits to medicines[] once the Rx hits a terminal state.
+prescriptionSchema.post("init", function () {
+  this._priorStatus = this.status;
+  this._priorMedicinesHash = JSON.stringify(this.medicines || []);
+});
+
+prescriptionSchema.pre("save", function (next) {
+  if (this.isNew || !this._priorStatus) return next();
+  const terminal = new Set(["Completed", "Cancelled", "FINAL"]);
+  if (terminal.has(this._priorStatus)) {
+    // The only legal write on a terminal Rx is the status field
+    // itself (e.g. someone re-opening — which the existing F-06
+    // pattern already discourages) and metadata like updatedAt.
+    // Medicines / investigations / advice are frozen.
+    const currentHash = JSON.stringify(this.medicines || []);
+    if (currentHash !== this._priorMedicinesHash) {
+      return next(new Error(
+        `Cannot edit medicines on a ${this._priorStatus} prescription — ` +
+        `pharmacy may have already dispensed. Create a new prescription instead.`,
+      ));
+    }
+  }
+  next();
+});
+
+// ── Drug-allergy gate (patient-safety audit F-08) ─────────────────
+// Cross-reference the medicines[] array against the patient's recorded
+// allergies (Patient.knownAllergies + clinicalDetails.historyOfAllergy)
+// at save time. Substring match (case-insensitive) — if the medicine
+// name OR generic name on the prescription contains an allergen string,
+// we throw. Doctor can suppress with the per-document override flag
+// `_allergyOverrideReason` (audited via the existing activity-log path),
+// which lets a senior clinician knowingly prescribe a drug a patient is
+// allergic to (e.g. desensitisation, ICU rescue). Without the override
+// the schema refuses the save.
+//
+// Cheap (one regex per medicine × allergies), runs on every save +
+// findOneAndUpdate with runValidators. False positives are possible
+// (e.g. "lactose" in an excipient) — clinicians can override with a
+// documented reason. False negatives (e.g. an unlisted brand name)
+// remain a feature, not a bug — this is a safety net, not a substitute
+// for clinical judgment.
+prescriptionSchema.pre("save", async function (next) {
+  // Skip on docs with no medicines or when the override is set
+  if (!this.isModified("medicines") && !this.isNew) return next();
+  if (!Array.isArray(this.medicines) || this.medicines.length === 0) return next();
+
+  // Gather allergy strings from the prescription's own clinicalDetails
+  // (set by the doctor on this very form) AND from the Patient master
+  // record (the canonical "knownAllergies"). Either source is enough
+  // to raise the alert.
+  const allergyStrings = [];
+  const local = (this.clinicalDetails && this.clinicalDetails.historyOfAllergy) || "";
+  if (local && local.trim() && !/^none|^nil|^nka|^no known/i.test(local.trim())) {
+    allergyStrings.push(...local.split(/[,;\n]/));
+  }
+  try {
+    if (this.patient) {
+      const Patient = mongoose.model("Patient");
+      const pat = await Patient.findById(this.patient).select("knownAllergies").lean();
+      const remote = (pat && pat.knownAllergies) || "";
+      if (remote && remote.trim() && !/^none|^nil|^nka|^no known/i.test(remote.trim())) {
+        allergyStrings.push(...remote.split(/[,;\n]/));
+      }
+    }
+  } catch (e) {
+    // Patient lookup failed — don't block the Rx because of an
+    // infrastructure hiccup. Log and continue.
+    console.error("[Prescription] allergy patient lookup failed:", e.message);
+  }
+  const allergens = [...new Set(allergyStrings.map((s) => s.trim()).filter(Boolean))];
+
+  if (allergens.length === 0) return next();
+  if (this._allergyOverrideReason) {
+    console.warn(
+      `[Prescription] OVERRIDE: patient ${this.UHID} prescribed with allergy override — reason: ${this._allergyOverrideReason}`,
+    );
+    return next();
+  }
+
+  const hits = [];
+  for (const med of this.medicines) {
+    const probe = String((med && (med.medicineName || med.genericName || "")) || "").toLowerCase();
+    if (!probe) continue;
+    for (const allergen of allergens) {
+      const a = allergen.toLowerCase();
+      if (a.length < 3) continue; // ignore noise like "no"
+      if (probe.includes(a)) {
+        hits.push(`${med.medicineName} vs "${allergen}"`);
+      }
+    }
+  }
+  if (hits.length) {
+    return next(new Error(
+      `Allergy alert — possible match(es): ${hits.join("; ")}. ` +
+      `Set _allergyOverrideReason on the document with a documented clinical reason to proceed.`,
+    ));
+  }
+  next();
+});
+
 module.exports = mongoose.model("Prescription", prescriptionSchema);

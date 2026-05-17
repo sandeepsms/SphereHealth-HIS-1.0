@@ -83,7 +83,7 @@ edit (A-15) remain open — listed in re-audit backlog.
 | C-04 | Missing `dateKey` indexes across daily-charge collections | HIGH | models/nursing/*, models/Vitals/* | BACKLOG | — | — |
 | C-05 | Unbounded `.find().lean()` on equipment/drug-stock/vitals lists | HIGH | controllers/Equipment/equipmentController.js, controllers/Pharmacy/pharmacyController.js | PARTIAL | 2026-05-17 (r9) | `equipment.stats` rewritten as `$facet` aggregation (O(1) payload); service-due + supplier list capped at 1000; remaining sites in pharmacy stock-register on backlog |
 | C-06 | N+1 in stock-register report and auto-billing handlers | HIGH | controllers/Pharmacy/pharmacyController.js:1106–1149 | BACKLOG | — | — |
-| C-07 | ~15 `findOneAndUpdate` calls missing `runValidators: true` | MEDIUM | dischargeSummaryController.js, others | PARTIAL | 2026-05-17 (r9) | dischargeSummary.finalize + admission.discharge updates now pass `runValidators: true`; remaining controllers on backlog |
+| C-07 | ~15 `findOneAndUpdate` calls missing `runValidators: true` | MEDIUM | dischargeSummaryController.js, wardTaskController.js, others | PARTIAL | 2026-05-17 (r11) | dischargeSummary.finalize, admission.discharge, bed.release, wardTask (assign/start/complete/cancel) updates now pass `runValidators: true`; ~4 controllers (housekeeping, nursingCarePlan, mar status flip, etc.) still on backlog |
 | C-08 | ~15 controllers don't validate `req.params.id` as ObjectId | HIGH | many controllers | PARTIAL | 2026-05-17 (r7) | Helper applied to patient, admission (15+ surfaces incl. /:id/consultation/:consultId), prescription routes; live `/api/admissions/not-an-objectid` → 400 |
 
 ---
@@ -93,7 +93,7 @@ edit (A-15) remain open — listed in re-audit backlog.
 | ID | Title | Severity | Files | Status | Fixed-on | Verifier |
 | -- | ----- | -------- | ----- | ------ | -------- | -------- |
 | D-01 | 35+ `.catch(() => {})` swallow billing/clinical errors | HIGH | many controllers | BACKLOG | — | High-volume refactor — round 2 commit |
-| D-02 | Seed scripts hardcode Mongo URI fallback to localhost | MEDIUM | scripts/seed*.js | BACKLOG | — | Dev-only |
+| D-02 | Seed scripts hardcode Mongo URI fallback to localhost | MEDIUM | scripts/seedJaiBhagwan.js, seedUsers.js, seedPatients.js, seedBIMS.js | **FIXED** | 2026-05-17 (r11) | Fail-fast on missing MONGO_URI; URI no longer echoed to stdout (no credential leak via `mongodb://user:pass@host` logging) |
 | D-03 | Blocking sync file I/O in maintenance scripts | LOW | scripts/normalize-billing-paths.js | WONT-FIX | 2026-05-17 | Maintenance-only scripts; not in request path |
 | D-04 | Controllers return HTTP 200 with `success:false` | HIGH | controllers/Billing/billingController.js, others | PARTIAL | 2026-05-17 | `handle()` wrapper in admissionController now honours `err.status` (covers discharge gate); broader sweep is BACKLOG |
 | D-05 | `NODE_ENV` / `CORS_ORIGINS` not validated at boot | MEDIUM | index.js | **FIXED** | 2026-05-17 | `requireEnv()` fail-fast + WARN on missing CORS/NODE_ENV |
@@ -125,8 +125,8 @@ edit (A-15) remain open — listed in re-audit backlog.
 | F-04 | Drug expiry check uses UTC `new Date()` | MEDIUM | controllers/Pharmacy/pharmacyController.js | **FIXED** | 2026-05-17 (r5) | IST-aware "start of today" boundary via Intl.DateTimeFormat + Asia/Kolkata |
 | F-05 | Bill items still editable in PARTIAL state | MEDIUM | services/Billing/billingService.js | **FIXED** | 2026-05-17 (r3) | Freeze list expanded to GENERATED/PARTIAL/PAID/CANCELLED/REFUNDED; mutation throws 409 |
 | F-06 | Appointment NoShow→Booked race allows overlap | MEDIUM | models/Appointment/appointmentModel.js | **FIXED** | 2026-05-17 (r9) | Post-init snapshot + pre-save state-machine guard rejects terminal (NoShow/Cancelled/Completed) → Booked; live `NoShow→Booked` save throws "Cannot re-book…" |
-| F-07 | Prescription editable post-dispense | LOW | models/Doctor/prescription.js:54 | BACKLOG | — | — |
-| F-08 | No drug-allergy / interaction check at prescribe time | LOW | models/Doctor/prescription.js | BACKLOG | — | Feature, not bug |
+| F-07 | Prescription editable post-dispense | LOW | models/Doctor/prescription.js | **FIXED** | 2026-05-17 (r11) | Post-init snapshot of medicines hash + pre-save guard rejects edits to medicines[] once status is terminal (Completed/Cancelled/FINAL); live test: edit on Completed Rx throws "Cannot edit medicines on a Completed prescription" |
+| F-08 | No drug-allergy / interaction check at prescribe time | LOW | models/Doctor/prescription.js | **FIXED** | 2026-05-17 (r11) | Substring safety net cross-references medicines[] against patient.knownAllergies + clinicalDetails.historyOfAllergy on every save; clinician can bypass via `_allergyOverrideReason` (audited via warn-log); live: Aspirin allergy + Aspirin Rx → "Allergy alert — possible match(es): Aspirin 75mg vs Aspirin" |
 
 ---
 

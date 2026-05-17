@@ -10,7 +10,12 @@ const mongoose = require("mongoose");
 const User = require("../models/User/userModel");
 const Department = require("../models/Department/department");
 
-const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/spherehealth";
+// Fail-fast on missing MONGO_URI (audit D-02). No silent localhost fallback.
+if (!process.env.MONGO_URI) {
+  console.error("FATAL: MONGO_URI is not set in Backend/.env — refusing to seed.");
+  process.exit(1);
+}
+const MONGO_URI = process.env.MONGO_URI;
 
 const SEED_USERS = [
   {
@@ -105,7 +110,8 @@ const SEED_USERS = [
 async function seed() {
   try {
     await mongoose.connect(MONGO_URI);
-    console.log("✅ Connected to MongoDB:", MONGO_URI);
+    // URI redacted from log — may contain credentials (audit D-02 / G-02).
+    console.log("✅ Connected to MongoDB");
 
     // Get or create a default General Medicine department for Doctor/Nurse seeds
     let defaultDept = await Department.findOne({ name: "General Medicine" });

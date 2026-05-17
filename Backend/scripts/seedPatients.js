@@ -29,7 +29,12 @@ const Beds       = require("../models/bedMgmt/bedsModel");
 const maskUHID = (u) => (u ? `${"*".repeat(Math.max(0, String(u).length - 4))}${String(u).slice(-4)}` : "(none)");
 const User       = require("../models/User/userModel");
 
-const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/spherehealth";
+// Fail-fast on missing MONGO_URI (audit D-02). No silent localhost fallback.
+if (!process.env.MONGO_URI) {
+  console.error("FATAL: MONGO_URI is not set in Backend/.env — refusing to seed.");
+  process.exit(1);
+}
+const MONGO_URI = process.env.MONGO_URI;
 
 // ── UHID generator (mirrors patient service logic) ───────────────────────────
 async function genUHID() {
@@ -51,7 +56,8 @@ async function genVisitNumber() {
 
 async function seed() {
   await mongoose.connect(MONGO_URI);
-  console.log("✅ Connected to MongoDB:", MONGO_URI);
+  // URI redacted from log — credentials risk (audit D-02 / G-02).
+  console.log("✅ Connected to MongoDB");
 
   // ── 1. Find or create Department ────────────────────────────────────────────
   let dept = await Department.findOne().lean();

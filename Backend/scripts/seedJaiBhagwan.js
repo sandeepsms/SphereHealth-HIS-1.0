@@ -24,11 +24,21 @@ require("../models/bedMgmt/wardModel");
 require("../models/bedMgmt/floorModel");
 require("../models/bedMgmt/buildingModel");
 
-const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/spherehealth";
+// Fail-fast on missing MONGO_URI (security audit D-02). The previous
+// silent localhost fallback meant a misconfigured dev box would seed
+// against an unintended DB. Same env contract as the application
+// server: MONGO_URI is REQUIRED.
+if (!process.env.MONGO_URI) {
+  console.error("FATAL: MONGO_URI is not set in Backend/.env — refusing to seed.");
+  process.exit(1);
+}
+const MONGO_URI = process.env.MONGO_URI;
 
 async function run() {
   await mongoose.connect(MONGO_URI);
-  console.log("✅ Connected:", MONGO_URI);
+  // Don't echo the full URI to stdout — it may contain credentials
+  // (security audit D-02 / G-02 follow-up).
+  console.log("✅ Connected to MongoDB");
 
   // ── 1. CLEAR ALL PATIENT DATA ───────────────────────────────────────────────
   console.log("\n🗑️  Clearing all patient data...");

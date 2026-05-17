@@ -15,7 +15,12 @@ const Room = require("../models/bedMgmt/roomModel");
 const Beds = require("../models/bedMgmt/bedsModel");
 const RoomCategory = require("../models/bedMgmt/roomCategoryModel");
 
-const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/spherehealth";
+// Fail-fast on missing MONGO_URI (audit D-02). No silent localhost fallback.
+if (!process.env.MONGO_URI) {
+  console.error("FATAL: MONGO_URI is not set in Backend/.env — refusing to seed.");
+  process.exit(1);
+}
+const MONGO_URI = process.env.MONGO_URI;
 
 // ── Room category definitions ────────────────────────────────────────────────
 const ROOM_CATEGORIES = [
@@ -169,7 +174,8 @@ async function createBedIfMissing(building, floor, ward, room, bedNum) {
 async function seed() {
   try {
     await mongoose.connect(MONGO_URI);
-    console.log("✅ Connected to MongoDB:", MONGO_URI);
+    // URI redacted from log — credentials risk (audit D-02 / G-02).
+    console.log("✅ Connected to MongoDB");
 
     // 1. Find or create building
     let building = await Building.findOne({ buildingCode: STRUCTURE.buildingCode });
