@@ -85,12 +85,14 @@ const NAV = [
     items: [
       { label: "Dashboard",           icon: "pi-chart-line",        path: "/reception",            nabh: true,  badge: "LIVE",  roles: [ADMIN, RX, DR, NR, AC, TPA] },
       { label: "New Registration",    icon: "pi-user-plus",         path: "/reception/register",   nabh: true,                  roles: [ADMIN, RX] },
-      // RX-flavored Patient Search & Visit History (rx-page style, slimmer)
-      { label: "Patient Search",      icon: "pi-search",            path: "/patient-search",                                   roles: [RX] },
-      { label: "Visit History",       icon: "pi-clock",             path: "/visit-history",                                    roles: [RX] },
-      // Original Patient Search & Visit History — for other roles
-      { label: "Patient Search",      icon: "pi-search",            path: "/allpatient",                                       roles: [ADMIN, DR, NR, AC, TPA] },
-      { label: "Visit History",       icon: "pi-clock",             path: "/patient-history",                                  roles: [ADMIN, DR, NR] },
+      // Single "Patient Lookup — All-in-One" entry replaces the four
+      // previous lines (RX-flavored + clinical-flavored copies of
+      // "Patient Search" + "Visit History"). All 4 legacy routes now
+      // alias the unified PatientLookupPage which adapts its default
+      // view per role: Receptionist → Search · Doctor/Nurse/Admin →
+      // Directory · ?uhid= deep link → Timeline. See the
+      // PatientLookupPage docstring for the consolidation rationale.
+      { label: "Patient Lookup",      icon: "pi-id-card",           path: "/patient-search",                  badge: "ALL-IN-ONE",  roles: [ADMIN, RX, DR, NR, AC, TPA] },
       { label: "Appointments",        icon: "pi-calendar-plus",     path: "/appointments",         nabh: true,  badge: "NEW",   roles: [ADMIN, RX] },
       { label: "Discharge Queue",     icon: "pi-sign-out",          path: "/discharge-queue",      nabh: true,  badge: "NEW",   roles: [ADMIN, RX] },
       { label: "TPA / Insurance",     icon: "pi-shield",            path: "/tpa-cases",            nabh: true,  badge: "NEW",   roles: [ADMIN, RX, TPA, AC] },
