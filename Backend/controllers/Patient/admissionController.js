@@ -171,9 +171,16 @@ class AdmissionController {
   });
 
   dischargePatient = handle(async (req, res) => {
+    // Pipe caller identity into the service so the allowOverride path can
+    // re-check role at the business-logic layer (re-audit H-03 defense in
+    // depth — the route already gates `ipd.discharge` to Admin+Doctor; this
+    // narrows the bypass-the-bill-gate sub-action to Admin only).
     const admission = await AdmissionService.dischargePatient(
       req.params.id,
-      req.body,
+      {
+        ...req.body,
+        actor: { role: req.user?.role, id: req.user?.id || req.user?._id },
+      },
     );
     return res.json({
       success: true,

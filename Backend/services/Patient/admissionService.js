@@ -204,20 +204,30 @@ class AdmissionService {
     // least progressed past "BillCleared". Caller can pass
     // dischargeData.allowOverride to bypass — used by Admin LAMA / death
     // workflows where waiting for the cashier would be inhumane — and the
-    // override is audited.
+    // override is audited. Re-audit H-03: the override itself is now gated
+    // to Admin only (regardless of route-level requireAction). The
+    // controller layer passes { actor: { role, id } } via dischargeData.
     const stage = admission.dischargeWorkflow?.stage || "NotRequested";
     const cleared = ["BillCleared", "GatePassIssued", "Completed"].includes(stage);
+    if (dischargeData.allowOverride && dischargeData.actor?.role !== "Admin") {
+      const err = new Error(
+        `Only Admin can bypass the bill-clearance gate (LAMA / death). ` +
+        `Caller role: ${dischargeData.actor?.role || "(unknown)"}.`,
+      );
+      err.status = 403;
+      throw err;
+    }
     if (!cleared && !dischargeData.allowOverride) {
       const err = new Error(
         `Cannot discharge — bill not yet cleared (workflow stage: ${stage}). ` +
-        `Settle the final bill via /clear-final-bill first, or pass allowOverride=true for LAMA/death.`,
+        `Settle the final bill via /clear-final-bill first, or pass allowOverride=true (Admin only) for LAMA/death.`,
       );
       err.status = 409; // Conflict — required precondition not met
       throw err;
     }
     if (dischargeData.allowOverride) {
       console.warn(
-        `[Discharge] OVERRIDE used on ADM ${admission.admissionNumber}: bypassing bill-clearance gate. Reason: ${dischargeData.overrideReason || "(none provided)"}`,
+        `[Discharge] OVERRIDE used on ADM ${admission.admissionNumber} by ${dischargeData.actor?.role}/${dischargeData.actor?.id}: bypassing bill-clearance gate. Reason: ${dischargeData.overrideReason || "(none provided)"}`,
       );
     }
 

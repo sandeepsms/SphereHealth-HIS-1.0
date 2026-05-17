@@ -157,18 +157,28 @@ edit (A-15) remain open — listed in re-audit backlog.
 
 ---
 
-## Re-audit log
+## Re-audit log (round 2)
 
 | Section | Round 2 date | Round 2 verifier | New findings | Status |
 | ------- | ------------ | ---------------- | ------------ | ------ |
-| A | 2026-05-17 | Claude Opus 4.7 | _pending — round-2 commit_ | — |
-| B | 2026-05-17 | Claude Opus 4.7 | _pending — round-2 commit_ | — |
-| C | _BACKLOG_ | | | |
-| D | _BACKLOG_ | | | |
-| E | _BACKLOG_ | | | |
-| F | 2026-05-17 | Claude Opus 4.7 | _pending — round-2 commit_ | — |
-| G | 2026-05-17 | Claude Opus 4.7 | _pending — round-2 commit_ | — |
-| H | 2026-05-17 | Claude Opus 4.7 | _pending — round-2 commit_ | — |
+| A | 2026-05-17 | Claude Opus 4.7 (re-audit sub-agent) | 3 new findings (see R-A below) | **FIXED** in commit r2 |
+| B | 2026-05-17 | Claude Opus 4.7 (re-audit sub-agent) | 0 new findings | **CLEAN** |
+| C | _backlog_ | | | |
+| D | _backlog_ | | | |
+| E | _backlog_ | | | |
+| F | 2026-05-17 | Claude Opus 4.7 (re-audit sub-agent) | 0 new findings | **CLEAN** |
+| G | 2026-05-17 | Claude Opus 4.7 (re-audit sub-agent) | 2 new findings (see R-G below) | **FIXED** in commit r2 |
+| H | 2026-05-17 | Claude Opus 4.7 (re-audit sub-agent) | 0 new findings | **CLEAN** — all 6 fixes confirmed |
+
+### Round-2 new findings + fixes
+
+| ID | Title | Severity | Files | Status | Fixed-on | Verifier |
+| -- | ----- | -------- | ----- | ------ | -------- | -------- |
+| R-A-01 | Nested-object bypass of `patient.write-clinical` gate (`{address:{bloodGroup:"AB+"}}` slips past shallow `Object.keys()` check) | **HIGH** | controllers/Patient/patientController.js | **FIXED** | 2026-05-17 | Live `{address:{bloodGroup:"AB+"}}` → 403; deeper 4-level nest also → 403 |
+| R-A-02 | Identity fields (fullName, firstName, lastName, title) wrongly classified as clinical | LOW | controllers/Patient/patientController.js | **FIXED** | 2026-05-17 | Moved to demographic set; live receptionist `{fullName:"X"}` → 200 |
+| R-A-03 | `allowOverride` flag on discharge has no service-layer role check (route gate is the only line of defense) | MEDIUM | services/Patient/admissionService.js, controllers/Patient/admissionController.js | **FIXED** | 2026-05-17 | Doctor with `allowOverride:true` → 403 "Only Admin can bypass" |
+| R-G-01 | seedPatients.js logs raw UHID (4 occurrences) | MEDIUM | scripts/seedPatients.js | **FIXED** | 2026-05-17 | `maskUHID` helper applied |
+| R-G-02 | seedJaiBhagwan.js logs raw UHID (2 occurrences) | MEDIUM | scripts/seedJaiBhagwan.js | **FIXED** | 2026-05-17 | `maskUHID` helper applied |
 
 ### Summary of fix-round 1 (2026-05-17)
 

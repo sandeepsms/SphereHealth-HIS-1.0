@@ -23,6 +23,10 @@ const Admission  = require("../models/Patient/admissionModel");
 const Department = require("../models/Department/department");
 const Doctor     = require("../models/Doctor/doctorModel");
 const Beds       = require("../models/bedMgmt/bedsModel");
+
+// UHID is PHI under DPDP §8 — masking even in seed scripts so log
+// aggregators / shared dev terminals can't snapshot it (re-audit G-03b).
+const maskUHID = (u) => (u ? `${"*".repeat(Math.max(0, String(u).length - 4))}${String(u).slice(-4)}` : "(none)");
 const User       = require("../models/User/userModel");
 
 const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/spherehealth";
@@ -142,9 +146,9 @@ async function seed() {
       totalOPDVisits: 1,
       lastVisitDate: new Date(),
     });
-    console.log(`✅ Created OPD patient: ${opdPatient.fullName} | UHID: ${opdPatient.UHID}`);
+    console.log(`✅ Created OPD patient: ${opdPatient.fullName} | UHID: ${maskUHID(opdPatient.UHID)}`);
   } else {
-    console.log(`ℹ️  OPD patient already exists: ${opdPatient.fullName} | UHID: ${opdPatient.UHID}`);
+    console.log(`ℹ️  OPD patient already exists: ${opdPatient.fullName} | UHID: ${maskUHID(opdPatient.UHID)}`);
   }
 
   // ── 5. Create OPD Visit ─────────────────────────────────────────────────────
@@ -212,9 +216,9 @@ async function seed() {
       totalIPDVisits: 1,
       lastVisitDate: new Date(),
     });
-    console.log(`✅ Created IPD patient: ${ipdPatient.fullName} | UHID: ${ipdPatient.UHID}`);
+    console.log(`✅ Created IPD patient: ${ipdPatient.fullName} | UHID: ${maskUHID(ipdPatient.UHID)}`);
   } else {
-    console.log(`ℹ️  IPD patient already exists: ${ipdPatient.fullName} | UHID: ${ipdPatient.UHID}`);
+    console.log(`ℹ️  IPD patient already exists: ${ipdPatient.fullName} | UHID: ${maskUHID(ipdPatient.UHID)}`);
   }
 
   // ── 7. Create IPD Admission ─────────────────────────────────────────────────

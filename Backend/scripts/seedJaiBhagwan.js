@@ -108,7 +108,10 @@ async function run() {
     totalIPDVisits: 1,
     lastVisitDate: new Date(),
   });
-  console.log(`\n✅ Created patient: Mr. JaiBhagwan | UHID: ${patient.UHID} | Age: ${patient.age}`);
+  // UHID masked even in seed logs — re-audit G-03b. Last 4 chars exposed for
+  // operator cross-reference; rest redacted so log aggregators can't snapshot.
+  const maskUHID = (u) => (u ? `${"*".repeat(Math.max(0, String(u).length - 4))}${String(u).slice(-4)}` : "(none)");
+  console.log(`\n✅ Created patient: Mr. JaiBhagwan | UHID: ${maskUHID(patient.UHID)} | Age: ${patient.age}`);
 
   // ── 5. CREATE IPD ADMISSION ──────────────────────────────────────────────────
   const now = new Date();
@@ -326,7 +329,7 @@ async function run() {
   console.log("  JAIBHAGWAN IPD — SEED COMPLETE");
   console.log("══════════════════════════════════════════════════════");
   console.log(`  Patient   : Mr. JaiBhagwan, 56 yrs Male`);
-  console.log(`  UHID      : ${patient.UHID}`);
+  console.log(`  UHID      : ${maskUHID(patient.UHID)}`);
   console.log(`  Diagnosis : Acute Gastroenteritis`);
   console.log(`  Admission : ${admission.admissionNumber}`);
   console.log(`  Bed       : ${bed ? bed.bedNumber : "Not assigned"}`);
