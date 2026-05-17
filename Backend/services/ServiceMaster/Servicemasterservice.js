@@ -95,6 +95,20 @@ class ServiceMasterService {
   }
 
   // ── 5. Update existing service ────────────────────────────────
+  //
+  // Two-step: update ServiceMaster, then mirror `defaultPrice` into the
+  // matching CASH ServicePricing row. Without this mirror, editing the
+  // sticker price on a service silently left the active CASH tariff
+  // stuck at the original create-time value — every cash bill priced
+  // against the stale ServicePricing row, while the master record
+  // claimed the new rate. Auto-billing fetches via
+  // ServicePricing.getPriceFor(...), so that's the row that actually
+  // counts.
+  //
+  // If no CASH row exists yet (created before the auto-create-on-create
+  // hook in #4), we materialise one. TPA/CORPORATE rows are left
+  // untouched on purpose: those are deliberate negotiated rates that
+  // shouldn't move just because the cash list price changed.
   async updateService(id, data) {
     const service = await ServiceMaster.findByIdAndUpdate(
       id,
@@ -102,6 +116,41 @@ class ServiceMasterService {
       { new: true, runValidators: true },
     );
     if (!service) throw new Error("Service not found");
+
+    if (Object.prototype.hasOwnProperty.call(data, "defaultPrice")) {
+      const newPrice = Number(data.defaultPrice);
+      if (Number.isFinite(newPrice) && newPrice >= 0) {
+        try {
+          const cash = await ServicePricing.findOne({
+            serviceId:  service._id,
+            tariffType: "CASH",
+            isActive:   true,
+          });
+          if (cash) {
+            cash.price      = newPrice;
+            cash.discount   = cash.discount || 0;
+            cash.finalPrice = +(newPrice * (1 - cash.discount / 100)).toFixed(2);
+            await cash.save();
+          } else {
+            await ServicePricing.create({
+              serviceId:  service._id,
+              tariffType: "CASH",
+              price:      newPrice,
+              discount:   0,
+              finalPrice: newPrice,
+            });
+          }
+        } catch (e) {
+          // Non-fatal: the master price update succeeded, mirror failed.
+          // Surface the gap to logs so audit can backfill.
+          try {
+            const { logErr } = require("../../utils/logErr");
+            logErr("serviceMaster", `cash-mirror ${service.serviceCode}`)(e);
+          } catch { console.error("[serviceMaster] CASH mirror failed:", e?.message); }
+        }
+      }
+    }
+
     return service;
   }
 
