@@ -137,6 +137,79 @@ function IdentityBanner({ patient, currentAdmission, role, onBack, onPrint }) {
   );
 }
 
+/* ── Pending-actions summary banner ──────────────────────────────
+   Sits below the NABH completeness strip and answers "what's left
+   to do RIGHT NOW for this patient?". Each pill scrolls the page
+   to the relevant section on click. Only renders if there's at
+   least one outstanding item — a fully-up-to-date file stays clean.
+*/
+function PendingActions({ data }) {
+  const { doctorOrders = [], investigations = [], consents = [], dietPlans = [], currentAdmission } = data;
+
+  // Doctor orders: anything not Completed / Stopped / Cancelled.
+  const pendOrders = doctorOrders.filter((o) =>
+    !["Completed", "Stopped", "Cancelled"].includes(o.status),
+  ).length;
+
+  // Investigations: tests whose result isn't in yet.
+  let pendTests = 0;
+  for (const inv of investigations) {
+    for (const it of (inv.items || [])) {
+      if (it.resultStatus !== "COMPLETED" && it.resultStatus !== "REPORTED") pendTests++;
+    }
+  }
+
+  // Consents: not SIGNED (and not REFUSED/REVOKED, those are final).
+  const pendConsents = consents.filter((c) =>
+    !["SIGNED", "REFUSED", "REVOKED"].includes(c.status),
+  ).length;
+
+  // Initial Assessment gate: NABH requires Doctor AND Nurse IA before
+  // any clinical work continues. Flag whichever is missing.
+  const ia = currentAdmission?.initialAssessment || {};
+  const iaDocNeeded   = !ia.doctorCompleted;
+  const iaNurseNeeded = !ia.nurseCompleted;
+
+  // Diet plan: a draft (or completely absent on an IPD admission) reads
+  // as "no active plan yet".
+  const pendDiet = dietPlans.filter((d) => d.status === "draft").length;
+
+  const items = [];
+  if (iaDocNeeded)   items.push({ id: "initial",        label: "Doctor IA pending",        icon: "🩺", color: "#7c3aed" });
+  if (iaNurseNeeded) items.push({ id: "initial",        label: "Nursing IA pending",       icon: "👩‍⚕️", color: "#db2777" });
+  if (pendOrders)    items.push({ id: "orders",         label: `${pendOrders} order${pendOrders!==1?"s":""} active / pending`, icon: "💊", color: "#ea580c" });
+  if (pendTests)     items.push({ id: "investigations", label: `${pendTests} lab test${pendTests!==1?"s":""} awaiting result`, icon: "🧪", color: "#0284c7" });
+  if (pendConsents)  items.push({ id: "consents",       label: `${pendConsents} consent${pendConsents!==1?"s":""} unsigned`, icon: "📝", color: "#ca8a04" });
+  if (pendDiet)      items.push({ id: "diet",           label: `${pendDiet} diet plan draft`, icon: "🥗", color: "#16a34a" });
+
+  if (!items.length) return null;
+
+  return (
+    <div style={{
+      margin: "10px 0 14px", padding: "8px 12px",
+      borderRadius: 8, background: "linear-gradient(180deg, #fffbeb 0%, #fff 100%)",
+      border: "1px solid #fde68a", borderLeft: "4px solid #d97706",
+      display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+    }}>
+      <span style={{ fontSize: 12, fontWeight: 800, color: "#92400e", letterSpacing: 0.3 }}>
+        ⏳ PENDING ACTIONS
+      </span>
+      {items.map((it, i) => (
+        <button key={i} onClick={() => {
+          const el = document.getElementById(it.id);
+          if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+        }} style={{
+          padding: "3px 10px", borderRadius: 6, border: `1px solid ${it.color}40`,
+          background: "#fff", color: it.color, fontSize: 11, fontWeight: 700,
+          cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5,
+        }}>
+          <span style={{ fontSize: 12 }}>{it.icon}</span> {it.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function Completeness({ completeness }) {
   const items = [
     { key: "admission",          label: "Admission recorded" },
@@ -1501,37 +1574,66 @@ function NoteList({ notes, kind, emptyMsg }) {
 
 function OrdersSection({ orders }) {
   if (!orders?.length) return <Empty icon="💊" msg="No orders placed yet" />;
+  // Surface pending / active orders at the top so the bedside view
+  // always answers "what's left to do" first.
+  const PENDING_STATUSES = new Set(["Pending", "Active", "InProgress", "OnHold"]);
+  const sorted = [...orders].sort((a, b) => {
+    const aP = PENDING_STATUSES.has(a.status), bP = PENDING_STATUSES.has(b.status);
+    if (aP !== bP) return aP ? -1 : 1;
+    return new Date(b.orderedAt || b.createdAt) - new Date(a.orderedAt || a.createdAt);
+  });
+  const pendingCount = sorted.filter((o) => PENDING_STATUSES.has(o.status)).length;
+
   return (
-    <table className="pf-table pf-table--compact">
-      <thead>
-        <tr>
-          <th>When</th><th>Drug / Order</th><th>Dose / Rate</th>
-          <th>Route</th><th>Frequency</th><th>Status</th>
-        </tr>
-      </thead>
-      <tbody>
-        {orders.map((o) => (
-          <tr key={o._id}>
-            <td>{fmtDT(o.orderedAt || o.createdAt)}</td>
-            <td>
-              <strong>{o.orderDetails?.medicineName || o.orderDetails?.displayName || o.orderType || "—"}</strong>
-              {o.hamFlag && <span className="pf-badge pf-badge--danger" style={{ marginLeft: 6 }}>HAM ⚠</span>}
-            </td>
-            <td>{o.orderDetails?.dose || o.currentRate || "—"}</td>
-            <td>{o.orderDetails?.route || "—"}</td>
-            <td>{o.orderDetails?.frequency || "—"}</td>
-            <td>
-              <span className={`pf-badge ${
-                ["Completed", "InProgress"].includes(o.status) ? "pf-badge--ok" :
-                ["Stopped", "Cancelled"].includes(o.status)    ? "pf-badge--danger" :
-                o.status === "OnHold"                          ? "pf-badge--warn" :
-                "pf-badge--neutral"
-              }`}>{o.status}</span>
-            </td>
+    <>
+      {pendingCount > 0 && (
+        <div style={{
+          marginBottom: 6, padding: "4px 10px", borderRadius: 4,
+          background: "#fef3c7", border: "1px solid #fde68a",
+          fontSize: 11, fontWeight: 700, color: "#92400e",
+          display: "inline-flex", alignItems: "center", gap: 6,
+        }}>
+          ⏳ {pendingCount} order{pendingCount !== 1 ? "s" : ""} pending / active
+        </div>
+      )}
+      <table className="pf-table pf-table--compact">
+        <thead>
+          <tr>
+            <th>When</th><th>Drug / Order</th><th>Dose / Rate</th>
+            <th>Route</th><th>Frequency</th><th>Status</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {sorted.map((o) => {
+            const isPending = PENDING_STATUSES.has(o.status);
+            const rowStyle = isPending ? {
+              background: "linear-gradient(90deg, #fffbeb 0%, transparent 100%)",
+              borderLeft: "3px solid #f59e0b",
+            } : undefined;
+            return (
+              <tr key={o._id} style={rowStyle}>
+                <td>{fmtDT(o.orderedAt || o.createdAt)}</td>
+                <td>
+                  <strong>{o.orderDetails?.medicineName || o.orderDetails?.displayName || o.orderType || "—"}</strong>
+                  {o.hamFlag && <span className="pf-badge pf-badge--danger" style={{ marginLeft: 6 }}>HAM ⚠</span>}
+                </td>
+                <td>{o.orderDetails?.dose || o.currentRate || "—"}</td>
+                <td>{o.orderDetails?.route || "—"}</td>
+                <td>{o.orderDetails?.frequency || "—"}</td>
+                <td>
+                  <span className={`pf-badge ${
+                    ["Completed", "InProgress"].includes(o.status) ? "pf-badge--ok" :
+                    ["Stopped", "Cancelled"].includes(o.status)    ? "pf-badge--danger" :
+                    ["OnHold", "Pending", "Active"].includes(o.status) ? "pf-badge--warn" :
+                    "pf-badge--neutral"
+                  }`}>{isPending ? `⏳ ${o.status}` : o.status}</span>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </>
   );
 }
 
@@ -1618,28 +1720,87 @@ function ConsentSection({ consents }) {
 
 function InvestigationSection({ investigations }) {
   if (!investigations?.length) return <Empty icon="🧪" msg="No investigations ordered" />;
-  return investigations.map((o) => (
-    <div key={o._id} className="pf-record">
-      <div className="pf-record__head">
-        <span className="pf-record__title">Order — {fmtDate(o.createdAt)}</span>
-        <span className={`pf-badge ${o.orderStatus === "COMPLETED" ? "pf-badge--ok" : "pf-badge--warn"}`}>{o.orderStatus}</span>
-        <span className="pf-record__time">By {o.doctorName || "—"}</span>
-      </div>
-      <table className="pf-table pf-table--compact">
-        <thead><tr><th>Test</th><th>Sample</th><th>Status</th><th>Result</th></tr></thead>
-        <tbody>
-          {(o.items || []).map((it, i) => (
-            <tr key={i}>
-              <td>{it.investigationName}</td>
-              <td>{it.sampleStatus}</td>
-              <td>{it.resultStatus}</td>
-              <td>{(it.results || []).map((r) => `${r.parameter}: ${r.value} ${r.unit || ""}`).join("; ") || "—"}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  ));
+  // Pending orders first, then completed. Per-test status pills make
+  // the bottleneck (sample not collected? result not entered?) visible.
+  const isOrderPending = (o) => o.orderStatus !== "COMPLETED" && o.orderStatus !== "CANCELLED";
+  const sorted = [...investigations].sort((a, b) => {
+    const aP = isOrderPending(a), bP = isOrderPending(b);
+    if (aP !== bP) return aP ? -1 : 1;
+    return new Date(b.createdAt) - new Date(a.createdAt);
+  });
+  const pendingTests = sorted.reduce((sum, o) => sum + (o.items || []).filter((it) => it.resultStatus !== "COMPLETED" && it.resultStatus !== "REPORTED").length, 0);
+
+  const sampleColor = (s) => /collected|in.?process|received/i.test(s) ? "#ca8a04"
+                           : /completed|resulted/i.test(s)             ? "#16a34a"
+                           : /pending|awaiting/i.test(s)               ? "#dc2626"
+                           : "#64748b";
+  const resultColor = (s) => /completed|reported|resulted/i.test(s)    ? "#16a34a"
+                           : /partial|in.?process/i.test(s)            ? "#ca8a04"
+                           : "#dc2626";
+  const sampleIcon  = (s) => /completed|resulted/i.test(s) ? "✓"
+                           : /collected|in.?process/i.test(s) ? "🧪"
+                           : "⏳";
+
+  return (
+    <>
+      {pendingTests > 0 && (
+        <div style={{
+          marginBottom: 6, padding: "4px 10px", borderRadius: 4,
+          background: "#fef3c7", border: "1px solid #fde68a",
+          fontSize: 11, fontWeight: 700, color: "#92400e",
+          display: "inline-flex", alignItems: "center", gap: 6,
+        }}>
+          ⏳ {pendingTests} test{pendingTests !== 1 ? "s" : ""} awaiting sample / result
+        </div>
+      )}
+      {sorted.map((o) => {
+        const orderPending = isOrderPending(o);
+        return (
+          <div key={o._id} className="pf-record" style={orderPending ? { borderLeft: "4px solid #f59e0b" } : undefined}>
+            <div className="pf-record__head">
+              <span className="pf-record__title">Order — {fmtDate(o.createdAt)}</span>
+              <span className={`pf-badge ${o.orderStatus === "COMPLETED" ? "pf-badge--ok" : "pf-badge--warn"}`}>
+                {orderPending ? `⏳ ${o.orderStatus}` : o.orderStatus}
+              </span>
+              <span className="pf-record__time">By {o.doctorName || "—"}</span>
+            </div>
+            <table className="pf-table pf-table--compact">
+              <thead><tr><th>Test</th><th>Sample</th><th>Result</th><th>Findings</th></tr></thead>
+              <tbody>
+                {(o.items || []).map((it, i) => {
+                  const sc = sampleColor(it.sampleStatus || "");
+                  const rc = resultColor(it.resultStatus || "");
+                  const pending = it.resultStatus !== "COMPLETED" && it.resultStatus !== "REPORTED";
+                  return (
+                    <tr key={i} style={pending ? { background: "#fffbeb" } : undefined}>
+                      <td><strong>{it.investigationName}</strong></td>
+                      <td>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "1px 7px", borderRadius: 4, fontSize: 10.5, fontWeight: 700,
+                          background: `${sc}15`, color: sc, border: `1px solid ${sc}40` }}>
+                          {sampleIcon(it.sampleStatus || "")} {it.sampleStatus || "—"}
+                        </span>
+                      </td>
+                      <td>
+                        <span style={{ padding: "1px 7px", borderRadius: 4, fontSize: 10.5, fontWeight: 700,
+                          background: `${rc}15`, color: rc, border: `1px solid ${rc}40` }}>
+                          {it.resultStatus || "—"}
+                        </span>
+                      </td>
+                      <td style={{ fontSize: 11 }}>
+                        {(it.results || []).length > 0
+                          ? (it.results || []).map((r) => `${r.parameter}: ${r.value} ${r.unit || ""}`).join("; ")
+                          : <span style={{ color: "#94a3b8", fontStyle: "italic" }}>awaiting…</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
+    </>
+  );
 }
 
 // Dietician's nutritional assessments + assigned diet plans for this
@@ -2161,6 +2322,7 @@ export default function CompletePatientFilePage() {
           onPrint={() => window.open(`/patient-file/${uhid}?role=${role}&autoprint=1`, "_blank", "noopener,width=1100,height=900")}
         />
         <Completeness completeness={completeness} />
+        <PendingActions data={data} />
 
         <div className="pf-grid">
           <nav className="pf-nav" aria-label="Patient file sections">
