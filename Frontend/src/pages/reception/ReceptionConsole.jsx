@@ -463,7 +463,74 @@ export default function ReceptionConsole() {
 
   /* ─── Save & Print ─── */
   const saveAndProcess = async () => {
-    if (!validate()) { toast.error("Please fix the highlighted fields"); return; }
+    if (!validate()) {
+      // The old toast just said "fix the highlighted fields" — useless
+      // when the field in question is below the fold (Department /
+      // Doctor / Chief Complaint sit under the address block). Name the
+      // exact fields so the receptionist knows what to fill, and try to
+      // scroll the first failing input into view.
+      // Note: validate() has already called setErrors(e) with the same
+      // error object we mirror here. We rebuild the list locally because
+      // setState is async, so the snapshot we just set isn't readable
+      // synchronously yet.
+      const missing = [];
+      if (!patient.fullName?.trim()) missing.push("Full Name");
+      if (!patient.gender) missing.push("Gender");
+      if (!patient.contactNumber || !/^\d{10}$/.test(patient.contactNumber)) missing.push("Phone (10 digits)");
+      if (!patient.dateOfBirth && !patient.age) missing.push("Age or DOB");
+      if (patient.paymentType === "TPA" && !patient.tpa) missing.push("TPA Provider");
+      if (patient.paymentType === "TPA" && !patient.policyNumber) missing.push("Policy Number");
+      if (visitType === "OPD") {
+        if (!opd.department) missing.push("Department");
+        if (!opd.doctor) missing.push("Doctor");
+        if (!opd.chiefComplaint?.trim()) missing.push("Chief Complaint");
+      } else if (visitType === "IPD") {
+        if (!ipd.department) missing.push("Department");
+        if (!ipd.admittingDoctor) missing.push("Admitting Doctor");
+        if (!ipd.reasonForAdmission) missing.push("Reason for Admission");
+        if (!bedData.bedId) missing.push("Bed");
+      } else if (visitType === "Daycare") {
+        if (!dayCare.procedureName) missing.push("Procedure Name");
+        if (!dayCare.doctor) missing.push("Doctor");
+      } else if (visitType === "Emergency") {
+        if (!er.presentingComplaint) missing.push("Presenting Complaint");
+        if (!bedData.bedId) missing.push("Emergency Bed");
+        if (!er.attendingDoctor) missing.push("Attending Doctor");
+        if (er.isMLC && !er.mlcNumber) missing.push("MLC Number");
+      } else if (visitType === "Services") {
+        if (services.cart.length === 0) missing.push("at least one Service");
+      }
+      const list = missing.length ? missing.join(", ") : "the highlighted fields";
+      toast.error(`Please fill: ${list}`, { autoClose: 6000 });
+      // Scroll the first required label without a filled value into the
+      // middle of the viewport so the cashier doesn't have to hunt.
+      // Match against the label text so we don't need ref plumbing into
+      // each subform.
+      requestAnimationFrame(() => {
+        const FIELD_LABEL_MAP = {
+          "Full Name": "Full Name",
+          "Gender": "Gender",
+          "Phone (10 digits)": "Phone",
+          "Department": "Department",
+          "Doctor": "Doctor",
+          "Admitting Doctor": "Admitting Doctor",
+          "Attending Doctor": "Attending Doctor",
+          "Chief Complaint": "Chief Complaint",
+          "Presenting Complaint": "Presenting Complaint",
+          "Procedure Name": "Procedure",
+          "Reason for Admission": "Reason",
+          "Bed": "Bed",
+          "Emergency Bed": "Bed",
+          "MLC Number": "MLC",
+        };
+        const wanted = FIELD_LABEL_MAP[missing[0]];
+        if (!wanted) return;
+        const labels = Array.from(document.querySelectorAll("label, .his-label, .rc-label"));
+        const match = labels.find((l) => l.textContent?.trim().toLowerCase().startsWith(wanted.toLowerCase()));
+        if (match) match.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+      return;
+    }
     setSaving(true);
 
     try {
