@@ -128,6 +128,44 @@ const ServiceMasterSchema = new mongoose.Schema(
       ],
       default: "other",
     },
+
+    // ── ANH tariff: 3-tier package pricing ─────────────────────────
+    // Packages (surgical / medical-management) and room-tier rates
+    // come from the hospital's published rate card with three columns:
+    //   General Ward / Twin-Sharing (Semi-Private) / Private (Deluxe / ICU)
+    // The patient's admitted room category picks the tier; CASH default
+    // uses generalWard. Fields are optional — only populated for rows
+    // imported from the tariff workbook.
+    tierPricing: {
+      generalWard: { type: Number, min: 0 },   // lowest tier (CASH default)
+      semiPrivate: { type: Number, min: 0 },   // middle tier
+      private:     { type: Number, min: 0 },   // top tier (also ICU/Deluxe)
+    },
+
+    // Free-text from the tariff workbook — what's included / excluded
+    // in this package. Surfaced on the bill so receptionists and TPA
+    // reviewers see exactly what the package covers.
+    inclusions: { type: String, trim: true },
+    exclusions: { type: String, trim: true },
+
+    // Cap on admission length the package covers (MMP packages = 3 days).
+    // Auto-billing uses this to know when to switch from package PER_DAY
+    // to non-package per-day room + nursing accrual.
+    maxLOSDays: { type: Number, min: 0 },
+
+    // Diagnosis / procedure keywords used to match a package to a new
+    // admission. e.g. ["bronchitis","wheeze","cough"] for MMP-2
+    // (Acute Bronchitis). Free-form — supplied during import.
+    diagnosisTags: { type: [String], default: [] },
+
+    // Speciality / department the package belongs to — e.g. "Cardiology",
+    // "ENT", "General Surgery". Helps UI grouping and report filters.
+    speciality: { type: String, trim: true },
+
+    // Tariff package code from the source workbook (ABHI / ANH /
+    // hospital-specific). Lets us track which catalog version a row
+    // came from for audit and future re-imports.
+    tariffSource: { type: String, trim: true },
   },
   {
     timestamps: true,
