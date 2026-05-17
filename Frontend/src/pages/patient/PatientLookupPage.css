@@ -822,6 +822,66 @@
   gap: 8px;
 }
 
+/* Success-state header tint — green gradient instead of slate */
+.pl-modal-head--success {
+  background: linear-gradient(135deg, #15803d, #16a34a);
+}
+.pl-modal-head--success i { color: #bbf7d0; }
+
+/* Success "receipt card" inside the modal body */
+.pl-success-card {
+  background: linear-gradient(135deg, #fef9c3, #fde68a);
+  border: 2px solid #facc15;
+  border-radius: 12px;
+  padding: 18px 20px;
+  text-align: center;
+}
+.pl-success-rno {
+  font-family: 'DM Mono', monospace;
+  font-size: 13px;
+  font-weight: 800;
+  color: #92400e;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+.pl-success-amt {
+  font-family: 'DM Mono', monospace;
+  font-size: 32px;
+  font-weight: 900;
+  color: #713f12;
+  line-height: 1.1;
+  margin-top: 6px;
+}
+.pl-success-meta {
+  font-size: 12px;
+  color: #92400e;
+  margin-top: 4px;
+  font-weight: 600;
+}
+
+/* Reprint button on each advance row in the Billing tab */
+.pl-advance-print {
+  margin-left: 6px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #475569;
+  cursor: pointer;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+.pl-advance-print:hover {
+  background: #ecfeff;
+  color: #0e7490;
+  border-color: #67e8f9;
+}
+
 /* ─── Responsive collapse ──────────────────────────────────── */
 @media (max-width: 1024px) {
   .pl-search-grid {

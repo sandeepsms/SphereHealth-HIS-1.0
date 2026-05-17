@@ -832,6 +832,7 @@ function PatientDetailPanel({
 
         {!loading && tab === "billing" && (
           <BillingBody
+            patient={patient}
             bills={bills}
             advancesList={advancesList}
             unspentAdv={unspentAdv}
@@ -902,7 +903,7 @@ function ProfileBody({ patient }) {
 }
 
 /* ─── Billing body — full bill + payment ledger + advance section ── */
-function BillingBody({ bills, advancesList = [], unspentAdv = 0, onApplyAdvance }) {
+function BillingBody({ bills, advancesList = [], unspentAdv = 0, onApplyAdvance, patient }) {
   const list = Array.isArray(bills) ? bills : [];
   const unspentAdvances = (advancesList || []).filter((a) => (a.remainingAmount || 0) > 0);
 
@@ -930,6 +931,20 @@ function BillingBody({ bills, advancesList = [], unspentAdv = 0, onApplyAdvance 
                 <span className="pl-advance-rem"> ({fmtCur(a.remainingAmount)} left)</span>
               )}
             </span>
+            {/* Reprint button — admin / cashier can reprint at any time
+                (e.g. patient asks for a duplicate copy). Hidden for
+                refunded / cancelled rows since their receipt is no
+                longer valid evidence of held money. */}
+            {patient && a.status !== "REFUNDED" && a.status !== "CANCELLED" && (
+              <button
+                type="button"
+                className="pl-advance-print"
+                title={`Reprint receipt ${a.receiptNumber}`}
+                onClick={(e) => { e.stopPropagation(); printAdvanceReceipt(a, patient); }}
+              >
+                <i className="pi pi-print" />
+              </button>
+            )}
           </div>
           <div className="pl-advance-meta">
             {fmtDateTime(a.paidAt)} · status: <strong>{a.status}</strong>
@@ -1120,6 +1135,40 @@ function BillRow({ label, v, bold, success, due, discount }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   Helper: open /print/advance-receipt in a popup with the payload
+   pre-loaded in sessionStorage. Matches the contract documented in
+   PrintRouterPage.jsx — sessionStorage["printPayload-<slug>"] is
+   the canonical channel for large payloads.
+═══════════════════════════════════════════════════════════════ */
+function printAdvanceReceipt(advance, patient) {
+  if (!advance || !patient) return;
+  const payload = {
+    receiptNo:    advance.receiptNumber,
+    patientName:  [patient.title, patient.fullName].filter(Boolean).join(" "),
+    uhid:         patient.UHID,
+    ipdNo:        advance.admission?.admissionNumber || null,
+    admissionDate: advance.admission?.admissionDate || null,
+    bedNumber:    null,
+    wardName:     null,
+    date:         advance.paidAt || advance.createdAt || new Date().toISOString(),
+    amount:       Number(advance.amount?.$numberDecimal ?? advance.amount) || 0,
+    method:       advance.paymentMode,
+    refNo:        advance.transactionId,
+    depositPurpose: advance.remarks || "hospitalization advance",
+    estimatedCost: advance.estimatedCost || null,
+  };
+  try {
+    sessionStorage.setItem(`printPayload-advance-receipt`, JSON.stringify(payload));
+  } catch (e) {
+    console.error("[print] sessionStorage write failed:", e?.message);
+  }
+  // Open in a new window so the existing app session stays open
+  // behind the print dialog. Width/height match the printable's A5
+  // default layout — toolbar lets the user upsize to A4 if needed.
+  window.open("/print/advance-receipt", "_blank", "noopener,noreferrer,width=900,height=1100");
+}
+
+/* ═══════════════════════════════════════════════════════════════
    TakeAdvanceModal — cash/UPI/card deposit before bills exist
    Posts to /api/billing/advance and refreshes the parent panel.
 ═══════════════════════════════════════════════════════════════ */
@@ -1131,6 +1180,7 @@ function TakeAdvanceModal({ patient, onClose, onSaved }) {
   const [remarks,       setRemarks]       = useState("");
   const [saving,        setSaving]        = useState(false);
   const [err,           setErr]           = useState(null);
+  const [savedAdv,      setSavedAdv]      = useState(null);   // set once POST returns
 
   const submit = async () => {
     const amt = Number(amount);
@@ -1150,18 +1200,65 @@ function TakeAdvanceModal({ patient, onClose, onSaved }) {
         bankName:      bankName      || null,
         remarks:       remarks       || null,
       });
-      // Receipt is the JSON response — we surface the receipt number
-      // on success. AdvanceReceipt.jsx printing wiring is a follow-up.
-      window.alert(
-        `Advance received\n\nReceipt: ${data?.data?.receiptNumber}\nAmount: ₹${amt.toLocaleString("en-IN")}\nMode: ${paymentMode}\n\nThis credit is now on ${patient.UHID} and will auto-suggest "Apply Advance" on future bills.`,
-      );
-      onSaved && onSaved();
+      // Switch modal into success state so the cashier can either
+      // print immediately or close + take the next deposit. The parent
+      // is NOT notified yet — onSaved fires when user clicks Done so
+      // the lookup panel only refreshes after they've moved on.
+      setSavedAdv(data?.data || null);
     } catch (e) {
       setErr(e?.response?.data?.message || e?.message || "Save failed");
     } finally {
       setSaving(false);
     }
   };
+
+  // ── Success state — receipt summary + print button ───────────────
+  if (savedAdv) {
+    const amt = Number(savedAdv.amount?.$numberDecimal ?? savedAdv.amount) || 0;
+    return (
+      <div className="pl-modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) { onSaved && onSaved(); } }}>
+        <div className="pl-modal" role="dialog" aria-label="Advance saved">
+          <div className="pl-modal-head pl-modal-head--success">
+            <i className="pi pi-check-circle" /> Advance Received
+            <button className="pl-modal-close" onClick={() => onSaved && onSaved()} aria-label="Close">✕</button>
+          </div>
+          <div className="pl-modal-body">
+            <div className="pl-success-card">
+              <div className="pl-success-rno">{savedAdv.receiptNumber}</div>
+              <div className="pl-success-amt">₹{amt.toLocaleString("en-IN")}</div>
+              <div className="pl-success-meta">
+                {savedAdv.paymentMode}
+                {savedAdv.transactionId ? ` · ref ${savedAdv.transactionId}` : ""}
+              </div>
+              <div className="pl-success-meta">
+                from {patient.title ? patient.title + " " : ""}{patient.fullName} ({patient.UHID})
+              </div>
+            </div>
+            <div className="pl-modal-info">
+              <i className="pi pi-info-circle" /> This credit is now on the UHID with status
+              <strong> ACTIVE</strong>. It auto-applies to future bills via the
+              "Apply Advance" button on each bill card.
+            </div>
+          </div>
+          <div className="pl-modal-foot">
+            <button className="rx-action-btn" onClick={() => onSaved && onSaved()}>
+              Done
+            </button>
+            <button
+              className="rx-action-btn rx-action-btn--primary"
+              onClick={() => {
+                printAdvanceReceipt(savedAdv, patient);
+                // keep the modal open so the cashier can click again
+                // if the popup blocker swallowed the first try.
+              }}
+            >
+              <i className="pi pi-print" /> Print Receipt
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="pl-modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
