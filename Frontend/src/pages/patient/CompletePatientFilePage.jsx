@@ -422,10 +422,62 @@ function Chip({ label, value, accent = "#64748b" }) {
   );
 }
 
+/* Sub-objects that represent organ-system findings — when several of
+   these appear side-by-side under the same parent (typical of a Doctor
+   IA exam), we group them under a single "SYSTEMIC EXAMINATION" header
+   so the file reads as a real clinical exam, not a flat dump. */
+const SYSTEMIC_KEYS = new Set([
+  "resp", "respiratory",
+  "cvs", "cardio", "cardiovascular",
+  "abdomen", "abdominal", "gi", "git", "gastrointestinal", "perAbdomen", "perabdomen",
+  "cns", "neuro", "neurological", "neurology",
+  "mskl", "msk", "musculoskeletal", "spine",
+  "gu", "genitourinary", "renal",
+  "endocrine", "endo",
+  "heme", "hema", "hematological",
+  "derm", "dermatological", "skin", "integumentary",
+  "ent", "head_and_neck", "headandneck", "headAndNeck", "hen",
+  "lymph", "lymphatic",
+  "ophth", "ophthalmology", "eyes",
+  "psy", "psychiatry", "mental",
+]);
+const isSystemicKey = (k) => SYSTEMIC_KEYS.has(String(k).toLowerCase());
+
+// Render a wrapped "Resp / CVS / Abdomen / CNS" cluster as a single
+// SYSTEMIC EXAMINATION block — each system gets its own line of chips,
+// labelled by the system name on the left.
+function SystemicExamBlock({ systemEntries }) {
+  if (!systemEntries.length) return null;
+  return (
+    <div style={{ marginTop: 6 }}>
+      <div style={{
+        fontSize: 10, fontWeight: 800, color: "var(--pf-muted)",
+        textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4,
+      }}>Systemic Examination</div>
+      <div style={{ paddingLeft: 8, borderLeft: "2px solid #c7d2fe" }}>
+        {systemEntries.map(([k, v]) => (
+          <div key={k} style={{
+            display: "grid", gridTemplateColumns: "80px 1fr",
+            gap: 6, marginBottom: 3, alignItems: "baseline",
+          }}>
+            <div style={{
+              fontSize: 10, fontWeight: 700, color: "#4338ca",
+              textTransform: "uppercase", letterSpacing: 0.4,
+            }}>{titleCase(k)}</div>
+            <div><MixedFields data={v} /></div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // Recursively render every populated key in a Mixed object. Strategy:
 //   • Scalar values (and arrays of scalars) → wrap-flexed chips so dozens
 //     of dropdown-style fields fit a couple of lines instead of a wall.
-//   • Nested objects → small uppercase header + left-border subsection.
+//   • Sub-objects that represent organ systems (Resp/CVS/Abdomen/CNS/…)
+//     get grouped together under one SYSTEMIC EXAMINATION header.
+//   • Other nested objects → small uppercase header + left-border subsection.
 //   • Arrays of objects → numbered subsections.
 // Nothing is collapsed or dropped — user said "complete details rkhte hue,
 // koi info miss nhi honi chahiye" — just packed more densely.
@@ -459,6 +511,13 @@ function MixedFields({ data }) {
     Array.isArray(v) && v.some((x) => x != null && typeof x === "object"),
   );
 
+  // Separate organ-system sub-objects (Resp / CVS / Abdomen / CNS / …)
+  // so we can render them inside ONE "SYSTEMIC EXAMINATION" wrapper.
+  // Single-system payloads still render normally; only group when ≥2.
+  const systemicSubs = subobjects.filter(([k]) => isSystemicKey(k));
+  const otherSubs    = subobjects.filter(([k]) => !isSystemicKey(k));
+  const useSystemicWrap = systemicSubs.length >= 2;
+
   return (
     <div style={{ fontSize: 11 }}>
       {scalars.length > 0 && (
@@ -470,7 +529,8 @@ function MixedFields({ data }) {
           })}
         </div>
       )}
-      {subobjects.map(([k, v]) => (
+      {useSystemicWrap && <SystemicExamBlock systemEntries={systemicSubs} />}
+      {(useSystemicWrap ? otherSubs : subobjects).map(([k, v]) => (
         <div key={k} style={{ marginTop: 6 }}>
           <div style={{
             fontSize: 9.5, fontWeight: 800, color: "var(--pf-muted)",
