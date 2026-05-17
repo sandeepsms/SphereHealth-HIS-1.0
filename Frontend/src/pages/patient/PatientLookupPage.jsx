@@ -1,31 +1,39 @@
 /**
- * PatientLookupPage.jsx — unified patient search, directory, history & billing
+ * PatientLookupPage.jsx — unified search · directory · timeline · billing
  *
- * Replaces and aliases 4 previously-separate pages:
- *   /patient-search      (Receptionist — live name lookup → side panel)
- *   /visit-history       (Receptionist — UHID → timeline + billing)
- *   /allpatient          (Doctor/Nurse/Admin — paginated directory table)
- *   /patient-history     (Doctor/Nurse/Admin — search → clinical timeline)
+ * Aliases /patient-search, /visit-history, /allpatient, /patient-history.
+ * Three view modes the receptionist or clinician can switch between:
  *
- * Everything those 4 pages did is now reachable here without leaving the
- * window. The component picks a sensible initial view based on user role
- * (Receptionist → search; clinical → directory; with `?uhid=` → timeline)
- * but the user can switch via the view-tab strip at any time.
+ *   • SEARCH    — live name/UHID/phone lookup (200ms debounce, min 2 chars)
+ *                 with a side panel showing the picked patient's profile,
+ *                 unified visit timeline, and billing history
+ *   • DIRECTORY — paginated patient table with type filter (OPD/IPD/ER/...)
+ *                 and per-row Open / Edit actions
+ *   • TIMELINE  — full-width detail panel for a single patient, used when
+ *                 arriving via /visit-history/:uhid or ?uhid=
  *
- * DB integrity: every backend route this page calls is exactly the same
- * route the legacy 4 pages already used — `/api/patients/search`,
- * `/api/patients/uhid/:uhid`, `/api/admissions`, `/api/opd/patient/:id`,
- * `/api/emergency/patient/:id`, `/api/billing/uhid/:uhid`. No schema
- * changes, no new endpoints; this is a frontend-only consolidation.
+ * Per-role defaults:
+ *   • Receptionist  → Search
+ *   • Doctor/Nurse  → Directory
+ *   • ?uhid= present → Timeline
+ *
+ * Styling: HIS theme classes from reception-shared.css (`.rx-*`) + a small
+ * page-scoped sheet (PatientLookupPage.css) for layout-only rules. No
+ * inline JS styles (per workflow_no_inline_styles.md).
+ *
+ * DB integrity: every endpoint is unchanged from the legacy 4 pages —
+ * /api/patients/search, /api/patients/uhid/:uhid, /api/patients (list),
+ * /api/admissions, /api/opd/patient/:id, /api/emergency/patient/:id,
+ * /api/billing/uhid/:uhid. Frontend-only consolidation.
  */
 
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useNavigate, useSearchParams, useParams } from "react-router-dom";
 import axios from "axios";
-import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import "../reception/reception-shared.css";
+import "./PatientLookupPage.css";
 
 /* ─── Formatters ─────────────────────────────────────────────── */
 const fmtDate = (d) =>
@@ -43,7 +51,7 @@ const ageGenderLine = (p) => {
 };
 const docName = (d) => {
   if (!d) return "—";
-  if (typeof d === "string") return d;
+  if (typeof d === "string") return d.startsWith("Dr") ? d : `Dr. ${d}`;
   const pi = d.personalInfo || {};
   const full = pi.fullName || [pi.firstName, pi.lastName].filter(Boolean).join(" ");
   return full ? `Dr. ${full}` : d.name || "—";
@@ -52,6 +60,12 @@ const deptName = (d) => {
   if (!d) return "—";
   if (typeof d === "string") return d;
   return d.departmentName || d.name || "—";
+};
+const fullAddr = (a) => {
+  if (!a) return "—";
+  if (typeof a === "string") return a;
+  return [a.completeAddress, a.city, a.district, a.state, a.pincode]
+    .filter(Boolean).join(", ") || "—";
 };
 
 const TIMELINE_TABS = [
@@ -62,8 +76,8 @@ const TIMELINE_TABS = [
 ];
 
 /* ─── Cross-route timeline loaders ─────────────────────────────
-   These mirror the loader logic the legacy PatientHistoryPage used
-   so the response shape parity stays intact. */
+   Mirror the loader logic the legacy PatientHistoryPage used so the
+   response-shape parity stays intact. */
 async function loadAdmissions(patientId, uhid, signal) {
   const BASE = API_ENDPOINTS.ADMISSIONS;
   const extract = (r) => {
@@ -74,7 +88,7 @@ async function loadAdmissions(patientId, uhid, signal) {
     const r = await axios.get(BASE, { params: { patientId, limit: 200 }, signal });
     const d = extract(r);
     if (d) return d;
-  } catch { /* fall through */ }
+  } catch { /* fall through to UHID lookup */ }
   if (uhid) {
     try {
       const r = await axios.get(BASE, { params: { UHID: uhid, limit: 200 }, signal });
@@ -84,7 +98,6 @@ async function loadAdmissions(patientId, uhid, signal) {
   }
   return [];
 }
-
 async function loadOPDForPatient(patientId, signal) {
   if (!patientId) return [];
   try {
@@ -92,7 +105,6 @@ async function loadOPDForPatient(patientId, signal) {
     return r?.data?.data || r?.data || [];
   } catch { return []; }
 }
-
 async function loadEmergencyForPatient(patientId, signal) {
   if (!patientId) return [];
   try {
@@ -100,7 +112,6 @@ async function loadEmergencyForPatient(patientId, signal) {
     return r?.data?.data || r?.data || [];
   } catch { return []; }
 }
-
 async function loadBillsForUHID(uhid, signal) {
   if (!uhid) return [];
   try {
@@ -113,24 +124,16 @@ async function loadBillsForUHID(uhid, signal) {
 export default function PatientLookupPage({ initialView = "auto" }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { uhid: routeUhid } = useParams(); // for legacy /visit-history/:uhid
+  const { uhid: routeUhid } = useParams(); // legacy /visit-history/:uhid
   const { user } = useAuth();
   const role = user?.role;
 
-  // Capabilities derived from role
   const isRX        = role === "Receptionist";
-  const isClinical  = role === "Doctor" || role === "Nurse";
   const isAdmin     = role === "Admin";
-  const canEdit     = isAdmin || isRX;            // RX can fix demographics
-  const canDelete   = isAdmin;
-  const canNewVisit = isAdmin || isRX;            // start a fresh visit from here
+  const canEdit     = isAdmin || isRX;
+  const canNewVisit = isAdmin || isRX;
 
-  // Auto-pick initial view by role (or honor a URL query / prop override).
-  // search    — live name/UHID search; default for Receptionist
-  // directory — paginated patient table; default for clinical roles
-  // timeline  — full visit history; auto-selected when ?uhid= arrives
-  // Accept UHID from either `?uhid=` (modern) or `/:uhid` path param (legacy
-  // /visit-history/:uhid). Query string wins if both are present.
+  // Auto-pick initial view by role / URL.
   const urlUhid = (searchParams.get("uhid") || routeUhid || "").toUpperCase();
   const defaultView = useMemo(() => {
     if (urlUhid) return "timeline";
@@ -139,7 +142,7 @@ export default function PatientLookupPage({ initialView = "auto" }) {
   }, [urlUhid, initialView, isRX]);
   const [view, setView] = useState(defaultView);
 
-  /* ─── Live search ──────────────────────────────────────────── */
+  /* ─── Live search ─────────────────────────────────────────── */
   const [q, setQ] = useState("");
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
@@ -166,29 +169,26 @@ export default function PatientLookupPage({ initialView = "auto" }) {
     return () => { ac.abort(); if (debRef.current) clearTimeout(debRef.current); };
   }, [q]);
 
-  /* ─── Selected patient detail (right panel / timeline / billing) ── */
-  const [selected, setSelected] = useState(null);    // patient master record
+  /* ─── Selected patient + all timeline streams ──────────────── */
+  const [selected, setSelected] = useState(null);
   const [opd, setOpd]           = useState([]);
   const [adm, setAdm]           = useState([]);
   const [er, setEr]             = useState([]);
   const [bills, setBills]       = useState([]);
   const [detailLoading, setDetailLoading] = useState(false);
   const [timelineFilter, setTimelineFilter] = useState("ALL");
-  const [detailTab, setDetailTab] = useState("profile"); // "profile" | "visits" | "billing"
+  const [detailTab, setDetailTab] = useState("profile"); // profile · visits · billing
 
-  // Pull full patient record + all timeline streams for the selected UHID
   const loadPatientDetail = useCallback(async (uhidOrId) => {
     if (!uhidOrId) return;
     setDetailLoading(true);
     const ac = new AbortController();
     try {
-      // 1. Patient master — always by UHID, falls back to id-by-id if needed
       let patient = null;
       try {
         const r = await axios.get(`${API_ENDPOINTS.PATIENTS}/uhid/${encodeURIComponent(uhidOrId)}`, { signal: ac.signal });
         patient = r?.data?.data || r?.data;
       } catch {
-        // maybe caller gave us an ObjectId
         try {
           const r = await axios.get(`${API_ENDPOINTS.PATIENTS}/${uhidOrId}`, { signal: ac.signal });
           patient = r?.data?.data || r?.data;
@@ -199,7 +199,6 @@ export default function PatientLookupPage({ initialView = "auto" }) {
       if (!patient || ac.signal.aborted) return;
       setSelected(patient);
 
-      // 2. Visit streams + bills — parallel, all share the same abort signal
       const [opdRows, admRows, erRows, billRows] = await Promise.all([
         loadOPDForPatient(patient._id, ac.signal),
         loadAdmissions(patient._id, patient.UHID, ac.signal),
@@ -217,7 +216,6 @@ export default function PatientLookupPage({ initialView = "auto" }) {
     return () => ac.abort();
   }, []);
 
-  // Auto-load when ?uhid= arrives or when caller clicks a search row
   useEffect(() => {
     if (urlUhid) loadPatientDetail(urlUhid);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -229,14 +227,14 @@ export default function PatientLookupPage({ initialView = "auto" }) {
     setDetailTab("profile");
   };
 
-  /* ─── Directory mode (paginated) ──────────────────────────── */
-  const [dirRows, setDirRows] = useState([]);
-  const [dirPage, setDirPage] = useState(1);
-  const [dirType, setDirType] = useState("ALL");
-  const [dirSearch, setDirSearch] = useState("");
-  const [dirTotal, setDirTotal] = useState(0);
-  const [dirLoading, setDirLoading] = useState(false);
-  const DIR_LIMIT = 12;
+  /* ─── Directory mode (paginated) ───────────────────────────── */
+  const [dirRows,     setDirRows]     = useState([]);
+  const [dirPage,     setDirPage]     = useState(1);
+  const [dirType,     setDirType]     = useState("ALL");
+  const [dirSearch,   setDirSearch]   = useState("");
+  const [dirTotal,    setDirTotal]    = useState(0);
+  const [dirLoading,  setDirLoading]  = useState(false);
+  const DIR_LIMIT = 15;
 
   const loadDirectory = useCallback(async () => {
     if (view !== "directory") return;
@@ -265,47 +263,59 @@ export default function PatientLookupPage({ initialView = "auto" }) {
     return () => { if (typeof cleanup === "function") cleanup(); };
   }, [loadDirectory]);
 
-  /* ─── Unified timeline rows for the selected patient ─────── */
+  /* ─── Unified timeline rows ───────────────────────────────── */
   const timelineRows = useMemo(() => {
     const items = [];
     for (const v of opd) {
       items.push({
-        key:      `opd-${v._id}`,
-        kind:     "OPD",
-        when:     v.visitDate || v.createdAt,
-        title:    `OPD Visit ${v.visitNumber || ""}`,
-        doctor:   docName(v.doctorId || v.consultantName),
-        dept:     deptName(v.departmentId || v.department),
-        complaint:v.chiefComplaint,
-        status:   v.status,
-        raw:      v,
+        key: `opd-${v._id}`, kind: "OPD",
+        when:   v.visitDate || v.createdAt,
+        title:  `OPD ${v.visitNumber || ""}`.trim(),
+        token:  v.tokenNumber,
+        doctor: docName(v.doctorId || v.consultantName),
+        dept:   deptName(v.departmentId || v.department),
+        complaint: v.chiefComplaint,
+        duration:  v.complaintDuration,
+        history:   v.historyOfPresentIllness,
+        pastHx:    v.pastMedicalHistory,
+        status:    v.status,
+        vitalsStatus: v.vitalsStatus,
+        raw: v,
       });
     }
     for (const a of adm) {
       items.push({
-        key:      `adm-${a._id}`,
-        kind:     "IPD",
-        when:     a.admissionDate || a.createdAt,
-        title:    `${a.admissionType || "IPD"} Admission ${a.admissionNumber || ""}`,
-        doctor:   a.attendingDoctor || docName(a.attendingDoctorId),
-        dept:     a.department || deptName(a.departmentId),
-        bed:      a.bedNumber,
-        complaint:a.reasonForAdmission || a.provisionalDiagnosis,
-        status:   a.status,
-        raw:      a,
+        key: `adm-${a._id}`, kind: "IPD",
+        when:   a.admissionDate || a.createdAt,
+        title:  `${a.admissionType || "IPD"} ${a.admissionNumber || ""}`.trim(),
+        doctor: a.attendingDoctor || docName(a.attendingDoctorId),
+        dept:   a.department || deptName(a.departmentId),
+        bed:    a.bedNumber,
+        room:   a.roomNumber,
+        complaint: a.reasonForAdmission,
+        diagnosis: a.provisionalDiagnosis,
+        status: a.status,
+        dischargeDate: a.actualDischargeDate,
+        condition: a.conditionOnDischarge,
+        cost: a.totalCost,
+        advance: a.advancePaid,
+        estimated: a.estimatedCost,
+        raw: a,
       });
     }
     for (const e of er) {
       items.push({
-        key:      `er-${e._id}`,
-        kind:     "Emergency",
-        when:     e.visitDate || e.createdAt,
-        title:    `Emergency ${e.visitNumber || ""}`,
-        doctor:   docName(e.doctorId),
-        dept:     deptName(e.departmentId),
-        complaint:e.chiefComplaint,
-        status:   e.status,
-        raw:      e,
+        key: `er-${e._id}`, kind: "Emergency",
+        when:   e.visitDate || e.createdAt,
+        title:  `Emergency ${e.visitNumber || ""}`.trim(),
+        doctor: docName(e.doctorId),
+        dept:   deptName(e.departmentId),
+        complaint: e.chiefComplaint,
+        triage: e.triageLevel,
+        mlc:    e.isMLC,
+        mlcNo:  e.mlcNumber,
+        status: e.status,
+        raw: e,
       });
     }
     items.sort((a, b) => new Date(b.when) - new Date(a.when));
@@ -319,106 +329,97 @@ export default function PatientLookupPage({ initialView = "auto" }) {
     er:  er.length,
     bills: bills.length,
     outstanding: bills.reduce((s, b) => s + (Number(b.balanceAmount) || Number(b.balance) || 0), 0),
+    paid: bills.reduce((s, b) => s + (Number(b.totalPaid) || Number(b.paidAmount) || 0), 0),
   }), [opd, adm, er, bills]);
 
   /* ════════════════ RENDER ════════════════ */
   return (
-    <div className="rx-page" style={{ padding: 16 }}>
+    <div className="rx-page pl-page">
 
-      {/* ── Top bar: title + view-mode tabs ── */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, gap: 12, flexWrap: "wrap" }}>
+      {/* ── HIS-themed header bar ── */}
+      <div className="rx-header">
         <div>
-          <h2 style={{ margin: 0, fontSize: 20, color: "#0f172a" }}>
-            <i className="pi pi-id-card" style={{ color: "#0891b2", marginRight: 8 }} />
-            Patient Lookup
-          </h2>
-          <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+          <div className="rx-header-title">
+            <i className="pi pi-id-card" /> Patient Lookup
+          </div>
+          <div className="rx-header-meta">
             Search · Directory · Visit Timeline · Billing — all in one window
           </div>
         </div>
-        <div style={{ display: "flex", gap: 6, background: "#f1f5f9", padding: 4, borderRadius: 10 }}>
-          {[
-            { k: "search",    label: "Search",    icon: "pi-search" },
-            { k: "directory", label: "Directory", icon: "pi-table" },
-            { k: "timeline",  label: "Timeline",  icon: "pi-history", disabled: !selected },
-          ].map((t) => (
+        <div className="rx-header-actions">
+          <div className="pl-view-switch" role="tablist" aria-label="View mode">
             <button
-              key={t.k}
-              disabled={t.disabled}
-              onClick={() => setView(t.k)}
-              style={{
-                padding: "8px 14px",
-                fontSize: 13,
-                fontWeight: 600,
-                border: "none",
-                borderRadius: 7,
-                background: view === t.k ? "#ffffff" : "transparent",
-                color: view === t.k ? "#0891b2" : (t.disabled ? "#94a3b8" : "#475569"),
-                boxShadow: view === t.k ? "0 1px 2px rgba(0,0,0,.08)" : "none",
-                cursor: t.disabled ? "not-allowed" : "pointer",
-                opacity: t.disabled ? 0.5 : 1,
-              }}
+              role="tab"
+              aria-selected={view === "search"}
+              className={`pl-view-btn ${view === "search" ? "pl-view-btn--active" : ""}`}
+              onClick={() => setView("search")}
             >
-              <i className={`pi ${t.icon}`} style={{ marginRight: 6, fontSize: 12 }} />
-              {t.label}
+              <i className="pi pi-search" /> Search
             </button>
-          ))}
+            <button
+              role="tab"
+              aria-selected={view === "directory"}
+              className={`pl-view-btn ${view === "directory" ? "pl-view-btn--active" : ""}`}
+              onClick={() => setView("directory")}
+            >
+              <i className="pi pi-table" /> Directory
+            </button>
+            <button
+              role="tab"
+              aria-selected={view === "timeline"}
+              disabled={!selected}
+              className={`pl-view-btn ${view === "timeline" ? "pl-view-btn--active" : ""}`}
+              onClick={() => setView("timeline")}
+            >
+              <i className="pi pi-history" /> Timeline
+            </button>
+          </div>
         </div>
       </div>
 
       {/* ════════════════ SEARCH VIEW ════════════════ */}
       {view === "search" && (
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.2fr)", gap: 14 }}>
+        <div className="pl-search-grid">
           {/* ── Search column ── */}
-          <div className="rx-card">
-            <div className="rx-card-head">
+          <div className="rx-card pl-search-col">
+            <div className="pl-col-head">
               <i className="pi pi-search" /> Live Search
-              <span className="rx-card-meta">{results.length} result{results.length !== 1 ? "s" : ""}</span>
+              <span className="pl-col-meta">{results.length} result{results.length !== 1 ? "s" : ""}</span>
             </div>
-            <div className="rx-card-body">
-              <input
-                autoFocus
-                type="text"
-                placeholder="Name, UHID, or phone (min 2 chars)"
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                style={{
-                  width: "100%", padding: "10px 12px",
-                  border: "1.5px solid #e2e8f0", borderRadius: 8,
-                  fontSize: 14, marginBottom: 12,
-                }}
-              />
-              {searching && <div style={{ color: "#64748b", fontSize: 12 }}>Searching…</div>}
+            <div className="pl-col-body">
+              <div className="rx-search">
+                <i className="pi pi-search" />
+                <input
+                  autoFocus
+                  type="text"
+                  placeholder="Name, UHID, or phone (min 2 chars)"
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                />
+              </div>
+              {searching && <div className="pl-hint">Searching…</div>}
               {!searching && q.trim().length >= 2 && results.length === 0 && (
                 <div className="rx-empty">No patients match "{q}"</div>
               )}
-              <div style={{ display: "grid", gap: 8 }}>
+              <div className="pl-result-list">
                 {results.map((p) => {
                   const isSelected = selected?._id === p._id;
                   return (
                     <button
                       key={p._id}
                       onClick={() => pickPatient(p)}
-                      style={{
-                        textAlign: "left", padding: 10,
-                        border: `1.5px solid ${isSelected ? "#0891b2" : "#e2e8f0"}`,
-                        background: isSelected ? "#ecfeff" : "#ffffff",
-                        borderRadius: 8, cursor: "pointer",
-                        display: "flex", alignItems: "center", gap: 10,
-                      }}
+                      className={`pl-result-card ${isSelected ? "pl-result-card--active" : ""}`}
                     >
-                      <div style={{
-                        width: 36, height: 36, borderRadius: "50%",
-                        background: "#0891b2", color: "#ffffff",
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        fontWeight: 700, fontSize: 13,
-                      }}>{initials(p.fullName)}</div>
-                      <div style={{ minWidth: 0, flex: 1 }}>
-                        <div style={{ fontWeight: 700, color: "#0f172a", fontSize: 13 }}>
+                      <span className="pl-avatar">{initials(p.fullName)}</span>
+                      <div className="pl-result-info">
+                        <div className="pl-result-name">
                           {p.title ? `${p.title} ` : ""}{p.fullName}
                         </div>
-                        <div style={{ fontSize: 11, color: "#64748b" }}>
-                          {p.UHID} · {ageGenderLine(p)} · {p.contactNumber || "—"}
+                        <div className="pl-result-meta">
+                          <span className="rx-mono-tag">{p.UHID}</span>
+                          <span>{ageGenderLine(p)}</span>
+                          {p.contactNumber && <span>{p.contactNumber}</span>}
+                          {p.bloodGroup   && <span className="pl-bg">{p.bloodGroup}</span>}
                         </div>
                       </div>
                       {p.registrationType && (
@@ -450,26 +451,21 @@ export default function PatientLookupPage({ initialView = "auto" }) {
 
       {/* ════════════════ DIRECTORY VIEW ════════════════ */}
       {view === "directory" && (
-        <div>
-          {/* Filter row */}
-          <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
-            <input
-              type="text"
-              placeholder="Search name / UHID / phone…"
-              value={dirSearch}
-              onChange={(e) => { setDirPage(1); setDirSearch(e.target.value); }}
-              style={{
-                flex: "1 1 280px", padding: "10px 12px",
-                border: "1.5px solid #e2e8f0", borderRadius: 8, fontSize: 14,
-              }}
-            />
+        <>
+          <div className="pl-dir-filters">
+            <div className="rx-search pl-dir-search">
+              <i className="pi pi-search" />
+              <input
+                type="text"
+                placeholder="Search name / UHID / phone / email…"
+                value={dirSearch}
+                onChange={(e) => { setDirPage(1); setDirSearch(e.target.value); }}
+              />
+            </div>
             <select
+              className="his-select pl-dir-type"
               value={dirType}
               onChange={(e) => { setDirPage(1); setDirType(e.target.value); }}
-              style={{
-                padding: "10px 12px", border: "1.5px solid #e2e8f0",
-                borderRadius: 8, fontSize: 14, background: "#fff",
-              }}
             >
               <option value="ALL">All Types</option>
               <option value="OPD">OPD</option>
@@ -477,64 +473,72 @@ export default function PatientLookupPage({ initialView = "auto" }) {
               <option value="Emergency">Emergency</option>
               <option value="Daycare">Day Care</option>
             </select>
+            <span className="pl-dir-total">{dirTotal} total</span>
           </div>
 
-          {/* Table */}
-          <div className="rx-card">
-            <div className="rx-card-head">
-              <i className="pi pi-users" /> Patient Directory
-              <span className="rx-card-meta">{dirTotal} total</span>
-            </div>
-            <div className="rx-card-body" style={{ padding: 0 }}>
-              {dirLoading && <div style={{ padding: 16, color: "#64748b" }}>Loading…</div>}
-              {!dirLoading && dirRows.length === 0 && (
-                <div className="rx-empty" style={{ padding: 24 }}>
-                  No patients found
-                </div>
-              )}
-              {!dirLoading && dirRows.length > 0 && (
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <div className="rx-card pl-dir-card">
+            {dirLoading ? (
+              <div className="pl-hint pl-hint--pad">
+                <i className="pi pi-spin pi-spinner" /> Loading…
+              </div>
+            ) : dirRows.length === 0 ? (
+              <div className="rx-empty">
+                <span className="rx-empty-icon">🔍</span>
+                No patients found
+              </div>
+            ) : (
+              <div className="rx-table-wrap pl-dir-tablewrap">
+                <table className="rx-table">
                   <thead>
-                    <tr style={{ background: "#f8fafc", color: "#475569" }}>
-                      <th style={th}>Patient</th>
-                      <th style={th}>UHID</th>
-                      <th style={th}>Age / Sex</th>
-                      <th style={th}>Contact</th>
-                      <th style={th}>Type</th>
-                      <th style={th}>Doctor / Dept</th>
-                      <th style={{ ...th, textAlign: "right" }}>Actions</th>
+                    <tr>
+                      <th>Patient</th>
+                      <th>UHID</th>
+                      <th>Age / Sex</th>
+                      <th>Contact</th>
+                      <th>Type</th>
+                      <th>Doctor / Department</th>
+                      <th>Payment</th>
+                      <th className="pl-th-actions">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {dirRows.map((p) => (
-                      <tr key={p._id} style={{ borderTop: "1px solid #e2e8f0" }}>
-                        <td style={td}>
-                          <div style={{ fontWeight: 700, color: "#0f172a" }}>
-                            {p.title ? `${p.title} ` : ""}{p.fullName}
+                      <tr key={p._id}>
+                        <td>
+                          <div className="pl-cell-name">
+                            <span className="pl-avatar pl-avatar--sm">{initials(p.fullName)}</span>
+                            <span>{p.title ? `${p.title} ` : ""}{p.fullName}</span>
                           </div>
                         </td>
-                        <td style={{ ...td, fontFamily: "monospace", fontSize: 12 }}>{p.UHID}</td>
-                        <td style={td}>{ageGenderLine(p) || "—"}</td>
-                        <td style={td}>{p.contactNumber || "—"}</td>
-                        <td style={td}>
+                        <td><span className="rx-mono-tag">{p.UHID}</span></td>
+                        <td>{ageGenderLine(p) || "—"}</td>
+                        <td>
+                          <div>{p.contactNumber || "—"}</div>
+                          {p.email && <div className="pl-sub">{p.email}</div>}
+                        </td>
+                        <td>
                           {p.registrationType && (
                             <span className={`rx-pill rx-pill--${(p.registrationType || "").toLowerCase()}`}>
                               {p.registrationType}
                             </span>
                           )}
                         </td>
-                        <td style={td}>
+                        <td>
                           <div>{docName(p.doctor)}</div>
-                          <div style={{ fontSize: 11, color: "#94a3b8" }}>{deptName(p.department)}</div>
+                          <div className="pl-sub">{deptName(p.department)}</div>
                         </td>
-                        <td style={{ ...td, textAlign: "right" }}>
-                          <button onClick={() => { pickPatient(p); setView("timeline"); }}
-                                  style={btnSm}>
+                        <td>
+                          <span className="rx-mode-pill">{p.paymentType || "CASH"}</span>
+                          {p.tpa && <div className="pl-sub">{p.tpa.tpaName || p.tpa.name || "TPA"}</div>}
+                        </td>
+                        <td className="pl-td-actions">
+                          <button className="rx-action-btn rx-action-btn--primary"
+                                  onClick={() => { pickPatient(p); setView("timeline"); }}>
                             <i className="pi pi-eye" /> Open
                           </button>
                           {canEdit && (
-                            <button onClick={() => navigate(`/reception/register?uhid=${encodeURIComponent(p.UHID || "")}`)}
-                                    style={{ ...btnSm, marginLeft: 6 }}>
+                            <button className="rx-action-btn"
+                                    onClick={() => navigate(`/reception/register?uhid=${encodeURIComponent(p.UHID || "")}`)}>
                               <i className="pi pi-pencil" /> Edit
                             </button>
                           )}
@@ -543,25 +547,26 @@ export default function PatientLookupPage({ initialView = "auto" }) {
                     ))}
                   </tbody>
                 </table>
-              )}
-            </div>
+              </div>
+            )}
           </div>
 
-          {/* Pager */}
           {dirTotal > DIR_LIMIT && (
-            <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 12 }}>
-              <button onClick={() => setDirPage(Math.max(1, dirPage - 1))} disabled={dirPage === 1} style={btnSm}>
-                ← Prev
+            <div className="pl-pager">
+              <button className="rx-action-btn"
+                      onClick={() => setDirPage(Math.max(1, dirPage - 1))} disabled={dirPage === 1}>
+                <i className="pi pi-chevron-left" /> Prev
               </button>
-              <span style={{ alignSelf: "center", fontSize: 13, color: "#475569" }}>
+              <span className="pl-pager-meta">
                 Page {dirPage} of {Math.max(1, Math.ceil(dirTotal / DIR_LIMIT))}
               </span>
-              <button onClick={() => setDirPage(dirPage + 1)} disabled={dirPage * DIR_LIMIT >= dirTotal} style={btnSm}>
-                Next →
+              <button className="rx-action-btn"
+                      onClick={() => setDirPage(dirPage + 1)} disabled={dirPage * DIR_LIMIT >= dirTotal}>
+                Next <i className="pi pi-chevron-right" />
               </button>
             </div>
           )}
-        </div>
+        </>
       )}
 
       {/* ════════════════ TIMELINE VIEW ════════════════ */}
@@ -577,13 +582,12 @@ export default function PatientLookupPage({ initialView = "auto" }) {
           canEdit={canEdit}
           navigate={navigate}
           fullWidth
-          // When the timeline view loads without a selection (e.g. user
-          // clicks the tab before picking a patient), prompt them back
-          // into Search.
           emptyHint={!selected && (
-            <div className="rx-empty" style={{ padding: 24 }}>
+            <div className="rx-empty">
+              <span className="rx-empty-icon">🔍</span>
               No patient selected.{" "}
-              <button onClick={() => setView("search")} style={{ ...btnSm, marginLeft: 8 }}>
+              <button className="rx-action-btn rx-action-btn--primary pl-empty-cta"
+                      onClick={() => setView("search")}>
                 Search for a patient →
               </button>
             </div>
@@ -594,7 +598,10 @@ export default function PatientLookupPage({ initialView = "auto" }) {
   );
 }
 
-/* ─── Detail panel (Profile / Visits / Billing tabs) ────────── */
+/* ════════════════════════════════════════════════════════════
+   DETAIL PANEL — Profile / Visits / Billing tabs
+   Shows ALL backend fields per audit requirement.
+══════════════════════════════════════════════════════════════ */
 function PatientDetailPanel({
   patient, opd, adm, er, bills, tab, setTab,
   timelineFilter, setTimelineFilter, timelineRows, totals, loading,
@@ -603,164 +610,248 @@ function PatientDetailPanel({
   if (!patient && emptyHint) return emptyHint;
   if (!patient) {
     return (
-      <div className="rx-card" style={{ ...(fullWidth ? { width: "100%" } : {}) }}>
-        <div className="rx-card-body">
-          <div className="rx-empty">
-            <i className="pi pi-id-card" style={{ fontSize: 24, color: "#cbd5e1" }} />
-            <div style={{ marginTop: 8, color: "#64748b" }}>
-              Select a patient on the left to see their profile, visits, and billing.
-            </div>
-          </div>
+      <div className={`rx-card pl-detail-card ${fullWidth ? "pl-detail-card--full" : ""}`}>
+        <div className="rx-empty pl-empty">
+          <i className="pi pi-id-card pl-empty-icon" />
+          <div>Select a patient on the left to see their profile, visits, and billing.</div>
         </div>
       </div>
     );
   }
   return (
-    <div className="rx-card" style={{ ...(fullWidth ? { width: "100%" } : {}) }}>
-      {/* Header */}
-      <div style={{ padding: 14, borderBottom: "1px solid #e2e8f0", display: "flex", gap: 12, alignItems: "center" }}>
-        <div style={{
-          width: 48, height: 48, borderRadius: "50%",
-          background: "#0891b2", color: "#fff",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          fontWeight: 700, fontSize: 16,
-        }}>{initials(patient.fullName)}</div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 700, fontSize: 16, color: "#0f172a" }}>
+    <div className={`rx-card pl-detail-card ${fullWidth ? "pl-detail-card--full" : ""}`}>
+      {/* ── Identity strip ── */}
+      <div className="pl-id-strip">
+        <span className="pl-avatar pl-avatar--lg">{initials(patient.fullName)}</span>
+        <div className="pl-id-main">
+          <div className="pl-id-name">
             {patient.title ? `${patient.title} ` : ""}{patient.fullName}
+            {patient.isMLC && <span className="rx-pill rx-pill--mlc">MLC{patient.mlcNumber ? ` · ${patient.mlcNumber}` : ""}</span>}
           </div>
-          <div style={{ fontSize: 12, color: "#64748b" }}>
-            {patient.UHID} · {ageGenderLine(patient)} · {patient.contactNumber || "—"}
-            {patient.bloodGroup && <span> · {patient.bloodGroup}</span>}
+          <div className="pl-id-meta">
+            <span className="rx-mono-tag">{patient.UHID}</span>
+            <span>{ageGenderLine(patient) || "—"}</span>
+            {patient.contactNumber && <span><i className="pi pi-phone" /> {patient.contactNumber}</span>}
+            {patient.bloodGroup    && <span className="pl-bg">{patient.bloodGroup}</span>}
+            {patient.registrationType && (
+              <span className={`rx-pill rx-pill--${(patient.registrationType || "").toLowerCase()}`}>
+                {patient.registrationType}
+              </span>
+            )}
           </div>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div className="pl-id-actions">
           {canNewVisit && (
-            <button onClick={() => navigate(`/reception/register?uhid=${encodeURIComponent(patient.UHID || "")}`)} style={btnPrimary}>
+            <button className="rx-action-btn rx-action-btn--primary"
+                    onClick={() => navigate(`/reception/register?uhid=${encodeURIComponent(patient.UHID || "")}`)}>
               <i className="pi pi-plus" /> New Visit
             </button>
           )}
-          <button onClick={() => navigate(`/reception-billing?uhid=${encodeURIComponent(patient.UHID || "")}`)} style={btnSm}>
+          <button className="rx-action-btn"
+                  onClick={() => navigate(`/reception-billing?uhid=${encodeURIComponent(patient.UHID || "")}`)}>
             <i className="pi pi-receipt" /> Billing
           </button>
+          {canEdit && (
+            <button className="rx-action-btn"
+                    onClick={() => navigate(`/reception/register?uhid=${encodeURIComponent(patient.UHID || "")}`)}>
+              <i className="pi pi-pencil" /> Edit
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Detail tabs */}
-      <div style={{ display: "flex", gap: 4, padding: "10px 14px 0", borderBottom: "1px solid #e2e8f0" }}>
-        {[
-          { k: "profile", label: "Profile",  icon: "pi-id-card", count: null },
-          { k: "visits",  label: "Visits",   icon: "pi-history", count: timelineRows.length },
-          { k: "billing", label: "Billing",  icon: "pi-receipt", count: totals.bills },
-        ].map((t) => (
-          <button
-            key={t.k}
-            onClick={() => setTab(t.k)}
-            style={{
-              padding: "8px 14px", border: "none",
-              borderBottom: tab === t.k ? "2px solid #0891b2" : "2px solid transparent",
-              background: "transparent",
-              color: tab === t.k ? "#0891b2" : "#64748b",
-              fontWeight: 600, fontSize: 13, cursor: "pointer",
-            }}
-          >
-            <i className={`pi ${t.icon}`} style={{ marginRight: 6 }} />
-            {t.label}{t.count != null && <span style={{ color: "#94a3b8", fontWeight: 500 }}> ({t.count})</span>}
-          </button>
-        ))}
+      {/* ── Quick KPIs ── */}
+      <div className="rx-kpis pl-kpis">
+        <div className="rx-kpi">
+          <span className="rx-kpi-label">OPD</span>
+          <span className="rx-kpi-value">{totals.opd}</span>
+        </div>
+        <div className="rx-kpi">
+          <span className="rx-kpi-label">IPD</span>
+          <span className="rx-kpi-value">{totals.ipd}</span>
+        </div>
+        <div className="rx-kpi">
+          <span className="rx-kpi-label">ER</span>
+          <span className="rx-kpi-value">{totals.er}</span>
+        </div>
+        <div className="rx-kpi">
+          <span className="rx-kpi-label">Bills</span>
+          <span className="rx-kpi-value">{totals.bills}</span>
+          {totals.paid > 0 && <span className="rx-kpi-sub">Paid {fmtCur(totals.paid)}</span>}
+        </div>
+        {totals.outstanding > 0 && (
+          <div className="rx-kpi pl-kpi-due">
+            <span className="rx-kpi-label">Outstanding</span>
+            <span className="rx-kpi-value">{fmtCur(totals.outstanding)}</span>
+          </div>
+        )}
       </div>
 
-      {/* Tab bodies */}
-      <div style={{ padding: 14, minHeight: 200 }}>
-        {loading && <div style={{ color: "#64748b" }}>Loading…</div>}
+      {/* ── Detail tabs ── */}
+      <div className="rx-tabs pl-detail-tabs">
+        <button
+          className={`rx-tab ${tab === "profile" ? "rx-tab--active" : ""}`}
+          onClick={() => setTab("profile")}>
+          <i className="pi pi-id-card" /> Profile
+        </button>
+        <button
+          className={`rx-tab ${tab === "visits" ? "rx-tab--active" : ""}`}
+          onClick={() => setTab("visits")}>
+          <i className="pi pi-history" /> Visits <span className="rx-tab-count">{timelineRows.length}</span>
+        </button>
+        <button
+          className={`rx-tab ${tab === "billing" ? "rx-tab--active" : ""}`}
+          onClick={() => setTab("billing")}>
+          <i className="pi pi-receipt" /> Billing <span className="rx-tab-count">{totals.bills}</span>
+        </button>
+      </div>
 
-        {!loading && tab === "profile" && (
-          <ProfileBody patient={patient} totals={totals} />
-        )}
+      <div className="pl-tab-body">
+        {loading && <div className="pl-hint pl-hint--pad"><i className="pi pi-spin pi-spinner" /> Loading…</div>}
+
+        {!loading && tab === "profile" && <ProfileBody patient={patient} />}
 
         {!loading && tab === "visits" && (
           <>
-            <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+            <div className="pl-tl-filter">
               {TIMELINE_TABS.map((t) => (
                 <button
                   key={t.key}
+                  className={`pl-tl-chip ${timelineFilter === t.key ? "pl-tl-chip--active" : ""}`}
                   onClick={() => setTimelineFilter(t.key)}
-                  style={{
-                    padding: "6px 10px",
-                    border: `1px solid ${timelineFilter === t.key ? "#0891b2" : "#e2e8f0"}`,
-                    background: timelineFilter === t.key ? "#ecfeff" : "#ffffff",
-                    color: timelineFilter === t.key ? "#0891b2" : "#475569",
-                    borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600,
-                  }}
                 >
-                  <i className={`pi ${t.icon}`} style={{ marginRight: 4 }} /> {t.label}
+                  <i className={`pi ${t.icon}`} /> {t.label}
                 </button>
               ))}
             </div>
             {timelineRows.length === 0 ? (
               <div className="rx-empty">No visits in this filter</div>
             ) : (
-              <div style={{ display: "grid", gap: 8 }}>
-                {timelineRows.map((r) => <TimelineRow key={r.key} r={r} />)}
+              <div className="rx-timeline pl-timeline">
+                {timelineRows.map((r) => <TimelineCard key={r.key} r={r} />)}
               </div>
             )}
           </>
         )}
 
-        {!loading && tab === "billing" && (
-          <BillingBody bills={bills} totals={totals} />
+        {!loading && tab === "billing" && <BillingBody bills={bills} />}
+      </div>
+    </div>
+  );
+}
+
+/* ─── Profile body — every backend field on the patient master ── */
+function ProfileBody({ patient }) {
+  return (
+    <div className="pl-profile-grid">
+      <Section title="Personal">
+        <Field label="DOB" value={fmtDate(patient.dateOfBirth)} />
+        <Field label="Marital Status" value={patient.maritalStatus || "—"} />
+        <Field label="Father / Guardian" value={patient.fatherName || "—"} />
+        <Field label="Mother" value={patient.motherName || "—"} />
+        <Field label="Occupation" value={patient.occupation || "—"} />
+        <Field label="Nationality" value={patient.nationality || "Indian"} />
+      </Section>
+      <Section title="Contact">
+        <Field label="Phone" value={patient.contactNumber || "—"} />
+        <Field label="Alt Phone" value={patient.alternateContact || "—"} />
+        <Field label="Email" value={patient.email || "—"} />
+        <Field full label="Address" value={fullAddr(patient.address)} />
+      </Section>
+      <Section title="Medical">
+        <Field label="Blood Group" value={patient.bloodGroup || "—"} />
+        <Field full label="Known Allergies" value={patient.knownAllergies || "None known"} />
+        <Field full label="Chronic Conditions" value={patient.chronicConditions || patient.knownConditions || "—"} />
+      </Section>
+      <Section title="Visit / Care Team">
+        <Field label="Registration Type" value={patient.registrationType || "—"} />
+        <Field label="Department" value={deptName(patient.department)} />
+        <Field label="Primary Doctor" value={docName(patient.doctor)} />
+        <Field label="Total OPD" value={String(patient.totalOPDVisits ?? "—")} />
+        <Field label="Total IPD" value={String(patient.totalIPDVisits ?? "—")} />
+        <Field label="Last Visit" value={fmtDate(patient.lastVisitDate)} />
+      </Section>
+      <Section title="Payment & Insurance">
+        <Field label="Payment Type" value={patient.paymentType || "CASH"} />
+        {patient.tpa && (
+          <>
+            <Field label="TPA" value={patient.tpa.tpaName || patient.tpa.name || "—"} />
+            <Field label="TPA Code" value={patient.tpa.tpaCode || "—"} />
+            <Field label="Policy / Card #" value={patient.tpaCardNumber || patient.policyNumber || "—"} />
+          </>
         )}
-      </div>
+        {patient.isMLC && (
+          <Field label="MLC Number" value={patient.mlcNumber || "—"} />
+        )}
+      </Section>
+      <Section title="Companion / Emergency Contact">
+        <Field label="Name" value={patient.companionName || "—"} />
+        <Field label="Relationship" value={patient.companionRelationship || "—"} />
+        <Field label="Phone" value={patient.companionContact || "—"} />
+      </Section>
+      <Section title="System">
+        <Field label="Registered" value={fmtDateTime(patient.createdAt)} />
+        <Field label="Last Updated" value={fmtDateTime(patient.updatedAt)} />
+        <Field label="Patient ID" value={<span className="rx-mono-tag rx-mono-tag--subtle">{patient._id}</span>} />
+      </Section>
     </div>
   );
 }
 
-function ProfileBody({ patient, totals }) {
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
-      <Field label="DOB" value={fmtDate(patient.dateOfBirth)} />
-      <Field label="Blood Group" value={patient.bloodGroup || "—"} />
-      <Field label="Marital Status" value={patient.maritalStatus || "—"} />
-      <Field label="Email" value={patient.email || "—"} />
-      <Field label="Allergies" value={patient.knownAllergies || "None"} />
-      <Field label="Department" value={deptName(patient.department)} />
-      <Field label="Primary Doctor" value={docName(patient.doctor)} />
-      <Field label="Address" value={patient.address?.completeAddress || patient.address || "—"} full />
-      <div style={{ gridColumn: "1 / -1", display: "flex", gap: 16, marginTop: 6 }}>
-        <Stat label="OPD" value={totals.opd} />
-        <Stat label="IPD" value={totals.ipd} />
-        <Stat label="ER"  value={totals.er} />
-        <Stat label="Bills" value={totals.bills} />
-        {totals.outstanding > 0 && <Stat label="Outstanding" value={fmtCur(totals.outstanding)} color="#dc2626" />}
-      </div>
-    </div>
-  );
-}
-
+/* ─── Billing body — full bill + payment ledger ──────────────── */
 function BillingBody({ bills }) {
-  if (!bills || bills.length === 0) return <div className="rx-empty">No bills on file</div>;
+  if (!bills || bills.length === 0) {
+    return (
+      <div className="rx-empty">
+        <span className="rx-empty-icon">🧾</span>
+        No bills on file
+      </div>
+    );
+  }
   return (
-    <div style={{ display: "grid", gap: 8 }}>
+    <div className="pl-bills">
       {bills.map((b) => {
         const balance = Number(b.balanceAmount) || Number(b.balance) || 0;
         const total   = Number(b.netAmount)     || Number(b.totalAmount) || 0;
+        const paid    = Number(b.totalPaid)     || Number(b.paidAmount)  || (total - balance);
         return (
-          <div key={b._id} style={{
-            border: "1px solid #e2e8f0", borderRadius: 8, padding: 10,
-            display: "flex", justifyContent: "space-between", alignItems: "center",
-          }}>
-            <div>
-              <div style={{ fontWeight: 700, color: "#0f172a", fontSize: 13 }}>
-                {b.billNumber} · {b.visitType}
+          <div key={b._id} className="pl-bill-card">
+            <div className="pl-bill-head">
+              <div>
+                <div className="pl-bill-num">
+                  <i className="pi pi-receipt" /> {b.billNumber}
+                  <span className={`rx-pill rx-pill--${(b.visitType || "").toLowerCase()}`}>{b.visitType}</span>
+                </div>
+                <div className="pl-bill-sub">{fmtDateTime(b.billDate || b.createdAt)}</div>
               </div>
-              <div style={{ fontSize: 11, color: "#64748b" }}>
-                {fmtDateTime(b.billDate || b.createdAt)} · status: {b.billStatus}
+              <span className={`pl-bill-status pl-bill-status--${(b.billStatus || "").toLowerCase()}`}>
+                {b.billStatus}
+              </span>
+            </div>
+            <div className="pl-bill-rows">
+              <BillRow label="Gross"     v={b.grossAmount} />
+              <BillRow label="Discount"  v={b.totalDiscount} discount />
+              <BillRow label="Tax (GST)" v={b.totalTax || b.taxAmount} />
+              <BillRow label="Net"       v={total} bold />
+              <BillRow label="Paid"      v={paid} success />
+              {balance > 0 && <BillRow label="Outstanding" v={balance} due />}
+            </div>
+            {Array.isArray(b.payments) && b.payments.length > 0 && (
+              <div className="pl-payments">
+                <div className="pl-payments-head">
+                  <i className="pi pi-wallet" /> Payment ledger
+                </div>
+                {b.payments.map((p, i) => (
+                  <div key={p._id || i} className="pl-pay-row">
+                    <span>{fmtDate(p.paymentDate || p.createdAt)}</span>
+                    <span className="rx-mode-pill">{p.paymentMode || "CASH"}</span>
+                    {p.transactionId && <span className="rx-mono-tag rx-mono-tag--subtle">{p.transactionId}</span>}
+                    {p.receivedBy && <span className="pl-pay-by">by {p.receivedBy}</span>}
+                    <span className="pl-pay-amt">{fmtCur(p.amount)}</span>
+                  </div>
+                ))}
               </div>
-            </div>
-            <div style={{ textAlign: "right" }}>
-              <div style={{ fontWeight: 700, color: "#0f172a", fontSize: 14 }}>{fmtCur(total)}</div>
-              {balance > 0 && <div style={{ fontSize: 12, color: "#dc2626" }}>Due: {fmtCur(balance)}</div>}
-            </div>
+            )}
           </div>
         );
       })}
@@ -768,62 +859,98 @@ function BillingBody({ bills }) {
   );
 }
 
-function TimelineRow({ r }) {
-  const tone = { OPD: "#7c3aed", IPD: "#1d4ed8", Emergency: "#dc2626" }[r.kind] || "#64748b";
+/* ─── Timeline card — full backend fields per visit kind ───── */
+function TimelineCard({ r }) {
+  const cls = r.kind === "OPD" ? "opd" : r.kind === "IPD" ? "ipd" : "emergency";
   return (
-    <div style={{
-      border: "1px solid #e2e8f0", borderRadius: 8, padding: 10,
-      display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 12, alignItems: "center",
-    }}>
-      <span style={{
-        background: `${tone}15`, color: tone, padding: "3px 8px",
-        borderRadius: 4, fontSize: 11, fontWeight: 700,
-      }}>{r.kind}</span>
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontWeight: 700, color: "#0f172a", fontSize: 13 }}>{r.title}</div>
-        <div style={{ fontSize: 11, color: "#64748b" }}>
-          {r.doctor} · {r.dept}{r.bed && ` · Bed ${r.bed}`}
+    <div className={`rx-tl-item rx-tl-item--${cls} pl-tl-card`}>
+      <div className="rx-tl-head">
+        <span className="rx-tl-date">{fmtDateTime(r.when)}</span>
+        <span className={`rx-tl-type rx-tl-type--${cls}`}>{r.kind}</span>
+        {r.status && <span className="pl-tl-status">{r.status}</span>}
+      </div>
+      <div className="rx-tl-meta">
+        <strong>{r.title}</strong>
+        {" · "}{r.doctor}
+        {" · "}{r.dept}
+        {r.bed  && <> · Bed {r.bed}{r.room ? ` (${r.room})` : ""}</>}
+        {r.token != null && <> · Token #{r.token}</>}
+        {r.triage && <> · Triage {r.triage}</>}
+        {r.mlc && <> · <span className="rx-pill rx-pill--mlc">MLC{r.mlcNo ? ` ${r.mlcNo}` : ""}</span></>}
+      </div>
+      {r.complaint && (
+        <div className="pl-tl-row">
+          <span className="pl-tl-key">Complaint</span>
+          <span>{r.complaint}{r.duration ? ` · ${r.duration}` : ""}</span>
         </div>
-        {r.complaint && (
-          <div style={{ fontSize: 12, color: "#475569", marginTop: 4 }}>
-            <strong>Complaint:</strong> {r.complaint}
-          </div>
-        )}
-      </div>
-      <div style={{ textAlign: "right" }}>
-        <div style={{ fontSize: 11, color: "#64748b" }}>{fmtDateTime(r.when)}</div>
-        {r.status && <div style={{ fontSize: 11, fontWeight: 600, color: tone, marginTop: 2 }}>{r.status}</div>}
-      </div>
+      )}
+      {r.diagnosis && (
+        <div className="pl-tl-row">
+          <span className="pl-tl-key">Diagnosis</span>
+          <span>{r.diagnosis}</span>
+        </div>
+      )}
+      {r.history && (
+        <div className="pl-tl-row">
+          <span className="pl-tl-key">HoPI</span>
+          <span>{r.history}</span>
+        </div>
+      )}
+      {r.pastHx && (
+        <div className="pl-tl-row">
+          <span className="pl-tl-key">Past Hx</span>
+          <span>{r.pastHx}</span>
+        </div>
+      )}
+      {r.kind === "IPD" && (
+        <div className="pl-tl-row pl-tl-row--cost">
+          {r.estimated != null && <span><span className="pl-tl-key">Est</span> {fmtCur(r.estimated)}</span>}
+          {r.advance   != null && <span><span className="pl-tl-key">Advance</span> {fmtCur(r.advance)}</span>}
+          {r.cost      != null && <span><span className="pl-tl-key">Final</span> {fmtCur(r.cost)}</span>}
+          {r.dischargeDate && <span><span className="pl-tl-key">DC</span> {fmtDate(r.dischargeDate)}</span>}
+          {r.condition && <span><span className="pl-tl-key">Cond.</span> {r.condition}</span>}
+        </div>
+      )}
+      {r.kind === "OPD" && r.vitalsStatus && (
+        <div className="pl-tl-row">
+          <span className="pl-tl-key">Vitals</span>
+          <span>{r.vitalsStatus}</span>
+        </div>
+      )}
     </div>
   );
 }
 
+/* ─── Small atoms ─────────────────────────────────────────── */
+function Section({ title, children }) {
+  return (
+    <div className="pl-section">
+      <div className="pl-section-title">{title}</div>
+      <div className="pl-section-body">{children}</div>
+    </div>
+  );
+}
 function Field({ label, value, full }) {
   return (
-    <div style={{ gridColumn: full ? "1 / -1" : undefined }}>
-      <div style={{ fontSize: 11, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.6px", fontWeight: 700 }}>{label}</div>
-      <div style={{ fontSize: 13, color: "#0f172a", marginTop: 2 }}>{value}</div>
+    <div className={`pl-field${full ? " pl-field--full" : ""}`}>
+      <div className="pl-field-label">{label}</div>
+      <div className="pl-field-value">{value || "—"}</div>
     </div>
   );
 }
-
-function Stat({ label, value, color = "#0891b2" }) {
+function BillRow({ label, v, bold, success, due, discount }) {
+  if (v == null || Number(v) === 0) return null;
+  const cls = [
+    "pl-billrow",
+    bold && "pl-billrow--bold",
+    success && "pl-billrow--success",
+    due && "pl-billrow--due",
+    discount && "pl-billrow--discount",
+  ].filter(Boolean).join(" ");
   return (
-    <div style={{ background: `${color}10`, borderRadius: 8, padding: "10px 14px", minWidth: 84 }}>
-      <div style={{ fontSize: 11, color: "#64748b", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px" }}>{label}</div>
-      <div style={{ fontSize: 20, color, fontWeight: 700, marginTop: 2 }}>{value}</div>
+    <div className={cls}>
+      <span>{label}</span>
+      <span>{fmtCur(v)}</span>
     </div>
   );
 }
-
-/* ─── Inline style helpers ────────────────────────────────── */
-const th = { textAlign: "left", padding: "10px 12px", fontWeight: 700, fontSize: 12, textTransform: "uppercase", letterSpacing: "0.5px" };
-const td = { padding: "10px 12px", color: "#0f172a", verticalAlign: "middle" };
-const btnSm = {
-  padding: "6px 12px", border: "1px solid #e2e8f0", background: "#ffffff",
-  color: "#475569", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600,
-};
-const btnPrimary = {
-  padding: "6px 12px", border: "1px solid #0891b2", background: "#0891b2",
-  color: "#ffffff", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600,
-};
