@@ -110,6 +110,49 @@ exports.updateItemQty = async (req, res) => {
   }
 };
 
+// ── POST /api/billing/uhid/:UHID/collect-all ────────────────
+// Bulk-collect across every outstanding bill for the UHID. Distributes
+// the lump sum FIFO (oldest bill first), capping each leg at that
+// bill's balance. Returns the allocation list + a parent transaction
+// id that joins every per-bill payment row.
+exports.bulkCollectByUHID = async (req, res) => {
+  try {
+    const data = await billingService.bulkCollectByUHID(
+      req.params.UHID,
+      req.body,
+    );
+    res.json({
+      success: true,
+      data,
+      message: `₹${data.totalCollected} collected across ${data.billsTouched} bill(s)`,
+    });
+  } catch (e) {
+    res.status(e.status || 400).json({ success: false, message: e.message });
+  }
+};
+
+// ── POST /api/billing/uhid/:UHID/bulk-settle ────────────────
+// One discount distributed across every outstanding bill for the
+// UHID. PERCENT mode applies the same % to each bill's balance;
+// AMOUNT mode distributes the flat ₹ proportionally to each bill's
+// share of total outstanding. Every touched bill gets its own audit
+// log entry.
+exports.bulkSettleByUHID = async (req, res) => {
+  try {
+    const data = await billingService.bulkSettleByUHID(
+      req.params.UHID,
+      req.body,
+    );
+    res.json({
+      success: true,
+      data,
+      message: `Bulk settlement applied to ${data.billsTouched} bill(s)`,
+    });
+  } catch (e) {
+    res.status(e.status || 400).json({ success: false, message: e.message });
+  }
+};
+
 // ── POST /api/billing/:billId/settlement-adjust ──────────────
 // Lets the receptionist adjust a GENERATED/PARTIAL bill at settlement
 // time (extra discount + per-item qty/price edits). Audited — backend

@@ -84,6 +84,8 @@ export default function ReceptionBilling() {
   const [cancelTarget, setCancelTarget] = useState(null);
   const [addSvcTarget, setAddSvcTarget] = useState(null);   // DRAFT bill currently being amended
   const [settleTarget, setSettleTarget] = useState(null);   // GENERATED/PARTIAL bill being adjusted at counter
+  const [showBulkCollect, setShowBulkCollect] = useState(false);  // "Collect All Dues" modal on Outstanding KPI
+  const [showBulkSettle,  setShowBulkSettle]  = useState(false);  // "Settle All" modal on Outstanding KPI
   const [todayCollection, setTodayCollection] = useState(null);
   // ── Advance-deposit state — fetched alongside bills on every load.
   //    advances: full ledger; unspentAdv: aggregated remaining balance
@@ -587,9 +589,23 @@ export default function ReceptionBilling() {
               <div className="rx-kpi-label">Collected</div>
               <div className="rx-kpi-value rx-text-success">{fmtCur(totals.paid)}</div>
             </div>
-            <div className="rx-kpi rx-kpi--accent">
+            <div className={`rx-kpi rx-kpi--accent ${totals.due > 0 ? "rx-kpi--actionable" : ""}`}>
               <div className="rx-kpi-label">Outstanding</div>
               <div className={`rx-kpi-value ${totals.due > 0 ? "rx-text-danger" : "rx-text-success"}`}>{fmtCur(totals.due)}</div>
+              {totals.due > 0 && totals.open > 0 && (
+                <div className="rx-kpi-actions">
+                  <button className="rx-kpi-btn rx-kpi-btn--success"
+                          onClick={() => setShowBulkCollect(true)}
+                          title={`Collect ${fmtCur(totals.due)} in one go — distributed FIFO across ${totals.open} bill${totals.open === 1 ? "" : "s"}`}>
+                    <i className="pi pi-check-circle" /> Collect All Dues
+                  </button>
+                  <button className="rx-kpi-btn rx-kpi-btn--primary"
+                          onClick={() => setShowBulkSettle(true)}
+                          title="Apply one discount across every outstanding bill, then collect">
+                    <i className="pi pi-sliders-h" /> Settle All
+                  </button>
+                </div>
+              )}
             </div>
             {unspentAdv > 0 && (
               <div className="rx-kpi rx-kpi--accent rx-kpi--credit"
@@ -763,6 +779,32 @@ export default function ReceptionBilling() {
             // When the cashier clicks "Save & Take Payment", chain straight
             // into the existing PaymentModal pre-filled to the new balance.
             if (openPayAfter && freshBill) setPayTarget(freshBill);
+          }}
+        />
+      )}
+
+      {showBulkCollect && (
+        <BulkCollectModal
+          uhid={uhid}
+          patient={patient}
+          bills={bills.filter(b => ["GENERATED", "PARTIAL"].includes(b.billStatus) && Number(b.balanceAmount) > 0)}
+          totalDue={totals.due}
+          onClose={() => setShowBulkCollect(false)}
+          onDone={async () => { setShowBulkCollect(false); await load(uhid); }}
+        />
+      )}
+
+      {showBulkSettle && (
+        <BulkSettleModal
+          uhid={uhid}
+          patient={patient}
+          bills={bills.filter(b => ["GENERATED", "PARTIAL"].includes(b.billStatus) && Number(b.balanceAmount) > 0)}
+          totalDue={totals.due}
+          onClose={() => setShowBulkSettle(false)}
+          onDone={async (openCollectAfter) => {
+            setShowBulkSettle(false);
+            await load(uhid);
+            if (openCollectAfter) setShowBulkCollect(true);
           }}
         />
       )}
@@ -1451,6 +1493,339 @@ function SettlementModal({ bill, onClose, onDone }) {
           <button className="rx-modal-btn-primary rx-modal-btn-primary--success"
                   onClick={() => submit(true)} disabled={saving}>
             <i className={`pi ${saving ? "pi-spin pi-spinner" : "pi-wallet"}`} /> Save &amp; Take Payment
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ───────────────────────────────────────────────────────────── */
+/* BulkCollectModal — collect a single lump sum across every
+   outstanding bill for the UHID. Backend distributes FIFO; this
+   modal shows the cashier the projected allocation BEFORE submit so
+   they can sanity-check what each bill will receive.                  */
+
+function BulkCollectModal({ uhid, patient, bills, totalDue, onClose, onDone }) {
+  const [amount, setAmount] = useState(totalDue || 0);
+  const [mode, setMode] = useState("CASH");
+  const [txnId, setTxnId] = useState("");
+  const [receivedBy, setReceivedBy] = useState("");
+  const [remarks, setRemarks] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  // FIFO preview — mirrors the backend's distribution logic so the
+  // cashier sees exactly which bills will get how much before saving.
+  const allocation = useMemo(() => {
+    const amt = Number(amount) || 0;
+    const sorted = [...bills].sort((a, b) =>
+      new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+    let remaining = amt;
+    return sorted.map((b) => {
+      const bal = Number(b.balanceAmount) || 0;
+      const leg = Math.min(remaining, bal);
+      remaining = Math.max(0, remaining - leg);
+      return {
+        billId:    b._id,
+        billNumber: b.billNumber,
+        balance:   bal,
+        leg,
+        leftover:  Math.max(0, bal - leg),
+      };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [amount, bills]);
+
+  const willTouch = allocation.filter(a => a.leg > 0.005).length;
+
+  const submit = async () => {
+    const amt = Number(amount);
+    if (!amt || amt <= 0)        return toast.error("Enter a valid amount");
+    if (amt > totalDue + 0.5)    return toast.error(`Cannot collect more than total due (${fmtCur(totalDue)})`);
+    if (["UPI", "CARD", "CHEQUE", "ONLINE"].includes(mode) && !txnId.trim()) {
+      if (!window.confirm(`No transaction reference for ${mode} payment. Record anyway?`)) return;
+    }
+    setSaving(true);
+    try {
+      const { data } = await axios.post(
+        `${API_ENDPOINTS.BILLING}/uhid/${encodeURIComponent(uhid)}/collect-all`,
+        {
+          amount:        amt,
+          paymentMode:   mode,
+          transactionId: txnId || undefined,
+          receivedBy:    receivedBy || undefined,
+          remarks:       remarks || undefined,
+        },
+      );
+      const meta = data?.data;
+      toast.success(`${fmtCur(meta?.totalCollected || amt)} collected across ${meta?.billsTouched || willTouch} bill(s)`);
+      onDone();
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Collection failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="rx-modal-backdrop" onClick={onClose}>
+      <div className="rx-modal rx-modal--lg" onClick={e => e.stopPropagation()}>
+        <div className="rx-modal-head rx-modal-head--success">
+          <i className="pi pi-check-circle" />
+          <span className="rx-modal-title">
+            Collect All Dues — {patient?.fullName || uhid}
+          </span>
+          <button className="rx-modal-close" onClick={onClose}>×</button>
+        </div>
+        <div className="rx-modal-body">
+          <div className="rx-banner rx-banner--success">
+            💰 Total outstanding: <strong>{fmtCur(totalDue)}</strong> across <strong>{bills.length}</strong> bill{bills.length === 1 ? "" : "s"}
+          </div>
+
+          <div className="his-field-group">
+            <label className="his-label">Amount (₹) *</label>
+            <input className="his-field" type="number" min="0" step="0.01"
+                   value={amount} onChange={e => setAmount(e.target.value)} autoFocus />
+          </div>
+
+          <div className="his-field-group">
+            <label className="his-label">Payment Mode *</label>
+            <div className="rx-grid-5">
+              {PAYMENT_MODES.filter(m => m !== "TPA_CLAIM").map(m => (
+                <button key={m} type="button"
+                        className={`rx-slot ${mode === m ? "rx-slot--selected" : ""}`}
+                        onClick={() => setMode(m)}>{m}</button>
+              ))}
+            </div>
+          </div>
+
+          {mode !== "CASH" && (
+            <div className="his-field-group">
+              <label className="his-label">{mode === "UPI" ? "UPI Reference / VPA" : mode === "CHEQUE" ? "Cheque Number" : "Transaction ID"}</label>
+              <input className="his-field" value={txnId} onChange={e => setTxnId(e.target.value)}
+                     placeholder={mode === "UPI" ? "e.g. 412345678901" : mode === "CHEQUE" ? "e.g. 000123" : "Auth / approval code"} />
+            </div>
+          )}
+
+          <div className="rx-grid-2">
+            <div className="his-field-group">
+              <label className="his-label">Received By</label>
+              <input className="his-field" value={receivedBy} onChange={e => setReceivedBy(e.target.value)} placeholder="Reception staff name" />
+            </div>
+            <div className="his-field-group">
+              <label className="his-label">Remarks</label>
+              <input className="his-field" value={remarks} onChange={e => setRemarks(e.target.value)} placeholder="Optional" />
+            </div>
+          </div>
+
+          {/* FIFO allocation preview */}
+          <div className="rx-section-label" style={{ marginTop: 14 }}>
+            FIFO allocation preview ({willTouch} bill{willTouch === 1 ? "" : "s"})
+          </div>
+          <table className="rx-table rx-table--sm">
+            <thead>
+              <tr>
+                <th>Bill #</th>
+                <th className="right">Balance</th>
+                <th className="right">This payment</th>
+                <th className="right">Will leave</th>
+              </tr>
+            </thead>
+            <tbody>
+              {allocation.map((a) => (
+                <tr key={a.billId} style={a.leg <= 0.005 ? { opacity: 0.4 } : {}}>
+                  <td className="rx-mono-tag rx-mono-tag--subtle">{a.billNumber}</td>
+                  <td className="right">{fmtCur(a.balance)}</td>
+                  <td className="right bold rx-text-success">{a.leg > 0.005 ? fmtCur(a.leg) : "—"}</td>
+                  <td className="right">{a.leg > 0.005 ? (a.leftover > 0.005 ? fmtCur(a.leftover) : "PAID") : fmtCur(a.balance)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="rx-modal-foot">
+          <button className="rx-modal-btn-cancel" onClick={onClose}>Cancel</button>
+          <button className="rx-modal-btn-primary rx-modal-btn-primary--success"
+                  onClick={submit} disabled={saving}>
+            <i className={`pi ${saving ? "pi-spin pi-spinner" : "pi-check"}`} /> Collect {fmtCur(amount)}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ───────────────────────────────────────────────────────────── */
+/* BulkSettleModal — one discount distributed across every
+   outstanding bill for the UHID. PERCENT mode is uniform per-bill;
+   AMOUNT mode is proportional to each bill's share of total
+   outstanding. Always emits an audit log entry per bill.            */
+
+function BulkSettleModal({ uhid, patient, bills, totalDue, onClose, onDone }) {
+  const [mode, setMode]      = useState("PERCENT");
+  const [pct,  setPct]       = useState(0);
+  const [amt,  setAmt]       = useState(0);
+  const [reason, setReason]  = useState("");
+  const [adjustedBy, setAdjustedBy] = useState("");
+  const [saving, setSaving]  = useState(false);
+
+  // Live preview per-bill mirrors the backend math.
+  const preview = useMemo(() => {
+    const out = bills.map((b) => {
+      const bal = Number(b.balanceAmount) || 0;
+      let disc;
+      if (mode === "PERCENT") {
+        disc = (bal * Number(pct || 0)) / 100;
+      } else {
+        disc = totalDue > 0 ? (Number(amt || 0) * bal) / totalDue : 0;
+      }
+      disc = Math.min(Math.max(0, disc), bal);
+      return {
+        billId:    b._id,
+        billNumber: b.billNumber,
+        balance:   bal,
+        discount:  disc,
+        newBalance: bal - disc,
+      };
+    });
+    const totalDiscount = out.reduce((s, r) => s + r.discount, 0);
+    const newTotalDue   = totalDue - totalDiscount;
+    return { rows: out, totalDiscount, newTotalDue };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bills, mode, pct, amt, totalDue]);
+
+  const submit = async (openCollectAfter) => {
+    if (!reason.trim())     return toast.error("Reason is mandatory (audit log)");
+    if (!adjustedBy.trim()) return toast.error("Your name is required (audit log)");
+    const value = mode === "PERCENT" ? Number(pct) : Number(amt);
+    if (!value || value <= 0) return toast.error("Enter a non-zero discount");
+
+    setSaving(true);
+    try {
+      const { data } = await axios.post(
+        `${API_ENDPOINTS.BILLING}/uhid/${encodeURIComponent(uhid)}/bulk-settle`,
+        { mode, value, adjustedBy: adjustedBy.trim(), reason: reason.trim() },
+      );
+      const meta = data?.data;
+      toast.success(`Bulk discount ${fmtCur(meta?.totalDiscount || preview.totalDiscount)} applied to ${meta?.billsTouched || preview.rows.length} bill(s)`);
+      onDone(openCollectAfter);
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Bulk settlement failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="rx-modal-backdrop" onClick={onClose}>
+      <div className="rx-modal rx-modal--lg" onClick={e => e.stopPropagation()}>
+        <div className="rx-modal-head rx-modal-head--primary">
+          <i className="pi pi-sliders-h" />
+          <span className="rx-modal-title">
+            Settle All — {patient?.fullName || uhid}
+          </span>
+          <button className="rx-modal-close" onClick={onClose}>×</button>
+        </div>
+        <div className="rx-modal-body">
+          <div className="rx-banner rx-banner--info">
+            Outstanding before discount: <strong>{fmtCur(totalDue)}</strong> across <strong>{bills.length}</strong> bill{bills.length === 1 ? "" : "s"}
+          </div>
+
+          <div className="rx-grid-2">
+            <div className="his-field-group">
+              <label className="his-label">Discount Mode</label>
+              <div className="rx-grid-2">
+                <button type="button"
+                        className={`rx-slot ${mode === "PERCENT" ? "rx-slot--selected" : ""}`}
+                        onClick={() => setMode("PERCENT")}>
+                  % per bill
+                </button>
+                <button type="button"
+                        className={`rx-slot ${mode === "AMOUNT" ? "rx-slot--selected" : ""}`}
+                        onClick={() => setMode("AMOUNT")}>
+                  Flat ₹ (proportional)
+                </button>
+              </div>
+            </div>
+            {mode === "PERCENT" ? (
+              <div className="his-field-group">
+                <label className="his-label">Discount % (each bill) *</label>
+                <input type="number" min="0" max="100" step="0.5" className="his-field"
+                       value={pct} onChange={e => setPct(Number(e.target.value) || 0)} placeholder="e.g. 5" />
+              </div>
+            ) : (
+              <div className="his-field-group">
+                <label className="his-label">Total ₹ discount (split FIFO) *</label>
+                <input type="number" min="0" step="1" className="his-field"
+                       value={amt} onChange={e => setAmt(Number(e.target.value) || 0)} placeholder="e.g. 500" />
+              </div>
+            )}
+          </div>
+
+          <div className="rx-section-label" style={{ marginTop: 14 }}>Audit details *</div>
+          <div className="rx-grid-2">
+            <div className="his-field-group">
+              <label className="his-label">Your Name *</label>
+              <input className="his-field" value={adjustedBy}
+                     onChange={e => setAdjustedBy(e.target.value)}
+                     placeholder="Reception staff name" />
+            </div>
+            <div className="his-field-group">
+              <label className="his-label">Reason *</label>
+              <input className="his-field" value={reason}
+                     onChange={e => setReason(e.target.value)}
+                     placeholder="e.g. courtesy waiver, billing dispute" />
+            </div>
+          </div>
+
+          <div className="rx-section-label" style={{ marginTop: 14 }}>Per-bill preview</div>
+          <table className="rx-table rx-table--sm">
+            <thead>
+              <tr>
+                <th>Bill #</th>
+                <th className="right">Balance</th>
+                <th className="right">Discount</th>
+                <th className="right">New Balance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {preview.rows.map((r) => (
+                <tr key={r.billId}>
+                  <td className="rx-mono-tag rx-mono-tag--subtle">{r.billNumber}</td>
+                  <td className="right">{fmtCur(r.balance)}</td>
+                  <td className="right bold rx-text-discount">– {fmtCur(r.discount)}</td>
+                  <td className="right bold">{fmtCur(r.newBalance)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <div className="rx-settle-preview" style={{ marginTop: 10 }}>
+            <div className="rx-settle-preview-row">
+              <span>Total before discount</span>
+              <strong>{fmtCur(totalDue)}</strong>
+            </div>
+            <div className="rx-settle-preview-row rx-text-discount">
+              <span>– Bulk discount</span>
+              <strong>{fmtCur(preview.totalDiscount)}</strong>
+            </div>
+            <div className="rx-settle-preview-row rx-settle-preview-row--balance">
+              <span>NEW TOTAL DUE</span>
+              <strong className={preview.newTotalDue > 0 ? "rx-text-danger" : "rx-text-success"}>
+                {fmtCur(preview.newTotalDue)}
+              </strong>
+            </div>
+          </div>
+        </div>
+        <div className="rx-modal-foot">
+          <button className="rx-modal-btn-cancel" onClick={onClose}>Cancel</button>
+          <button className="rx-modal-btn-primary"
+                  onClick={() => submit(false)} disabled={saving}>
+            <i className={`pi ${saving ? "pi-spin pi-spinner" : "pi-save"}`} /> Save Settlement
+          </button>
+          <button className="rx-modal-btn-primary rx-modal-btn-primary--success"
+                  onClick={() => submit(true)} disabled={saving}>
+            <i className={`pi ${saving ? "pi-spin pi-spinner" : "pi-wallet"}`} /> Save &amp; Collect All
           </button>
         </div>
       </div>

@@ -406,6 +406,50 @@
   background: linear-gradient(180deg, #0891b2, #06b6d4);
 }
 
+/* Actionable KPI tile — used on Outstanding when there are open bills
+   to collect against. Adds a red accent bar + a button row at the
+   bottom of the tile so the cashier can act on the figure directly
+   without scrolling to the per-bill detail. */
+.rx-kpi--actionable::before {
+  background: linear-gradient(180deg, #b91c1c, #dc2626) !important;
+}
+.rx-kpi-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.rx-kpi-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  white-space: nowrap;
+  font-family: inherit;
+  letter-spacing: 0.2px;
+  transition: all .15s ease;
+}
+.rx-kpi-btn--success {
+  background: #ecfdf5;
+  color: #047857;
+  border-color: #6ee7b7;
+}
+.rx-kpi-btn--success:hover { background: #d1fae5; border-color: #34d399; }
+.rx-kpi-btn--primary {
+  background: #ecfeff;
+  color: #0e7490;
+  border-color: #67e8f9;
+}
+.rx-kpi-btn--primary:hover { background: #cffafe; border-color: #22d3ee; }
+
 /* Mini grid card — used in patient search results */
 .rx-mini-card {
   background: #fff;

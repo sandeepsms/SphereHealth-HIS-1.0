@@ -470,6 +470,203 @@ class BillingService {
     return bill;
   }
 
+  // ── 8b. Bulk collect across all outstanding bills for a UHID ───
+  //
+  // Front-desk shortcut: patient hands over one lump-sum and says
+  // "clear everything." Backend distributes the amount FIFO across
+  // every GENERATED / PARTIAL bill for the UHID (oldest first),
+  // capping each leg at that bill's balance so we never overshoot.
+  // A single parent transactionId (caller-supplied or generated) is
+  // attached to every per-bill payment row so the audit trail joins
+  // the legs back together — receipt printing, reconciliation, etc.
+  //
+  // Returns { totalCollected, billsTouched, allocations: [{billId, billNumber, amount}], parentTransactionId }
+  async bulkCollectByUHID(UHID, { amount, paymentMode, transactionId, receivedBy, remarks }) {
+    if (!UHID || !String(UHID).trim()) throw new Error("UHID required");
+    const amt = Number(amount);
+    if (!amt || amt <= 0) throw new Error("Valid amount required");
+    const mode = String(paymentMode || "").toUpperCase();
+    if (!["CASH", "CARD", "UPI", "CHEQUE", "ONLINE"].includes(mode)) {
+      throw new Error("Invalid paymentMode");
+    }
+
+    // Pull every outstanding bill, FIFO by createdAt. We only touch
+    // GENERATED / PARTIAL — DRAFT can't take a payment yet, PAID has
+    // no balance, CANCELLED / REFUNDED are sealed.
+    const bills = await PatientBill.find({
+      UHID,
+      billStatus: { $in: ["GENERATED", "PARTIAL"] },
+    }).sort({ createdAt: 1 });
+
+    if (bills.length === 0) {
+      throw new Error("No outstanding bills found for this UHID");
+    }
+
+    const totalDue = bills.reduce((s, b) => s + toNum(b.balanceAmount), 0);
+    if (amt > totalDue + 0.5) {
+      throw new Error(
+        `Amount ₹${amt} exceeds total outstanding ₹${totalDue.toFixed(2)} — use per-bill flow or advance deposit for over-payments`,
+      );
+    }
+
+    // Parent transaction id — links every per-bill payment row back to
+    // a single counter event. If the cashier supplied a real txn id
+    // (e.g. UPI ref), use it verbatim so the bank statement matches.
+    const parentTxn = transactionId && String(transactionId).trim()
+      ? String(transactionId).trim()
+      : `BULK-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+
+    const allocations = [];
+    let remaining = amt;
+
+    for (const bill of bills) {
+      if (remaining <= 0.005) break;
+      const bal = toNum(bill.balanceAmount);
+      if (bal <= 0) continue;
+      const leg = Math.min(remaining, bal);
+
+      bill.payments.push({
+        amount: leg,
+        paymentMode: mode,
+        transactionId: parentTxn,
+        receivedBy: receivedBy ? String(receivedBy).trim() : undefined,
+        remarks: remarks
+          ? `${String(remarks).trim()} (bulk-collect)`
+          : `Bulk collect across UHID — parent ${parentTxn}`,
+        paidAt: new Date(),
+      });
+
+      // Recompute via pre-save (also flips DRAFT/GENERATED → PARTIAL / PAID).
+      const newPaid =
+        bill.payments.reduce((s, p) => s + toNum(p.amount), 0);
+      const newBal = Math.max(0, toNum(bill.patientPayableAmount) - newPaid);
+      bill.billStatus = newBal <= 0.005 ? "PAID" : "PARTIAL";
+      if (newBal <= 0.005) bill.paidAt = new Date();
+
+      await bill.save();
+      allocations.push({
+        billId:    bill._id.toString(),
+        billNumber: bill.billNumber,
+        amount:     Number(leg.toFixed(2)),
+        newStatus:  bill.billStatus,
+      });
+      remaining -= leg;
+    }
+
+    return {
+      totalCollected:    Number((amt - remaining).toFixed(2)),
+      billsTouched:      allocations.length,
+      allocations,
+      parentTransactionId: parentTxn,
+    };
+  }
+
+  // ── 8c. Bulk settlement-time adjustment across all outstanding ─
+  //
+  // The receptionist negotiates a single courtesy discount with the
+  // patient (e.g. "5% off the whole stay") and wants it spread across
+  // every outstanding bill in one click. Two distribution modes:
+  //
+  //   PERCENT — same % applied to each bill's current balance. So a
+  //             5% on a ₹1000 bill = ₹50, on a ₹500 bill = ₹25, etc.
+  //
+  //   AMOUNT  — flat ₹ amount distributed PROPORTIONALLY to each
+  //             bill's share of total outstanding. So a ₹200 discount
+  //             on bills owing ₹600 + ₹400 (60/40) splits 120/80.
+  //
+  // Each bill gets its own audit log entry (type: EXTRA_DISCOUNT,
+  // reason: shared) so per-bill review still works downstream.
+  async bulkSettleByUHID(UHID, { mode, value, adjustedBy, reason }) {
+    if (!UHID || !String(UHID).trim()) throw new Error("UHID required");
+    const m = String(mode || "").toUpperCase();
+    if (!["PERCENT", "AMOUNT"].includes(m)) throw new Error("mode must be PERCENT or AMOUNT");
+    const v = Number(value);
+    if (!v || v <= 0) throw new Error("Valid value required");
+    if (m === "PERCENT" && v > 100) throw new Error("Percent cannot exceed 100");
+    if (!adjustedBy || !String(adjustedBy).trim()) throw new Error("adjustedBy required");
+    if (!reason || !String(reason).trim())         throw new Error("Reason required");
+
+    const bills = await PatientBill.find({
+      UHID,
+      billStatus: { $in: ["GENERATED", "PARTIAL"] },
+    }).sort({ createdAt: 1 });
+
+    if (bills.length === 0) throw new Error("No outstanding bills for this UHID");
+
+    const totalDue = bills.reduce((s, b) => s + toNum(b.balanceAmount), 0);
+    const flatPool = m === "AMOUNT" ? v : null;
+    if (flatPool != null && flatPool > totalDue + 0.5) {
+      throw new Error(`Discount ₹${flatPool} exceeds total outstanding ₹${totalDue.toFixed(2)}`);
+    }
+
+    const adjustments = [];
+
+    for (const bill of bills) {
+      const bal = toNum(bill.balanceAmount);
+      if (bal <= 0) continue;
+
+      // Compute this bill's share.
+      let billDisc;
+      if (m === "PERCENT") {
+        // % applied to balance, but the schema stores extra discount
+        // against patient share — so it directly reduces this bill.
+        billDisc = (bal * v) / 100;
+      } else {
+        billDisc = (flatPool * bal) / totalDue;  // proportional
+      }
+      billDisc = Math.min(billDisc, bal);  // never overshoot
+      if (billDisc <= 0.005) continue;
+
+      const beforeSnap = {
+        netAmount:     toNum(bill.netAmount),
+        extraDiscount: toNum(bill.extraDiscount) || 0,
+        balanceAmount: bal,
+      };
+
+      // Add to existing extra discount (cumulative).
+      const prev = toNum(bill.extraDiscount) || 0;
+      bill.extraDiscount       = prev + billDisc;
+      bill.extraDiscountReason = String(reason).trim();
+      bill.extraDiscountBy     = String(adjustedBy).trim();
+
+      bill.adjustmentLog.push({
+        at: new Date(),
+        by: String(adjustedBy).trim(),
+        type: "EXTRA_DISCOUNT",
+        reason: `[BULK-${m}] ${String(reason).trim()}`,
+        before: beforeSnap,
+        after: null,  // filled below
+      });
+
+      await bill.save();
+
+      const lastIdx = bill.adjustmentLog.length - 1;
+      bill.adjustmentLog[lastIdx].after = {
+        netAmount:     toNum(bill.netAmount),
+        extraDiscount: toNum(bill.extraDiscount) || 0,
+        balanceAmount: toNum(bill.balanceAmount),
+      };
+      await bill.save();
+
+      adjustments.push({
+        billId:        bill._id.toString(),
+        billNumber:    bill.billNumber,
+        discountApplied: Number(billDisc.toFixed(2)),
+        newBalance:    Number(toNum(bill.balanceAmount).toFixed(2)),
+      });
+    }
+
+    const newTotalDue = adjustments.reduce((s, a) => s + a.newBalance, 0);
+    const totalDiscount = adjustments.reduce((s, a) => s + a.discountApplied, 0);
+
+    return {
+      billsTouched:     adjustments.length,
+      totalDiscount:    Number(totalDiscount.toFixed(2)),
+      newTotalDue:      Number(newTotalDue.toFixed(2)),
+      adjustments,
+    };
+  }
+
   // ── 9. Generate final bill (DRAFT → GENERATED) ────────────────
   async generateFinalBill(billId, generatedBy = "Staff") {
     const bill = await PatientBill.findById(billId);

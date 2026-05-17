@@ -25,6 +25,12 @@ router.post("/:billId/tpa-preauth-submit", ctrl.tpaPreAuthSubmit);
 router.post("/:billId/tpa-approve",       ctrl.tpaApprove);
 router.post("/:billId/tpa-deny",          ctrl.tpaDeny);
 router.get("/uhid/:UHID", ctrl.getBillsByUHID); // GET  /api/billing/uhid/UH00000001
+// Front-desk bulk actions across every outstanding bill for a UHID.
+// collect-all distributes one lump-sum FIFO; bulk-settle applies a
+// uniform % or proportional ₹ discount. Both writes are audited
+// per-bill via bill.payments + bill.adjustmentLog respectively.
+router.post("/uhid/:UHID/collect-all", ctrl.bulkCollectByUHID);
+router.post("/uhid/:UHID/bulk-settle", ctrl.bulkSettleByUHID);
 router.get("/price/:serviceId", ctrl.getServicePrice); // GET  /api/billing/price/:id?tariffType=TPA&tpaId=xxx
 router.get("/daycare-check/:admissionId", ctrl.checkDaycare); // GET  /api/billing/daycare-check/:admissionId
 
