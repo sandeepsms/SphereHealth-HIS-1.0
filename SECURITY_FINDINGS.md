@@ -188,6 +188,14 @@ edit (A-15) remain open — listed in re-audit backlog.
 | R3-A-01 | Dose regex accepted `"0 mg"` (clinically invalid) and rejected `"1.5 mg/kg/day"` (legitimate weight-based notation) | MEDIUM | models/Doctor/DoctorOrderModel.js | **FIXED** | 2026-05-17 (r4) | Trailing `\b` swapped for `[\s\/]|$` so ratios pass; `parseFloat > 0` guard rejects zero; 8/8 unit fixtures pass |
 | R3-E-01 | `sphereai_active_patient` localStorage key not covered by logout sweep | MEDIUM | context/AuthContext.jsx | **FIXED** | 2026-05-17 (r4) | `sphereai_` added to phiPrefixes list |
 
+### Round-5 new findings + fixes
+
+| ID | Title | Severity | Files | Status | Fixed-on | Verifier |
+| -- | ----- | -------- | ----- | ------ | -------- | -------- |
+| R5-F-01 | `listBatches` "expiring in N days" filter still used raw UTC `new Date()` — drifts IST boundary | MEDIUM | controllers/Pharmacy/pharmacyController.js:216 | **FIXED** | 2026-05-17 (r6) | Switched to `istStartOfDayPlus(days)` shared helper |
+| R5-F-02 | `alerts` (90-day expiry horizon + "now") still used raw UTC | MEDIUM | controllers/Pharmacy/pharmacyController.js:1414–1415, 1441 | **FIXED** | 2026-05-17 (r6) | Both `now` and `horizon` now `istStartOfToday()` / `istStartOfDayPlus(90)` |
+| R5-Hint | Hoisted IST helpers to `utils/queryGuards.js` so other timezone-sensitive comparisons (autoBilling already had its own copy) can reuse | — | utils/queryGuards.js | **FIXED** | 2026-05-17 (r6) | Live: 30/90-day diffs are exactly N × 86400000 ms |
+
 ### Summary of fix-round 1 (2026-05-17)
 
 **Sections fully addressed:**

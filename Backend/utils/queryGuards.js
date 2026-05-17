@@ -50,4 +50,39 @@ function validateObjectIdParam(paramName = "id") {
   };
 }
 
-module.exports = { escapeRegex, safeRegex, validateObjectIdParam };
+/**
+ * Hospital-timezone date helpers — anchor on the IST calendar day rather
+ * than the server's UTC instant. India is UTC+5:30, so any naive
+ * `new Date()` boundary drifts by 5h30m relative to the IST midnight a
+ * pharmacist / clinician actually cares about. Override the timezone via
+ * `HOSPITAL_TZ` env var for non-India deploys. Patient-safety / business
+ * audit F-04 (initial in fifoConsume) + F-04 follow-ups (listBatches +
+ * alerts in pharmacyController).
+ */
+const HOSPITAL_TZ = process.env.HOSPITAL_TZ || "Asia/Kolkata";
+const _DAY_KEY_FMT = new Intl.DateTimeFormat("en-CA", {
+  timeZone: HOSPITAL_TZ, year: "numeric", month: "2-digit", day: "2-digit",
+});
+
+/** Returns the UTC instant that marks "start of today" in the hospital TZ. */
+function istStartOfToday(now = new Date()) {
+  const key = _DAY_KEY_FMT.format(now);
+  // IST is UTC+5:30; making the offset explicit so the host's clock-skew
+  // doesn't leak in. Override HOSPITAL_TZ + this offset together when
+  // deploying elsewhere.
+  return new Date(`${key}T00:00:00+05:30`);
+}
+
+/** Returns the UTC instant that marks "start of N days from today" in the hospital TZ. */
+function istStartOfDayPlus(days, now = new Date()) {
+  const base = istStartOfToday(now);
+  return new Date(base.getTime() + days * 86400000);
+}
+
+module.exports = {
+  escapeRegex,
+  safeRegex,
+  validateObjectIdParam,
+  istStartOfToday,
+  istStartOfDayPlus,
+};

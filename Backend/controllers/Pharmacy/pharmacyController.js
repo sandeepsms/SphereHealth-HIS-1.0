@@ -212,8 +212,12 @@ exports.listBatches = async (req, res) => {
     if (drugId)  where.drugId = drugId;
     if (location) where.location = location;
     if (expiringIn) {
+      // IST-aware horizon (re-audit F-04-1) — the "expiring within N days"
+      // filter must count days from the IST midnight the pharmacist sees,
+      // not from the server's UTC instant.
+      const { istStartOfDayPlus } = require("../../utils/queryGuards");
       const days = Number(expiringIn);
-      where.expiryDate = { $lte: new Date(Date.now() + days * 86400000) };
+      where.expiryDate = { $lte: istStartOfDayPlus(days) };
     }
     if (lowStock === "true") where.remaining = { $lt: 5 };
     const batches = await DrugBatch.find(where).sort({ expiryDate: 1 }).populate("drugId", "name reorderLevel").lean();
@@ -271,23 +275,16 @@ async function fifoConsume(drugId, qty) {
   for (let pass = 0; pass < MAX_PASSES && need > 0; pass++) {
     // Re-query each pass so we always see live `remaining` after races.
     // Exclude already-tried-and-empty batches.
-    // IST-aware "start of today" comparison (business audit F-04). The
-    // previous `new Date()` compared against UTC instant, which drifted
-    // the "is this expired?" boundary by 5h30m around midnight IST. A
-    // batch expiring on "today IST" would silently flip to "expired" the
-    // instant the server's UTC date rolled, even though the pharmacist's
-    // calendar still said today. We now anchor on the IST day boundary.
-    const HOSPITAL_TZ = process.env.HOSPITAL_TZ || "Asia/Kolkata";
-    const istKey = new Intl.DateTimeFormat("en-CA", {
-      timeZone: HOSPITAL_TZ, year: "numeric", month: "2-digit", day: "2-digit",
-    }).format(new Date());
-    const istStartOfToday = new Date(`${istKey}T00:00:00+05:30`);
+    // IST-aware "start of today" anchor (business audit F-04). Helper
+    // hoisted to utils/queryGuards so listBatches + alerts (re-audit
+    // F-04-1 / F-04-2) reuse the same boundary logic.
+    const { istStartOfToday } = require("../../utils/queryGuards");
     const where = {
       drugId, isActive: true, remaining: { $gt: 0 },
       // Block expired batches at dispense time (D&C compliance) —
       // the GRN endpoint already refuses expiry < today on receipt,
       // but a previously-receivable batch may have expired since.
-      expiryDate: { $gte: istStartOfToday },
+      expiryDate: { $gte: istStartOfToday() },
     };
     if (triedBatchIds.size > 0) where._id = { $nin: [...triedBatchIds] };
 
@@ -1411,8 +1408,12 @@ exports.gstSummary = async (req, res) => {
 
 exports.alerts = async (req, res) => {
   try {
-    const now = new Date();
-    const horizon = new Date(Date.now() + 90 * 86400000);
+    // IST-aware "today" and 90-day horizon (re-audit F-04-2). The
+    // pharmacy alerts UI counts batches against the local IST calendar;
+    // raw UTC instants drifted the boundary by ~5h30m at midnight.
+    const { istStartOfToday, istStartOfDayPlus } = require("../../utils/queryGuards");
+    const now = istStartOfToday();
+    const horizon = istStartOfDayPlus(90);
 
     // Low stock: rollup per drug where total remaining < reorderLevel.
     const rollup = await DrugBatch.aggregate([
