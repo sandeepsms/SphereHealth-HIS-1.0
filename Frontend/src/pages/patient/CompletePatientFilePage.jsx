@@ -314,6 +314,125 @@ const SCORING_SCALES = {
   },
 };
 
+/* ── Blood transfusion panel ─────────────────────────────────────────
+   NABH safety-critical record. Storage shape (from NursingNotes):
+       product, bagNo, crossMatchNo, volume, groupVerified, secondNurse,
+       startTime, endTime, status, reactionType,
+       preBP_sys/preBP_dia/prePulse/preTemp,
+       postBP_sys/postBP_dia/postPulse
+   Detect when ≥2 of these "blood-only" keys are present. Render with
+   status + reaction big and colour-coded, and pre vs post vitals
+   side-by-side so the safety story is one glance.
+*/
+const BLOOD_KEYS = new Set([
+  "product", "bagno", "crossmatchno", "volume", "groupverified",
+  "secondnurse", "starttime", "endtime", "status", "reactiontype",
+  "prebp_sys", "prebp_dia", "prepulse", "pretemp",
+  "postbp_sys", "postbp_dia", "postpulse",
+]);
+function matchBlood(data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return false;
+  const keys = Object.keys(data).map((k) => k.toLowerCase());
+  const hits = keys.filter((k) => BLOOD_KEYS.has(k)).length;
+  // Strong signal: a bag number + a product, OR ≥3 distinct blood keys.
+  return (hits >= 3) || (keys.includes("bagno") && keys.includes("product"));
+}
+function lc(data, key) {
+  if (!data) return undefined;
+  for (const k of Object.keys(data)) if (k.toLowerCase() === key.toLowerCase()) return data[k];
+  return undefined;
+}
+function BloodTransfusionPanel({ data }) {
+  const product       = lc(data, "product");
+  const bagNo         = lc(data, "bagNo");
+  const crossMatchNo  = lc(data, "crossMatchNo");
+  const volume        = lc(data, "volume");
+  const groupVerified = lc(data, "groupVerified");
+  const secondNurse   = lc(data, "secondNurse");
+  const startTime     = lc(data, "startTime");
+  const endTime       = lc(data, "endTime");
+  const status        = lc(data, "status");
+  const reactionType  = lc(data, "reactionType");
+
+  const statusColor   = status === "Completed"  ? "#16a34a"
+                      : status === "Transfusing" ? "#ca8a04"
+                      : status === "Stopped"    ? "#dc2626"
+                      : "#64748b";
+  const reactionColor = reactionType && reactionType !== "None" ? "#dc2626" : "#16a34a";
+
+  const preVitals = [
+    (lc(data, "preBP_sys") || lc(data, "preBP_dia")) && `BP ${lc(data, "preBP_sys") ?? "?"}/${lc(data, "preBP_dia") ?? "?"}`,
+    lc(data, "prePulse") && `Pulse ${lc(data, "prePulse")}`,
+    lc(data, "preTemp")  && `Temp ${lc(data, "preTemp")}°F`,
+  ].filter(Boolean).join("  ·  ");
+  const postVitals = [
+    (lc(data, "postBP_sys") || lc(data, "postBP_dia")) && `BP ${lc(data, "postBP_sys") ?? "?"}/${lc(data, "postBP_dia") ?? "?"}`,
+    lc(data, "postPulse") && `Pulse ${lc(data, "postPulse")}`,
+  ].filter(Boolean).join("  ·  ");
+
+  return (
+    <div style={{
+      marginTop: 4, padding: "8px 12px", borderRadius: 6,
+      background: "linear-gradient(180deg, #fef2f2 0%, #fff 30%)",
+      border: "1px solid #fecaca", borderLeft: "4px solid #dc2626",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 13, fontWeight: 800, color: "#b91c1c", letterSpacing: 0.4 }}>🩸 BLOOD TRANSFUSION</span>
+        {status && (
+          <span style={{
+            padding: "2px 9px", borderRadius: 4, fontSize: 11, fontWeight: 800,
+            background: `${statusColor}18`, color: statusColor, border: `1px solid ${statusColor}50`,
+          }}>{status.toUpperCase()}</span>
+        )}
+        {reactionType && (
+          <span style={{
+            padding: "2px 9px", borderRadius: 4, fontSize: 11, fontWeight: 800,
+            background: `${reactionColor}18`, color: reactionColor, border: `1px solid ${reactionColor}50`,
+          }}>REACTION: {reactionType.toUpperCase()}</span>
+        )}
+      </div>
+
+      <div style={{
+        display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+        gap: "3px 14px", fontSize: 11.5, marginBottom: 6,
+      }}>
+        {product       && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Product:</span> <b>{product}</b></div>}
+        {bagNo         && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Bag #:</span> <span style={{ fontFamily: "monospace" }}>{bagNo}</span></div>}
+        {crossMatchNo  && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>X-Match:</span> <span style={{ fontFamily: "monospace" }}>{crossMatchNo}</span></div>}
+        {volume        && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Volume:</span> {volume} ml</div>}
+        {startTime     && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Start:</span> {startTime}</div>}
+        {endTime       && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>End:</span> {endTime}</div>}
+        {secondNurse   && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>2nd Nurse:</span> {secondNurse}</div>}
+        {groupVerified !== undefined && groupVerified !== "" && (
+          <div>
+            <span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Group verified:</span>{" "}
+            <span style={{ color: groupVerified ? "#16a34a" : "#dc2626", fontWeight: 800 }}>
+              {groupVerified ? "✓ Yes" : "✗ No"}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {(preVitals || postVitals) && (
+        <div style={{
+          display: "grid", gridTemplateColumns: "60px 1fr", gap: "2px 8px",
+          fontSize: 11, padding: "6px 8px", background: "#fff",
+          borderRadius: 4, border: "1px dashed #fecaca",
+        }}>
+          {preVitals && (<>
+            <span style={{ fontWeight: 800, color: "#b91c1c" }}>PRE</span>
+            <span style={{ fontFamily: "monospace" }}>{preVitals}</span>
+          </>)}
+          {postVitals && (<>
+            <span style={{ fontWeight: 800, color: "#b91c1c" }}>POST</span>
+            <span style={{ fontFamily: "monospace" }}>{postVitals}</span>
+          </>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Does this object look like one of our known scales? Match by item-key
 // overlap — needs at least 3 of the canonical keys present (case-insens).
 function matchScale(data) {
@@ -490,6 +609,9 @@ function MixedFields({ data }) {
     const r = renderScalar(data);
     return r == null ? null : <span style={{ fontSize: 11 }}>{r}</span>;
   }
+
+  // Blood-transfusion record gets a dedicated safety-critical panel.
+  if (matchBlood(data)) return <BloodTransfusionPanel data={data} />;
 
   // If THIS object looks like a known clinical scoring scale (Braden,
   // Morse, MEWS, GCS), render the dedicated panel instead of the
