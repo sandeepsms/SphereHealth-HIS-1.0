@@ -817,6 +817,77 @@ exports.getCollectionSummary = async (req, res, next) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────
+// PATIENT ADVANCE — UHID-level prepayment ledger
+// Cash/UPI/card collected from a patient before any bill is generated
+// (typical IPD admission deposit) lives here. Later applied to bills.
+// ─────────────────────────────────────────────────────────────────────
+
+// POST /api/billing/advance  { UHID, amount, paymentMode, transactionId?, receivedBy, admission?, remarks? }
+exports.createAdvance = async (req, res) => {
+  try {
+    const svc = require("../../services/Billing/patientAdvanceService");
+    const adv = await svc.createAdvance({
+      ...req.body,
+      receivedBy:     req.body.receivedBy     || req.user?.fullName     || req.user?.employeeId,
+      receivedById:   req.body.receivedById   || req.user?._id,
+      receivedByRole: req.body.receivedByRole || req.user?.role,
+    });
+    res.status(201).json({ success: true, data: adv });
+  } catch (e) {
+    res.status(400).json({ success: false, message: e?.message || "Advance create failed" });
+  }
+};
+
+// GET /api/billing/advance/uhid/:UHID?unspentOnly=true
+exports.listAdvancesByUHID = async (req, res) => {
+  try {
+    const svc = require("../../services/Billing/patientAdvanceService");
+    const unspentOnly = String(req.query?.unspentOnly || "").toLowerCase() === "true";
+    const rows = await svc.listAdvancesForUHID(req.params.UHID, { unspentOnly });
+    const totalUnspent = await svc.getUnspentBalance(req.params.UHID);
+    res.json({ success: true, data: { advances: rows, totalUnspent } });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e?.message || "Advance list failed" });
+  }
+};
+
+// POST /api/billing/advance/:advanceId/apply  { billId, amount? }
+exports.applyAdvanceToBill = async (req, res) => {
+  try {
+    const svc = require("../../services/Billing/patientAdvanceService");
+    const { billId, amount } = req.body || {};
+    if (!billId) return res.status(400).json({ success: false, message: "billId required" });
+    const result = await svc.applyAdvanceToBill(req.params.advanceId, billId, {
+      amount,
+      appliedBy:   req.user?.fullName || req.user?.employeeId || "Reception",
+      appliedById: req.user?._id || null,
+    });
+    res.json({
+      success: true,
+      appliedAmount: result.appliedAmount,
+      advance: result.advance,
+      bill: { _id: result.bill._id, billNumber: result.bill.billNumber, balanceAmount: result.bill.balanceAmount, billStatus: result.bill.billStatus },
+    });
+  } catch (e) {
+    res.status(400).json({ success: false, message: e?.message || "Advance apply failed" });
+  }
+};
+
+// POST /api/billing/advance/:advanceId/refund  { refundedBy, refundReason }
+exports.refundAdvance = async (req, res) => {
+  try {
+    const svc = require("../../services/Billing/patientAdvanceService");
+    const adv = await svc.refundAdvance(req.params.advanceId, {
+      refundedBy:   req.body?.refundedBy   || req.user?.fullName || req.user?.employeeId,
+      refundReason: req.body?.refundReason || "Refund at patient request",
+    });
+    res.json({ success: true, data: adv });
+  } catch (e) {
+    res.status(400).json({ success: false, message: e?.message || "Refund failed" });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────
 // ANH PACKAGE — preview / attach / detach
 // ─────────────────────────────────────────────────────────────────────
 

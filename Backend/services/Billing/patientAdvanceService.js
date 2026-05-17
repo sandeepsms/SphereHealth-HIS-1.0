@@ -1,0 +1,246 @@
+// services/Billing/patientAdvanceService.js
+// ════════════════════════════════════════════════════════════════════
+// Business logic for the PatientAdvance ledger — create, list, apply,
+// refund. Mirrors the optimistic-concurrency pattern used by
+// billingService.recordPayment so two cashiers can't double-spend the
+// same advance row.
+// ════════════════════════════════════════════════════════════════════
+
+const mongoose = require("mongoose");
+const PatientAdvance = require("../../models/PatientBillModel/PatientAdvanceModel");
+const PatientBill    = require("../../models/PatientBillModel/PatientBillModel");
+const Patient        = require("../../models/Patient/patientModel");
+const Admission      = require("../../models/Patient/admissionModel");
+
+const toNum = (v) =>
+  v == null ? 0 : Number(v?.toString?.() ?? v) || 0;
+
+const MAX_RETRIES = 5;
+
+class PatientAdvanceService {
+  // ── 1. Create an advance deposit ──────────────────────────────
+  // Called when a patient pays before any bill exists. Returns the
+  // created PatientAdvance with auto-generated receiptNumber.
+  async createAdvance(data) {
+    const {
+      UHID,
+      admission = null,
+      amount,
+      paymentMode,
+      transactionId = null,
+      bankName = null,
+      receivedBy,
+      receivedById = null,
+      receivedByRole = null,
+      remarks = null,
+    } = data;
+
+    if (!UHID)         throw new Error("UHID required");
+    if (!amount || Number(amount) <= 0) throw new Error("Valid amount required");
+    if (!paymentMode)  throw new Error("Payment mode required");
+    if (!receivedBy)   throw new Error("Received-by name required for audit");
+
+    const patient = await Patient.findOne({ UHID: String(UHID).toUpperCase() });
+    if (!patient) throw new Error(`Patient ${UHID} not found`);
+
+    const ALLOWED_MODES = ["CASH", "CARD", "UPI", "CHEQUE", "ONLINE"];
+    if (!ALLOWED_MODES.includes(String(paymentMode).toUpperCase())) {
+      throw new Error(`Invalid payment mode "${paymentMode}". Allowed: ${ALLOWED_MODES.join(", ")}`);
+    }
+
+    // Soft validation: non-cash modes should have a transactionId. We
+    // warn but don't block — the cashier may legitimately not have it
+    // (e.g. cheque-pending-clearance taken at the desk).
+    if (paymentMode !== "CASH" && !transactionId) {
+      console.warn(`[advance] ${paymentMode} advance taken without transactionId for UHID=${UHID}`);
+    }
+
+    // If admission is referenced, validate it belongs to the same UHID
+    // (prevents accidentally tagging an advance to another patient's
+    // admission via the API).
+    let admissionRef = null;
+    if (admission) {
+      const adm = await Admission.findById(admission).lean();
+      if (!adm) throw new Error(`Admission ${admission} not found`);
+      if (String(adm.UHID).toUpperCase() !== String(UHID).toUpperCase()) {
+        throw new Error(`Admission ${admission} belongs to UHID ${adm.UHID}, not ${UHID}`);
+      }
+      admissionRef = adm._id;
+    }
+
+    const advance = await PatientAdvance.create({
+      UHID: String(UHID).toUpperCase(),
+      patientId: patient._id,
+      admission: admissionRef,
+      amount, paymentMode: String(paymentMode).toUpperCase(),
+      transactionId, bankName,
+      receivedBy, receivedById, receivedByRole,
+      paidAt: new Date(),
+      remarks,
+    });
+    return advance;
+  }
+
+  // ── 2. List advances for a patient ────────────────────────────
+  // Returns advances sorted newest-first with the virtual
+  // `remainingAmount` populated. Optional filter to show only those
+  // with unspent balance (for the "Apply Advance" picker).
+  async listAdvancesForUHID(UHID, { unspentOnly = false } = {}) {
+    if (!UHID) throw new Error("UHID required");
+    const q = { UHID: String(UHID).toUpperCase() };
+    if (unspentOnly) q.status = { $in: ["ACTIVE", "PARTIALLY_APPLIED"] };
+    const rows = await PatientAdvance.find(q).sort({ paidAt: -1 });
+    return rows.map((r) => {
+      const o = r.toObject({ virtuals: true });
+      // Force-cast Decimal128 strings → numbers for the API consumer.
+      o.amount        = toNum(o.amount);
+      o.appliedAmount = toNum(o.appliedAmount);
+      o.remainingAmount = Math.max(0, +(o.amount - o.appliedAmount).toFixed(2));
+      return o;
+    });
+  }
+
+  // ── 3. Aggregate: total unspent balance on a UHID ─────────────
+  // Used by the patient-lookup UI to surface "₹X advance on file".
+  async getUnspentBalance(UHID) {
+    if (!UHID) return 0;
+    const rows = await PatientAdvance.find({
+      UHID: String(UHID).toUpperCase(),
+      status: { $in: ["ACTIVE", "PARTIALLY_APPLIED"] },
+    }).lean();
+    return rows.reduce((s, r) => s + Math.max(0, toNum(r.amount) - toNum(r.appliedAmount)), 0);
+  }
+
+  // ── 4. Apply an advance row to a bill ─────────────────────────
+  // Inserts a Bill.payments[] row with mode ADVANCE_ADJUSTMENT and
+  // updates the PatientAdvance.appliedAmount + appliedTo[]. Both
+  // writes are wrapped in a transaction when the connection supports
+  // it (replica set / mongos). On standalone Mongo a safer-order
+  // sequential write is used so a mid-step failure leaves NO money
+  // double-counted: advance is updated FIRST, then the bill payment
+  // is pushed (if step 2 fails, the cashier sees the bill unchanged
+  // but the advance is locked — easier to reconcile than the inverse).
+  async applyAdvanceToBill(advanceId, billId, { amount, appliedBy, appliedById = null } = {}) {
+    if (!advanceId || !billId) throw new Error("advanceId and billId required");
+
+    const session = await mongoose.startSession().catch(() => null);
+    const useTx = !!session && !!(
+      session.client?.s?.options?.replicaSet ||
+      session.client?.options?.replicaSet
+    );
+
+    try {
+      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        const work = async (s) => {
+          const adv  = await PatientAdvance.findById(advanceId).session(s || undefined);
+          const bill = await PatientBill.findById(billId).session(s || undefined);
+          if (!adv)  throw new Error("Advance not found");
+          if (!bill) throw new Error("Bill not found");
+
+          if (adv.status === "REFUNDED" || adv.status === "CANCELLED") {
+            throw new Error(`Advance is ${adv.status}; cannot apply`);
+          }
+          if (String(adv.UHID).toUpperCase() !== String(bill.UHID).toUpperCase()) {
+            throw new Error(`Advance UHID ${adv.UHID} does not match bill UHID ${bill.UHID}`);
+          }
+          if (bill.billStatus === "DRAFT") {
+            throw new Error("Bill abhi DRAFT hai — pehle generateFinalBill() karo, tab advance apply ho");
+          }
+          if (bill.billStatus === "PAID")
+            throw new Error("Bill already fully paid");
+          if (bill.billStatus === "CANCELLED")
+            throw new Error("Cancelled bill pe advance apply nahi ho sakti");
+          if (bill.billStatus === "REFUNDED")
+            throw new Error("Refunded bill — no further payments allowed");
+
+          const remainingAdv  = Math.max(0, toNum(adv.amount) - toNum(adv.appliedAmount));
+          const billBalance   = Math.max(0, toNum(bill.patientPayableAmount) - bill.payments.reduce((s, p) => s + toNum(p.amount), 0));
+          // Default to MIN(advance remaining, bill balance) — covers the
+          // most common case where the cashier wants to consume as much
+          // of the advance as the bill allows. Caller can override.
+          const requested = amount != null ? toNum(amount) : Math.min(remainingAdv, billBalance);
+          if (requested <= 0) throw new Error("Nothing to apply (bill balance or advance remaining is zero)");
+          if (requested > remainingAdv) throw new Error(`Advance only has ₹${remainingAdv} remaining; cannot apply ₹${requested}`);
+          if (requested > billBalance)  throw new Error(`Bill balance is only ₹${billBalance}; cannot apply ₹${requested}`);
+
+          // 1. Push a Bill.payments[] row of mode ADVANCE_ADJUSTMENT.
+          //    transactionId carries the advance receipt number for the
+          //    audit trail. We do not double-charge — this is an
+          //    in-system credit transfer.
+          bill.payments.push({
+            amount: requested,
+            paymentMode: "ADVANCE_ADJUSTMENT",
+            transactionId: adv.receiptNumber,
+            receivedBy: appliedBy || adv.receivedBy || "System",
+            paidAt: new Date(),
+            remarks: `Applied from advance ${adv.receiptNumber}`,
+          });
+          const newPayment = bill.payments[bill.payments.length - 1];
+
+          const totalPaid = bill.payments.reduce((s, p) => s + toNum(p.amount), 0);
+          const balance   = Math.max(0, toNum(bill.patientPayableAmount) - totalPaid);
+          bill.advancePaid   = totalPaid;
+          bill.balanceAmount = balance;
+          bill.billStatus    = balance === 0 ? "PAID" : "PARTIAL";
+          if (bill.billStatus === "PAID") bill.paidAt = new Date();
+
+          // 2. Update the advance row: bump appliedAmount, push an
+          //    appliedTo[] entry. The pre-save hook auto-flips status
+          //    from ACTIVE → PARTIALLY_APPLIED → FULLY_APPLIED.
+          adv.appliedAmount = toNum(adv.appliedAmount) + requested;
+          adv.appliedTo.push({
+            billId: bill._id,
+            billNumber: bill.billNumber,
+            amount: requested,
+            appliedAt: new Date(),
+            appliedBy: appliedBy || "System",
+            appliedById,
+            billPaymentId: newPayment._id,
+          });
+
+          await adv.save({ session: s || undefined });
+          await bill.save({ session: s || undefined });
+          return { advance: adv, bill, appliedAmount: requested };
+        };
+
+        try {
+          if (useTx) {
+            let result;
+            await session.withTransaction(async () => { result = await work(session); });
+            return result;
+          }
+          return await work(null);
+        } catch (err) {
+          if (err?.name === "VersionError") continue;
+          throw err;
+        }
+      }
+      throw new Error("Advance apply concurrency conflict after retries");
+    } finally {
+      if (session) session.endSession();
+    }
+  }
+
+  // ── 5. Refund an unspent advance ──────────────────────────────
+  // Allowed when no portion has been applied yet (status ACTIVE).
+  // Once any portion is applied the advance is locked — refund of a
+  // partially-applied advance would require reversing the bill
+  // payments first, which is a separate accountant-tier flow.
+  async refundAdvance(advanceId, { refundedBy, refundReason }) {
+    const adv = await PatientAdvance.findById(advanceId);
+    if (!adv) throw new Error("Advance not found");
+    if (adv.status !== "ACTIVE") {
+      throw new Error(`Cannot refund — status is ${adv.status}. Only ACTIVE advances can be refunded.`);
+    }
+    if (!refundedBy)   throw new Error("refundedBy name required for audit");
+    if (!refundReason) throw new Error("refundReason required for audit");
+    adv.status = "REFUNDED";
+    adv.refundedAt = new Date();
+    adv.refundedBy = refundedBy;
+    adv.refundReason = refundReason;
+    await adv.save();
+    return adv;
+  }
+}
+
+module.exports = new PatientAdvanceService();

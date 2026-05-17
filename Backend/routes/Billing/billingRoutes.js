@@ -73,4 +73,15 @@ router.post("/admissions/:admissionId/attach-package",
 router.post("/admissions/:admissionId/detach-package",
   requireAction("billing.refund"), ctrl.detachPackageFromAdmission);
 
+// ── Patient advance deposit ──────────────────────────────────────────
+// Creating an advance is the receptionist's daily flow — any
+// authenticated reception/admin/accountant can take a deposit at the
+// desk. Refund is more sensitive (cash leaves the till) so gated to
+// billing.refund. Listing is a read; apply changes ledger state but
+// is part of the same desk-collection flow as create.
+router.post("/advance",                          ctrl.createAdvance);
+router.get ("/advance/uhid/:UHID",               ctrl.listAdvancesByUHID);
+router.post("/advance/:advanceId/apply",         ctrl.applyAdvanceToBill);
+router.post("/advance/:advanceId/refund",        requireAction("billing.refund"), ctrl.refundAdvance);
+
 module.exports = router;

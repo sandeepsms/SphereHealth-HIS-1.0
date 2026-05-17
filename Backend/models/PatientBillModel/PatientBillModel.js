@@ -89,7 +89,12 @@ const PaymentSchema = new mongoose.Schema(
     paymentMode: {
       type: String,
       required: true,
-      enum: ["CASH", "CARD", "UPI", "CHEQUE", "ONLINE", "TPA_CLAIM"] },
+      // ADVANCE_ADJUSTMENT — a previously-collected UHID-level
+      // PatientAdvance is being consumed into this bill. The
+      // transactionId carries the source PatientAdvance.receiptNumber
+      // so the receipt + audit log can trace the money trail without
+      // double-counting (cashier never physically touched cash again).
+      enum: ["CASH", "CARD", "UPI", "CHEQUE", "ONLINE", "TPA_CLAIM", "ADVANCE_ADJUSTMENT"] },
     transactionId: { type: String, trim: true },
     paidAt: { type: Date, default: Date.now },
     receivedBy: { type: String, trim: true },
