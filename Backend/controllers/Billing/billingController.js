@@ -815,3 +815,68 @@ exports.getCollectionSummary = async (req, res, next) => {
     });
   } catch (e) { next(e); }
 };
+
+// ─────────────────────────────────────────────────────────────────────
+// POST /api/billing/backfill-registration
+//
+// One-shot admin endpoint that walks every Patient whose `totalOPDVisits`
+// is > 0 but who has NO PatientBill yet, and back-creates the missing
+// OPD visit + admission + billing trigger. Same idempotent path that
+// new registrations now take — so re-running it is safe.
+//
+// Why it's needed: before the patientService dispatch was wired, every
+// receptionist registration relied on the frontend making a second
+// axios call to /opd/visits. If that call ever silently failed, the
+// patient existed but their first OPD bill never did. This sweeps the
+// historical residue clean. Filterable by `?uhid=…` for one-off cleanup.
+//
+// Body params (optional): { uhid?: string, limit?: number, dryRun?: boolean }
+// ─────────────────────────────────────────────────────────────────────
+exports.backfillRegistrationBills = async (req, res) => {
+  try {
+    const Patient    = require("../../models/Patient/patientModel");
+    const Admission  = require("../../models/Patient/admissionModel");
+    const OPDService = require("../../services/Patient/OPDService");
+    const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+
+    const { uhid, limit = 200, dryRun = false } = req.body || {};
+
+    const q = { isActive: true, registrationType: "OPD", totalOPDVisits: { $gt: 0 } };
+    if (uhid) q.UHID = String(uhid).toUpperCase();
+
+    const patients = await Patient.find(q)
+      .limit(Math.max(1, Math.min(2000, Number(limit) || 200)))
+      .select("_id UHID fullName department doctor paymentType registrationType");
+
+    const report = { scanned: patients.length, alreadyHadBill: 0, backfilled: 0, skippedNoDoctor: 0, errored: 0, items: [] };
+
+    for (const p of patients) {
+      try {
+        const hasBill = await PatientBill.exists({ UHID: p.UHID });
+        if (hasBill) { report.alreadyHadBill++; continue; }
+        if (!p.doctor) { report.skippedNoDoctor++; report.items.push({ UHID: p.UHID, status: "skipped-no-doctor" }); continue; }
+        if (dryRun)    { report.items.push({ UHID: p.UHID, status: "would-backfill" }); continue; }
+
+        await OPDService.createOPDVisit({
+          patientId:      p._id,
+          UHID:           p.UHID,
+          departmentId:   p.department,
+          doctorId:       p.doctor,
+          chiefComplaint: "Registration backfill (auto)",
+          visitDate:      new Date(),
+          visitType:      "OPD",
+          paymentType:    p.paymentType || "GENERAL",
+        });
+        report.backfilled++;
+        report.items.push({ UHID: p.UHID, status: "backfilled" });
+      } catch (e) {
+        report.errored++;
+        report.items.push({ UHID: p.UHID, status: "error", error: e?.message || String(e) });
+      }
+    }
+
+    res.json({ success: true, dryRun, report });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e?.message || "Backfill failed" });
+  }
+};

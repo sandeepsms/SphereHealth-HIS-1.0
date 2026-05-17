@@ -57,4 +57,10 @@ router.post("/:billId/tpa-claim", requireAction("tpa.claim"),     ctrl.setTPACla
 router.put("/:billId/items/:itemId", ctrl.updateItemQty); // PUT  /api/billing/:id/items/:itemId  {quantity}
 router.delete("/:billId/items/:itemId", ctrl.removeItem); // DELETE /api/billing/:id/items/:itemId
 
+// ── Admin one-shot: backfill bills for historical patients whose
+// receptionist registration never landed a billing trigger. Gated by
+// billing.refund (Accountant/Admin only) — same tier as cancel/refund
+// since it materially changes ledger state.
+router.post("/backfill-registration", requireAction("billing.refund"), ctrl.backfillRegistrationBills);
+
 module.exports = router;
