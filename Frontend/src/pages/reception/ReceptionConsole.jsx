@@ -15,7 +15,7 @@
  * All styling via ReceptionConsole.css — no inline JS styles.
  */
 
-import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "react-toastify";
 import axios from "axios";
@@ -120,7 +120,10 @@ const emptyIPD = {
 
 const emptyDayCare = {
   procedureName: "",
-  procedureType: "Diagnostic",
+  // procedureType field removed 2026-05-17 — never sent to the
+  // /api/admissions payload (audit confirmed via grep). Leaving it
+  // in the form added a useless dropdown the receptionist had to
+  // click past on every Day Care registration.
   department: "",
   doctor: "",
   expectedDischargeTime: "",
@@ -1267,13 +1270,11 @@ export default function ReceptionConsole() {
                       {filteredDoctors.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
                     </select>
                   </div>
-                  <div className="his-field-group">
-                    <label className="his-label">Procedure Type</label>
-                    <select className="his-select" value={dayCare.procedureType}
-                      onChange={e => setDayCare(p => ({ ...p, procedureType: e.target.value }))}>
-                      <option>Diagnostic</option><option>Therapeutic</option><option>Surgical</option><option>Chemotherapy</option><option>Dialysis</option><option>Other</option>
-                    </select>
-                  </div>
+                  {/* Procedure Type dropdown removed 2026-05-17 — the
+                      field was never sent to the admissions API so
+                      capturing it just added a useless click. The
+                      procedure category lives on the doctor's order
+                      sheet instead, where it actually drives billing. */}
                 </div>
                 <div className="his-field-group">
                   <label className="his-label">Procedure Name<span className="rc-req">*</span></label>
@@ -1601,7 +1602,6 @@ function printReceipt({ patient, visitType, opd, ipd, dayCare, er, services, bed
     ];
     if (visitType === "Daycare") return [
       ["Procedure", dayCare.procedureName],
-      ["Type", dayCare.procedureType],
       ["Doctor", docLabel || "—"],
       ["Expected Discharge", dayCare.expectedDischargeTime || "Today"],
     ];
