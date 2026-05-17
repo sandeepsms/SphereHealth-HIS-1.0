@@ -105,7 +105,7 @@ export default function PatientBilling() {
     billing
       .getServicesGrouped()
       .then(setServiceGroups)
-      .catch(() => {});
+      .catch((e) => console.error("[PatientBilling] getServicesGrouped:", e?.message));
     if (urlUHID) loadPatient(urlUHID);
   }, []);
 
@@ -1441,7 +1441,7 @@ function AdmissionTab({ UHID, billing, toast, refresh }) {
       billing
         .getAdmissions(UHID)
         .then(setAdmissions)
-        .catch(() => {});
+        .catch((e) => console.error("[PatientBilling] getAdmissions:", e?.message));
     }
   }, [UHID]);
 

@@ -8,6 +8,7 @@ const mongoose = require("mongoose");
 const Admission = require("../../models/Patient/admissionModel");
 const Bed = require("../../models/bedMgmt/bedsModel");
 const Patient = require("../../models/Patient/patientModel");
+const { logErr } = require("../../utils/logErr");
 const { nextSequence } = require("../../utils/counter");
 
 class AdmissionService {
@@ -179,7 +180,7 @@ class AdmissionService {
           if (data.bedId) {
             await Bed.findByIdAndUpdate(data.bedId, {
               $set: { status: "Available", currentAdmission: null },
-            }).catch(() => {});
+            }).catch(logErr("admission", `rollback bed ${data.bedId} on create failure`));
           }
           throw err;
         }
@@ -287,7 +288,7 @@ class AdmissionService {
           if (admission.bedId) {
             await Bed.findByIdAndUpdate(admission.bedId, {
               $set: { status: "Occupied", currentAdmission: admission._id },
-            }).catch(() => {});
+            }).catch(logErr("discharge", `re-occupy bed ${admission.bedId} after save failure`));
           }
           throw err;
         }
@@ -420,12 +421,12 @@ class AdmissionService {
           if (oldBedFreed && oldBedId) {
             await Bed.findByIdAndUpdate(oldBedId, {
               $set: { status: "Occupied", currentAdmission: admissionId },
-            }).catch(() => {});
+            }).catch(logErr("transferBed", `rollback re-occupy old bed ${oldBedId}`));
           }
           if (newBedOccupied) {
             await Bed.findByIdAndUpdate(newBedId, {
               $set: { status: "Available", currentAdmission: null },
-            }).catch(() => {});
+            }).catch(logErr("transferBed", `rollback free new bed ${newBedId}`));
           }
           throw err;
         }

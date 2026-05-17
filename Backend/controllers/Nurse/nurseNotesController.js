@@ -29,9 +29,13 @@ class NurseNotesController {
     const note = await nurseNotesService.createNurseNote(data, nurseUserId);
     // ── Auto-billing hook ──────────────────────────────────────
     try {
+      const { logErr } = require("../../utils/logErr");
       const autoBilling = require("../../services/Billing/autoBillingService");
-      autoBilling.onNurseNoteSaved(note).catch(() => {});
-    } catch {}
+      autoBilling.onNurseNoteSaved(note).catch(logErr("autoBilling", `onNurseNoteSaved ${note?._id}`));
+    } catch (e) {
+      const { logErr } = require("../../utils/logErr");
+      logErr("autoBilling", "load failure on nurse-note save")(e);
+    }
     return res.status(201).json({ success: true, data: note });
   });
 
