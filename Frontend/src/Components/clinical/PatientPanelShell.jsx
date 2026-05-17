@@ -158,6 +158,30 @@ export default function PatientPanelShell({
   const handleBreakGlassAllow = (reason) => {
     setBreakGlassAcked(true);
     try { sessionStorage.setItem(`break-glass:${patient.UHID}`, reason || "1"); } catch {}
+    // Persist the break-glass justification to the backend audit log so an
+    // out-of-scope chart peek is traceable beyond the user's own
+    // sessionStorage. Security audit 2026-05-17 finding E-02. Fire-and-
+    // forget — never blocks the clinician's workflow if the log endpoint
+    // is down, but logs the failure so SOC can spot dropped events.
+    try {
+      const t = localStorage.getItem("his_token");
+      fetch(`${import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api"}/patient-file/${encodeURIComponent(patient.UHID)}/log`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(t ? { Authorization: `Bearer ${t}` } : {}),
+        },
+        body: JSON.stringify({
+          action: "BREAK_GLASS",
+          summary: `Break-glass access granted: ${reason || "(no reason given)"}`,
+          severity: "HIGH",
+          isFlagged: true,
+          metadata: { reason: reason || null, role, admissionId: admission?._id || null },
+        }),
+      }).catch((e) => console.error("[BreakGlass] backend audit failed:", e?.message));
+    } catch (e) {
+      console.error("[BreakGlass] audit dispatch error:", e?.message);
+    }
   };
 
   // ── Roadmap A4: WHO Surgical Safety Checklist. Caller (panel) supplies

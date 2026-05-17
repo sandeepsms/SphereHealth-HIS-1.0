@@ -106,13 +106,28 @@ export const ACTIONS = {
   "security.gate-log":        ["Admin", "Security", "Receptionist"],
   "security.incident-report": ["Admin", "Security"],
 
+  // Patient demographics vs clinical edits — split so receptionist can fix a
+  // misspelled name / contact but can't rewrite blood group, DOB, allergies,
+  // gender. Mirror of Backend/config/permissions.js (security audit 2026-05-17).
+  "patient.read":               ["Admin", "Receptionist", "Doctor", "Nurse", "Lab Technician", "Pharmacist", "Dietician", "TPA Coordinator", "Accountant"],
+  "patient.write-demographics": ["Admin", "Receptionist"],
+  "patient.write-clinical":     ["Admin", "Doctor", "Nurse"],
+  "patient.delete":             ["Admin"],
+  "patient.export":             ["Admin", "Doctor"],
+
   // Clinical
   "rx.write":              ["Admin", "Doctor"],
   // Accountant gets read access for the Accounts Console (GST register,
   // pharmacy stats, sales/expiry registers). Write actions stay restricted.
   "rx.read":               ["Admin", "Doctor", "Nurse", "Pharmacist", "Accountant"],
   "ipd.assign-bed":        ["Admin", "Receptionist", "Doctor"],
-  "ipd.discharge":         ["Admin", "Doctor", "Receptionist"],
+  // Clinical discharge — medical decision. Receptionist is intentionally NOT
+  // here (security audit 2026-05-17); they still have reception.discharge
+  // for the bill-counter step.
+  "ipd.discharge":         ["Admin", "Doctor"],
+  "ipd.cancel":            ["Admin", "Doctor"],
+  "ipd.transfer":          ["Admin", "Doctor", "Nurse"],
+  "ipd.delete":            ["Admin"],
   "ipd.discharge-summary": ["Admin", "Doctor"],
   "vitals.write":          ["Admin", "Nurse", "Doctor"],
   "mar.write":             ["Admin", "Nurse"],

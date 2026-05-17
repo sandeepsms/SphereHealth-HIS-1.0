@@ -45,7 +45,31 @@ class BillingService {
     if (admissionId) filter.admission = admissionId;
 
     let bill = await PatientBill.findOne(filter);
-    if (bill) return bill;
+    if (bill) {
+      // Existing DRAFT bill — top up any missed days/visits (e.g. today's
+      // bed + nursing if the nightly cron hasn't fired yet). Idempotent
+      // via dailyDedup, so safe to call on every open.
+      if (admissionId) {
+        try {
+          const adm = await Admission.findById(admissionId).lean();
+          if (adm && (adm.status === "Active" || adm.status === "Transferred")) {
+            const autoBilling = require("./autoBillingService");
+            const r = await autoBilling.backfillAdmissionCharges(adm);
+            console.log(
+              `[Billing] top-up backfill for ADM ${adm.admissionNumber}:`,
+              `bed=${r.bedFired} nursing=${r.nurseFired}`,
+              `doctor=${r.doctorFired} consumables=${r.consumableFired}`,
+              `skipped=${r.skipped} errors=${r.errors}`,
+            );
+            const refreshed = await PatientBill.findById(bill._id);
+            if (refreshed) bill = refreshed;
+          }
+        } catch (e) {
+          console.error("[Billing] top-up backfill failed:", e.message);
+        }
+      }
+      return bill;
+    }
 
     const billData = {
       patient: patient._id,
@@ -69,6 +93,30 @@ class BillingService {
     try {
       bill = new PatientBill(billData);
       await bill.save();
+      // Newly-created bill for an active admission — backfill bed, nursing
+      // and any orphaned doctor-note / consumable charges that piled up
+      // before the auto-billing engine had a bill to write to. Idempotent
+      // (createTrigger dedup guards make repeat calls a no-op).
+      if (admissionId) {
+        try {
+          const adm = await Admission.findById(admissionId).lean();
+          if (adm && (adm.status === "Active" || adm.status === "Transferred")) {
+            const autoBilling = require("./autoBillingService");
+            const r = await autoBilling.backfillAdmissionCharges(adm);
+            console.log(
+              `[Billing] backfill for ADM ${adm.admissionNumber}:`,
+              `bed=${r.bedFired} nursing=${r.nurseFired}`,
+              `doctor=${r.doctorFired} consumables=${r.consumableFired}`,
+              `skipped=${r.skipped} errors=${r.errors}`,
+            );
+            // Re-fetch so the freshly-billed items are returned to caller
+            const refreshed = await PatientBill.findById(bill._id);
+            if (refreshed) bill = refreshed;
+          }
+        } catch (e) {
+          console.error("[Billing] backfill failed (bill still created):", e.message);
+        }
+      }
       return bill;
     } catch (err) {
       if (err.code === 11000) {
@@ -122,8 +170,19 @@ class BillingService {
   ) {
     const bill = await PatientBill.findById(billId);
     if (!bill) throw new Error("Bill not found");
-    if (["PAID", "CANCELLED"].includes(bill.billStatus)) {
-      throw new Error("Cannot modify a PAID or CANCELLED bill");
+    // Bill-edit freeze (business audit F-05). Originally only PAID /
+    // CANCELLED bills were locked — that left PARTIAL bills (some payment
+    // already received) editable, so a receptionist could add new line
+    // items and inflate what the patient still owed AFTER the cashier
+    // had counted money. Locking from GENERATED onward stops the leak;
+    // legitimate "patient consumed more services" goes through the
+    // dedicated `recordPayment` / `amendItem` (Accountant) path instead.
+    if (["GENERATED", "PARTIAL", "PAID", "CANCELLED", "REFUNDED"].includes(bill.billStatus)) {
+      const err = new Error(
+        `Cannot modify a ${bill.billStatus} bill — use the amendment workflow.`,
+      );
+      err.status = 409;
+      throw err;
     }
 
     const service = await ServiceMaster.findById(serviceId);
@@ -182,8 +241,19 @@ class BillingService {
   async removeItemFromBill(billId, itemId) {
     const bill = await PatientBill.findById(billId);
     if (!bill) throw new Error("Bill not found");
-    if (["PAID", "CANCELLED"].includes(bill.billStatus)) {
-      throw new Error("Cannot modify a PAID or CANCELLED bill");
+    // Bill-edit freeze (business audit F-05). Originally only PAID /
+    // CANCELLED bills were locked — that left PARTIAL bills (some payment
+    // already received) editable, so a receptionist could add new line
+    // items and inflate what the patient still owed AFTER the cashier
+    // had counted money. Locking from GENERATED onward stops the leak;
+    // legitimate "patient consumed more services" goes through the
+    // dedicated `recordPayment` / `amendItem` (Accountant) path instead.
+    if (["GENERATED", "PARTIAL", "PAID", "CANCELLED", "REFUNDED"].includes(bill.billStatus)) {
+      const err = new Error(
+        `Cannot modify a ${bill.billStatus} bill — use the amendment workflow.`,
+      );
+      err.status = 409;
+      throw err;
     }
 
     bill.billItems = bill.billItems.filter(
@@ -199,8 +269,19 @@ class BillingService {
 
     const bill = await PatientBill.findById(billId);
     if (!bill) throw new Error("Bill not found");
-    if (["PAID", "CANCELLED"].includes(bill.billStatus)) {
-      throw new Error("Cannot modify a PAID or CANCELLED bill");
+    // Bill-edit freeze (business audit F-05). Originally only PAID /
+    // CANCELLED bills were locked — that left PARTIAL bills (some payment
+    // already received) editable, so a receptionist could add new line
+    // items and inflate what the patient still owed AFTER the cashier
+    // had counted money. Locking from GENERATED onward stops the leak;
+    // legitimate "patient consumed more services" goes through the
+    // dedicated `recordPayment` / `amendItem` (Accountant) path instead.
+    if (["GENERATED", "PARTIAL", "PAID", "CANCELLED", "REFUNDED"].includes(bill.billStatus)) {
+      const err = new Error(
+        `Cannot modify a ${bill.billStatus} bill — use the amendment workflow.`,
+      );
+      err.status = 409;
+      throw err;
     }
 
     const item = bill.billItems.id(itemId);
@@ -489,12 +570,21 @@ class BillingService {
   }
 
   // ── 16. Add a charge via nurse ────────────────────────────────
-  // Validates that the service has chargeableBy: ["Nurse"] before adding
+  // Validates that the service has chargeableBy: ["Nurse"] before adding.
+  // Round-3 re-audit (F-05 follow-up): aligned with the unified freeze
+  // policy applied to addServiceToBill / removeItemFromBill /
+  // updateItemQuantity — only DRAFT bills accept new charges, even from
+  // nursing. A GENERATED bill (printed for the patient) or anything
+  // beyond must go through the amendment workflow.
   async addNurseCharge(billId, serviceId, quantity, { nurseName, shift, remarks } = {}) {
     const bill = await PatientBill.findById(billId);
     if (!bill) throw new Error("Bill not found");
-    if (!["DRAFT", "GENERATED"].includes(bill.billStatus)) {
-      throw new Error("Bill is closed");
+    if (["GENERATED", "PARTIAL", "PAID", "CANCELLED", "REFUNDED"].includes(bill.billStatus)) {
+      const err = new Error(
+        `Cannot add a nurse charge to a ${bill.billStatus} bill — use the amendment workflow.`,
+      );
+      err.status = 409;
+      throw err;
     }
 
     const service = await ServiceMaster.findById(serviceId);

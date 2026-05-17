@@ -24,11 +24,21 @@ require("../models/bedMgmt/wardModel");
 require("../models/bedMgmt/floorModel");
 require("../models/bedMgmt/buildingModel");
 
-const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/spherehealth";
+// Fail-fast on missing MONGO_URI (security audit D-02). The previous
+// silent localhost fallback meant a misconfigured dev box would seed
+// against an unintended DB. Same env contract as the application
+// server: MONGO_URI is REQUIRED.
+if (!process.env.MONGO_URI) {
+  console.error("FATAL: MONGO_URI is not set in Backend/.env — refusing to seed.");
+  process.exit(1);
+}
+const MONGO_URI = process.env.MONGO_URI;
 
 async function run() {
   await mongoose.connect(MONGO_URI);
-  console.log("✅ Connected:", MONGO_URI);
+  // Don't echo the full URI to stdout — it may contain credentials
+  // (security audit D-02 / G-02 follow-up).
+  console.log("✅ Connected to MongoDB");
 
   // ── 1. CLEAR ALL PATIENT DATA ───────────────────────────────────────────────
   console.log("\n🗑️  Clearing all patient data...");
@@ -108,7 +118,10 @@ async function run() {
     totalIPDVisits: 1,
     lastVisitDate: new Date(),
   });
-  console.log(`\n✅ Created patient: Mr. JaiBhagwan | UHID: ${patient.UHID} | Age: ${patient.age}`);
+  // UHID masked even in seed logs — re-audit G-03b. Last 4 chars exposed for
+  // operator cross-reference; rest redacted so log aggregators can't snapshot.
+  const maskUHID = (u) => (u ? `${"*".repeat(Math.max(0, String(u).length - 4))}${String(u).slice(-4)}` : "(none)");
+  console.log(`\n✅ Created patient: Mr. JaiBhagwan | UHID: ${maskUHID(patient.UHID)} | Age: ${patient.age}`);
 
   // ── 5. CREATE IPD ADMISSION ──────────────────────────────────────────────────
   const now = new Date();
@@ -326,7 +339,7 @@ async function run() {
   console.log("  JAIBHAGWAN IPD — SEED COMPLETE");
   console.log("══════════════════════════════════════════════════════");
   console.log(`  Patient   : Mr. JaiBhagwan, 56 yrs Male`);
-  console.log(`  UHID      : ${patient.UHID}`);
+  console.log(`  UHID      : ${maskUHID(patient.UHID)}`);
   console.log(`  Diagnosis : Acute Gastroenteritis`);
   console.log(`  Admission : ${admission.admissionNumber}`);
   console.log(`  Bed       : ${bed ? bed.bedNumber : "Not assigned"}`);

@@ -169,8 +169,58 @@ exports.getPatientByUHID = async (req, res) => {
   }
 };
 
+// Fields that affect clinical decisions (transfusion compatibility, paediatric
+// dosing, drug-allergy alerts). Edits touching ANY of these — at any nesting
+// depth — require the patient.write-clinical role; any other field falls
+// under the looser patient.write-demographics gate. Security audit
+// 2026-05-17 A-12 (initial fix) + re-audit H-01 / H-02 (move identity
+// fields back to demographics; deep-scan to defeat the
+// `{ wrapper: { bloodGroup: "X" } }` nested-object bypass).
+const CLINICAL_PATIENT_FIELDS = new Set([
+  "bloodGroup",
+  "knownAllergies",
+  "dateOfBirth",
+  "age",
+  "gender",
+  // Identity fields stay under patient.write-demographics so receptionist can
+  // still fix a misspelled name. Name changes are still audit-logged via the
+  // existing activityLogger pipeline.
+]);
+
+// Recursively scan a request body for any key that lives in
+// CLINICAL_PATIENT_FIELDS. Defeats `{ address: { bloodGroup: "AB+" } }` style
+// nesting attacks where shallow Object.keys() would miss the inner field.
+// Bounded depth (8) prevents stack abuse on pathological payloads.
+function hasClinicalField(obj, depth = 0) {
+  if (!obj || typeof obj !== "object" || depth > 8) return false;
+  if (Array.isArray(obj)) return obj.some((item) => hasClinicalField(item, depth + 1));
+  for (const [k, v] of Object.entries(obj)) {
+    if (CLINICAL_PATIENT_FIELDS.has(k)) return true;
+    if (v && typeof v === "object" && hasClinicalField(v, depth + 1)) return true;
+  }
+  return false;
+}
+
 exports.updatePatient = async (req, res) => {
   try {
+    const { roleCan } = require("../../config/permissions");
+    const role = req.user?.role;
+    if (!role) {
+      return res.status(401).json({ success: false, message: "Not authenticated" });
+    }
+    const touchedClinical = hasClinicalField(req.body);
+    const requiredAction = touchedClinical
+      ? "patient.write-clinical"
+      : "patient.write-demographics";
+    if (!roleCan(role, requiredAction)) {
+      return res.status(403).json({
+        success: false,
+        message: `Access denied. Action '${requiredAction}' is not permitted for role '${role}'.`,
+        action: requiredAction,
+        role,
+      });
+    }
+
     const patient = await patientService.updatePatient(req.params.id, req.body);
     res
       .status(200)

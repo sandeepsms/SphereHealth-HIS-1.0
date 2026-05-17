@@ -69,9 +69,18 @@ exports.createPrescription = async (req, res) => {
         });
     }
 
+    // Plumb actor so the service writes a PatientActivityLog row with
+    // who-what-when on every prescription edit (audit A-11).
     const updated = await PrescriptionService.updatePrescriptionByUHID(
       uhid,
-      payload,
+      {
+        ...payload,
+        actor: {
+          id:   req.user?.id   || req.user?._id   || null,
+          name: req.user?.name || req.user?.fullName || null,
+          role: req.user?.role || null,
+        },
+      },
     );
     return res
       .status(200)
@@ -190,7 +199,12 @@ exports.updatePrescription = async (req, res) => {
 // ── DELETE ────────────────────────────────────────────────────
 exports.deletePrescription = async (req, res) => {
   try {
-    await PrescriptionService.deletePrescription(req.params.id);
+    // Plumb actor for audit-log (R9 re-audit follow-up A-11).
+    await PrescriptionService.deletePrescription(req.params.id, {
+      id:   req.user?.id   || req.user?._id   || null,
+      name: req.user?.name || req.user?.fullName || null,
+      role: req.user?.role || null,
+    });
     res.status(200).json({ success: true, message: "Deleted" });
   } catch (error) {
     res
@@ -210,6 +224,11 @@ exports.updatePrescriptionStatus = async (req, res) => {
     const data = await PrescriptionService.updatePrescriptionStatus(
       req.params.id,
       status,
+      {
+        id:   req.user?.id   || req.user?._id   || null,
+        name: req.user?.name || req.user?.fullName || null,
+        role: req.user?.role || null,
+      },
     );
     res.status(200).json({ success: true, data });
   } catch (error) {

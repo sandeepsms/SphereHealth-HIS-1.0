@@ -315,8 +315,8 @@ exports.getFhirBundle = async (req, res) => {
         ip: req.ip, userAgent: req.headers["user-agent"] || "",
         tags: ["disclosure", "fhir"],
         isFlagged: true,
-      }).catch(() => {});
-    } catch { /* audit best effort */ }
+      }).catch((e) => console.error(`[patientFile] FHIR-disclosure audit-log failed: ${e?.message}`));
+    } catch (e) { console.error(`[patientFile] FHIR audit dispatch error: ${e?.message}`); }
 
     res.setHeader("Content-Type", "application/fhir+json");
     return res.json(bundle);

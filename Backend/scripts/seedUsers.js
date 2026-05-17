@@ -10,7 +10,12 @@ const mongoose = require("mongoose");
 const User = require("../models/User/userModel");
 const Department = require("../models/Department/department");
 
-const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/spherehealth";
+// Fail-fast on missing MONGO_URI (audit D-02). No silent localhost fallback.
+if (!process.env.MONGO_URI) {
+  console.error("FATAL: MONGO_URI is not set in Backend/.env — refusing to seed.");
+  process.exit(1);
+}
+const MONGO_URI = process.env.MONGO_URI;
 
 const SEED_USERS = [
   {
@@ -105,7 +110,8 @@ const SEED_USERS = [
 async function seed() {
   try {
     await mongoose.connect(MONGO_URI);
-    console.log("✅ Connected to MongoDB:", MONGO_URI);
+    // URI redacted from log — may contain credentials (audit D-02 / G-02).
+    console.log("✅ Connected to MongoDB");
 
     // Get or create a default General Medicine department for Doctor/Nurse seeds
     let defaultDept = await Department.findOne({ name: "General Medicine" });
@@ -130,15 +136,20 @@ async function seed() {
       }
       const user = new User(userData);
       await user.save();
-      console.log(`✅ Created: ${userData.email} [${userData.role}] — password: ${userData.password}`);
+      // Password redacted from stdout (security audit B-07). Plain-text
+      // creds in log aggregators / shared dev terminals are a CWE-532
+      // disclosure even in dev. Operator can still look up the password
+      // in this file's SEED_USERS array if they actually need to log in.
+      console.log(`✅ Created: ${userData.email} [${userData.role}]`);
       created++;
     }
 
     console.log(`\n📋 Seed complete. Created: ${created}, Skipped: ${skipped}`);
-    console.log("\n🔑 Default Login Credentials:");
+    console.log("\n🔑 Login Credentials Listing:");
+    console.log("   (passwords redacted from log — see SEED_USERS in this file)");
     console.log("┌─────────────────────────────────────────────────────────────┐");
     SEED_USERS.forEach(u => {
-      console.log(`│  ${u.role.padEnd(18)} ${u.email.padEnd(35)} ${u.password}`);
+      console.log(`│  ${u.role.padEnd(18)} ${u.email.padEnd(35)} ******`);
     });
     console.log("└─────────────────────────────────────────────────────────────┘");
   } catch (err) {

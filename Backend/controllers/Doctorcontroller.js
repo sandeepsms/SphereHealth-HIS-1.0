@@ -31,7 +31,9 @@ exports.doctorinfo = async (req, res) => {
 exports.getdoctorPatientbyID = async (req, res) => {
   try {
     const { UHID } = req.params;
-    console.log(UHID);
+    // PII removed from logs (security audit 2026-05-17, finding G-03).
+    // UHIDs in stdout get scraped into log aggregators and shared dev
+    // terminals — DPDP §8 considers that a disclosure.
 
     if (!UHID) {
       return res.status(400).json({ success: false, msg: "UHID is required" });

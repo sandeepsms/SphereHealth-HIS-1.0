@@ -8,6 +8,7 @@ const mongoose = require("mongoose");
 const Admission = require("../../models/Patient/admissionModel");
 const Bed = require("../../models/bedMgmt/bedsModel");
 const Patient = require("../../models/Patient/patientModel");
+const { logErr } = require("../../utils/logErr");
 const { nextSequence } = require("../../utils/counter");
 
 class AdmissionService {
@@ -179,7 +180,7 @@ class AdmissionService {
           if (data.bedId) {
             await Bed.findByIdAndUpdate(data.bedId, {
               $set: { status: "Available", currentAdmission: null },
-            }).catch(() => {});
+            }).catch(logErr("admission", `rollback bed ${data.bedId} on create failure`));
           }
           throw err;
         }
@@ -198,6 +199,52 @@ class AdmissionService {
       throw new Error(
         `Cannot discharge — admission status is already "${admission.status}"`,
       );
+
+    // ── NABH discharge-readiness gate (security/business audit F-01) ─────
+    // Block the clinical discharge until the bill-counter workflow has at
+    // least progressed past "BillCleared". Caller can pass
+    // dischargeData.allowOverride to bypass — used by Admin LAMA / death
+    // workflows where waiting for the cashier would be inhumane — and the
+    // override is audited. Re-audit H-03: the override itself is now gated
+    // to Admin only (regardless of route-level requireAction). The
+    // controller layer passes { actor: { role, id } } via dischargeData.
+    const stage = admission.dischargeWorkflow?.stage || "NotRequested";
+    const cleared = ["BillCleared", "GatePassIssued", "Completed"].includes(stage);
+    if (dischargeData.allowOverride && dischargeData.actor?.role !== "Admin") {
+      const err = new Error(
+        `Only Admin can bypass the bill-clearance gate (LAMA / death). ` +
+        `Caller role: ${dischargeData.actor?.role || "(unknown)"}.`,
+      );
+      err.status = 403;
+      throw err;
+    }
+    if (!cleared && !dischargeData.allowOverride) {
+      const err = new Error(
+        `Cannot discharge — bill not yet cleared (workflow stage: ${stage}). ` +
+        `Settle the final bill via /clear-final-bill first, or pass allowOverride=true (Admin only) for LAMA/death.`,
+      );
+      err.status = 409; // Conflict — required precondition not met
+      throw err;
+    }
+    if (dischargeData.allowOverride) {
+      console.warn(
+        `[Discharge] OVERRIDE used on ADM ${admission.admissionNumber} by ${dischargeData.actor?.role}/${dischargeData.actor?.id}: bypassing bill-clearance gate. Reason: ${dischargeData.overrideReason || "(none provided)"}`,
+      );
+    }
+
+    // BEFORE flipping status, fire today's bed + nursing-daily charges
+    // one last time so the day-of-discharge always makes it onto the bill.
+    // The daily-accrual cron stops touching this admission the moment its
+    // status leaves "Active", so without this flush an overnight discharge
+    // would lose the final day's bed + nursing fee.
+    try {
+      const autoBilling = require("../Billing/autoBillingService");
+      await autoBilling.flushDailyChargesForAdmission(admission);
+    } catch (e) {
+      // Bill-side hiccups shouldn't block a clinical discharge — log and
+      // continue. The cashier still has the bill open for manual review.
+      console.error("[Discharge] flushDailyCharges error:", e.message);
+    }
 
     const session = await mongoose.startSession().catch(() => null);
     const useTx = !!session && (session.client?.s?.options?.replicaSet ||
@@ -241,7 +288,7 @@ class AdmissionService {
           if (admission.bedId) {
             await Bed.findByIdAndUpdate(admission.bedId, {
               $set: { status: "Occupied", currentAdmission: admission._id },
-            }).catch(() => {});
+            }).catch(logErr("discharge", `re-occupy bed ${admission.bedId} after save failure`));
           }
           throw err;
         }
@@ -374,12 +421,12 @@ class AdmissionService {
           if (oldBedFreed && oldBedId) {
             await Bed.findByIdAndUpdate(oldBedId, {
               $set: { status: "Occupied", currentAdmission: admissionId },
-            }).catch(() => {});
+            }).catch(logErr("transferBed", `rollback re-occupy old bed ${oldBedId}`));
           }
           if (newBedOccupied) {
             await Bed.findByIdAndUpdate(newBedId, {
               $set: { status: "Available", currentAdmission: null },
-            }).catch(() => {});
+            }).catch(logErr("transferBed", `rollback free new bed ${newBedId}`));
           }
           throw err;
         }

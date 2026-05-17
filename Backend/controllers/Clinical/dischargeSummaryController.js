@@ -88,6 +88,10 @@ class DischargeSummaryController {
   // PATCH /api/discharge-summary/:id/finalize
   finalize = handle(async (req, res) => {
     const { finalizedByName } = req.body;
+    // runValidators added per audit C-07 — without it, the status flip
+    // and the date/condition writes bypass the schema's enum/format
+    // checks; a future bad value (e.g. status: "FINAL_GREATEST") would
+    // persist silently and break the discharge filter.
     const summary = await DischargeSummary.findByIdAndUpdate(
       req.params.id,
       {
@@ -95,7 +99,7 @@ class DischargeSummaryController {
         finalizedByName: finalizedByName || "Doctor",
         finalizedAt: new Date(),
       },
-      { new: true }
+      { new: true, runValidators: true }
     );
     if (!summary) return res.status(404).json({ success: false, message: "Discharge summary not found" });
 
@@ -113,19 +117,26 @@ class DischargeSummaryController {
           dischargeSummary: summary._id.toString(),
           followUpInstructions: summary.followUpInstructions,
         },
-        { new: true },
+        { new: true, runValidators: true },
       );
       if (admission?.bedId) {
         try {
           const Bed = require("../../models/bedMgmt/bedsModel");
-          await Bed.findByIdAndUpdate(admission.bedId, {
-            $set: {
-              status: "Available",
-              patient: null,
-              currentAdmission: null,
-              lastDischargedAt: new Date(),
+          // runValidators added per R9 re-audit — without it, the bed
+          // status enum wasn't enforced on the update path, so a future
+          // typo upstream could persist an invalid status silently.
+          await Bed.findByIdAndUpdate(
+            admission.bedId,
+            {
+              $set: {
+                status: "Available",
+                patient: null,
+                currentAdmission: null,
+                lastDischargedAt: new Date(),
+              },
             },
-          });
+            { runValidators: true },
+          );
         } catch (e) { /* non-fatal — surface in admin alerts */ }
       }
     }

@@ -2,12 +2,48 @@
  * autoBillingService.js
  * Event-driven billing engine — every clinical action fires a BillingTrigger
  * that either immediately bills or waits for completion before billing.
+ *
+ * Rules of engagement (as of redesign-1):
+ *
+ *   BED CHARGES        — daily, priced from the bed's room-category
+ *                        `defaultPricing.perBedDailyRate`. Falls back to the
+ *                        flat ServiceMaster default if the category is
+ *                        missing a rate. Dedup'd by `admissionId+date`.
+ *
+ *   NURSING DAILY FEE  — daily, priced from the bed's room-category
+ *                        `defaultPricing.nursingCharges`. Same daily cadence
+ *                        as the bed charge. ICU/HDU patients get the higher
+ *                        category nursing fee automatically. Bed-side
+ *                        consumables (gloves, syringes, gauze) bill
+ *                        separately via `onEquipmentCharged` from
+ *                        nursingChargesService.
+ *
+ *   DOCTOR VISITS      — one charge per doctor per round per day. Note
+ *                        sub-type drives the service code:
+ *                            progress + shift=morning  → DOC-MORN-ROUND
+ *                            progress + shift=evening  → DOC-EVE-ROUND
+ *                            progress + shift=night    → DOC-NIGHT-ROUND
+ *                            consultation              → DOC-CONSULT
+ *                            admission                 → DOC-ADMISSION
+ *                            discharge                 → DOC-DISCHARGE
+ *                        Dedup key includes the doctor's identity, so two
+ *                        consultants on the same day are billed separately
+ *                        (NABH multi-disciplinary care).
+ *
+ *   BILL FREEZE        — auto-charges flow as long as
+ *                        admission.status === "Active". The moment status
+ *                        flips to Discharged / Cancelled, the cron stops
+ *                        firing. dischargePatient() in admissionService
+ *                        invokes flushDailyChargesForAdmission() one last
+ *                        time so the day-of-discharge bed + nursing get
+ *                        billed before the freeze.
  */
 const BillingTrigger = require("../../models/Billing/BillingTrigger");
 const ServiceMaster  = require("../../models/ServiceMaster/serviceMasterModel");
 const PatientBill    = require("../../models/PatientBillModel/PatientBillModel");
 const ServicePricing = require("../../models/ServicePricing/ServicePricingModel");
 const Admission      = require("../../models/Patient/admissionModel");
+const Room           = require("../../models/bedMgmt/roomModel");
 
 // ── Service-event map: maps clinical event types → service codes ──────────────
 // autoCharge: true = bill immediately when trigger created
@@ -64,6 +100,53 @@ const getDateKey = (d = new Date()) => DATE_KEY_FMT.format(d);
 async function findServiceByCode(code) {
   if (!code) return null;
   return ServiceMaster.findOne({ serviceCode: code, isActive: true }).lean();
+}
+
+// ── Helper: walk admission → room → category to get pricing ──────────────────
+// Returns { bedRate, nursingRate, categoryCode, categoryName, roomType }
+// for the room the patient is currently in. Returns zero rates if the
+// patient has no bed (OPD / Services stub) or if the category is missing
+// pricing — the caller falls back to whatever ServiceMaster has.
+async function resolveBedAndNursingRates(admission) {
+  const empty = { bedRate: 0, nursingRate: 0, categoryCode: null, categoryName: null, roomType: null };
+  if (!admission?.roomId) return empty;
+  try {
+    const room = await Room.findById(admission.roomId).populate("roomCategory").lean();
+    const cat = room?.roomCategory;
+    if (!cat) return empty;
+    return {
+      bedRate:     Number(cat.defaultPricing?.perBedDailyRate) || 0,
+      nursingRate: Number(cat.defaultPricing?.nursingCharges)   || 0,
+      categoryCode: cat.categoryCode || null,
+      categoryName: cat.categoryName || null,
+      roomType:     cat.roomType     || null,
+    };
+  } catch (e) {
+    console.error("[AutoBilling] resolveBedAndNursingRates error:", e.message);
+    return empty;
+  }
+}
+
+// ── Helper: map doctor note (type + shift) → billable visit code ─────────────
+// One charge per doctor per round per day. The dedup-by-doctor flag ensures
+// two consultants on the same day each get a separate line.
+function resolveDoctorVisitCode(noteType, shift) {
+  const nt = String(noteType || "").toLowerCase();
+  const sh = String(shift || "").toLowerCase();
+  if (nt === "consultation") return { code: "DOC-CONSULT",      name: "Inter-department Consultation", dailyDedup: false, dedupByDoctor: true };
+  if (nt === "admission")    return { code: "DOC-ADMISSION",    name: "Admission Assessment",          dailyDedup: false, dedupByDoctor: true };
+  if (nt === "discharge")    return { code: "DOC-DISCHARGE",    name: "Discharge Summary Visit",       dailyDedup: false, dedupByDoctor: true };
+  if (nt === "icu")          return { code: "DOC-ICU-VISIT",    name: "ICU Doctor Visit",              dailyDedup: true,  dedupByDoctor: true };
+  if (nt === "procedure" || nt === "operative" || nt === "preop" || nt === "postop") {
+    // Procedure billing happens via its own ServiceMaster lookup elsewhere
+    // — don't double-charge a generic visit on top of the procedure fee.
+    return null;
+  }
+  // Routine round notes (progress, daily, assessment, general) — shift-based.
+  if (/evening/.test(sh)) return { code: "DOC-EVE-ROUND",   name: "Doctor Evening Round", dailyDedup: true, dedupByDoctor: true };
+  if (/night/.test(sh))   return { code: "DOC-NIGHT-ROUND", name: "Doctor Night Round",   dailyDedup: true, dedupByDoctor: true };
+  // morning / afternoon / unspecified all fall into morning-round
+  return { code: "DOC-MORN-ROUND", name: "Doctor Morning Round", dailyDedup: true, dedupByDoctor: true };
 }
 
 // ── Helper: find ServiceMaster by name (fuzzy) ───────────────────────────────
@@ -125,11 +208,18 @@ async function getOrCreateBill(admissionId, patientType) {
 }
 
 // ── Helper: add item to bill ──────────────────────────────────────────────────
+// `source.unitPriceOverride` lets a caller inject a price computed elsewhere
+// (e.g. bed rate from the room category) instead of using ServicePricing.
 async function addItemToBill(bill, service, quantity, source, trigger) {
   if (!bill || !service) return null;
   try {
-    const pricing = await ServicePricing.getPriceFor(service._id, bill.paymentType || "CASH", bill.tpa?.toString());
-    const unitPrice  = pricing?.finalPrice ?? service.defaultPrice ?? 0;
+    let unitPrice;
+    if (source.unitPriceOverride != null) {
+      unitPrice = Number(source.unitPriceOverride) || 0;
+    } else {
+      const pricing = await ServicePricing.getPriceFor(service._id, bill.paymentType || "CASH", bill.tpa?.toString());
+      unitPrice = pricing?.finalPrice ?? service.defaultPrice ?? 0;
+    }
     const totalAmt   = unitPrice * (quantity || 1);
 
     const item = {
@@ -145,7 +235,7 @@ async function addItemToBill(bill, service, quantity, source, trigger) {
       netAmount:       totalAmt,
       tpaPayableAmount:     bill.paymentType === "TPA" ? totalAmt : 0,
       patientPayableAmount: bill.paymentType === "TPA" ? 0 : totalAmt,
-      chargeDate:      new Date(),
+      chargeDate:      source.chargeDate ? new Date(source.chargeDate) : new Date(),
       appliedTariff:   bill.paymentType || "CASH",
       remarks:         source.remarks || `Auto-billed via ${source.sourceType}`,
       addedBySource:   source.addedBySource || "Auto",
@@ -162,6 +252,17 @@ async function addItemToBill(bill, service, quantity, source, trigger) {
     // event (typically it'll spin up a new draft on the next admission day).
     if (["PAID", "CANCELLED", "REFUNDED"].includes(freshBill.billStatus)) {
       console.warn(`[AutoBilling] skipping addItemToBill — bill ${freshBill._id} is ${freshBill.billStatus}`);
+      // Audit-clean the trigger: mark "skipped" with a reason instead of
+      // leaving it in "pending" forever — otherwise the audit trail shows
+      // an outstanding charge that will never actually bill.
+      if (trigger?._id) {
+        const { logErr } = require("../../utils/logErr");
+        await BillingTrigger.findByIdAndUpdate(trigger._id, {
+          status: "skipped",
+          skipReason: `Bill ${freshBill.billStatus.toLowerCase()} — no new charges accepted`,
+          skippedAt: new Date(),
+        }).catch(logErr("autoBilling", `mark-trigger-skipped ${trigger._id}`));
+      }
       return null;
     }
     freshBill.billItems.push(item);
@@ -184,17 +285,34 @@ async function createTrigger(config) {
     completedBy, completedById, completedByRole,
     orderDetails, completionNotes,
     autoCharge = false, dailyDedup = false, requiresConfirmation = false,
+    dedupByDoctor = false, // NEW — when true, dedup key includes doctor identity
+    unitPriceOverride,     // NEW — bed/nursing daily rates from room category
+    overrideDateKey,       // NEW — historical backfill uses past dateKey while
+                           //       keeping the dailyDedup guard intact
+    chargeDate,            // NEW — bill-item chargeDate (defaults to today)
     shift, department, notes,
   } = config;
 
-  const dateKey = getDateKey();
+  const dateKey = overrideDateKey || getDateKey();
 
-  // Daily dedup check
+  // Daily dedup check. Doctor-round charges set dedupByDoctor=true so two
+  // consulting doctors on the same day each get their own line (NABH
+  // multi-disciplinary care). Without that flag the existing behaviour
+  // (one-per-admission-per-day, regardless of who) is preserved for
+  // bed/nursing/RBS/etc.
   if (dailyDedup && admissionId && serviceCode) {
-    const existing = await BillingTrigger.findOne({
+    const dedupQuery = {
       admissionId, serviceCode, dateKey,
       status: { $in: ["completed", "billed", "pending"] },
-    }).lean();
+    };
+    if (dedupByDoctor) {
+      // Prefer ObjectId match if we have one; otherwise fall back to
+      // name match. Either dimension uniquely identifies "this doctor
+      // on this day for this admission".
+      if (orderedById) dedupQuery.orderedById = orderedById;
+      else if (orderedBy) dedupQuery.orderedBy = orderedBy;
+    }
+    const existing = await BillingTrigger.findOne(dedupQuery).lean();
     if (existing) {
       return { skipped: true, reason: "Daily dedup — already charged today", existing };
     }
@@ -208,10 +326,22 @@ async function createTrigger(config) {
     resolvedService = await findServiceByCode(serviceCode);
   }
 
-  const unitPrice   = resolvedService?.defaultPrice ?? 0;
+  // Price precedence: caller override (room-category rate) → ServicePricing
+  // tariff (TPA/Corporate aware, looked up inside addItemToBill) →
+  // ServiceMaster.defaultPrice → 0. We store the override here on the
+  // trigger so the audit row reflects exactly what the patient will pay.
+  const unitPrice   = unitPriceOverride != null
+    ? (Number(unitPriceOverride) || 0)
+    : (resolvedService?.defaultPrice ?? 0);
   const totalAmount = unitPrice * (quantity || 1);
 
-  const triggerStatus = autoCharge && resolvedService ? "completed" : requiresConfirmation ? "pending" : "pending";
+  // If a code was requested but ServiceMaster doesn't have it yet (common
+  // for newly-introduced codes like DOC-MORN-ROUND or BED-ICU), accept
+  // the trigger anyway — the bill item is fully described by serviceCode +
+  // serviceName + unitPriceOverride. A nightly job can backfill missing
+  // ServiceMaster rows from accumulated triggers.
+  const canAutoCharge = autoCharge && (resolvedService || (serviceCode && unitPriceOverride != null && serviceName));
+  const triggerStatus = canAutoCharge ? "completed" : requiresConfirmation ? "pending" : "pending";
 
   const triggerData = {
     admissionId, patientId, UHID, patientType,
@@ -235,11 +365,21 @@ async function createTrigger(config) {
 
   const trigger = await BillingTrigger.create(triggerData);
 
-  // Auto-bill immediately if configured and service found
-  if (autoCharge && resolvedService && admissionId) {
+  // Auto-bill immediately if configured. We accept a synthetic service
+  // doc (built from the trigger fields) when ServiceMaster doesn't have
+  // the code yet — addItemToBill only needs name/code/category/billingType.
+  if (canAutoCharge && admissionId) {
     const bill = await getOrCreateBill(admissionId, patientType);
     if (bill) {
-      const result = await addItemToBill(bill, resolvedService, quantity, {
+      const serviceForItem = resolvedService || {
+        _id: undefined,
+        serviceCode,
+        serviceName: serviceName || serviceCode,
+        category: "Service",
+        billingType: "PER_DAY",
+        defaultPrice: unitPrice,
+      };
+      const result = await addItemToBill(bill, serviceForItem, quantity, {
         addedBySource: config.sourceType === "DoctorNote" ? "Doctor" :
                        config.sourceType === "NurseNote"  ? "Nurse"  :
                        config.sourceType === "MAR"        ? "Nurse"  :
@@ -249,6 +389,8 @@ async function createTrigger(config) {
         addedByRole: completedByRole || orderedByRole || "System",
         remarks:    `${sourceType} — ${orderDetails || serviceName || serviceCode}`,
         sourceType,
+        unitPriceOverride,
+        chargeDate,
       }, trigger);
 
       if (result) {
@@ -316,19 +458,32 @@ async function onNurseNoteSaved(noteDoc) {
 }
 
 /**
- * Fire when a doctor note is saved
+ * Fire when a doctor note is saved.
+ *
+ * Charges are differentiated by note sub-type + shift so the bill shows
+ * what the doctor actually did, not a single opaque "consultation" line:
+ *   - progress / daily / assessment + shift → MORN-ROUND / EVE-ROUND / NIGHT-ROUND
+ *   - consultation                            → DOC-CONSULT (separate per consultant)
+ *   - admission                               → DOC-ADMISSION
+ *   - discharge                               → DOC-DISCHARGE
+ *   - icu                                     → DOC-ICU-VISIT (higher tariff)
+ *   - procedure / operative / preop / postop  → no visit charge (procedure code handles it)
+ *
+ * Dedup is per-doctor-per-day, so multiple consultants attending the
+ * same admission on the same day each generate their own line (NABH
+ * multi-disciplinary care reporting).
  */
 async function onDoctorNoteSaved(noteDoc) {
   if (!noteDoc) return;
   const noteType = noteDoc.noteType || "progress";
-  const mapKey   = `DoctorNote:${noteType}`;
-  const mapping  = EVENT_SERVICE_MAP[mapKey] || EVENT_SERVICE_MAP["DoctorNote:progress"];
-  if (!mapping || (!mapping.serviceCode && !mapping.dynamicLookup)) return;
+  const visit = resolveDoctorVisitCode(noteType, noteDoc.shift);
+  if (!visit) return; // procedure notes etc. bill via their own path
 
   const admissionId = noteDoc.admissionId || await resolveAdmissionId(noteDoc);
   if (!admissionId) return;
 
-  const doctorName = noteDoc.doctorName || noteDoc.orderedBy || "Doctor";
+  const doctorName = noteDoc.doctorName || noteDoc.consultantName || noteDoc.orderedBy || "Doctor";
+  const doctorId   = noteDoc.doctor || noteDoc.doctorId || null;
 
   try {
     await createTrigger({
@@ -336,18 +491,22 @@ async function onDoctorNoteSaved(noteDoc) {
       patientId:   noteDoc.patientId,
       UHID:        noteDoc.UHID || noteDoc.patientUHID,
       patientType: "IPD",
-      serviceCode: mapping.serviceCode,
+      serviceCode: visit.code,
+      serviceName: visit.name,
       sourceType:  "DoctorNote",
       sourceDocumentId:    noteDoc._id,
       sourceDocumentModel: "DoctorNote",
       orderedBy:     doctorName,
+      orderedById:   doctorId,
       orderedByRole: "Doctor",
       completedBy:   doctorName,
+      completedById: doctorId,
       completedByRole: "Doctor",
-      orderDetails:  `Doctor ${noteType} note`,
-      autoCharge:    mapping.autoCharge,
-      dailyDedup:    mapping.dailyDedup,
-      requiresConfirmation: mapping.requiresConfirmation,
+      orderDetails:  `${visit.name} — ${doctorName}${noteType !== "progress" ? ` (${noteType})` : ""}`,
+      autoCharge:    true,
+      dailyDedup:    visit.dailyDedup,
+      dedupByDoctor: visit.dedupByDoctor,
+      shift:         noteDoc.shift,
     });
   } catch (e) {
     console.error("[AutoBilling] onDoctorNoteSaved error:", e.message);
@@ -550,24 +709,61 @@ async function onInvestigationResulted(orderDoc) {
 }
 
 /**
- * Fire when nursing equipment is logged (from NursingChargeEntry)
- * This already has its own billing, so just create audit trigger
+ * Fire when nursing equipment / consumable is logged from
+ * nursingChargesService.logItems(). Routes through the standard
+ * createTrigger path so the item lands on the patient's bill (closed-bill
+ * guard + audit trail) instead of just creating an orphan audit row.
+ *
+ * Uses unitPriceOverride from the NursingChargeEntry's stored price so
+ * the bill matches exactly what the nurse logged (no surprise re-pricing
+ * if the master rate changes later).
  */
 async function onEquipmentCharged(chargeEntry, billItemId) {
   if (!chargeEntry) return;
+  if (billItemId) {
+    // Already manually billed elsewhere — leave a paper-trail trigger and
+    // exit, so we don't double-add to the bill.
+    try {
+      await BillingTrigger.create({
+        admissionId: chargeEntry.admissionId,
+        patientId:   chargeEntry.patientId,
+        UHID:        chargeEntry.UHID,
+        patientType: "IPD",
+        serviceCode: `EQUIP-${chargeEntry.itemId?.toString().slice(-6) || "GEN"}`,
+        serviceName: chargeEntry.itemName,
+        quantity:    chargeEntry.quantity || 1,
+        unitPrice:   chargeEntry.unitPrice,
+        totalAmount: chargeEntry.totalAmount,
+        sourceType:  "Equipment",
+        sourceDocumentId:    chargeEntry._id,
+        sourceDocumentModel: "NursingChargeEntry",
+        orderedBy:   chargeEntry.chargedBy || "Nurse",
+        orderedByRole: "Nurse",
+        completedBy:   chargeEntry.chargedBy || "Nurse",
+        completedByRole: "Nurse",
+        completedAt: new Date(),
+        billItemId,
+        status: "billed",
+        autoCharged: true,
+        dateKey: chargeEntry.dateKey || getDateKey(),
+        shift: chargeEntry.shift,
+      });
+    } catch (e) { console.error("[AutoBilling] onEquipmentCharged (paper-trail) error:", e.message); }
+    return;
+  }
 
   try {
-    await BillingTrigger.create({
+    await createTrigger({
       admissionId:  chargeEntry.admissionId,
       patientId:    chargeEntry.patientId,
       UHID:         chargeEntry.UHID,
       patientType:  "IPD",
-      serviceId:    chargeEntry.itemId,
-      serviceCode:  chargeEntry.itemId?.toString(),
+      // Stable per-item code so the bill groups consumables sensibly.
+      // Falls back to a hash of the itemId when itemName isn't reliable.
+      serviceCode:  `EQUIP-${chargeEntry.itemId?.toString().slice(-6) || "GEN"}`,
       serviceName:  chargeEntry.itemName,
       quantity:     chargeEntry.quantity || 1,
-      unitPrice:    chargeEntry.unitPrice,
-      totalAmount:  chargeEntry.totalAmount,
+      unitPriceOverride: chargeEntry.unitPrice,
       sourceType:   "Equipment",
       sourceDocumentId:    chargeEntry._id,
       sourceDocumentModel: "NursingChargeEntry",
@@ -575,11 +771,11 @@ async function onEquipmentCharged(chargeEntry, billItemId) {
       orderedByRole: "Nurse",
       completedBy:   chargeEntry.chargedBy || "Nurse",
       completedByRole: "Nurse",
-      completedAt:   new Date(),
-      orderDetails:  `Equipment used: ${chargeEntry.itemName}`,
-      status:        billItemId ? "billed" : "completed",
-      autoCharged:   true,
-      dateKey:       chargeEntry.dateKey || getDateKey(),
+      orderDetails:  `Consumable: ${chargeEntry.itemName} × ${chargeEntry.quantity || 1}`,
+      autoCharge:    true,
+      // Already deduped at the NursingChargeEntry layer for chargeOncePerDay
+      // items, so no need to re-dedup here.
+      dailyDedup:    false,
       shift:         chargeEntry.shift,
     });
   } catch (e) {
@@ -845,28 +1041,61 @@ async function onAdmissionCreated(admissionDoc) {
     }).catch((e) => { console.error("Admission charge trigger error:", e.message); return null; })
   );
 
-  // 3. First bed-day charge (if IPD/Daycare) — daily cron handles subsequent days
+  // 3. First bed-day + nursing-daily charge (if IPD/Daycare) — daily cron
+  //    handles subsequent days. Rates come from the bed's room category
+  //    so ICU/HDU/Private/Ward patients pay their tier's price without
+  //    any per-category ServiceMaster pre-seed.
   if (typeCode === "IPD" || typeCode === "DAYCARE") {
-    triggers.push(
-      await createTrigger({
-        admissionId:         admissionDoc._id,
-        patientId:           admissionDoc.patientId,
-        UHID:                admissionDoc.UHID,
-        patientType:         typeCode,
-        serviceCode:         `BED-DAY-${typeCode}`,
-        serviceName:         `${typeCode} Bed Charge (Day 1)`,
-        quantity:            1,
-        sourceType:          "BedCharge",
-        sourceDocumentId:    admissionDoc._id,
-        sourceDocumentModel: "Admission",
-        orderedBy:           "System",
-        orderedByRole:       "System",
-        orderDetails:        `Daily bed charge for ${admissionDoc.admissionType}`,
-        autoCharge:          true,
-        dailyDedup:          true,
-        department:          admissionDoc.department,
-      }).catch((e) => { console.error("Bed-day trigger error:", e.message); return null; })
-    );
+    const rates = await resolveBedAndNursingRates(admissionDoc);
+    const catTag = rates.categoryCode ? `-${rates.categoryCode}` : "";
+
+    if (rates.bedRate > 0) {
+      triggers.push(
+        await createTrigger({
+          admissionId:         admissionDoc._id,
+          patientId:           admissionDoc.patientId,
+          UHID:                admissionDoc.UHID,
+          patientType:         typeCode,
+          serviceCode:         `BED${catTag}`,
+          serviceName:         `Bed Charge — ${rates.categoryName || rates.roomType || typeCode} (Day 1)`,
+          quantity:            1,
+          unitPriceOverride:   rates.bedRate,
+          sourceType:          "BedCharge",
+          sourceDocumentId:    admissionDoc._id,
+          sourceDocumentModel: "Admission",
+          orderedBy:           "System",
+          orderedByRole:       "System",
+          orderDetails:        `Day 1 bed charge — ${rates.categoryName || rates.roomType || "category"} @ ₹${rates.bedRate}/day`,
+          autoCharge:          true,
+          dailyDedup:          true,
+          department:          admissionDoc.department,
+        }).catch((e) => { console.error("Bed-day trigger error:", e.message); return null; })
+      );
+    }
+
+    if (rates.nursingRate > 0) {
+      triggers.push(
+        await createTrigger({
+          admissionId:         admissionDoc._id,
+          patientId:           admissionDoc.patientId,
+          UHID:                admissionDoc.UHID,
+          patientType:         typeCode,
+          serviceCode:         `NURSING${catTag}`,
+          serviceName:         `Nursing Care — ${rates.categoryName || rates.roomType || typeCode} (Day 1)`,
+          quantity:            1,
+          unitPriceOverride:   rates.nursingRate,
+          sourceType:          "BedCharge",
+          sourceDocumentId:    admissionDoc._id,
+          sourceDocumentModel: "Admission",
+          orderedBy:           "System",
+          orderedByRole:       "System",
+          orderDetails:        `Day 1 nursing care — ${rates.categoryName || rates.roomType || "category"} @ ₹${rates.nursingRate}/day`,
+          autoCharge:          true,
+          dailyDedup:          true,
+          department:          admissionDoc.department,
+        }).catch((e) => { console.error("Nursing-day trigger error:", e.message); return null; })
+      );
+    }
   }
 
   return triggers.filter(Boolean);
@@ -925,41 +1154,263 @@ async function runDailyBedChargeAccrual() {
     Transfer:  "IPD",
   };
 
-  let fired = 0, skipped = 0, errors = 0;
+  let bedFired = 0, nurseFired = 0, skipped = 0, errors = 0;
   for (const adm of active) {
     const typeCode = typeMap[adm.admissionType] || "IPD";
     if (typeCode !== "IPD" && typeCode !== "DAYCARE") continue;
 
-    const startMs = new Date(adm.admissionDate || adm.createdAt).getTime();
-    const dayN = Math.max(1, Math.floor((Date.now() - startMs) / 86400000) + 1);
-
     try {
-      const r = await createTrigger({
-        admissionId:         adm._id,
-        patientId:           adm.patientId,
-        UHID:                adm.UHID,
-        patientType:         typeCode,
-        serviceCode:         `BED-DAY-${typeCode}`,
-        serviceName:         `${typeCode} Bed Charge (Day ${dayN})`,
-        quantity:            1,
-        sourceType:          "BedCharge",
-        sourceDocumentId:    adm._id,
-        sourceDocumentModel: "Admission",
-        orderedBy:           "System",
-        orderedByRole:       "System",
-        orderDetails:        `Auto daily bed accrual — Day ${dayN}`,
-        autoCharge:          true,
-        dailyDedup:          true,
-        department:          adm.department,
-      });
-      if (r?.skipped) skipped++;
-      else if (r?.trigger) fired++;
+      const result = await flushDailyChargesForAdmission(adm, { typeCode });
+      bedFired   += result.bedFired;
+      nurseFired += result.nurseFired;
+      skipped    += result.skipped;
     } catch (e) {
       errors++;
       console.error(`[daily-accrual] admission ${adm._id}:`, e.message);
     }
   }
-  return { active: active.length, fired, skipped, errors, at: new Date() };
+  return { active: active.length, bedFired, nurseFired, skipped, errors, at: new Date() };
+}
+
+/**
+ * Fire today's bed + nursing-daily charges for one admission. Idempotent via
+ * the `dailyDedup` guard inside createTrigger, so safe to call:
+ *   - from the periodic cron (runDailyBedChargeAccrual)
+ *   - from admissionService.dischargePatient just before flipping status, so
+ *     the day-of-discharge bed + nursing always make it onto the bill before
+ *     the auto-billing pipeline freezes the admission.
+ *
+ * Returns { bedFired, nurseFired, skipped } counts so the caller can audit.
+ */
+async function flushDailyChargesForAdmission(admission, { typeCode } = {}) {
+  let bedFired = 0, nurseFired = 0, skipped = 0;
+  if (!admission?._id) return { bedFired, nurseFired, skipped };
+
+  const typeMap = {
+    Planned: "IPD", Emergency: "EMERGENCY", "Day Care": "DAYCARE",
+    Daycare: "DAYCARE", Transfer: "IPD",
+  };
+  const tc = typeCode || typeMap[admission.admissionType] || "IPD";
+  if (tc !== "IPD" && tc !== "DAYCARE") return { bedFired, nurseFired, skipped };
+
+  const startMs = new Date(admission.admissionDate || admission.createdAt).getTime();
+  const dayN = Math.max(1, Math.floor((Date.now() - startMs) / 86400000) + 1);
+
+  const rates = await resolveBedAndNursingRates(admission);
+  const catTag = rates.categoryCode ? `-${rates.categoryCode}` : "";
+
+  if (rates.bedRate > 0) {
+    const r = await createTrigger({
+      admissionId:         admission._id,
+      patientId:           admission.patientId,
+      UHID:                admission.UHID,
+      patientType:         tc,
+      serviceCode:         `BED${catTag}`,
+      serviceName:         `Bed Charge — ${rates.categoryName || rates.roomType || tc} (Day ${dayN})`,
+      quantity:            1,
+      unitPriceOverride:   rates.bedRate,
+      sourceType:          "BedCharge",
+      sourceDocumentId:    admission._id,
+      sourceDocumentModel: "Admission",
+      orderedBy:           "System",
+      orderedByRole:       "System",
+      orderDetails:        `Daily bed accrual — Day ${dayN} — ${rates.categoryName || rates.roomType || "category"} @ ₹${rates.bedRate}/day`,
+      autoCharge:          true,
+      dailyDedup:          true,
+      department:          admission.department,
+    });
+    if (r?.skipped) skipped++;
+    else if (r?.trigger) bedFired++;
+  }
+
+  if (rates.nursingRate > 0) {
+    const r = await createTrigger({
+      admissionId:         admission._id,
+      patientId:           admission.patientId,
+      UHID:                admission.UHID,
+      patientType:         tc,
+      serviceCode:         `NURSING${catTag}`,
+      serviceName:         `Nursing Care — ${rates.categoryName || rates.roomType || tc} (Day ${dayN})`,
+      quantity:            1,
+      unitPriceOverride:   rates.nursingRate,
+      sourceType:          "BedCharge",
+      sourceDocumentId:    admission._id,
+      sourceDocumentModel: "Admission",
+      orderedBy:           "System",
+      orderedByRole:       "System",
+      orderDetails:        `Daily nursing care — Day ${dayN} — ${rates.categoryName || rates.roomType || "category"} @ ₹${rates.nursingRate}/day`,
+      autoCharge:          true,
+      dailyDedup:          true,
+      department:          admission.department,
+    });
+    if (r?.skipped) skipped++;
+    else if (r?.trigger) nurseFired++;
+  }
+
+  return { bedFired, nurseFired, skipped };
+}
+
+/**
+ * Backfill bed + nursing for every day from admissionDate to today,
+ * plus orphaned doctor notes, nurse notes and nursing-consumable entries
+ * that were saved BEFORE the auto-billing redesign hooked their save
+ * paths. Idempotent — the `dailyDedup` and per-source dedup guards inside
+ * createTrigger prevent duplicate charges if called twice.
+ *
+ * Called automatically by `billingService.getOrCreateDraftBill` when a
+ * NEW draft bill is created for an active admission, so the moment a user
+ * opens the AI billing page for a long-running admission the bill reflects
+ * the entire stay (bed × N days + nursing × N days + every visit on file).
+ *
+ * Returns { days, bedFired, nurseFired, doctorFired, nurseNoteFired,
+ *           consumableFired, skipped, errors }.
+ */
+async function backfillAdmissionCharges(admission) {
+  const result = {
+    days: 0, bedFired: 0, nurseFired: 0,
+    doctorFired: 0, nurseNoteFired: 0, consumableFired: 0,
+    skipped: 0, errors: 0,
+  };
+  if (!admission?._id) return result;
+  // Only backfill while the admission is open. A discharged or cancelled
+  // admission's bill is the discharge-day snapshot; we don't retroactively
+  // add charges to a closed event.
+  if (admission.status !== "Active" && admission.status !== "Transferred") {
+    console.log(`[Backfill] skipping ADM ${admission.admissionNumber} — status=${admission.status}`);
+    return result;
+  }
+
+  const typeMap = {
+    Planned: "IPD", Emergency: "EMERGENCY", "Day Care": "DAYCARE",
+    Daycare: "DAYCARE", Transfer: "IPD",
+  };
+  const tc = typeMap[admission.admissionType] || "IPD";
+
+  const rates = await resolveBedAndNursingRates(admission);
+  const catTag = rates.categoryCode ? `-${rates.categoryCode}` : "";
+  console.log(
+    `[Backfill] ADM ${admission.admissionNumber} (${tc}) — room=${rates.roomType || "?"}/${rates.categoryName || rates.categoryCode || "?"}`,
+    `bed=₹${rates.bedRate} nursing=₹${rates.nursingRate}`,
+  );
+
+  // ── 1. Bed + nursing day-by-day from admissionDate → today ──────────────────
+  if (rates.bedRate > 0 || rates.nursingRate > 0) {
+    const startDate = new Date(admission.admissionDate || admission.createdAt);
+    if (!isNaN(startDate.getTime())) {
+      const todayKey = getDateKey();
+      // Anchor cursor at noon to dodge DST edges; we only care about the
+      // calendar-day buckets in IST anyway.
+      const cursor = new Date(startDate);
+      cursor.setHours(12, 0, 0, 0);
+
+      let safety = 0;
+      while (safety++ < 400) {
+        const dateKey = getDateKey(cursor);
+        if (dateKey > todayKey) break;
+        result.days++;
+        const dayN = result.days;
+
+        if (rates.bedRate > 0) {
+          try {
+            const r = await createTrigger({
+              admissionId:         admission._id,
+              patientId:           admission.patientId,
+              UHID:                admission.UHID,
+              patientType:         tc,
+              serviceCode:         `BED${catTag}`,
+              serviceName:         `Bed Charge — ${rates.categoryName || rates.roomType || tc} (Day ${dayN})`,
+              quantity:            1,
+              unitPriceOverride:   rates.bedRate,
+              sourceType:          "BedCharge",
+              sourceDocumentId:    admission._id,
+              sourceDocumentModel: "Admission",
+              orderedBy:           "System",
+              orderedByRole:       "System",
+              orderDetails:        `Backfill bed accrual — Day ${dayN} (${dateKey}) — ${rates.categoryName || rates.roomType || "category"} @ ₹${rates.bedRate}/day`,
+              autoCharge:          true,
+              dailyDedup:          true,
+              department:          admission.department,
+              overrideDateKey:     dateKey,
+              chargeDate:          new Date(cursor),
+            });
+            if (r?.skipped) result.skipped++;
+            else if (r?.trigger) result.bedFired++;
+          } catch (e) { result.errors++; console.error("[Backfill] bed:", e.message); }
+        }
+
+        if (rates.nursingRate > 0) {
+          try {
+            const r = await createTrigger({
+              admissionId:         admission._id,
+              patientId:           admission.patientId,
+              UHID:                admission.UHID,
+              patientType:         tc,
+              serviceCode:         `NURSING${catTag}`,
+              serviceName:         `Nursing Care — ${rates.categoryName || rates.roomType || tc} (Day ${dayN})`,
+              quantity:            1,
+              unitPriceOverride:   rates.nursingRate,
+              sourceType:          "BedCharge",
+              sourceDocumentId:    admission._id,
+              sourceDocumentModel: "Admission",
+              orderedBy:           "System",
+              orderedByRole:       "System",
+              orderDetails:        `Backfill nursing care — Day ${dayN} (${dateKey}) — ${rates.categoryName || rates.roomType || "category"} @ ₹${rates.nursingRate}/day`,
+              autoCharge:          true,
+              dailyDedup:          true,
+              department:          admission.department,
+              overrideDateKey:     dateKey,
+              chargeDate:          new Date(cursor),
+            });
+            if (r?.skipped) result.skipped++;
+            else if (r?.trigger) result.nurseFired++;
+          } catch (e) { result.errors++; console.error("[Backfill] nursing:", e.message); }
+        }
+
+        cursor.setDate(cursor.getDate() + 1);
+      }
+    }
+  }
+
+  // ── 2. Existing doctor notes (per-shift round / consult charges) ────────────
+  try {
+    const DoctorNote = require("../../models/Doctor/DoctorNotesModel");
+    const notes = await DoctorNote.find({ admissionId: admission._id }).lean();
+    for (const note of notes) {
+      try {
+        await onDoctorNoteSaved(note);
+        result.doctorFired++;
+      } catch (e) { result.errors++; console.error("[Backfill] doctor note:", e.message); }
+    }
+  } catch (e) {
+    // DoctorNote model may live under a different path in some installs —
+    // log but don't abort the rest of the backfill.
+    console.warn("[Backfill] DoctorNote model not loaded:", e.message);
+  }
+
+  // ── 3. Existing nurse notes (skip — charges fire only on note types with
+  //       a serviceCode mapping, and re-firing them risks dup-on-non-daily
+  //       codes that lack a per-source dedup key. Coverage is good enough
+  //       from forward-only fire-on-save going forward.)
+
+  // ── 4. Existing nursing consumables (NursingChargeEntry) ────────────────────
+  try {
+    const NursingChargeEntry = require("../../models/nursing/NursingChargeEntry");
+    const entries = await NursingChargeEntry.find({
+      admissionId: admission._id,
+      status: "active",
+      billed: { $ne: true },
+    }).lean();
+    for (const entry of entries) {
+      try {
+        await onEquipmentCharged(entry);
+        result.consumableFired++;
+      } catch (e) { result.errors++; console.error("[Backfill] consumable:", e.message); }
+    }
+  } catch (e) {
+    console.warn("[Backfill] NursingChargeEntry model not loaded:", e.message);
+  }
+
+  return result;
 }
 
 module.exports = {
@@ -980,6 +1431,9 @@ module.exports = {
   // Admission/ER handlers
   onAdmissionCreated,
   onEmergencyVisitCreated,
-  // Daily accrual (callable from cron + admin endpoint)
+  // Daily accrual + on-demand flush (admission discharge calls flushDailyChargesForAdmission)
+  flushDailyChargesForAdmission,
   runDailyBedChargeAccrual,
+  // Retroactive backfill (bill creation calls this for active admissions)
+  backfillAdmissionCharges,
 };

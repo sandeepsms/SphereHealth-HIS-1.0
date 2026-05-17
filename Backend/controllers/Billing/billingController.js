@@ -367,9 +367,12 @@ exports.listBills = async (req, res) => {
     if (status)       query.billStatus  = String(status).toUpperCase();
     if (visitType)    query.visitType   = String(visitType).toUpperCase();
     if (paymentType)  query.paymentType = String(paymentType).toUpperCase();
-    if (UHID)         query.UHID        = { $regex: UHID, $options: "i" };
-    if (billNumber)   query.billNumber  = { $regex: billNumber, $options: "i" };
-    if (patientName)  query.patientName = { $regex: patientName, $options: "i" };
+    // Escape user-supplied regex chars so a caller can't pass `.*` and
+    // dump every bill (security audit 2026-05-17 finding B-01).
+    const { safeRegex } = require("../../utils/queryGuards");
+    if (UHID)         query.UHID        = safeRegex(UHID);
+    if (billNumber)   query.billNumber  = safeRegex(billNumber);
+    if (patientName)  query.patientName = safeRegex(patientName);
     if (startDate || endDate) {
       query.billDate = {};
       if (startDate) query.billDate.$gte = new Date(startDate);

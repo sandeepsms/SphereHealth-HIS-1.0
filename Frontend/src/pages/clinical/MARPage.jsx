@@ -4,6 +4,7 @@ import { API_ENDPOINTS } from "../../config/api";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import { useAutoSave } from "../../hooks/useAutoSave";
 import { useDigitalSignature } from "../../hooks/useDigitalSignature";
+import { useUhidFromLocation } from "../../hooks/useUhidFromLocation";
 import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
 import SignaturePad from "../../Components/signature/SignaturePad";
 
@@ -790,16 +791,16 @@ function MARPageContent({ selectedPatient }) {
     }
   }, [selectedPatient]);
 
-  /* Auto-load when /mar?uhid=… is opened from /bed-visual.
-     /api/mar/ipd/:ipd works with UHID, ipdNo, or bedNumber — pass UHID
-     straight through and let the search() function resolve it. */
+  /* Auto-load when /mar is opened from /bed-visual. UHID now comes
+     from location.state (or a legacy ?uhid= URL param which is
+     scrubbed from history on read). Audit E-04. */
+  const uhidFromLocation = useUhidFromLocation();
   useEffect(() => {
-    const u = new URLSearchParams(window.location.search).get("uhid");
-    if (!u || !u.trim()) return;
-    setSearchIPD(u.trim());
+    if (!uhidFromLocation || !uhidFromLocation.trim()) return;
+    setSearchIPD(uhidFromLocation.trim());
     setTimeout(() => document.getElementById("mar-search-btn")?.click(), 200);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [uhidFromLocation]);
 
   async function search() {
     if(!searchIPD.trim()) return;

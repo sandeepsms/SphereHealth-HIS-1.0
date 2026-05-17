@@ -151,6 +151,22 @@ exports.logItems = async ({ admissionId, items, shift, chargedBy, chargedById, d
       status:      "active",
     });
 
+    // Hook into auto-billing so the consumable lands on the patient's
+    // bill the moment the nurse logs it. Previously these entries were
+    // created here but never propagated — `onEquipmentCharged` existed
+    // in autoBillingService but nothing called it. Fire-and-forget; if
+    // the bill is closed (PAID/CANCELLED/REFUNDED) the auto-billing
+    // engine marks the trigger as "skipped" and the entry still stays
+    // on file for audit.
+    try {
+      const autoBilling = require("../Billing/autoBillingService");
+      autoBilling.onEquipmentCharged(entry).catch((e) =>
+        console.error("[NursingCharges] auto-bill error:", e.message),
+      );
+    } catch (e) {
+      console.error("[NursingCharges] could not load autoBillingService:", e.message);
+    }
+
     saved.push(entry);
   }
 

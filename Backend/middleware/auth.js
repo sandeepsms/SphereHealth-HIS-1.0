@@ -6,7 +6,7 @@ const JWT_SECRET = process.env.JWT_SECRET;
    Supports both the Authorization: Bearer header (preferred) and
    a `?token=` query parameter — the latter is required for
    EventSource / SSE streams, which can't set custom headers. */
-const authenticate = (req, res, next) => {
+const authenticate = async (req, res, next) => {
   const authHeader = req.headers.authorization;
   let token = null;
 
@@ -21,7 +21,24 @@ const authenticate = (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded; // { id, role, employeeId }
+    // Revocation list check (audit B-10). A logged-out / compromised
+    // token still parses cleanly until `exp`, so we look it up by
+    // `jti`. Pre-B-10 tokens lack the jti claim — those bypass the
+    // check (graceful upgrade; they'll expire within 8h anyway).
+    if (decoded.jti) {
+      try {
+        const TokenRevocation = require("../models/Auth/TokenRevocationModel");
+        const revoked = await TokenRevocation.exists({ jti: decoded.jti });
+        if (revoked) {
+          return res.status(401).json({ message: "Session revoked. Please login again." });
+        }
+      } catch (e) {
+        // Lookup failed (e.g. Mongo blip) — fail open so a transient DB
+        // problem doesn't lock the entire hospital out. Log loud.
+        console.error("[auth] revocation lookup failed:", e.message);
+      }
+    }
+    req.user = decoded; // { id, role, employeeId, jti, iat, exp }
     next();
   } catch (err) {
     if (err.name === "TokenExpiredError")

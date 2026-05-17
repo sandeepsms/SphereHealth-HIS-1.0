@@ -208,7 +208,9 @@ class MLCService {
       }
     } catch (createErr) {
       // Manual rollback for the non-transaction path.
-      await Doctor.findByIdAndUpdate(doctor._id, { $inc: { mlcSeq: -1 } }).catch(() => {});
+      const { logErr } = require("../../utils/logErr");
+      await Doctor.findByIdAndUpdate(doctor._id, { $inc: { mlcSeq: -1 } })
+        .catch(logErr("MLC", `rollback mlcSeq for doctor ${doctor._id}`));
       throw createErr;
     } finally {
       session?.endSession();

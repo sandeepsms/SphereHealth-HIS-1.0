@@ -108,7 +108,12 @@ async function findOrCreateUser({ email, role, firstName, lastName, phone, gende
 }
 
 async function run() {
-  if (!process.env.MONGO_URI) throw new Error("MONGO_URI not set in .env");
+  // Fail-fast pattern aligned with the other seed scripts (audit D-02 +
+  // R11 re-audit follow-up). No localhost fallback, no URI echo.
+  if (!process.env.MONGO_URI) {
+    console.error("FATAL: MONGO_URI is not set in Backend/.env — refusing to seed.");
+    process.exit(1);
+  }
   await mongoose.connect(process.env.MONGO_URI);
   console.log("Connected to MongoDB\n");
 
@@ -172,7 +177,9 @@ async function run() {
     console.log(`  ${created ? "✓" : "↺"} ${user.fullName.padEnd(28)}  ${staff.email.padEnd(34)}  (${staff.role})`);
   }
 
-  console.log(`\n  All passwords (newly-created users): ${DEFAULT_PASSWORD}`);
+  // Password not logged (security audit B-07). Operator can read
+  // DEFAULT_PASSWORD from this file's top-level constant if needed.
+  console.log(`\n  Default password is set on newly-created users — see DEFAULT_PASSWORD const in this script.`);
   console.log("  Existing users retain their old password.\n");
 
   await mongoose.disconnect();

@@ -1,13 +1,20 @@
 const svc = require("../../services/Investigation/investigationOrderService");
+const { logErr } = require("../../utils/logErr");
 
 exports.create = async (req, res) => {
   try {
     const data = await svc.createOrder(req.body);
     // ── Auto-billing hook ──────────────────────────────────────
+    // Fire-and-forget but no longer silent (audit D-01). If the
+    // billing trigger fails we still want the order to succeed —
+    // billing has its own retry mechanism — but the failure now
+    // surfaces in container logs so SOC can spot a stuck queue.
     try {
       const autoBilling = require("../../services/Billing/autoBillingService");
-      autoBilling.onInvestigationOrdered(data).catch(() => {});
-    } catch {}
+      autoBilling.onInvestigationOrdered(data).catch(logErr("autoBilling", `onInvestigationOrdered ${data?._id}`));
+    } catch (e) {
+      logErr("autoBilling", "load failure on investigation.create")(e);
+    }
     res.status(201).json({ success: true, data });
   } catch (e) {
     res.status(400).json({ success: false, message: e.message });
@@ -67,8 +74,10 @@ exports.enterResults = async (req, res) => {
     // ── Auto-billing hook ──────────────────────────────────────
     try {
       const autoBilling = require("../../services/Billing/autoBillingService");
-      autoBilling.onInvestigationResulted(data).catch(() => {});
-    } catch {}
+      autoBilling.onInvestigationResulted(data).catch(logErr("autoBilling", `onInvestigationResulted ${data?._id}`));
+    } catch (e) {
+      logErr("autoBilling", "load failure on investigation.result")(e);
+    }
     res.json({ success: true, data });
   } catch (e) {
     res.status(400).json({ success: false, message: e.message });
@@ -90,8 +99,10 @@ exports.verify = async (req, res) => {
     // ── Auto-billing hook ──────────────────────────────────────
     try {
       const autoBilling = require("../../services/Billing/autoBillingService");
-      autoBilling.onInvestigationResulted(data).catch(() => {});
-    } catch {}
+      autoBilling.onInvestigationResulted(data).catch(logErr("autoBilling", `onInvestigationResulted ${data?._id}`));
+    } catch (e) {
+      logErr("autoBilling", "load failure on investigation.result")(e);
+    }
     res.json({ success: true, data });
   } catch (e) {
     res.status(400).json({ success: false, message: e.message });

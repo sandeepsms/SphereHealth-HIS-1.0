@@ -105,7 +105,7 @@ class MARController {
     const mar = await MAR.findByIdAndUpdate(
       req.params.id,
       { $push: { medications: req.body } },
-      { new: true }
+      { new: true, runValidators: true }
     );
     if (!mar) return res.status(404).json({ success: false, message: "MAR not found" });
     return res.json({ success: true, data: mar });
@@ -130,19 +130,23 @@ class MARController {
     const mar = await MAR.findOneAndUpdate(
       { _id: req.params.id, "medications._id": req.params.medId },
       { $push: { "medications.$.administrations": entry } },
-      { new: true }
+      { new: true, runValidators: true }
     );
     if (!mar) return res.status(404).json({ success: false, message: "MAR or medication not found" });
 
     // ── Auto-billing hook ──────────────────────────────────────
     // Bill on every GIVEN dose; HELD/REFUSED/MISSED/NOT_AVAILABLE do NOT bill.
     try {
+      const { logErr } = require("../../utils/logErr");
       const autoBilling = require("../../services/Billing/autoBillingService");
       const med = mar.medications.id(req.params.medId);
       if (med && finalStatus === "GIVEN") {
-        autoBilling.onMARAdministration(mar, med, entry).catch(() => {});
+        autoBilling.onMARAdministration(mar, med, entry).catch(logErr("autoBilling", `onMARAdministration ${mar?._id} med ${med?._id}`));
       }
-    } catch {}
+    } catch (e) {
+      const { logErr } = require("../../utils/logErr");
+      logErr("autoBilling", "load failure on MAR.administer")(e);
+    }
     return res.json({ success: true, data: mar, message: "Administration recorded" });
   });
 
@@ -159,7 +163,7 @@ class MARController {
           "medications.$.discontinueReason": discontinueReason,
         },
       },
-      { new: true }
+      { new: true, runValidators: true }
     );
     if (!mar) return res.status(404).json({ success: false, message: "MAR or medication not found" });
     return res.json({ success: true, data: mar });

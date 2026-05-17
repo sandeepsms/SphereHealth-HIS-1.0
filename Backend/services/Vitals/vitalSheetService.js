@@ -108,11 +108,18 @@ exports.saveVitalSheet = async (data) => {
 };
 
 // ── Get all sheets for a patient ──────────────────────
-exports.getVitalSheet = async (uhid, date) => {
+// `limit` defaults to 90 days of sheets — vital trends rarely need more
+// than 3 months of history at once, and an unbounded scan on a long-stay
+// IPD patient (months of daily vitals) used to melt the API. Pagination
+// is exposed via the optional `limit` arg so the trend-graph page can
+// override on demand. Re-audit C-05 (R9 follow-up).
+exports.getVitalSheet = async (uhid, date, opts = {}) => {
   if (!uhid) throw new Error("uhid is required");
 
   const filter = { uhid };
   if (date) filter.date = formatDate(date);
+
+  const lim = Math.max(1, Math.min(500, Number(opts.limit) || 90));
 
   const records = await VitalSheet.find(filter)
     .populate("patient", "fullName UHID age gender contactNumber bloodGroup")
@@ -123,6 +130,7 @@ exports.getVitalSheet = async (uhid, date) => {
       "personalInfo.fullName staffId professional.designation",
     )
     .sort({ date: -1 })
+    .limit(lim)
     .lean();
 
   return { exists: records.length > 0, data: records, count: records.length };

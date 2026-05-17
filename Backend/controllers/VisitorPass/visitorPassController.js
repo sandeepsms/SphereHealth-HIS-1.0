@@ -89,7 +89,10 @@ exports.listPasses = handle(async (req, res) => {
   if (req.query.admissionId)  filter.admissionId = req.query.admissionId;
   if (req.query.patientUHID)  filter.patientUHID = req.query.patientUHID;
   if (req.query.q) {
-    const q = new RegExp(req.query.q, "i");
+    // Escape user-supplied regex chars so a caller can't pass `.*` and
+    // dump every pass (security audit 2026-05-17 finding B-03).
+    const { safeRegex } = require("../../utils/queryGuards");
+    const q = safeRegex(req.query.q);
     filter.$or = [{ patientName: q }, { attendantName: q }, { passNumber: q }, { patientUHID: q }];
   }
   const list = await VisitorPass.find(filter).sort({ createdAt: -1 }).limit(500).lean();

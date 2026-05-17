@@ -167,21 +167,34 @@ function AccessSnapshot({ role }) {
 function AdminDashboard({ user }) {
   const navigate = useNavigate();
   const [stats, setStats] = useState({});
-  useEffect(() => { (async () => {
-    try {
-      const [u, p] = await Promise.all([
-        axios.get(`${API}/users?limit=1`, authHdr()).catch(() => null),
-        axios.get(`${API}/pharmacy/stats`, authHdr()).catch(() => null),
-      ]);
-      setStats({
-        users: u?.data?.total ?? u?.data?.data?.length ?? "—",
-        pharmacyRevenueToday: p?.data?.data?.todaySales?.net ?? null,
-        pharmacyMonthRevenue: p?.data?.data?.monthSales?.net ?? null,
-        drugsCount: p?.data?.data?.drugsCount ?? null,
-        expiringCount: p?.data?.data?.expiringWithin90Days ?? null,
-      });
-    } catch {}
-  })(); }, []);
+  useEffect(() => {
+    // AbortController guards against React's "setState on unmounted
+    // component" warning when the user navigates away mid-fetch
+    // (audit E-05). Aborted axios calls reject with an error caught
+    // by the outer try; we check `ac.signal.aborted` before setState
+    // so a stale response can't poison fresh state if the parallel
+    // requests resolve in a surprising order.
+    const ac = new AbortController();
+    (async () => {
+      try {
+        const [u, p] = await Promise.all([
+          axios.get(`${API}/users?limit=1`, { ...authHdr(), signal: ac.signal }).catch(() => null),
+          axios.get(`${API}/pharmacy/stats`, { ...authHdr(), signal: ac.signal }).catch(() => null),
+        ]);
+        if (ac.signal.aborted) return;
+        setStats({
+          users: u?.data?.total ?? u?.data?.data?.length ?? "—",
+          pharmacyRevenueToday: p?.data?.data?.todaySales?.net ?? null,
+          pharmacyMonthRevenue: p?.data?.data?.monthSales?.net ?? null,
+          drugsCount: p?.data?.data?.drugsCount ?? null,
+          expiringCount: p?.data?.data?.expiringWithin90Days ?? null,
+        });
+      } catch (e) {
+        if (!axios.isCancel(e)) console.error("[AdminDashboard] stats fetch:", e?.message);
+      }
+    })();
+    return () => ac.abort();
+  }, []);
   return (
     <>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
@@ -217,21 +230,28 @@ function AdminDashboard({ user }) {
 function DoctorDashboard({ user }) {
   const navigate = useNavigate();
   const [stats, setStats] = useState({});
-  useEffect(() => { (async () => {
-    try {
-      const today = new Date().toISOString().slice(0, 10);
-      const [opd, adm] = await Promise.all([
-        axios.get(`${API}/opd?from=${today}&to=${today}`, authHdr()).catch(() => null),
-        // IPD-only: Admission collection also stores OPD / Day-Care
-        // stubs, so without hasBed=true the count over-reports IPD.
-        axios.get(`${API}/admissions/active?hasBed=true`, authHdr()).catch(() => null),
-      ]);
-      setStats({
-        opdToday: opd?.data?.data?.length ?? opd?.data?.length ?? "—",
-        ipdActive: adm?.data?.data?.length ?? adm?.data?.length ?? "—",
-      });
-    } catch {}
-  })(); }, []);
+  useEffect(() => {
+    const ac = new AbortController();
+    (async () => {
+      try {
+        const today = new Date().toISOString().slice(0, 10);
+        const [opd, adm] = await Promise.all([
+          axios.get(`${API}/opd?from=${today}&to=${today}`, { ...authHdr(), signal: ac.signal }).catch(() => null),
+          // IPD-only: Admission collection also stores OPD / Day-Care
+          // stubs, so without hasBed=true the count over-reports IPD.
+          axios.get(`${API}/admissions/active?hasBed=true`, { ...authHdr(), signal: ac.signal }).catch(() => null),
+        ]);
+        if (ac.signal.aborted) return;
+        setStats({
+          opdToday: opd?.data?.data?.length ?? opd?.data?.length ?? "—",
+          ipdActive: adm?.data?.data?.length ?? adm?.data?.length ?? "—",
+        });
+      } catch (e) {
+        if (!axios.isCancel(e)) console.error("[DoctorDashboard] stats fetch:", e?.message);
+      }
+    })();
+    return () => ac.abort();
+  }, []);
   return (
     <>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
@@ -334,12 +354,19 @@ function ReceptionDashboard({ user }) {
 function PharmacistDashboard({ user }) {
   const navigate = useNavigate();
   const [stats, setStats] = useState({});
-  useEffect(() => { (async () => {
-    try {
-      const r = await axios.get(`${API}/pharmacy/stats`, authHdr());
-      setStats(r.data?.data || {});
-    } catch {}
-  })(); }, []);
+  useEffect(() => {
+    const ac = new AbortController();
+    (async () => {
+      try {
+        const r = await axios.get(`${API}/pharmacy/stats`, { ...authHdr(), signal: ac.signal });
+        if (ac.signal.aborted) return;
+        setStats(r.data?.data || {});
+      } catch (e) {
+        if (!axios.isCancel(e)) console.error("[PharmacistDashboard] stats fetch:", e?.message);
+      }
+    })();
+    return () => ac.abort();
+  }, []);
   return (
     <>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 14 }}>
@@ -406,21 +433,28 @@ function LabDashboard({ user, role }) {
 function AccountantDashboard({ user }) {
   const navigate = useNavigate();
   const [stats, setStats] = useState({});
-  useEffect(() => { (async () => {
-    try {
-      const today = new Date().toISOString().slice(0, 10);
-      const r = await axios.get(`${API}/billing/collection-summary?date=${today}`, authHdr());
-      const s = r.data?.summary || {};
-      setStats({
-        collected: s.totalCollected,
-        gross:     s.totalGross,
-        outstand:  s.totalPending,
-        tpaPend:   s.tpaPending,
-        txns:      s.txnCount,
-        advance:   s.advanceDue,
-      });
-    } catch {}
-  })(); }, []);
+  useEffect(() => {
+    const ac = new AbortController();
+    (async () => {
+      try {
+        const today = new Date().toISOString().slice(0, 10);
+        const r = await axios.get(`${API}/billing/collection-summary?date=${today}`, { ...authHdr(), signal: ac.signal });
+        if (ac.signal.aborted) return;
+        const s = r.data?.summary || {};
+        setStats({
+          collected: s.totalCollected,
+          gross:     s.totalGross,
+          outstand:  s.totalPending,
+          tpaPend:   s.tpaPending,
+          txns:      s.txnCount,
+          advance:   s.advanceDue,
+        });
+      } catch (e) {
+        if (!axios.isCancel(e)) console.error("[AccountantDashboard] stats fetch:", e?.message);
+      }
+    })();
+    return () => ac.abort();
+  }, []);
   return (
     <>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>

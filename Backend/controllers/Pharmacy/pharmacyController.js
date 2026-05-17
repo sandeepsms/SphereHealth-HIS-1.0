@@ -118,7 +118,9 @@ exports.deleteDrug = async (req, res) => {
 ══════════════════════════════════════════════════════════════════ */
 exports.listSuppliers = async (req, res) => {
   try {
-    const items = await Supplier.find({ isActive: true }).sort({ name: 1 }).lean();
+    // Defensive cap (audit C-05). 1000 suppliers is generous for any
+    // single hospital; the dropdown UI tops out well below that.
+    const items = await Supplier.find({ isActive: true }).sort({ name: 1 }).limit(1000).lean();
     res.json({ success: true, data: items });
   } catch (e) { sendErr(res, e); }
 };
@@ -212,8 +214,12 @@ exports.listBatches = async (req, res) => {
     if (drugId)  where.drugId = drugId;
     if (location) where.location = location;
     if (expiringIn) {
+      // IST-aware horizon (re-audit F-04-1) — the "expiring within N days"
+      // filter must count days from the IST midnight the pharmacist sees,
+      // not from the server's UTC instant.
+      const { istStartOfDayPlus } = require("../../utils/queryGuards");
       const days = Number(expiringIn);
-      where.expiryDate = { $lte: new Date(Date.now() + days * 86400000) };
+      where.expiryDate = { $lte: istStartOfDayPlus(days) };
     }
     if (lowStock === "true") where.remaining = { $lt: 5 };
     const batches = await DrugBatch.find(where).sort({ expiryDate: 1 }).populate("drugId", "name reorderLevel").lean();
@@ -271,12 +277,16 @@ async function fifoConsume(drugId, qty) {
   for (let pass = 0; pass < MAX_PASSES && need > 0; pass++) {
     // Re-query each pass so we always see live `remaining` after races.
     // Exclude already-tried-and-empty batches.
+    // IST-aware "start of today" anchor (business audit F-04). Helper
+    // hoisted to utils/queryGuards so listBatches + alerts (re-audit
+    // F-04-1 / F-04-2) reuse the same boundary logic.
+    const { istStartOfToday } = require("../../utils/queryGuards");
     const where = {
       drugId, isActive: true, remaining: { $gt: 0 },
       // Block expired batches at dispense time (D&C compliance) —
       // the GRN endpoint already refuses expiry < today on receipt,
       // but a previously-receivable batch may have expired since.
-      expiryDate: { $gte: new Date() },
+      expiryDate: { $gte: istStartOfToday() },
     };
     if (triedBatchIds.size > 0) where._id = { $nin: [...triedBatchIds] };
 
@@ -387,26 +397,23 @@ exports.dispense = async (req, res) => {
     const seq = await nextSeq("pharmacyBill");
     const billNumber = `PHM-${new Date().toISOString().slice(0,10).replace(/-/g, "")}-${String(seq).padStart(4, "0")}`;
 
-    // Pre-flight: enough stock?
-    for (const it of items) {
-      const have = await DrugBatch.aggregate([
-        { $match: { drugId: new mongoose.Types.ObjectId(it.drugId), isActive: true, remaining: { $gt: 0 } } },
-        { $group: { _id: null, total: { $sum: "$remaining" } } },
-      ]);
-      const total = have[0]?.total || 0;
-      if (total < Number(it.quantity)) {
-        return res.status(409).json({
-          success: false,
-          message: `Insufficient stock for ${it.drugName} — need ${it.quantity}, have ${total}`,
-        });
-      }
-    }
-
-    // Consume FIFO and build sale items with batch info.
+    // Stock pre-flight DELETED (business audit F-03). The previous
+    // aggregation `$sum` + check happened OUTSIDE the atomic
+    // findOneAndUpdate in fifoConsume, so two concurrent dispenses both
+    // reading "have 5, need 5" would both pass pre-flight and the second
+    // would only fail at fifoConsume — after the cashier had already
+    // started ringing it up. We now trust fifoConsume's atomic predicate
+    // (`remaining: { $gte: take }`) and add cross-item rollback so a
+    // mid-loop shortage on item B unrolls item A's already-reserved
+    // stock — the sale is all-or-nothing.
     const saleItems = [];
     let subTotal = 0, totalGst = 0, totalDisc = 0;
+    const consumedAll = []; // [{ batchId, qty }] across all items, for rollback
+    try {
     for (const it of items) {
       const used = await fifoConsume(it.drugId, Number(it.quantity));
+      // Track what we reserved so we can undo if a later item fails.
+      for (const u of used) consumedAll.push({ batchId: u.batch._id, qty: u.used });
       // If split across batches, write one sale row per batch — keeps audit clean.
       for (const u of used) {
         const qty   = u.used;
@@ -467,6 +474,26 @@ exports.dispense = async (req, res) => {
       remarks: remarks || "",
     });
     res.json({ success: true, data: sale });
+    } catch (consumeErr) {
+      // Cross-item rollback (business audit F-03): if any item or the
+      // Sale.create itself fails, undo every batch reservation we made
+      // so the pharmacy's `remaining` counts stay accurate. Each
+      // findByIdAndUpdate is itself atomic; we swallow individual undo
+      // errors so a partial-rollback failure doesn't mask the original
+      // dispense error.
+      for (const c of consumedAll) {
+        try {
+          await DrugBatch.findByIdAndUpdate(c.batchId, {
+            $inc: { quantityOut: -c.qty, remaining: c.qty },
+          });
+        } catch (rbErr) {
+          console.error("[Pharmacy] dispense rollback failed for batch",
+            String(c.batchId), ":", rbErr.message);
+        }
+      }
+      const status = /^Insufficient stock/i.test(consumeErr.message || "") ? 409 : 500;
+      return res.status(status).json({ success: false, message: consumeErr.message });
+    }
   } catch (e) {
     res.status(500).json({ success: false, message: e.message });
   }
@@ -585,14 +612,26 @@ exports.returnItems = async (req, res) => {
       refundGst      += gstAmt;
       refundDiscount += disc;
 
-      // Restore stock to the original batch (FIFO didn't matter here —
-      // we know exactly which batch each item came from).
+      // Restore stock to the original batch atomically (re-audit r7
+      // follow-up: the previous load-then-save pattern raced with
+      // concurrent dispenses and could clobber `remaining`). The
+      // `quantityIn` is a fixed-on-receipt invariant so we just bump
+      // `quantityOut` down and `remaining` up — both deltas are pure
+      // $inc operations, so concurrent updates compose correctly.
       if (orig.batchId) {
-        const b = await DrugBatch.findById(orig.batchId);
-        if (b) {
-          b.quantityOut = Math.max(0, (b.quantityOut || 0) - qty);
-          b.remaining   = Math.max(0, (b.quantityIn || 0) - (b.quantityOut || 0));
-          await b.save();
+        const restored = await DrugBatch.findOneAndUpdate(
+          { _id: orig.batchId, isActive: true, quantityOut: { $gte: qty } },
+          { $inc: { quantityOut: -qty, remaining: qty } },
+          { new: true },
+        );
+        if (!restored) {
+          // Batch is missing, disabled, or already at zero quantityOut —
+          // shouldn't happen unless someone hand-edited Mongo, but logging
+          // beats silently swallowing the failure.
+          console.error(
+            `[Pharmacy] returnItems: could not restore qty=${qty} to batch ${orig.batchId} ` +
+            `(possibly inactive or already reset). Sale ${sale._id} return continues.`,
+          );
         }
       }
     }
@@ -695,23 +734,18 @@ exports.addItems = async (req, res) => {
       }
     }
 
-    // Pre-flight stock check
-    for (const it of items) {
-      const have = await DrugBatch.aggregate([
-        { $match: { drugId: new mongoose.Types.ObjectId(it.drugId), isActive: true, remaining: { $gt: 0 } } },
-        { $group: { _id: null, total: { $sum: "$remaining" } } },
-      ]);
-      const total = have[0]?.total || 0;
-      if (total < Number(it.quantity)) {
-        return res.status(409).json({ success: false, message: `Insufficient stock for ${it.drugName} — need ${it.quantity}, have ${total}` });
-      }
-    }
-
-    // Consume FIFO and build added-items array (mirror of dispense)
+    // Pre-flight DELETED — same TOCTOU bug as dispense() (re-audit
+    // round-7 follow-up). fifoConsume's atomic predicate is now the
+    // single source of truth; cross-item rollback below unrolls
+    // already-reserved stock if a later item runs short OR if
+    // sale.save() fails (e.g. parent-bill validation kicks).
     const addedItems = [];
     let subTotal = 0, totalGst = 0, totalDisc = 0;
+    const consumedAll = []; // [{batchId, qty}] across all items, for rollback
+    try {
     for (const it of items) {
       const used = await fifoConsume(it.drugId, Number(it.quantity));
+      for (const u of used) consumedAll.push({ batchId: u.batch._id, qty: u.used });
       for (const u of used) {
         const qty   = u.used;
         const unit  = Number(it.unitPrice || u.batch.salePrice || 0);
@@ -788,6 +822,23 @@ exports.addItems = async (req, res) => {
     await sale.save();
 
     res.json({ success: true, data: { sale, supplementRecord } });
+    } catch (consumeErr) {
+      // Cross-item rollback identical to dispense() (re-audit r7
+      // follow-up). Unrolls every reservation so addItems() is
+      // all-or-nothing.
+      for (const c of consumedAll) {
+        try {
+          await DrugBatch.findByIdAndUpdate(c.batchId, {
+            $inc: { quantityOut: -c.qty, remaining: c.qty },
+          });
+        } catch (rbErr) {
+          console.error("[Pharmacy] addItems rollback failed for batch",
+            String(c.batchId), ":", rbErr.message);
+        }
+      }
+      const status = /^Insufficient stock/i.test(consumeErr.message || "") ? 409 : 500;
+      return res.status(status).json({ success: false, message: consumeErr.message });
+    }
   } catch (e) { sendErr(res, e); }
 };
 
@@ -1097,69 +1148,85 @@ exports.purchaseRegister = async (req, res) => {
 // Stock register — Form 35 (D&C): opening + receipts + issues + closing per drug.
 // "Opening" = batches.created before from-date, sum(quantityIn). "Issued in range" =
 // sales items linked to those batches during the range.
+//
+// Audit C-06: previous implementation looped per drug and ran 4 aggregations
+// inside the loop — 4×N round-trips. On a 500-drug master that's 2000 calls,
+// O(seconds). Now collapsed to 5 parallel aggregations total (1× DrugBatch
+// per-drug rollup + 1× sales-items + 1× supplements + 1× returns + 1× Drug
+// master) merged in JS by drugId. O(1) round-trip count regardless of N.
 exports.stockRegister = async (req, res) => {
   try {
     const { from, to } = req.query;
     const start = from ? new Date(from) : new Date(Date.now() - 30 * 86400000);
     const end   = to   ? new Date(new Date(to).getTime() + 86399_999) : new Date();
 
-    const drugs = await Drug.find({ isActive: true }).lean();
-    const out = [];
-    for (const d of drugs) {
-      const allBatches = await DrugBatch.find({ drugId: d._id, isActive: true }).lean();
-      const opening = allBatches
-        .filter(b => new Date(b.createdAt) < start)
-        .reduce((s, b) => s + (b.quantityIn || 0), 0);
-      const receipts = allBatches
-        .filter(b => new Date(b.createdAt) >= start && new Date(b.createdAt) <= end)
-        .reduce((s, b) => s + (b.quantityIn || 0), 0);
-      // Issued in range = sum(items.quantity from sales in range)
-      //                 − sum(returns.refundedItems.quantity from sales in range)
-      // Includes Partial-Return + Refunded sales so the audit is honest about
-      // what stock actually left the pharmacy.
-      const issuedAgg = await Sale.aggregate([
-        { $match: {
-            status: { $in: ["Completed", "Partial-Return", "Refunded", "Supplemented"] },
-            createdAt: { $gte: start, $lte: end },
-          } },
+    const [drugs, batchAgg, issuedAgg, suppAgg, returnedAgg] = await Promise.all([
+      Drug.find({ isActive: true }).lean(),
+      // Per-drug batch rollup — opening (created < start), receipts
+      // (start ≤ created ≤ end), closing (sum remaining today). The
+      // `drugId: $ne null` match (re-audit R14 follow-up) prevents
+      // orphan batches from folding into a single `_id: null` bucket
+      // that the merge loop would silently drop.
+      DrugBatch.aggregate([
+        { $match: { isActive: true, drugId: { $ne: null } } },
+        { $group: {
+            _id: "$drugId",
+            opening:  { $sum: { $cond: [{ $lt:  ["$createdAt", start] }, { $ifNull: ["$quantityIn", 0] }, 0] } },
+            receipts: { $sum: { $cond: [{ $and: [
+                                          { $gte: ["$createdAt", start] },
+                                          { $lte: ["$createdAt", end]   } ] },
+                                       { $ifNull: ["$quantityIn", 0] }, 0] } },
+            closing:  { $sum: { $ifNull: ["$remaining", 0] } },
+        } },
+      ]),
+      // Original sale items in range — grouped by drugId. Filter null
+      // drugIds AFTER unwind so the per-row guard catches malformed
+      // items embedded in otherwise-valid sale docs.
+      Sale.aggregate([
+        { $match: { status: { $in: ["Completed", "Partial-Return", "Refunded", "Supplemented"] },
+                    createdAt: { $gte: start, $lte: end } } },
         { $unwind: "$items" },
-        { $match: { "items.drugId": d._id } },
-        { $group: { _id: null, qty: { $sum: "$items.quantity" } } },
-      ]);
-      const grossIssued = issuedAgg[0]?.qty || 0;
-
-      // Add supplementary items (debit notes) — these are stock that
-      // left the pharmacy AFTER the original bill, so they count
-      // against opening + receipts.
-      const supplementAgg = await Sale.aggregate([
-        { $match: {
-            status: { $in: ["Supplemented", "Partial-Return"] },
-            createdAt: { $gte: start, $lte: end },
-          } },
+        { $match: { "items.drugId": { $ne: null } } },
+        { $group: { _id: "$items.drugId", qty: { $sum: "$items.quantity" } } },
+      ]),
+      // Supplementary items (debit notes) in range — grouped by drugId
+      Sale.aggregate([
+        { $match: { status: { $in: ["Supplemented", "Partial-Return"] },
+                    createdAt: { $gte: start, $lte: end } } },
         { $unwind: "$supplements" },
         { $unwind: "$supplements.addedItems" },
-        { $match: { "supplements.addedItems.drugId": d._id } },
-        { $group: { _id: null, qty: { $sum: "$supplements.addedItems.quantity" } } },
-      ]);
-      const supplementQty = supplementAgg[0]?.qty || 0;
-
-      const returnedAgg = await Sale.aggregate([
-        { $match: {
-            status: { $in: ["Partial-Return", "Refunded"] },
-            createdAt: { $gte: start, $lte: end },
-          } },
+        { $match: { "supplements.addedItems.drugId": { $ne: null } } },
+        { $group: { _id: "$supplements.addedItems.drugId", qty: { $sum: "$supplements.addedItems.quantity" } } },
+      ]),
+      // Returns in range — grouped by drugId
+      Sale.aggregate([
+        { $match: { status: { $in: ["Partial-Return", "Refunded"] },
+                    createdAt: { $gte: start, $lte: end } } },
         { $unwind: "$returns" },
         { $unwind: "$returns.refundedItems" },
-        { $match: { "returns.refundedItems.drugId": d._id } },
-        { $group: { _id: null, qty: { $sum: "$returns.refundedItems.quantity" } } },
-      ]);
-      const returnedQty = returnedAgg[0]?.qty || 0;
+        { $match: { "returns.refundedItems.drugId": { $ne: null } } },
+        { $group: { _id: "$returns.refundedItems.drugId", qty: { $sum: "$returns.refundedItems.quantity" } } },
+      ]),
+    ]);
+
+    const idStr = (v) => String(v || "");
+    const byBatch    = new Map(batchAgg.map(   r => [idStr(r._id), r]));
+    const byIssued   = new Map(issuedAgg.map(  r => [idStr(r._id), r.qty]));
+    const bySupp     = new Map(suppAgg.map(    r => [idStr(r._id), r.qty]));
+    const byReturned = new Map(returnedAgg.map(r => [idStr(r._id), r.qty]));
+
+    const out = [];
+    for (const d of drugs) {
+      const k = idStr(d._id);
+      const b = byBatch.get(k) || { opening: 0, receipts: 0, closing: 0 };
+      const grossIssued  = byIssued.get(k)   || 0;
+      const supplementQty = bySupp.get(k)    || 0;
+      const returnedQty  = byReturned.get(k) || 0;
       const issued = Math.max(0, grossIssued + supplementQty - returnedQty);
-      const closing = allBatches.reduce((s, b) => s + (b.remaining || 0), 0);
-      if (opening || receipts || issued || closing) {
+      if (b.opening || b.receipts || issued || b.closing) {
         out.push({
           drugId: d._id, drugName: d.name, category: d.category, hsn: d.hsnCode || "30049099",
-          opening, receipts, issued, closing,
+          opening: b.opening, receipts: b.receipts, issued, closing: b.closing,
           reorderLevel: d.reorderLevel || 10,
         });
       }
@@ -1400,8 +1467,12 @@ exports.gstSummary = async (req, res) => {
 
 exports.alerts = async (req, res) => {
   try {
-    const now = new Date();
-    const horizon = new Date(Date.now() + 90 * 86400000);
+    // IST-aware "today" and 90-day horizon (re-audit F-04-2). The
+    // pharmacy alerts UI counts batches against the local IST calendar;
+    // raw UTC instants drifted the boundary by ~5h30m at midnight.
+    const { istStartOfToday, istStartOfDayPlus } = require("../../utils/queryGuards");
+    const now = istStartOfToday();
+    const horizon = istStartOfDayPlus(90);
 
     // Low stock: rollup per drug where total remaining < reorderLevel.
     const rollup = await DrugBatch.aggregate([

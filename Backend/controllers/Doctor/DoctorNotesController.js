@@ -32,9 +32,13 @@ class DoctorNotesController {
     );
     // ── Auto-billing hook ──────────────────────────────────────
     try {
+      const { logErr } = require("../../utils/logErr");
       const autoBilling = require("../../services/Billing/autoBillingService");
-      autoBilling.onDoctorNoteSaved(note).catch(() => {});
-    } catch {}
+      autoBilling.onDoctorNoteSaved(note).catch(logErr("autoBilling", `onDoctorNoteSaved ${note?._id}`));
+    } catch (e) {
+      const { logErr } = require("../../utils/logErr");
+      logErr("autoBilling", "load failure on doctor-note save")(e);
+    }
     return res.status(201).json({ success: true, data: note });
   });
 

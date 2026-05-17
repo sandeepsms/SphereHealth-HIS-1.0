@@ -93,7 +93,7 @@ exports.accept = async (req, res) => {
     const t = await WardTask.findOneAndUpdate(
       { _id: req.params.id, status: "open" },
       { $set: { status: "assigned", assignedTo: myId, assignedToName: myName, acceptedAt: new Date() } },
-      { new: true }
+      { new: true, runValidators: true }
     ).lean();
     if (!t) return res.status(409).json({ success: false, message: "Task already taken or not open." });
     res.json({ success: true, data: t });
@@ -106,7 +106,7 @@ exports.start = async (req, res) => {
     const t = await WardTask.findOneAndUpdate(
       { _id: req.params.id, assignedTo: req.user?.id, status: "assigned" },
       { $set: { status: "in-progress", startedAt: new Date() } },
-      { new: true }
+      { new: true, runValidators: true }
     ).lean();
     if (!t) return res.status(409).json({ success: false, message: "Task not in 'assigned' state or not yours." });
     res.json({ success: true, data: t });
@@ -119,7 +119,7 @@ exports.complete = async (req, res) => {
     const t = await WardTask.findOneAndUpdate(
       { _id: req.params.id, assignedTo: req.user?.id, status: { $in: ["assigned", "in-progress"] } },
       { $set: { status: "done", completedAt: new Date(), completionNotes: req.body?.completionNotes || "" } },
-      { new: true }
+      { new: true, runValidators: true }
     ).lean();
     if (!t) return res.status(409).json({ success: false, message: "Task not in a completable state or not yours." });
     res.json({ success: true, data: t });
@@ -137,7 +137,7 @@ exports.cancel = async (req, res) => {
     const updated = await WardTask.findByIdAndUpdate(
       req.params.id,
       { $set: { status: "cancelled", cancelledAt: new Date(), cancelReason: req.body?.cancelReason || "" } },
-      { new: true }
+      { new: true, runValidators: true }
     ).lean();
     res.json({ success: true, data: updated });
   } catch (e) { res.status(400).json({ success: false, message: e.message }); }

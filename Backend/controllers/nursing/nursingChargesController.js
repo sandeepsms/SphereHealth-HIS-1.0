@@ -19,11 +19,15 @@ exports.logItems = async (req, res) => {
     const result = await svc.logItems({ admissionId, items, shift, chargedBy, chargedById, dateKey });
     // ── Auto-billing audit trail ────────────────────────────────
     try {
+      const { logErr } = require("../../utils/logErr");
       const autoBilling = require("../../services/Billing/autoBillingService");
       for (const saved of result.saved || []) {
-        autoBilling.onEquipmentCharged({ ...saved, admissionId, UHID: req.body.UHID, chargedBy }, saved.billItemId).catch(() => {});
+        autoBilling.onEquipmentCharged({ ...saved, admissionId, UHID: req.body.UHID, chargedBy }, saved.billItemId).catch(logErr("autoBilling", `onEquipmentCharged ${saved?._id}`));
       }
-    } catch {}
+    } catch (e) {
+      const { logErr } = require("../../utils/logErr");
+      logErr("autoBilling", "load failure on nursing-charges log")(e);
+    }
     ok(res, result, 201);
   } catch (e) { err(res, e); }
 };
