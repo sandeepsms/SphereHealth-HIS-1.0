@@ -233,6 +233,164 @@ const titleCase = (k) =>
     .replace(/([a-z])([A-Z])/g, "$1 $2")
     .replace(/^./, (c) => c.toUpperCase());
 
+/* ── Clinical scoring scales ─────────────────────────────────────────
+   When a Mixed payload contains keys that match a known scoring scale
+   (Braden b1..b6, Morse m1..m6, MEWS, GCS, MUST), we render it as a
+   dedicated panel so the bedside nurse / doctor sees:
+       code · meaning · value · interpretation
+   side-by-side, plus the total and the risk band — not just "b1: 3".
+
+   Each scale's items map gives the human label + value→description
+   table. interpret(total) returns the risk band + colour to render the
+   total chip with.
+*/
+const SCORING_SCALES = {
+  braden: {
+    title: "Braden Scale — Pressure Ulcer Risk",
+    accent: "#7c3aed",
+    items: {
+      b1: { label: "Sensory perception", values: { 1: "Completely limited", 2: "Very limited", 3: "Slightly limited", 4: "No impairment" } },
+      b2: { label: "Moisture",          values: { 1: "Constantly moist", 2: "Very moist", 3: "Occasionally moist", 4: "Rarely moist" } },
+      b3: { label: "Activity",          values: { 1: "Bedfast", 2: "Chairfast", 3: "Walks occasionally", 4: "Walks frequently" } },
+      b4: { label: "Mobility",          values: { 1: "Completely immobile", 2: "Very limited", 3: "Slightly limited", 4: "No limitation" } },
+      b5: { label: "Nutrition",         values: { 1: "Very poor", 2: "Probably inadequate", 3: "Adequate", 4: "Excellent" } },
+      b6: { label: "Friction / shear",  values: { 1: "Problem", 2: "Potential problem", 3: "No apparent problem" } },
+    },
+    interpret(total) {
+      if (total >= 19) return { risk: "Low risk (≥19)",       color: "#16a34a" };
+      if (total >= 15) return { risk: "Mild risk (15–18)",    color: "#65a30d" };
+      if (total >= 13) return { risk: "Moderate risk (13–14)", color: "#ca8a04" };
+      if (total >= 10) return { risk: "High risk (10–12)",    color: "#ea580c" };
+      return                 { risk: "Severe risk (≤9)",      color: "#dc2626" };
+    },
+  },
+  morse: {
+    title: "Morse Fall Scale",
+    accent: "#db2777",
+    items: {
+      m1: { label: "History of falling (≤3 months)", values: { 0: "No", 25: "Yes" } },
+      m2: { label: "Secondary diagnosis",            values: { 0: "No", 15: "Yes" } },
+      m3: { label: "Ambulatory aid",                 values: { 0: "None / bedrest / w/c / nurse", 15: "Crutches / cane / walker", 30: "Furniture support" } },
+      m4: { label: "IV / heparin lock",              values: { 0: "No", 20: "Yes" } },
+      m5: { label: "Gait / transferring",            values: { 0: "Normal / bedrest / immobile", 10: "Weak", 20: "Impaired" } },
+      m6: { label: "Mental status",                  values: { 0: "Oriented to own ability", 15: "Forgets / overestimates" } },
+    },
+    interpret(total) {
+      if (total < 25) return { risk: "Low fall risk (<25)",    color: "#16a34a" };
+      if (total < 45) return { risk: "Moderate (25–44)",       color: "#ca8a04" };
+      return                { risk: "High fall risk (≥45)",    color: "#dc2626" };
+    },
+  },
+  mews: {
+    title: "MEWS — Modified Early Warning Score",
+    accent: "#ea580c",
+    items: {
+      mews1: { label: "Respiratory rate" },
+      mews2: { label: "Heart rate" },
+      mews3: { label: "Systolic BP" },
+      mews4: { label: "Temperature" },
+      mews5: { label: "AVPU / consciousness" },
+      mews6: { label: "Urine output" },
+    },
+    interpret(total) {
+      if (total <= 2) return { risk: "Low concern",     color: "#16a34a" };
+      if (total <= 4) return { risk: "Moderate (3–4)",  color: "#ca8a04" };
+      return                { risk: "Critical (≥5)",   color: "#dc2626" };
+    },
+  },
+  gcs: {
+    title: "Glasgow Coma Scale",
+    accent: "#0284c7",
+    items: {
+      eye:    { label: "Eye opening",        values: { 1: "None", 2: "To pain", 3: "To voice", 4: "Spontaneous" } },
+      verbal: { label: "Verbal response",    values: { 1: "None", 2: "Incomprehensible", 3: "Inappropriate words", 4: "Confused", 5: "Oriented" } },
+      motor:  { label: "Motor response",     values: { 1: "None", 2: "Extension to pain", 3: "Flexion to pain", 4: "Withdrawal", 5: "Localises pain", 6: "Obeys commands" } },
+    },
+    interpret(total) {
+      if (total >= 13) return { risk: "Mild (13–15)",    color: "#16a34a" };
+      if (total >=  9) return { risk: "Moderate (9–12)", color: "#ca8a04" };
+      return                 { risk: "Severe (≤8)",      color: "#dc2626" };
+    },
+  },
+};
+
+// Does this object look like one of our known scales? Match by item-key
+// overlap — needs at least 3 of the canonical keys present (case-insens).
+function matchScale(data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const keys = Object.keys(data).map((k) => k.toLowerCase());
+  let best = null;
+  for (const [id, scale] of Object.entries(SCORING_SCALES)) {
+    const itemKeys = Object.keys(scale.items);
+    const hits = itemKeys.filter((k) => keys.includes(k));
+    if (hits.length >= Math.min(3, itemKeys.length) && (!best || hits.length > best.hits)) {
+      best = { id, scale, hits: hits.length };
+    }
+  }
+  return best ? best.scale : null;
+}
+
+function ScoringPanel({ scale, data }) {
+  // Look up each item from `data` case-insensitively; preserve scale order.
+  const lookup = Object.fromEntries(
+    Object.entries(data).map(([k, v]) => [k.toLowerCase(), v]),
+  );
+  const itemRows = Object.entries(scale.items).map(([code, def]) => {
+    const raw = lookup[code.toLowerCase()];
+    if (raw == null || raw === "") return null;
+    const desc = def.values?.[raw] || def.values?.[String(raw)] || null;
+    return { code, label: def.label, value: raw, desc };
+  }).filter(Boolean);
+
+  // Compute total if all values numeric.
+  const numericValues = itemRows
+    .map((r) => Number(r.value))
+    .filter((n) => Number.isFinite(n));
+  const total = numericValues.length === itemRows.length && itemRows.length > 0
+    ? numericValues.reduce((a, b) => a + b, 0)
+    : null;
+  const interp = total != null && scale.interpret ? scale.interpret(total) : null;
+
+  return (
+    <div style={{
+      marginTop: 4, padding: "6px 10px", background: "#fff",
+      borderRadius: 6, border: `1px solid ${scale.accent}30`,
+      borderLeft: `3px solid ${scale.accent}`,
+    }}>
+      <div style={{
+        fontSize: 10.5, fontWeight: 800, color: scale.accent,
+        textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4,
+      }}>{scale.title}</div>
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "30px minmax(140px,1fr) 32px 1fr",
+        gap: "2px 8px", fontSize: 11, alignItems: "baseline",
+      }}>
+        {itemRows.map((r) => (
+          <React.Fragment key={r.code}>
+            <span style={{ fontFamily: "monospace", color: scale.accent, fontWeight: 700, fontSize: 10.5 }}>{r.code.toUpperCase()}</span>
+            <span style={{ color: "#1f2937" }}>{r.label}</span>
+            <span style={{ fontWeight: 700, textAlign: "right", fontFamily: "monospace" }}>{r.value}</span>
+            <span style={{ color: "#475569" }}>{r.desc || ""}</span>
+          </React.Fragment>
+        ))}
+      </div>
+      {interp && (
+        <div style={{
+          marginTop: 4, paddingTop: 4, borderTop: `1px dashed ${scale.accent}30`,
+          display: "flex", alignItems: "center", gap: 8, fontSize: 11,
+        }}>
+          <span style={{ fontWeight: 800 }}>Total: <span style={{ fontFamily: "monospace", color: scale.accent }}>{total}</span></span>
+          <span style={{
+            padding: "2px 8px", borderRadius: 4, fontWeight: 700, fontSize: 10.5,
+            background: `${interp.color}15`, color: interp.color, border: `1px solid ${interp.color}40`,
+          }}>{interp.risk}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Render an arbitrary scalar value as plain text. Returns null when the
 // leaf is empty, so the caller can decide whether to drop the row entirely.
 function renderScalar(v) {
@@ -280,6 +438,12 @@ function MixedFields({ data }) {
     const r = renderScalar(data);
     return r == null ? null : <span style={{ fontSize: 11 }}>{r}</span>;
   }
+
+  // If THIS object looks like a known clinical scoring scale (Braden,
+  // Morse, MEWS, GCS), render the dedicated panel instead of the
+  // generic chip grid.
+  const scale = matchScale(data);
+  if (scale) return <ScoringPanel scale={scale} data={data} />;
 
   const entries = Object.entries(data).filter(([, v]) => isMeaningful(v));
   if (!entries.length) return null;
