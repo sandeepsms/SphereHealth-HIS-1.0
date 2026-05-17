@@ -213,37 +213,210 @@ function RoleAddCTA({ viewerRole, uhid, allow, href, color, label, icon = "+" })
   );
 }
 
+/* ── Helpers for rendering "every populated field" on a clinical note ───
+   Goal: when a doctor / nurse selects from a dropdown or writes anything
+   into a structured form, the Patient File should reflect that — not just
+   SOAP. These helpers walk the well-known nested objects and the catch-all
+   Mixed payloads (DoctorNotes.noteDetails, NurseNotes.noteData,
+   Admission.nurseInitialAssessment) and emit one row per populated leaf.
+*/
+const isMeaningful = (v) => {
+  if (v == null || v === "" || v === false) return false;
+  if (Array.isArray(v))      return v.length > 0;
+  if (typeof v === "object") return Object.values(v).some(isMeaningful);
+  return true;
+};
+
+const titleCase = (k) =>
+  String(k || "")
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/^./, (c) => c.toUpperCase());
+
+// Render an arbitrary scalar / array value as text (depth-1).
+function renderLeaf(v) {
+  if (v == null || v === "") return null;
+  if (typeof v === "boolean") return v ? "Yes" : null;
+  if (Array.isArray(v)) {
+    const items = v.filter((x) => x != null && x !== "");
+    if (!items.length) return null;
+    if (items.every((x) => typeof x !== "object")) return items.join(", ");
+    return (
+      <ul style={{ margin: "2px 0 0 16px", padding: 0 }}>
+        {items.map((it, i) => (
+          <li key={i}><MixedFields data={it} compact /></li>
+        ))}
+      </ul>
+    );
+  }
+  if (typeof v === "object") return <MixedFields data={v} compact />;
+  return String(v);
+}
+
+// Recursively render every populated key in a Mixed object. Skips empty
+// strings, false, null, undefined, empty arrays/objects. Booleans that
+// are TRUE render as "Yes" — typical for assessment checkbox flags.
+function MixedFields({ data, compact }) {
+  if (!isMeaningful(data)) return null;
+  if (typeof data !== "object" || Array.isArray(data)) {
+    const r = renderLeaf(data);
+    return r == null ? null : <span>{r}</span>;
+  }
+  const entries = Object.entries(data).filter(([, v]) => isMeaningful(v));
+  if (!entries.length) return null;
+  return (
+    <div style={{
+      display: "grid",
+      gridTemplateColumns: compact ? "minmax(120px,180px) 1fr" : "minmax(140px,200px) 1fr",
+      gap: compact ? "2px 10px" : "4px 12px",
+      fontSize: 12, margin: compact ? "2px 0" : "4px 0",
+    }}>
+      {entries.map(([k, v]) => (
+        <React.Fragment key={k}>
+          <div style={{ color: "var(--pf-muted)", fontWeight: 600, textTransform: "capitalize" }}>{titleCase(k)}</div>
+          <div>{renderLeaf(v)}</div>
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
+// Inline summary for a vitals object — keeps the high-information density
+// of a one-line read (BP 120/80 · Pulse 78 · Temp 98.6 · SpO2 99).
+function VitalsInline({ vitals }) {
+  if (!isMeaningful(vitals)) return null;
+  const parts = [];
+  if (vitals.bp && (vitals.bp.systolic || vitals.bp.diastolic))
+    parts.push(`BP ${vitals.bp.systolic ?? "?"}/${vitals.bp.diastolic ?? "?"}`);
+  if (vitals.pulse  != null && vitals.pulse  !== "") parts.push(`Pulse ${vitals.pulse}`);
+  if (vitals.temp   != null && vitals.temp   !== "") parts.push(`Temp ${vitals.temp}°F`);
+  if (vitals.rr     != null && vitals.rr     !== "") parts.push(`RR ${vitals.rr}`);
+  if (vitals.spo2   != null && vitals.spo2   !== "") parts.push(`SpO2 ${vitals.spo2}%`);
+  if (vitals.bloodSugar != null && vitals.bloodSugar !== "") parts.push(`BS ${vitals.bloodSugar} mg/dL`);
+  if (!parts.length) return null;
+  return (
+    <p style={{ margin: "4px 0", padding: "6px 10px", background: "#f8fafc", borderRadius: 4, fontFamily: "monospace", fontSize: 12 }}>
+      📊 {parts.join("  ·  ")}
+    </p>
+  );
+}
+
 function NoteList({ notes, kind, emptyMsg }) {
   if (!notes?.length) return <Empty msg={emptyMsg || "No records yet"} />;
-  return notes.map((n) => (
-    <div key={n._id} className={`pf-record pf-record--${kind}`}>
-      <div className="pf-record__head">
-        <span className="pf-record__title">
-          {n.doctorName || n.nurseName || "Staff"} — {n.noteType || "note"}
-        </span>
-        <span className="pf-record__time">{fmtDT(n.visitDate || n.createdAt)}</span>
-        {n.status && <span className={`pf-badge ${n.status === "signed" ? "pf-badge--ok" : "pf-badge--warn"}`}>{n.status}</span>}
-        {n.shift && <span className="pf-badge pf-badge--neutral">{n.shift}</span>}
+  return notes.map((n) => {
+    // Build the "general condition" pill list for nurse notes — only
+    // include flags the nurse actually ticked.
+    const gcFlags = Object.entries(n.generalCondition || {})
+      .filter(([, v]) => v === true)
+      .map(([k]) => titleCase(k));
+
+    // I/O totals — only show when something was logged.
+    const io = n.intakeOutput || {};
+    const ioParts = [];
+    if (io.oral)        ioParts.push(`Oral ${io.oral} ml`);
+    if (io.ivFluids)    ioParts.push(`IV ${io.ivFluids} ml`);
+    if (io.urineOutput) ioParts.push(`Urine ${io.urineOutput} ml`);
+    if (io.otherOutput) ioParts.push(`Other-out ${io.otherOutput} ml`);
+
+    // Nursing-care checklist — only the checked items.
+    const careDone = Object.entries(n.nursingCare || {})
+      .filter(([k, v]) => v === true && k !== "otherCare")
+      .map(([k]) => titleCase(k));
+
+    return (
+      <div key={n._id} className={`pf-record pf-record--${kind}`}>
+        <div className="pf-record__head">
+          <span className="pf-record__title">
+            {n.doctorName || n.nurseName || "Staff"} — {n.noteType || "note"}
+          </span>
+          <span className="pf-record__time">{fmtDT(n.visitDate || n.noteDate || n.createdAt)}</span>
+          {n.status && <span className={`pf-badge ${["signed","submitted"].includes(n.status) ? "pf-badge--ok" : "pf-badge--warn"}`}>{n.status}</span>}
+          {n.shift && <span className="pf-badge pf-badge--neutral">{n.shift}</span>}
+          {(n.isCritical || n.isCriticalEvent) && <span className="pf-badge pf-badge--err">CRITICAL</span>}
+        </div>
+
+        <div className="pf-record__body">
+          {/* SOAP — doctor notes */}
+          {n.soap && (
+            <>
+              {n.soap.subjective && <p><strong>S:</strong> {n.soap.subjective}</p>}
+              {n.soap.objective  && <p><strong>O:</strong> {n.soap.objective}</p>}
+              {n.soap.assessment && <p><strong>A:</strong> {n.soap.assessment}</p>}
+              {n.soap.plan       && <p><strong>P:</strong> {n.soap.plan}</p>}
+            </>
+          )}
+
+          {/* Diagnoses */}
+          {n.provisionalDiagnosis && <p><strong>Provisional Dx:</strong> {n.provisionalDiagnosis}</p>}
+          {n.workingDiagnosis     && <p><strong>Working Dx:</strong>     {n.workingDiagnosis}</p>}
+          {n.finalDiagnosis       && <p><strong>Final Dx:</strong>       {n.finalDiagnosis}</p>}
+          {(n.icd10Code || n.icd10Description) && (
+            <p><strong>ICD-10:</strong> {[n.icd10Code, n.icd10Description].filter(Boolean).join(" — ")}</p>
+          )}
+          {(n.snomedCode || n.snomedDisplay) && (
+            <p><strong>SNOMED:</strong> {[n.snomedCode, n.snomedDisplay].filter(Boolean).join(" — ")}</p>
+          )}
+
+          {/* Vitals (compact inline) */}
+          <VitalsInline vitals={n.vitals} />
+
+          {/* Investigations array (doctor note) */}
+          {Array.isArray(n.investigations) && n.investigations.length > 0 && (
+            <p><strong>Investigations:</strong> {n.investigations.filter(Boolean).join(", ")}</p>
+          )}
+
+          {/* Orders summary on the note itself — full detail still in Orders + MAR section */}
+          {Array.isArray(n.orders) && n.orders.length > 0 && (
+            <p><strong>Orders ({n.orders.length}):</strong> {n.orders.map((o) => o.instruction).filter(Boolean).slice(0, 3).join(" · ")}{n.orders.length > 3 ? " · …" : ""}</p>
+          )}
+
+          {/* Nurse-specific structured blocks */}
+          {gcFlags.length > 0 && <p><strong>General condition:</strong> {gcFlags.join(", ")}</p>}
+          {(n.painScore > 0 || n.painAssessment) && (
+            <p><strong>Pain:</strong> {n.painScore != null ? `${n.painScore}/10` : ""}{n.painAssessment ? ` — ${n.painAssessment}` : ""}</p>
+          )}
+          {n.ivLine && isMeaningful(n.ivLine) && (
+            <p><strong>IV line:</strong> {[n.ivLine.site, n.ivLine.condition, n.ivLine.notes].filter(Boolean).join(" · ")}</p>
+          )}
+          {ioParts.length > 0 && <p><strong>I/O:</strong> {ioParts.join(" · ")}{io.notes ? ` — ${io.notes}` : ""}</p>}
+          {(careDone.length > 0 || n.nursingCare?.otherCare) && (
+            <p><strong>Nursing care:</strong> {[...careDone, n.nursingCare?.otherCare].filter(Boolean).join(", ")}</p>
+          )}
+
+          {/* The big payload: Mixed objects that hold module-specific data
+              (assessment forms, fall-risk, MEWS, wound, nutrition, etc.).
+              Render every populated leaf — this is the change that fixes
+              "Patient File doesn't show what doctor/nurse selected". */}
+          {isMeaningful(n.noteDetails) && (
+            <div style={{ marginTop: 6, padding: "8px 10px", background: "#f8fafc", borderRadius: 4 }}>
+              <strong style={{ fontSize: 11, color: "var(--pf-muted)", display: "block", marginBottom: 4 }}>NOTE DETAILS</strong>
+              <MixedFields data={n.noteDetails} />
+            </div>
+          )}
+          {isMeaningful(n.noteData) && (
+            <div style={{ marginTop: 6, padding: "8px 10px", background: "#f8fafc", borderRadius: 4 }}>
+              <strong style={{ fontSize: 11, color: "var(--pf-muted)", display: "block", marginBottom: 4 }}>ASSESSMENT FIELDS</strong>
+              <MixedFields data={n.noteData} />
+            </div>
+          )}
+
+          {/* Free-text fallbacks */}
+          {n.remarks  && <p>{n.remarks}</p>}
+          {n.note     && <p>{n.note}</p>}
+          {n.noteText && <p>{n.noteText}</p>}
+          {n.content  && <p>{n.content}</p>}
+
+          {/* Tags + patient-status badges */}
+          {n.patientStatus && <p style={{ fontSize: 11.5 }}><strong>Patient status:</strong> {n.patientStatus}</p>}
+          {Array.isArray(n.tags) && n.tags.length > 0 && (
+            <p style={{ fontSize: 11.5 }}>{n.tags.map((t) => <span key={t} className="pf-badge pf-badge--neutral" style={{ marginRight: 4 }}>{t}</span>)}</p>
+          )}
+
+          {n.signedByName && <p style={{ fontStyle: "italic", color: "var(--pf-muted)" }}>Signed by {n.signedByName}{n.signedByReg ? ` (Reg ${n.signedByReg})` : ""} on {fmtDT(n.signedAt || n.submittedAt)}</p>}
+        </div>
       </div>
-      <div className="pf-record__body">
-        {n.soap && (
-          <>
-            {n.soap.subjective && <p><strong>S:</strong> {n.soap.subjective}</p>}
-            {n.soap.objective  && <p><strong>O:</strong> {n.soap.objective}</p>}
-            {n.soap.assessment && <p><strong>A:</strong> {n.soap.assessment}</p>}
-            {n.soap.plan       && <p><strong>P:</strong> {n.soap.plan}</p>}
-          </>
-        )}
-        {n.provisionalDiagnosis && <p><strong>Provisional Dx:</strong> {n.provisionalDiagnosis}</p>}
-        {n.finalDiagnosis       && <p><strong>Final Dx:</strong> {n.finalDiagnosis}</p>}
-        {n.remarks  && <p>{n.remarks}</p>}
-        {n.note     && <p>{n.note}</p>}
-        {n.noteText && <p>{n.noteText}</p>}
-        {n.content  && <p>{n.content}</p>}
-        {n.signedByName && <p style={{ fontStyle: "italic", color: "var(--pf-muted)" }}>Signed by {n.signedByName}{n.signedByReg ? ` (Reg ${n.signedByReg})` : ""} on {fmtDT(n.signedAt)}</p>}
-      </div>
-    </div>
-  ));
+    );
+  });
 }
 
 function OrdersSection({ orders }) {
@@ -944,6 +1117,34 @@ export default function CompletePatientFilePage() {
                 allow={["Nurse"]} href="/nurse-initial-assessment?uhid={UHID}"
                 color="#db2777" label="Add Nursing IA in console" icon="✏" />
               <NoteList notes={nurseInitial} kind="nurse" emptyMsg="Nursing initial assessment not recorded" />
+              {/* The dedicated /nurse-initial-assessment page stores its full
+                  NABH-required payload directly on the admission document
+                  (admission.nurseInitialAssessment, type: Mixed). It's
+                  separate from NurseNote.noteData and was never being
+                  surfaced here. Render every populated field. */}
+              {isMeaningful(currentAdmission?.nurseInitialAssessment) && (
+                <div className="pf-record pf-record--nurse" style={{ marginTop: 12 }}>
+                  <div className="pf-record__head">
+                    <span className="pf-record__title">Nurse IA — full assessment payload</span>
+                    <span className="pf-record__time">stored on admission</span>
+                  </div>
+                  <div className="pf-record__body">
+                    <MixedFields data={currentAdmission.nurseInitialAssessment} />
+                  </div>
+                </div>
+              )}
+              {/* Same idea for the admission-level doctor IA payload, if any */}
+              {isMeaningful(currentAdmission?.initialAssessment) && (
+                <div className="pf-record pf-record--doctor" style={{ marginTop: 12 }}>
+                  <div className="pf-record__head">
+                    <span className="pf-record__title">Doctor IA gate</span>
+                    <span className="pf-record__time">recorded on admission</span>
+                  </div>
+                  <div className="pf-record__body">
+                    <MixedFields data={currentAdmission.initialAssessment} />
+                  </div>
+                </div>
+              )}
             </Section>
 
             <Section id="doctor-notes" icon="👨‍⚕️" title="Doctor Notes" sub="Progress, ICU, procedure, consultation" count={docOther.length}>
