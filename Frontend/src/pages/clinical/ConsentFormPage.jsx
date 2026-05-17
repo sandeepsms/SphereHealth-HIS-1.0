@@ -796,7 +796,9 @@ function ConsentFormPageContent({ selectedPatient }) {
     if (!uhid.trim()) return;
     setSearching(true);
     try {
-      const res = await axios.get(`${API_ENDPOINTS.BASE}/admissions/active`, { headers });
+      // hasBed=true so OPD/Daycare/Services visits don't pollute the
+      // consent-form admission picker (which expects IPD patients only).
+      const res = await axios.get(`${API_ENDPOINTS.BASE}/admissions/active?hasBed=true`, { headers });
       const list = Array.isArray(res.data?.data) ? res.data.data : Array.isArray(res.data) ? res.data : [];
       const found = list.find(a =>
         a.UHID === uhid.trim().toUpperCase() ||

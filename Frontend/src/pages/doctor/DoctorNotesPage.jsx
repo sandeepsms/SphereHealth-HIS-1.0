@@ -286,8 +286,11 @@ function DoctorNotesContent({ selectedPatient }) {
           setRecentPatients(asPrimary.sort((a, b) => new Date(b.admissionDate || b.createdAt) - new Date(a.admissionDate || a.createdAt)));
           setConsultPatients(asConsulting);
         } else {
-          // Fallback: all active admissions (for Admin or unauthenticated)
-          const { data } = await axios.get(`${API_ENDPOINTS.ADMISSIONS}/active`);
+          // Fallback: all active IPD admissions (for Admin or unauthenticated).
+          // hasBed=true filters out OPD/Daycare/Services stubs that share the
+          // collection — without it the doctor's notes board showed every
+          // OPD visit as if it were an IPD patient.
+          const { data } = await axios.get(`${API_ENDPOINTS.ADMISSIONS}/active?hasBed=true`);
           const arr = Array.isArray(data) ? data : (data.data || []);
           setRecentPatients(arr.sort((a, b) => new Date(b.admissionDate || b.createdAt) - new Date(a.admissionDate || a.createdAt)));
         }
