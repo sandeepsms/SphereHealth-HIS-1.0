@@ -2587,6 +2587,155 @@ function IOSheetSection({ nurseNotes = [], currentAdmission }) {
   );
 }
 
+/* ── Procedure Notes — combined Doctor + Nurse procedure records ──
+   Pulls every note where noteType matches /procedure/ AND/OR the
+   payload signature matches matchProcedure(). Groups date → shift,
+   each entry rendered with the same <ProcedurePanel/> the inline
+   note cards already use. Print-ready chronological view. */
+function ProcedureNotesSection({ doctorNotes = [], nurseNotes = [] }) {
+  const PROC_TYPES = /procedure|operative|preop|postop/i;
+  const events = [];
+
+  for (const n of doctorNotes) {
+    const looksProc = PROC_TYPES.test(n.noteType || "") || matchProcedure(n.noteDetails);
+    if (!looksProc) continue;
+    // The structured payload lives in noteDetails for doctor notes; if
+    // empty, fall back to the top-level fields so the panel can render
+    // procedureName / indication / outcome from either spot.
+    const payload = isMeaningful(n.noteDetails) ? n.noteDetails : {
+      procedureName: n.noteType, indication: n.provisionalDiagnosis, outcome: n.patientStatus,
+    };
+    events.push({
+      when: new Date(n.visitDate || n.createdAt),
+      shift: (n.shift || "general").toLowerCase(),
+      by: n.doctorName || "Doctor",
+      role: "Doctor",
+      noteType: n.noteType,
+      remarks: n.remarks || n.note || "",
+      payload,
+      signedBy: n.signedByName, signedAt: n.signedAt,
+      status: n.status,
+    });
+  }
+  for (const n of nurseNotes) {
+    const looksProc = PROC_TYPES.test(n.noteType || "") || matchProcedure(n.noteData);
+    if (!looksProc) continue;
+    events.push({
+      when: new Date(n.visitDate || n.noteDate || n.createdAt),
+      shift: (n.shift || "general").toLowerCase(),
+      by: n.nurseName || "Nurse",
+      role: "Nurse",
+      noteType: n.noteType,
+      remarks: n.remarks || "",
+      payload: n.noteData,
+      signedBy: n.signedByName, signedAt: n.submittedAt,
+      status: n.status,
+    });
+  }
+
+  if (!events.length) return <Empty icon="🩺" msg="No procedure notes recorded yet" />;
+
+  // Group date → shift, newest date first, shift order morning→night.
+  const byDate = {};
+  for (const e of events) {
+    const dk = dateKey(e.when);
+    if (!byDate[dk]) byDate[dk] = { date: e.when, byShift: {} };
+    const sk = e.shift || "general";
+    if (!byDate[dk].byShift[sk]) byDate[dk].byShift[sk] = [];
+    byDate[dk].byShift[sk].push(e);
+  }
+  const dates = Object.keys(byDate).sort((a, b) => b.localeCompare(a));
+  for (const dk of dates) {
+    for (const sk of Object.keys(byDate[dk].byShift)) {
+      byDate[dk].byShift[sk].sort((a, b) => a.when - b.when);
+    }
+  }
+
+  const totalCount = events.length;
+  const doctorCount = events.filter((e) => e.role === "Doctor").length;
+  const nurseCount  = totalCount - doctorCount;
+
+  return (
+    <>
+      <div style={{ marginBottom: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <span style={{ padding: "2px 9px", borderRadius: 4, fontSize: 11, fontWeight: 800,
+          background: "#dcfce7", color: "#166534" }}>Total: {totalCount}</span>
+        {doctorCount > 0 && <span style={{ padding: "2px 9px", borderRadius: 4, fontSize: 11, fontWeight: 800,
+          background: "#f3e8ff", color: "#7c3aed" }}>👨‍⚕️ Doctor: {doctorCount}</span>}
+        {nurseCount > 0 && <span style={{ padding: "2px 9px", borderRadius: 4, fontSize: 11, fontWeight: 800,
+          background: "#fce7f3", color: "#db2777" }}>👩‍⚕️ Nurse: {nurseCount}</span>}
+      </div>
+
+      {dates.map((dk) => {
+        const date = byDate[dk].date;
+        const dateStr = date.toLocaleDateString("en-IN", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
+        const shifts = Object.keys(byDate[dk].byShift).sort((a, b) => (SHIFT_ORDER[a] ?? 9) - (SHIFT_ORDER[b] ?? 9));
+        const dayCount = Object.values(byDate[dk].byShift).reduce((s, arr) => s + arr.length, 0);
+        return (
+          <div key={dk} style={{ marginBottom: 14 }}>
+            <div style={{
+              padding: "6px 12px", borderRadius: 6, marginBottom: 6,
+              border: "1px solid #bbf7d0", borderLeft: "4px solid #16a34a",
+              background: "linear-gradient(90deg, #f0fdf4 0%, #fff 60%)",
+              display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap",
+            }}>
+              <span style={{ fontSize: 12.5, fontWeight: 800, color: "#166534" }}>📅 {dateStr}</span>
+              <span style={{ fontSize: 10.5, color: "var(--pf-muted)", fontWeight: 700 }}>{dayCount} procedure note{dayCount !== 1 ? "s" : ""}</span>
+            </div>
+            {shifts.map((sk) => (
+              <div key={sk} style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: "var(--pf-muted)",
+                  textTransform: "uppercase", letterSpacing: 0.6, margin: "4px 0 4px 8px" }}>
+                  Shift: {sk}
+                </div>
+                <div style={{ paddingLeft: 8, borderLeft: "2px dashed #e5e7eb", display: "flex", flexDirection: "column", gap: 4 }}>
+                  {byDate[dk].byShift[sk].map((e, i) => {
+                    const roleColor = e.role === "Doctor" ? "#7c3aed" : "#db2777";
+                    return (
+                      <div key={i} style={{
+                        padding: "6px 10px", borderRadius: 5,
+                        background: "#fff", border: "1px solid #e5e7eb",
+                        borderLeft: `3px solid ${roleColor}`,
+                      }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
+                          <span style={{ fontFamily: "monospace", fontSize: 10.5, color: "var(--pf-muted)" }}>
+                            {e.when.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
+                          </span>
+                          <span style={{ padding: "1px 7px", borderRadius: 3, fontSize: 10, fontWeight: 800,
+                            background: `${roleColor}15`, color: roleColor }}>
+                            {e.role === "Doctor" ? "👨‍⚕️ DOCTOR" : "👩‍⚕️ NURSE"}
+                          </span>
+                          <span style={{ fontSize: 11.5, fontWeight: 700, color: "#1f2937" }}>{e.by}</span>
+                          {e.noteType && <span style={{ fontSize: 10.5, color: "var(--pf-muted)" }}>· {e.noteType}</span>}
+                          {e.status && <span style={{ marginLeft: "auto", padding: "1px 7px", borderRadius: 3, fontSize: 9.5, fontWeight: 700,
+                            background: ["signed", "submitted"].includes(e.status) ? "#dcfce7" : "#fef3c7",
+                            color:      ["signed", "submitted"].includes(e.status) ? "#166534" : "#92400e" }}>
+                            {e.status}
+                          </span>}
+                        </div>
+                        {/* Re-use the existing ProcedurePanel for any payload that matches; fall back to generic chips otherwise */}
+                        {isMeaningful(e.payload) && (
+                          matchProcedure(e.payload)
+                            ? <ProcedurePanel data={e.payload} />
+                            : <MixedFields data={e.payload} />
+                        )}
+                        {e.remarks && <div style={{ marginTop: 4, fontSize: 11, fontStyle: "italic", color: "var(--pf-muted)" }}>{e.remarks}</div>}
+                        {e.signedBy && <div style={{ marginTop: 3, fontSize: 10, color: "var(--pf-muted)" }}>
+                          Signed by {e.signedBy}{e.signedAt ? ` on ${fmtDT(e.signedAt)}` : ""}
+                        </div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 function PrintFooter({ uhid, role }) {
   // Roadmap F23 — per-page QR back-link. The browser repeats this footer
   // via @page running-element on every printed page, so any single page
@@ -2715,6 +2864,7 @@ export default function CompletePatientFilePage() {
     { id: "orders",        label: "Orders + MAR",       icon: "💊", count: doctorOrders.length },
     { id: "vitals",        label: "Vitals + I/O",       icon: "📈", count: vitals.length },
     { id: "io-sheet",      label: "Intake / Output Sheet", icon: "💧", count: null },
+    { id: "procedures",    label: "Procedure Notes",    icon: "🩺", count: null },
     { id: "investigations",label: "Investigations",     icon: "🧪", count: investigations.length },
     { id: "consents",      label: "Consents",           icon: "📝", count: consents.length },
     { id: "diet",          label: "Diet Plans",         icon: "🥗", count: dietPlans?.length || 0 },
@@ -2846,6 +2996,10 @@ export default function CompletePatientFilePage() {
 
             <Section id="io-sheet" icon="💧" title="Intake / Output Sheet" sub="All I/O entries across nursing notes — grouped date → shift, with daily totals and net balance. Print-ready.">
               <IOSheetSection nurseNotes={nurseNotes} currentAdmission={currentAdmission} />
+            </Section>
+
+            <Section id="procedures" icon="🩺" title="Procedure Notes" sub="Every procedure performed by Doctor or Nurse — date → shift, with role badges and full payload.">
+              <ProcedureNotesSection doctorNotes={doctorNotes} nurseNotes={nurseNotes} />
             </Section>
 
             <Section id="vitals" icon="📈" title="Vital Trends" sub="Every vital recorded — both dedicated sheet + embedded in nursing notes">
