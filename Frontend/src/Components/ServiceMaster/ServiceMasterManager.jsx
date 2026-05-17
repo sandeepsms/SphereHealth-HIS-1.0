@@ -76,6 +76,21 @@ const BLANK_SVC = {
   applicableTo: ["ALL"],
   unitLabel: "",
   description: "",
+  // ── ANH tariff fields (optional — populated for imported packages) ─
+  // tierPricing pairs with the patient's room category at billing time:
+  //   GENW/DAYCARE → generalWard · SEMI → semiPrivate · PVT/ICU/NICU → private.
+  // Admins edit any tier here; the engine picks the matching one per
+  // admission. generalWard also feeds the CASH list price by default.
+  tierPricing: { generalWard: 0, semiPrivate: 0, private: 0 },
+  // Free-text from the rate card, surfaced on the receipt.
+  inclusions: "",
+  exclusions: "",
+  // For MMP-style PER_DAY packages — switch back to la carte after this many days.
+  maxLOSDays: 0,
+  // Comma-separated diagnosis keywords for the auto-matcher (e.g. "dengue, fever").
+  diagnosisTagsText: "",
+  // Speciality / department label — surfaces in package filters.
+  speciality: "",
 };
 
 const BLANK_PRICE = {
@@ -188,15 +203,46 @@ export default function ServiceMasterManager() {
       applicableTo: svc.applicableTo,
       unitLabel: svc.unitLabel || "",
       description: svc.description || "",
+      // ANH tariff fields — fall back to zero / empty if the row was
+      // created via the old form (pre-extension) so the controls render.
+      tierPricing: {
+        generalWard: svc.tierPricing?.generalWard ?? 0,
+        semiPrivate: svc.tierPricing?.semiPrivate ?? 0,
+        private:     svc.tierPricing?.private     ?? 0,
+      },
+      inclusions: svc.inclusions || "",
+      exclusions: svc.exclusions || "",
+      maxLOSDays: svc.maxLOSDays || 0,
+      diagnosisTagsText: Array.isArray(svc.diagnosisTags) ? svc.diagnosisTags.join(", ") : "",
+      speciality: svc.speciality || "",
     });
     setShowSvcDlg(true);
   };
 
   // ── Save service ─────────────────────────────────────────────
+  // Transform UI-only fields into the API shape before POST:
+  //   diagnosisTagsText → diagnosisTags[]  (split on commas, trim, dedupe)
+  //   tierPricing fields zero-stripped only when ALL three are 0 (otherwise
+  //   we'd nuke the patient-tier pricing for any save by an unaware editor).
   const handleSaveService = async () => {
     try {
+      const payload = {
+        ...svcForm,
+        diagnosisTags: String(svcForm.diagnosisTagsText || "")
+          .split(",")
+          .map((s) => s.trim().toLowerCase())
+          .filter(Boolean)
+          .filter((t, i, a) => a.indexOf(t) === i),
+      };
+      delete payload.diagnosisTagsText;
+      // If the admin left every tier at 0, drop the whole subdoc so the
+      // engine falls back to `defaultPrice` rather than billing ₹0/day.
+      const tp = payload.tierPricing;
+      if (!tp || (!tp.generalWard && !tp.semiPrivate && !tp.private)) {
+        delete payload.tierPricing;
+      }
       if (editSvc) {
-        await billing.updateService(editSvc._id, svcForm);
+        await billing.updateService(editSvc._id, payload);
         toast.current?.show({
           severity: "success",
           summary: "Updated",
@@ -204,7 +250,7 @@ export default function ServiceMasterManager() {
           life: 2000,
         });
       } else {
-        await billing.createService(svcForm);
+        await billing.createService(payload);
         toast.current?.show({
           severity: "success",
           summary: "Created",
@@ -704,6 +750,112 @@ export default function ServiceMasterManager() {
               placeholder="Optional description"
               style={{ width: "100%" }}
             />
+          </div>
+
+          {/* ────────────────────────────────────────────────────────
+              ANH TARIFF / PACKAGE FIELDS
+              Optional fields — populated when the row was imported
+              from the hospital's published rate card (or when adding
+              a new package manually). Tier prices feed the engine's
+              per-room-category lookup. Diagnosis tags drive the
+              auto-matcher that snaps a package onto an admission.
+          ──────────────────────────────────────────────────────── */}
+          <div style={{ gridColumn: "span 2", marginTop: 12, padding: "12px 14px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: "#06b6d4", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
+              <i className="pi pi-tags" /> Tariff / Package Fields
+              <span style={{ marginLeft: "auto", fontSize: 10, fontWeight: 600, color: "#64748b", textTransform: "none", letterSpacing: 0 }}>
+                Used by the ANH auto-matcher · CASH = General Ward tier
+              </span>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+              <div>
+                <label style={{ fontWeight: 600, fontSize: 12, display: "block", marginBottom: 3 }}>General Ward (₹)</label>
+                <InputNumber
+                  value={svcForm.tierPricing?.generalWard ?? 0}
+                  onValueChange={(e) => setSvcForm({ ...svcForm, tierPricing: { ...svcForm.tierPricing, generalWard: e.value || 0 } })}
+                  mode="currency" currency="INR" locale="en-IN"
+                  style={{ width: "100%" }}
+                />
+              </div>
+              <div>
+                <label style={{ fontWeight: 600, fontSize: 12, display: "block", marginBottom: 3 }}>Semi-Private (₹)</label>
+                <InputNumber
+                  value={svcForm.tierPricing?.semiPrivate ?? 0}
+                  onValueChange={(e) => setSvcForm({ ...svcForm, tierPricing: { ...svcForm.tierPricing, semiPrivate: e.value || 0 } })}
+                  mode="currency" currency="INR" locale="en-IN"
+                  style={{ width: "100%" }}
+                />
+              </div>
+              <div>
+                <label style={{ fontWeight: 600, fontSize: 12, display: "block", marginBottom: 3 }}>Private / ICU / NICU (₹)</label>
+                <InputNumber
+                  value={svcForm.tierPricing?.private ?? 0}
+                  onValueChange={(e) => setSvcForm({ ...svcForm, tierPricing: { ...svcForm.tierPricing, private: e.value || 0 } })}
+                  mode="currency" currency="INR" locale="en-IN"
+                  style={{ width: "100%" }}
+                />
+              </div>
+
+              <div>
+                <label style={{ fontWeight: 600, fontSize: 12, display: "block", marginBottom: 3 }}>Speciality</label>
+                <InputText
+                  value={svcForm.speciality || ""}
+                  onChange={(e) => setSvcForm({ ...svcForm, speciality: e.target.value })}
+                  placeholder="e.g. Cardiology, ENT, Medical Management"
+                  style={{ width: "100%" }}
+                />
+              </div>
+              <div>
+                <label style={{ fontWeight: 600, fontSize: 12, display: "block", marginBottom: 3 }}>Max LOS (days, 0 = uncapped)</label>
+                <InputNumber
+                  value={svcForm.maxLOSDays ?? 0}
+                  onValueChange={(e) => setSvcForm({ ...svcForm, maxLOSDays: e.value || 0 })}
+                  min={0} max={90}
+                  suffix=" d"
+                  style={{ width: "100%" }}
+                />
+              </div>
+              <div style={{ display: "flex", alignItems: "flex-end" }}>
+                <small style={{ color: "#64748b", fontSize: 11 }}>
+                  After Max LOS, per-day billing reverts to room + nursing + investigations.
+                </small>
+              </div>
+
+              <div style={{ gridColumn: "span 3" }}>
+                <label style={{ fontWeight: 600, fontSize: 12, display: "block", marginBottom: 3 }}>
+                  Diagnosis Tags (comma-separated, used for auto-matching)
+                </label>
+                <InputText
+                  value={svcForm.diagnosisTagsText || ""}
+                  onChange={(e) => setSvcForm({ ...svcForm, diagnosisTagsText: e.target.value })}
+                  placeholder="e.g. dengue, fever, septicaemia, chikungunya"
+                  style={{ width: "100%" }}
+                />
+                <small style={{ color: "#64748b", fontSize: 11 }}>
+                  When an admission's diagnosis matches ≥ 2 of these tags (or 1 if only one is set), this package auto-attaches.
+                </small>
+              </div>
+
+              <div style={{ gridColumn: "span 3" }}>
+                <label style={{ fontWeight: 600, fontSize: 12, display: "block", marginBottom: 3 }}>Inclusions</label>
+                <InputText
+                  value={svcForm.inclusions || ""}
+                  onChange={(e) => setSvcForm({ ...svcForm, inclusions: e.target.value })}
+                  placeholder="What this package covers (free text from rate card)"
+                  style={{ width: "100%" }}
+                />
+              </div>
+              <div style={{ gridColumn: "span 3" }}>
+                <label style={{ fontWeight: 600, fontSize: 12, display: "block", marginBottom: 3 }}>Exclusions</label>
+                <InputText
+                  value={svcForm.exclusions || ""}
+                  onChange={(e) => setSvcForm({ ...svcForm, exclusions: e.target.value })}
+                  placeholder="What's NOT included (charged separately)"
+                  style={{ width: "100%" }}
+                />
+              </div>
+            </div>
           </div>
         </div>
       </Dialog>

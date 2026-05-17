@@ -15,6 +15,26 @@ async function generateOPDAdmissionNumber() {
 class OPDService {
   /* ── Create a new OPD visit ── */
   async createOPDVisit(opdData) {
+    // ── Same-day idempotency guard ────────────────────────────────────
+    // The receptionist flow now auto-fires this from patientService on
+    // first registration (so the OPD bill always lands). The frontend
+    // ALSO fires it from a follow-up axios call. Without dedupe we'd
+    // create two OPD visits + double-bill. If a visit for this patient
+    // already exists for today's date (+ same doctor when supplied),
+    // return it unchanged. Same-day repeat consultations have to use a
+    // different doctor or be created tomorrow — matches HIS billing
+    // norms (one consult charge per doctor per day).
+    try {
+      const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+      const todayEnd   = new Date(todayStart); todayEnd.setDate(todayEnd.getDate() + 1);
+      const existing = await OPD.findOne({
+        patientId: opdData.patientId,
+        visitDate: { $gte: todayStart, $lt: todayEnd },
+        ...(opdData.doctorId ? { doctorId: opdData.doctorId } : {}),
+      }).sort({ createdAt: -1 });
+      if (existing) return existing;
+    } catch { /* fall through to normal create if dedup lookup fails */ }
+
     // Get patient's current OPD visit count before saving
     const patient = await Patient.findById(opdData.patientId);
     if (!patient) throw new Error("Patient not found");
@@ -63,11 +83,28 @@ class OPDService {
       });
 
       // Fire audit trigger: OPD Registration (consultation fee)
+      //
+      // We AWAIT this now instead of fire-and-forget. Why: the receptionist
+      // expects the OPD bill to exist by the time the next screen loads
+      // (patient lookup, billing console, etc.). Fire-and-forget meant the
+      // trigger materialised the bill ~100ms after the 201 response, and
+      // any error inside addItemToBill went to console.error rather than
+      // surfacing — so a misconfigured ServiceMaster row would silently
+      // drop the entire OPD-CON line item with no breadcrumb on the bill.
+      //
+      // The cost is small: onOPDRegistered does one createTrigger + one
+      // getOrCreateDraftBill + one addItemToBill — sub-100ms locally. The
+      // outer try{}catch still keeps registration non-blocking; if billing
+      // throws, the patient still gets registered, with the gap logged.
       try {
         const { logErr } = require("../../utils/logErr");
         const autoBilling = require("../Billing/autoBillingService");
         if (autoBilling.onOPDRegistered) {
-          autoBilling.onOPDRegistered(savedOPD, admission).catch(logErr("autoBilling", `onOPDRegistered ${savedOPD?._id}`));
+          try {
+            await autoBilling.onOPDRegistered(savedOPD, admission);
+          } catch (billErr) {
+            logErr("autoBilling", `onOPDRegistered ${savedOPD?._id}`)(billErr);
+          }
         }
       } catch (e) {
         const { logErr } = require("../../utils/logErr");

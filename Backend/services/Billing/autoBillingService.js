@@ -973,6 +973,154 @@ async function onOPDAssessmentSaved(opdVisit, admission, doctorName, assessmentI
   });
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// ANH PACKAGE MATCHING & ATTACHMENT
+// ═══════════════════════════════════════════════════════════════════════════════
+// When an admission carries a provisionalDiagnosis / reasonForAdmission that
+// maps to a published ANH package (Sheet1 surgical or Sheet2 medical-mgmt),
+// snap the package onto the admission and route billing through it instead
+// of building a la carte room+nursing+investigations.
+
+// Tokens we strip before matching — common English filler / clinical noise.
+// Keeps "acute bronchitis" → ["acute","bronchitis"] but drops "with","for"...
+const STOPWORDS = new Set([
+  "with","without","and","for","the","this","that","into","onto","from","upto",
+  "until","unto","upon","over","under","unspecified","other","others","also",
+  "incl","includes","including","inclusive","exclusive","extra","used",
+  "cost","charges","charge","fee","fees","etc","day","days","per","case","all",
+  "any","new","fresh","type","types","one","two","three","grade","ward","room",
+  "class","economy","open","note",
+]);
+const tokenize = (s) =>
+  String(s || "")
+    .toLowerCase()
+    .replace(/\(.*?\)/g, " ")
+    .split(/[^a-z0-9]+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 4 && !STOPWORDS.has(t));
+
+/**
+ * Find the best-matching ANH package for the given diagnosis text.
+ *
+ * Scoring: each package has a diagnosisTags array (from the import).
+ * For every token in the diagnosis text that appears in a package's
+ * tags, +1. We require at least 2 shared tokens (or 1 if the package
+ * has only one tag) before declaring a match. On ties the higher-score
+ * MMP (medical management) wins over surgical (medical packages have
+ * cleaner tags; surgical names carry more noise).
+ *
+ * Returns the ServiceMaster doc (with _matchScore/_matchedTokens) or
+ * null. Use `{ minScore }` to tune behaviour from the caller.
+ */
+async function findMatchingPackage(diagnosisText, opts = {}) {
+  const ServiceMaster = require("../../models/ServiceMaster/serviceMasterModel");
+  const tokens = tokenize(diagnosisText);
+  if (tokens.length === 0) return null;
+  const minScore = opts.minScore ?? 2;
+
+  const candidates = await ServiceMaster.find({
+    category: "PACKAGE",
+    isActive: true,
+    "diagnosisTags.0": { $exists: true },
+  }).lean();
+
+  let best = null;
+  let bestScore = 0;
+  for (const pkg of candidates) {
+    const tags = pkg.diagnosisTags || [];
+    const tagSet = new Set(tags.map((t) => String(t).toLowerCase()));
+    let score = 0;
+    for (const tk of tokens) if (tagSet.has(tk)) score++;
+    const need = tags.length === 1 ? 1 : minScore;
+    if (score < need) continue;
+    const isMMP = pkg.serviceCode?.startsWith("PKG-MED-MMP");
+    const wins =
+      score > bestScore ||
+      (score === bestScore && isMMP && !best?.serviceCode?.startsWith("PKG-MED-MMP"));
+    if (wins) {
+      best = pkg;
+      bestScore = score;
+    }
+  }
+  return best ? { ...best, _matchScore: bestScore, _matchedTokens: tokens } : null;
+}
+
+/**
+ * Snap a matched package onto an admission and fire the initial billing
+ * trigger. Mutates admissionDoc in place AND saves the package binding
+ * back to the Admission collection so future cron runs see it.
+ *
+ * Tier selection follows the patient's room category:
+ *   GENW / DAYCARE       → generalWard
+ *   SEMI                 → semiPrivate
+ *   PVT / ICU / NICU     → private
+ * Falls back to generalWard (CASH list price) when no room is attached
+ * yet (Emergency / pre-bed admissions).
+ *
+ * Returns the created trigger, or null on failure.
+ */
+async function attachPackageToAdmission(admissionDoc, packageDoc, opts = {}) {
+  if (!admissionDoc?._id || !packageDoc?._id) return null;
+  const tierCode = (await resolveBedAndNursingRates(admissionDoc)).categoryCode || "GENW";
+  const tierKey =
+      tierCode === "SEMI" ? "semiPrivate"
+    : (tierCode === "PVT" || tierCode === "ICU" || tierCode === "NICU") ? "private"
+    : "generalWard";
+  const unitPrice =
+    packageDoc.tierPricing?.[tierKey] ??
+    packageDoc.tierPricing?.generalWard ??
+    packageDoc.defaultPrice ?? 0;
+
+  try {
+    const Admission = require("../../models/Patient/admissionModel");
+    await Admission.findByIdAndUpdate(admissionDoc._id, {
+      $set: {
+        "package.serviceCode":      packageDoc.serviceCode,
+        "package.serviceId":        packageDoc._id,
+        "package.packageName":      packageDoc.serviceName,
+        "package.packageType":      packageDoc.billingType,
+        "package.tierUsed":         tierKey,
+        "package.unitPrice":        unitPrice,
+        "package.maxLOSDays":       packageDoc.maxLOSDays || 0,
+        "package.attachedAt":       new Date(),
+        "package.attachedBy":       opts.attachedBy || "AutoMatcher",
+        "package.matchedDiagnosis": opts.matchedDiagnosis || admissionDoc.provisionalDiagnosis || admissionDoc.reasonForAdmission || "",
+        "package.matchScore":       packageDoc._matchScore || 0,
+        "package.autoAttached":     !!opts.auto,
+      },
+    });
+  } catch (e) {
+    console.error("[AutoBilling] attachPackage persist error:", e.message);
+    return null;
+  }
+
+  const typeCode = (admissionDoc.admissionType === "Day Care" || admissionDoc.admissionType === "Daycare") ? "DAYCARE" : "IPD";
+  const trigger = await createTrigger({
+    admissionId:         admissionDoc._id,
+    patientId:           admissionDoc.patientId,
+    UHID:                admissionDoc.UHID,
+    patientType:         typeCode,
+    serviceCode:         packageDoc.serviceCode,
+    serviceName:         packageDoc.serviceName,
+    quantity:            1,
+    unitPriceOverride:   unitPrice,
+    sourceType:          "Admission",
+    sourceDocumentId:    admissionDoc._id,
+    sourceDocumentModel: "Admission",
+    orderedBy:           opts.attachedBy || "AutoMatcher",
+    orderedByRole:       opts.auto ? "System" : "Reception",
+    orderDetails:        opts.auto
+      ? `Auto-matched ANH package — diagnosis "${opts.matchedDiagnosis || admissionDoc.provisionalDiagnosis || ""}" (tier=${tierKey}, score=${packageDoc._matchScore || 0})`
+      : `Manually attached ANH package by ${opts.attachedBy || "Staff"} (tier=${tierKey})`,
+    autoCharge:          true,
+    dailyDedup:          packageDoc.billingType === "PER_DAY",
+    department:          admissionDoc.department,
+    notes:               packageDoc.inclusions ? `Inclusions: ${packageDoc.inclusions}` : undefined,
+  }).catch((e) => { console.error("[AutoBilling] package trigger error:", e.message); return null; });
+
+  return trigger;
+}
+
 /**
  * Called when an IPD / Day Care / Emergency admission is created
  * (from ReceptionConsole or AdmissionController).
@@ -981,6 +1129,8 @@ async function onOPDAssessmentSaved(opdVisit, admission, doctorName, assessmentI
  *   - Registration fee
  *   - Admission charge (per type)
  *   - First bed-day charge (deferred to daily cron in practice)
+ *   - ANH package (if diagnosis matches one) — added LAST so the
+ *     baseline reg/admission charges still post even if matching errors
  */
 async function onAdmissionCreated(admissionDoc) {
   if (!admissionDoc?._id) return [];
@@ -1098,6 +1248,37 @@ async function onAdmissionCreated(admissionDoc) {
     }
   }
 
+  // ── 4. ANH package auto-match (LAST — failure here is non-fatal) ─────
+  //    Build matching haystack from the admission's clinical free-text.
+  //    For surgical packages "Cholecystectomy" or "CABG" usually appears
+  //    in provisionalDiagnosis. For MMP the receptionist often types
+  //    "acute bronchitis" / "dengue" in reasonForAdmission. Combine both
+  //    so either field triggers a match.
+  if (typeCode === "IPD" || typeCode === "DAYCARE") {
+    try {
+      const haystack = [
+        admissionDoc.provisionalDiagnosis || "",
+        admissionDoc.reasonForAdmission   || "",
+      ].filter(Boolean).join(" | ");
+      if (haystack) {
+        const pkg = await findMatchingPackage(haystack);
+        if (pkg) {
+          const pkgTrigger = await attachPackageToAdmission(admissionDoc, pkg, {
+            auto: true,
+            attachedBy: "AutoMatcher",
+            matchedDiagnosis: haystack,
+          });
+          if (pkgTrigger) {
+            triggers.push(pkgTrigger);
+            console.log(`[AutoBilling] ANH package matched: ${pkg.serviceCode} (${pkg._matchScore} tags) for ADM ${admissionDoc.admissionNumber}`);
+          }
+        }
+      }
+    } catch (e) {
+      console.error(`[AutoBilling] package auto-match for ADM ${admissionDoc._id}:`, e.message);
+    }
+  }
+
   return triggers.filter(Boolean);
 }
 
@@ -1195,6 +1376,44 @@ async function flushDailyChargesForAdmission(admission, { typeCode } = {}) {
 
   const startMs = new Date(admission.admissionDate || admission.createdAt).getTime();
   const dayN = Math.max(1, Math.floor((Date.now() - startMs) / 86400000) + 1);
+
+  // ── Package-aware routing ────────────────────────────────────────────
+  // If the admission has an attached ANH package and today still falls
+  // within its maxLOSDays window, fire the package PER_DAY trigger
+  // instead of (or alongside) the la carte bed + nursing breakdown.
+  // MMP packages (PER_DAY) cover the whole stay's room+nursing+
+  // investigations — so we suppress BED/NURSING for those days to
+  // avoid double-charging. Surgical packages (PER_PROCEDURE) were
+  // already charged once on admission; daily accrual is unaffected.
+  const pkg = admission.package;
+  const hasPackage = pkg?.serviceCode && pkg?.packageType === "PER_DAY";
+  const withinPackageWindow =
+    hasPackage && (!pkg.maxLOSDays || pkg.maxLOSDays === 0 || dayN <= pkg.maxLOSDays);
+
+  if (withinPackageWindow) {
+    const r = await createTrigger({
+      admissionId:         admission._id,
+      patientId:           admission.patientId,
+      UHID:                admission.UHID,
+      patientType:         tc,
+      serviceCode:         pkg.serviceCode,
+      serviceName:         `${pkg.packageName || pkg.serviceCode} (Day ${dayN}/${pkg.maxLOSDays || "∞"})`,
+      quantity:            1,
+      unitPriceOverride:   pkg.unitPrice,
+      sourceType:          "BedCharge",
+      sourceDocumentId:    admission._id,
+      sourceDocumentModel: "Admission",
+      orderedBy:           "System",
+      orderedByRole:       "System",
+      orderDetails:        `Package per-day charge — ${pkg.packageName || pkg.serviceCode} @ ₹${pkg.unitPrice}/day (tier=${pkg.tierUsed})`,
+      autoCharge:          true,
+      dailyDedup:          true,
+      department:          admission.department,
+    }).catch((e) => { console.error("[AutoBilling] package daily trigger error:", e.message); return null; });
+    if (r?.skipped) skipped++;
+    else if (r?.trigger) bedFired++;   // count as "bed" line for the summary
+    return { bedFired, nurseFired, skipped };   // Skip raw bed+nursing entirely
+  }
 
   const rates = await resolveBedAndNursingRates(admission);
   const catTag = rates.categoryCode ? `-${rates.categoryCode}` : "";
@@ -1436,4 +1655,8 @@ module.exports = {
   runDailyBedChargeAccrual,
   // Retroactive backfill (bill creation calls this for active admissions)
   backfillAdmissionCharges,
+  // ANH package matching (used by admin endpoints + admissionController)
+  findMatchingPackage,
+  attachPackageToAdmission,
+  tokenize,
 };

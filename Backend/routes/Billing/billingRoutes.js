@@ -57,4 +57,20 @@ router.post("/:billId/tpa-claim", requireAction("tpa.claim"),     ctrl.setTPACla
 router.put("/:billId/items/:itemId", ctrl.updateItemQty); // PUT  /api/billing/:id/items/:itemId  {quantity}
 router.delete("/:billId/items/:itemId", ctrl.removeItem); // DELETE /api/billing/:id/items/:itemId
 
+// ── Admin one-shot: backfill bills for historical patients whose
+// receptionist registration never landed a billing trigger. Gated by
+// billing.refund (Accountant/Admin only) — same tier as cancel/refund
+// since it materially changes ledger state.
+router.post("/backfill-registration", requireAction("billing.refund"), ctrl.backfillRegistrationBills);
+
+// ── ANH package management ───────────────────────────────────────────
+// Preview is a safe read — any authenticated user can call it. Attach
+// and Detach change ledger state, so gated to billing.refund tier
+// (Accountant / Admin / Receptionist with elevated permission).
+router.post("/packages/preview", ctrl.previewPackageMatch);
+router.post("/admissions/:admissionId/attach-package",
+  requireAction("billing.refund"), ctrl.attachPackageToAdmission);
+router.post("/admissions/:admissionId/detach-package",
+  requireAction("billing.refund"), ctrl.detachPackageFromAdmission);
+
 module.exports = router;

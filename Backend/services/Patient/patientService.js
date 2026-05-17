@@ -53,9 +53,15 @@ class PatientService {
         throw new Error("Policy number is required for TPA payment type");
     }
 
-    // ✅ Initialise the correct visit counter to 1 on first registration
+    // ✅ Initialise the correct visit counter to 1 on first registration —
+    // EXCEPT for OPD/Emergency where the dispatch below creates the visit
+    // record (which itself $inc's the counter). Pre-setting to 1 there
+    // would land the counter at 2 after the OPDService increment.
     const counterField = visitCounterField(patientData.registrationType);
-    if (counterField) {
+    const willDispatchVisit =
+      (patientData.registrationType === "OPD" && patientData.doctor) ||
+       patientData.registrationType === "Emergency";
+    if (counterField && !willDispatchVisit) {
       patientData[counterField] = 1;
     }
 
@@ -70,6 +76,109 @@ class PatientService {
       { path: "doctor", select: "personalInfo doctorId" },
       { path: "tpa", select: "tpaName tpaCode phone email" },
     ]);
+
+    // ══════════════════════════════════════════════════════════════════
+    // AUTO-DISPATCH: visit + bill trigger
+    //
+    // Why: until now `createPatient` only saved the Patient row. The
+    // frontend then fired a SEPARATE axios call (POST /api/opd/visits)
+    // to create the visit + admission + bill trigger. If that second
+    // call ever failed (validation, network blip, missing field) the
+    // patient's visit counter was still bumped — but no Admission, no
+    // BillingTrigger, no PatientBill was ever created. That's why
+    // patients like Mr. sandy (UHID00000010) showed `OPD 1` in the
+    // lookup screen but `Bills 0`.
+    //
+    // Fix: from here, the registration controller is self-sufficient.
+    // For OPD with a doctor selected we create the OPD visit + admission
+    // + fire the consult-fee trigger in the same transaction. For
+    // Emergency we fire the ER-TRIAGE trigger against a synthetic
+    // Emergency admission. Both paths are idempotent — the frontend
+    // can still post to /opd/visits and the same-day dedup in
+    // OPDService.createOPDVisit will no-op.
+    //
+    // IPD / Daycare are NOT dispatched here — they require bed + room
+    // category selection which isn't on the basic registration form.
+    // The existing admissionController.create flow already fires
+    // onAdmissionCreated when the receptionist hits "Admit".
+    // ══════════════════════════════════════════════════════════════════
+    if (patientData.registrationType === "OPD" && patientData.doctor) {
+      try {
+        const OPDService = require("./OPDService");
+        await OPDService.createOPDVisit({
+          patientId:      patient._id,
+          UHID:           patient.UHID,
+          departmentId:   patient.department?._id || patient.department,
+          doctorId:       patient.doctor?._id     || patient.doctor,
+          department:     patient.department?.departmentName || "",
+          consultantName: patient.doctor?.personalInfo?.fullName || "",
+          chiefComplaint: patientData.chiefComplaint || "Initial Registration",
+          visitDate:      new Date(),
+          // OPDRegistration.visitType enum is `["First Visit", "Follow-up", "Routine Checkup"]`
+          // — NOT the visit-CATEGORY ("OPD"/"IPD"/etc). First registration
+          // is always First Visit; follow-ups go through their own form.
+          visitType:      "First Visit",
+          paymentType:    patient.paymentType || "GENERAL",
+        });
+      } catch (e) {
+        // Non-fatal — patient is registered, just log the gap so it can
+        // be backfilled. The receptionist will still see a successful
+        // 201 response; downstream the audit log will flag the missing
+        // bill (handy for QA).
+        try {
+          const { logErr } = require("../../utils/logErr");
+          logErr("patientService", `auto-create OPD visit ${patient.UHID}`)(e);
+        } catch { console.error("[patientService] OPD auto-visit error:", e?.message); }
+      }
+    } else if (patientData.registrationType === "Emergency") {
+      try {
+        const autoBilling = require("../Billing/autoBillingService");
+        const Admission   = require("../../models/Patient/admissionModel");
+        // Synthetic Emergency admission so onEmergencyVisitCreated has
+        // a real row to attach BillingTriggers to. The triage screen
+        // updates this admission with clinical detail later.
+        const erAdmNumber = `ER-${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, "0")}${String(new Date().getDate()).padStart(2, "0")}-${String(Date.now()).slice(-4)}`;
+        const adm = await Admission.create({
+          UHID:               patient.UHID,
+          patientId:          patient._id,
+          patientName:        patient.fullName,
+          contactNumber:      patient.contactNumber || "N/A",
+          admissionType:      "Emergency",
+          admissionNumber:    erAdmNumber,
+          attendingDoctor:    patient.doctor?.personalInfo?.fullName || "",
+          attendingDoctorId:  patient.doctor?._id     || patient.doctor || null,
+          department:         patient.department?.departmentName || "Emergency",
+          departmentId:       patient.department?._id || patient.department || null,
+          reasonForAdmission: patientData.chiefComplaint || "Emergency Registration",
+          hasBed:             false,
+          status:             "Active",
+          paymentType:        patient.paymentType || "GENERAL",
+          admissionDate:      new Date(),
+        });
+        await this.updateVisitCount(patient._id, "Emergency");
+        autoBilling.onEmergencyVisitCreated(
+          {
+            _id:        adm._id,
+            UHID:       patient.UHID,
+            patientId:  patient._id,
+            visitDate:  new Date(),
+            doctorId:   adm.attendingDoctorId,
+            departmentId: adm.departmentId,
+          },
+          adm,
+        ).catch((e) => {
+          try {
+            const { logErr } = require("../../utils/logErr");
+            logErr("patientService", `ER trigger ${patient.UHID}`)(e);
+          } catch { console.error("[patientService] ER trigger error:", e?.message); }
+        });
+      } catch (e) {
+        try {
+          const { logErr } = require("../../utils/logErr");
+          logErr("patientService", `auto-create ER admission ${patient.UHID}`)(e);
+        } catch { console.error("[patientService] ER auto-admit error:", e?.message); }
+      }
+    }
 
     return patient;
   }

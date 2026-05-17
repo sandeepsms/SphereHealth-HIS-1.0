@@ -85,12 +85,14 @@ const NAV = [
     items: [
       { label: "Dashboard",           icon: "pi-chart-line",        path: "/reception",            nabh: true,  badge: "LIVE",  roles: [ADMIN, RX, DR, NR, AC, TPA] },
       { label: "New Registration",    icon: "pi-user-plus",         path: "/reception/register",   nabh: true,                  roles: [ADMIN, RX] },
-      // RX-flavored Patient Search & Visit History (rx-page style, slimmer)
-      { label: "Patient Search",      icon: "pi-search",            path: "/patient-search",                                   roles: [RX] },
-      { label: "Visit History",       icon: "pi-clock",             path: "/visit-history",                                    roles: [RX] },
-      // Original Patient Search & Visit History — for other roles
-      { label: "Patient Search",      icon: "pi-search",            path: "/allpatient",                                       roles: [ADMIN, DR, NR, AC, TPA] },
-      { label: "Visit History",       icon: "pi-clock",             path: "/patient-history",                                  roles: [ADMIN, DR, NR] },
+      // Single "Patient Lookup — All-in-One" entry replaces the four
+      // previous lines (RX-flavored + clinical-flavored copies of
+      // "Patient Search" + "Visit History"). All 4 legacy routes now
+      // alias the unified PatientLookupPage which adapts its default
+      // view per role: Receptionist → Search · Doctor/Nurse/Admin →
+      // Directory · ?uhid= deep link → Timeline. See the
+      // PatientLookupPage docstring for the consolidation rationale.
+      { label: "Patient Lookup",      icon: "pi-id-card",           path: "/patient-search",                  badge: "ALL-IN-ONE",  roles: [ADMIN, RX, DR, NR, AC, TPA] },
       { label: "Appointments",        icon: "pi-calendar-plus",     path: "/appointments",         nabh: true,  badge: "NEW",   roles: [ADMIN, RX] },
       { label: "Discharge Queue",     icon: "pi-sign-out",          path: "/discharge-queue",      nabh: true,  badge: "NEW",   roles: [ADMIN, RX] },
       { label: "TPA / Insurance",     icon: "pi-shield",            path: "/tpa-cases",            nabh: true,  badge: "NEW",   roles: [ADMIN, RX, TPA, AC] },
@@ -369,12 +371,95 @@ const SECURITY_NAV = [
   { id: "incidents",      label: "Incident Reports", icon: "pi-exclamation-triangle",color: "#ef4444", light: "#fef2f2", path: "/incidents",      single: true, roles: ["Security"], badge: "NEW" },
 ];
 
+// Receptionist — workflow-focused hard-fork. Replaces the previous
+// 7-section / 17-item filter view (which sprinkled Reception across
+// Dashboard, Reception, OPD/Emergency, Bed Management, Billing, Ward
+// Boy sections) with a curated 1-tile + 3-section, 11-item layout
+// organised around a receptionist's actual day:
+//   • Today's Desk        — landing-tile dashboard with live counters
+//   • FRONT DESK          — registration, search, history, appointments,
+//                           visitor passes, discharge clearance
+//   • QUEUES & BEDS       — OPD queue, ER cases, live bed map
+//   • BILLING & TPA       — payment counter + insurance pre-auth
+// Removed vs. previous view:
+//   - duplicate "Dashboard" top-level link (the Reception tile is the
+//     landing page; the universal /dashboard role-router still
+//     forwards there if you bookmark it)
+//   - Ward Boy → Task Board (receptionists can't fulfill tasks; if
+//     they need to file a porter request they'll do it from the
+//     patient file's quick actions)
+//   - Setup / hierarchy entries (Wards / Rooms / Floors / Buildings)
+//     they never had access to anyway — listed here for clarity.
+const RECEPTION_NAV = [
+  // Landing tile — the receptionist's home page (ReceptionDashboard:
+  // today's OPD/IPD totals, doctor strip, collection breakdown, dues)
+  {
+    id: "desk", label: "Today's Desk",
+    icon: "pi-home", color: "#0891b2", light: "#ecfeff",
+    path: "/reception", single: true, roles: ["Receptionist"],
+  },
+
+  // ── Front desk — registration, lookup, scheduling, discharge ──
+  // Ordered by daily frequency: New Reg is the primary CTA; search/
+  // history support returning-patient lookup; appointments slot the
+  // next visit; visitor passes are the steady stream of attendant
+  // entries; discharge queue closes out IPD patients.
+  {
+    id: "front-desk", label: "Front Desk",
+    icon: "pi-desktop", color: "#0891b2", light: "#ecfeff",
+    nabh: true, roles: ["Receptionist"],
+    items: [
+      { label: "New Registration",  icon: "pi-user-plus",      path: "/reception/register", roles: ["Receptionist"], nabh: true },
+      // Single "Patient Lookup — All-in-One" entry replaces the previous
+      // pair of "Patient Search" + "Visit History" sidebar links. Inside
+      // the unified PatientLookupPage the receptionist can switch between
+      // search / directory / timeline tabs without leaving the page; the
+      // separate sidebar entry for Visit History became redundant. Lands
+      // on the Search tab by default for receptionists (see the
+      // `defaultView` logic inside PatientLookupPage).
+      { label: "Patient Lookup",    icon: "pi-id-card",        path: "/patient-search",     roles: ["Receptionist"], badge: "ALL-IN-ONE" },
+      { label: "Appointments",      icon: "pi-calendar-plus",  path: "/appointments",       roles: ["Receptionist"], nabh: true },
+      { label: "Visitor Passes",    icon: "pi-id-card",        path: "/visitor-passes",     roles: ["Receptionist"], nabh: true },
+      { label: "Discharge Queue",   icon: "pi-sign-out",       path: "/discharge-queue",    roles: ["Receptionist"], nabh: true, badge: "NABH" },
+    ],
+  },
+
+  // ── Queues & beds — current workload visibility ──
+  // OPD queue + ER cases are the two queues a reception watches all
+  // day; Live Bed Map opens read-only for IPD admission planning.
+  {
+    id: "queues", label: "Queues & Beds",
+    icon: "pi-list", color: "#059669", light: "#ecfdf5",
+    roles: ["Receptionist"],
+    items: [
+      { label: "OPD Queue",        icon: "pi-list",  path: "/reception-opd-queue", roles: ["Receptionist"] },
+      { label: "Emergency Cases",  icon: "pi-bolt",  path: "/reception-emergency", roles: ["Receptionist"] },
+      { label: "Live Bed Map",     icon: "pi-eye",   path: "/bed-visual",          roles: ["Receptionist"] },
+    ],
+  },
+
+  // ── Billing & TPA — payment counter + insurance ──
+  // Receptionists collect cash/UPI/card at the counter and prepare
+  // TPA pre-auth at admission. Both endpoints live here so the
+  // operator doesn't need to dig through a Finance section.
+  {
+    id: "billing", label: "Billing & TPA",
+    icon: "pi-receipt", color: "#d97706", light: "#fffbeb",
+    roles: ["Receptionist"],
+    items: [
+      { label: "Billing & Payments",  icon: "pi-receipt", path: "/reception-billing", roles: ["Receptionist"] },
+      { label: "TPA / Insurance",     icon: "pi-shield",  path: "/tpa-cases",         roles: ["Receptionist"], nabh: true },
+    ],
+  },
+];
+
 function filterNav(nav, userRole) {
   if (userRole === ADMIN) return nav; // Admin sees everything unfiltered
   if (userRole === "Dietician")    return DIETICIAN_NAV;
   if (userRole === "Ward Boy")     return WARD_BOY_NAV;
   if (userRole === "Housekeeping") return HOUSEKEEPING_NAV;
   if (userRole === "Security")     return SECURITY_NAV;
+  if (userRole === "Receptionist") return RECEPTION_NAV;
   return nav
     .filter(section => canSee(section.roles, userRole))
     .map(section => {

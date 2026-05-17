@@ -1598,6 +1598,69 @@ const SERVICES = [
     unitLabel: "one time",
     displayOrder: 2203,
   },
+
+  // ════════════════════════════════════════════════════════════════
+  // ENGINE-LEVEL CODES — codes that autoBillingService.js posts when
+  // it fires onOPDRegistered / onAdmissionCreated / onEmergencyVisit /
+  // onDoctorNoteSaved / onNurseNoteSaved. Without these rows in
+  // ServiceMaster the engine still works (via unitPriceOverride
+  // fallback) but ServicePricing tariff overrides (CASH/TPA/CORPORATE)
+  // never apply — so this seed is what unlocks proper rate-card
+  // overrides for the auto-billed line items.
+  // ════════════════════════════════════════════════════════════════
+
+  // ── Registration fees (one-time, per visit-type) ─────────────────
+  { serviceCode: "REG-OPD",       serviceName: "OPD Registration Fee",       domain: "OPD",       category: "REGISTRATION", applicableTo: ["OPD"],       billingType: "ONE_TIME", defaultPrice: 100, isAutoCharged: true, unitLabel: "one time", displayOrder: 9001 },
+  { serviceCode: "REG-IPD",       serviceName: "IPD Registration Fee",       domain: "IPD",       category: "REGISTRATION", applicableTo: ["IPD"],       billingType: "ONE_TIME", defaultPrice: 200, isAutoCharged: true, unitLabel: "one time", displayOrder: 9002 },
+  { serviceCode: "REG-DAYCARE",   serviceName: "Day Care Registration Fee",  domain: "DAYCARE",   category: "REGISTRATION", applicableTo: ["DAYCARE"],   billingType: "ONE_TIME", defaultPrice: 150, isAutoCharged: true, unitLabel: "one time", displayOrder: 9003 },
+  { serviceCode: "REG-EMERGENCY", serviceName: "Emergency Registration Fee", domain: "EMERGENCY", category: "REGISTRATION", applicableTo: ["EMERGENCY"], billingType: "ONE_TIME", defaultPrice: 300, isAutoCharged: true, unitLabel: "one time", displayOrder: 9004 },
+  { serviceCode: "REG-SERVICES",  serviceName: "Services Registration Fee",  domain: "COMMON",    category: "REGISTRATION", applicableTo: ["ALL"],       billingType: "ONE_TIME", defaultPrice: 50,  isAutoCharged: true, unitLabel: "one time", displayOrder: 9005 },
+
+  // ── Admission processing (one-time, per admission-type) ──────────
+  { serviceCode: "ADM-OPD",       serviceName: "OPD Admission Processing",       domain: "OPD",       category: "REGISTRATION", applicableTo: ["OPD"],       billingType: "ONE_TIME", defaultPrice: 0,   isAutoCharged: true, unitLabel: "one time", displayOrder: 9011 },
+  { serviceCode: "ADM-IPD",       serviceName: "IPD Admission Processing",       domain: "IPD",       category: "REGISTRATION", applicableTo: ["IPD"],       billingType: "ONE_TIME", defaultPrice: 500, isAutoCharged: true, unitLabel: "one time", displayOrder: 9012 },
+  { serviceCode: "ADM-DAYCARE",   serviceName: "Day Care Admission Processing",  domain: "DAYCARE",   category: "REGISTRATION", applicableTo: ["DAYCARE"],   billingType: "ONE_TIME", defaultPrice: 300, isAutoCharged: true, unitLabel: "one time", displayOrder: 9013 },
+  { serviceCode: "ADM-EMERGENCY", serviceName: "Emergency Admission Processing", domain: "EMERGENCY", category: "REGISTRATION", applicableTo: ["EMERGENCY"], billingType: "ONE_TIME", defaultPrice: 400, isAutoCharged: true, unitLabel: "one time", displayOrder: 9014 },
+
+  // ── Bed/Room charges (per day, by room category) ─────────────────
+  // The engine resolves these via the admission's room → roomCategory
+  // → defaultPricing.perBedDailyRate. ServiceMaster row exists purely
+  // to anchor the line item; the actual rate comes from RoomCategory.
+  { serviceCode: "BED",                 serviceName: "Bed Charge (Daily)",                domain: "IPD", category: "ROOM", applicableTo: ["IPD", "DAYCARE"], billingType: "PER_DAY", defaultPrice: 1500, isAutoCharged: true, unitLabel: "per day", displayOrder: 9020 },
+  { serviceCode: "BED-GENERAL",         serviceName: "Bed — General Ward (Daily)",        domain: "IPD", category: "ROOM", applicableTo: ["IPD"], billingType: "PER_DAY", defaultPrice: 1000, isAutoCharged: true, unitLabel: "per day", displayOrder: 9021 },
+  { serviceCode: "BED-SEMI_PRIVATE",    serviceName: "Bed — Semi-Private (Daily)",        domain: "IPD", category: "ROOM", applicableTo: ["IPD"], billingType: "PER_DAY", defaultPrice: 1800, isAutoCharged: true, unitLabel: "per day", displayOrder: 9022 },
+  { serviceCode: "BED-PRIVATE",         serviceName: "Bed — Private Room (Daily)",        domain: "IPD", category: "ROOM", applicableTo: ["IPD"], billingType: "PER_DAY", defaultPrice: 3000, isAutoCharged: true, unitLabel: "per day", displayOrder: 9023 },
+  { serviceCode: "BED-DELUXE",          serviceName: "Bed — Deluxe Suite (Daily)",        domain: "IPD", category: "ROOM", applicableTo: ["IPD"], billingType: "PER_DAY", defaultPrice: 5000, isAutoCharged: true, unitLabel: "per day", displayOrder: 9024 },
+  { serviceCode: "BED-ICU",             serviceName: "Bed — ICU (Daily)",                 domain: "IPD", category: "ROOM", applicableTo: ["IPD"], billingType: "PER_DAY", defaultPrice: 6000, isAutoCharged: true, unitLabel: "per day", displayOrder: 9025 },
+  { serviceCode: "BED-NICU",            serviceName: "Bed — NICU (Daily)",                domain: "IPD", category: "ROOM", applicableTo: ["IPD"], billingType: "PER_DAY", defaultPrice: 7000, isAutoCharged: true, unitLabel: "per day", displayOrder: 9026 },
+  { serviceCode: "BED-DAYCARE",         serviceName: "Bed — Day Care (Daily)",            domain: "DAYCARE", category: "ROOM", applicableTo: ["DAYCARE"], billingType: "PER_DAY", defaultPrice: 800, isAutoCharged: true, unitLabel: "per day", displayOrder: 9027 },
+
+  // ── Nursing charges (per day, by room category) ──────────────────
+  { serviceCode: "NURSING",             serviceName: "Nursing Charge (Daily)",            domain: "IPD", category: "NURSING", applicableTo: ["IPD", "DAYCARE"], billingType: "PER_DAY", defaultPrice: 300, isAutoCharged: true, unitLabel: "per day", displayOrder: 9030 },
+  { serviceCode: "NURSING-GENERAL",     serviceName: "Nursing — General Ward (Daily)",    domain: "IPD", category: "NURSING", applicableTo: ["IPD"], billingType: "PER_DAY", defaultPrice: 200, isAutoCharged: true, unitLabel: "per day", displayOrder: 9031 },
+  { serviceCode: "NURSING-SEMI_PRIVATE",serviceName: "Nursing — Semi-Private (Daily)",    domain: "IPD", category: "NURSING", applicableTo: ["IPD"], billingType: "PER_DAY", defaultPrice: 350, isAutoCharged: true, unitLabel: "per day", displayOrder: 9032 },
+  { serviceCode: "NURSING-PRIVATE",     serviceName: "Nursing — Private Room (Daily)",    domain: "IPD", category: "NURSING", applicableTo: ["IPD"], billingType: "PER_DAY", defaultPrice: 500, isAutoCharged: true, unitLabel: "per day", displayOrder: 9033 },
+  { serviceCode: "NURSING-DELUXE",      serviceName: "Nursing — Deluxe Suite (Daily)",    domain: "IPD", category: "NURSING", applicableTo: ["IPD"], billingType: "PER_DAY", defaultPrice: 700, isAutoCharged: true, unitLabel: "per day", displayOrder: 9034 },
+  { serviceCode: "NURSING-ICU",         serviceName: "Nursing — ICU (Daily)",             domain: "IPD", category: "NURSING", applicableTo: ["IPD"], billingType: "PER_DAY", defaultPrice: 1200, isAutoCharged: true, unitLabel: "per day", displayOrder: 9035 },
+  { serviceCode: "NURSING-NICU",        serviceName: "Nursing — NICU (Daily)",            domain: "IPD", category: "NURSING", applicableTo: ["IPD"], billingType: "PER_DAY", defaultPrice: 1500, isAutoCharged: true, unitLabel: "per day", displayOrder: 9036 },
+  { serviceCode: "NURSING-DAYCARE",     serviceName: "Nursing — Day Care (Daily)",        domain: "DAYCARE", category: "NURSING", applicableTo: ["DAYCARE"], billingType: "PER_DAY", defaultPrice: 150, isAutoCharged: true, unitLabel: "per day", displayOrder: 9037 },
+
+  // ── ER triage + OPD consultation + Doctor visits ─────────────────
+  { serviceCode: "ER-TRIAGE",       serviceName: "Emergency Triage Charge",       domain: "EMERGENCY", category: "CONSULTATION", applicableTo: ["EMERGENCY"], billingType: "ONE_TIME",  defaultPrice: 500,  isAutoCharged: true, unitLabel: "one time", displayOrder: 9040 },
+  { serviceCode: "OPD-CON",         serviceName: "OPD Consultation Fee",          domain: "OPD",       category: "CONSULTATION", applicableTo: ["OPD"],       billingType: "PER_VISIT", defaultPrice: 500, isAutoCharged: true, unitLabel: "per visit", displayOrder: 9041 },
+  { serviceCode: "CON-001",         serviceName: "Doctor Visit / Assessment",     domain: "IPD",       category: "DOCTOR",       applicableTo: ["IPD", "DAYCARE"], billingType: "PER_VISIT", defaultPrice: 400, isAutoCharged: true, unitLabel: "per visit", displayOrder: 9042 },
+  { serviceCode: "DOC-CONSULT",     serviceName: "Doctor Consultation",           domain: "IPD",       category: "DOCTOR",       applicableTo: ["IPD"],       billingType: "PER_VISIT", defaultPrice: 500, isAutoCharged: true, unitLabel: "per visit", displayOrder: 9043 },
+  { serviceCode: "DOC-MORN-ROUND",  serviceName: "Doctor Morning Round",          domain: "IPD",       category: "DOCTOR",       applicableTo: ["IPD"],       billingType: "PER_VISIT", defaultPrice: 400, isAutoCharged: true, unitLabel: "per visit", displayOrder: 9044 },
+  { serviceCode: "DOC-EVE-ROUND",   serviceName: "Doctor Evening Round",          domain: "IPD",       category: "DOCTOR",       applicableTo: ["IPD"],       billingType: "PER_VISIT", defaultPrice: 400, isAutoCharged: true, unitLabel: "per visit", displayOrder: 9045 },
+  { serviceCode: "DOC-NIGHT-ROUND", serviceName: "Doctor Night Round",            domain: "IPD",       category: "DOCTOR",       applicableTo: ["IPD"],       billingType: "PER_VISIT", defaultPrice: 500, isAutoCharged: true, unitLabel: "per visit", displayOrder: 9046 },
+  { serviceCode: "DOC-ICU-VISIT",   serviceName: "Doctor ICU Visit",              domain: "IPD",       category: "DOCTOR",       applicableTo: ["IPD"],       billingType: "PER_VISIT", defaultPrice: 800, isAutoCharged: true, unitLabel: "per visit", displayOrder: 9047 },
+
+  // ── Engine-fired nursing codes ───────────────────────────────────
+  { serviceCode: "NRS-001",  serviceName: "IV Cannulation",                domain: "IPD", category: "NURSING", applicableTo: ["IPD", "DAYCARE"], billingType: "PER_PROCEDURE", defaultPrice: 150, isAutoCharged: true, unitLabel: "per procedure", displayOrder: 9050 },
+  { serviceCode: "NRS-004",  serviceName: "Wound Dressing (Nurse)",        domain: "IPD", category: "NURSING", applicableTo: ["IPD", "DAYCARE", "OPD"], billingType: "PER_PROCEDURE", defaultPrice: 200, isAutoCharged: true, unitLabel: "per procedure", displayOrder: 9051 },
+  { serviceCode: "NRS-005",  serviceName: "Skin Care / Pressure Care",     domain: "IPD", category: "NURSING", applicableTo: ["IPD"], billingType: "PER_PROCEDURE", defaultPrice: 100, isAutoCharged: true, unitLabel: "per procedure", displayOrder: 9052 },
+  { serviceCode: "NRS-009",  serviceName: "Vitals Monitoring (Daily)",     domain: "IPD", category: "NURSING", applicableTo: ["IPD"], billingType: "PER_DAY",       defaultPrice: 100, isAutoCharged: true, unitLabel: "per day",       displayOrder: 9053 },
+  { serviceCode: "NRS-BLD",  serviceName: "Blood Transfusion (Nurse)",     domain: "IPD", category: "NURSING", applicableTo: ["IPD"], billingType: "PER_UNIT",      defaultPrice: 500, isAutoCharged: false, unitLabel: "per unit",     displayOrder: 9054 },
 ];
 
 // ── Seed function ─────────────────────────────────────────────

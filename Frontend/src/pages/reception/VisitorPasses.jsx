@@ -15,6 +15,11 @@ import "../../Components/clinical/clinical-forms.css";
 
 const RELATIONS = ["Son", "Daughter", "Spouse", "Mother", "Father", "Brother", "Sister", "Friend", "Relative", "Other"];
 const ID_TYPES  = ["Aadhaar", "PAN", "Voter ID", "Driving License", "Passport", "Other"];
+// Visiting hours are NABH-mandated but vary hospital-to-hospital. Pulled
+// out to a single constant so a future Hospital Settings UI / env override
+// can replace it without hunting through JSX.
+const VISITING_HOURS = { morning: "11 AM – 1 PM", evening: "5 PM – 7 PM" };
+const ICU_VISIT_NOTE = "ICU/NICU: max 1 visitor at a time, 10 min slots.";
 
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
 
@@ -42,7 +47,12 @@ export default function VisitorPasses() {
         const data = aRes.value.data;
         setAdmissions(Array.isArray(data) ? data : (data?.admissions || data?.data || []));
       }
-    } catch (e) { toast.error("Could not load passes"); }
+    } catch (e) {
+      // Surface the underlying error to console (E-06) — the operator
+      // still sees a user-friendly toast but SOC can trace the failure.
+      console.error("[VisitorPasses] load:", e?.response?.data?.message || e?.message);
+      toast.error("Could not load passes");
+    }
     finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -68,13 +78,19 @@ export default function VisitorPasses() {
   const onReturn = async (id) => {
     if (!window.confirm("Mark pass as returned?")) return;
     try { await axios.post(`${API_ENDPOINTS.BASE}/visitor-passes/${id}/return`); toast.success("Pass returned"); load(); }
-    catch (e) { toast.error("Failed"); }
+    catch (e) {
+      console.error("[VisitorPasses] return:", e?.response?.data?.message || e?.message);
+      toast.error(e?.response?.data?.message || "Could not mark pass as returned");
+    }
   };
   const onRevoke = async (id) => {
     const reason = window.prompt("Revoke reason?");
     if (reason === null) return;
     try { await axios.post(`${API_ENDPOINTS.BASE}/visitor-passes/${id}/revoke`, { reason }); toast.success("Pass revoked"); load(); }
-    catch (e) { toast.error("Failed"); }
+    catch (e) {
+      console.error("[VisitorPasses] revoke:", e?.response?.data?.message || e?.message);
+      toast.error(e?.response?.data?.message || "Could not revoke pass");
+    }
   };
 
   return (
@@ -256,7 +272,7 @@ function IssuePassModal({ admissions, onClose, onIssued, userName }) {
             <input className="his-field" type="number" value={validHours} onChange={e => setValidHours(e.target.value)} />
           </div>
           <div className="rx-banner rx-banner--info">
-            🕐 Visiting hours: <strong>11 AM – 1 PM</strong> &amp; <strong>5 PM – 7 PM</strong>. ICU/NICU: max 1 visitor at a time, 10 min slots.
+            🕐 Visiting hours: <strong>{VISITING_HOURS.morning}</strong> &amp; <strong>{VISITING_HOURS.evening}</strong>. {ICU_VISIT_NOTE}
           </div>
         </div>
         <div className="rx-modal-foot">

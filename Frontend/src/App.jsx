@@ -27,7 +27,8 @@ import MainPage from "./pages/mainPage/MainPage";
 import Dashboard1 from "./pages/patient/Dashboard";
 
 // ── Lazy-loaded pages (downloaded on-demand) ────────────────────
-const PatientsTable = lazy(() => import("./Components/PatientsTable"));
+// PatientsTable deleted 2026-05-17 — superseded by PatientLookupPage's
+// "directory" view. The /allpatient route now mounts PatientLookupPage.
 const Servicebtn = lazy(() => import("./Components/Servicebtn"));
 const OPDPrint = lazy(() => import("./pages/OPD/OPDPrint"));
 const ServiceAlldata = lazy(() => import("./Components/ServiceAlldata"));
@@ -109,8 +110,9 @@ const DischargeQueue        = lazy(() => import("./pages/reception/DischargeQueu
 const VisitorPasses         = lazy(() => import("./pages/reception/VisitorPasses"));
 const TPACases              = lazy(() => import("./pages/reception/TPACases"));
 const Appointments          = lazy(() => import("./pages/reception/Appointments"));
-const ReceptionPatientSearch  = lazy(() => import("./pages/reception/ReceptionPatientSearch"));
-const ReceptionVisitHistory   = lazy(() => import("./pages/reception/ReceptionVisitHistory"));
+// ReceptionPatientSearch + ReceptionVisitHistory deleted 2026-05-17 —
+// both superseded by PatientLookupPage. Routes /patient-search and
+// /visit-history now mount the unified component.
 const ReceptionOPDQueue       = lazy(() => import("./pages/reception/ReceptionOPDQueue"));
 const ReceptionEmergencyCases = lazy(() => import("./pages/reception/ReceptionEmergencyCases"));
 const ReceptionBedView        = lazy(() => import("./pages/reception/ReceptionBedView"));
@@ -127,7 +129,14 @@ const LabResultsEntry         = lazy(() => import("./pages/lab/LabResultsEntry")
 const NurseOPDQueuePage = lazy(() => import("./pages/nurse/NurseOPDQueuePage"));
 const NursePatientPanel = lazy(() => import("./pages/nurse/NursePatientPanel"));
 const DoctorOPDPanelPage = lazy(() => import("./pages/doctor/DoctorOPDPanelPage"));
-const PatientHistoryPage = lazy(() => import("./pages/patient/PatientHistoryPage"));
+// PatientHistoryPage deleted 2026-05-17 — superseded by
+// PatientLookupPage's "timeline" view.
+// Unified replacement for /patient-search + /visit-history + /allpatient
+// + /patient-history. All four routes now mount this single component
+// with a different `initialView` so the page lands on the relevant tab.
+// The legacy components remain importable for the rare deep-link that
+// hasn't been migrated, but the routes below point at the unified one.
+const PatientLookupPage = lazy(() => import("./pages/patient/PatientLookupPage"));
 const CompletePatientFilePage = lazy(() => import("./pages/patient/CompletePatientFilePage"));
 const GateLogPage = lazy(() => import("./pages/security/GateLogPage"));
 const IncidentsPage = lazy(() => import("./pages/security/IncidentsPage"));
@@ -290,7 +299,9 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/dash" element={<Dashboard1 />} />
 
             {/* Patient Registration moved to /reception (see below) */}
-            <Route path="/allpatient" element={<PatientsTable />} />
+            {/* /allpatient → unified PatientLookupPage in "directory" mode.
+                See PatientLookupPage docstring for the consolidation rationale. */}
+            <Route path="/allpatient" element={<PatientLookupPage initialView="directory" />} />
 
             {/* ── Doctors ──────────────────────────────────────── */}
             {/* List visible to anyone who books / refers / staffs OPD;
@@ -477,9 +488,13 @@ function AppLayout({ collapsed, setCollapsed }) {
             } />
             <Route path="/appointments" element={<Appointments />} />
             {/* Receptionist-flavored versions of shared modules */}
-            <Route path="/patient-search" element={<ReceptionPatientSearch />} />
-            <Route path="/visit-history" element={<ReceptionVisitHistory />} />
-            <Route path="/visit-history/:uhid" element={<ReceptionVisitHistory />} />
+            {/* All three legacy patient-lookup routes now mount the unified
+                PatientLookupPage. /patient-search lands on the live-search
+                tab (Receptionist default); /visit-history lands on the
+                timeline tab (which auto-loads if ?uhid= or /:uhid is given). */}
+            <Route path="/patient-search" element={<PatientLookupPage initialView="search" />} />
+            <Route path="/visit-history"  element={<PatientLookupPage initialView="timeline" />} />
+            <Route path="/visit-history/:uhid" element={<PatientLookupPage initialView="timeline" />} />
             <Route path="/reception-opd-queue" element={<ReceptionOPDQueue />} />
             <Route path="/reception-emergency" element={<ReceptionEmergencyCases />} />
             <Route path="/reception-beds" element={<ReceptionBedView />} />
@@ -496,7 +511,11 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/opd-queue" element={<NurseOPDQueuePage />} />
             <Route path="/nurse-patient-panel" element={<NursePatientPanel />} />
             <Route path="/doctor-opd-panel" element={<DoctorOPDPanelPage />} />
-            <Route path="/patient-history" element={<PatientHistoryPage />} />
+            {/* Legacy clinical-history route — same destination, "timeline"
+                tab. /patient-history/:uhid still works the same way thanks
+                to the useSearchParams + useParams handling inside the
+                unified component. */}
+            <Route path="/patient-history" element={<PatientLookupPage initialView="timeline" />} />
             {/* Complete patient file — one page with every clinical record + UI audit feed. */}
             <Route path="/patient-file/:uhid" element={<CompletePatientFilePage />} />
             <Route path="/mar" element={<MARPage />} />
