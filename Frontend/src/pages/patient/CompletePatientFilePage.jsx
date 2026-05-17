@@ -1472,7 +1472,9 @@ function NoteList({ notes, kind, emptyMsg }) {
           <span className="pf-record__time">{fmtDT(n.visitDate || n.noteDate || n.createdAt)}</span>
           {n.status && <span className={`pf-badge ${["signed","submitted"].includes(n.status) ? "pf-badge--ok" : "pf-badge--warn"}`}>{n.status}</span>}
           {n.shift && <span className="pf-badge pf-badge--neutral">{n.shift}</span>}
-          {(n.isCritical || n.isCriticalEvent) && <span className="pf-badge pf-badge--err">CRITICAL</span>}
+          {(n.isCritical || n.isCriticalEvent) && (
+            <span className="pf-badge pf-badge--err" role="status" aria-label="Critical event">🚨 CRITICAL</span>
+          )}
         </div>
 
         <div className="pf-record__body pf-record__body--dense">
@@ -1683,7 +1685,9 @@ function VitalsSection({ vitals, nurseNotes }) {
       </thead>
       <tbody>
         {merged.slice(0, 200).map((r, i) => (
-          <tr key={i}>
+          // Deterministic key from the row's actual data — `key={i}` was
+          // breaking reconciliation when new vitals were inserted mid-stream.
+          <tr key={`${r.when || ""}|${r.bp}|${r.pulse}|${i}`}>
             <td>{fmtDT(r.when)}</td><td>{r.by}</td>
             <td>{r.bp}</td><td>{r.pulse}</td><td>{r.temp}</td>
             <td>{r.rr}</td><td>{r.spo2}</td><td>{r.bsl}</td><td>{r.gcs}</td>
@@ -1696,8 +1700,13 @@ function VitalsSection({ vitals, nurseNotes }) {
 
 function ConsentSection({ consents }) {
   if (!consents?.length) return <Empty icon="📝" msg="No consent forms yet" />;
-  return consents.map((c) => (
-    <div key={c._id} className="pf-record pf-record--consent">
+  // Wrap in a fragment so this works as a section child even though
+  // .map() returns an array. Guard against rows missing _id (would
+  // collapse all duplicates onto one undefined-keyed slot otherwise).
+  return (
+    <>
+    {consents.map((c, i) => (
+    <div key={c._id || `consent-${i}`} className="pf-record pf-record--consent">
       <div className="pf-record__head">
         <span className="pf-record__title">{c.consentTitle || c.consentType}</span>
         <span className="pf-record__time">{fmtDT(c.createdAt)}</span>
@@ -1715,7 +1724,9 @@ function ConsentSection({ consents }) {
         {c.refusalReason && <p><strong>Refusal reason:</strong> {c.refusalReason}</p>}
       </div>
     </div>
-  ));
+    ))}
+    </>
+  );
 }
 
 function InvestigationSection({ investigations }) {
@@ -2044,9 +2055,12 @@ function PrintLetterhead({ patient, currentAdmission, role }) {
 }
 
 function PrintBody({ data, docInitial, nurseInitial, docOther, nurseOther }) {
+  // dietPlans was missing from this destructure — PrintSection 9a was
+  // reading a free variable that didn't exist, crashing the print popup.
+  // (Audit finding HIGH-3.)
   const { currentAdmission, doctorOrders, vitals, nurseNotes,
     consents, investigations, mlc, dischargeSummary, bills, activityLog,
-    bedTransfers, shiftHandovers, timeline } = data;
+    bedTransfers, shiftHandovers, dietPlans, timeline } = data;
   return (
     <main className="pf-print-body">
       <PrintSection title="1. Admission Summary">
@@ -2088,9 +2102,11 @@ function PrintBody({ data, docInitial, nurseInitial, docOther, nurseOther }) {
       {/* Dietician — nutritional assessments + assigned plans. Shown
           whenever any plan exists so the treating doctor / nurse on
           rounds can see what nutritional orders are in effect. */}
-      <PrintSection title="9a. Dietician — Diet Plans">
-        <DietPlansSection dietPlans={dietPlans} />
-      </PrintSection>
+      {(dietPlans?.length || 0) > 0 && (
+        <PrintSection title="9a. Dietician — Diet Plans">
+          <DietPlansSection dietPlans={dietPlans} />
+        </PrintSection>
+      )}
 
       {mlc?.length > 0 && (
         <PrintSection title="10. Medico-Legal Cases">
@@ -2165,43 +2181,39 @@ function PrintSection({ title, children }) {
    hits by scale and renders a date · shift · total · risk table per scale
    so the bedside team can see trajectory at a glance. */
 function ScoringTrendsSection({ nurseNotes = [], doctorNotes = [], currentAdmission }) {
-  // Collect (scaleId, date, shift, by, data) tuples.
-  const hits = [];
-  const consider = (data, when, shift, by) => {
-    if (!isMeaningful(data)) return;
-    // Direct scale match on the object itself.
-    const direct = matchScale(data);
-    if (direct) hits.push({ scaleId: direct.title, scale: direct, when, shift, by, data });
-    // Walk one level down: noteData.braden, noteData.fallRisk, etc.
-    if (typeof data === "object" && !Array.isArray(data)) {
-      for (const v of Object.values(data)) {
-        if (v && typeof v === "object" && !Array.isArray(v)) {
-          const nested = matchScale(v);
-          if (nested) hits.push({ scaleId: nested.title, scale: nested, when, shift, by, data: v });
+  // All the heavy scanning/grouping is memoised on the inputs — large
+  // patients with 200+ notes were paying this cost on every render.
+  const byScale = useMemo(() => {
+    const hits = [];
+    const consider = (data, when, shift, by) => {
+      if (!isMeaningful(data)) return;
+      const direct = matchScale(data);
+      if (direct) hits.push({ scaleId: direct.title, scale: direct, when, shift, by, data });
+      if (typeof data === "object" && !Array.isArray(data)) {
+        for (const v of Object.values(data)) {
+          if (v && typeof v === "object" && !Array.isArray(v)) {
+            const nested = matchScale(v);
+            if (nested) hits.push({ scaleId: nested.title, scale: nested, when, shift, by, data: v });
+          }
         }
       }
+    };
+    for (const n of nurseNotes)  consider(n.noteData,    n.visitDate || n.noteDate || n.createdAt, n.shift, n.nurseName);
+    for (const n of doctorNotes) consider(n.noteDetails, n.visitDate || n.createdAt, n.shift, n.doctorName);
+    consider(currentAdmission?.nurseInitialAssessment, currentAdmission?.admissionDate, "admission", "Nurse");
+
+    const grouped = {};
+    for (const h of hits) {
+      if (!grouped[h.scaleId]) grouped[h.scaleId] = { scale: h.scale, rows: [] };
+      grouped[h.scaleId].rows.push(h);
     }
-  };
-  for (const n of nurseNotes) {
-    consider(n.noteData, n.visitDate || n.noteDate || n.createdAt, n.shift, n.nurseName);
-  }
-  for (const n of doctorNotes) {
-    consider(n.noteDetails, n.visitDate || n.createdAt, n.shift, n.doctorName);
-  }
-  // Admission-stored Nurse IA may carry a Braden / Morse payload too.
-  consider(currentAdmission?.nurseInitialAssessment, currentAdmission?.admissionDate, "admission", "Nurse");
+    for (const g of Object.values(grouped)) {
+      g.rows.sort((a, b) => new Date(b.when) - new Date(a.when));
+    }
+    return grouped;
+  }, [nurseNotes, doctorNotes, currentAdmission]);
 
-  if (!hits.length) return <Empty icon="📊" msg="No scoring scales recorded yet" />;
-
-  // Group by scaleId, sort newest-first within group.
-  const byScale = {};
-  for (const h of hits) {
-    if (!byScale[h.scaleId]) byScale[h.scaleId] = { scale: h.scale, rows: [] };
-    byScale[h.scaleId].rows.push(h);
-  }
-  for (const g of Object.values(byScale)) {
-    g.rows.sort((a, b) => new Date(b.when) - new Date(a.when));
-  }
+  if (!Object.keys(byScale).length) return <Empty icon="📊" msg="No scoring scales recorded yet" />;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -2277,47 +2289,49 @@ const SHIFT_ORDER = { morning: 0, afternoon: 1, evening: 2, night: 3, general: 4
 const dateKey = (d) => d ? new Date(d).toISOString().slice(0, 10) : "0000-00-00";
 
 function TimelineSection({ data }) {
-  const events = [];
-  const push = (kind, title, when, shift, by, payload) =>
-    when && events.push({ kind, title, when: new Date(when), shift: (shift || "").toLowerCase(), by, payload });
+  const { byDate, dates, total } = useMemo(() => {
+    const events = [];
+    const push = (kind, title, when, shift, by, payload) =>
+      when && events.push({ kind, title, when: new Date(when), shift: (shift || "").toLowerCase(), by, payload });
 
-  for (const n of data.doctorNotes  || []) push("doctor-note", `Doctor — ${n.noteType || "note"}`, n.visitDate || n.createdAt, n.shift, n.doctorName, n);
-  for (const n of data.nurseNotes   || []) push("nurse-note",  `Nurse — ${n.noteType || "note"}`,  n.visitDate || n.noteDate || n.createdAt, n.shift, n.nurseName, n);
-  for (const o of data.doctorOrders || []) push("order",       `Order — ${o.orderDetails?.medicineName || o.orderType || "—"}`, o.orderedAt || o.createdAt, null, o.orderedBy || o.doctorName, o);
-  for (const i of data.investigations || []) push("lab",       `Lab order — ${(i.items || []).length} test(s)`, i.createdAt, null, i.doctorName, i);
-  for (const c of data.consents     || []) push("consent",     `Consent — ${c.consentTitle || c.consentType}`, c.createdAt, null, c.signedByName || c.consentGivenBy, c);
-  for (const d of data.dietPlans    || []) push("diet",        `Diet plan — ${d.plan?.templateName || "Custom"}`, d.assignedAt || d.createdAt, null, d.assignedByName, d);
-  for (const t of data.bedTransfers || []) push("transfer",    `Bed transfer — ${t.fromBed} → ${t.toBed}`, t.createdAt, null, t.requestedBy, t);
-  for (const h of data.shiftHandovers || []) push("handover",  `Shift handover`, h.createdAt, h.shift, h.fromNurseName || h.byName, h);
-  for (const m of data.mlc          || []) push("mlc",         `MLC — ${m.natureOfInjury || "report"}`, m.createdAt, null, m.doctorName, m);
-  if (data.currentAdmission?.admissionDate) {
-    push("admission", `Admission — ${data.currentAdmission.admissionType}`, data.currentAdmission.admissionDate, null, data.currentAdmission.createdBy, data.currentAdmission);
-  }
-  if (data.currentAdmission?.actualDischargeDate) {
-    push("discharge", `Discharge`, data.currentAdmission.actualDischargeDate, null, data.currentAdmission.dischargedBy, data.currentAdmission);
-  }
-  if (data.dischargeSummary?.signedAt || data.dischargeSummary?.createdAt) {
-    push("discharge-summary", "Discharge summary signed", data.dischargeSummary.signedAt || data.dischargeSummary.createdAt, null, data.dischargeSummary.signedByName, data.dischargeSummary);
-  }
+    for (const n of data.doctorNotes  || []) push("doctor-note", `Doctor — ${n.noteType || "note"}`, n.visitDate || n.createdAt, n.shift, n.doctorName, n);
+    for (const n of data.nurseNotes   || []) push("nurse-note",  `Nurse — ${n.noteType || "note"}`,  n.visitDate || n.noteDate || n.createdAt, n.shift, n.nurseName, n);
+    for (const o of data.doctorOrders || []) push("order",       `Order — ${o.orderDetails?.medicineName || o.orderType || "—"}`, o.orderedAt || o.createdAt, null, o.orderedBy || o.doctorName, o);
+    for (const i of data.investigations || []) push("lab",       `Lab order — ${(i.items || []).length} test(s)`, i.createdAt, null, i.doctorName, i);
+    for (const c of data.consents     || []) push("consent",     `Consent — ${c.consentTitle || c.consentType}`, c.createdAt, null, c.signedByName || c.consentGivenBy, c);
+    for (const d of data.dietPlans    || []) push("diet",        `Diet plan — ${d.plan?.templateName || "Custom"}`, d.assignedAt || d.createdAt, null, d.assignedByName, d);
+    for (const t of data.bedTransfers || []) push("transfer",    `Bed transfer — ${t.fromBed} → ${t.toBed}`, t.createdAt, null, t.requestedBy, t);
+    for (const h of data.shiftHandovers || []) push("handover",  `Shift handover`, h.createdAt, h.shift, h.fromNurseName || h.byName, h);
+    for (const m of data.mlc          || []) push("mlc",         `MLC — ${m.natureOfInjury || "report"}`, m.createdAt, null, m.doctorName, m);
+    if (data.currentAdmission?.admissionDate) {
+      push("admission", `Admission — ${data.currentAdmission.admissionType}`, data.currentAdmission.admissionDate, null, data.currentAdmission.createdBy, data.currentAdmission);
+    }
+    if (data.currentAdmission?.actualDischargeDate) {
+      push("discharge", `Discharge`, data.currentAdmission.actualDischargeDate, null, data.currentAdmission.dischargedBy, data.currentAdmission);
+    }
+    if (data.dischargeSummary?.signedAt || data.dischargeSummary?.createdAt) {
+      push("discharge-summary", "Discharge summary signed", data.dischargeSummary.signedAt || data.dischargeSummary.createdAt, null, data.dischargeSummary.signedByName, data.dischargeSummary);
+    }
 
-  if (!events.length) return <Empty icon="📜" msg="No events on file yet" />;
+    const grouped = {};
+    for (const e of events) {
+      const k = dateKey(e.when);
+      if (!grouped[k]) grouped[k] = [];
+      grouped[k].push(e);
+    }
+    const sortedDates = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
+    for (const k of sortedDates) {
+      grouped[k].sort((a, b) => {
+        const sa = SHIFT_ORDER[a.shift] ?? 9;
+        const sb = SHIFT_ORDER[b.shift] ?? 9;
+        if (sa !== sb) return sa - sb;
+        return a.when - b.when;
+      });
+    }
+    return { byDate: grouped, dates: sortedDates, total: events.length };
+  }, [data]);
 
-  // Group by date (newest first), then by shift order.
-  const byDate = {};
-  for (const e of events) {
-    const k = dateKey(e.when);
-    if (!byDate[k]) byDate[k] = [];
-    byDate[k].push(e);
-  }
-  const dates = Object.keys(byDate).sort((a, b) => b.localeCompare(a));
-  for (const k of dates) {
-    byDate[k].sort((a, b) => {
-      const sa = SHIFT_ORDER[a.shift] ?? 9;
-      const sb = SHIFT_ORDER[b.shift] ?? 9;
-      if (sa !== sb) return sa - sb;
-      return a.when - b.when;
-    });
-  }
+  if (!total) return <Empty icon="📜" msg="No events on file yet" />;
 
   const KIND_META = {
     "doctor-note":       { icon: "👨‍⚕️", color: "#7c3aed" },
@@ -2348,7 +2362,7 @@ function TimelineSection({ data }) {
         }
         const shifts = Object.keys(byShift).sort((a, b) => (SHIFT_ORDER[a] ?? 9) - (SHIFT_ORDER[b] ?? 9));
         return (
-          <div key={dk} style={{ marginBottom: 14 }}>
+          <div key={dk} className="pf-date-card" style={{ marginBottom: 14 }}>
             <div style={{
               position: "sticky", top: 0, zIndex: 1, background: "#fff",
               padding: "6px 10px", borderRadius: 6,
@@ -2437,43 +2451,46 @@ function ioRowFrom(noteData) {
 }
 
 function IOSheetSection({ nurseNotes = [], currentAdmission }) {
-  const events = [];
-  for (const n of nurseNotes) {
-    const row = ioRowFrom(n.noteData);
-    if (!row) continue;
-    events.push({
-      when: new Date(n.visitDate || n.noteDate || n.createdAt),
-      shift: (n.shift || "general").toLowerCase(),
-      by: n.nurseName || "—",
-      noteType: n.noteType,
-      row,
-    });
-  }
-  // Admission's nurseInitialAssessment can carry an I/O block too.
-  const iaRow = ioRowFrom(currentAdmission?.nurseInitialAssessment);
-  if (iaRow) events.push({
-    when: new Date(currentAdmission?.admissionDate),
-    shift: "admission", by: "Nurse (IA)", noteType: "initial", row: iaRow,
-  });
-
-  if (!events.length) return <Empty icon="💧" msg="No intake / output recorded yet" />;
-
-  // Group date → shift
-  const byDate = {};
-  for (const e of events) {
-    const dk = dateKey(e.when);
-    if (!byDate[dk]) byDate[dk] = { date: e.when, byShift: {} };
-    const sk = e.shift || "general";
-    if (!byDate[dk].byShift[sk]) byDate[dk].byShift[sk] = [];
-    byDate[dk].byShift[sk].push(e);
-  }
-  // Sort dates newest first; sort entries within a shift by time
-  const dateKeys = Object.keys(byDate).sort((a, b) => b.localeCompare(a));
-  for (const dk of dateKeys) {
-    for (const sk of Object.keys(byDate[dk].byShift)) {
-      byDate[dk].byShift[sk].sort((a, b) => a.when - b.when);
+  const { byDate, dateKeys, hasAny } = useMemo(() => {
+    const events = [];
+    for (const n of nurseNotes) {
+      const row = ioRowFrom(n.noteData);
+      if (!row) continue;
+      const when = n.visitDate || n.noteDate || n.createdAt;
+      if (!when) continue; // skip events with no usable timestamp
+      events.push({
+        when: new Date(when),
+        shift: (n.shift || "general").toLowerCase(),
+        by: n.nurseName || "—",
+        noteType: n.noteType,
+        row,
+      });
     }
-  }
+    const iaRow = ioRowFrom(currentAdmission?.nurseInitialAssessment);
+    if (iaRow && currentAdmission?.admissionDate) {
+      events.push({
+        when: new Date(currentAdmission.admissionDate),
+        shift: "admission", by: "Nurse (IA)", noteType: "initial", row: iaRow,
+      });
+    }
+    const grouped = {};
+    for (const e of events) {
+      const dk = dateKey(e.when);
+      if (!grouped[dk]) grouped[dk] = { date: e.when, byShift: {} };
+      const sk = e.shift || "general";
+      if (!grouped[dk].byShift[sk]) grouped[dk].byShift[sk] = [];
+      grouped[dk].byShift[sk].push(e);
+    }
+    const keys = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
+    for (const dk of keys) {
+      for (const sk of Object.keys(grouped[dk].byShift)) {
+        grouped[dk].byShift[sk].sort((a, b) => a.when - b.when);
+      }
+    }
+    return { byDate: grouped, dateKeys: keys, hasAny: events.length > 0 };
+  }, [nurseNotes, currentAdmission]);
+
+  if (!hasAny) return <Empty icon="💧" msg="No intake / output recorded yet" />;
 
   // Aggregate totals helper
   const sumRows = (rows) => {
@@ -2507,7 +2524,7 @@ function IOSheetSection({ nurseNotes = [], currentAdmission }) {
         const shifts = Object.keys(byDate[dk].byShift).sort((a, b) => (SHIFT_ORDER[a] ?? 9) - (SHIFT_ORDER[b] ?? 9));
 
         return (
-          <div key={dk} style={{ border: "1px solid #99f6e4", borderRadius: 6, borderLeft: "4px solid #0d9488", overflow: "hidden" }}>
+          <div key={dk} className="pf-date-card" style={{ border: "1px solid #99f6e4", borderRadius: 6, borderLeft: "4px solid #0d9488", overflow: "hidden", marginBottom: 12 }}>
             <div style={{
               padding: "6px 12px", background: "linear-gradient(90deg, #ecfdf5 0%, #fff 60%)",
               display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6,
@@ -2518,7 +2535,9 @@ function IOSheetSection({ nurseNotes = [], currentAdmission }) {
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                 <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 800, background: "#dcfce7", color: "#166534" }}>IN: {dayTotals.in} ml</span>
                 <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 800, background: "#fee2e2", color: "#b91c1c" }}>OUT: {dayTotals.out} ml</span>
-                <span style={{ padding: "2px 10px", borderRadius: 4, fontSize: 11.5, fontWeight: 800,
+                <span
+                  aria-label={dayNet > 500 ? "Net fluid overload (>+500 ml)" : dayNet < -500 ? "Net fluid deficit (<-500 ml)" : "Net fluid balance OK"}
+                  style={{ padding: "2px 10px", borderRadius: 4, fontSize: 11.5, fontWeight: 800,
                   background: `${netColor}18`, color: netColor, border: `1px solid ${netColor}50` }}>
                   NET: {dayNet >= 0 ? "+" : ""}{dayNet} ml
                 </span>
@@ -2593,67 +2612,57 @@ function IOSheetSection({ nurseNotes = [], currentAdmission }) {
    each entry rendered with the same <ProcedurePanel/> the inline
    note cards already use. Print-ready chronological view. */
 function ProcedureNotesSection({ doctorNotes = [], nurseNotes = [] }) {
-  const PROC_TYPES = /procedure|operative|preop|postop/i;
-  const events = [];
-
-  for (const n of doctorNotes) {
-    const looksProc = PROC_TYPES.test(n.noteType || "") || matchProcedure(n.noteDetails);
-    if (!looksProc) continue;
-    // The structured payload lives in noteDetails for doctor notes; if
-    // empty, fall back to the top-level fields so the panel can render
-    // procedureName / indication / outcome from either spot.
-    const payload = isMeaningful(n.noteDetails) ? n.noteDetails : {
-      procedureName: n.noteType, indication: n.provisionalDiagnosis, outcome: n.patientStatus,
-    };
-    events.push({
-      when: new Date(n.visitDate || n.createdAt),
-      shift: (n.shift || "general").toLowerCase(),
-      by: n.doctorName || "Doctor",
-      role: "Doctor",
-      noteType: n.noteType,
-      remarks: n.remarks || n.note || "",
-      payload,
-      signedBy: n.signedByName, signedAt: n.signedAt,
-      status: n.status,
-    });
-  }
-  for (const n of nurseNotes) {
-    const looksProc = PROC_TYPES.test(n.noteType || "") || matchProcedure(n.noteData);
-    if (!looksProc) continue;
-    events.push({
-      when: new Date(n.visitDate || n.noteDate || n.createdAt),
-      shift: (n.shift || "general").toLowerCase(),
-      by: n.nurseName || "Nurse",
-      role: "Nurse",
-      noteType: n.noteType,
-      remarks: n.remarks || "",
-      payload: n.noteData,
-      signedBy: n.signedByName, signedAt: n.submittedAt,
-      status: n.status,
-    });
-  }
-
-  if (!events.length) return <Empty icon="🩺" msg="No procedure notes recorded yet" />;
-
-  // Group date → shift, newest date first, shift order morning→night.
-  const byDate = {};
-  for (const e of events) {
-    const dk = dateKey(e.when);
-    if (!byDate[dk]) byDate[dk] = { date: e.when, byShift: {} };
-    const sk = e.shift || "general";
-    if (!byDate[dk].byShift[sk]) byDate[dk].byShift[sk] = [];
-    byDate[dk].byShift[sk].push(e);
-  }
-  const dates = Object.keys(byDate).sort((a, b) => b.localeCompare(a));
-  for (const dk of dates) {
-    for (const sk of Object.keys(byDate[dk].byShift)) {
-      byDate[dk].byShift[sk].sort((a, b) => a.when - b.when);
+  const { byDate, dates, totalCount, doctorCount, nurseCount } = useMemo(() => {
+    const PROC_TYPES = /procedure|operative|preop|postop/i;
+    const arr = [];
+    for (const n of doctorNotes) {
+      const looksProc = PROC_TYPES.test(n.noteType || "") || matchProcedure(n.noteDetails);
+      if (!looksProc) continue;
+      const when = n.visitDate || n.createdAt;
+      if (!when) continue;
+      const payload = isMeaningful(n.noteDetails) ? n.noteDetails : {
+        procedureName: n.noteType, indication: n.provisionalDiagnosis, outcome: n.patientStatus,
+      };
+      arr.push({
+        when: new Date(when),
+        shift: (n.shift || "general").toLowerCase(),
+        by: n.doctorName || "Doctor", role: "Doctor", noteType: n.noteType,
+        remarks: n.remarks || n.note || "", payload,
+        signedBy: n.signedByName, signedAt: n.signedAt, status: n.status,
+      });
     }
-  }
+    for (const n of nurseNotes) {
+      const looksProc = PROC_TYPES.test(n.noteType || "") || matchProcedure(n.noteData);
+      if (!looksProc) continue;
+      const when = n.visitDate || n.noteDate || n.createdAt;
+      if (!when) continue;
+      arr.push({
+        when: new Date(when),
+        shift: (n.shift || "general").toLowerCase(),
+        by: n.nurseName || "Nurse", role: "Nurse", noteType: n.noteType,
+        remarks: n.remarks || "", payload: n.noteData,
+        signedBy: n.signedByName, signedAt: n.submittedAt, status: n.status,
+      });
+    }
+    const grouped = {};
+    for (const e of arr) {
+      const dk = dateKey(e.when);
+      if (!grouped[dk]) grouped[dk] = { date: e.when, byShift: {} };
+      const sk = e.shift || "general";
+      if (!grouped[dk].byShift[sk]) grouped[dk].byShift[sk] = [];
+      grouped[dk].byShift[sk].push(e);
+    }
+    const sortedDates = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
+    for (const dk of sortedDates) {
+      for (const sk of Object.keys(grouped[dk].byShift)) {
+        grouped[dk].byShift[sk].sort((a, b) => a.when - b.when);
+      }
+    }
+    const dCount = arr.filter((e) => e.role === "Doctor").length;
+    return { byDate: grouped, dates: sortedDates, totalCount: arr.length, doctorCount: dCount, nurseCount: arr.length - dCount };
+  }, [doctorNotes, nurseNotes]);
 
-  const totalCount = events.length;
-  const doctorCount = events.filter((e) => e.role === "Doctor").length;
-  const nurseCount  = totalCount - doctorCount;
+  if (!totalCount) return <Empty icon="🩺" msg="No procedure notes recorded yet" />;
 
   return (
     <>
@@ -2672,7 +2681,7 @@ function ProcedureNotesSection({ doctorNotes = [], nurseNotes = [] }) {
         const shifts = Object.keys(byDate[dk].byShift).sort((a, b) => (SHIFT_ORDER[a] ?? 9) - (SHIFT_ORDER[b] ?? 9));
         const dayCount = Object.values(byDate[dk].byShift).reduce((s, arr) => s + arr.length, 0);
         return (
-          <div key={dk} style={{ marginBottom: 14 }}>
+          <div key={dk} className="pf-date-card" style={{ marginBottom: 14 }}>
             <div style={{
               padding: "6px 12px", borderRadius: 6, marginBottom: 6,
               border: "1px solid #bbf7d0", borderLeft: "4px solid #16a34a",
@@ -2851,10 +2860,19 @@ export default function CompletePatientFilePage() {
     consents, investigations, mlc, dischargeSummary, bills, activityLog,
     bedTransfers, shiftHandovers, dietPlans, timeline, completeness } = data;
 
-  const docInitial   = doctorNotes.filter((n) => /initial/i.test(n.noteType || ""));
-  const nurseInitial = nurseNotes.filter((n)  => /initial/i.test(n.noteType || ""));
-  const docOther     = doctorNotes.filter((n) => !/initial/i.test(n.noteType || ""));
-  const nurseOther   = nurseNotes.filter((n)  => !/initial/i.test(n.noteType || ""));
+  // Note types that have their OWN dedicated section now (Procedure Notes,
+  // Intake/Output Sheet). Filter them out of the generic Doctor/Nurse
+  // Notes feed so the same note doesn't appear twice in the file.
+  // Plain consts (not useMemo) — these are cheap filters and putting
+  // useMemo here after the early-return guards above would violate
+  // React's Rules of Hooks.
+  const RELOCATED_NURSE_TYPES = /^(intake|procedure|operative|preop|postop)$/i;
+  const RELOCATED_DOC_TYPES   = /^(procedure|operative|preop|postop)$/i;
+
+  const docInitial   = doctorNotes.filter((n) =>  /initial/i.test(n.noteType || ""));
+  const nurseInitial = nurseNotes.filter((n)  =>  /initial/i.test(n.noteType || ""));
+  const docOther     = doctorNotes.filter((n) => !/initial/i.test(n.noteType || "") && !RELOCATED_DOC_TYPES.test(n.noteType || ""));
+  const nurseOther   = nurseNotes.filter((n)  => !/initial/i.test(n.noteType || "") && !RELOCATED_NURSE_TYPES.test(n.noteType || ""));
 
   const navItems = [
     { id: "admission",     label: "Admission",          icon: "🛏", count: data.admissions?.length },

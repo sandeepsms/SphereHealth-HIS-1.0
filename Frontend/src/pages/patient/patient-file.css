@@ -1647,7 +1647,12 @@
   .pf-record,
   .ppt-note,
   .ppt-sig,
-  .pf-table tr {
+  .pf-table tr,
+  /* New aggregating sections — each date card is a discrete unit
+     that should not split across pages. Marker class set inline on
+     IOSheet / ProcedureNotes / Timeline / ScoringTrends date blocks. */
+  .pf-print-keep,
+  .pf-date-card {
     page-break-inside: avoid;
     break-inside: avoid;
   }
