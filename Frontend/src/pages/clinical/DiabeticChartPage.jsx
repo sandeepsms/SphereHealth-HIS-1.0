@@ -16,6 +16,7 @@ import axios from "axios";
 import { toast } from "react-toastify";
 import "../../Components/clinical/clinical-forms.css";
 import { useAuth } from "../../context/AuthContext";
+import { useUhidFromLocation } from "../../hooks/useUhidFromLocation";
 import { API_ENDPOINTS } from "../../config/api";
 import {
   getDiabeticChart, upsertDiabeticChart, upsertEntry, updateScale,
@@ -99,15 +100,15 @@ export default function DiabeticChartPage() {
   // accidental triple-click on already-saved row.
   const lastSavedHashRef = React.useRef({});
 
-  /* ── Read UHID from URL on mount ── */
+  /* ── Read UHID from location.state (or scrubbed legacy URL) ── */
+  const uhidFromLocation = useUhidFromLocation();
   useEffect(() => {
-    const u = new URLSearchParams(window.location.search).get("uhid");
-    if (u && u.trim()) {
-      setUhidIn(u.trim());
-      loadPatient(u.trim());
+    if (uhidFromLocation && uhidFromLocation.trim()) {
+      setUhidIn(uhidFromLocation.trim());
+      loadPatient(uhidFromLocation.trim());
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [uhidFromLocation]);
 
   /* ── Reload sheet whenever patient or date changes ── */
   useEffect(() => {

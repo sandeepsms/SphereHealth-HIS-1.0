@@ -13,6 +13,7 @@ import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import { useAutoSave } from "../../hooks/useAutoSave";
 import { useDigitalSignature } from "../../hooks/useDigitalSignature";
+import { useUhidFromLocation } from "../../hooks/useUhidFromLocation";
 import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
 import SignaturePad from "../../Components/signature/SignaturePad";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
@@ -911,30 +912,27 @@ function DischargeSummaryPageContent({ selectedPatient }) {
     setView("form");
   };
 
-  // Auto-load when /discharge-summary?uhid=… is opened from /bed-visual.
-  // Reads the optional discharge_context blob from sessionStorage so we
-  // know which bed / admission triggered this flow, and surfaces the
-  // 4-step workflow banner.
+  // Auto-load when /discharge-summary is opened from /bed-visual. UHID
+  // now comes from location.state (or a legacy ?uhid= URL param which
+  // is scrubbed from history on read). Audit E-04.
+  const uhidFromLocation = useUhidFromLocation();
   const [workflowCtx, setWorkflowCtx] = useState(null);
   useEffect(() => {
-    const u = new URLSearchParams(window.location.search).get("uhid");
     try {
       const raw = sessionStorage.getItem("discharge_context");
       if (raw) setWorkflowCtx(JSON.parse(raw));
     } catch (_) {}
-    if (u && u.trim()) {
-      setUhid(u.trim());
+    if (uhidFromLocation && uhidFromLocation.trim()) {
+      setUhid(uhidFromLocation.trim());
       // Defer one tick so the state update flushes before searchPatient
       // reads it via closure.
       setTimeout(() => {
-        // Inline the load so we don't have to thread an arg through
-        // searchPatient — it already reads state via closure.
         const trigger = document.getElementById("ds-load-btn");
         if (trigger) trigger.click();
       }, 60);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [uhidFromLocation]);
 
   // Auto-fill when patient selected from AdmittedPatientPanel
   useEffect(() => {
