@@ -716,18 +716,42 @@ class AdmissionController {
     // Free the bed so the next admission can use it. Mirrors
     // admissionService.dischargePatient — without this, beds stay stuck
     // "Occupied" forever after a receptionist-issued gate pass.
+    //
+    // Round-14 re-audit found that a silent bed-update failure (e.g. wrong
+    // bedId, connection blip) would leave the admission marked Discharged
+    // while the bed stayed Occupied — a bed-management leak that blocks
+    // the next admission. Now: we check the result of findByIdAndUpdate,
+    // log loud on miss, AND surface a `bedReleased` flag in the response
+    // so the reception UI can prompt for manual cleanup. The admission
+    // itself stays Discharged (the source of truth) — bed-mgmt is a
+    // downstream concern that a nightly sweep can also reconcile.
+    let bedReleased = true;
+    let bedWarning  = null;
     if (adm.bedId) {
       try {
         const Bed = require("../../models/bedMgmt/bedsModel");
-        await Bed.findByIdAndUpdate(adm.bedId, {
-          $set: { status: "Available", currentAdmission: null, patient: null },
-        });
+        const updated = await Bed.findByIdAndUpdate(
+          adm.bedId,
+          { $set: { status: "Available", currentAdmission: null, patient: null } },
+          { new: true, runValidators: true },
+        );
+        if (!updated) {
+          bedReleased = false;
+          bedWarning  = `Bed ${adm.bedId} not found — manual cleanup required`;
+          console.error(`[issueGatePass] bed ${adm.bedId} not found — patient ${adm.UHID} discharged but bed not released`);
+        }
       } catch (e) {
-        console.error("[issueGatePass] Failed to release bed:", e.message);
+        bedReleased = false;
+        bedWarning  = `Bed release failed: ${e.message}`;
+        console.error(`[issueGatePass] bed-release error for ${adm.UHID}:`, e.message);
       }
     }
 
-    return res.json({ success: true, data: adm.dischargeWorkflow });
+    return res.json({
+      success: true,
+      data: adm.dischargeWorkflow,
+      ...(bedReleased ? {} : { bedReleased: false, warning: bedWarning }),
+    });
   });
 }
 

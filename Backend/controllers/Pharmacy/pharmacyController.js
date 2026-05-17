@@ -1163,9 +1163,12 @@ exports.stockRegister = async (req, res) => {
     const [drugs, batchAgg, issuedAgg, suppAgg, returnedAgg] = await Promise.all([
       Drug.find({ isActive: true }).lean(),
       // Per-drug batch rollup — opening (created < start), receipts
-      // (start ≤ created ≤ end), closing (sum remaining today).
+      // (start ≤ created ≤ end), closing (sum remaining today). The
+      // `drugId: $ne null` match (re-audit R14 follow-up) prevents
+      // orphan batches from folding into a single `_id: null` bucket
+      // that the merge loop would silently drop.
       DrugBatch.aggregate([
-        { $match: { isActive: true } },
+        { $match: { isActive: true, drugId: { $ne: null } } },
         { $group: {
             _id: "$drugId",
             opening:  { $sum: { $cond: [{ $lt:  ["$createdAt", start] }, { $ifNull: ["$quantityIn", 0] }, 0] } },
@@ -1176,11 +1179,14 @@ exports.stockRegister = async (req, res) => {
             closing:  { $sum: { $ifNull: ["$remaining", 0] } },
         } },
       ]),
-      // Original sale items in range — grouped by drugId
+      // Original sale items in range — grouped by drugId. Filter null
+      // drugIds AFTER unwind so the per-row guard catches malformed
+      // items embedded in otherwise-valid sale docs.
       Sale.aggregate([
         { $match: { status: { $in: ["Completed", "Partial-Return", "Refunded", "Supplemented"] },
                     createdAt: { $gte: start, $lte: end } } },
         { $unwind: "$items" },
+        { $match: { "items.drugId": { $ne: null } } },
         { $group: { _id: "$items.drugId", qty: { $sum: "$items.quantity" } } },
       ]),
       // Supplementary items (debit notes) in range — grouped by drugId
@@ -1189,6 +1195,7 @@ exports.stockRegister = async (req, res) => {
                     createdAt: { $gte: start, $lte: end } } },
         { $unwind: "$supplements" },
         { $unwind: "$supplements.addedItems" },
+        { $match: { "supplements.addedItems.drugId": { $ne: null } } },
         { $group: { _id: "$supplements.addedItems.drugId", qty: { $sum: "$supplements.addedItems.quantity" } } },
       ]),
       // Returns in range — grouped by drugId
@@ -1197,6 +1204,7 @@ exports.stockRegister = async (req, res) => {
                     createdAt: { $gte: start, $lte: end } } },
         { $unwind: "$returns" },
         { $unwind: "$returns.refundedItems" },
+        { $match: { "returns.refundedItems.drugId": { $ne: null } } },
         { $group: { _id: "$returns.refundedItems.drugId", qty: { $sum: "$returns.refundedItems.quantity" } } },
       ]),
     ]);

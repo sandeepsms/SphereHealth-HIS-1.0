@@ -196,6 +196,15 @@ edit (A-15) remain open — listed in re-audit backlog.
 | R5-F-02 | `alerts` (90-day expiry horizon + "now") still used raw UTC | MEDIUM | controllers/Pharmacy/pharmacyController.js:1414–1415, 1441 | **FIXED** | 2026-05-17 (r6) | Both `now` and `horizon` now `istStartOfToday()` / `istStartOfDayPlus(90)` |
 | R5-Hint | Hoisted IST helpers to `utils/queryGuards.js` so other timezone-sensitive comparisons (autoBilling already had its own copy) can reuse | — | utils/queryGuards.js | **FIXED** | 2026-05-17 (r6) | Live: 30/90-day diffs are exactly N × 86400000 ms |
 
+### Round-14 new findings + fixes
+
+| ID | Title | Severity | Files | Status | Fixed-on | Verifier |
+| -- | ----- | -------- | ----- | ------ | -------- | -------- |
+| R14-A-01 | `issueGatePass` bed-release used a silent try/catch — failure left bed Occupied while admission was Discharged | **HIGH** | controllers/Patient/admissionController.js | **FIXED** | 2026-05-17 (r15) | Checks `findByIdAndUpdate` result; loud log on miss; response now carries `bedReleased: false, warning:"..."` so reception UI can prompt manual cleanup |
+| R14-C-01 | `stockRegister` aggregations grouped on raw `drugId` — orphan rows with null drugId folded into one bucket and were silently dropped by the JS merge | MEDIUM | controllers/Pharmacy/pharmacyController.js | **FIXED** | 2026-05-17 (r15) | `$match: { drugId: $ne null }` (or unwound equivalent) added to each of the 4 sale-side pipelines |
+| R14-A-02 | `clearFinalBill` CAS only accepts prior stage `DoctorApproved` — restart-after-cancel scenario yields a confusing 409 | LOW | controllers/Patient/admissionController.js | WONT-FIX | 2026-05-17 (r15) | Discharge-cancel flow doesn't currently exist; if/when it does, expand predicate. Acceptable UX trade-off documented. |
+| R14-A-03 | `issueGatePass` burns a Counter sequence BEFORE the CAS — 100 concurrent failed attempts waste 100 numbers | LOW | controllers/Patient/admissionController.js | WONT-FIX | 2026-05-17 (r15) | Gaps in Counter-based numbering are accepted industry practice; reordering would re-introduce duplicate-number risk |
+
 ### Round-7 new findings + fixes
 
 | ID | Title | Severity | Files | Status | Fixed-on | Verifier |
