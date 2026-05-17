@@ -130,7 +130,7 @@ exports.seedReconciliation = async (req, res) => {
         },
         $set: { rows },
       },
-      { upsert: true, new: true }
+      { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }
     );
 
     activityLogger.log({
@@ -157,7 +157,7 @@ exports.updateReconciliation = async (req, res) => {
     const doc = await MedReconciliation.findOneAndUpdate(
       { admissionId: admId },
       { $set: { rows, summaryNotes: summaryNotes || "", updatedBy: req.user?._id } },
-      { new: true }
+      { new: true, runValidators: true }
     );
     if (!doc) return res.status(404).json({ success: false, message: "Reconciliation not found — seed first" });
     activityLogger.log({

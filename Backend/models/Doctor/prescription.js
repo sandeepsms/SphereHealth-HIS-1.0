@@ -126,6 +126,14 @@ const prescriptionSchema = new mongoose.Schema(
         ref: "InvestigationOrder",
       },
     ],
+
+    // Override flag for the F-08 drug-allergy gate. Must be declared on
+    // the schema — otherwise Mongoose's default `strict: true` silently
+    // strips it before the pre-save hook runs, breaking the clinician's
+    // documented bypass path (re-audit R11 follow-up). The reason is
+    // persisted with the prescription so a NABH reviewer can see why a
+    // drug was prescribed against a known allergy.
+    _allergyOverrideReason: { type: String, default: "" },
   },
   { timestamps: true },
 );

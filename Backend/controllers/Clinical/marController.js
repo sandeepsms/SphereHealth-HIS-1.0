@@ -105,7 +105,7 @@ class MARController {
     const mar = await MAR.findByIdAndUpdate(
       req.params.id,
       { $push: { medications: req.body } },
-      { new: true }
+      { new: true, runValidators: true }
     );
     if (!mar) return res.status(404).json({ success: false, message: "MAR not found" });
     return res.json({ success: true, data: mar });
@@ -130,7 +130,7 @@ class MARController {
     const mar = await MAR.findOneAndUpdate(
       { _id: req.params.id, "medications._id": req.params.medId },
       { $push: { "medications.$.administrations": entry } },
-      { new: true }
+      { new: true, runValidators: true }
     );
     if (!mar) return res.status(404).json({ success: false, message: "MAR or medication not found" });
 
@@ -159,7 +159,7 @@ class MARController {
           "medications.$.discontinueReason": discontinueReason,
         },
       },
-      { new: true }
+      { new: true, runValidators: true }
     );
     if (!mar) return res.status(404).json({ success: false, message: "MAR or medication not found" });
     return res.json({ success: true, data: mar });

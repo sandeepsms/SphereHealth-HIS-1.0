@@ -65,7 +65,7 @@ exports.taskAccept = async (req, res) => {
     const t = await CleaningTask.findOneAndUpdate(
       { _id: req.params.id, status: "open" },
       { $set: { status: "assigned", assignedTo: req.user.id, assignedToName: name, acceptedAt: new Date() } },
-      { new: true }
+      { new: true, runValidators: true }
     ).lean();
     if (!t) return res.status(409).json({ success: false, message: "Task already taken or not open." });
     res.json({ success: true, data: t });
@@ -77,7 +77,7 @@ exports.taskStart = async (req, res) => {
     const t = await CleaningTask.findOneAndUpdate(
       { _id: req.params.id, assignedTo: req.user.id, status: "assigned" },
       { $set: { status: "in-progress", startedAt: new Date() } },
-      { new: true }
+      { new: true, runValidators: true }
     ).lean();
     if (!t) return res.status(409).json({ success: false, message: "Not in 'assigned' state or not yours." });
     res.json({ success: true, data: t });
@@ -95,7 +95,7 @@ exports.taskComplete = async (req, res) => {
           protocolFollowed: req.body?.protocolFollowed || "",
           productsUsed: req.body?.productsUsed || [],
       } },
-      { new: true }
+      { new: true, runValidators: true }
     ).lean();
     if (!t) return res.status(409).json({ success: false, message: "Task not completable or not yours." });
     res.json({ success: true, data: t });
@@ -111,7 +111,7 @@ exports.taskCancel = async (req, res) => {
     if (!canCancel) return res.status(403).json({ success: false, message: "Only requester or Admin can cancel." });
     const updated = await CleaningTask.findByIdAndUpdate(req.params.id,
       { $set: { status: "cancelled", cancelledAt: new Date(), cancelReason: req.body?.cancelReason || "" } },
-      { new: true }).lean();
+      { new: true, runValidators: true }).lean();
     res.json({ success: true, data: updated });
   } catch (e) { res.status(400).json({ success: false, message: e.message }); }
 };

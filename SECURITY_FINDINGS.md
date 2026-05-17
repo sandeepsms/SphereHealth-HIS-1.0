@@ -213,6 +213,16 @@ edit (A-15) remain open — listed in re-audit backlog.
 | R9-C-02 | `Bed.findByIdAndUpdate` on discharge-summary finalize missing `runValidators: true` | MEDIUM | controllers/Clinical/dischargeSummaryController.js:125 | **FIXED** | 2026-05-17 (r10) | `runValidators: true` added; bed-status enum now enforced |
 | R9-A-02 | `updatePrescriptionByUHID` audit row was missing `patientId` (analytics group-by broke) | MEDIUM | services/Doctor/PrescriptionService.js | **FIXED** | 2026-05-17 (r10) | `patientId: before.patient` added to the audit-log create payload |
 
+### Round-11 new findings + fixes
+
+| ID | Title | Severity | Files | Status | Fixed-on | Verifier |
+| -- | ----- | -------- | ----- | ------ | -------- | -------- |
+| R11-F-01 | F-08 allergy-override field `_allergyOverrideReason` never reached the hook — Mongoose strict mode stripped it | **HIGH** | models/Doctor/prescription.js | **FIXED** | 2026-05-17 (r12) | Field declared on schema; live save with override now persists the reason and bypasses the gate with audit warn-log |
+| R11-D-01 | `seedRoleUsers.js` still used `throw new Error` on missing MONGO_URI instead of the fail-fast pattern the other 4 seed scripts use | MEDIUM | scripts/seedRoleUsers.js | **FIXED** | 2026-05-17 (r12) | Aligned with the `console.error + process.exit(1)` pattern |
+| R11-C-01 | `marController` had 3 paths (addMedication, recordAdministration, discontinueMedication) without `runValidators: true` | **HIGH** | controllers/Clinical/marController.js | **FIXED** | 2026-05-17 (r12) | All three writes now pass `runValidators: true` |
+| R11-C-02 | `medReconciliationController` had 2 paths without `runValidators` | MEDIUM | controllers/Clinical/medReconciliationController.js | **FIXED** | 2026-05-17 (r12) | seedReconciliation + updateReconciliation both pass `runValidators: true` (+ `setDefaultsOnInsert` on upsert) |
+| R11-C-03 | `housekeepingController` had 4 task-board paths without `runValidators` | MEDIUM | controllers/Clinical/housekeepingController.js | **FIXED** | 2026-05-17 (r12) | All 4 (accept/start/complete/cancel) now pass `runValidators: true` |
+
 ### Summary of fix-round 1 (2026-05-17)
 
 **Sections fully addressed:**
