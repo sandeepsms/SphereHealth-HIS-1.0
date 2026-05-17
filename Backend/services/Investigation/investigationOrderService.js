@@ -435,13 +435,17 @@ class InvestigationOrderService {
     // post-order test additions were never billed. Now triggers
     // onInvestigationOrdered for the new line item.
     try {
+      const { logErr } = require("../../utils/logErr");
       const autoBilling = require("../Billing/autoBillingService");
       if (typeof autoBilling.onInvestigationItemAdded === "function") {
-        autoBilling.onInvestigationItemAdded(order, inv, pricing).catch(() => {});
+        autoBilling.onInvestigationItemAdded(order, inv, pricing).catch(logErr("autoBilling", `onInvestigationItemAdded ${order?._id}`));
       } else if (typeof autoBilling.onInvestigationOrdered === "function") {
-        autoBilling.onInvestigationOrdered(order).catch(() => {});
+        autoBilling.onInvestigationOrdered(order).catch(logErr("autoBilling", `onInvestigationOrdered ${order?._id}`));
       }
-    } catch { /* auto-billing not wired in this env */ }
+    } catch (e) {
+      const { logErr } = require("../../utils/logErr");
+      logErr("autoBilling", "load failure on investigation item-add")(e);
+    }
 
     return this._populate(order._id);
   }

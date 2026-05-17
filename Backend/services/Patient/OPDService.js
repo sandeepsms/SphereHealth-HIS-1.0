@@ -64,11 +64,15 @@ class OPDService {
 
       // Fire audit trigger: OPD Registration (consultation fee)
       try {
+        const { logErr } = require("../../utils/logErr");
         const autoBilling = require("../Billing/autoBillingService");
         if (autoBilling.onOPDRegistered) {
-          autoBilling.onOPDRegistered(savedOPD, admission).catch(() => {});
+          autoBilling.onOPDRegistered(savedOPD, admission).catch(logErr("autoBilling", `onOPDRegistered ${savedOPD?._id}`));
         }
-      } catch (_) {}
+      } catch (e) {
+        const { logErr } = require("../../utils/logErr");
+        logErr("autoBilling", "load failure on OPD register")(e);
+      }
 
       savedOPD._admissionId = admission._id; // attach for response
     } catch (admErr) {
@@ -234,12 +238,16 @@ class OPDService {
       try {
         const admission = await Admission.findOne({ visitNumber, admissionType: "OPD", status: "Active" }).lean();
         if (admission) {
+          const { logErr } = require("../../utils/logErr");
           const autoBilling = require("../Billing/autoBillingService");
           if (autoBilling.onOPDVitalsRecorded) {
-            autoBilling.onOPDVitalsRecorded(updatedVisit, admission, nurseName).catch(() => {});
+            autoBilling.onOPDVitalsRecorded(updatedVisit, admission, nurseName).catch(logErr("autoBilling", `onOPDVitalsRecorded ${updatedVisit?._id}`));
           }
         }
-      } catch (_) {}
+      } catch (e) {
+        const { logErr } = require("../../utils/logErr");
+        logErr("autoBilling", "load failure on OPD vitals")(e);
+      }
     }
 
     return updatedVisit;
@@ -290,10 +298,14 @@ class OPDService {
             await Admission.findByIdAndUpdate(admission._id, {
               reasonForAdmission: assessmentData.provisionalDiagnosis || admission.reasonForAdmission,
             });
-            autoBilling.onOPDAssessmentSaved(updatedVisit, admission, doctorName).catch(() => {});
+            const { logErr } = require("../../utils/logErr");
+            autoBilling.onOPDAssessmentSaved(updatedVisit, admission, doctorName).catch(logErr("autoBilling", `onOPDAssessmentSaved ${updatedVisit?._id}`));
           }
         }
-      } catch (_) {}
+      } catch (e) {
+        const { logErr } = require("../../utils/logErr");
+        logErr("autoBilling", "load failure on OPD assessment")(e);
+      }
     }
 
     return updatedVisit;

@@ -354,12 +354,19 @@ function ReceptionDashboard({ user }) {
 function PharmacistDashboard({ user }) {
   const navigate = useNavigate();
   const [stats, setStats] = useState({});
-  useEffect(() => { (async () => {
-    try {
-      const r = await axios.get(`${API}/pharmacy/stats`, authHdr());
-      setStats(r.data?.data || {});
-    } catch {}
-  })(); }, []);
+  useEffect(() => {
+    const ac = new AbortController();
+    (async () => {
+      try {
+        const r = await axios.get(`${API}/pharmacy/stats`, { ...authHdr(), signal: ac.signal });
+        if (ac.signal.aborted) return;
+        setStats(r.data?.data || {});
+      } catch (e) {
+        if (!axios.isCancel(e)) console.error("[PharmacistDashboard] stats fetch:", e?.message);
+      }
+    })();
+    return () => ac.abort();
+  }, []);
   return (
     <>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 14 }}>
@@ -426,21 +433,28 @@ function LabDashboard({ user, role }) {
 function AccountantDashboard({ user }) {
   const navigate = useNavigate();
   const [stats, setStats] = useState({});
-  useEffect(() => { (async () => {
-    try {
-      const today = new Date().toISOString().slice(0, 10);
-      const r = await axios.get(`${API}/billing/collection-summary?date=${today}`, authHdr());
-      const s = r.data?.summary || {};
-      setStats({
-        collected: s.totalCollected,
-        gross:     s.totalGross,
-        outstand:  s.totalPending,
-        tpaPend:   s.tpaPending,
-        txns:      s.txnCount,
-        advance:   s.advanceDue,
-      });
-    } catch {}
-  })(); }, []);
+  useEffect(() => {
+    const ac = new AbortController();
+    (async () => {
+      try {
+        const today = new Date().toISOString().slice(0, 10);
+        const r = await axios.get(`${API}/billing/collection-summary?date=${today}`, { ...authHdr(), signal: ac.signal });
+        if (ac.signal.aborted) return;
+        const s = r.data?.summary || {};
+        setStats({
+          collected: s.totalCollected,
+          gross:     s.totalGross,
+          outstand:  s.totalPending,
+          tpaPend:   s.tpaPending,
+          txns:      s.txnCount,
+          advance:   s.advanceDue,
+        });
+      } catch (e) {
+        if (!axios.isCancel(e)) console.error("[AccountantDashboard] stats fetch:", e?.message);
+      }
+    })();
+    return () => ac.abort();
+  }, []);
   return (
     <>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>

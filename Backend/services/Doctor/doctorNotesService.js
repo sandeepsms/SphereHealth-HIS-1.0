@@ -173,9 +173,13 @@ const signDoctorNote = async (noteId, doctorUserId, signaturePayload = {}) => {
   // were saved as draft and signed later never produced a consultation
   // charge. Fire here too — the billing service already de-dupes daily.
   try {
+    const { logErr } = require("../../utils/logErr");
     const autoBilling = require("../../services/Billing/autoBillingService");
-    autoBilling.onDoctorNoteSaved(note).catch(() => {});
-  } catch (_) { /* billing optional */ }
+    autoBilling.onDoctorNoteSaved(note).catch(logErr("autoBilling", `onDoctorNoteSaved ${note?._id}`));
+  } catch (e) {
+    const { logErr } = require("../../utils/logErr");
+    logErr("autoBilling", "load failure on doctor-note service save")(e);
+  }
 
   return note;
 };
