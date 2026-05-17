@@ -75,10 +75,16 @@ export default function ReceptionBilling() {
 
   // Today's collection summary — small live tile.
   // Response shape: { success, date, summary: { totalCollected, totalGross, ... } }
+  // AbortController guards against the receptionist navigating away mid-
+  // request (E-05 pattern). Failure now logs to console instead of being
+  // silently swallowed (E-06) — the live tile just shows no data, but
+  // the operator can see in DevTools that the API call failed.
   useEffect(() => {
-    axios.get(`${API_ENDPOINTS.BILLING}/collection-summary?date=${new Date().toISOString().slice(0, 10)}`)
-      .then(({ data }) => setTodayCollection(data?.summary || data?.data?.summary || null))
-      .catch(() => {});
+    const ac = new AbortController();
+    axios.get(`${API_ENDPOINTS.BILLING}/collection-summary?date=${new Date().toISOString().slice(0, 10)}`, { signal: ac.signal })
+      .then(({ data }) => { if (!ac.signal.aborted) setTodayCollection(data?.summary || data?.data?.summary || null); })
+      .catch((e) => { if (!axios.isCancel(e)) console.error("[ReceptionBilling] collection-summary:", e?.message); });
+    return () => ac.abort();
   }, []);
 
   const loadBill = async (billId) => {
