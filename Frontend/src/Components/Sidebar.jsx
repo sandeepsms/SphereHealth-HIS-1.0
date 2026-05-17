@@ -408,9 +408,15 @@ const RECEPTION_NAV = [
     nabh: true, roles: ["Receptionist"],
     items: [
       { label: "New Registration",  icon: "pi-user-plus",      path: "/reception/register", roles: ["Receptionist"], nabh: true },
-      { label: "Patient Search",    icon: "pi-search",         path: "/patient-search",     roles: ["Receptionist"] },
+      // Single "Patient Lookup — All-in-One" entry replaces the previous
+      // pair of "Patient Search" + "Visit History" sidebar links. Inside
+      // the unified PatientLookupPage the receptionist can switch between
+      // search / directory / timeline tabs without leaving the page; the
+      // separate sidebar entry for Visit History became redundant. Lands
+      // on the Search tab by default for receptionists (see the
+      // `defaultView` logic inside PatientLookupPage).
+      { label: "Patient Lookup",    icon: "pi-id-card",        path: "/patient-search",     roles: ["Receptionist"], badge: "ALL-IN-ONE" },
       { label: "Appointments",      icon: "pi-calendar-plus",  path: "/appointments",       roles: ["Receptionist"], nabh: true },
-      { label: "Visit History",     icon: "pi-clock",          path: "/visit-history",      roles: ["Receptionist"] },
       { label: "Visitor Passes",    icon: "pi-id-card",        path: "/visitor-passes",     roles: ["Receptionist"], nabh: true },
       { label: "Discharge Queue",   icon: "pi-sign-out",       path: "/discharge-queue",    roles: ["Receptionist"], nabh: true, badge: "NABH" },
     ],

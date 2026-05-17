@@ -1151,7 +1151,8 @@
   line-height: 1.5;
 }
 
-/* ─── All-Patients directory (used by PatientsTable.jsx) ────────────── */
+/* ─── All-Patients directory (originally used by PatientsTable, now
+       carried over for PatientLookupPage's directory view) ───────── */
 .rx-table-wrap {
   background: #fff;
   border: 1px solid #e2e8f0;
