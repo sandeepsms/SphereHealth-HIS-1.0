@@ -233,49 +233,105 @@ const titleCase = (k) =>
     .replace(/([a-z])([A-Z])/g, "$1 $2")
     .replace(/^./, (c) => c.toUpperCase());
 
-// Render an arbitrary scalar / array value as text (depth-1).
-function renderLeaf(v) {
+// Render an arbitrary scalar value as plain text. Returns null when the
+// leaf is empty, so the caller can decide whether to drop the row entirely.
+function renderScalar(v) {
   if (v == null || v === "") return null;
   if (typeof v === "boolean") return v ? "Yes" : null;
   if (Array.isArray(v)) {
     const items = v.filter((x) => x != null && x !== "");
     if (!items.length) return null;
     if (items.every((x) => typeof x !== "object")) return items.join(", ");
-    return (
-      <ul style={{ margin: "2px 0 0 16px", padding: 0 }}>
-        {items.map((it, i) => (
-          <li key={i}><MixedFields data={it} compact /></li>
-        ))}
-      </ul>
-    );
+    return null; // array of objects — handled by MixedFields recursion
   }
-  if (typeof v === "object") return <MixedFields data={v} compact />;
   return String(v);
 }
 
-// Recursively render every populated key in a Mixed object. Skips empty
-// strings, false, null, undefined, empty arrays/objects. Booleans that
-// are TRUE render as "Yes" — typical for assessment checkbox flags.
-function MixedFields({ data, compact }) {
+// Inline chip for a "label: value" pair. Used to densify dropdown-style
+// fields where the value is short (Pallor: Absent, BP: 120/80).
+function Chip({ label, value, accent = "#64748b" }) {
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "baseline", gap: 4,
+      padding: "1px 8px", borderRadius: 4,
+      background: "#fff", border: "1px solid #e5e7eb",
+      fontSize: 11, lineHeight: 1.55, whiteSpace: "nowrap",
+      maxWidth: "100%",
+    }}>
+      <span style={{ color: accent, fontWeight: 700, fontSize: 10 }}>{label}:</span>
+      <span style={{ color: "#1f2937", overflow: "hidden", textOverflow: "ellipsis" }}>{value}</span>
+    </span>
+  );
+}
+
+// Recursively render every populated key in a Mixed object. Strategy:
+//   • Scalar values (and arrays of scalars) → wrap-flexed chips so dozens
+//     of dropdown-style fields fit a couple of lines instead of a wall.
+//   • Nested objects → small uppercase header + left-border subsection.
+//   • Arrays of objects → numbered subsections.
+// Nothing is collapsed or dropped — user said "complete details rkhte hue,
+// koi info miss nhi honi chahiye" — just packed more densely.
+function MixedFields({ data }) {
   if (!isMeaningful(data)) return null;
+
+  // Bottom of recursion: a primitive sneaking through (e.g. an array
+  // element that turned out to be a string).
   if (typeof data !== "object" || Array.isArray(data)) {
-    const r = renderLeaf(data);
-    return r == null ? null : <span>{r}</span>;
+    const r = renderScalar(data);
+    return r == null ? null : <span style={{ fontSize: 11 }}>{r}</span>;
   }
+
   const entries = Object.entries(data).filter(([, v]) => isMeaningful(v));
   if (!entries.length) return null;
+
+  // Partition into chip-friendly scalars vs nested-object subsections.
+  const scalars = entries.filter(([, v]) =>
+    typeof v !== "object" || (Array.isArray(v) && v.every((x) => typeof x !== "object")),
+  );
+  const subobjects = entries.filter(([, v]) =>
+    typeof v === "object" && !Array.isArray(v),
+  );
+  const arraysOfObjects = entries.filter(([, v]) =>
+    Array.isArray(v) && v.some((x) => x != null && typeof x === "object"),
+  );
+
   return (
-    <div style={{
-      display: "grid",
-      gridTemplateColumns: compact ? "minmax(120px,180px) 1fr" : "minmax(140px,200px) 1fr",
-      gap: compact ? "2px 10px" : "4px 12px",
-      fontSize: 12, margin: compact ? "2px 0" : "4px 0",
-    }}>
-      {entries.map(([k, v]) => (
-        <React.Fragment key={k}>
-          <div style={{ color: "var(--pf-muted)", fontWeight: 600, textTransform: "capitalize" }}>{titleCase(k)}</div>
-          <div>{renderLeaf(v)}</div>
-        </React.Fragment>
+    <div style={{ fontSize: 11 }}>
+      {scalars.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+          {scalars.map(([k, v]) => {
+            const r = renderScalar(v);
+            if (r == null) return null;
+            return <Chip key={k} label={titleCase(k)} value={r} />;
+          })}
+        </div>
+      )}
+      {subobjects.map(([k, v]) => (
+        <div key={k} style={{ marginTop: 6 }}>
+          <div style={{
+            fontSize: 9.5, fontWeight: 800, color: "var(--pf-muted)",
+            textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 3,
+          }}>{titleCase(k)}</div>
+          <div style={{ paddingLeft: 8, borderLeft: "2px solid #e5e7eb" }}>
+            <MixedFields data={v} />
+          </div>
+        </div>
+      ))}
+      {arraysOfObjects.map(([k, arr]) => (
+        <div key={k} style={{ marginTop: 6 }}>
+          <div style={{
+            fontSize: 9.5, fontWeight: 800, color: "var(--pf-muted)",
+            textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 3,
+          }}>{titleCase(k)} ({arr.length})</div>
+          <div style={{ paddingLeft: 8, borderLeft: "2px solid #e5e7eb" }}>
+            {arr.map((it, i) => (
+              <div key={i} style={{ padding: "2px 0", borderTop: i ? "1px dotted #f1f5f9" : "none" }}>
+                <span style={{ fontSize: 9, color: "var(--pf-muted)", fontWeight: 700, marginRight: 4 }}>#{i + 1}</span>
+                <MixedFields data={it} />
+              </div>
+            ))}
+          </div>
+        </div>
       ))}
     </div>
   );
@@ -335,84 +391,97 @@ function NoteList({ notes, kind, emptyMsg }) {
           {(n.isCritical || n.isCriticalEvent) && <span className="pf-badge pf-badge--err">CRITICAL</span>}
         </div>
 
-        <div className="pf-record__body">
-          {/* SOAP — doctor notes */}
-          {n.soap && (
-            <>
-              {n.soap.subjective && <p><strong>S:</strong> {n.soap.subjective}</p>}
-              {n.soap.objective  && <p><strong>O:</strong> {n.soap.objective}</p>}
-              {n.soap.assessment && <p><strong>A:</strong> {n.soap.assessment}</p>}
-              {n.soap.plan       && <p><strong>P:</strong> {n.soap.plan}</p>}
-            </>
+        <div className="pf-record__body pf-record__body--dense">
+          {/* SOAP — render as a tight 2-col grid so the four letters
+              stay in line and the prose flows next to them. Only
+              populated lines appear. */}
+          {n.soap && (n.soap.subjective || n.soap.objective || n.soap.assessment || n.soap.plan) && (
+            <div style={{ display: "grid", gridTemplateColumns: "18px 1fr", gap: "1px 8px", fontSize: 12, marginBottom: 4 }}>
+              {n.soap.subjective && (<><b>S</b><span>{n.soap.subjective}</span></>)}
+              {n.soap.objective  && (<><b>O</b><span>{n.soap.objective}</span></>)}
+              {n.soap.assessment && (<><b>A</b><span>{n.soap.assessment}</span></>)}
+              {n.soap.plan       && (<><b>P</b><span>{n.soap.plan}</span></>)}
+            </div>
           )}
 
-          {/* Diagnoses */}
-          {n.provisionalDiagnosis && <p><strong>Provisional Dx:</strong> {n.provisionalDiagnosis}</p>}
-          {n.workingDiagnosis     && <p><strong>Working Dx:</strong>     {n.workingDiagnosis}</p>}
-          {n.finalDiagnosis       && <p><strong>Final Dx:</strong>       {n.finalDiagnosis}</p>}
-          {(n.icd10Code || n.icd10Description) && (
-            <p><strong>ICD-10:</strong> {[n.icd10Code, n.icd10Description].filter(Boolean).join(" — ")}</p>
-          )}
-          {(n.snomedCode || n.snomedDisplay) && (
-            <p><strong>SNOMED:</strong> {[n.snomedCode, n.snomedDisplay].filter(Boolean).join(" — ")}</p>
+          {/* Diagnoses + coding — one wrap-flex row of chips */}
+          {(n.provisionalDiagnosis || n.workingDiagnosis || n.finalDiagnosis || n.icd10Code || n.icd10Description || n.snomedCode || n.snomedDisplay) && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 4 }}>
+              {n.provisionalDiagnosis && <Chip label="Provisional Dx" value={n.provisionalDiagnosis} accent="#7c3aed" />}
+              {n.workingDiagnosis     && <Chip label="Working Dx"     value={n.workingDiagnosis}     accent="#7c3aed" />}
+              {n.finalDiagnosis       && <Chip label="Final Dx"       value={n.finalDiagnosis}       accent="#7c3aed" />}
+              {(n.icd10Code || n.icd10Description) && <Chip label="ICD-10" value={[n.icd10Code, n.icd10Description].filter(Boolean).join(" — ")} accent="#0284c7" />}
+              {(n.snomedCode || n.snomedDisplay)   && <Chip label="SNOMED" value={[n.snomedCode, n.snomedDisplay].filter(Boolean).join(" — ")} accent="#0284c7" />}
+            </div>
           )}
 
-          {/* Vitals (compact inline) */}
+          {/* Vitals — single dense pill */}
           <VitalsInline vitals={n.vitals} />
 
-          {/* Investigations array (doctor note) */}
-          {Array.isArray(n.investigations) && n.investigations.length > 0 && (
-            <p><strong>Investigations:</strong> {n.investigations.filter(Boolean).join(", ")}</p>
+          {/* Investigations + orders — chip row */}
+          {((Array.isArray(n.investigations) && n.investigations.length > 0) || (Array.isArray(n.orders) && n.orders.length > 0)) && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 4 }}>
+              {Array.isArray(n.investigations) && n.investigations.length > 0 && (
+                <Chip label={`Investigations (${n.investigations.length})`} value={n.investigations.filter(Boolean).join(", ")} accent="#0284c7" />
+              )}
+              {Array.isArray(n.orders) && n.orders.length > 0 && (
+                <Chip label={`Orders (${n.orders.length})`} value={`${n.orders.map((o) => o.instruction).filter(Boolean).slice(0, 3).join(" · ")}${n.orders.length > 3 ? " · …" : ""}`} accent="#ea580c" />
+              )}
+            </div>
           )}
 
-          {/* Orders summary on the note itself — full detail still in Orders + MAR section */}
-          {Array.isArray(n.orders) && n.orders.length > 0 && (
-            <p><strong>Orders ({n.orders.length}):</strong> {n.orders.map((o) => o.instruction).filter(Boolean).slice(0, 3).join(" · ")}{n.orders.length > 3 ? " · …" : ""}</p>
+          {/* Nurse-specific structured blocks — all in one chip row */}
+          {(gcFlags.length > 0 || n.painScore > 0 || n.painAssessment || isMeaningful(n.ivLine) || ioParts.length > 0 || careDone.length > 0 || n.nursingCare?.otherCare) && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 4 }}>
+              {gcFlags.length > 0 && <Chip label="Gen. condition" value={gcFlags.join(", ")} accent="#db2777" />}
+              {(n.painScore > 0 || n.painAssessment) && (
+                <Chip label="Pain" value={`${n.painScore != null ? `${n.painScore}/10` : ""}${n.painAssessment ? ` · ${n.painAssessment}` : ""}`.trim()} accent="#db2777" />
+              )}
+              {n.ivLine && isMeaningful(n.ivLine) && (
+                <Chip label="IV line" value={[n.ivLine.site, n.ivLine.condition, n.ivLine.notes].filter(Boolean).join(" · ")} accent="#0d9488" />
+              )}
+              {ioParts.length > 0 && <Chip label="I/O" value={`${ioParts.join(" · ")}${io.notes ? ` — ${io.notes}` : ""}`} accent="#0d9488" />}
+              {(careDone.length > 0 || n.nursingCare?.otherCare) && (
+                <Chip label="Nursing care" value={[...careDone, n.nursingCare?.otherCare].filter(Boolean).join(", ")} accent="#db2777" />
+              )}
+            </div>
           )}
 
-          {/* Nurse-specific structured blocks */}
-          {gcFlags.length > 0 && <p><strong>General condition:</strong> {gcFlags.join(", ")}</p>}
-          {(n.painScore > 0 || n.painAssessment) && (
-            <p><strong>Pain:</strong> {n.painScore != null ? `${n.painScore}/10` : ""}{n.painAssessment ? ` — ${n.painAssessment}` : ""}</p>
-          )}
-          {n.ivLine && isMeaningful(n.ivLine) && (
-            <p><strong>IV line:</strong> {[n.ivLine.site, n.ivLine.condition, n.ivLine.notes].filter(Boolean).join(" · ")}</p>
-          )}
-          {ioParts.length > 0 && <p><strong>I/O:</strong> {ioParts.join(" · ")}{io.notes ? ` — ${io.notes}` : ""}</p>}
-          {(careDone.length > 0 || n.nursingCare?.otherCare) && (
-            <p><strong>Nursing care:</strong> {[...careDone, n.nursingCare?.otherCare].filter(Boolean).join(", ")}</p>
-          )}
-
-          {/* The big payload: Mixed objects that hold module-specific data
-              (assessment forms, fall-risk, MEWS, wound, nutrition, etc.).
-              Render every populated leaf — this is the change that fixes
-              "Patient File doesn't show what doctor/nurse selected". */}
+          {/* Mixed payloads — denser panel, no big header label */}
           {isMeaningful(n.noteDetails) && (
-            <div style={{ marginTop: 6, padding: "8px 10px", background: "#f8fafc", borderRadius: 4 }}>
-              <strong style={{ fontSize: 11, color: "var(--pf-muted)", display: "block", marginBottom: 4 }}>NOTE DETAILS</strong>
+            <div style={{ marginTop: 4, padding: "6px 8px", background: "#f8fafc", borderRadius: 4, borderLeft: "3px solid #7c3aed" }}>
               <MixedFields data={n.noteDetails} />
             </div>
           )}
           {isMeaningful(n.noteData) && (
-            <div style={{ marginTop: 6, padding: "8px 10px", background: "#f8fafc", borderRadius: 4 }}>
-              <strong style={{ fontSize: 11, color: "var(--pf-muted)", display: "block", marginBottom: 4 }}>ASSESSMENT FIELDS</strong>
+            <div style={{ marginTop: 4, padding: "6px 8px", background: "#f8fafc", borderRadius: 4, borderLeft: "3px solid #db2777" }}>
               <MixedFields data={n.noteData} />
             </div>
           )}
 
-          {/* Free-text fallbacks */}
-          {n.remarks  && <p>{n.remarks}</p>}
-          {n.note     && <p>{n.note}</p>}
-          {n.noteText && <p>{n.noteText}</p>}
-          {n.content  && <p>{n.content}</p>}
-
-          {/* Tags + patient-status badges */}
-          {n.patientStatus && <p style={{ fontSize: 11.5 }}><strong>Patient status:</strong> {n.patientStatus}</p>}
-          {Array.isArray(n.tags) && n.tags.length > 0 && (
-            <p style={{ fontSize: 11.5 }}>{n.tags.map((t) => <span key={t} className="pf-badge pf-badge--neutral" style={{ marginRight: 4 }}>{t}</span>)}</p>
+          {/* Free-text fallbacks — tight margins */}
+          {(n.remarks || n.note || n.noteText || n.content) && (
+            <div style={{ fontSize: 12, marginTop: 4 }}>
+              {n.remarks  && <div>{n.remarks}</div>}
+              {n.note     && <div>{n.note}</div>}
+              {n.noteText && <div>{n.noteText}</div>}
+              {n.content  && <div>{n.content}</div>}
+            </div>
           )}
 
-          {n.signedByName && <p style={{ fontStyle: "italic", color: "var(--pf-muted)" }}>Signed by {n.signedByName}{n.signedByReg ? ` (Reg ${n.signedByReg})` : ""} on {fmtDT(n.signedAt || n.submittedAt)}</p>}
+          {/* Tags */}
+          {Array.isArray(n.tags) && n.tags.length > 0 && (
+            <div style={{ marginTop: 3 }}>
+              {n.tags.map((t) => <span key={t} className="pf-badge pf-badge--neutral" style={{ marginRight: 3, fontSize: 9.5 }}>{t}</span>)}
+            </div>
+          )}
+          {n.patientStatus && <Chip label="Status" value={n.patientStatus} accent="#64748b" />}
+
+          {n.signedByName && (
+            <div style={{ fontStyle: "italic", color: "var(--pf-muted)", fontSize: 10.5, marginTop: 4, borderTop: "1px dotted #e5e7eb", paddingTop: 3 }}>
+              Signed by {n.signedByName}{n.signedByReg ? ` (Reg ${n.signedByReg})` : ""} on {fmtDT(n.signedAt || n.submittedAt)}
+            </div>
+          )}
         </div>
       </div>
     );
