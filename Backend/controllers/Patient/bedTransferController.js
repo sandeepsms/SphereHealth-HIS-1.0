@@ -50,21 +50,56 @@ exports.createTransfer = async (req, res) => {
       });
     }
 
-    // Reserve the target bed so no one else books it before handover
-    await Bed.findByIdAndUpdate(toBedId, { status: "Reserved" });
+    // Atomic reserve — only flip "Available" → "Reserved" if we win the
+    // race. Two concurrent transfer-initiations targeting the same bed
+    // were previously both passing the SELECT step then both calling
+    // findByIdAndUpdate, leaving one of them with a phantom transfer
+    // doc against a bed that's already reserved by another admission.
+    // Patient-safety/data-integrity audit A-09.
+    const reserved = await Bed.findOneAndUpdate(
+      { _id: toBedId, status: "Available" },
+      { $set: { status: "Reserved" } },
+      { new: true },
+    );
+    if (!reserved) {
+      return res.status(409).json({
+        success: false,
+        message: "Selected bed was just taken by another transfer. Pick another bed.",
+      });
+    }
 
-    const transfer = await BedTransfer.create({
-      UHID, admissionId, patientName: patientName || "",
-      fromBedId:      fromBedId      || null,
-      fromBedNumber:  fromBedNumber  || "",
-      fromWardName:   fromWardName   || "",
-      fromRoomNumber: fromRoomNumber || "",
-      toBedId, toBedNumber, toWardName, toRoomNumber,
-      reason: reason || "",
-      shiftingNotes: shiftingNotes.trim(),
-      requestedBy:   requestedBy  || "",
-      requestedById: requestedById || null,
-    });
+    let transfer;
+    try {
+      transfer = await BedTransfer.create({
+        UHID, admissionId, patientName: patientName || "",
+        fromBedId:      fromBedId      || null,
+        fromBedNumber:  fromBedNumber  || "",
+        fromWardName:   fromWardName   || "",
+        fromRoomNumber: fromRoomNumber || "",
+        toBedId, toBedNumber, toWardName, toRoomNumber,
+        reason: reason || "",
+        shiftingNotes: shiftingNotes.trim(),
+        requestedBy:   requestedBy  || "",
+        requestedById: requestedById || null,
+      });
+    } catch (createErr) {
+      // The unique partial index on `{admissionId, status:"PendingHandover"}`
+      // is the main expected failure here (duplicate transfer). Roll back
+      // the reservation so the bed doesn't get stuck. Best-effort —
+      // if the rollback itself fails the admin still gets a clear error.
+      try {
+        await Bed.findByIdAndUpdate(toBedId, { $set: { status: "Available" } });
+      } catch (rbErr) {
+        console.error("[BedTransfer] rollback reservation failed:", rbErr.message);
+      }
+      const dup = createErr.code === 11000;
+      return res.status(dup ? 409 : 500).json({
+        success: false,
+        message: dup
+          ? "An open transfer is already pending for this admission."
+          : createErr.message,
+      });
+    }
 
     res.status(201).json({
       success: true,

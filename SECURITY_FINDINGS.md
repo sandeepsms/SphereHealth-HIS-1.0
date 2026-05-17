@@ -34,7 +34,7 @@ NABH / DPDP auditor can replay the trail end-to-end.
 | A-06 | Prescription `age` & `gender` not enum-constrained | MEDIUM | models/Doctor/prescription.js | **FIXED** | 2026-05-17 (r5) | age:0–150, gender enum; live `age:200, gender:"Xen"` → validation error on both |
 | A-07 | Medication `route` accepts arbitrary text | MEDIUM | models/Doctor/prescription.js:59 | **FIXED** | 2026-05-17 | Enum added (Oral, IV, IM, SC, SL, PR, PV, Topical, Inhalation, ...) |
 | A-08 | Admission + auto-bill chain not in a transaction | HIGH | controllers/Patient/admissionController.js:15–42 | BACKLOG | — | Wider rewrite — out of scope this pass |
-| A-09 | Bed transfer multi-doc write lacks session | MEDIUM | models/Patient/bedTransferModel.js | BACKLOG | — | — |
+| A-09 | Bed transfer multi-doc write lacks session | MEDIUM | controllers/Patient/bedTransferController.js | **FIXED** | 2026-05-17 (r7) | Atomic reserve (`status:"Available"` predicate); if `BedTransfer.create` fails (e.g. duplicate-pending unique index), bed reservation rolls back; 409 on duplicate pending |
 | A-10 | Discharge multi-stage flow has no atomic guarantee | MEDIUM | models/Patient/admissionModel.js:171–183 | BACKLOG | — | F-01 gate added as defense-in-depth |
 | A-11 | Prescription update has no audit-log call | MEDIUM | services/Doctor/PrescriptionService.js:66–74 | BACKLOG | — | — |
 | A-12 | Receptionist can edit clinical patient fields (blood group, DOB, allergies) | **CRITICAL** | routes/Patient/patientRoutes.js, controllers/Patient/patientController.js | **FIXED** | 2026-05-17 | Live receptionist PUT bloodGroup → 403 |
@@ -84,7 +84,7 @@ edit (A-15) remain open — listed in re-audit backlog.
 | C-05 | Unbounded `.find().lean()` on equipment/drug-stock/vitals lists | HIGH | controllers/equipmentController.js:42, pharmacyController.js:1106, vitalSheetController.js:33 | BACKLOG | — | — |
 | C-06 | N+1 in stock-register report and auto-billing handlers | HIGH | controllers/Pharmacy/pharmacyController.js:1106–1149 | BACKLOG | — | — |
 | C-07 | ~15 `findOneAndUpdate` calls missing `runValidators: true` | MEDIUM | dischargeSummaryController.js, marController.js, others | BACKLOG | — | — |
-| C-08 | ~15 controllers don't validate `req.params.id` as ObjectId | HIGH | dischargeSummaryController.js:67, bedController.js, others | PARTIAL | 2026-05-17 | `validateObjectIdParam` helper added; applied to patient routes; live `not-an-objectid` → 400 |
+| C-08 | ~15 controllers don't validate `req.params.id` as ObjectId | HIGH | many controllers | PARTIAL | 2026-05-17 (r7) | Helper applied to patient, admission (15+ surfaces incl. /:id/consultation/:consultId), prescription routes; live `/api/admissions/not-an-objectid` → 400 |
 
 ---
 
@@ -121,7 +121,7 @@ edit (A-15) remain open — listed in re-audit backlog.
 | -- | ----- | -------- | ----- | ------ | -------- | -------- |
 | F-01 | `dischargePatient()` doesn't check `billCleared` before status flip | HIGH | services/Patient/admissionService.js:194 | **FIXED** | 2026-05-17 | Live discharge w/o clearance → 409 with clear msg + allowOverride path |
 | F-02 | Lab results editable post-verification | HIGH | models/Investigation/InvestigationOrderModel.js | **FIXED** | 2026-05-17 | post-init snapshot + pre-save lock — editing a VERIFIED item throws |
-| F-03 | Pharmacy pre-flight stock check non-atomic | MEDIUM | controllers/Pharmacy/pharmacyController.js:391 | BACKLOG | — | — |
+| F-03 | Pharmacy pre-flight stock check non-atomic | MEDIUM | controllers/Pharmacy/pharmacyController.js | **FIXED** | 2026-05-17 (r7) | TOCTOU `$sum` pre-flight removed; fifoConsume's atomic `findOneAndUpdate({remaining: {$gte: take}})` is authoritative; cross-item rollback on mid-loop shortage |
 | F-04 | Drug expiry check uses UTC `new Date()` | MEDIUM | controllers/Pharmacy/pharmacyController.js | **FIXED** | 2026-05-17 (r5) | IST-aware "start of today" boundary via Intl.DateTimeFormat + Asia/Kolkata |
 | F-05 | Bill items still editable in PARTIAL state | MEDIUM | services/Billing/billingService.js | **FIXED** | 2026-05-17 (r3) | Freeze list expanded to GENERATED/PARTIAL/PAID/CANCELLED/REFUNDED; mutation throws 409 |
 | F-06 | Appointment NoShow→Booked race allows overlap | MEDIUM | models/Appointment/appointmentModel.js:59 | BACKLOG | — | — |

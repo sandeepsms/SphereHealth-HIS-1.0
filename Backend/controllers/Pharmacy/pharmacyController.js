@@ -395,26 +395,23 @@ exports.dispense = async (req, res) => {
     const seq = await nextSeq("pharmacyBill");
     const billNumber = `PHM-${new Date().toISOString().slice(0,10).replace(/-/g, "")}-${String(seq).padStart(4, "0")}`;
 
-    // Pre-flight: enough stock?
-    for (const it of items) {
-      const have = await DrugBatch.aggregate([
-        { $match: { drugId: new mongoose.Types.ObjectId(it.drugId), isActive: true, remaining: { $gt: 0 } } },
-        { $group: { _id: null, total: { $sum: "$remaining" } } },
-      ]);
-      const total = have[0]?.total || 0;
-      if (total < Number(it.quantity)) {
-        return res.status(409).json({
-          success: false,
-          message: `Insufficient stock for ${it.drugName} — need ${it.quantity}, have ${total}`,
-        });
-      }
-    }
-
-    // Consume FIFO and build sale items with batch info.
+    // Stock pre-flight DELETED (business audit F-03). The previous
+    // aggregation `$sum` + check happened OUTSIDE the atomic
+    // findOneAndUpdate in fifoConsume, so two concurrent dispenses both
+    // reading "have 5, need 5" would both pass pre-flight and the second
+    // would only fail at fifoConsume — after the cashier had already
+    // started ringing it up. We now trust fifoConsume's atomic predicate
+    // (`remaining: { $gte: take }`) and add cross-item rollback so a
+    // mid-loop shortage on item B unrolls item A's already-reserved
+    // stock — the sale is all-or-nothing.
     const saleItems = [];
     let subTotal = 0, totalGst = 0, totalDisc = 0;
+    const consumedAll = []; // [{ batchId, qty }] across all items, for rollback
+    try {
     for (const it of items) {
       const used = await fifoConsume(it.drugId, Number(it.quantity));
+      // Track what we reserved so we can undo if a later item fails.
+      for (const u of used) consumedAll.push({ batchId: u.batch._id, qty: u.used });
       // If split across batches, write one sale row per batch — keeps audit clean.
       for (const u of used) {
         const qty   = u.used;
@@ -475,6 +472,26 @@ exports.dispense = async (req, res) => {
       remarks: remarks || "",
     });
     res.json({ success: true, data: sale });
+    } catch (consumeErr) {
+      // Cross-item rollback (business audit F-03): if any item or the
+      // Sale.create itself fails, undo every batch reservation we made
+      // so the pharmacy's `remaining` counts stay accurate. Each
+      // findByIdAndUpdate is itself atomic; we swallow individual undo
+      // errors so a partial-rollback failure doesn't mask the original
+      // dispense error.
+      for (const c of consumedAll) {
+        try {
+          await DrugBatch.findByIdAndUpdate(c.batchId, {
+            $inc: { quantityOut: -c.qty, remaining: c.qty },
+          });
+        } catch (rbErr) {
+          console.error("[Pharmacy] dispense rollback failed for batch",
+            String(c.batchId), ":", rbErr.message);
+        }
+      }
+      const status = /^Insufficient stock/i.test(consumeErr.message || "") ? 409 : 500;
+      return res.status(status).json({ success: false, message: consumeErr.message });
+    }
   } catch (e) {
     res.status(500).json({ success: false, message: e.message });
   }
