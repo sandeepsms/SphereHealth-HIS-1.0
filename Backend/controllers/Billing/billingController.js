@@ -400,48 +400,11 @@ exports.listBills = async (req, res) => {
   }
 };
 
-// ── POST /api/billing/ai-suggest ──────────────────────────────
-exports.aiSuggest = async (req, res, next) => {
-  try {
-    const { billId, diagnosis, patientType, additionalContext } = req.body;
-    if (!billId || !diagnosis) {
-      return res
-        .status(400)
-        .json({ success: false, message: "billId and diagnosis are required" });
-    }
-    const aiSvc = require("../../services/Billing/aiChargeService");
-    const result = await aiSvc.suggestMissedCharges({
-      billId,
-      diagnosis,
-      patientType: patientType || "IPD",
-      additionalContext,
-    });
-    res.json({ success: true, data: result });
-  } catch (e) {
-    next(e);
-  }
-};
-
-// ── POST /api/billing/ai-confirm ──────────────────────────────
-exports.aiConfirm = async (req, res, next) => {
-  try {
-    const { billId, serviceIds, confirmedBy } = req.body;
-    if (!billId || !Array.isArray(serviceIds)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "billId and serviceIds[] required" });
-    }
-    const aiSvc = require("../../services/Billing/aiChargeService");
-    const result = await aiSvc.confirmAISuggestions(
-      billId,
-      serviceIds,
-      confirmedBy || "Staff",
-    );
-    res.json({ success: true, data: result });
-  } catch (e) {
-    next(e);
-  }
-};
+// AI-billing endpoints (aiSuggest / aiConfirm) and their backing
+// aiChargeService.js were removed — see commit "Remove AI billing
+// surface from HIS". If the AI suggestion engine ever comes back it
+// should be re-introduced as a separate audit-confirmable flow, not
+// auto-applied to bills.
 
 // ── POST /api/billing/:billId/nurse-charge ────────────────────
 exports.addNurseCharge = async (req, res, next) => {

@@ -57,7 +57,7 @@ export const MODULES = [
   { id: "maintenance",label: "Maintenance",     icon: "pi-wrench",        home: "/maintenance",       color: "#0d9488" },
   { id: "security",   label: "Visitor Security",icon: "pi-lock",          home: "/visitor-passes",    color: "#374151" },
   { id: "admin",      label: "Masters & Admin", icon: "pi-cog",           home: "/admin/users",       color: "#1e293b" },
-  { id: "reports",    label: "Reports & MIS",   icon: "pi-chart-bar",     home: "/billing-intelligence", color: "#1d4ed8" },
+  { id: "reports",    label: "Reports & MIS",   icon: "pi-chart-bar",     home: "/billing-audit-trail",  color: "#1d4ed8" },
 ];
 
 /* ── Module access per role.

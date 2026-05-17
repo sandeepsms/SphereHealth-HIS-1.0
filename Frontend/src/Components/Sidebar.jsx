@@ -224,11 +224,15 @@ const NAV = [
     roles: [ADMIN, AC, TPA, RX],
     items: [
       // RX-flavored unified billing & payment collection (rx-page style)
-      { label: "Billing & Payments",    icon: "pi-receipt", path: "/reception-billing",     roles: [RX] },
+      // Receptionist-only Billing Counter — single-window flow.
+      // The accountant / admin still see the deeper UIs below, but
+      // for the receptionist this is the only billing entry.
+      { label: "Billing Counter",       icon: "pi-credit-card", path: "/reception-billing", badge: "COUNTER", roles: [RX] },
       // Full billing UIs for accountants / admin
       { label: "Patient Bill",          icon: "pi-user",    path: "/patient-billing",       roles: [ADMIN, AC, TPA] },
       { label: "Bills List",            icon: "pi-file",    path: "/billing",               roles: [ADMIN, AC] },
-      { label: "Billing Intelligence",  icon: "pi-bolt",    path: "/billing-intelligence",  badge: "AI",  roles: [ADMIN, AC] },
+      // Billing Intelligence (AI) was removed — single Billing Counter
+      // page now handles the full receptionist flow.
       { label: "Billing Audit Trail",   icon: "pi-list",    path: "/billing-audit-trail",                 roles: [ADMIN, AC] },
       { label: "TPA Services",          icon: "pi-briefcase", path: "/addservice",          roles: [ADMIN, TPA, AC] },
       { label: "Chargeable Services",   icon: "pi-dollar",  path: "/chargeable-services",   roles: [ADMIN, AC] },
@@ -438,18 +442,20 @@ const RECEPTION_NAV = [
     ],
   },
 
-  // ── Billing & TPA — payment counter + insurance ──
-  // Receptionists collect cash/UPI/card at the counter and prepare
-  // TPA pre-auth at admission. Both endpoints live here so the
-  // operator doesn't need to dig through a Finance section.
+  // ── Billing Counter — single-window cash/UPI/card collection ──
+  // One sidebar entry covers the entire receptionist billing flow:
+  //   patient search → bill list → payment recording → advance deposit
+  //   take/apply → receipt printing. TPA pre-auth still has its own
+  //   /tpa-cases page (admin/AC sidebar), but for the receptionist's
+  //   day-to-day cash work everything lives behind this single tile.
+  //   Rendered as `single: true` so the sidebar shows it as a flat
+  //   card with the COUNTER pill — not an expandable group.
   {
-    id: "billing", label: "Billing & TPA",
-    icon: "pi-receipt", color: "#d97706", light: "#fffbeb",
-    roles: ["Receptionist"],
-    items: [
-      { label: "Billing & Payments",  icon: "pi-receipt", path: "/reception-billing", roles: ["Receptionist"] },
-      { label: "TPA / Insurance",     icon: "pi-shield",  path: "/tpa-cases",         roles: ["Receptionist"], nabh: true },
-    ],
+    id: "billing-counter", label: "Billing Counter",
+    icon: "pi-credit-card", color: "#d97706", light: "#fffbeb",
+    nabh: true, single: true, roles: ["Receptionist"],
+    path: "/reception-billing",
+    badge: "COUNTER",
   },
 ];
 
@@ -517,8 +523,10 @@ function NavItem({ item, color, collapsed, navigate, isActive }) {
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
           }}>{item.label}</span>
           {item.nabh  && <Pill label="NABH" color="#7c3aed" />}
-          {item.badge === "AI"  && <Pill label="AI"  color="#059669" />}
-          {item.badge === "NEW" && <Pill label="NEW" color="#d97706" />}
+          {item.badge === "AI"      && <Pill label="AI"      color="#059669" />}
+          {item.badge === "NEW"     && <Pill label="NEW"     color="#d97706" />}
+          {item.badge === "ALL-IN-ONE" && <Pill label="ALL-IN-ONE" color="#0891b2" />}
+          {item.badge === "COUNTER" && <Pill label="COUNTER" color="#d97706" />}
         </>
       )}
     </button>
@@ -559,10 +567,18 @@ function SectionHeader({ section, collapsed, isOpen, toggle, isActive, navigate 
             style={{ fontSize: 13, color: active ? "white" : section.color }} />
         </div>
         {!collapsed && (
-          <span style={{
-            fontSize: 13, fontWeight: 600,
-            color: active ? section.color : "#1e293b",
-          }}>{section.label}</span>
+          <>
+            <span style={{
+              fontSize: 13, fontWeight: 600,
+              color: active ? section.color : "#1e293b",
+              flex: 1, textAlign: "left",
+            }}>{section.label}</span>
+            {section.nabh && <Pill label="NABH" color="#7c3aed" />}
+            {section.badge === "COUNTER" && <Pill label="COUNTER" color={section.color || "#d97706"} />}
+            {section.badge === "ALL-IN-ONE" && <Pill label="ALL-IN-ONE" color="#0891b2" />}
+            {section.badge === "AI"      && <Pill label="AI"  color="#059669" />}
+            {section.badge === "NEW"     && <Pill label="NEW" color="#d97706" />}
+          </>
         )}
       </button>
     );

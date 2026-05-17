@@ -28,9 +28,9 @@ router.get("/uhid/:UHID", ctrl.getBillsByUHID); // GET  /api/billing/uhid/UH0000
 router.get("/price/:serviceId", ctrl.getServicePrice); // GET  /api/billing/price/:id?tariffType=TPA&tpaId=xxx
 router.get("/daycare-check/:admissionId", ctrl.checkDaycare); // GET  /api/billing/daycare-check/:admissionId
 
-// ── AI Intelligence ───────────────────────────────────────────
-router.post("/ai-suggest", ctrl.aiSuggest); // POST /api/billing/ai-suggest       {billId, diagnosis, patientType}
-router.post("/ai-confirm", ctrl.aiConfirm); // POST /api/billing/ai-confirm       {billId, serviceIds[], confirmedBy}
+// AI billing routes (/ai-suggest, /ai-confirm) removed along with
+// BillingIntelligencePage.jsx — single Billing Counter page now
+// handles the full receptionist flow without AI suggestions.
 router.get("/nurse-services", ctrl.getNurseChargeableServices); // GET  /api/billing/nurse-services?patientType=IPD
 
 // ── Nurse charge entry ────────────────────────────────────────

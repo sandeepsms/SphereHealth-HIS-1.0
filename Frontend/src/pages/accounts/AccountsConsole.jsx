@@ -300,7 +300,7 @@ function RevenueTab() {
 
       <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
         <PrimaryButton label="Open Bills List"          icon="pi-list"    color={C.amber}  onClick={() => navigate("/billing")} />
-        <PrimaryButton label="Billing Intelligence"     icon="pi-bolt"    color={C.purple} onClick={() => navigate("/billing-intelligence")} />
+        <PrimaryButton label="Billing Counter"          icon="pi-credit-card" color={C.purple} onClick={() => navigate("/reception-billing")} />
         <PrimaryButton label="Pharmacy Sales Register"  icon="pi-receipt" color={C.orange} onClick={() => navigate("/pharmacy?tab=registers")} />
       </div>
     </>

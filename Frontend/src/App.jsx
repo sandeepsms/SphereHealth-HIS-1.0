@@ -83,7 +83,8 @@ const BillGeneration = lazy(() => import("./pages/billing/Billgeneration"));
 const PatientBilling = lazy(() => import("./Components/billing/PatientBilling"));
 const ServiceMasterManager = lazy(() => import("./Components/ServiceMaster/ServiceMasterManager"));
 const ChargeableServices = lazy(() => import("./pages/services/ChargeableServices"));
-const BillingIntelligencePage = lazy(() => import("./pages/billing/BillingIntelligencePage"));
+// BillingIntelligencePage removed — receptionist Billing Counter is now
+// the single billing surface; AI suggestions are no longer auto-applied.
 const BillingAuditTrailPage = lazy(() => import("./pages/billing/BillingAuditTrailPage"));
 
 // Vitals
@@ -434,13 +435,8 @@ function AppLayout({ collapsed, setCollapsed }) {
               <RoleGuard action="billing.read"><ChargeableServices /></RoleGuard>
             } />
 
-            {/* ── AI Billing Intelligence — admin/accountant only ── */}
-            <Route path="/billing-intelligence" element={
-              <RoleGuard action="reports.financial"><BillingIntelligencePage /></RoleGuard>
-            } />
-            <Route path="/billing-intelligence/:uhid" element={
-              <RoleGuard action="reports.financial"><BillingIntelligencePage /></RoleGuard>
-            } />
+            {/* /billing-intelligence routes removed — receptionist Billing
+                Counter at /reception-billing now handles the full flow. */}
 
             {/* ── Billing Audit Trail — admin only ───────────────── */}
             <Route path="/billing-audit-trail" element={
