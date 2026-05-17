@@ -155,6 +155,7 @@ require("./models/Patient/OPDModels");
 require("./models/nursing/NursingConsumableItem");
 require("./models/nursing/NursingChargeEntry");
 require("./models/Billing/BillingTrigger");
+require("./models/Auth/TokenRevocationModel"); // jti revocation list (audit B-10)
 
 // ── Connect DB then attach routes ──────────────────────────────────────────
 connectDB();

@@ -2,7 +2,9 @@ const express = require("express");
 const router = express.Router();
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
+const crypto = require("crypto");
 const User = require("../../models/User/userModel");
+const TokenRevocation = require("../../models/Auth/TokenRevocationModel");
 
 const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_EXPIRES = process.env.JWT_EXPIRES || "8h";
@@ -43,8 +45,13 @@ router.post("/login", async (req, res) => {
     user.lastLogin = new Date();
     await user.save();
 
+    // jti = unique token ID for the revocation list (audit B-10). Without
+    // it, a logged-out / compromised token stays valid until exp. The
+    // authenticate middleware checks TokenRevocation by jti on every
+    // request; logout writes the jti there with TTL = exp.
+    const jti = crypto.randomUUID();
     const token = jwt.sign(
-      { id: user._id, role: user.role, employeeId: user.employeeId },
+      { id: user._id, role: user.role, employeeId: user.employeeId, jti },
       JWT_SECRET,
       { expiresIn: JWT_EXPIRES }
     );
@@ -138,9 +145,46 @@ router.get("/signature", async (req, res) => {
   }
 });
 
-/* ── POST /api/auth/logout ── (client just discards token, server logs it) */
-router.post("/logout", (req, res) => {
-  res.json({ message: "Logged out successfully" });
+/* ── POST /api/auth/logout ──
+   Server-side token revocation. The frontend already drops the token
+   from localStorage on logout, but a copy could still live in DevTools
+   or a leaked file. This endpoint writes the jti to TokenRevocation
+   with TTL = the token's exp, so the authenticate middleware rejects
+   any later use within the 8-hour validity window. Audit B-10. */
+router.post("/logout", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      // Idempotent — already logged out / never had a token
+      return res.json({ message: "Logged out successfully" });
+    }
+    const token = authHeader.split(" ")[1];
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      if (decoded.jti && decoded.exp) {
+        // Best-effort upsert — duplicate-key on jti (already revoked) is
+        // a no-op success.
+        await TokenRevocation.updateOne(
+          { jti: decoded.jti },
+          {
+            $setOnInsert: {
+              jti: decoded.jti,
+              userId: decoded.id || null,
+              reason: "logout",
+              expiresAt: new Date(decoded.exp * 1000),
+            },
+          },
+          { upsert: true },
+        );
+      }
+    } catch (e) {
+      // Invalid / already-expired token — nothing to revoke, still 200
+    }
+    res.json({ message: "Logged out successfully" });
+  } catch (err) {
+    console.error("[auth] logout error:", err.message);
+    res.status(500).json({ message: "Logout failed" });
+  }
 });
 
 module.exports = router;

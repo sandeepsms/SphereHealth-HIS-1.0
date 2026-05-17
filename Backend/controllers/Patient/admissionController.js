@@ -545,17 +545,41 @@ class AdmissionController {
   // Called by Doctor after writing discharge summary.
   // Body: { doctorName, finalBillAmount? }
   doctorApproveDischarge = handle(async (req, res) => {
+    // Atomic CAS — only flip stage if it's currently NotRequested or
+    // missing. Audit A-10: previous load+mutate+save raced when two
+    // doctors clicked at the same time; now whichever request wins
+    // returns 200, the other gets a clean 409. No double-fire of the
+    // approval timestamp / approver name.
     const Admission = require("../../models/Patient/admissionModel");
-    const adm = await Admission.findById(req.params.id);
-    if (!adm) return res.status(404).json({ success: false, message: "Admission not found" });
-    if (!adm.dischargeWorkflow) adm.dischargeWorkflow = {};
-    adm.dischargeWorkflow.stage              = "DoctorApproved";
-    adm.dischargeWorkflow.doctorApprovedAt   = new Date();
-    adm.dischargeWorkflow.doctorApprovedBy   = req.body.doctorName || "Doctor";
-    if (req.body.finalBillAmount !== undefined)
-      adm.dischargeWorkflow.finalBillAmount = Number(req.body.finalBillAmount) || 0;
-    adm.markModified("dischargeWorkflow");
-    await adm.save();
+    const set = {
+      "dischargeWorkflow.stage":              "DoctorApproved",
+      "dischargeWorkflow.doctorApprovedAt":   new Date(),
+      "dischargeWorkflow.doctorApprovedBy":   req.body.doctorName || "Doctor",
+    };
+    if (req.body.finalBillAmount !== undefined) {
+      set["dischargeWorkflow.finalBillAmount"] = Number(req.body.finalBillAmount) || 0;
+    }
+    const adm = await Admission.findOneAndUpdate(
+      {
+        _id: req.params.id,
+        $or: [
+          { "dischargeWorkflow.stage": "NotRequested" },
+          { "dischargeWorkflow.stage": { $exists: false } },
+          { dischargeWorkflow: { $exists: false } },
+        ],
+      },
+      { $set: set },
+      { new: true, runValidators: true },
+    );
+    if (!adm) {
+      // Either admission missing, or stage was already past NotRequested.
+      const probe = await Admission.findById(req.params.id).select("dischargeWorkflow.stage").lean();
+      if (!probe) return res.status(404).json({ success: false, message: "Admission not found" });
+      return res.status(409).json({
+        success: false,
+        message: `Discharge already approved (current stage: ${probe.dischargeWorkflow?.stage}).`,
+      });
+    }
     return res.json({ success: true, data: adm.dischargeWorkflow });
   });
 
@@ -565,31 +589,39 @@ class AdmissionController {
   // If a PatientBill exists for this admission, also record the payment on it
   // so the bill's balanceAmount drops to 0 and billStatus becomes PAID.
   clearFinalBill = handle(async (req, res) => {
+    // Atomic CAS — only flip stage if it's currently "DoctorApproved"
+    // (audit A-10). Two concurrent cashier clicks can no longer both
+    // push a payment row onto the linked PatientBill: the loser's
+    // CAS fails and returns 409 cleanly, the bill update below
+    // never runs for them.
     const Admission   = require("../../models/Patient/admissionModel");
     const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
-    const adm = await Admission.findById(req.params.id);
-    if (!adm) return res.status(404).json({ success: false, message: "Admission not found" });
-    if (!adm.dischargeWorkflow) adm.dischargeWorkflow = {};
-    if (adm.dischargeWorkflow.stage === "NotRequested") {
-      return res.status(400).json({ success: false, message: "Doctor has not yet approved discharge" });
+    const set = {
+      "dischargeWorkflow.stage":         "BillCleared",
+      "dischargeWorkflow.billClearedAt": new Date(),
+      "dischargeWorkflow.billClearedBy": req.body.clearedBy || "Receptionist",
+    };
+    if (req.body.finalBillNumber) set["dischargeWorkflow.finalBillNumber"] = req.body.finalBillNumber;
+    if (req.body.finalBillAmount !== undefined) {
+      set["dischargeWorkflow.finalBillAmount"] = Number(req.body.finalBillAmount) || 0;
     }
-    // Idempotency: refuse to re-clear an already-cleared bill so concurrent
-    // receptionists (or accidental retries) don't double-push payment rows
-    // onto the linked PatientBill.
-    if (["BillCleared", "GatePassIssued", "Completed"].includes(adm.dischargeWorkflow.stage)) {
+    const adm = await Admission.findOneAndUpdate(
+      { _id: req.params.id, "dischargeWorkflow.stage": "DoctorApproved" },
+      { $set: set },
+      { new: true, runValidators: true },
+    );
+    if (!adm) {
+      const probe = await Admission.findById(req.params.id).select("dischargeWorkflow").lean();
+      if (!probe) return res.status(404).json({ success: false, message: "Admission not found" });
+      const stage = probe.dischargeWorkflow?.stage || "NotRequested";
+      if (stage === "NotRequested") {
+        return res.status(400).json({ success: false, message: "Doctor has not yet approved discharge" });
+      }
       return res.status(409).json({
         success: false,
-        message: `Final bill already cleared on ${adm.dischargeWorkflow.billClearedAt || "an earlier action"}.`,
+        message: `Final bill already cleared on ${probe.dischargeWorkflow.billClearedAt || "an earlier action"}.`,
       });
     }
-    adm.dischargeWorkflow.stage           = "BillCleared";
-    adm.dischargeWorkflow.billClearedAt   = new Date();
-    adm.dischargeWorkflow.billClearedBy   = req.body.clearedBy || "Receptionist";
-    if (req.body.finalBillNumber) adm.dischargeWorkflow.finalBillNumber = req.body.finalBillNumber;
-    if (req.body.finalBillAmount !== undefined)
-      adm.dischargeWorkflow.finalBillAmount = Number(req.body.finalBillAmount) || 0;
-    adm.markModified("dischargeWorkflow");
-    await adm.save();
 
     // Also push a payment row onto the linked IPD/DAYCARE bill so the
     // patient's outstanding balance reflects the final-bill clearance.
@@ -641,36 +673,45 @@ class AdmissionController {
   // POST /api/admissions/:id/issue-gate-pass
   // Final step — receptionist hands gate pass + marks discharge complete.
   issueGatePass = handle(async (req, res) => {
+    // Atomic CAS — only flip stage if it's currently "BillCleared"
+    // (audit A-10). The gate-pass number is generated via atomic
+    // Counter and STAMPED in the same findOneAndUpdate, so two
+    // concurrent receptionists can never both burn a sequence and
+    // then both lose the CAS — only the winner's number persists,
+    // the loser's sequence is dead but harmless (gaps are expected
+    // in any Counter-based numbering scheme).
     const Admission = require("../../models/Patient/admissionModel");
-    const adm = await Admission.findById(req.params.id);
-    if (!adm) return res.status(404).json({ success: false, message: "Admission not found" });
-    if (!adm.dischargeWorkflow) adm.dischargeWorkflow = {};
-    if (adm.dischargeWorkflow.stage !== "BillCleared" && adm.dischargeWorkflow.stage !== "GatePassIssued") {
-      return res.status(400).json({ success: false, message: "Final bill must be cleared before issuing gate pass" });
-    }
-    // Idempotency: if a gate pass already exists, return it instead of
-    // generating a new one (avoids duplicate GP numbers on retry).
-    if (adm.dischargeWorkflow.stage === "Completed" || adm.dischargeWorkflow.gatePassNumber) {
-      return res.status(409).json({
-        success: false,
-        message: `Gate pass already issued (${adm.dischargeWorkflow.gatePassNumber || "—"})`,
-      });
-    }
-    // Generate gate-pass number: GP-YYYYMMDD-XXXX via atomic Counter
-    // (replaces the legacy countDocuments race that produced duplicates).
-    // The two lines below are kept for backward-compat name shadowing; the
-    // actual value comes from `nextSequence`.
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, "");
     const seq = await nextSequence(`gatepass:${dateStr}`);
     const passNumber = `GP-${dateStr}-${String(seq).padStart(4, "0")}`;
-    adm.dischargeWorkflow.stage             = "Completed";
-    adm.dischargeWorkflow.gatePassNumber    = passNumber;
-    adm.dischargeWorkflow.gatePassIssuedAt  = new Date();
-    adm.dischargeWorkflow.gatePassIssuedBy  = req.body.issuedBy || "Receptionist";
-    adm.status                              = "Discharged";
-    adm.actualDischargeDate                 = new Date();
-    adm.markModified("dischargeWorkflow");
-    await adm.save();
+    const now = new Date();
+    const adm = await Admission.findOneAndUpdate(
+      { _id: req.params.id, "dischargeWorkflow.stage": "BillCleared" },
+      { $set: {
+        "dischargeWorkflow.stage":            "Completed",
+        "dischargeWorkflow.gatePassNumber":   passNumber,
+        "dischargeWorkflow.gatePassIssuedAt": now,
+        "dischargeWorkflow.gatePassIssuedBy": req.body.issuedBy || "Receptionist",
+        status:                                "Discharged",
+        actualDischargeDate:                   now,
+      } },
+      { new: true, runValidators: true },
+    );
+    if (!adm) {
+      const probe = await Admission.findById(req.params.id).select("dischargeWorkflow").lean();
+      if (!probe) return res.status(404).json({ success: false, message: "Admission not found" });
+      const stage = probe.dischargeWorkflow?.stage || "NotRequested";
+      if (stage === "Completed" || probe.dischargeWorkflow?.gatePassNumber) {
+        return res.status(409).json({
+          success: false,
+          message: `Gate pass already issued (${probe.dischargeWorkflow?.gatePassNumber || "—"})`,
+        });
+      }
+      return res.status(400).json({
+        success: false,
+        message: `Final bill must be cleared before issuing gate pass (current stage: ${stage})`,
+      });
+    }
 
     // Free the bed so the next admission can use it. Mirrors
     // admissionService.dischargePatient — without this, beds stay stuck

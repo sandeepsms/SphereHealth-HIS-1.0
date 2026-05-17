@@ -1148,69 +1148,77 @@ exports.purchaseRegister = async (req, res) => {
 // Stock register — Form 35 (D&C): opening + receipts + issues + closing per drug.
 // "Opening" = batches.created before from-date, sum(quantityIn). "Issued in range" =
 // sales items linked to those batches during the range.
+//
+// Audit C-06: previous implementation looped per drug and ran 4 aggregations
+// inside the loop — 4×N round-trips. On a 500-drug master that's 2000 calls,
+// O(seconds). Now collapsed to 5 parallel aggregations total (1× DrugBatch
+// per-drug rollup + 1× sales-items + 1× supplements + 1× returns + 1× Drug
+// master) merged in JS by drugId. O(1) round-trip count regardless of N.
 exports.stockRegister = async (req, res) => {
   try {
     const { from, to } = req.query;
     const start = from ? new Date(from) : new Date(Date.now() - 30 * 86400000);
     const end   = to   ? new Date(new Date(to).getTime() + 86399_999) : new Date();
 
-    const drugs = await Drug.find({ isActive: true }).lean();
-    const out = [];
-    for (const d of drugs) {
-      const allBatches = await DrugBatch.find({ drugId: d._id, isActive: true }).lean();
-      const opening = allBatches
-        .filter(b => new Date(b.createdAt) < start)
-        .reduce((s, b) => s + (b.quantityIn || 0), 0);
-      const receipts = allBatches
-        .filter(b => new Date(b.createdAt) >= start && new Date(b.createdAt) <= end)
-        .reduce((s, b) => s + (b.quantityIn || 0), 0);
-      // Issued in range = sum(items.quantity from sales in range)
-      //                 − sum(returns.refundedItems.quantity from sales in range)
-      // Includes Partial-Return + Refunded sales so the audit is honest about
-      // what stock actually left the pharmacy.
-      const issuedAgg = await Sale.aggregate([
-        { $match: {
-            status: { $in: ["Completed", "Partial-Return", "Refunded", "Supplemented"] },
-            createdAt: { $gte: start, $lte: end },
-          } },
+    const [drugs, batchAgg, issuedAgg, suppAgg, returnedAgg] = await Promise.all([
+      Drug.find({ isActive: true }).lean(),
+      // Per-drug batch rollup — opening (created < start), receipts
+      // (start ≤ created ≤ end), closing (sum remaining today).
+      DrugBatch.aggregate([
+        { $match: { isActive: true } },
+        { $group: {
+            _id: "$drugId",
+            opening:  { $sum: { $cond: [{ $lt:  ["$createdAt", start] }, { $ifNull: ["$quantityIn", 0] }, 0] } },
+            receipts: { $sum: { $cond: [{ $and: [
+                                          { $gte: ["$createdAt", start] },
+                                          { $lte: ["$createdAt", end]   } ] },
+                                       { $ifNull: ["$quantityIn", 0] }, 0] } },
+            closing:  { $sum: { $ifNull: ["$remaining", 0] } },
+        } },
+      ]),
+      // Original sale items in range — grouped by drugId
+      Sale.aggregate([
+        { $match: { status: { $in: ["Completed", "Partial-Return", "Refunded", "Supplemented"] },
+                    createdAt: { $gte: start, $lte: end } } },
         { $unwind: "$items" },
-        { $match: { "items.drugId": d._id } },
-        { $group: { _id: null, qty: { $sum: "$items.quantity" } } },
-      ]);
-      const grossIssued = issuedAgg[0]?.qty || 0;
-
-      // Add supplementary items (debit notes) — these are stock that
-      // left the pharmacy AFTER the original bill, so they count
-      // against opening + receipts.
-      const supplementAgg = await Sale.aggregate([
-        { $match: {
-            status: { $in: ["Supplemented", "Partial-Return"] },
-            createdAt: { $gte: start, $lte: end },
-          } },
+        { $group: { _id: "$items.drugId", qty: { $sum: "$items.quantity" } } },
+      ]),
+      // Supplementary items (debit notes) in range — grouped by drugId
+      Sale.aggregate([
+        { $match: { status: { $in: ["Supplemented", "Partial-Return"] },
+                    createdAt: { $gte: start, $lte: end } } },
         { $unwind: "$supplements" },
         { $unwind: "$supplements.addedItems" },
-        { $match: { "supplements.addedItems.drugId": d._id } },
-        { $group: { _id: null, qty: { $sum: "$supplements.addedItems.quantity" } } },
-      ]);
-      const supplementQty = supplementAgg[0]?.qty || 0;
-
-      const returnedAgg = await Sale.aggregate([
-        { $match: {
-            status: { $in: ["Partial-Return", "Refunded"] },
-            createdAt: { $gte: start, $lte: end },
-          } },
+        { $group: { _id: "$supplements.addedItems.drugId", qty: { $sum: "$supplements.addedItems.quantity" } } },
+      ]),
+      // Returns in range — grouped by drugId
+      Sale.aggregate([
+        { $match: { status: { $in: ["Partial-Return", "Refunded"] },
+                    createdAt: { $gte: start, $lte: end } } },
         { $unwind: "$returns" },
         { $unwind: "$returns.refundedItems" },
-        { $match: { "returns.refundedItems.drugId": d._id } },
-        { $group: { _id: null, qty: { $sum: "$returns.refundedItems.quantity" } } },
-      ]);
-      const returnedQty = returnedAgg[0]?.qty || 0;
+        { $group: { _id: "$returns.refundedItems.drugId", qty: { $sum: "$returns.refundedItems.quantity" } } },
+      ]),
+    ]);
+
+    const idStr = (v) => String(v || "");
+    const byBatch    = new Map(batchAgg.map(   r => [idStr(r._id), r]));
+    const byIssued   = new Map(issuedAgg.map(  r => [idStr(r._id), r.qty]));
+    const bySupp     = new Map(suppAgg.map(    r => [idStr(r._id), r.qty]));
+    const byReturned = new Map(returnedAgg.map(r => [idStr(r._id), r.qty]));
+
+    const out = [];
+    for (const d of drugs) {
+      const k = idStr(d._id);
+      const b = byBatch.get(k) || { opening: 0, receipts: 0, closing: 0 };
+      const grossIssued  = byIssued.get(k)   || 0;
+      const supplementQty = bySupp.get(k)    || 0;
+      const returnedQty  = byReturned.get(k) || 0;
       const issued = Math.max(0, grossIssued + supplementQty - returnedQty);
-      const closing = allBatches.reduce((s, b) => s + (b.remaining || 0), 0);
-      if (opening || receipts || issued || closing) {
+      if (b.opening || b.receipts || issued || b.closing) {
         out.push({
           drugId: d._id, drugName: d.name, category: d.category, hsn: d.hsnCode || "30049099",
-          opening, receipts, issued, closing,
+          opening: b.opening, receipts: b.receipts, issued, closing: b.closing,
           reorderLevel: d.reorderLevel || 10,
         });
       }
