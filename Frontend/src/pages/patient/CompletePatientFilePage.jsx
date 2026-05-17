@@ -482,6 +482,315 @@ function BloodTransfusionPanel({ data }) {
   );
 }
 
+/* ── Generic detector helper ─────────────────────────────────────────
+   `matchKeys(data, keys, min)` returns true iff `data` is an object
+   that contains at least `min` of the given keys (case-insensitive).
+   Used by the type-specific match*() functions below. */
+function matchKeys(data, keys, min = 3) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return false;
+  const have = new Set(Object.keys(data).map((k) => k.toLowerCase()));
+  let hits = 0;
+  for (const k of keys) if (have.has(k.toLowerCase())) hits++;
+  return hits >= min;
+}
+
+/* ── IV LINE / INFUSION ─────────────────────────────────────────── */
+function matchIV(data) {
+  if (!matchKeys(data, ["fluid", "volume", "rate", "dropsPerMin", "route", "site", "cannulaDate", "setChangeDate", "additive"], 3)) return false;
+  // Disambiguate from blood — blood has product+bagNo.
+  if (lc(data, "bagNo") && lc(data, "product")) return false;
+  return true;
+}
+function IVPanel({ data }) {
+  const site = lc(data, "site");
+  const cond = lc(data, "condition");
+  const siteColor = (cond || "").toLowerCase().includes("patent") ? "#16a34a"
+                  : (cond || "").toLowerCase().match(/swollen|redness|removed/) ? "#dc2626"
+                  : "#64748b";
+  return (
+    <div style={{
+      marginTop: 4, padding: "8px 12px", borderRadius: 6,
+      background: "linear-gradient(180deg, #ecfeff 0%, #fff 30%)",
+      border: "1px solid #a5f3fc", borderLeft: "4px solid #0891b2",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12.5, fontWeight: 800, color: "#0e7490", letterSpacing: 0.3 }}>💧 IV LINE / INFUSION</span>
+        {cond && (
+          <span style={{ padding: "2px 9px", borderRadius: 4, fontSize: 10.5, fontWeight: 800,
+            background: `${siteColor}18`, color: siteColor, border: `1px solid ${siteColor}50` }}>{cond.toUpperCase()}</span>
+        )}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "3px 14px", fontSize: 11.5 }}>
+        {lc(data, "fluid")         && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Fluid:</span> <b>{lc(data, "fluid")}</b></div>}
+        {lc(data, "volume")        && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Volume:</span> {lc(data, "volume")} ml</div>}
+        {lc(data, "rate")          && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Rate:</span> {lc(data, "rate")} ml/h</div>}
+        {lc(data, "dropsPerMin")   && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Drops/min:</span> {lc(data, "dropsPerMin")}</div>}
+        {lc(data, "route")         && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Route:</span> {lc(data, "route")}</div>}
+        {site                       && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Site:</span> {site}</div>}
+        {lc(data, "cannulaDate")   && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Cannula:</span> {lc(data, "cannulaDate")}</div>}
+        {lc(data, "setChangeDate") && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Set change:</span> {lc(data, "setChangeDate")}</div>}
+        {lc(data, "additive")      && <div style={{ gridColumn: "1 / -1" }}><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Additive:</span> {lc(data, "additive")}</div>}
+      </div>
+    </div>
+  );
+}
+
+/* ── WOUND CARE ─────────────────────────────────────────────────── */
+function matchWound(data) {
+  return matchKeys(data, ["exudateAmt", "exudateType", "healingStage", "tunneling", "undermining", "surroundingSkin", "dressing", "type"], 3)
+      && (lc(data, "exudateAmt") || lc(data, "exudateType") || lc(data, "healingStage"));
+}
+function WoundPanel({ data }) {
+  const stage = lc(data, "healingStage") || "";
+  const stageColor = /granulating|epithelial/i.test(stage) ? "#16a34a"
+                   : /sloughy|necrotic|infected/i.test(stage) ? "#dc2626"
+                   : "#ca8a04";
+  const L = lc(data, "length"), W = lc(data, "width"), D = lc(data, "depth");
+  const dims = [L && `${L} cm`, W && `${W} cm`, D && `${D} cm`].filter(Boolean).join(" × ");
+  return (
+    <div style={{
+      marginTop: 4, padding: "8px 12px", borderRadius: 6,
+      background: "linear-gradient(180deg, #fff7ed 0%, #fff 30%)",
+      border: "1px solid #fed7aa", borderLeft: "4px solid #ea580c",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12.5, fontWeight: 800, color: "#9a3412" }}>🩹 WOUND CARE</span>
+        {stage && (
+          <span style={{ padding: "2px 9px", borderRadius: 4, fontSize: 10.5, fontWeight: 800,
+            background: `${stageColor}18`, color: stageColor, border: `1px solid ${stageColor}50` }}>{stage.toUpperCase()}</span>
+        )}
+        {lc(data, "tunneling")    && <span style={{ padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "#fee2e2", color: "#b91c1c" }}>⚠ Tunneling</span>}
+        {lc(data, "undermining")  && <span style={{ padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "#fee2e2", color: "#b91c1c" }}>⚠ Undermining</span>}
+        {lc(data, "odour")        && <span style={{ padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "#fee2e2", color: "#b91c1c" }}>⚠ Odour</span>}
+        {lc(data, "swabSent")     && <span style={{ padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "#dcfce7", color: "#166534" }}>Swab sent</span>}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "3px 14px", fontSize: 11.5 }}>
+        {lc(data, "type")          && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Type:</span> <b>{lc(data, "type")}</b></div>}
+        {lc(data, "site")          && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Site:</span> {lc(data, "site")}</div>}
+        {dims                      && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>L × W × D:</span> <span style={{ fontFamily: "monospace" }}>{dims}</span></div>}
+        {(lc(data, "exudateAmt") || lc(data, "exudateType")) && (
+          <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Exudate:</span> {[lc(data, "exudateAmt"), lc(data, "exudateType")].filter(Boolean).join(" · ")}</div>
+        )}
+        {lc(data, "surroundingSkin") && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Surrounding:</span> {lc(data, "surroundingSkin")}</div>}
+        {lc(data, "dressing")      && <div style={{ gridColumn: "1 / -1" }}><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Dressing:</span> {lc(data, "dressing")}</div>}
+        {lc(data, "painDuring")    && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Pain during:</span> {lc(data, "painDuring")}</div>}
+        {lc(data, "nextDressingDate") && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Next dressing:</span> {lc(data, "nextDressingDate")}</div>}
+      </div>
+    </div>
+  );
+}
+
+/* ── PAIN ASSESSMENT ────────────────────────────────────────────── */
+function matchPain(data) {
+  if (!matchKeys(data, ["scale", "score", "location", "character", "onset", "duration", "frequency", "aggravating", "relieving", "analgesicGiven", "reassessScore"], 3)) return false;
+  return lc(data, "score") != null || lc(data, "reassessScore") != null;
+}
+function PainPanel({ data }) {
+  const score = Number(lc(data, "score"));
+  const scoreColor = !Number.isFinite(score) ? "#64748b"
+                   : score >= 7 ? "#dc2626"
+                   : score >= 4 ? "#ea580c"
+                   : score >= 1 ? "#ca8a04"
+                   : "#16a34a";
+  const reScore = Number(lc(data, "reassessScore"));
+  return (
+    <div style={{
+      marginTop: 4, padding: "8px 12px", borderRadius: 6,
+      background: "linear-gradient(180deg, #fdf2f8 0%, #fff 30%)",
+      border: "1px solid #fbcfe8", borderLeft: "4px solid #db2777",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12.5, fontWeight: 800, color: "#9d174d" }}>🔥 PAIN ASSESSMENT</span>
+        {Number.isFinite(score) && (
+          <span style={{ padding: "2px 10px", borderRadius: 4, fontSize: 12, fontWeight: 800,
+            background: `${scoreColor}18`, color: scoreColor, border: `1px solid ${scoreColor}50` }}>
+            {score}/10 {lc(data, "scale") || ""}
+          </span>
+        )}
+        {Number.isFinite(reScore) && (
+          <span style={{ padding: "2px 10px", borderRadius: 4, fontSize: 11, fontWeight: 700,
+            background: "#fff", color: scoreColor, border: `1px dashed ${scoreColor}` }}>
+            Reassess: {reScore}/10 {lc(data, "reassessTime") ? `@ ${lc(data, "reassessTime")}` : ""}
+          </span>
+        )}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "3px 14px", fontSize: 11.5 }}>
+        {lc(data, "location")     && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Location:</span> <b>{lc(data, "location")}</b></div>}
+        {lc(data, "type")         && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Type:</span> {lc(data, "type")}</div>}
+        {lc(data, "character")    && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Character:</span> {lc(data, "character")}</div>}
+        {lc(data, "onset")        && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Onset:</span> {lc(data, "onset")}</div>}
+        {lc(data, "duration")     && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Duration:</span> {lc(data, "duration")}</div>}
+        {lc(data, "frequency")    && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Frequency:</span> {lc(data, "frequency")}</div>}
+        {lc(data, "radiation")    && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Radiation:</span> Yes{lc(data, "radiationSite") ? ` → ${lc(data, "radiationSite")}` : ""}</div>}
+        {lc(data, "aggravating")  && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Aggravating:</span> {lc(data, "aggravating")}</div>}
+        {lc(data, "relieving")    && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Relieving:</span> {lc(data, "relieving")}</div>}
+        {lc(data, "painOnMovement") && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>On movement:</span> Yes</div>}
+        {lc(data, "nonPharm")     && <div style={{ gridColumn: "1 / -1" }}><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Non-pharm:</span> {lc(data, "nonPharm")}</div>}
+        {(lc(data, "analgesicGiven") || lc(data, "analgesic")) && (
+          <div style={{ gridColumn: "1 / -1", paddingTop: 4, borderTop: "1px dashed #fbcfe8" }}>
+            <span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Analgesic:</span>{" "}
+            <b>{lc(data, "analgesic") || "Given"}</b>
+            {lc(data, "analgesicRoute") ? ` · ${lc(data, "analgesicRoute")}` : ""}
+            {lc(data, "analgesicTime")  ? ` @ ${lc(data, "analgesicTime")}` : ""}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── NEURO ASSESSMENT ───────────────────────────────────────────── */
+function matchNeuro(data) {
+  // GCS sub-scores are the strong signal; pupils/limbs alone aren't enough.
+  return matchKeys(data, ["gcse", "gcsv", "gcsm", "pupils", "pupilSizeL", "pupilSizeR", "lightReflex", "seizure", "orientation", "limbUL", "limbUR", "limbLL", "limbLR"], 3);
+}
+function NeuroPanel({ data }) {
+  const e = Number(lc(data, "gcse")), v = Number(lc(data, "gcsv")), m = Number(lc(data, "gcsm"));
+  const gcsTotal = Number.isFinite(e) && Number.isFinite(v) && Number.isFinite(m) ? e + v + m : null;
+  const gcsColor = gcsTotal == null ? "#64748b"
+                 : gcsTotal >= 13 ? "#16a34a"
+                 : gcsTotal >=  9 ? "#ca8a04"
+                 : "#dc2626";
+  const limbs = {
+    UL: lc(data, "limbUL"), UR: lc(data, "limbUR"),
+    LL: lc(data, "limbLL"), LR: lc(data, "limbLR"),
+  };
+  const hasLimbs = Object.values(limbs).some((x) => x);
+  return (
+    <div style={{
+      marginTop: 4, padding: "8px 12px", borderRadius: 6,
+      background: "linear-gradient(180deg, #f5f3ff 0%, #fff 30%)",
+      border: "1px solid #ddd6fe", borderLeft: "4px solid #7c3aed",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12.5, fontWeight: 800, color: "#5b21b6" }}>🧠 NEURO ASSESSMENT</span>
+        {gcsTotal != null && (
+          <span style={{ padding: "2px 10px", borderRadius: 4, fontSize: 12, fontWeight: 800,
+            background: `${gcsColor}18`, color: gcsColor, border: `1px solid ${gcsColor}50` }}>
+            GCS {gcsTotal}/15 (E{e}V{v}M{m})
+          </span>
+        )}
+        {lc(data, "seizure") && <span style={{ padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "#fee2e2", color: "#b91c1c" }}>⚠ Seizure</span>}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "3px 14px", fontSize: 11.5, marginBottom: hasLimbs ? 6 : 0 }}>
+        {lc(data, "orientation")  && <div style={{ gridColumn: "1 / -1" }}><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Orientation:</span> <b>{lc(data, "orientation")}</b></div>}
+        {lc(data, "pupils")       && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Pupils:</span> {lc(data, "pupils")}</div>}
+        {(lc(data, "pupilSizeL") || lc(data, "pupilSizeR")) && (
+          <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Size L/R:</span> {lc(data, "pupilSizeL") || "?"} / {lc(data, "pupilSizeR") || "?"} mm</div>
+        )}
+        {lc(data, "lightReflex")  && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Light reflex:</span> {lc(data, "lightReflex")}</div>}
+      </div>
+      {hasLimbs && (
+        <div style={{ padding: "6px 8px", background: "#fff", borderRadius: 4, border: "1px dashed #ddd6fe" }}>
+          <div style={{ fontSize: 9.5, fontWeight: 800, color: "#6d28d9", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 3 }}>LIMB POWER</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2px 16px", fontSize: 11, fontFamily: "monospace" }}>
+            <div><b>UL:</b> {limbs.UL || "—"}</div>
+            <div><b>UR:</b> {limbs.UR || "—"}</div>
+            <div><b>LL:</b> {limbs.LL || "—"}</div>
+            <div><b>LR:</b> {limbs.LR || "—"}</div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── PROCEDURE NOTE ─────────────────────────────────────────────── */
+function matchProcedure(data) {
+  return (lc(data, "procedureName") || "") !== "" && matchKeys(data, ["procedureName", "indication", "site", "performedBy", "outcome", "complications", "consentObtained", "sterile"], 3);
+}
+function ProcedurePanel({ data }) {
+  const outcome = lc(data, "outcome") || "";
+  const outColor = /well|success/i.test(outcome) ? "#16a34a"
+                 : /complic|fail|abort/i.test(outcome) ? "#dc2626"
+                 : "#ca8a04";
+  const complications = lc(data, "complications");
+  return (
+    <div style={{
+      marginTop: 4, padding: "8px 12px", borderRadius: 6,
+      background: "linear-gradient(180deg, #f0fdf4 0%, #fff 30%)",
+      border: "1px solid #bbf7d0", borderLeft: "4px solid #16a34a",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12.5, fontWeight: 800, color: "#166534" }}>🩺 PROCEDURE</span>
+        <span style={{ fontSize: 12, fontWeight: 700, color: "#166534" }}>{lc(data, "procedureName")}</span>
+        {outcome && (
+          <span style={{ padding: "2px 9px", borderRadius: 4, fontSize: 10.5, fontWeight: 800,
+            background: `${outColor}18`, color: outColor, border: `1px solid ${outColor}50` }}>{outcome.toUpperCase()}</span>
+        )}
+        {lc(data, "consentObtained") && <span style={{ padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "#dcfce7", color: "#166534" }}>Consent ✓</span>}
+        {lc(data, "sterile")         && <span style={{ padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "#dcfce7", color: "#166534" }}>Sterile</span>}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "3px 14px", fontSize: 11.5 }}>
+        {lc(data, "indication")    && <div style={{ gridColumn: "1 / -1" }}><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Indication:</span> {lc(data, "indication")}</div>}
+        {lc(data, "site")          && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Site:</span> {lc(data, "site")}{lc(data, "laterality") && lc(data, "laterality") !== "N/A" ? ` (${lc(data, "laterality")})` : ""}</div>}
+        {lc(data, "time")          && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Time:</span> {lc(data, "time")}</div>}
+        {lc(data, "performedBy")   && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>By:</span> {lc(data, "performedBy")}{lc(data, "designation") ? ` · ${lc(data, "designation")}` : ""}</div>}
+        {lc(data, "assistant")     && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Assistant:</span> {lc(data, "assistant")}</div>}
+        {lc(data, "position")      && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Position:</span> {lc(data, "position")}</div>}
+        {complications && complications !== "None" && (
+          <div style={{ gridColumn: "1 / -1", padding: 4, background: "#fee2e2", borderRadius: 4, color: "#991b1b" }}>
+            <b>⚠ Complications:</b> {complications}
+          </div>
+        )}
+        {lc(data, "specimenSent")  && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Specimen sent:</span> Yes{lc(data, "specimenType") ? ` · ${lc(data, "specimenType")}` : ""}</div>}
+        {lc(data, "postProcVitals")&& <div style={{ gridColumn: "1 / -1" }}><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Post-proc vitals:</span> {lc(data, "postProcVitals")}</div>}
+        {lc(data, "followUp")      && <div style={{ gridColumn: "1 / -1" }}><span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>Follow-up:</span> {lc(data, "followUp")}</div>}
+      </div>
+    </div>
+  );
+}
+
+/* ── SBAR / SHIFT HANDOVER ──────────────────────────────────────── */
+function matchSBAR(data) {
+  return matchKeys(data, ["situation", "background", "assessment", "recommendation"], 3);
+}
+function SBARPanel({ data }) {
+  const rows = [
+    ["S", "Situation",      lc(data, "situation"),      "#dc2626"],
+    ["B", "Background",     lc(data, "background"),     "#ca8a04"],
+    ["A", "Assessment",     lc(data, "assessment"),     "#0284c7"],
+    ["R", "Recommendation", lc(data, "recommendation"), "#16a34a"],
+  ].filter(([, , v]) => v);
+  return (
+    <div style={{
+      marginTop: 4, padding: "8px 12px", borderRadius: 6,
+      background: "linear-gradient(180deg, #f0f9ff 0%, #fff 30%)",
+      border: "1px solid #bae6fd", borderLeft: "4px solid #0284c7",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12.5, fontWeight: 800, color: "#075985" }}>📋 SBAR HANDOVER</span>
+        {lc(data, "type") && (
+          <span style={{ padding: "1px 8px", borderRadius: 4, fontSize: 10.5, fontWeight: 700, background: "#e0f2fe", color: "#075985" }}>{lc(data, "type")}</span>
+        )}
+        {lc(data, "patientStatus") && (
+          <span style={{ padding: "1px 8px", borderRadius: 4, fontSize: 10.5, fontWeight: 700, background: "#dcfce7", color: "#166534" }}>{lc(data, "patientStatus")}</span>
+        )}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "22px 90px 1fr", gap: "4px 8px", fontSize: 11.5, alignItems: "baseline" }}>
+        {rows.map(([letter, label, text, color]) => (
+          <React.Fragment key={letter}>
+            <span style={{
+              width: 22, height: 22, borderRadius: 4, background: color, color: "#fff",
+              display: "inline-flex", alignItems: "center", justifyContent: "center",
+              fontWeight: 800, fontSize: 12,
+            }}>{letter}</span>
+            <span style={{ color, fontWeight: 700 }}>{label}</span>
+            <span>{text}</span>
+          </React.Fragment>
+        ))}
+      </div>
+      {(lc(data, "incomingNurse") || lc(data, "followUpDate")) && (
+        <div style={{ marginTop: 6, paddingTop: 4, borderTop: "1px dashed #bae6fd", fontSize: 11, color: "var(--pf-muted)", display: "flex", gap: 12, flexWrap: "wrap" }}>
+          {lc(data, "incomingNurse") && <span><b>To:</b> {lc(data, "incomingNurse")}</span>}
+          {lc(data, "followUpDate")  && <span><b>Follow-up:</b> {lc(data, "followUpDate")}</span>}
+          {lc(data, "educationGiven") && <span style={{ color: "#166534" }}>✓ Education given{lc(data, "educationTopics") ? ` (${lc(data, "educationTopics")})` : ""}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Does this object look like one of our known scales? Match by item-key
 // overlap — needs at least 3 of the canonical keys present (case-insens).
 function matchScale(data) {
@@ -659,8 +968,16 @@ function MixedFields({ data }) {
     return r == null ? null : <span style={{ fontSize: 11 }}>{r}</span>;
   }
 
-  // Blood-transfusion record gets a dedicated safety-critical panel.
-  if (matchBlood(data)) return <BloodTransfusionPanel data={data} />;
+  // Dispatch order: safety-critical & high-signal record types first,
+  // then scoring scales, then generic chip rendering. Each `match*`
+  // requires a strong key signature so we don't false-positive.
+  if (matchBlood(data))     return <BloodTransfusionPanel data={data} />;
+  if (matchSBAR(data))      return <SBARPanel data={data} />;
+  if (matchNeuro(data))     return <NeuroPanel data={data} />;
+  if (matchProcedure(data)) return <ProcedurePanel data={data} />;
+  if (matchWound(data))     return <WoundPanel data={data} />;
+  if (matchPain(data))      return <PainPanel data={data} />;
+  if (matchIV(data))        return <IVPanel data={data} />;
 
   // If THIS object looks like a known clinical scoring scale (Braden,
   // Morse, MEWS, GCS), render the dedicated panel instead of the
