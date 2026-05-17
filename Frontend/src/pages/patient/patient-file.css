@@ -352,6 +352,15 @@
 .pf-record__body { font-size: 12px; line-height: 1.55; color: var(--pf-text); }
 .pf-record__body p { margin: 0 0 6px; }
 
+/* Dense variant — used by Doctor/Nurse note cards in NoteList. Shrinks
+   inner padding + paragraph spacing + card margin so a fully-populated
+   IA (with vitals, exam-system subsections, etc.) reads as one tight
+   block instead of a page-tall record. Same field-set, just compact. */
+.pf-record__body--dense { font-size: 11.5px; line-height: 1.45; }
+.pf-record__body--dense p,
+.pf-record__body--dense div { margin: 0 0 3px; }
+.pf-record:has(> .pf-record__body--dense) { padding: 8px 12px; margin-bottom: 6px; }
+
 .pf-record--doctor  { border-left-color: #7c3aed; }
 .pf-record--nurse   { border-left-color: #0d9488; }
 .pf-record--order   { border-left-color: #d97706; }
@@ -1638,7 +1647,12 @@
   .pf-record,
   .ppt-note,
   .ppt-sig,
-  .pf-table tr {
+  .pf-table tr,
+  /* New aggregating sections — each date card is a discrete unit
+     that should not split across pages. Marker class set inline on
+     IOSheet / ProcedureNotes / Timeline / ScoringTrends date blocks. */
+  .pf-print-keep,
+  .pf-date-card {
     page-break-inside: avoid;
     break-inside: avoid;
   }

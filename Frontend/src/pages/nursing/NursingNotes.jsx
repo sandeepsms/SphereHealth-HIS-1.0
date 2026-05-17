@@ -300,7 +300,15 @@ function NursingNotesContent({ selectedPatient }) {
 
   /* ── Module-specific form state ── */
   const [vitals,    setVitals]    = useState({ bp_sys: "", bp_dia: "", pulse: "", temp: "", spo2: "", rr: "", gcs: "", bsl: "", painScore: "", o2Flow: "", o2Device: "None", weight: "", position: "Supine" });
-  const [blood,     setBlood]     = useState({ product: "PRC (Packed RBC)", bagNo: "", crossMatchNo: "", volume: "350", groupVerified: true, secondNurse: "", startTime: "", status: "Transfusing", endTime: "", reactionType: "None", preBP_sys: "", preBP_dia: "", prePulse: "", preTemp: "", postBP_sys: "", postBP_dia: "", postPulse: "" });
+  // `intra` is the in-transfusion monitoring log — each row is one set of
+  // vitals taken at a known minute offset (NABH typical schedule:
+  // 15 min, 30 min, 60 min, then hourly). Array keeps the panel rendering
+  // forward-compatible if the schedule changes.
+  const [blood,     setBlood]     = useState({ product: "PRC (Packed RBC)", bagNo: "", crossMatchNo: "", volume: "350", groupVerified: true, secondNurse: "", startTime: "", status: "Transfusing", endTime: "", reactionType: "None", preBP_sys: "", preBP_dia: "", prePulse: "", preTemp: "", postBP_sys: "", postBP_dia: "", postPulse: "", intra: [
+    { atMin: 15, bp_sys: "", bp_dia: "", pulse: "", temp: "" },
+    { atMin: 30, bp_sys: "", bp_dia: "", pulse: "", temp: "" },
+    { atMin: 60, bp_sys: "", bp_dia: "", pulse: "", temp: "" },
+  ] });
   const [iv,        setIV]        = useState({ fluid: "NS 0.9%", volume: "", rate: "", dropsPerMin: "", route: "IV Right Forearm", site: "Patent", cannulaDate: "", setChangeDate: "", additive: "" });
   const [intake,    setIntake]    = useState({ oral: "", ivFluids: "", bloodProducts: "", urineOutput: "", drainOutput: "", nasogastric: "", emesis: "", bloodLoss: "" });
   const [ivMedOrders,    setIvMedOrders]    = useState([]); // IV dilution volumes from Treatment Chart
@@ -2188,6 +2196,42 @@ function NursingNotesContent({ selectedPatient }) {
                       <FL label="Diastolic BP (mmHg)"><input type="number" style={fld} value={blood.preBP_dia} placeholder="80" onChange={e => setBlood(p => ({ ...p, preBP_dia: e.target.value }))} /></FL>
                       <FL label="Pulse (/min)"><input type="number" style={fld} value={blood.prePulse} placeholder="80" onChange={e => setBlood(p => ({ ...p, prePulse: e.target.value }))} /></FL>
                       <FL label="Temp (°F)"><input type="number" style={fld} value={blood.preTemp} placeholder="98.6" onChange={e => setBlood(p => ({ ...p, preTemp: e.target.value }))} /></FL>
+                    </div>
+                  </div>
+
+                  {/* In-transfusion monitoring vitals — NABH typical:
+                      15 min, 30 min, 60 min, then hourly. Each row is
+                      independent so nurses can skip / add as needed. */}
+                  <div style={{ background:"#fffbeb", border:`1px solid #fde68a`, borderRadius:8, padding:"10px 14px" }}>
+                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:"#b45309", textTransform:"uppercase", letterSpacing:".6px" }}>In-Transfusion Monitoring</div>
+                      <button type="button"
+                        onClick={() => setBlood(p => ({ ...p, intra: [...(p.intra||[]), { atMin: ((p.intra?.[p.intra.length-1]?.atMin || 0) + 30), bp_sys: "", bp_dia: "", pulse: "", temp: "" }] }))}
+                        style={{ padding:"3px 10px", borderRadius:5, border:`1px solid #fcd34d`, background:"#fff", color:"#b45309", fontSize:11, fontWeight:700, cursor:"pointer" }}>
+                        + Add reading
+                      </button>
+                    </div>
+                    {(blood.intra || []).map((row, idx) => (
+                      <div key={idx} style={{ display:"grid", gridTemplateColumns:"70px 1fr 1fr 1fr 1fr 24px", gap:8, marginBottom:6, alignItems:"end" }}>
+                        <FL label="At (min)">
+                          <input type="number" style={fld} value={row.atMin ?? ""} placeholder="15"
+                            onChange={e => setBlood(p => ({ ...p, intra: p.intra.map((r,i) => i===idx ? { ...r, atMin: e.target.value === "" ? "" : Number(e.target.value) } : r) }))} />
+                        </FL>
+                        <FL label="Sys BP"><input type="number" style={fld} value={row.bp_sys} placeholder="120"
+                          onChange={e => setBlood(p => ({ ...p, intra: p.intra.map((r,i) => i===idx ? { ...r, bp_sys: e.target.value } : r) }))} /></FL>
+                        <FL label="Dia BP"><input type="number" style={fld} value={row.bp_dia} placeholder="78"
+                          onChange={e => setBlood(p => ({ ...p, intra: p.intra.map((r,i) => i===idx ? { ...r, bp_dia: e.target.value } : r) }))} /></FL>
+                        <FL label="Pulse"><input type="number" style={fld} value={row.pulse} placeholder="80"
+                          onChange={e => setBlood(p => ({ ...p, intra: p.intra.map((r,i) => i===idx ? { ...r, pulse: e.target.value } : r) }))} /></FL>
+                        <FL label="Temp"><input type="number" style={fld} value={row.temp} placeholder="98.6"
+                          onChange={e => setBlood(p => ({ ...p, intra: p.intra.map((r,i) => i===idx ? { ...r, temp: e.target.value } : r) }))} /></FL>
+                        <button type="button" title="Remove this reading"
+                          onClick={() => setBlood(p => ({ ...p, intra: p.intra.filter((_,i) => i!==idx) }))}
+                          style={{ width:24, height:24, borderRadius:5, border:`1px solid #fcd34d`, background:"#fff", color:"#b45309", cursor:"pointer", fontWeight:800 }}>×</button>
+                      </div>
+                    ))}
+                    <div style={{ fontSize:10.5, color:C.muted, marginTop:4 }}>
+                      Leave a row blank to skip it. NABH suggests vitals at 15 min, 30 min, then hourly until 2 h post-end.
                     </div>
                   </div>
                   {/* Post-transfusion vitals */}
