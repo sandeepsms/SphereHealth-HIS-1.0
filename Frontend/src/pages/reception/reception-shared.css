@@ -1293,3 +1293,47 @@
 .rx-vital-chip strong { color: #0f172a; font-weight: 700; }
 
 
+
+/* ── Keyboard shortcut hint pills (kbd) ────────────────────────
+   Used on action buttons + in the ShortcutsModal cheat sheet so the
+   receptionist learns hotkeys without leaving the page. */
+.rx-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  margin-left: 6px;
+  border: 1px solid #cbd5e1;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: #f8fafc;
+  color: #475569;
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+.rx-kbd--lg {
+  min-width: 26px;
+  height: 26px;
+  font-size: 12px;
+  padding: 0 8px;
+  margin-left: 0;
+}
+.rx-kbd--dark {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+.rx-action-btn--danger .rx-kbd {
+  background: #fef2f2;
+  border-color: #fca5a5;
+  color: #b91c1c;
+}
+.rx-action-btn--primary .rx-kbd {
+  background: #ecfeff;
+  border-color: #67e8f9;
+  color: #0e7490;
+}

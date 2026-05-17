@@ -194,6 +194,31 @@ export default function ReceptionBilling() {
     navigate(`/reception-billing/${encodeURIComponent(p.UHID)}`, { replace: true });
   };
 
+  // Helper — deselect the current patient and return to the directory.
+  // Bound to the "Clear" button + Escape key. Clears all per-patient
+  // state so the next pick starts clean.
+  const clearPatient = useCallback(() => {
+    setUhid("");
+    setPatient(null);
+    setBills([]);
+    setActiveBill(null);
+    setAdvances([]);
+    setUnspentAdv(0);
+    setSearchQ("");
+    setSearchResults([]);
+    setSearchOpen(false);
+    navigate("/reception-billing", { replace: true });
+  }, [navigate]);
+
+  // Help-overlay toggle (? key) — shows the keyboard shortcut cheat sheet.
+  const [showShortcuts, setShowShortcuts] = useState(false);
+
+  // NOTE: The keyboard-shortcut useEffect is intentionally defined later in
+  // this file (just before `totals`), AFTER loadBill / generateBill /
+  // printReceipt are declared. Putting it here triggered a Temporal Dead
+  // Zone (TDZ) crash because the dep array referenced functions declared
+  // further down. See "Keyboard shortcuts" block below.
+
   // Today's collection summary — small live tile.
   // Response shape: { success, date, summary: { totalCollected, totalGross, ... } }
   // AbortController guards against the receptionist navigating away mid-
@@ -260,6 +285,121 @@ export default function ReceptionBilling() {
     });
   };
 
+  // ── Keyboard shortcuts ─────────────────────────────────────────
+  //
+  // Receptionist-facing hotkeys. Defined HERE (not next to clearPatient)
+  // so that loadBill / generateBill / printReceipt are already in scope
+  // — otherwise the dep array hits a TDZ on first render.
+  //
+  // Skip when the user is typing in an input/textarea/select/contenteditable
+  // (so "1" inside a search box doesn't fire the OPD tab). Most modals
+  // close themselves on Escape via their own backdrop click — Escape here
+  // only clears the patient selection when no modal is open.
+  useEffect(() => {
+    const onKey = (e) => {
+      const tag = e.target?.tagName;
+      const isTyping =
+        tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" ||
+        e.target?.isContentEditable;
+
+      // "?" — always show help (also works while typing, since "?"
+      // requires Shift and is unlikely to be typed by accident; but
+      // skip it if a modal text input is currently focused).
+      if (e.key === "?" && !isTyping) {
+        e.preventDefault();
+        setShowShortcuts(true);
+        return;
+      }
+
+      // "/" or Ctrl+K — focus the search box (industry standard).
+      // Skip when already in an input so it stays as a literal "/" key.
+      if (!isTyping && (e.key === "/" || (e.ctrlKey && e.key.toLowerCase() === "k"))) {
+        e.preventDefault();
+        const el = document.querySelector('input[placeholder*="name, UHID"]');
+        if (el) el.focus();
+        return;
+      }
+
+      // Esc — close help, clear search dropdown, or clear patient.
+      // Modals own their own Esc → those don't reach here (they
+      // stopPropagation via the backdrop click).
+      if (e.key === "Escape") {
+        if (showShortcuts) { setShowShortcuts(false); return; }
+        if (isTyping) return;
+        if (searchOpen)    { setSearchOpen(false); return; }
+        if (patient)       { clearPatient(); return; }
+      }
+
+      // The rest only fire when NOT typing (so "g" inside a search
+      // box still types a "g") and a patient is selected for the
+      // action-shortcuts.
+      if (isTyping) return;
+
+      // 1-6 — directory tab switch (only when no patient loaded).
+      if (!patient && /^[1-6]$/.test(e.key)) {
+        const TABS = ["OPD","IPD","Daycare","Emergency","Services","ALL"];
+        setListType(TABS[Number(e.key) - 1]);
+        return;
+      }
+
+      if (!patient) return;
+
+      const k = e.key.toLowerCase();
+
+      // T — Take Advance (always available when a patient is loaded).
+      if (k === "t") {
+        e.preventDefault();
+        setShowAdvDlg(true);
+        return;
+      }
+
+      // Bill-specific shortcuts only when a bill is selected on the
+      // right side. Backend status guards still apply.
+      if (!activeBill) return;
+      const status = activeBill.billStatus;
+      if (k === "g" && status === "DRAFT") {        // Generate
+        e.preventDefault();
+        generateBill(activeBill._id);
+        return;
+      }
+      if (k === "a" && status === "DRAFT") {        // Add Service
+        e.preventDefault();
+        setAddSvcTarget(activeBill);
+        return;
+      }
+      if (k === "p" && ["GENERATED","PARTIAL"].includes(status)) {  // Pay
+        e.preventDefault();
+        setPayTarget(activeBill);
+        return;
+      }
+      if (k === "v" && ["GENERATED","PARTIAL"].includes(status) && unspentAdv > 0 && Number(activeBill.balanceAmount) > 0) {
+        // V — apply adVance to bill (FIFO oldest first). Mirrors the
+        // onApplyAdvance click handler on the BillDetail toolbar.
+        e.preventDefault();
+        const unspent = advances.filter((a) => (a.remainingAmount || 0) > 0);
+        const adv = unspent[unspent.length - 1] || unspent[0];
+        if (adv) {
+          axios.post(`${API_ENDPOINTS.BILLING}/advance/${adv._id}/apply`, { billId: activeBill._id })
+            .then(async () => { toast.success("Advance applied"); await load(uhid); await loadBill(activeBill._id); })
+            .catch((err) => toast.error(err?.response?.data?.message || "Apply failed"));
+        }
+        return;
+      }
+      if (k === "r" && status !== "DRAFT") {        // pRint receipt
+        e.preventDefault();
+        printReceipt(activeBill);
+        return;
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+    // loadBill / generateBill / printReceipt are recreated each render;
+    // listing them keeps callbacks fresh but they're not in deps array
+    // to avoid the listener bouncing on every render. The closure picks
+    // up the latest patient/activeBill/etc which is what we care about.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patient, activeBill, advances, unspentAdv, uhid, searchOpen, showShortcuts, clearPatient, load]);
+
   const totals = useMemo(() => {
     const sum = (k) => bills.reduce((s, b) => s + (b[k] || 0), 0);
     return {
@@ -283,6 +423,12 @@ export default function ReceptionBilling() {
           </div>
         </div>
         <div className="rx-header-actions">
+          <button className="rx-btn-ghost"
+                  onClick={() => setShowShortcuts(true)}
+                  title="Keyboard shortcuts (press ?)">
+            <i className="pi pi-question-circle" /> Shortcuts
+            <kbd className="rx-kbd rx-kbd--dark">?</kbd>
+          </button>
           <button className="rx-btn-ghost" onClick={() => navigate("/patient-search")}>
             <i className="pi pi-search" /> Patient Search
           </button>
@@ -405,12 +551,20 @@ export default function ReceptionBilling() {
             <div className="rx-card-actions">
               <button className="rx-action-btn rx-action-btn--primary"
                       onClick={() => setShowAdvDlg(true)}
-                      title="Take cash / UPI / card deposit before bills are generated">
+                      title="Take cash / UPI / card deposit (T)">
                 <i className="pi pi-wallet" /> Take Advance
+                <kbd className="rx-kbd">T</kbd>
               </button>
               <button className="rx-action-btn"
-                      onClick={() => navigate(`/visit-history/${patient.UHID}`)}>
+                      onClick={() => navigate(`/visit-history/${patient.UHID}`)}
+                      title="Visit history for this patient">
                 <i className="pi pi-clock" /> History
+              </button>
+              <button className="rx-action-btn rx-action-btn--danger"
+                      onClick={clearPatient}
+                      title="Clear current patient and return to directory (Esc)">
+                <i className="pi pi-times" /> Clear
+                <kbd className="rx-kbd">Esc</kbd>
               </button>
             </div>
           </div>
@@ -598,6 +752,15 @@ export default function ReceptionBilling() {
           patient={patient}
           onClose={() => setShowAdvDlg(false)}
           onSaved={() => { setShowAdvDlg(false); load(uhid); }}
+        />
+      )}
+
+      {showShortcuts && (
+        <ShortcutsModal
+          patientLoaded={!!patient}
+          activeBillStatus={activeBill?.billStatus}
+          unspentAdv={unspentAdv}
+          onClose={() => setShowShortcuts(false)}
         />
       )}
 
@@ -1108,6 +1271,106 @@ function receiptHTML(bill, patient) {
 
 function escapeHtml(s = "") {
   return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   ShortcutsModal — cheat sheet of all hotkeys on the Billing Counter
+   Triggered by "?" key or the "Shortcuts" button in the header.
+   Greys out shortcuts that aren't applicable in the current state
+   (e.g. "G - Generate" is dim if the active bill is already GENERATED).
+═══════════════════════════════════════════════════════════════ */
+function ShortcutsModal({ patientLoaded, activeBillStatus, unspentAdv, onClose }) {
+  const dim = (active) => ({
+    opacity: active ? 1 : 0.35,
+    pointerEvents: "none",
+  });
+  const isDraft     = activeBillStatus === "DRAFT";
+  const canPay      = ["GENERATED", "PARTIAL"].includes(activeBillStatus);
+  const canApply    = canPay && unspentAdv > 0;
+  const hasBillCtx  = !!activeBillStatus;
+
+  return (
+    <div className="rx-modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="rx-modal" style={{ maxWidth: 560 }}>
+        <div className="rx-modal-head">
+          <i className="pi pi-info-circle" /> Keyboard Shortcuts
+          <button className="rx-modal-close" onClick={onClose}>✕</button>
+        </div>
+        <div className="rx-modal-body" style={{ padding: "12px 16px", gap: 6 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: "#06b6d4", letterSpacing: 0.4, marginTop: 4 }}>
+            Search &amp; navigation
+          </div>
+          <ShortcutRow keys={["/", "Ctrl", "K"]} label="Focus the search box" />
+          <ShortcutRow keys={["?"]} label="Show / hide this help" />
+          <ShortcutRow keys={["Esc"]} label={patientLoaded ? "Clear current patient → return to directory" : "Close dropdown / help"} />
+
+          <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: "#06b6d4", letterSpacing: 0.4, marginTop: 10 }}>
+            Directory tabs (no patient selected)
+          </div>
+          <div style={dim(!patientLoaded)}>
+            <ShortcutRow keys={["1"]} label="OPD" />
+            <ShortcutRow keys={["2"]} label="IPD" />
+            <ShortcutRow keys={["3"]} label="Day Care" />
+            <ShortcutRow keys={["4"]} label="Emergency" />
+            <ShortcutRow keys={["5"]} label="Services" />
+            <ShortcutRow keys={["6"]} label="All Types" />
+          </div>
+
+          <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: "#06b6d4", letterSpacing: 0.4, marginTop: 10 }}>
+            Patient actions
+          </div>
+          <div style={dim(patientLoaded)}>
+            <ShortcutRow keys={["T"]} label="Take Advance deposit" />
+          </div>
+
+          <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: "#06b6d4", letterSpacing: 0.4, marginTop: 10 }}>
+            Bill actions (when a bill is selected)
+          </div>
+          <div style={dim(hasBillCtx && isDraft)}>
+            <ShortcutRow keys={["A"]} label="Add Service to bill (DRAFT only)" />
+            <ShortcutRow keys={["G"]} label="Generate (finalize) DRAFT bill" />
+          </div>
+          <div style={dim(hasBillCtx && canPay)}>
+            <ShortcutRow keys={["P"]} label="Collect Payment" />
+          </div>
+          <div style={dim(hasBillCtx && canApply)}>
+            <ShortcutRow keys={["V"]} label="Apply Advance to this bill" />
+          </div>
+          <div style={dim(hasBillCtx && activeBillStatus && activeBillStatus !== "DRAFT")}>
+            <ShortcutRow keys={["R"]} label="Print Receipt" />
+          </div>
+
+          <div style={{ marginTop: 12, padding: "8px 12px", background: "#ecfeff", color: "#0e7490", border: "1px solid #67e8f9", borderRadius: 8, fontSize: 11, lineHeight: 1.5 }}>
+            <i className="pi pi-info-circle" /> Shortcuts are <strong>ignored while typing</strong> in
+            input boxes (so "1" in the search bar still types "1"). Press <kbd className="rx-kbd">Esc</kbd> to
+            unfocus an input and re-enable hotkeys.
+          </div>
+        </div>
+        <div className="rx-modal-foot">
+          <button className="rx-action-btn rx-action-btn--primary" onClick={onClose}>
+            <i className="pi pi-check" /> Got it
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// One row in the shortcuts cheat sheet — keys on the left, label on the right.
+function ShortcutRow({ keys, label }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 0", fontSize: 12, color: "#475569" }}>
+      <div style={{ display: "inline-flex", gap: 4, minWidth: 90 }}>
+        {keys.map((k, i) => (
+          <React.Fragment key={k}>
+            {i > 0 && <span style={{ color: "#94a3b8", fontSize: 11, alignSelf: "center" }}>+</span>}
+            <kbd className="rx-kbd rx-kbd--lg">{k}</kbd>
+          </React.Fragment>
+        ))}
+      </div>
+      <span style={{ flex: 1 }}>{label}</span>
+    </div>
+  );
 }
 
 /* ═══════════════════════════════════════════════════════════════
