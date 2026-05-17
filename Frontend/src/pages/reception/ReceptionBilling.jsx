@@ -40,6 +40,35 @@ const STATUS_CLASS = {
 // Matches PaymentSchema.paymentMode enum on the backend. TPA_CLAIM is used
 // when the TPA reimbursement settles a previously-pending share of a bill.
 const PAYMENT_MODES = ["CASH", "UPI", "CARD", "CHEQUE", "ONLINE", "TPA_CLAIM"];
+const ADVANCE_MODES = ["CASH", "UPI", "CARD", "CHEQUE", "ONLINE"];
+
+/* Open /print/advance-receipt in a popup with the payload preloaded in
+   sessionStorage. Matches the contract documented in PrintRouterPage.jsx.
+   Single source of truth — both the success-state Print button and the
+   per-row Reprint icon call this helper. */
+function printAdvanceReceipt(advance, patient) {
+  if (!advance || !patient) return;
+  const payload = {
+    receiptNo:    advance.receiptNumber,
+    patientName:  [patient.title, patient.fullName].filter(Boolean).join(" "),
+    uhid:         patient.UHID,
+    ipdNo:        advance.admission?.admissionNumber || null,
+    admissionDate: advance.admission?.admissionDate || null,
+    bedNumber:    null,
+    wardName:     null,
+    date:         advance.paidAt || advance.createdAt || new Date().toISOString(),
+    amount:       Number(advance.amount?.$numberDecimal ?? advance.amount) || 0,
+    method:       advance.paymentMode,
+    refNo:        advance.transactionId,
+    depositPurpose: advance.remarks || "hospitalization advance",
+  };
+  try {
+    sessionStorage.setItem("printPayload-advance-receipt", JSON.stringify(payload));
+  } catch (e) {
+    console.error("[print] sessionStorage write failed:", e?.message);
+  }
+  window.open("/print/advance-receipt", "_blank", "noopener,noreferrer,width=900,height=1100");
+}
 
 export default function ReceptionBilling() {
   const { uhid: paramUhid } = useParams();
@@ -54,11 +83,19 @@ export default function ReceptionBilling() {
   const [refundTarget, setRefundTarget] = useState(null);
   const [cancelTarget, setCancelTarget] = useState(null);
   const [todayCollection, setTodayCollection] = useState(null);
+  // ── Advance-deposit state — fetched alongside bills on every load.
+  //    advances: full ledger; unspentAdv: aggregated remaining balance
+  //    (drives the "Advance Credit" KPI + Apply-Advance button gate).
+  //    showAdvDlg toggles the TakeAdvanceModal.
+  const [advances,      setAdvances]      = useState([]);
+  const [unspentAdv,    setUnspentAdv]    = useState(0);
+  const [showAdvDlg,    setShowAdvDlg]    = useState(false);
 
   const load = useCallback(async (uhidArg) => {
     if (!uhidArg) return;
     setLoading(true);
     setPatient(null); setBills([]); setActiveBill(null);
+    setAdvances([]); setUnspentAdv(0);
     try {
       const { data } = await axios.get(`${API_ENDPOINTS.BILLING}/uhid/${uhidArg}`);
       const p = data?.patient || data?.data?.patient;
@@ -66,6 +103,15 @@ export default function ReceptionBilling() {
       if (!p) { toast.warning("No patient found for that UHID"); setLoading(false); return; }
       setPatient(p);
       setBills(list);
+
+      // Parallel fetch — never blocks bill rendering if it 5xxs.
+      try {
+        const adv = await axios.get(`${API_ENDPOINTS.BILLING}/advance/uhid/${encodeURIComponent(uhidArg)}`);
+        setAdvances(adv?.data?.data?.advances || []);
+        setUnspentAdv(Number(adv?.data?.data?.totalUnspent) || 0);
+      } catch (e) {
+        console.warn("[ReceptionBilling] advance load failed:", e?.message);
+      }
     } catch (e) {
       toast.error(e?.response?.data?.message || "Failed to load bills");
     } finally { setLoading(false); }
@@ -210,6 +256,11 @@ export default function ReceptionBilling() {
               </div>
             </div>
             <div className="rx-card-actions">
+              <button className="rx-action-btn rx-action-btn--primary"
+                      onClick={() => setShowAdvDlg(true)}
+                      title="Take cash / UPI / card deposit before bills are generated">
+                <i className="pi pi-wallet" /> Take Advance
+              </button>
               <button className="rx-action-btn"
                       onClick={() => navigate(`/visit-history/${patient.UHID}`)}>
                 <i className="pi pi-clock" /> History
@@ -217,7 +268,9 @@ export default function ReceptionBilling() {
             </div>
           </div>
 
-          {/* KPI strip */}
+          {/* KPI strip — 5th tile (Advance Credit) only renders when
+              the patient has an unspent deposit; otherwise the strip
+              stays compact at 4 tiles. */}
           <div className="rx-kpis">
             <div className="rx-kpi rx-kpi--accent">
               <div className="rx-kpi-label">Total Bills</div>
@@ -236,7 +289,72 @@ export default function ReceptionBilling() {
               <div className="rx-kpi-label">Outstanding</div>
               <div className={`rx-kpi-value ${totals.due > 0 ? "rx-text-danger" : "rx-text-success"}`}>{fmtCur(totals.due)}</div>
             </div>
+            {unspentAdv > 0 && (
+              <div className="rx-kpi rx-kpi--accent rx-kpi--credit"
+                   title="Unspent advance deposits on this UHID. Click Apply on any open bill to consume.">
+                <div className="rx-kpi-label">Advance Credit</div>
+                <div className="rx-kpi-value rx-text-success">{fmtCur(unspentAdv)}</div>
+                <div className="rx-kpi-sub">{advances.filter((a) => (a.remainingAmount || 0) > 0).length} deposit{advances.filter((a) => (a.remainingAmount || 0) > 0).length === 1 ? "" : "s"}</div>
+              </div>
+            )}
           </div>
+
+          {/* ── Advance Deposits ledger ─────────────────────────────
+              Shows every deposit (active + applied + refunded). Reprint
+              icon on each non-void row. When a bill is selected on the
+              right, "Apply Advance" button on its toolbar consumes from
+              the oldest active deposit. */}
+          {advances.length > 0 && (
+            <div className="rx-card rx-mb-12" style={{ borderLeft: "4px solid #06b6d4", display: "block" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, fontSize: 12, fontWeight: 800, color: "#06b6d4", textTransform: "uppercase", letterSpacing: 0.4 }}>
+                <i className="pi pi-wallet" /> Advance Deposits
+                <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 700, color: unspentAdv > 0 ? "#15803d" : "#64748b", background: unspentAdv > 0 ? "#f0fdf4" : "#f1f5f9", padding: "3px 10px", borderRadius: 999, border: `1px solid ${unspentAdv > 0 ? "#86efac" : "#e2e8f0"}`, letterSpacing: 0, textTransform: "none" }}>
+                  {unspentAdv > 0 ? `Available: ${fmtCur(unspentAdv)}` : "Fully applied"}
+                </span>
+              </div>
+              {advances.map((a) => {
+                const isVoid = a.status === "REFUNDED" || a.status === "CANCELLED";
+                return (
+                  <div key={a._id} style={{
+                    padding: "6px 0",
+                    borderBottom: "1px dotted #f1f5f9",
+                    opacity: a.status === "FULLY_APPLIED" ? 0.7 : (isVoid ? 0.45 : 1),
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 12, color: "#475569" }}>
+                      <span className="rx-mono-tag">{a.receiptNumber}</span>
+                      <span className="rx-mode-pill">{a.paymentMode}</span>
+                      {a.transactionId && <span className="rx-mono-tag rx-mono-tag--subtle">{a.transactionId}</span>}
+                      <span style={{ color: "#94a3b8" }}>by {a.receivedBy}</span>
+                      <span style={{ marginLeft: "auto", fontFamily: "'DM Mono', monospace", fontWeight: 800, color: "#0f172a", fontSize: 13 }}>
+                        {fmtCur(a.amount)}
+                        {a.remainingAmount > 0 && a.remainingAmount < Number(a.amount) && (
+                          <span style={{ fontWeight: 600, fontSize: 11, color: "#15803d", marginLeft: 4 }}>
+                            ({fmtCur(a.remainingAmount)} left)
+                          </span>
+                        )}
+                      </span>
+                      {!isVoid && (
+                        <button
+                          type="button"
+                          onClick={() => printAdvanceReceipt(a, patient)}
+                          title={`Reprint receipt ${a.receiptNumber}`}
+                          style={{ width: 28, height: 28, borderRadius: 6, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+                        >
+                          <i className="pi pi-print" style={{ fontSize: 12 }} />
+                        </button>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 3, paddingLeft: 4 }}>
+                      {new Date(a.paidAt).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                      {" · status: "}<strong>{a.status}</strong>
+                      {a.appliedTo?.length > 0 && ` · applied to ${a.appliedTo.map((x) => x.billNumber).join(", ")}`}
+                      {a.remarks && ` · ${a.remarks}`}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
           {/* Two-column layout: bill list | active bill details */}
           <div className="rx-split-list">
@@ -285,11 +403,28 @@ export default function ReceptionBilling() {
               ) : (
                 <BillDetail
                   bill={activeBill}
+                  unspentAdv={unspentAdv}
                   onGenerate={() => generateBill(activeBill._id)}
                   onPay={() => setPayTarget(activeBill)}
                   onPrint={() => printReceipt(activeBill)}
                   onRefund={() => setRefundTarget(activeBill)}
                   onCancel={() => setCancelTarget(activeBill)}
+                  onApplyAdvance={async () => {
+                    const unspent = advances.filter((a) => (a.remainingAmount || 0) > 0);
+                    if (unspent.length === 0) { toast.warning("No unspent advance available"); return; }
+                    // FIFO — apply oldest first. Backend caps the amount at
+                    // MIN(advance remaining, bill balance) so a single click
+                    // is always safe.
+                    const adv = unspent[unspent.length - 1];
+                    try {
+                      await axios.post(`${API_ENDPOINTS.BILLING}/advance/${adv._id}/apply`, { billId: activeBill._id });
+                      toast.success("Advance applied to bill");
+                      await load(uhid);
+                      await loadBill(activeBill._id);
+                    } catch (e) {
+                      toast.error(e?.response?.data?.message || "Apply failed");
+                    }
+                  }}
                 />
               )}
             </div>
@@ -307,6 +442,14 @@ export default function ReceptionBilling() {
             await load(uhid);
             await loadBill(id);
           }}
+        />
+      )}
+
+      {showAdvDlg && patient && (
+        <TakeAdvanceModal
+          patient={patient}
+          onClose={() => setShowAdvDlg(false)}
+          onSaved={() => { setShowAdvDlg(false); load(uhid); }}
         />
       )}
 
@@ -341,13 +484,14 @@ export default function ReceptionBilling() {
 
 /* ───────────────────────────────────────────────────────────── */
 
-function BillDetail({ bill, onGenerate, onPay, onPrint, onRefund, onCancel }) {
+function BillDetail({ bill, unspentAdv = 0, onGenerate, onPay, onPrint, onRefund, onCancel, onApplyAdvance }) {
   const { can } = useAuth();
   const isDraft   = bill.billStatus === "DRAFT";
   const canPay    = ["GENERATED", "PARTIAL"].includes(bill.billStatus);
   const items     = bill.billItems || [];
   const payments  = bill.payments || [];
   const paidTotal = payments.reduce((s, p) => s + (p.amount || 0), 0);
+  const canApply  = canPay && unspentAdv > 0 && Number(bill.balanceAmount) > 0;
   // Receptionist may collect payments but NOT issue refunds or cancel a
   // finalized bill — those need Accountant/Admin (billing.refund).
   // Backend already 403s the call; this hides the button so the UX matches.
@@ -368,6 +512,13 @@ function BillDetail({ bill, onGenerate, onPay, onPrint, onRefund, onCancel }) {
         {isDraft && (
           <button className="rx-action-btn rx-action-btn--primary" onClick={onGenerate}>
             <i className="pi pi-check" /> Generate Bill
+          </button>
+        )}
+        {canApply && (
+          <button className="rx-action-btn rx-action-btn--primary"
+                  onClick={onApplyAdvance}
+                  title={`Consume from the oldest unspent advance (${unspentAdv.toLocaleString("en-IN")} available)`}>
+            <i className="pi pi-arrow-circle-down" /> Apply Advance
           </button>
         )}
         {canPay && (
@@ -785,4 +936,154 @@ function receiptHTML(bill, patient) {
 
 function escapeHtml(s = "") {
   return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   TakeAdvanceModal — cash/UPI/card deposit before bills exist
+   Posts to /api/billing/advance, switches to success state with a
+   Print Receipt button, then refreshes the parent on Done.
+═══════════════════════════════════════════════════════════════ */
+function TakeAdvanceModal({ patient, onClose, onSaved }) {
+  const [amount, setAmount] = useState("");
+  const [mode,   setMode]   = useState("CASH");
+  const [txnId,  setTxnId]  = useState("");
+  const [bank,   setBank]   = useState("");
+  const [remarks,setRemarks]= useState("");
+  const [err,    setErr]    = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [savedAdv, setSavedAdv] = useState(null);
+
+  const submit = async () => {
+    const amt = Number(amount);
+    if (!amt || amt <= 0) { setErr("Enter a valid amount"); return; }
+    if (mode !== "CASH" && !txnId) { setErr(`Transaction reference required for ${mode}`); return; }
+    setErr(null);
+    setSaving(true);
+    try {
+      const { data } = await axios.post(`${API_ENDPOINTS.BILLING}/advance`, {
+        UHID: patient.UHID,
+        amount: amt,
+        paymentMode: mode,
+        transactionId: txnId || null,
+        bankName: bank || null,
+        remarks: remarks || null,
+      });
+      setSavedAdv(data?.data || null);
+    } catch (e) {
+      setErr(e?.response?.data?.message || e?.message || "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (savedAdv) {
+    const amt = Number(savedAdv.amount?.$numberDecimal ?? savedAdv.amount) || 0;
+    return (
+      <div className="rx-modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) onSaved && onSaved(); }}>
+        <div className="rx-modal">
+          <div className="rx-modal-head" style={{ background: "linear-gradient(135deg, #15803d, #16a34a)" }}>
+            <i className="pi pi-check-circle" style={{ color: "#bbf7d0" }} /> Advance Received
+            <button className="rx-modal-close" onClick={() => onSaved && onSaved()}>✕</button>
+          </div>
+          <div className="rx-modal-body">
+            <div style={{ background: "linear-gradient(135deg, #fef9c3, #fde68a)", border: "2px solid #facc15", borderRadius: 12, padding: "18px 20px", textAlign: "center" }}>
+              <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 800, color: "#92400e", letterSpacing: 0.5, textTransform: "uppercase" }}>{savedAdv.receiptNumber}</div>
+              <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 32, fontWeight: 900, color: "#713f12", lineHeight: 1.1, marginTop: 6 }}>{fmtCur(amt)}</div>
+              <div style={{ fontSize: 12, color: "#92400e", marginTop: 4, fontWeight: 600 }}>
+                {savedAdv.paymentMode}{savedAdv.transactionId ? ` · ref ${savedAdv.transactionId}` : ""}
+              </div>
+              <div style={{ fontSize: 12, color: "#92400e", marginTop: 4, fontWeight: 600 }}>
+                from {patient.title ? patient.title + " " : ""}{patient.fullName} ({patient.UHID})
+              </div>
+            </div>
+            <div style={{ marginTop: 12, padding: "10px 12px", background: "#ecfeff", color: "#0e7490", border: "1px solid #67e8f9", borderRadius: 8, fontSize: 11, lineHeight: 1.5 }}>
+              <i className="pi pi-info-circle" /> This credit is now on the UHID with status <strong>ACTIVE</strong>.
+              Click <strong>Apply Advance</strong> on any open bill to consume from it.
+            </div>
+          </div>
+          <div className="rx-modal-foot">
+            <button className="rx-action-btn" onClick={() => onSaved && onSaved()}>Done</button>
+            <button className="rx-action-btn rx-action-btn--primary"
+                    onClick={() => printAdvanceReceipt(savedAdv, patient)}>
+              <i className="pi pi-print" /> Print Receipt
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rx-modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="rx-modal">
+        <div className="rx-modal-head">
+          <i className="pi pi-wallet" /> Take Advance Deposit
+          <button className="rx-modal-close" onClick={onClose}>✕</button>
+        </div>
+        <div className="rx-modal-body">
+          <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "8px 12px", fontSize: 13, color: "#0f172a" }}>
+            <strong>{patient.title ? `${patient.title} ` : ""}{patient.fullName}</strong>
+            <div style={{ fontSize: 11, color: "#64748b" }}>{patient.UHID} · {patient.contactNumber || "no phone"}</div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4 }}>Amount (₹) *</div>
+              <input type="number" min="1" autoFocus
+                     value={amount}
+                     onChange={(e) => setAmount(e.target.value)}
+                     placeholder="e.g. 10000"
+                     style={{ width: "100%", padding: "8px 12px", border: "1px solid #cbd5e1", borderRadius: 8, fontSize: 13 }} />
+            </div>
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4 }}>Payment Mode *</div>
+              <select value={mode} onChange={(e) => setMode(e.target.value)}
+                      style={{ width: "100%", padding: "8px 12px", border: "1px solid #cbd5e1", borderRadius: 8, fontSize: 13, background: "#fff" }}>
+                {ADVANCE_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
+            {mode !== "CASH" && (
+              <div style={{ gridColumn: "span 2" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4 }}>
+                  {mode === "CHEQUE" ? "Cheque No" : mode === "CARD" ? "Card Auth / Last 4" : "Transaction Reference"} *
+                </div>
+                <input value={txnId} onChange={(e) => setTxnId(e.target.value)}
+                       placeholder={mode === "UPI" ? "UPI ref id (12 digits)" : ""}
+                       style={{ width: "100%", padding: "8px 12px", border: "1px solid #cbd5e1", borderRadius: 8, fontSize: 13 }} />
+              </div>
+            )}
+            {(mode === "CHEQUE" || mode === "ONLINE") && (
+              <div style={{ gridColumn: "span 2" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4 }}>Bank Name</div>
+                <input value={bank} onChange={(e) => setBank(e.target.value)}
+                       placeholder="e.g. HDFC, SBI"
+                       style={{ width: "100%", padding: "8px 12px", border: "1px solid #cbd5e1", borderRadius: 8, fontSize: 13 }} />
+              </div>
+            )}
+            <div style={{ gridColumn: "span 2" }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4 }}>Remarks</div>
+              <input value={remarks} onChange={(e) => setRemarks(e.target.value)}
+                     placeholder="e.g. IPD admission deposit"
+                     style={{ width: "100%", padding: "8px 12px", border: "1px solid #cbd5e1", borderRadius: 8, fontSize: 13 }} />
+            </div>
+          </div>
+
+          {err && <div style={{ marginTop: 10, padding: "8px 12px", background: "#fef2f2", color: "#b91c1c", border: "1px solid #fca5a5", borderRadius: 8, fontSize: 12, fontWeight: 600 }}>{err}</div>}
+
+          <div style={{ marginTop: 12, padding: "10px 12px", background: "#ecfeff", color: "#0e7490", border: "1px solid #67e8f9", borderRadius: 8, fontSize: 11, lineHeight: 1.5 }}>
+            <i className="pi pi-info-circle" /> Deposit lands on this UHID as <strong>ADV-YYYY-NNNNNN</strong> with
+            status <strong>ACTIVE</strong>. Click <strong>Apply Advance</strong> on a generated bill to consume credit.
+          </div>
+        </div>
+        <div className="rx-modal-foot">
+          <button className="rx-action-btn" onClick={onClose} disabled={saving}>Cancel</button>
+          <button className="rx-action-btn rx-action-btn--primary"
+                  onClick={submit}
+                  disabled={saving || !amount || Number(amount) <= 0}>
+            <i className="pi pi-check" /> {saving ? "Saving…" : "Save Deposit"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
