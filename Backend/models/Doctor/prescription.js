@@ -39,13 +39,16 @@ const prescriptionSchema = new mongoose.Schema(
       physicalExamination: String,
     },
 
+    // Patient-safety bounds — same envelope as NurseVitalsSchema so
+    // OPD-side and IPD-side share the same definition of "physiologically
+    // possible". Patient-safety audit 2026-05-17 A-02.
     vitals: {
-      weight: Number,
-      temperature: Number,
-      bloodPressure: String,
-      pulse: Number,
-      respiratoryRate: Number,
-      spo2: Number,
+      weight:          { type: Number, min: 0,   max: 500 },
+      temperature:     { type: Number, min: 25,  max: 45 },
+      bloodPressure:   { type: String, match: /^\d{2,3}\/\d{2,3}$/ },
+      pulse:           { type: Number, min: 0,   max: 300 },
+      respiratoryRate: { type: Number, min: 0,   max: 80 },
+      spo2:            { type: Number, min: 0,   max: 100 },
     },
 
     provisionalDiagnosis: { type: String, required: true },
@@ -53,10 +56,16 @@ const prescriptionSchema = new mongoose.Schema(
     // ── Medicines ─────────────────────────────────────────────
     medicines: [
       {
-        medicineName: { type: String, required: true },
+        medicineName: { type: String, required: true, trim: true, minlength: 1 },
         schedule: String,
         instruction: String,
-        route: { type: String, default: "Oral" },
+        // Enum-constrained route so a typo like "Orall" or freeform text
+        // can't poison MAR / pharmacy downstream. Patient-safety audit A-07.
+        route: {
+          type: String,
+          enum: ["Oral", "IV", "IM", "SC", "SL", "PR", "PV", "Topical", "Inhalation", "Nebulisation", "Ophthalmic", "Otic", "Nasal", "Rectal", "Transdermal"],
+          default: "Oral",
+        },
         days: { type: String, default: "1" },
       },
     ],

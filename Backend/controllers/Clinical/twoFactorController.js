@@ -69,13 +69,17 @@ exports.requestOtp = async (req, res) => {
       userId:    u._id || u.id || null,
     });
 
-    // ── SMS send — pluggable. If no provider configured, log to stdout
-    // so QA can still test the gate in dev.
+    // ── SMS send — pluggable. We never log the full phone, OTP, or token
+    // to stdout (they appear in container logs, log aggregators, and on
+    // shared dev terminals — CWE-532 / DPDP §8). The OTP is still returned
+    // via the JSON response (in dev only) so QA can auto-fill; the JSON
+    // payload stays inside the encrypted TLS channel.
+    const maskedPhone = phoneToUse ? `${"*".repeat(Math.max(0, phoneToUse.length - 4))}${phoneToUse.slice(-4)}` : "(none)";
     if (process.env.SMS_PROVIDER) {
       // TODO: wire actual SMS gateway (Twilio / MSG91 / AWS SNS).
-      console.log(`[2FA] send via ${process.env.SMS_PROVIDER} → ${phoneToUse}`);
+      console.log(`[2FA] send via ${process.env.SMS_PROVIDER} → ${maskedPhone}`);
     } else {
-      console.log(`[2FA-DEV] purpose=${purpose} phone=${phoneToUse} otp=${otp} token=${token}`);
+      console.log(`[2FA-DEV] purpose=${purpose} phone=${maskedPhone} (otp/token redacted — see response payload)`);
     }
 
     return res.json({

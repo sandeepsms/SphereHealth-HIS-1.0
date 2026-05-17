@@ -39,6 +39,18 @@ const ACTIONS = {
   "security.gate-log":        ["Admin", "Security", "Receptionist"],
   "security.incident-report": ["Admin", "Security"],
 
+  // Patient demographics vs clinical edits — split so receptionist can fix a
+  // misspelled name / contact but can't rewrite blood group, DOB, allergies,
+  // gender (any of which would silently corrupt cross-checks like transfusion
+  // compatibility, paediatric dosing, drug-allergy alerts).
+  "patient.read":               ["Admin", "Receptionist", "Doctor", "Nurse", "Lab Technician", "Pharmacist", "Dietician", "TPA Coordinator", "Accountant"],
+  "patient.write-demographics": ["Admin", "Receptionist"],
+  "patient.write-clinical":     ["Admin", "Doctor", "Nurse"],
+  "patient.delete":             ["Admin"],
+  // Full data export (FHIR bundle, complete file dump) — clinical role only,
+  // gated on top of a DPDP consent check at the controller level.
+  "patient.export":             ["Admin", "Doctor"],
+
   // Clinical
   "rx.write":              ["Admin", "Doctor"],
   // Accountant added so /pharmacy/stats and /pharmacy/registers/* (the GST
@@ -47,7 +59,14 @@ const ACTIONS = {
   // exposed via this action.
   "rx.read":               ["Admin", "Doctor", "Nurse", "Pharmacist", "Accountant"],
   "ipd.assign-bed":        ["Admin", "Receptionist", "Doctor"],
-  "ipd.discharge":         ["Admin", "Doctor", "Receptionist"],
+  // Clinical discharge — the medical decision that the patient is safe to
+  // leave. Receptionist is intentionally NOT here (security audit 2026-05-17,
+  // finding B-05/A-13). The "reception.discharge" action below covers the
+  // bill-counter discharge step a receptionist legitimately performs.
+  "ipd.discharge":         ["Admin", "Doctor"],
+  "ipd.cancel":            ["Admin", "Doctor"],
+  "ipd.transfer":          ["Admin", "Doctor", "Nurse"],
+  "ipd.delete":            ["Admin"],
   "ipd.discharge-summary": ["Admin", "Doctor"],
   "vitals.write":          ["Admin", "Nurse", "Doctor"],
   "mar.write":             ["Admin", "Nurse"],

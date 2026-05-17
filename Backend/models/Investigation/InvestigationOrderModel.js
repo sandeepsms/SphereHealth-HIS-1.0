@@ -216,7 +216,58 @@ InvestigationOrderSchema.pre("save", async function (next) {
     (i) => i.performedAt === "EXTERNAL",
   ).length;
 
+  // ── Post-verification result lock (business audit 2026-05-17 F-02) ────
+  // Once an item is VERIFIED (clinician signed off) its results, units,
+  // reference range, and interpretation become immutable to anything except
+  // an explicit Admin amendment workflow. We snapshot the verified items at
+  // load time on the doc-level `_verifiedSnapshot` and compare on save.
+  if (!this.isNew && Array.isArray(this.items)) {
+    const snap = this._verifiedSnapshot || {};
+    for (const item of this.items) {
+      const prior = snap[String(item._id)];
+      if (!prior) continue; // newly added line — no prior verified state
+      if (prior.resultStatus !== "VERIFIED") continue;
+      // Allow only structural fields to mutate (e.g., reportPrintedAt).
+      const mutable = JSON.stringify({
+        results: item.results,
+        interpretation: item.interpretation,
+        resultStatus: item.resultStatus,
+        verifiedBy: item.verifiedBy,
+      });
+      if (mutable !== prior.serialized) {
+        return next(
+          new Error(
+            `Cannot modify verified lab item ${item._id} (${item.investigationName || item.investigationCode || "unnamed"}). ` +
+            `Verified results are append-only — file an amendment via the Lab Admin workflow.`,
+          ),
+        );
+      }
+    }
+  }
+
   next();
+});
+
+// Snapshot verified-item state on every load so the pre-save hook can detect
+// post-verification tampering. Cheap (one pass over items, JSON.stringify of
+// already-loaded fields) and required for the lock to actually fire.
+InvestigationOrderSchema.post("init", function () {
+  if (!Array.isArray(this.items)) return;
+  const snap = {};
+  for (const item of this.items) {
+    if (item.resultStatus === "VERIFIED") {
+      snap[String(item._id)] = {
+        resultStatus: item.resultStatus,
+        serialized: JSON.stringify({
+          results: item.results,
+          interpretation: item.interpretation,
+          resultStatus: item.resultStatus,
+          verifiedBy: item.verifiedBy,
+        }),
+      };
+    }
+  }
+  this._verifiedSnapshot = snap;
 });
 
 InvestigationOrderSchema.index({ UHID: 1 });

@@ -62,7 +62,10 @@ exports.list = handle(async (req, res) => {
   if (req.query.doctorId) filter.doctorId = req.query.doctorId;
   if (req.query.status)   filter.status   = req.query.status;
   if (req.query.q) {
-    const q = new RegExp(req.query.q, "i");
+    // Escape user-supplied regex chars so a caller can't pass `.*` and
+    // dump every appointment (security audit 2026-05-17 finding B-02).
+    const { safeRegex } = require("../../utils/queryGuards");
+    const q = safeRegex(req.query.q);
     filter.$or = [{ patientName: q }, { patientPhone: q }, { appointmentNumber: q }, { UHID: q }];
   }
   const list = await Appointment.find(filter)

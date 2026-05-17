@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const ctrl = require("../../controllers/Patient/admissionController");
-const { authenticate, authorize, attemptAuth, attachDoctorProfile } = require("../../middleware/auth");
+const { authenticate, authorize, attemptAuth, attachDoctorProfile, requireAction } = require("../../middleware/auth");
 
 // Soft-auth + doctor profile resolver so list endpoints can auto-restrict
 // to "only this doctor's admitted patients" when the caller is a Doctor.
@@ -41,17 +41,21 @@ router.get("/patient/:patientId/history", ctrl.getPatientAdmissionHistory); // �
 router.get("/patient/:patientId", ctrl.getPatientAdmissionHistory); // ✅ alias
 
 // ── CRUD ─────────────────────────────────────────────────────
-router.post("/", ctrl.createAdmission);
+router.post("/", authenticate, requireAction("ipd.assign-bed"), ctrl.createAdmission);
 router.get("/", ctrl.getAllAdmissions);
 router.get("/:id/access", authenticate, ctrl.checkAccess);
 router.get("/:id", ctrl.getAdmissionById);
-router.put("/:id", ctrl.updateAdmission);
-router.delete("/:id", ctrl.deleteAdmission);
+router.put("/:id", authenticate, requireAction("ipd.assign-bed"), ctrl.updateAdmission);
+router.delete("/:id", authenticate, requireAction("ipd.delete"), ctrl.deleteAdmission);
 
 // ── Actions ──────────────────────────────────────────────────
-router.post("/:id/discharge", ctrl.dischargePatient);
-router.post("/:id/cancel", ctrl.cancelAdmission);
-router.post("/:id/transfer", ctrl.transferBed);
+// CLINICAL discharge — Admin / Doctor only. Receptionist still uses the
+// /clear-final-bill + /issue-gate-pass workflow (above) to settle billing,
+// but cannot flip the admission to "Discharged" without medical sign-off
+// (security audit 2026-05-17 A-13 / B-05).
+router.post("/:id/discharge", authenticate, requireAction("ipd.discharge"), ctrl.dischargePatient);
+router.post("/:id/cancel",    authenticate, requireAction("ipd.cancel"),    ctrl.cancelAdmission);
+router.post("/:id/transfer",  authenticate, requireAction("ipd.transfer"),  ctrl.transferBed);
 router.put("/:id/initial-assessment", ctrl.markInitialAssessment);
 // Nurse Initial Assessment full payload save (NABH IPSG.6)
 router.post("/:id/nurse-assessment", ctrl.saveNurseInitialAssessment);

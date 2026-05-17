@@ -169,8 +169,44 @@ exports.getPatientByUHID = async (req, res) => {
   }
 };
 
+// Fields that affect clinical decisions (transfusion compatibility, paediatric
+// dosing, drug-allergy alerts, identity-on-wristband). Edits touching these
+// require the patient.write-clinical role; any other field falls under the
+// looser patient.write-demographics gate. Security audit 2026-05-17 A-12.
+const CLINICAL_PATIENT_FIELDS = new Set([
+  "bloodGroup",
+  "knownAllergies",
+  "dateOfBirth",
+  "age",
+  "gender",
+  "title",
+  "fullName",
+  "firstName",
+  "lastName",
+]);
+
 exports.updatePatient = async (req, res) => {
   try {
+    const { roleCan } = require("../../config/permissions");
+    const role = req.user?.role;
+    if (!role) {
+      return res.status(401).json({ success: false, message: "Not authenticated" });
+    }
+    const touchedClinical = Object.keys(req.body || {}).some((k) =>
+      CLINICAL_PATIENT_FIELDS.has(k),
+    );
+    const requiredAction = touchedClinical
+      ? "patient.write-clinical"
+      : "patient.write-demographics";
+    if (!roleCan(role, requiredAction)) {
+      return res.status(403).json({
+        success: false,
+        message: `Access denied. Action '${requiredAction}' is not permitted for role '${role}'.`,
+        action: requiredAction,
+        role,
+      });
+    }
+
     const patient = await patientService.updatePatient(req.params.id, req.body);
     res
       .status(200)

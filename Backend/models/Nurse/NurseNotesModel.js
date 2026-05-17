@@ -3,14 +3,22 @@
 
 const mongoose = require("mongoose");
 
+// Clinical sanity bounds — anything outside these is almost certainly a
+// keypad slip, not a real vital, and triggering a downstream alert on a
+// `pulse: -100` or `temp: NaN` is patient-safety unsound. Wide enough to
+// admit genuine extremes (neonatal HR, hyperthermia, severe hypotension)
+// while rejecting impossible data. Security/safety audit 2026-05-17 A-03.
 const NurseVitalsSchema = new mongoose.Schema(
   {
-    bp: { systolic: Number, diastolic: Number },
-    pulse: Number,
-    temp: Number,
-    rr: Number,
-    spo2: Number,
-    bloodSugar: Number,
+    bp: {
+      systolic:  { type: Number, min: 30,  max: 300 },
+      diastolic: { type: Number, min: 10,  max: 250 },
+    },
+    pulse:      { type: Number, min: 0,   max: 300 },
+    temp:       { type: Number, min: 25,  max: 45 },
+    rr:         { type: Number, min: 0,   max: 80 },
+    spo2:       { type: Number, min: 0,   max: 100 },
+    bloodSugar: { type: Number, min: 0,   max: 1500 },
   },
   { _id: false },
 );
@@ -37,12 +45,16 @@ const OrderExecutionSchema = new mongoose.Schema(
   { _id: true },
 );
 
+// Intake/Output in ml. `min: 0` keeps the I/O sheet sane — a nurse cannot
+// "give back" 500ml of oral feed or "uncatheterise" 200ml of urine. Upper
+// bound is generous so a 24-hour cumulative entry isn't rejected.
+// Patient-safety audit 2026-05-17 A-04.
 const IOSchema = new mongoose.Schema(
   {
-    oral: { type: Number, default: 0 },
-    ivFluids: { type: Number, default: 0 },
-    urineOutput: { type: Number, default: 0 },
-    otherOutput: { type: Number, default: 0 },
+    oral:        { type: Number, default: 0, min: 0, max: 20000 },
+    ivFluids:    { type: Number, default: 0, min: 0, max: 20000 },
+    urineOutput: { type: Number, default: 0, min: 0, max: 20000 },
+    otherOutput: { type: Number, default: 0, min: 0, max: 20000 },
     notes: { type: String },
   },
   { _id: false },

@@ -6,7 +6,13 @@ const handle = (fn) => async (req, res) => {
     const result = await fn(req, res);
     return result;
   } catch (err) {
-    const status = err.message?.includes("not found") ? 404 : 400;
+    // Honour explicit err.status / err.statusCode when the service sets one
+    // (e.g. 409 from discharge bill-clearance gate). Otherwise fall back to
+    // the "not found" → 404 heuristic, with a generic 400 default.
+    const explicit = Number(err.status || err.statusCode);
+    const status = Number.isInteger(explicit) && explicit >= 400 && explicit < 600
+      ? explicit
+      : (err.message?.includes("not found") ? 404 : 400);
     return res.status(status).json({ success: false, message: err.message });
   }
 };

@@ -199,6 +199,28 @@ class AdmissionService {
         `Cannot discharge — admission status is already "${admission.status}"`,
       );
 
+    // ── NABH discharge-readiness gate (security/business audit F-01) ─────
+    // Block the clinical discharge until the bill-counter workflow has at
+    // least progressed past "BillCleared". Caller can pass
+    // dischargeData.allowOverride to bypass — used by Admin LAMA / death
+    // workflows where waiting for the cashier would be inhumane — and the
+    // override is audited.
+    const stage = admission.dischargeWorkflow?.stage || "NotRequested";
+    const cleared = ["BillCleared", "GatePassIssued", "Completed"].includes(stage);
+    if (!cleared && !dischargeData.allowOverride) {
+      const err = new Error(
+        `Cannot discharge — bill not yet cleared (workflow stage: ${stage}). ` +
+        `Settle the final bill via /clear-final-bill first, or pass allowOverride=true for LAMA/death.`,
+      );
+      err.status = 409; // Conflict — required precondition not met
+      throw err;
+    }
+    if (dischargeData.allowOverride) {
+      console.warn(
+        `[Discharge] OVERRIDE used on ADM ${admission.admissionNumber}: bypassing bill-clearance gate. Reason: ${dischargeData.overrideReason || "(none provided)"}`,
+      );
+    }
+
     // BEFORE flipping status, fire today's bed + nursing-daily charges
     // one last time so the day-of-discharge always makes it onto the bill.
     // The daily-accrual cron stops touching this admission the moment its
