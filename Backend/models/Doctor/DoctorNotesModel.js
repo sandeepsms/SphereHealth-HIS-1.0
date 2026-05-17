@@ -146,6 +146,11 @@ DoctorNotesSchema.index({ patient: 1, visitDate: -1 });
 DoctorNotesSchema.index({ ipdNo: 1, visitDate: -1 });
 DoctorNotesSchema.index({ doctor: 1, visitDate: -1 });
 DoctorNotesSchema.index({ "orders.nurseStatus": 1 });
+// Mirror of NurseNotes — drives the "this doctor's morning rounds on
+// this admission today" query that the rounds-board page issues for
+// every admission load. Audit C-04 (round-13 close-out).
+DoctorNotesSchema.index({ ipdNo: 1, shift: 1, visitDate: -1 });
+DoctorNotesSchema.index({ admissionId: 1, visitDate: -1 });
 
 // All pending orders for a patient — used by nurse
 DoctorNotesSchema.statics.getAllPendingOrders = async function (ipdNo) {

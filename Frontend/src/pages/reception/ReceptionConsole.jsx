@@ -715,10 +715,31 @@ export default function ReceptionConsole() {
     if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     autosaveTimerRef.current = setTimeout(() => {
       try {
-        sessionStorage.setItem("rc_autosave", JSON.stringify({
+        // Strip PHI/payment fields before persisting (audit E-03). Reception
+        // restart needs to recover non-PII typing (name spelling, address)
+        // but UHID, Aadhaar, advancePayment, payment-mode details should
+        // never sit in browser storage where a shared-terminal next user
+        // can read them. The fields stripped here are the ones the reception
+        // form actually collects; new sensitive fields must be added below.
+        const STRIP_PHI = new Set([
+          "uhid", "UHID", "aadhaar", "aadhaarNumber", "panNumber",
+          "advancePayment", "paymentMode", "cardNumber", "cardLast4",
+          "upiId", "transactionId", "chequeNumber", "bankAccount",
+        ]);
+        const sanitize = (obj) => {
+          if (!obj || typeof obj !== "object") return obj;
+          if (Array.isArray(obj)) return obj.map(sanitize);
+          const out = {};
+          for (const [k, v] of Object.entries(obj)) {
+            if (STRIP_PHI.has(k)) continue;
+            out[k] = (v && typeof v === "object") ? sanitize(v) : v;
+          }
+          return out;
+        };
+        sessionStorage.setItem("rc_autosave", JSON.stringify(sanitize({
           visitType, patient, opd, ipd, dayCare, er, services, bedData, isExisting,
           ts: Date.now(),
-        }));
+        })));
       } catch { /* quota exceeded or private mode — ignore */ }
     }, 400);
     return () => autosaveTimerRef.current && clearTimeout(autosaveTimerRef.current);
@@ -904,22 +925,32 @@ export default function ReceptionConsole() {
               <span className="rc-section-meta">Step 1 of 2</span>
             </div>
             <div className="rc-section-body">
+              {/*
+                A11y: every label is paired with htmlFor + matching id on
+                the input so screen readers (NVDA / JAWS) and voice-input
+                tools announce the field name. Pattern: id="rc-<field>".
+                Migration kicked off here for the patient identity block
+                (Title, Full Name, Gender, DOB, Age, Phone) per audit
+                E-07 round-13 close-out. The remaining sections still
+                rely on label-proximity association — backlog item for
+                the a11y-sweep pass.
+              */}
               <div className="rc-grid-4">
                 <div className="his-field-group">
-                  <label className="his-label">Title</label>
-                  <select className="his-select" value={patient.title} onChange={e => setP("title", e.target.value)}>
+                  <label className="his-label" htmlFor="rc-title">Title</label>
+                  <select id="rc-title" className="his-select" value={patient.title} onChange={e => setP("title", e.target.value)}>
                     {TITLES.map(t => <option key={t}>{t}</option>)}
                   </select>
                 </div>
                 <div className="his-field-group rc-span-2">
-                  <label className="his-label">Full Name<span className="rc-req">*</span></label>
-                  <input className={`his-field ${errors.fullName ? "his-field--err" : ""}`} value={patient.fullName}
+                  <label className="his-label" htmlFor="rc-fullName">Full Name<span className="rc-req">*</span></label>
+                  <input id="rc-fullName" className={`his-field ${errors.fullName ? "his-field--err" : ""}`} value={patient.fullName}
                     onChange={e => setP("fullName", e.target.value)} placeholder="Patient full name" />
                   {errors.fullName && <span className="rc-err"><i className="pi pi-exclamation-circle" /> {errors.fullName}</span>}
                 </div>
                 <div className="his-field-group">
-                  <label className="his-label">Gender<span className="rc-req">*</span></label>
-                  <select className={`his-select ${errors.gender ? "his-field--err" : ""}`} value={patient.gender}
+                  <label className="his-label" htmlFor="rc-gender">Gender<span className="rc-req">*</span></label>
+                  <select id="rc-gender" className={`his-select ${errors.gender ? "his-field--err" : ""}`} value={patient.gender}
                     onChange={e => setP("gender", e.target.value)}>
                     {GENDERS.map(g => <option key={g}>{g}</option>)}
                   </select>
@@ -928,19 +959,19 @@ export default function ReceptionConsole() {
 
               <div className="rc-grid-4">
                 <div className="his-field-group">
-                  <label className="his-label">Date of Birth</label>
-                  <input className="his-field" type="date" value={patient.dateOfBirth}
+                  <label className="his-label" htmlFor="rc-dob">Date of Birth</label>
+                  <input id="rc-dob" className="his-field" type="date" value={patient.dateOfBirth}
                     onChange={e => setP("dateOfBirth", e.target.value) || setP("age", calcAge(e.target.value))} />
                 </div>
                 <div className="his-field-group">
-                  <label className="his-label">Age (yrs)</label>
-                  <input className={`his-field ${errors.age ? "his-field--err" : ""}`} type="number"
+                  <label className="his-label" htmlFor="rc-age">Age (yrs)</label>
+                  <input id="rc-age" className={`his-field ${errors.age ? "his-field--err" : ""}`} type="number"
                     value={patient.age || (patient.dateOfBirth ? calcAge(patient.dateOfBirth) : "")}
                     onChange={e => setP("age", e.target.value)} placeholder="35" />
                 </div>
                 <div className="his-field-group">
-                  <label className="his-label">Phone<span className="rc-req">*</span></label>
-                  <input className={`his-field ${errors.contactNumber ? "his-field--err" : ""}`} type="tel" maxLength={10}
+                  <label className="his-label" htmlFor="rc-phone">Phone<span className="rc-req">*</span></label>
+                  <input id="rc-phone" className={`his-field ${errors.contactNumber ? "his-field--err" : ""}`} type="tel" maxLength={10}
                     value={patient.contactNumber} onChange={e => setP("contactNumber", e.target.value.replace(/\D/g, ""))}
                     placeholder="10-digit mobile" />
                   {errors.contactNumber && <span className="rc-err">{errors.contactNumber}</span>}

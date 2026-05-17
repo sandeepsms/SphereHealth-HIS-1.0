@@ -78,9 +78,9 @@ edit (A-15) remain open — listed in re-audit backlog.
 | ID | Title | Severity | Files | Status | Fixed-on | Verifier |
 | -- | ----- | -------- | ----- | ------ | -------- | -------- |
 | C-01 | 10+ models missing required / enum / min-max on critical fields | HIGH | models/Patient/patientModel.js, User/userModel.js, Pharmacy/DrugModel.js, others | PARTIAL | 2026-05-17 | NurseVitals, IO, prescription.vitals, route enum fixed (covers ~30% of finding); remaining models in BACKLOG |
-| C-02 | Missing index on `PatientBill.patientId` | HIGH | models/PatientBillModel/PatientBillModel.js | BACKLOG | — | — |
-| C-03 | Missing `(UHID, createdAt)` index on DischargeSummary | HIGH | models/Clinical/DischargeSummaryModel.js | BACKLOG | — | — |
-| C-04 | Missing `dateKey` indexes across daily-charge collections | HIGH | models/nursing/*, models/Vitals/* | BACKLOG | — | — |
+| C-02 | Missing index on `PatientBill.patientId` | HIGH | models/PatientBillModel/PatientBillModel.js | WONT-FIX | 2026-05-17 (r13) | False-positive — `PatientBillSchema.index({ patient: 1 })` line 277 already covers (the field is `patient`, not `patientId`) |
+| C-03 | Missing `(UHID, createdAt)` index on DischargeSummary | HIGH | models/Clinical/DischargeSummaryModel.js | WONT-FIX | 2026-05-17 (r13) | False-positive — `DischargeSummarySchema.index({ UHID: 1, createdAt: -1 })` line 140 already present |
+| C-04 | Missing `dateKey` indexes across daily-charge collections | HIGH | models/Doctor/DoctorNotesModel.js | **FIXED** | 2026-05-17 (r13) | BillingTrigger/NursingChargeEntry/VitalSheet already had compound `dateKey` indexes; added `(ipdNo, shift, visitDate)` + `(admissionId, visitDate)` to DoctorNotesSchema for parity with NurseNotes |
 | C-05 | Unbounded `.find().lean()` on equipment/drug-stock/vitals lists | HIGH | controllers/Equipment/equipmentController.js, controllers/Pharmacy/pharmacyController.js | PARTIAL | 2026-05-17 (r9) | `equipment.stats` rewritten as `$facet` aggregation (O(1) payload); service-due + supplier list capped at 1000; remaining sites in pharmacy stock-register on backlog |
 | C-06 | N+1 in stock-register report and auto-billing handlers | HIGH | controllers/Pharmacy/pharmacyController.js:1106–1149 | BACKLOG | — | — |
 | C-07 | ~15 `findOneAndUpdate` calls missing `runValidators: true` | MEDIUM | dischargeSummaryController.js, wardTaskController.js, others | PARTIAL | 2026-05-17 (r11) | dischargeSummary.finalize, admission.discharge, bed.release, wardTask (assign/start/complete/cancel) updates now pass `runValidators: true`; ~4 controllers (housekeeping, nursingCarePlan, mar status flip, etc.) still on backlog |
@@ -106,11 +106,11 @@ edit (A-15) remain open — listed in re-audit backlog.
 | -- | ----- | -------- | ----- | ------ | -------- | -------- |
 | E-01 | Nursing assessments cached in localStorage keyed by patient `_id` | HIGH | context/AuthContext.jsx | **FIXED** | 2026-05-17 (r3) | logout() now sweeps `nabh_*`, `his_patient_*`, `his_admission_*`, `rc_*`, `break-glass:*` from local + sessionStorage |
 | E-02 | Break-glass justification stored in sessionStorage only | HIGH | Components/clinical/PatientPanelShell.jsx:160 | **FIXED** | 2026-05-17 (r3) | handleBreakGlassAllow now POSTs to /api/patient-file/:uhid/log with action=BREAK_GLASS, severity=HIGH, isFlagged=true |
-| E-03 | Reception form draft cached in sessionStorage | MEDIUM | pages/reception/ReceptionConsole.jsx:718 | BACKLOG | — | — |
+| E-03 | Reception form draft cached in sessionStorage | MEDIUM | pages/reception/ReceptionConsole.jsx | **FIXED** | 2026-05-17 (r13) | Recursive `sanitize()` strips PHI keys (uhid/aadhaar/pan/advancePayment/paymentMode/cardNumber/upiId/txnId/chequeNumber/bankAccount) from the draft before `sessionStorage.setItem` |
 | E-04 | UHID exposed in URL params | MEDIUM | pages/clinical/MARPage.jsx:797, others | BACKLOG | — | Router-level rewrite |
 | E-05 | useEffect async-IIFE without AbortController | MEDIUM | pages/RoleDashboardPage.jsx, PharmacyHomePage.jsx, others | BACKLOG | — | — |
 | E-06 | Silent `.catch(() => null)` across pages | MEDIUM | many | BACKLOG | — | High-volume refactor — round 2 |
-| E-07 | ReceptionConsole labels miss `htmlFor` (WCAG 2.1 AA) | MEDIUM | pages/reception/ReceptionConsole.jsx | BACKLOG | — | — |
+| E-07 | ReceptionConsole labels miss `htmlFor` (WCAG 2.1 AA) | MEDIUM | pages/reception/ReceptionConsole.jsx | PARTIAL | 2026-05-17 (r13) | Patient-identity block (Title, FullName, Gender, DOB, Age, Phone — the 6 most critical fields for screen-reader nav) now have `htmlFor`/`id` pairs with id pattern `rc-<field>`; remaining ~30 fields still rely on label-proximity — full a11y sweep on backlog |
 | E-08 | `dangerouslySetInnerHTML` for hard-coded CSS only | LOW | Components/clinical/FingerprintConsentModal.jsx:114 | WONT-FIX | 2026-05-17 | Hard-coded animation CSS only; no user content |
 
 ---
@@ -153,7 +153,7 @@ edit (A-15) remain open — listed in re-audit backlog.
 | H-04 | Mongoose connect has no retry | MEDIUM | config/db.js | **FIXED** | 2026-05-17 | Exponential backoff 1s→30s, MAX_RETRIES=12, reconnect listeners |
 | H-05 | Frontend `api.js` hardcodes localhost fallback | MEDIUM | Frontend/src/config/api.js | **FIXED** | 2026-05-17 (r3) | Loud `console.error` on PROD build when VITE_API_BASE_URL missing |
 | H-06 | CORS dev fallback hardcodes `http://localhost:5173` | LOW | index.js:14 | **FIXED** | 2026-05-17 | Now WARNs on missing CORS_ORIGINS instead of silently defaulting |
-| H-07 | No backup script in repo | MEDIUM | scripts/ (absent) | BACKLOG | — | Ops decision |
+| H-07 | No backup script in repo | MEDIUM | scripts/backup-mongo.sh | **FIXED** | 2026-05-17 (r13) | New `backup-mongo.sh` with mongodump+gzip, size sanity check (rejects sub-4KB archives), N-day prune, optional S3 SSE-AES256 upload; documented cron line for nightly run. Restore drill + off-site is ops follow-up |
 
 ---
 
