@@ -128,6 +128,12 @@ const NurseOPDQueuePage = lazy(() => import("./pages/nurse/NurseOPDQueuePage"));
 const NursePatientPanel = lazy(() => import("./pages/nurse/NursePatientPanel"));
 const DoctorOPDPanelPage = lazy(() => import("./pages/doctor/DoctorOPDPanelPage"));
 const PatientHistoryPage = lazy(() => import("./pages/patient/PatientHistoryPage"));
+// Unified replacement for /patient-search + /visit-history + /allpatient
+// + /patient-history. All four routes now mount this single component
+// with a different `initialView` so the page lands on the relevant tab.
+// The legacy components remain importable for the rare deep-link that
+// hasn't been migrated, but the routes below point at the unified one.
+const PatientLookupPage = lazy(() => import("./pages/patient/PatientLookupPage"));
 const CompletePatientFilePage = lazy(() => import("./pages/patient/CompletePatientFilePage"));
 const GateLogPage = lazy(() => import("./pages/security/GateLogPage"));
 const IncidentsPage = lazy(() => import("./pages/security/IncidentsPage"));
@@ -290,7 +296,11 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/dash" element={<Dashboard1 />} />
 
             {/* Patient Registration moved to /reception (see below) */}
-            <Route path="/allpatient" element={<PatientsTable />} />
+            {/* /allpatient → unified PatientLookupPage in "directory" mode.
+                The legacy <PatientsTable /> component is kept as a fallback
+                import (above) for any deep-link that needs the old behavior.
+                See PatientLookupPage docstring for the consolidation rationale. */}
+            <Route path="/allpatient" element={<PatientLookupPage initialView="directory" />} />
 
             {/* ── Doctors ──────────────────────────────────────── */}
             {/* List visible to anyone who books / refers / staffs OPD;
@@ -477,9 +487,13 @@ function AppLayout({ collapsed, setCollapsed }) {
             } />
             <Route path="/appointments" element={<Appointments />} />
             {/* Receptionist-flavored versions of shared modules */}
-            <Route path="/patient-search" element={<ReceptionPatientSearch />} />
-            <Route path="/visit-history" element={<ReceptionVisitHistory />} />
-            <Route path="/visit-history/:uhid" element={<ReceptionVisitHistory />} />
+            {/* All three legacy patient-lookup routes now mount the unified
+                PatientLookupPage. /patient-search lands on the live-search
+                tab (Receptionist default); /visit-history lands on the
+                timeline tab (which auto-loads if ?uhid= or /:uhid is given). */}
+            <Route path="/patient-search" element={<PatientLookupPage initialView="search" />} />
+            <Route path="/visit-history"  element={<PatientLookupPage initialView="timeline" />} />
+            <Route path="/visit-history/:uhid" element={<PatientLookupPage initialView="timeline" />} />
             <Route path="/reception-opd-queue" element={<ReceptionOPDQueue />} />
             <Route path="/reception-emergency" element={<ReceptionEmergencyCases />} />
             <Route path="/reception-beds" element={<ReceptionBedView />} />
@@ -496,7 +510,11 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/opd-queue" element={<NurseOPDQueuePage />} />
             <Route path="/nurse-patient-panel" element={<NursePatientPanel />} />
             <Route path="/doctor-opd-panel" element={<DoctorOPDPanelPage />} />
-            <Route path="/patient-history" element={<PatientHistoryPage />} />
+            {/* Legacy clinical-history route — same destination, "timeline"
+                tab. /patient-history/:uhid still works the same way thanks
+                to the useSearchParams + useParams handling inside the
+                unified component. */}
+            <Route path="/patient-history" element={<PatientLookupPage initialView="timeline" />} />
             {/* Complete patient file — one page with every clinical record + UI audit feed. */}
             <Route path="/patient-file/:uhid" element={<CompletePatientFilePage />} />
             <Route path="/mar" element={<MARPage />} />
