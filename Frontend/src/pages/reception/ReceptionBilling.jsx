@@ -82,6 +82,7 @@ export default function ReceptionBilling() {
   const [payTarget, setPayTarget] = useState(null);
   const [refundTarget, setRefundTarget] = useState(null);
   const [cancelTarget, setCancelTarget] = useState(null);
+  const [addSvcTarget, setAddSvcTarget] = useState(null);   // DRAFT bill currently being amended
   const [todayCollection, setTodayCollection] = useState(null);
   // ── Advance-deposit state — fetched alongside bills on every load.
   //    advances: full ledger; unspentAdv: aggregated remaining balance
@@ -409,6 +410,7 @@ export default function ReceptionBilling() {
                   onPrint={() => printReceipt(activeBill)}
                   onRefund={() => setRefundTarget(activeBill)}
                   onCancel={() => setCancelTarget(activeBill)}
+                  onAddService={() => setAddSvcTarget(activeBill)}
                   onApplyAdvance={async () => {
                     const unspent = advances.filter((a) => (a.remainingAmount || 0) > 0);
                     if (unspent.length === 0) { toast.warning("No unspent advance available"); return; }
@@ -453,6 +455,23 @@ export default function ReceptionBilling() {
         />
       )}
 
+      {addSvcTarget && (
+        <AddServiceModal
+          bill={addSvcTarget}
+          onClose={() => setAddSvcTarget(null)}
+          onChanged={async () => {
+            // Keep modal open so the cashier can add multiple services
+            // in one sitting; just refresh the underlying bill + totals.
+            await load(uhid);
+            await loadBill(addSvcTarget._id);
+            // Re-sync the modal's `bill` prop so the running total updates.
+            const r = await axios.get(`${API_ENDPOINTS.BILLING}/${addSvcTarget._id}`).catch(() => null);
+            const fresh = r?.data?.data || r?.data;
+            if (fresh) setAddSvcTarget(fresh);
+          }}
+        />
+      )}
+
       {refundTarget && (
         <RefundModal
           bill={refundTarget}
@@ -484,7 +503,7 @@ export default function ReceptionBilling() {
 
 /* ───────────────────────────────────────────────────────────── */
 
-function BillDetail({ bill, unspentAdv = 0, onGenerate, onPay, onPrint, onRefund, onCancel, onApplyAdvance }) {
+function BillDetail({ bill, unspentAdv = 0, onGenerate, onPay, onPrint, onRefund, onCancel, onApplyAdvance, onAddService }) {
   const { can } = useAuth();
   const isDraft   = bill.billStatus === "DRAFT";
   const canPay    = ["GENERATED", "PARTIAL"].includes(bill.billStatus);
@@ -509,6 +528,13 @@ function BillDetail({ bill, unspentAdv = 0, onGenerate, onPay, onPrint, onRefund
           </div>
           <div className="rx-detail-head-sub">{bill.visitType || "OPD"} · {items.length} item{items.length === 1 ? "" : "s"} · Created {fmtDate(bill.createdAt)}</div>
         </div>
+        {isDraft && onAddService && (
+          <button className="rx-action-btn rx-action-btn--success"
+                  onClick={onAddService}
+                  title="Add ECG, dressing, nebulisation, etc. to this draft">
+            <i className="pi pi-plus" /> Add Service
+          </button>
+        )}
         {isDraft && (
           <button className="rx-action-btn rx-action-btn--primary" onClick={onGenerate}>
             <i className="pi pi-check" /> Generate Bill
@@ -936,6 +962,174 @@ function receiptHTML(bill, patient) {
 
 function escapeHtml(s = "") {
   return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   AddServiceModal — searchable ServiceMaster picker for DRAFT bills
+   The receptionist taps "Add Service" on a DRAFT OPD bill mid-visit
+   (e.g. patient needs an ECG, dressing, nebulisation). The modal:
+     1. Live-searches /api/services?search=…&applicableTo=<visitType>
+     2. Lists matching services with code · name · billingType · price
+     3. Click "Add" → POST /api/billing/:billId/add-service
+     4. Bill is reloaded behind the modal; running total updates.
+     5. Modal stays open so multiple services can be added in one go.
+   Backend gates additions to DRAFT bills only (audit F-05 lock); the
+   button itself is only shown for DRAFT, so the UX never offers an
+   action the server will reject.
+═══════════════════════════════════════════════════════════════ */
+function AddServiceModal({ bill, onClose, onChanged }) {
+  const [query,    setQuery]    = useState("");
+  const [results,  setResults]  = useState([]);
+  const [domain,   setDomain]   = useState(bill.visitType || "OPD");
+  const [busy,     setBusy]     = useState(false);
+  const [err,      setErr]      = useState(null);
+  const [savingId, setSavingId] = useState(null);
+  const debRef = React.useRef(null);
+
+  // Live-debounced search. Empty query loads the most-common 50 for
+  // the chosen domain so the cashier can browse without typing.
+  React.useEffect(() => {
+    if (debRef.current) clearTimeout(debRef.current);
+    debRef.current = setTimeout(async () => {
+      setBusy(true);
+      setErr(null);
+      try {
+        const params = new URLSearchParams({ limit: "60", isActive: "true" });
+        if (query.trim().length >= 2) params.set("search", query.trim());
+        if (domain && domain !== "ALL") params.set("applicableTo", domain);
+        const { data } = await axios.get(`${API_ENDPOINTS.BASE}/services?${params.toString()}`);
+        const list = data?.data || data?.services || [];
+        setResults(Array.isArray(list) ? list : []);
+      } catch (e) {
+        setErr(e?.response?.data?.message || "Search failed");
+      } finally {
+        setBusy(false);
+      }
+    }, 250);
+    return () => { if (debRef.current) clearTimeout(debRef.current); };
+  }, [query, domain]);
+
+  const add = async (svc) => {
+    setSavingId(svc._id);
+    try {
+      await axios.post(`${API_ENDPOINTS.BILLING}/${bill._id}/add-service`, {
+        serviceId: svc._id,
+        quantity: 1,
+      });
+      toast.success(`${svc.serviceName} added`);
+      onChanged && onChanged();
+    } catch (e) {
+      const msg = e?.response?.data?.message || "Could not add service";
+      toast.error(msg);
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const billItemCount = (bill.billItems || []).length;
+  const currentTotal  = Number(bill.netAmount) || 0;
+
+  return (
+    <div className="rx-modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="rx-modal" style={{ maxWidth: 720, maxHeight: "90vh" }}>
+        <div className="rx-modal-head">
+          <i className="pi pi-plus-circle" /> Add Service to Bill
+          <button className="rx-modal-close" onClick={onClose}>✕</button>
+        </div>
+        <div className="rx-modal-body" style={{ padding: "12px 16px", gap: 10 }}>
+          {/* Bill context bar */}
+          <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#475569", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+            <div>
+              <strong>{bill.billNumber || "DRAFT"}</strong>
+              {" · "}<span className="rx-mono-tag rx-mono-tag--subtle">{bill.visitType}</span>
+              {" · "}{billItemCount} item{billItemCount === 1 ? "" : "s"}
+            </div>
+            <div style={{ fontFamily: "'DM Mono', monospace", fontWeight: 800, color: "#0f172a" }}>
+              Running total: {fmtCur(currentTotal)}
+            </div>
+          </div>
+
+          {/* Search bar + domain filter */}
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>
+            <div className="rx-search" style={{ marginBottom: 0, flex: 1 }}>
+              <i className="pi pi-search" />
+              <input autoFocus
+                     value={query}
+                     onChange={(e) => setQuery(e.target.value)}
+                     placeholder="Search service name or code (e.g. ECG, dressing, NRS-001)…" />
+            </div>
+            <select value={domain}
+                    onChange={(e) => setDomain(e.target.value)}
+                    style={{ padding: "8px 12px", border: "1px solid #cbd5e1", borderRadius: 10, fontSize: 13, background: "#fff", minWidth: 110 }}
+                    title="Filter by where the service is applicable">
+              <option value="OPD">OPD</option>
+              <option value="IPD">IPD</option>
+              <option value="DAYCARE">Day Care</option>
+              <option value="EMERGENCY">Emergency</option>
+              <option value="ALL">All</option>
+            </select>
+          </div>
+
+          {err && (
+            <div style={{ padding: "8px 12px", background: "#fef2f2", color: "#b91c1c", border: "1px solid #fca5a5", borderRadius: 8, fontSize: 12, fontWeight: 600 }}>
+              {err}
+            </div>
+          )}
+
+          {/* Result list */}
+          <div style={{ maxHeight: 420, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
+            {busy && results.length === 0 ? (
+              <div style={{ textAlign: "center", color: "#94a3b8", padding: "20px 0", fontSize: 13 }}>
+                <i className="pi pi-spin pi-spinner" /> Searching…
+              </div>
+            ) : results.length === 0 ? (
+              <div style={{ textAlign: "center", color: "#94a3b8", padding: "20px 0", fontSize: 13 }}>
+                No services match "{query || "(all)"}"
+              </div>
+            ) : results.map((s) => (
+              <div key={s._id}
+                   style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <span className="rx-mono-tag">{s.serviceCode}</span>
+                    <span style={{ fontWeight: 600, color: "#0f172a", fontSize: 13 }}>{s.serviceName}</span>
+                    {s.isAutoCharged && <span className="rx-mode-pill" style={{ background: "#fff7ed", color: "#c2410c", borderColor: "#fed7aa" }}>AUTO</span>}
+                  </div>
+                  <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
+                    {s.category} · {s.billingType} · {s.unitLabel || "unit"}
+                    {s.domain && ` · ${s.domain}`}
+                  </div>
+                </div>
+                <div style={{ textAlign: "right", minWidth: 90, fontFamily: "'DM Mono', monospace", fontWeight: 800, color: "#0f172a", fontSize: 14 }}>
+                  {fmtCur(s.defaultPrice)}
+                </div>
+                <button
+                  className="rx-action-btn rx-action-btn--primary"
+                  onClick={() => add(s)}
+                  disabled={savingId === s._id}
+                  title={`Add ${s.serviceName} to ${bill.billNumber || "draft"}`}
+                  style={{ minWidth: 70 }}
+                >
+                  {savingId === s._id ? <><i className="pi pi-spin pi-spinner" /> </> : <><i className="pi pi-plus" /> Add</>}
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ marginTop: 8, padding: "8px 12px", background: "#ecfeff", color: "#0e7490", border: "1px solid #67e8f9", borderRadius: 8, fontSize: 11, lineHeight: 1.5 }}>
+            <i className="pi pi-info-circle" /> Items can only be added while the bill is <strong>DRAFT</strong>.
+            Once you click <strong>Generate Bill</strong>, it locks for the cashier &mdash; any later
+            additions need the amendment workflow (Accountant tier).
+          </div>
+        </div>
+        <div className="rx-modal-foot">
+          <button className="rx-action-btn rx-action-btn--primary" onClick={onClose}>
+            <i className="pi pi-check" /> Done
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /* ═══════════════════════════════════════════════════════════════
