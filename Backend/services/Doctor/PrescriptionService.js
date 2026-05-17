@@ -63,13 +63,44 @@ class PrescriptionService {
   }
 
   // ── UPDATE BY UHID ────────────────────────────────────────────
+  // Audit log added per A-11 — every prescription edit needs a before/
+  // after snapshot in PatientActivityLog so a NABH reviewer can replay
+  // the chain. The actor info comes from the controller as `data.actor`
+  // (req.user); we strip it before writing to Mongo so it doesn't
+  // pollute the prescription doc.
   static async updatePrescriptionByUHID(uhid, data) {
+    const { actor, ...payload } = data || {};
+
+    const before = await Prescription.findOne({ UHID: uhid }).lean();
+    if (!before) throw new Error("Prescription not found");
+
     const p = await Prescription.findOneAndUpdate(
       { UHID: uhid },
-      { $set: data },
+      { $set: payload },
       { new: true, runValidators: true },
     );
     if (!p) throw new Error("Prescription not found");
+
+    // Fire-and-forget audit log — never block the clinical write even if
+    // the log path is down. The PatientActivityLog hash-chain in the
+    // model still detects tampering after the fact.
+    try {
+      const PatientActivityLog = require("../../models/Clinical/PatientActivityLogModel");
+      await PatientActivityLog.create({
+        UHID: uhid,
+        action: "PRESCRIPTION_UPDATE",
+        module: "Prescription",
+        summary: `Prescription updated by ${actor?.name || actor?.role || "System"}`,
+        userId:   actor?.id   || null,
+        userName: actor?.name || "System",
+        userRole: actor?.role || "System",
+        before,
+        after: p.toObject(),
+      });
+    } catch (e) {
+      console.error("[PrescriptionService] audit-log write failed:", e.message);
+    }
+
     return PrescriptionService._populate(p._id);
   }
 

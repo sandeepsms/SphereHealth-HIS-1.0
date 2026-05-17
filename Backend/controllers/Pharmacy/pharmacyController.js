@@ -118,7 +118,9 @@ exports.deleteDrug = async (req, res) => {
 ══════════════════════════════════════════════════════════════════ */
 exports.listSuppliers = async (req, res) => {
   try {
-    const items = await Supplier.find({ isActive: true }).sort({ name: 1 }).lean();
+    // Defensive cap (audit C-05). 1000 suppliers is generous for any
+    // single hospital; the dropdown UI tops out well below that.
+    const items = await Supplier.find({ isActive: true }).sort({ name: 1 }).limit(1000).lean();
     res.json({ success: true, data: items });
   } catch (e) { sendErr(res, e); }
 };

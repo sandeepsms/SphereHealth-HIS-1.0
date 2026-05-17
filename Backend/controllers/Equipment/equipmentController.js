@@ -37,38 +37,77 @@ exports.list = async (req, res) => {
 };
 
 /* ── KPI stats ─────────────────────────────────────────────────── */
+// Pushed the counting into MongoDB so we don't pull every equipment row
+// into JS memory just to filter it 10 times (audit C-05 — unbounded
+// `.find({isActive:true}).lean()` ballooned with each new asset). The
+// aggregation runs in a single round-trip and the result payload is
+// O(constant) instead of O(equipment count).
 exports.stats = async (req, res) => {
   try {
-    const all = await Equipment.find({ isActive: true }).lean();
-    const now = Date.now();
-    const inDays = (d) => Math.floor((new Date(d).getTime() - now) / 86400000);
+    const now = new Date();
+    const dueSoonCutoff = new Date(now.getTime() + 14 * 86400000);
 
-    const stats = {
-      total:        all.length,
-      byStatus: {
-        Available:     all.filter(e => e.status === "Available").length,
-        InUse:         all.filter(e => e.status === "In-use").length,
-        OnLoan:        all.filter(e => e.status === "On-loan").length,
-        UnderService:  all.filter(e => e.status === "Under-service").length,
-        OutOfService:  all.filter(e => e.status === "Out-of-service").length,
+    const [agg] = await Equipment.aggregate([
+      { $match: { isActive: true } },
+      {
+        $facet: {
+          total:    [{ $count: "n" }],
+          byStatus: [{ $group: { _id: "$status", n: { $sum: 1 } } }],
+          byLocation: [
+            { $group: { _id: "$currentLocation.type", n: { $sum: 1 } } },
+          ],
+          overdueSvc: [
+            { $match: { nextServiceDue: { $lt: now } } },
+            { $count: "n" },
+          ],
+          dueSoonSvc: [
+            { $match: { nextServiceDue: { $gte: now, $lte: dueSoonCutoff } } },
+            { $count: "n" },
+          ],
+          neverServiced: [
+            { $match: { lastService: null } },
+            { $count: "n" },
+          ],
+          homecareRevenue: [
+            { $match: { "currentLocation.type": "HOMECARE" } },
+            { $group: { _id: null, sum: { $sum: "$dailyRentalCharge" } } },
+          ],
+        },
       },
-      byLocation: {
-        WAREHOUSE: all.filter(e => e.currentLocation?.type === "WAREHOUSE").length,
-        BED:       all.filter(e => e.currentLocation?.type === "BED").length,
-        HOMECARE:  all.filter(e => e.currentLocation?.type === "HOMECARE").length,
-        SERVICE:   all.filter(e => e.currentLocation?.type === "SERVICE").length,
+    ]);
+
+    const byStatusMap = Object.fromEntries(
+      (agg.byStatus || []).map((r) => [r._id, r.n]),
+    );
+    const byLocationMap = Object.fromEntries(
+      (agg.byLocation || []).map((r) => [r._id, r.n]),
+    );
+
+    res.json({
+      success: true,
+      data: {
+        total: agg.total[0]?.n || 0,
+        byStatus: {
+          Available:    byStatusMap.Available    || 0,
+          InUse:        byStatusMap["In-use"]    || 0,
+          OnLoan:       byStatusMap["On-loan"]   || 0,
+          UnderService: byStatusMap["Under-service"] || 0,
+          OutOfService: byStatusMap["Out-of-service"] || 0,
+        },
+        byLocation: {
+          WAREHOUSE: byLocationMap.WAREHOUSE || 0,
+          BED:       byLocationMap.BED       || 0,
+          HOMECARE:  byLocationMap.HOMECARE  || 0,
+          SERVICE:   byLocationMap.SERVICE   || 0,
+        },
+        serviceDue: {
+          overdue:       agg.overdueSvc[0]?.n   || 0,
+          dueSoon:       agg.dueSoonSvc[0]?.n   || 0,
+          neverServiced: agg.neverServiced[0]?.n || 0,
+        },
+        homecareDailyRevenue: agg.homecareRevenue[0]?.sum || 0,
       },
-      serviceDue: {
-        overdue:    all.filter(e => e.nextServiceDue && new Date(e.nextServiceDue) < new Date()).length,
-        dueSoon:    all.filter(e => e.nextServiceDue && inDays(e.nextServiceDue) >= 0 && inDays(e.nextServiceDue) <= 14).length,
-        neverServiced: all.filter(e => !e.lastService).length,
-      },
-      // Total daily rental income from current homecare loans
-      homecareDailyRevenue: all
-        .filter(e => e.currentLocation?.type === "HOMECARE")
-        .reduce((s, e) => s + (e.dailyRentalCharge || 0), 0),
-    };
-    res.json({ success: true, data: stats });
+    });
   } catch (e) {
     res.status(500).json({ success: false, message: e.message });
   }
@@ -79,13 +118,16 @@ exports.serviceDue = async (req, res) => {
   try {
     const horizonDays = Number(req.query.days || 14);
     const cutoff = new Date(Date.now() + horizonDays * 86400000);
+    // Defensive cap (audit C-05). Real hospital fleets are well below 1000
+    // equipment items; the limit just stops a runaway scan from melting
+    // the API if the equipment master is ever bulk-imported wrong.
     const items = await Equipment.find({
       isActive: true,
       $or: [
         { nextServiceDue: { $lte: cutoff } },
         { lastService: null },
       ],
-    }).sort({ nextServiceDue: 1 }).lean();
+    }).sort({ nextServiceDue: 1 }).limit(1000).lean();
     res.json({ success: true, data: items });
   } catch (e) {
     res.status(500).json({ success: false, message: e.message });

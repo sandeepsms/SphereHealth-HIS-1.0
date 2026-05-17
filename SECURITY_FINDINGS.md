@@ -36,7 +36,7 @@ NABH / DPDP auditor can replay the trail end-to-end.
 | A-08 | Admission + auto-bill chain not in a transaction | HIGH | controllers/Patient/admissionController.js:15–42 | BACKLOG | — | Wider rewrite — out of scope this pass |
 | A-09 | Bed transfer multi-doc write lacks session | MEDIUM | controllers/Patient/bedTransferController.js | **FIXED** | 2026-05-17 (r7) | Atomic reserve (`status:"Available"` predicate); if `BedTransfer.create` fails (e.g. duplicate-pending unique index), bed reservation rolls back; 409 on duplicate pending |
 | A-10 | Discharge multi-stage flow has no atomic guarantee | MEDIUM | models/Patient/admissionModel.js:171–183 | BACKLOG | — | F-01 gate added as defense-in-depth |
-| A-11 | Prescription update has no audit-log call | MEDIUM | services/Doctor/PrescriptionService.js:66–74 | BACKLOG | — | — |
+| A-11 | Prescription update has no audit-log call | MEDIUM | services/Doctor/PrescriptionService.js | **FIXED** | 2026-05-17 (r9) | `updatePrescriptionByUHID` now snapshots before/after to `PatientActivityLog` with actor (role + id + name) plumbed from req.user via controller |
 | A-12 | Receptionist can edit clinical patient fields (blood group, DOB, allergies) | **CRITICAL** | routes/Patient/patientRoutes.js, controllers/Patient/patientController.js | **FIXED** | 2026-05-17 | Live receptionist PUT bloodGroup → 403 |
 | A-13 | Receptionist can hit `POST /:id/discharge` with no role guard | **CRITICAL** | routes/Patient/admissionRoutes.js:52 | **FIXED** | 2026-05-17 | Live receptionist discharge → 403 |
 | A-14 | Receptionist can cancel admissions | HIGH | routes/Patient/admissionRoutes.js:53 | **FIXED** | 2026-05-17 | requireAction("ipd.cancel") gate |
@@ -81,9 +81,9 @@ edit (A-15) remain open — listed in re-audit backlog.
 | C-02 | Missing index on `PatientBill.patientId` | HIGH | models/PatientBillModel/PatientBillModel.js | BACKLOG | — | — |
 | C-03 | Missing `(UHID, createdAt)` index on DischargeSummary | HIGH | models/Clinical/DischargeSummaryModel.js | BACKLOG | — | — |
 | C-04 | Missing `dateKey` indexes across daily-charge collections | HIGH | models/nursing/*, models/Vitals/* | BACKLOG | — | — |
-| C-05 | Unbounded `.find().lean()` on equipment/drug-stock/vitals lists | HIGH | controllers/equipmentController.js:42, pharmacyController.js:1106, vitalSheetController.js:33 | BACKLOG | — | — |
+| C-05 | Unbounded `.find().lean()` on equipment/drug-stock/vitals lists | HIGH | controllers/Equipment/equipmentController.js, controllers/Pharmacy/pharmacyController.js | PARTIAL | 2026-05-17 (r9) | `equipment.stats` rewritten as `$facet` aggregation (O(1) payload); service-due + supplier list capped at 1000; remaining sites in pharmacy stock-register on backlog |
 | C-06 | N+1 in stock-register report and auto-billing handlers | HIGH | controllers/Pharmacy/pharmacyController.js:1106–1149 | BACKLOG | — | — |
-| C-07 | ~15 `findOneAndUpdate` calls missing `runValidators: true` | MEDIUM | dischargeSummaryController.js, marController.js, others | BACKLOG | — | — |
+| C-07 | ~15 `findOneAndUpdate` calls missing `runValidators: true` | MEDIUM | dischargeSummaryController.js, others | PARTIAL | 2026-05-17 (r9) | dischargeSummary.finalize + admission.discharge updates now pass `runValidators: true`; remaining controllers on backlog |
 | C-08 | ~15 controllers don't validate `req.params.id` as ObjectId | HIGH | many controllers | PARTIAL | 2026-05-17 (r7) | Helper applied to patient, admission (15+ surfaces incl. /:id/consultation/:consultId), prescription routes; live `/api/admissions/not-an-objectid` → 400 |
 
 ---
@@ -124,7 +124,7 @@ edit (A-15) remain open — listed in re-audit backlog.
 | F-03 | Pharmacy pre-flight stock check non-atomic | MEDIUM | controllers/Pharmacy/pharmacyController.js | **FIXED** | 2026-05-17 (r7) | TOCTOU `$sum` pre-flight removed; fifoConsume's atomic `findOneAndUpdate({remaining: {$gte: take}})` is authoritative; cross-item rollback on mid-loop shortage |
 | F-04 | Drug expiry check uses UTC `new Date()` | MEDIUM | controllers/Pharmacy/pharmacyController.js | **FIXED** | 2026-05-17 (r5) | IST-aware "start of today" boundary via Intl.DateTimeFormat + Asia/Kolkata |
 | F-05 | Bill items still editable in PARTIAL state | MEDIUM | services/Billing/billingService.js | **FIXED** | 2026-05-17 (r3) | Freeze list expanded to GENERATED/PARTIAL/PAID/CANCELLED/REFUNDED; mutation throws 409 |
-| F-06 | Appointment NoShow→Booked race allows overlap | MEDIUM | models/Appointment/appointmentModel.js:59 | BACKLOG | — | — |
+| F-06 | Appointment NoShow→Booked race allows overlap | MEDIUM | models/Appointment/appointmentModel.js | **FIXED** | 2026-05-17 (r9) | Post-init snapshot + pre-save state-machine guard rejects terminal (NoShow/Cancelled/Completed) → Booked; live `NoShow→Booked` save throws "Cannot re-book…" |
 | F-07 | Prescription editable post-dispense | LOW | models/Doctor/prescription.js:54 | BACKLOG | — | — |
 | F-08 | No drug-allergy / interaction check at prescribe time | LOW | models/Doctor/prescription.js | BACKLOG | — | Feature, not bug |
 
