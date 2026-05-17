@@ -100,7 +100,11 @@ exports.referredPatients = async (req, res) => {
     //    reason the endpoint always returned [].
     try {
       const Admission = require("../../models/Patient/admissionModel");
-      const active = await Admission.find({ status: "Active" })
+      // hasBed: true is what distinguishes a true IPD admission from an
+      // OPD / Day-Care / Services stub that also lives in the same
+      // collection. Without this filter every OPD visit leaked into the
+      // dietician's "Referred IPD patients" board as source="IPD".
+      const active = await Admission.find({ status: "Active", hasBed: true })
         .sort({ admissionDate: -1 }).limit(200)
         .select("UHID patientName admissionDate roomNumber bedNumber department attendingDoctor admissionNumber wardId")
         .populate("wardId", "wardName name")
