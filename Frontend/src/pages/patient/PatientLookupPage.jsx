@@ -77,12 +77,27 @@ const TIMELINE_TABS = [
 
 /* ─── Cross-route timeline loaders ─────────────────────────────
    Mirror the loader logic the legacy PatientHistoryPage used so the
-   response-shape parity stays intact. */
+   response-shape parity stays intact. Every loader returns an Array
+   so downstream .map / .reduce / .filter calls are safe. */
+const toArray = (x) => {
+  if (Array.isArray(x)) return x;
+  if (x && typeof x === "object") {
+    // Common envelope shapes seen across the HIS API
+    for (const k of ["bills", "data", "admissions", "items", "results", "rows", "records", "list"]) {
+      if (Array.isArray(x[k])) return x[k];
+    }
+  }
+  return [];
+};
 async function loadAdmissions(patientId, uhid, signal) {
   const BASE = API_ENDPOINTS.ADMISSIONS;
   const extract = (r) => {
-    const d = r?.data?.admissions || r?.data?.data || r?.data;
-    return Array.isArray(d) ? d : null;
+    const root = r?.data;
+    const a =
+      toArray(root?.admissions) ||
+      toArray(root?.data) ||
+      toArray(root);
+    return a.length ? a : null;
   };
   try {
     const r = await axios.get(BASE, { params: { patientId, limit: 200 }, signal });
@@ -102,21 +117,24 @@ async function loadOPDForPatient(patientId, signal) {
   if (!patientId) return [];
   try {
     const r = await axios.get(`${API_ENDPOINTS.BASE}/opd/patient/${patientId}`, { signal });
-    return r?.data?.data || r?.data || [];
+    const inner = toArray(r?.data?.data);
+    return inner.length ? inner : toArray(r?.data);
   } catch { return []; }
 }
 async function loadEmergencyForPatient(patientId, signal) {
   if (!patientId) return [];
   try {
     const r = await axios.get(`${API_ENDPOINTS.BASE}/emergency/patient/${patientId}`, { signal });
-    return r?.data?.data || r?.data || [];
+    const inner = toArray(r?.data?.data);
+    return inner.length ? inner : toArray(r?.data);
   } catch { return []; }
 }
 async function loadBillsForUHID(uhid, signal) {
   if (!uhid) return [];
   try {
     const r = await axios.get(`${API_ENDPOINTS.BASE}/billing/uhid/${encodeURIComponent(uhid)}`, { signal });
-    return r?.data?.data || r?.data || [];
+    const inner = toArray(r?.data?.data);
+    return inner.length ? inner : toArray(r?.data);
   } catch { return []; }
 }
 
@@ -206,10 +224,10 @@ export default function PatientLookupPage({ initialView = "auto" }) {
         loadBillsForUHID(patient.UHID, ac.signal),
       ]);
       if (ac.signal.aborted) return;
-      setOpd(opdRows);
-      setAdm(admRows);
-      setEr(erRows);
-      setBills(billRows);
+      setOpd(Array.isArray(opdRows) ? opdRows : []);
+      setAdm(Array.isArray(admRows) ? admRows : []);
+      setEr(Array.isArray(erRows) ? erRows : []);
+      setBills(Array.isArray(billRows) ? billRows : []);
     } finally {
       if (!ac.signal.aborted) setDetailLoading(false);
     }
@@ -246,9 +264,11 @@ export default function PatientLookupPage({ initialView = "auto" }) {
       if (dirType !== "ALL") params.registrationType = dirType;
       const { data } = await axios.get(API_ENDPOINTS.PATIENTS, { params, signal: ac.signal });
       if (ac.signal.aborted) return;
-      const rows = data?.data || data?.patients || data || [];
-      const total = data?.total || data?.count || rows.length;
-      setDirRows(Array.isArray(rows) ? rows : []);
+      const rows = toArray(data?.data) .length ? toArray(data?.data)
+                 : toArray(data?.patients).length ? toArray(data?.patients)
+                 : toArray(data);
+      const total = Number(data?.total) || Number(data?.count) || rows.length;
+      setDirRows(rows);
       setDirTotal(total);
     } catch (e) {
       if (!axios.isCancel(e)) console.error("[PatientLookup] directory:", e?.message);
@@ -266,7 +286,10 @@ export default function PatientLookupPage({ initialView = "auto" }) {
   /* ─── Unified timeline rows ───────────────────────────────── */
   const timelineRows = useMemo(() => {
     const items = [];
-    for (const v of opd) {
+    const opdArr = Array.isArray(opd) ? opd : [];
+    const admArr = Array.isArray(adm) ? adm : [];
+    const erArr  = Array.isArray(er)  ? er  : [];
+    for (const v of opdArr) {
       items.push({
         key: `opd-${v._id}`, kind: "OPD",
         when:   v.visitDate || v.createdAt,
@@ -283,7 +306,7 @@ export default function PatientLookupPage({ initialView = "auto" }) {
         raw: v,
       });
     }
-    for (const a of adm) {
+    for (const a of admArr) {
       items.push({
         key: `adm-${a._id}`, kind: "IPD",
         when:   a.admissionDate || a.createdAt,
@@ -303,7 +326,7 @@ export default function PatientLookupPage({ initialView = "auto" }) {
         raw: a,
       });
     }
-    for (const e of er) {
+    for (const e of erArr) {
       items.push({
         key: `er-${e._id}`, kind: "Emergency",
         when:   e.visitDate || e.createdAt,
@@ -323,14 +346,20 @@ export default function PatientLookupPage({ initialView = "auto" }) {
     return items.filter((i) => i.kind === timelineFilter);
   }, [opd, adm, er, timelineFilter]);
 
-  const totals = useMemo(() => ({
-    opd: opd.length,
-    ipd: adm.length,
-    er:  er.length,
-    bills: bills.length,
-    outstanding: bills.reduce((s, b) => s + (Number(b.balanceAmount) || Number(b.balance) || 0), 0),
-    paid: bills.reduce((s, b) => s + (Number(b.totalPaid) || Number(b.paidAmount) || 0), 0),
-  }), [opd, adm, er, bills]);
+  const totals = useMemo(() => {
+    const opdArr   = Array.isArray(opd)   ? opd   : [];
+    const admArr   = Array.isArray(adm)   ? adm   : [];
+    const erArr    = Array.isArray(er)    ? er    : [];
+    const billsArr = Array.isArray(bills) ? bills : [];
+    return {
+      opd: opdArr.length,
+      ipd: admArr.length,
+      er:  erArr.length,
+      bills: billsArr.length,
+      outstanding: billsArr.reduce((s, b) => s + (Number(b.balanceAmount) || Number(b.balance) || 0), 0),
+      paid:        billsArr.reduce((s, b) => s + (Number(b.totalPaid)     || Number(b.paidAmount) || 0), 0),
+    };
+  }, [opd, adm, er, bills]);
 
   /* ════════════════ RENDER ════════════════ */
   return (
@@ -800,7 +829,8 @@ function ProfileBody({ patient }) {
 
 /* ─── Billing body — full bill + payment ledger ──────────────── */
 function BillingBody({ bills }) {
-  if (!bills || bills.length === 0) {
+  const list = Array.isArray(bills) ? bills : [];
+  if (list.length === 0) {
     return (
       <div className="rx-empty">
         <span className="rx-empty-icon">🧾</span>
@@ -810,7 +840,7 @@ function BillingBody({ bills }) {
   }
   return (
     <div className="pl-bills">
-      {bills.map((b) => {
+      {list.map((b) => {
         const balance = Number(b.balanceAmount) || Number(b.balance) || 0;
         const total   = Number(b.netAmount)     || Number(b.totalAmount) || 0;
         const paid    = Number(b.totalPaid)     || Number(b.paidAmount)  || (total - balance);
