@@ -199,7 +199,12 @@ exports.updatePrescription = async (req, res) => {
 // ── DELETE ────────────────────────────────────────────────────
 exports.deletePrescription = async (req, res) => {
   try {
-    await PrescriptionService.deletePrescription(req.params.id);
+    // Plumb actor for audit-log (R9 re-audit follow-up A-11).
+    await PrescriptionService.deletePrescription(req.params.id, {
+      id:   req.user?.id   || req.user?._id   || null,
+      name: req.user?.name || req.user?.fullName || null,
+      role: req.user?.role || null,
+    });
     res.status(200).json({ success: true, message: "Deleted" });
   } catch (error) {
     res
@@ -219,6 +224,11 @@ exports.updatePrescriptionStatus = async (req, res) => {
     const data = await PrescriptionService.updatePrescriptionStatus(
       req.params.id,
       status,
+      {
+        id:   req.user?.id   || req.user?._id   || null,
+        name: req.user?.name || req.user?.fullName || null,
+        role: req.user?.role || null,
+      },
     );
     res.status(200).json({ success: true, data });
   } catch (error) {

@@ -122,14 +122,21 @@ class DischargeSummaryController {
       if (admission?.bedId) {
         try {
           const Bed = require("../../models/bedMgmt/bedsModel");
-          await Bed.findByIdAndUpdate(admission.bedId, {
-            $set: {
-              status: "Available",
-              patient: null,
-              currentAdmission: null,
-              lastDischargedAt: new Date(),
+          // runValidators added per R9 re-audit — without it, the bed
+          // status enum wasn't enforced on the update path, so a future
+          // typo upstream could persist an invalid status silently.
+          await Bed.findByIdAndUpdate(
+            admission.bedId,
+            {
+              $set: {
+                status: "Available",
+                patient: null,
+                currentAdmission: null,
+                lastDischargedAt: new Date(),
+              },
             },
-          });
+            { runValidators: true },
+          );
         } catch (e) { /* non-fatal — surface in admin alerts */ }
       }
     }

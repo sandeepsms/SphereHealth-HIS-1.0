@@ -204,6 +204,15 @@ edit (A-15) remain open — listed in re-audit backlog.
 | R7-F-02 | `pharmacy.returnItems()` restored stock via non-atomic load+save loop — partial undo on failure | MEDIUM | controllers/Pharmacy/pharmacyController.js:615–622 | **FIXED** | 2026-05-17 (r8) | `findOneAndUpdate({quantityOut: {$gte: qty}, isActive: true}, $inc)` with structured log on failure |
 | R7-A-01 | `bedTransfer.completeHandover` multi-doc sequence (new bed → admission → old bed → transfer) had no rollback if admission.save() failed mid-sequence | MEDIUM | controllers/Patient/bedTransferController.js:160–204 | **FIXED** | 2026-05-17 (r8) | Sequence re-ordered (newBed → admission → oldBed → transfer); admission.save() failure rolls back newBed flip via `try/catch` |
 
+### Round-9 new findings + fixes
+
+| ID | Title | Severity | Files | Status | Fixed-on | Verifier |
+| -- | ----- | -------- | ----- | ------ | -------- | -------- |
+| R9-C-01 | `vitalSheetService.getVitalSheet` had no `.limit()` — months of daily vitals balloon the response | **HIGH** | services/Vitals/vitalSheetService.js | **FIXED** | 2026-05-17 (r10) | Default `.limit(90)` with caller-overridable `opts.limit` (capped at 500) |
+| R9-A-01 | `deletePrescription` + `updatePrescriptionStatus` had no audit log — NABH-relevant state changes leak | **HIGH** | services/Doctor/PrescriptionService.js | **FIXED** | 2026-05-17 (r10) | Both methods now snapshot before/after to `PatientActivityLog` with patientId/UHID/actor; PRESCRIPTION_DELETE + PRESCRIPTION_STATUS_CHANGE actions |
+| R9-C-02 | `Bed.findByIdAndUpdate` on discharge-summary finalize missing `runValidators: true` | MEDIUM | controllers/Clinical/dischargeSummaryController.js:125 | **FIXED** | 2026-05-17 (r10) | `runValidators: true` added; bed-status enum now enforced |
+| R9-A-02 | `updatePrescriptionByUHID` audit row was missing `patientId` (analytics group-by broke) | MEDIUM | services/Doctor/PrescriptionService.js | **FIXED** | 2026-05-17 (r10) | `patientId: before.patient` added to the audit-log create payload |
+
 ### Summary of fix-round 1 (2026-05-17)
 
 **Sections fully addressed:**
