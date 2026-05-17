@@ -2075,48 +2075,53 @@ function ShortcutRow({ keys, label }) {
 function PatientDirectory({ listType, setListType, rows, loading, onPick }) {
   // Tabs mirror the registrationType enum on Patient model.
   const TYPES = [
-    { key: "OPD",       label: "OPD",        icon: "pi-user-plus",     color: "#06b6d4" },
-    { key: "IPD",       label: "IPD",        icon: "pi-home",          color: "#7c3aed" },
-    { key: "Daycare",   label: "Day Care",   icon: "pi-sun",           color: "#d97706" },
-    { key: "Emergency", label: "Emergency",  icon: "pi-bolt",          color: "#dc2626" },
-    { key: "Services",  label: "Services",   icon: "pi-cog",           color: "#0e7490" },
-    { key: "ALL",       label: "All Types",  icon: "pi-list",          color: "#475569" },
+    { key: "OPD",       label: "OPD",        icon: "pi-user-plus", color: "#06b6d4" },
+    { key: "IPD",       label: "IPD",        icon: "pi-home",      color: "#7c3aed" },
+    { key: "Daycare",   label: "Day Care",   icon: "pi-sun",       color: "#d97706" },
+    { key: "Emergency", label: "Emergency",  icon: "pi-bolt",      color: "#dc2626" },
+    { key: "Services",  label: "Services",   icon: "pi-cog",       color: "#0e7490" },
+    { key: "ALL",       label: "All Types",  icon: "pi-list",      color: "#475569" },
   ];
+
+  // "Today" detection — same logic used on PatientLookupPage so the
+  // two pages render identical highlights. Falls back through lastVisitDate
+  // → registrationDate → createdAt because not every patient row carries
+  // all three.
+  const isToday = (p) => {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const d = new Date(p?.lastVisitDate || p?.registrationDate || p?.createdAt || 0);
+    if (Number.isNaN(d.getTime())) return false;
+    d.setHours(0, 0, 0, 0);
+    return d.getTime() === today.getTime();
+  };
+  const todayCount = rows.filter(isToday).length;
 
   return (
     <>
-      {/* Tab strip */}
-      <div style={{
-        display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap",
-        background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12,
-        padding: 6,
-      }}>
+      {/* Tab strip — uses the same class names as PatientLookupPage's
+          ActivePatientDirectory so the two pages share one CSS rulebook
+          (no inline styles per workflow_no_inline_styles.md). */}
+      <div className="pl-idle-tabs">
         {TYPES.map(t => {
           const active = listType === t.key;
           return (
             <button
               key={t.key}
               onClick={() => setListType(t.key)}
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 6,
-                padding: "8px 14px", border: 0, borderRadius: 8,
-                background: active ? `linear-gradient(135deg, ${t.color}, ${t.color}dd)` : "transparent",
-                color: active ? "#fff" : "#475569",
-                fontFamily: "inherit", fontSize: 12, fontWeight: 700,
-                cursor: "pointer", transition: "all 0.15s ease",
-              }}
-              onMouseEnter={e => { if (!active) e.currentTarget.style.background = "#f1f5f9"; }}
-              onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}
+              className={`pl-idle-tab ${active ? "pl-idle-tab--active" : ""}`}
+              style={active ? { background: `linear-gradient(135deg, ${t.color}, ${t.color}dd)` } : undefined}
             >
-              <i className={`pi ${t.icon}`} style={{ fontSize: 12 }} /> {t.label}
+              <i className={`pi ${t.icon}`} /> {t.label}
             </button>
           );
         })}
-        <span style={{
-          marginLeft: "auto", padding: "8px 12px", fontSize: 11,
-          fontWeight: 700, color: "#64748b", letterSpacing: 0.3,
-        }}>
-          {loading ? "Loading…" : `${rows.length} patient${rows.length === 1 ? "" : "s"}`}
+        <span className="pl-idle-count">
+          {loading ? "Loading…" : (
+            <>
+              <strong>{rows.length}</strong> patient{rows.length === 1 ? "" : "s"}
+              {todayCount > 0 && <> · <span className="pl-idle-today-count">{todayCount} today</span></>}
+            </>
+          )}
         </span>
       </div>
 
@@ -2129,66 +2134,39 @@ function PatientDirectory({ listType, setListType, rows, loading, onPick }) {
           No active {listType === "ALL" ? "" : listType} patients yet today.
         </div>
       ) : (
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(310px, 1fr))",
-          gap: 10,
-        }}>
-          {rows.map(p => (
-            <button
-              key={p._id}
-              onClick={() => onPick(p)}
-              style={{
-                display: "flex", alignItems: "center", gap: 10,
-                padding: "10px 12px",
-                background: "#fff", border: "1px solid #e2e8f0",
-                borderRadius: 10, cursor: "pointer",
-                fontFamily: "inherit", textAlign: "left",
-                transition: "all 0.15s ease",
-              }}
-              onMouseEnter={e => {
-                e.currentTarget.style.borderColor = "#06b6d4";
-                e.currentTarget.style.boxShadow = "0 4px 12px rgba(8, 145, 178, 0.12)";
-                e.currentTarget.style.transform = "translateY(-1px)";
-              }}
-              onMouseLeave={e => {
-                e.currentTarget.style.borderColor = "#e2e8f0";
-                e.currentTarget.style.boxShadow = "none";
-                e.currentTarget.style.transform = "none";
-              }}
-            >
-              <div style={{
-                width: 38, height: 38, borderRadius: "50%",
-                background: "linear-gradient(135deg, #0891b2, #06b6d4)",
-                color: "#fff", fontWeight: 800, fontSize: 13,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                flexShrink: 0,
-              }}>
-                {String(p.fullName || "?").trim().split(/\s+/).slice(0,2).map(x => x[0] || "").join("").toUpperCase()}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{
-                  fontWeight: 700, color: "#0f172a", fontSize: 13,
-                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                }}>
-                  {p.title ? `${p.title} ` : ""}{p.fullName}
+        <div className="pl-idle-grid">
+          {rows.map(p => {
+            const today = isToday(p);
+            return (
+              <button
+                key={p._id}
+                onClick={() => onPick(p)}
+                className={`pl-idle-card ${today ? "pl-idle-card--today" : ""}`}
+                title={`Open ${p.fullName} (${p.UHID})`}
+              >
+                {today && <span className="pl-idle-badge">TODAY</span>}
+                <div className="pl-idle-avatar">
+                  {String(p.fullName || "?").trim().split(/\s+/).slice(0,2).map(x => x[0] || "").join("").toUpperCase()}
                 </div>
-                <div style={{ fontSize: 11, color: "#64748b", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 2 }}>
-                  <span className="rx-mono-tag rx-mono-tag--subtle">{p.UHID}</span>
-                  {p.contactNumber && <span>📱 {p.contactNumber}</span>}
+                <div className="pl-idle-info">
+                  <div className="pl-idle-name">
+                    {p.title ? `${p.title} ` : ""}{p.fullName}
+                  </div>
+                  <div className="pl-idle-meta">
+                    <span className="rx-mono-tag rx-mono-tag--subtle">{p.UHID}</span>
+                    {p.contactNumber && <span>📱 {p.contactNumber}</span>}
+                  </div>
+                  <div className="pl-idle-sub">
+                    {p.age != null && `${p.age}y · `}{p.gender || ""}
+                    {p.lastVisitDate && ` · Last visit ${new Date(p.lastVisitDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}`}
+                  </div>
                 </div>
-                <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>
-                  {p.age != null && `${p.age}y · `}{p.gender || ""}
-                  {p.lastVisitDate && ` · Last visit ${new Date(p.lastVisitDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}`}
-                </div>
-              </div>
-              {p.registrationType && (
-                <span className="rx-mode-pill" style={{ fontSize: 10, padding: "2px 8px", flexShrink: 0 }}>
-                  {p.registrationType}
-                </span>
-              )}
-            </button>
-          ))}
+                {p.registrationType && (
+                  <span className="rx-mode-pill pl-idle-pill">{p.registrationType}</span>
+                )}
+              </button>
+            );
+          })}
         </div>
       )}
     </>

@@ -262,6 +262,33 @@ export default function PatientLookupPage({ initialView = "auto" }) {
     setDetailTab("profile");
   };
 
+  /* ─── Idle-state directory (SEARCH view) ─────────────────────
+   When the receptionist lands on /patient-search and hasn't typed
+   anything yet, we still want to show them WHO's currently active
+   (mirrors the ReceptionBilling pattern). Pill tabs filter by
+   registrationType; today's patients float to the top because the
+   backend now sorts by lastVisitDate DESC. */
+  const [idleType, setIdleType]       = useState("OPD");
+  const [idleRows, setIdleRows]       = useState([]);
+  const [idleLoading, setIdleLoading] = useState(false);
+  useEffect(() => {
+    if (view !== "search") return;
+    if (q.trim().length >= 2) return;  // user is actively searching
+    const ac = new AbortController();
+    setIdleLoading(true);
+    const params = new URLSearchParams({ limit: "60" });
+    if (idleType !== "ALL") params.set("registrationType", idleType);
+    axios.get(`${API_ENDPOINTS.PATIENTS}?${params.toString()}`, { signal: ac.signal })
+      .then(({ data }) => {
+        if (ac.signal.aborted) return;
+        const rows = data?.patients || data?.data || (Array.isArray(data) ? data : []);
+        setIdleRows(Array.isArray(rows) ? rows : []);
+      })
+      .catch((e) => { if (!axios.isCancel(e)) console.warn("[PatientLookup] idle directory:", e?.message); })
+      .finally(() => { if (!ac.signal.aborted) setIdleLoading(false); });
+    return () => ac.abort();
+  }, [view, q, idleType]);
+
   /* ─── Directory mode (paginated) ───────────────────────────── */
   const [dirRows,     setDirRows]     = useState([]);
   const [dirPage,     setDirPage]     = useState(1);
@@ -425,6 +452,22 @@ export default function PatientLookupPage({ initialView = "auto" }) {
 
       {/* ════════════════ SEARCH VIEW ════════════════ */}
       {view === "search" && (
+        <>
+          {/* ── Idle-state directory — visible whenever the cashier
+              isn't actively searching for / viewing a specific patient.
+              Same pill-tab pattern as ReceptionBilling so the staff
+              sees who's checked in today (sort: lastVisitDate DESC
+              then createdAt DESC, today-first). ── */}
+          {q.trim().length < 2 && !selected && (
+            <ActivePatientDirectory
+              listType={idleType}
+              setListType={setIdleType}
+              rows={idleRows}
+              loading={idleLoading}
+              onPick={pickPatient}
+            />
+          )}
+
         <div className="pl-search-grid">
           {/* ── Search column ── */}
           <div className="rx-card pl-search-col">
@@ -504,6 +547,7 @@ export default function PatientLookupPage({ initialView = "auto" }) {
             }}
           />
         </div>
+        </>
       )}
 
       {/* ════════════════ DIRECTORY VIEW ════════════════ */}
@@ -1357,6 +1401,112 @@ function TakeAdvanceModal({ patient, onClose, onSaved }) {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   ActivePatientDirectory — pill-tab strip + card grid for the
+   idle state of the SEARCH view. Mirrors ReceptionBilling's
+   PatientDirectory so /reception-billing and /patient-search feel
+   like the same desk.
+   ═══════════════════════════════════════════════════════════════ */
+function ActivePatientDirectory({ listType, setListType, rows, loading, onPick }) {
+  const TYPES = [
+    { key: "OPD",       label: "OPD",        icon: "pi-user-plus", color: "#06b6d4" },
+    { key: "IPD",       label: "IPD",        icon: "pi-home",      color: "#7c3aed" },
+    { key: "Daycare",   label: "Day Care",   icon: "pi-sun",       color: "#d97706" },
+    { key: "Emergency", label: "Emergency",  icon: "pi-bolt",      color: "#dc2626" },
+    { key: "Services",  label: "Services",   icon: "pi-cog",       color: "#0e7490" },
+    { key: "ALL",       label: "All Types",  icon: "pi-list",      color: "#475569" },
+  ];
+
+  // Today-first detection — backend already sorts by lastVisitDate
+  // DESC then createdAt DESC, but we tag each row visually so the
+  // staff can see at a glance who walked in TODAY vs older active
+  // patients. Compares the local-date portion of either field.
+  const isToday = (p) => {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const d = new Date(p?.lastVisitDate || p?.registrationDate || p?.createdAt || 0);
+    if (Number.isNaN(d.getTime())) return false;
+    d.setHours(0, 0, 0, 0);
+    return d.getTime() === today.getTime();
+  };
+
+  const todayCount = rows.filter(isToday).length;
+
+  return (
+    <div className="pl-idle-dir">
+      {/* Tab strip */}
+      <div className="pl-idle-tabs">
+        {TYPES.map(t => {
+          const active = listType === t.key;
+          return (
+            <button
+              key={t.key}
+              onClick={() => setListType(t.key)}
+              className={`pl-idle-tab ${active ? "pl-idle-tab--active" : ""}`}
+              data-color={t.color}
+              style={active ? { background: `linear-gradient(135deg, ${t.color}, ${t.color}dd)` } : undefined}
+            >
+              <i className={`pi ${t.icon}`} /> {t.label}
+            </button>
+          );
+        })}
+        <span className="pl-idle-count">
+          {loading ? "Loading…" : (
+            <>
+              <strong>{rows.length}</strong> patient{rows.length === 1 ? "" : "s"}
+              {todayCount > 0 && <> · <span className="pl-idle-today-count">{todayCount} today</span></>}
+            </>
+          )}
+        </span>
+      </div>
+
+      {/* Grid */}
+      {loading && rows.length === 0 ? (
+        <div className="rx-empty"><i className="pi pi-spin pi-spinner rx-loader-icon" /></div>
+      ) : rows.length === 0 ? (
+        <div className="rx-empty">
+          <span className="rx-empty-icon">👥</span>
+          No active {listType === "ALL" ? "" : listType} patients yet today.
+        </div>
+      ) : (
+        <div className="pl-idle-grid">
+          {rows.map(p => {
+            const today = isToday(p);
+            return (
+              <button
+                key={p._id}
+                onClick={() => onPick(p)}
+                className={`pl-idle-card ${today ? "pl-idle-card--today" : ""}`}
+                title={`Open ${p.fullName} (${p.UHID})`}
+              >
+                {today && <span className="pl-idle-badge">TODAY</span>}
+                <div className="pl-idle-avatar">
+                  {String(p.fullName || "?").trim().split(/\s+/).slice(0,2).map(x => x[0] || "").join("").toUpperCase()}
+                </div>
+                <div className="pl-idle-info">
+                  <div className="pl-idle-name">
+                    {p.title ? `${p.title} ` : ""}{p.fullName}
+                  </div>
+                  <div className="pl-idle-meta">
+                    <span className="rx-mono-tag rx-mono-tag--subtle">{p.UHID}</span>
+                    {p.contactNumber && <span>📱 {p.contactNumber}</span>}
+                  </div>
+                  <div className="pl-idle-sub">
+                    {p.age != null && `${p.age}y · `}{p.gender || ""}
+                    {p.lastVisitDate && ` · Last visit ${new Date(p.lastVisitDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}`}
+                  </div>
+                </div>
+                {p.registrationType && (
+                  <span className="rx-mode-pill pl-idle-pill">{p.registrationType}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
