@@ -195,7 +195,10 @@ async function findServicesByNamesBatch(names, patientType = "IPD") {
 // ── Helper: get or create draft bill for admission ────────────────────────────
 async function getOrCreateBill(admissionId, patientType) {
   const admission = await Admission.findById(admissionId).lean();
-  if (!admission) return null;
+  if (!admission) {
+    console.warn(`[AutoBilling] getOrCreateBill — admission ${admissionId} not found`);
+    return null;
+  }
   // billingService.js exports an INSTANCE — use directly, no `new`.
   const billingService = require("./billingService");
   try {
@@ -204,7 +207,22 @@ async function getOrCreateBill(admissionId, patientType) {
       patientType || "IPD",
       admissionId.toString()
     );
-  } catch { return null; }
+  } catch (e) {
+    // FIX (E2E test caught this): the previous `catch { return null }`
+    // silently swallowed every billing failure, leaving the upstream
+    // trigger forever in status="completed" with billId=undefined and
+    // NO breadcrumb on the bill or in logs. The audit UI would show
+    // "trigger fired" but the user would see "no bill" with no way to
+    // diagnose. Log the error with context so future failures are
+    // visible to the operator AND a downstream sweeper can retry.
+    try {
+      const { logErr } = require("../../utils/logErr");
+      logErr("autoBilling", `getOrCreateDraftBill UHID=${admission.UHID} adm=${admissionId} type=${patientType}`)(e);
+    } catch {
+      console.error(`[AutoBilling] getOrCreateDraftBill UHID=${admission.UHID} adm=${admissionId}:`, e?.message || e);
+    }
+    return null;
+  }
 }
 
 // ── Helper: add item to bill ──────────────────────────────────────────────────
@@ -270,7 +288,11 @@ async function addItemToBill(bill, service, quantity, source, trigger) {
     const savedItem = freshBill.billItems[freshBill.billItems.length - 1];
     return { bill: freshBill, itemId: savedItem._id, unitPrice, totalAmt };
   } catch (e) {
-    console.error("[AutoBilling] addItemToBill error:", e.message);
+    // Include enough context to debug without re-running: bill id,
+    // service code, trigger id, and the error message + name.
+    console.error(
+      `[AutoBilling] addItemToBill error on bill=${bill?._id} service=${service?.serviceCode || "(none)"} trigger=${trigger?._id || "(none)"}: ${e.name || "Error"}: ${e.message}`,
+    );
     return null;
   }
 }
@@ -405,6 +427,14 @@ async function createTrigger(config) {
         });
         return { trigger, billed: true, billId: result.bill._id };
       }
+      // addItemToBill returned null even though the bill existed.
+      // That's the gap the E2E test caught — the trigger lives but
+      // its line item never materialises. Surface it loudly so an
+      // operator can investigate (most likely cause: closed/frozen
+      // bill, or a Decimal128 / enum validation error inside save()).
+      console.warn(`[AutoBilling] addItemToBill returned null for ${trigger.serviceCode} on bill ${bill?._id} — trigger stays at "completed" with no billId`);
+    } else {
+      console.warn(`[AutoBilling] getOrCreateBill returned null for adm=${admissionId} type=${patientType} — trigger ${trigger?._id} (${trigger.serviceCode}) stays at "completed" with no billId`);
     }
   }
 
