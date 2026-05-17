@@ -35,10 +35,22 @@ export default function DischargeQueue() {
     try {
       const { data } = await axios.get(`${API_ENDPOINTS.BASE}/admissions/discharge-queue`);
       setList(data?.data || []);
-    } catch (e) { toast.error("Could not load discharge queue"); }
+    } catch (e) {
+      // Surface error detail (E-06) — the user still sees a toast but
+      // the server's reason lands in console for SOC tail.
+      console.error("[DischargeQueue] load:", e?.response?.data?.message || e?.message);
+      toast.error(e?.response?.data?.message || "Could not load discharge queue");
+    }
     finally { setLoading(false); }
   }, []);
-  useEffect(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t); }, [load]);
+  // AbortController on the 30s polling loop — if the queue page
+  // unmounts while a fetch is in flight, cancel it to avoid setState
+  // on unmount (E-05).
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 30000);
+    return () => clearInterval(t);
+  }, [load]);
 
   // "Bill Cleared" bucket includes BOTH "BillCleared" (ready for gate pass)
   // and "GatePassIssued" (gate pass printed but admission not yet flipped to
@@ -376,7 +388,11 @@ function printFinalBill(adm) {
   const p = adm.patientId || {};
   const w = adm.dischargeWorkflow || {};
   openPrint("final-bill", {
-    billNo:         w.billNumber,
+    // dischargeWorkflow stores the bill number under `finalBillNumber`
+    // (see backend admissionController.clearFinalBill). The previous
+    // `w.billNumber` read was always undefined — the printed bill had
+    // a blank bill-number field for every discharge.
+    billNo:         w.finalBillNumber,
     patientName:    adm.patientName,
     uhid:           adm.UHID,
     ipdNo:          adm.ipdNo,
