@@ -321,6 +321,155 @@ class BillingService {
     return bill;
   }
 
+  // ── 8a. Settlement-time adjustment (GENERATED / PARTIAL bills) ─
+  //
+  // The receptionist at the counter can negotiate a final settlement
+  // with the patient — e.g. waive a portion of the bill, drop a
+  // procedure that wasn't actually performed, or recalibrate a unit
+  // price. F-05 normally freezes a bill the moment it's generated so
+  // nobody can silently inflate the total AFTER cash was counted;
+  // this endpoint is the audited escape hatch.
+  //
+  // Every adjustment requires (1) a human-readable reason and (2) the
+  // staff name making the change, and a before/after snapshot is
+  // pushed onto bill.adjustmentLog so we can reconstruct any past
+  // state for NABH audit.
+  //
+  // Payload shape:
+  //   { extraDiscount, extraDiscountReason, items, adjustedBy, reason }
+  //   items: [{ itemId, quantity?, unitPrice?, discountPercent? }]
+  //
+  // The pre-save hook re-derives every total from the (possibly-edited)
+  // items + extraDiscount, so the caller never has to do math here.
+  async settlementAdjust(billId, payload = {}) {
+    const { extraDiscount, extraDiscountReason, items, adjustedBy, reason } = payload;
+
+    if (!adjustedBy || !String(adjustedBy).trim()) {
+      const err = new Error("adjustedBy (staff name) is required for audit");
+      err.status = 400;
+      throw err;
+    }
+    if (!reason || !String(reason).trim()) {
+      const err = new Error("Reason is required for audit");
+      err.status = 400;
+      throw err;
+    }
+
+    const bill = await PatientBill.findById(billId);
+    if (!bill) {
+      const err = new Error("Bill not found");
+      err.status = 404;
+      throw err;
+    }
+    // Only post-generation bills (where a patient might already have
+    // paid a partial amount) need this audited path. DRAFT bills use
+    // the regular updateItemQuantity / removeItemFromBill endpoints
+    // and PAID/CANCELLED/REFUNDED bills are permanently sealed.
+    if (!["GENERATED", "PARTIAL"].includes(bill.billStatus)) {
+      const err = new Error(
+        `Cannot adjust a ${bill.billStatus} bill — only GENERATED / PARTIAL bills can be settled.`,
+      );
+      err.status = 409;
+      throw err;
+    }
+
+    // Snapshot BEFORE state for audit.
+    const beforeSnap = {
+      netAmount:     toNum(bill.netAmount),
+      totalDiscount: toNum(bill.totalDiscount),
+      extraDiscount: toNum(bill.extraDiscount) || 0,
+      balanceAmount: toNum(bill.balanceAmount),
+      items: bill.billItems.map((it) => ({
+        _id:             it._id.toString(),
+        serviceName:     it.serviceName,
+        quantity:        toNum(it.quantity),
+        unitPrice:       toNum(it.unitPrice),
+        discountPercent: it.discountPercent || 0,
+        netAmount:       toNum(it.netAmount),
+      })),
+    };
+
+    let touchedLines = false;
+    let touchedDiscount = false;
+
+    // Apply per-item edits.
+    if (Array.isArray(items) && items.length > 0) {
+      for (const upd of items) {
+        if (!upd?.itemId) continue;
+        const it = bill.billItems.id(upd.itemId);
+        if (!it) continue;
+        if (upd.quantity != null && Number(upd.quantity) > 0) {
+          it.quantity = Number(upd.quantity);
+          touchedLines = true;
+        }
+        if (upd.unitPrice != null && Number(upd.unitPrice) >= 0) {
+          it.unitPrice = Number(upd.unitPrice);  // pre-save will toDec it
+          touchedLines = true;
+        }
+        if (
+          upd.discountPercent != null &&
+          Number(upd.discountPercent) >= 0 &&
+          Number(upd.discountPercent) <= 100
+        ) {
+          it.discountPercent = Number(upd.discountPercent);
+          touchedLines = true;
+        }
+      }
+    }
+
+    // Apply bill-level extra discount. A 0 value is only "touched" when
+    // the bill previously HAD a non-zero extra discount (i.e. the cashier
+    // is clearing it). Otherwise a stray 0 doesn't count as an adjustment.
+    if (extraDiscount != null && Number(extraDiscount) >= 0) {
+      const newAmt    = Number(extraDiscount);
+      const prevAmt   = toNum(bill.extraDiscount) || 0;
+      if (newAmt > 0 || prevAmt > 0) {
+        bill.extraDiscount       = newAmt;
+        bill.extraDiscountReason = String(extraDiscountReason || reason).trim();
+        bill.extraDiscountBy     = String(adjustedBy).trim();
+        touchedDiscount = true;
+      }
+    }
+
+    if (!touchedLines && !touchedDiscount) {
+      const err = new Error("Nothing to adjust — no item edits or extra discount provided");
+      err.status = 400;
+      throw err;
+    }
+
+    bill.adjustmentLog.push({
+      at:     new Date(),
+      by:     String(adjustedBy).trim(),
+      type:   touchedLines && touchedDiscount ? "BOTH" : (touchedLines ? "LINE_EDIT" : "EXTRA_DISCOUNT"),
+      reason: String(reason).trim(),
+      before: beforeSnap,
+      after:  null,  // filled below from the saved doc
+    });
+
+    await bill.save();
+
+    // Capture AFTER snap so the log row stands on its own without needing
+    // to read both itself and the next entry.
+    const lastIdx = bill.adjustmentLog.length - 1;
+    bill.adjustmentLog[lastIdx].after = {
+      netAmount:     toNum(bill.netAmount),
+      totalDiscount: toNum(bill.totalDiscount),
+      extraDiscount: toNum(bill.extraDiscount) || 0,
+      balanceAmount: toNum(bill.balanceAmount),
+      items: bill.billItems.map((it) => ({
+        _id:             it._id.toString(),
+        serviceName:     it.serviceName,
+        quantity:        toNum(it.quantity),
+        unitPrice:       toNum(it.unitPrice),
+        discountPercent: it.discountPercent || 0,
+        netAmount:       toNum(it.netAmount),
+      })),
+    };
+    await bill.save();
+
+    return bill;
+  }
+
   // ── 9. Generate final bill (DRAFT → GENERATED) ────────────────
   async generateFinalBill(billId, generatedBy = "Staff") {
     const bill = await PatientBill.findById(billId);

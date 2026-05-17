@@ -110,6 +110,24 @@ exports.updateItemQty = async (req, res) => {
   }
 };
 
+// ── POST /api/billing/:billId/settlement-adjust ──────────────
+// Lets the receptionist adjust a GENERATED/PARTIAL bill at settlement
+// time (extra discount + per-item qty/price edits). Audited — backend
+// requires `adjustedBy` + `reason` and pushes a before/after snapshot
+// onto bill.adjustmentLog.
+exports.settlementAdjust = async (req, res) => {
+  try {
+    const data = await billingService.settlementAdjust(
+      req.params.billId,
+      req.body,
+    );
+    res.json({ success: true, data, message: "Settlement adjustment recorded" });
+  } catch (e) {
+    const status = e.status || 400;
+    res.status(status).json({ success: false, message: e.message });
+  }
+};
+
 // ── POST /api/billing/:billId/generate ───────────────────────
 exports.generateBill = async (req, res) => {
   try {

@@ -151,6 +151,34 @@ const PatientBillSchema = new mongoose.Schema(
     advancePaid:          { type: Dec, default: () => toDec(0) },
     balanceAmount:        { type: Dec, default: () => toDec(0) },
 
+    // ── Settlement-time adjustment (post-generation) ──────
+    // The receptionist can apply an extra bill-level discount at
+    // settlement time — e.g. patient is bargaining, doctor approves a
+    // courtesy waiver, or a calculation needs to round off. Stored as
+    // an absolute Decimal128 amount so we can support either a flat
+    // ₹ value or the result of a percentage applied at save time.
+    // Reduces netAmount + patientPayableAmount in the pre-save hook;
+    // never goes negative. Every change is captured in adjustmentLog
+    // for NABH audit.
+    extraDiscount:        { type: Dec, default: () => toDec(0) },
+    extraDiscountReason:  { type: String, trim: true },
+    extraDiscountBy:      { type: String, trim: true },
+
+    // Append-only audit trail for any post-generation edit (line item
+    // qty/price change, extra discount). Each entry captures who, when,
+    // why, plus a before/after snapshot so we can reconstruct the bill
+    // state at any point in time.
+    adjustmentLog: [
+      {
+        at:      { type: Date, default: Date.now },
+        by:      { type: String, trim: true },
+        type:    { type: String, enum: ["LINE_EDIT", "EXTRA_DISCOUNT", "BOTH"], default: "BOTH" },
+        reason:  { type: String, trim: true },
+        before:  { type: mongoose.Schema.Types.Mixed },
+        after:   { type: mongoose.Schema.Types.Mixed },
+      },
+    ],
+
     // ── Payments ──────────────────────────────────────────
     payments: [PaymentSchema],
 
@@ -255,12 +283,19 @@ PatientBillSchema.pre("save", async function (next) {
       ptPay  += ptShare;
     });
 
+    // Settlement-time extra discount — capped at the patient share so the
+    // patient never owes a negative amount, and to totalDiscount so the
+    // "Discount" KPI on receipts reflects the true concession given. We
+    // apply the cap before mutating ptPay so the math stays consistent
+    // even when the cashier types a huge round-off by accident.
+    const extra = Math.min(Math.max(0, toNum(this.extraDiscount) || 0), ptPay);
+
     this.grossAmount          = toDec(gross);
-    this.totalDiscount        = toDec(disc);
+    this.totalDiscount        = toDec(disc + extra);
     this.taxAmount            = toDec(tax);
-    this.netAmount            = toDec(gross - disc + tax);
+    this.netAmount            = toDec(gross - disc + tax - extra);
     this.tpaPayableAmount     = toDec(tpaPay);
-    this.patientPayableAmount = toDec(ptPay);
+    this.patientPayableAmount = toDec(ptPay - extra);
   }
 
   // Recalculate balance. Payment rows can be negative (refunds), so totalPaid

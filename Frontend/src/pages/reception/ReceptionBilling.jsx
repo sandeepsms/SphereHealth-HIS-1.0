@@ -83,6 +83,7 @@ export default function ReceptionBilling() {
   const [refundTarget, setRefundTarget] = useState(null);
   const [cancelTarget, setCancelTarget] = useState(null);
   const [addSvcTarget, setAddSvcTarget] = useState(null);   // DRAFT bill currently being amended
+  const [settleTarget, setSettleTarget] = useState(null);   // GENERATED/PARTIAL bill being adjusted at counter
   const [todayCollection, setTodayCollection] = useState(null);
   // ── Advance-deposit state — fetched alongside bills on every load.
   //    advances: full ledger; unspentAdv: aggregated remaining balance
@@ -707,6 +708,7 @@ export default function ReceptionBilling() {
                   unspentAdv={unspentAdv}
                   onGenerate={() => generateBill(activeBill._id)}
                   onPay={() => setPayTarget(activeBill)}
+                  onSettle={() => setSettleTarget(activeBill)}
                   onPrint={() => printReceipt(activeBill)}
                   onRefund={() => setRefundTarget(activeBill)}
                   onCancel={() => setCancelTarget(activeBill)}
@@ -743,6 +745,24 @@ export default function ReceptionBilling() {
             setPayTarget(null);
             await load(uhid);
             await loadBill(id);
+          }}
+        />
+      )}
+
+      {settleTarget && (
+        <SettlementModal
+          bill={settleTarget}
+          onClose={() => setSettleTarget(null)}
+          onDone={async (openPayAfter) => {
+            const id = settleTarget._id;
+            setSettleTarget(null);
+            await load(uhid);
+            const fresh = await axios.get(`${API_ENDPOINTS.BILLING}/${id}`).catch(() => null);
+            const freshBill = fresh?.data?.data || fresh?.data || null;
+            if (freshBill) setActiveBill(freshBill);
+            // When the cashier clicks "Save & Take Payment", chain straight
+            // into the existing PaymentModal pre-filled to the new balance.
+            if (openPayAfter && freshBill) setPayTarget(freshBill);
           }}
         />
       )}
@@ -812,7 +832,7 @@ export default function ReceptionBilling() {
 
 /* ───────────────────────────────────────────────────────────── */
 
-function BillDetail({ bill, unspentAdv = 0, onGenerate, onPay, onPrint, onRefund, onCancel, onApplyAdvance, onAddService }) {
+function BillDetail({ bill, unspentAdv = 0, onGenerate, onPay, onSettle, onPrint, onRefund, onCancel, onApplyAdvance, onAddService }) {
   const { can } = useAuth();
   const isDraft   = bill.billStatus === "DRAFT";
   const canPay    = ["GENERATED", "PARTIAL"].includes(bill.billStatus);
@@ -857,9 +877,24 @@ function BillDetail({ bill, unspentAdv = 0, onGenerate, onPay, onPrint, onRefund
           </button>
         )}
         {canPay && (
-          <button className="rx-action-btn rx-action-btn--success" onClick={onPay}>
-            <i className="pi pi-wallet" /> Collect Payment
-          </button>
+          <>
+            {/* Two-button settlement flow. "Full Payment" is the one-click
+                happy path — opens the payment modal pre-filled to the full
+                outstanding balance. "Partial Settlement" routes through the
+                adjustment modal first so the receptionist can apply an
+                extra discount or tweak any item before collecting. */}
+            <button className="rx-action-btn rx-action-btn--success"
+                    onClick={onPay}
+                    title={`Collect the full outstanding ${fmtCur(bill.balanceAmount)}`}>
+              <i className="pi pi-check-circle" /> Full Payment
+              <span className="rx-action-amount">{fmtCur(bill.balanceAmount)}</span>
+            </button>
+            <button className="rx-action-btn rx-action-btn--primary"
+                    onClick={onSettle}
+                    title="Adjust items / add extra discount, then collect">
+              <i className="pi pi-sliders-h" /> Partial Settlement
+            </button>
+          </>
         )}
         {!isDraft && (
           <button className="rx-action-btn" onClick={onPrint}>
@@ -1141,6 +1176,289 @@ function RefundModal({ bill, onClose, onDone }) {
     </div>
   );
 }
+
+/* ───────────────────────────────────────────────────────────── */
+/* SettlementModal — counter-side adjustment for GENERATED/PARTIAL
+   bills. Lets the receptionist:
+     - bump any line item's quantity / unit price up or down
+     - apply an extra bill-level discount (either as a % of the gross
+       or as a flat ₹ amount)
+     - capture a mandatory reason + their name (audit)
+     - either save the adjustment, or chain straight into the payment
+       modal for the new balance.
+
+   The math runs entirely on the frontend for the live preview; the
+   actual recompute happens on the server (pre-save hook) when we
+   POST /:billId/settlement-adjust.                                    */
+
+function SettlementModal({ bill, onClose, onDone }) {
+  // Editable line items — keyed by itemId so we can submit a small
+  // diff (only the items the cashier actually touched) instead of the
+  // whole list. Start as null and lazily fill on first edit.
+  const [edits, setEdits] = useState({});
+  const [extraDiscPct, setExtraDiscPct] = useState(0);   // % entry mode
+  const [extraDiscAmt, setExtraDiscAmt] = useState(0);   // ₹ entry mode
+  const [discMode, setDiscMode]   = useState("PERCENT"); // PERCENT | AMOUNT
+  const [reason, setReason]       = useState("");
+  const [adjustedBy, setAdjustedBy] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const items = bill.billItems || [];
+
+  // Effective row — falls back to the original bill item if the
+  // cashier hasn't touched this row yet.
+  const effective = (it) => {
+    const e = edits[it._id] || {};
+    return {
+      quantity:        e.quantity        ?? (it.quantity ?? 1),
+      unitPrice:       e.unitPrice       ?? Number(it.unitPrice),
+      discountPercent: e.discountPercent ?? (it.discountPercent ?? 0),
+    };
+  };
+
+  const setField = (itemId, field, value) => {
+    setEdits((prev) => ({
+      ...prev,
+      [itemId]: { ...(prev[itemId] || {}), [field]: value },
+    }));
+  };
+
+  // Live preview math. Mirrors the backend pre-save hook so the
+  // numbers in the UI match exactly what the server will compute.
+  const preview = useMemo(() => {
+    let gross = 0, disc = 0, tax = 0;
+    items.forEach((it) => {
+      const eff = effective(it);
+      const g = Number(eff.unitPrice) * Number(eff.quantity);
+      const d = (g * Number(eff.discountPercent || 0)) / 100;
+      const n = g - d;
+      const t = it.isTaxable ? (n * Number(it.taxPercent || 0)) / 100 : 0;
+      gross += g; disc += d; tax += t;
+    });
+    const subtotal = gross - disc + tax;
+    const extra = discMode === "PERCENT"
+      ? (subtotal * Number(extraDiscPct || 0)) / 100
+      : Number(extraDiscAmt || 0);
+    const cappedExtra = Math.min(Math.max(0, extra), subtotal);
+    const newNet = subtotal - cappedExtra;
+    const paidSoFar = Number(bill.netAmount || 0) - Number(bill.balanceAmount || 0);
+    const newBalance = Math.max(0, newNet - paidSoFar);
+    return { gross, disc, tax, extra: cappedExtra, newNet, paidSoFar, newBalance };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [edits, extraDiscPct, extraDiscAmt, discMode, items, bill.netAmount, bill.balanceAmount]);
+
+  const submit = async (openPayAfter) => {
+    if (!reason.trim())     return toast.error("Reason is mandatory (audit log)");
+    if (!adjustedBy.trim()) return toast.error("Your name is required (audit log)");
+
+    // Build the diff: only send rows the cashier actually changed.
+    const itemsPayload = [];
+    items.forEach((it) => {
+      const e = edits[it._id];
+      if (!e) return;
+      const row = { itemId: it._id };
+      if (e.quantity != null && Number(e.quantity) !== Number(it.quantity)) {
+        row.quantity = Number(e.quantity);
+      }
+      if (e.unitPrice != null && Number(e.unitPrice) !== Number(it.unitPrice)) {
+        row.unitPrice = Number(e.unitPrice);
+      }
+      if (
+        e.discountPercent != null &&
+        Number(e.discountPercent) !== Number(it.discountPercent || 0)
+      ) {
+        row.discountPercent = Number(e.discountPercent);
+      }
+      if (row.quantity != null || row.unitPrice != null || row.discountPercent != null) {
+        itemsPayload.push(row);
+      }
+    });
+
+    const payload = {
+      adjustedBy: adjustedBy.trim(),
+      reason:     reason.trim(),
+      items:      itemsPayload,
+      extraDiscount:       preview.extra,
+      extraDiscountReason: reason.trim(),
+    };
+
+    if (itemsPayload.length === 0 && !preview.extra) {
+      return toast.error("Nothing to adjust — change at least one line or set an extra discount");
+    }
+
+    setSaving(true);
+    try {
+      await axios.post(
+        `${API_ENDPOINTS.BILLING}/${bill._id}/settlement-adjust`,
+        payload,
+      );
+      toast.success("Adjustment saved · audit logged");
+      onDone(openPayAfter);
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Adjustment failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="rx-modal-backdrop" onClick={onClose}>
+      <div className="rx-modal rx-modal--lg" onClick={e => e.stopPropagation()}>
+        <div className="rx-modal-head rx-modal-head--primary">
+          <i className="pi pi-sliders-h" />
+          <span className="rx-modal-title">Partial Settlement — {bill.billNumber}</span>
+          <button className="rx-modal-close" onClick={onClose}>×</button>
+        </div>
+        <div className="rx-modal-body">
+          <div className="rx-banner rx-banner--info">
+            Current balance: <strong>{fmtCur(bill.balanceAmount)}</strong> of <strong>{fmtCur(bill.netAmount)}</strong>
+            {(bill.netAmount - bill.balanceAmount) > 0 && (
+              <> · Already paid: <strong className="rx-text-success">{fmtCur(preview.paidSoFar)}</strong></>
+            )}
+          </div>
+
+          <div className="rx-section-label">Adjust line items</div>
+          <table className="rx-table rx-table--sm rx-settle-table">
+            <thead>
+              <tr>
+                <th>Service</th>
+                <th className="right">Qty</th>
+                <th className="right">Unit Price</th>
+                <th className="right">Disc %</th>
+                <th className="right">Net</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((it) => {
+                const eff = effective(it);
+                const lineGross = eff.unitPrice * eff.quantity;
+                const lineNet   = lineGross - (lineGross * eff.discountPercent) / 100;
+                const touched   = !!edits[it._id];
+                return (
+                  <tr key={it._id} className={touched ? "rx-row-touched" : ""}>
+                    <td>{it.serviceName}</td>
+                    <td className="right">
+                      <input type="number" min="0" step="1"
+                             className="rx-settle-input"
+                             value={eff.quantity}
+                             onChange={e => setField(it._id, "quantity", e.target.value === "" ? "" : Number(e.target.value))} />
+                    </td>
+                    <td className="right">
+                      <input type="number" min="0" step="0.01"
+                             className="rx-settle-input"
+                             value={eff.unitPrice}
+                             onChange={e => setField(it._id, "unitPrice", e.target.value === "" ? "" : Number(e.target.value))} />
+                    </td>
+                    <td className="right">
+                      <input type="number" min="0" max="100" step="0.5"
+                             className="rx-settle-input rx-settle-input--xs"
+                             value={eff.discountPercent}
+                             onChange={e => setField(it._id, "discountPercent", e.target.value === "" ? "" : Number(e.target.value))} />
+                    </td>
+                    <td className="right bold">{fmtCur(lineNet)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+
+          <div className="rx-section-label" style={{ marginTop: 14 }}>Extra discount (bill-level)</div>
+          <div className="rx-grid-2">
+            <div className="his-field-group">
+              <label className="his-label">Discount Mode</label>
+              <div className="rx-grid-2">
+                <button type="button"
+                        className={`rx-slot ${discMode === "PERCENT" ? "rx-slot--selected" : ""}`}
+                        onClick={() => setDiscMode("PERCENT")}>
+                  % of subtotal
+                </button>
+                <button type="button"
+                        className={`rx-slot ${discMode === "AMOUNT" ? "rx-slot--selected" : ""}`}
+                        onClick={() => setDiscMode("AMOUNT")}>
+                  Flat ₹ amount
+                </button>
+              </div>
+            </div>
+            {discMode === "PERCENT" ? (
+              <div className="his-field-group">
+                <label className="his-label">Additional Discount %</label>
+                <input type="number" min="0" max="100" step="0.5"
+                       className="his-field"
+                       value={extraDiscPct}
+                       onChange={e => setExtraDiscPct(e.target.value === "" ? 0 : Number(e.target.value))}
+                       placeholder="e.g. 5" />
+              </div>
+            ) : (
+              <div className="his-field-group">
+                <label className="his-label">Additional Discount (₹)</label>
+                <input type="number" min="0" step="1"
+                       className="his-field"
+                       value={extraDiscAmt}
+                       onChange={e => setExtraDiscAmt(e.target.value === "" ? 0 : Number(e.target.value))}
+                       placeholder="e.g. 200" />
+              </div>
+            )}
+          </div>
+
+          <div className="rx-section-label" style={{ marginTop: 14 }}>Audit details *</div>
+          <div className="rx-grid-2">
+            <div className="his-field-group">
+              <label className="his-label">Your Name *</label>
+              <input className="his-field" value={adjustedBy}
+                     onChange={e => setAdjustedBy(e.target.value)}
+                     placeholder="Reception staff name" />
+            </div>
+            <div className="his-field-group">
+              <label className="his-label">Reason *</label>
+              <input className="his-field" value={reason}
+                     onChange={e => setReason(e.target.value)}
+                     placeholder="e.g. courtesy waiver, line correction" />
+            </div>
+          </div>
+
+          {/* Live preview summary */}
+          <div className="rx-settle-preview">
+            <div className="rx-settle-preview-row">
+              <span>Subtotal (after item edits)</span>
+              <strong>{fmtCur(preview.gross - preview.disc + preview.tax)}</strong>
+            </div>
+            <div className="rx-settle-preview-row rx-text-discount">
+              <span>– Extra discount</span>
+              <strong>{fmtCur(preview.extra)}</strong>
+            </div>
+            <div className="rx-settle-preview-row rx-settle-preview-row--total">
+              <span>New net total</span>
+              <strong>{fmtCur(preview.newNet)}</strong>
+            </div>
+            <div className="rx-settle-preview-row">
+              <span>Paid so far</span>
+              <strong className="rx-text-success">{fmtCur(preview.paidSoFar)}</strong>
+            </div>
+            <div className="rx-settle-preview-row rx-settle-preview-row--balance">
+              <span>NEW BALANCE DUE</span>
+              <strong className={preview.newBalance > 0 ? "rx-text-danger" : "rx-text-success"}>
+                {fmtCur(preview.newBalance)}
+              </strong>
+            </div>
+          </div>
+        </div>
+        <div className="rx-modal-foot">
+          <button className="rx-modal-btn-cancel" onClick={onClose}>Cancel</button>
+          <button className="rx-modal-btn-primary"
+                  onClick={() => submit(false)} disabled={saving}>
+            <i className={`pi ${saving ? "pi-spin pi-spinner" : "pi-save"}`} /> Save Adjustment
+          </button>
+          <button className="rx-modal-btn-primary rx-modal-btn-primary--success"
+                  onClick={() => submit(true)} disabled={saving}>
+            <i className={`pi ${saving ? "pi-spin pi-spinner" : "pi-wallet"}`} /> Save &amp; Take Payment
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ───────────────────────────────────────────────────────────── */
 
 function CancelBillModal({ bill, onClose, onDone }) {
   const [reason, setReason] = useState("");

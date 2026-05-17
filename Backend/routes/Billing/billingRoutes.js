@@ -47,6 +47,11 @@ router.post("/create", ctrl.getOrCreateBill); // POST /api/billing/create  {UHID
 router.post("/:billId/add-service", ctrl.addService); // POST /api/billing/:id/add-service  {serviceId, quantity}
 router.post("/:billId/generate", ctrl.generateBill); // POST /api/billing/:id/generate
 router.post("/:billId/payment", ctrl.recordPayment); // POST /api/billing/:id/payment  {amount, paymentMode}
+// Audited settlement-time adjustment — extra discount + per-line price/qty edits
+// on GENERATED/PARTIAL bills. Receptionist-accessible (front desk negotiates
+// final settlement), but every change is logged with reason + staff name onto
+// bill.adjustmentLog for NABH review.
+router.post("/:billId/settlement-adjust", ctrl.settlementAdjust);
 // Refunds and cancellations are the only billing writes restricted past
 // the Receptionist tier — both require an Accountant (or Admin) per the
 // central ACTIONS map. Receptionists can record charges and payments but
