@@ -256,11 +256,12 @@ async function addItemToBill(bill, service, quantity, source, trigger) {
       // leaving it in "pending" forever — otherwise the audit trail shows
       // an outstanding charge that will never actually bill.
       if (trigger?._id) {
+        const { logErr } = require("../../utils/logErr");
         await BillingTrigger.findByIdAndUpdate(trigger._id, {
           status: "skipped",
           skipReason: `Bill ${freshBill.billStatus.toLowerCase()} — no new charges accepted`,
           skippedAt: new Date(),
-        }).catch(() => {});
+        }).catch(logErr("autoBilling", `mark-trigger-skipped ${trigger._id}`));
       }
       return null;
     }

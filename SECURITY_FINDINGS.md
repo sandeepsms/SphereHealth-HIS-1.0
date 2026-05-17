@@ -92,7 +92,7 @@ edit (A-15) remain open — listed in re-audit backlog.
 
 | ID | Title | Severity | Files | Status | Fixed-on | Verifier |
 | -- | ----- | -------- | ----- | ------ | -------- | -------- |
-| D-01 | 35+ `.catch(() => {})` swallow billing/clinical errors | HIGH | many controllers | BACKLOG | — | High-volume refactor — round 2 commit |
+| D-01 | 35+ `.catch(() => {})` swallow billing/clinical errors | HIGH | utils/logErr.js (new), investigationOrderController.js, medReconciliationController.js, marController.js, autoBillingService.js | PARTIAL | 2026-05-17 (r17) | New `logErr(module, action)` helper. Applied to highest-value sites: investigation-order auto-bill (3 sites), med-reconciliation activity log + DS sync (6 sites), MAR auto-bill, autoBilling skip-marker. ~25 more sites remain on backlog |
 | D-02 | Seed scripts hardcode Mongo URI fallback to localhost | MEDIUM | scripts/seedJaiBhagwan.js, seedUsers.js, seedPatients.js, seedBIMS.js | **FIXED** | 2026-05-17 (r11) | Fail-fast on missing MONGO_URI; URI no longer echoed to stdout (no credential leak via `mongodb://user:pass@host` logging) |
 | D-03 | Blocking sync file I/O in maintenance scripts | LOW | scripts/normalize-billing-paths.js | WONT-FIX | 2026-05-17 | Maintenance-only scripts; not in request path |
 | D-04 | Controllers return HTTP 200 with `success:false` | HIGH | controllers/Billing/billingController.js, others | PARTIAL | 2026-05-17 | `handle()` wrapper in admissionController now honours `err.status` (covers discharge gate); broader sweep is BACKLOG |

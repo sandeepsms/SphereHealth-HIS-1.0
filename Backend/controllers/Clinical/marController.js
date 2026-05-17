@@ -137,12 +137,16 @@ class MARController {
     // ── Auto-billing hook ──────────────────────────────────────
     // Bill on every GIVEN dose; HELD/REFUSED/MISSED/NOT_AVAILABLE do NOT bill.
     try {
+      const { logErr } = require("../../utils/logErr");
       const autoBilling = require("../../services/Billing/autoBillingService");
       const med = mar.medications.id(req.params.medId);
       if (med && finalStatus === "GIVEN") {
-        autoBilling.onMARAdministration(mar, med, entry).catch(() => {});
+        autoBilling.onMARAdministration(mar, med, entry).catch(logErr("autoBilling", `onMARAdministration ${mar?._id} med ${med?._id}`));
       }
-    } catch {}
+    } catch (e) {
+      const { logErr } = require("../../utils/logErr");
+      logErr("autoBilling", "load failure on MAR.administer")(e);
+    }
     return res.json({ success: true, data: mar, message: "Administration recorded" });
   });
 

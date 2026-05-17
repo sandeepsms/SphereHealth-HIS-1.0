@@ -21,6 +21,7 @@ const Patient           = require("../../models/Patient/patientModel");
 const DoctorOrder       = require("../../models/Doctor/DoctorOrderModel");
 const DischargeSummary  = require("../../models/Clinical/DischargeSummaryModel");
 const activityLogger    = require("../../services/Clinical/activityLogger");
+const { logErr }        = require("../../utils/logErr");
 
 function userMeta(req) {
   const u = req.user || {};
@@ -140,7 +141,7 @@ exports.seedReconciliation = async (req, res) => {
       sourceModel: "MedReconciliation", sourceId: doc._id,
       tags: ["med-recon", "safety"],
       ...userMeta(req),
-    }).catch(() => {});
+    }).catch(logErr("MedRecon", "activity-log"));
 
     return res.json({ success: true, data: doc });
   } catch (e) {
@@ -167,7 +168,7 @@ exports.updateReconciliation = async (req, res) => {
       sourceModel: "MedReconciliation", sourceId: doc._id,
       tags: ["med-recon"],
       ...userMeta(req),
-    }).catch(() => {});
+    }).catch(logErr("MedRecon", "activity-log"));
     return res.json({ success: true, data: doc });
   } catch (e) {
     return res.status(500).json({ success: false, message: e.message });
@@ -194,7 +195,7 @@ exports.updateRow = async (req, res) => {
       sourceModel: "MedReconciliation", sourceId: doc._id,
       tags: ["med-recon"],
       ...userMeta(req),
-    }).catch(() => {});
+    }).catch(logErr("MedRecon", "activity-log"));
     return res.json({ success: true, data: doc });
   } catch (e) {
     return res.status(500).json({ success: false, message: e.message });
@@ -236,7 +237,7 @@ async function reviewPhase(phase, req, res) {
         { admissionId: admId },
         { $set: { medicationsOnDischarge: finalMeds } },
         { upsert: false }
-      ).catch(() => {});
+      ).catch(logErr("MedRecon", `sync-to-DS ${admId}`));
     }
 
     activityLogger.log({
@@ -246,7 +247,7 @@ async function reviewPhase(phase, req, res) {
       sourceModel: "MedReconciliation", sourceId: doc._id,
       tags: ["med-recon", "safety"], isFlagged: true,
       ...userMeta(req),
-    }).catch(() => {});
+    }).catch(logErr("MedRecon", "activity-log"));
     return res.json({ success: true, data: doc });
   } catch (e) {
     return res.status(500).json({ success: false, message: e.message });
