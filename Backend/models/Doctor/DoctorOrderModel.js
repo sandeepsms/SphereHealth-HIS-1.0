@@ -138,8 +138,20 @@ const DoctorOrderSchema = new mongoose.Schema({
       type: String,
       trim: true,
       validate: {
-        validator: (v) => v == null || v === "" || /^\s*\d+(?:\.\d+)?\s*(?:mg|mcg|µg|g|kg|ml|l|iu|u|units?|drops?|tabs?|caps?|puffs?|sprays?|patch(?:es)?|tsp|tbsp|%)\b/i.test(v),
-        message: (props) => `dose "${props.value}" is not a valid amount + unit (e.g. "500 mg", "5 ml")`,
+        // Empty allowed (some non-medication orders have no dose). Otherwise
+        // require a STRICTLY POSITIVE amount followed by a known unit. The
+        // post-unit anchor accepts either a word boundary OR a "/" so
+        // weight-based ratios like "1.5 mg/kg/day" pass cleanly. "0 mg" is
+        // rejected by the lookahead.
+        validator: (v) => {
+          if (v == null || v === "") return true;
+          if (!/^\s*\d+(?:\.\d+)?\s*(?:mg|mcg|µg|g|kg|ml|l|iu|u|units?|drops?|tabs?|caps?|puffs?|sprays?|patch(?:es)?|tsp|tbsp|%)(?:[\s\/]|$)/i.test(v)) return false;
+          // Lookahead-style zero rejection: extract the leading numeric and
+          // ensure it's > 0. Catches "0 mg", "0.0 ml", "00 IU".
+          const num = parseFloat(v);
+          return Number.isFinite(num) && num > 0;
+        },
+        message: (props) => `dose "${props.value}" must be a positive amount + unit (e.g. "500 mg", "1.5 mg/kg/day")`,
       },
     },
     frequency: String, duration: String, route: String,

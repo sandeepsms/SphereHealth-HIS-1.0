@@ -52,7 +52,7 @@ export function AuthProvider({ children }) {
     // PHI prefixes used by NABH nursing pages + reception autosave +
     // break-glass justifications. Keep this list in sync with whatever
     // pages call localStorage.setItem with a patient-scoped key.
-    const phiPrefixes = ["nabh_", "his_patient_", "his_admission_", "rc_"];
+    const phiPrefixes = ["nabh_", "his_patient_", "his_admission_", "rc_", "sphereai_"];
     for (const store of [window.localStorage, window.sessionStorage]) {
       try {
         const keys = Object.keys(store);

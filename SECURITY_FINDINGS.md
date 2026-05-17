@@ -180,6 +180,14 @@ edit (A-15) remain open — listed in re-audit backlog.
 | R-G-01 | seedPatients.js logs raw UHID (4 occurrences) | MEDIUM | scripts/seedPatients.js | **FIXED** | 2026-05-17 | `maskUHID` helper applied |
 | R-G-02 | seedJaiBhagwan.js logs raw UHID (2 occurrences) | MEDIUM | scripts/seedJaiBhagwan.js | **FIXED** | 2026-05-17 | `maskUHID` helper applied |
 
+### Round-3 new findings + fixes
+
+| ID | Title | Severity | Files | Status | Fixed-on | Verifier |
+| -- | ----- | -------- | ----- | ------ | -------- | -------- |
+| R3-F-01 | `addNurseCharge` still allowed adding charges to GENERATED bills — the F-05 replace_all missed this method (different guard pattern) | **HIGH** | services/Billing/billingService.js:577 | **FIXED** | 2026-05-17 (r4) | Same freeze list applied (GENERATED/PARTIAL/PAID/CANCELLED/REFUNDED); 409 with amendment message |
+| R3-A-01 | Dose regex accepted `"0 mg"` (clinically invalid) and rejected `"1.5 mg/kg/day"` (legitimate weight-based notation) | MEDIUM | models/Doctor/DoctorOrderModel.js | **FIXED** | 2026-05-17 (r4) | Trailing `\b` swapped for `[\s\/]|$` so ratios pass; `parseFloat > 0` guard rejects zero; 8/8 unit fixtures pass |
+| R3-E-01 | `sphereai_active_patient` localStorage key not covered by logout sweep | MEDIUM | context/AuthContext.jsx | **FIXED** | 2026-05-17 (r4) | `sphereai_` added to phiPrefixes list |
+
 ### Summary of fix-round 1 (2026-05-17)
 
 **Sections fully addressed:**

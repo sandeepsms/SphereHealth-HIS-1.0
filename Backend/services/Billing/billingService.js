@@ -570,12 +570,21 @@ class BillingService {
   }
 
   // ── 16. Add a charge via nurse ────────────────────────────────
-  // Validates that the service has chargeableBy: ["Nurse"] before adding
+  // Validates that the service has chargeableBy: ["Nurse"] before adding.
+  // Round-3 re-audit (F-05 follow-up): aligned with the unified freeze
+  // policy applied to addServiceToBill / removeItemFromBill /
+  // updateItemQuantity — only DRAFT bills accept new charges, even from
+  // nursing. A GENERATED bill (printed for the patient) or anything
+  // beyond must go through the amendment workflow.
   async addNurseCharge(billId, serviceId, quantity, { nurseName, shift, remarks } = {}) {
     const bill = await PatientBill.findById(billId);
     if (!bill) throw new Error("Bill not found");
-    if (!["DRAFT", "GENERATED"].includes(bill.billStatus)) {
-      throw new Error("Bill is closed");
+    if (["GENERATED", "PARTIAL", "PAID", "CANCELLED", "REFUNDED"].includes(bill.billStatus)) {
+      const err = new Error(
+        `Cannot add a nurse charge to a ${bill.billStatus} bill — use the amendment workflow.`,
+      );
+      err.status = 409;
+      throw err;
     }
 
     const service = await ServiceMaster.findById(serviceId);
