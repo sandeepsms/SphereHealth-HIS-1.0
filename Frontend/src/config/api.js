@@ -1,8 +1,19 @@
 // Single source of truth for the backend base URL. Set VITE_API_BASE_URL in
 // .env / .env.production to point at the real host; the fallback is the dev
 // loopback so a fresh `npm run dev` works out of the box without env config.
-export const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
+// Audit finding H-05: warn loudly when running in PROD without the env var
+// set so a misconfigured deploy doesn't silently try to hit a developer
+// laptop's localhost.
+const RAW_API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+export const API_BASE_URL = RAW_API_BASE_URL || "http://localhost:5000/api";
+
+if (import.meta.env.PROD && !RAW_API_BASE_URL) {
+  // eslint-disable-next-line no-console
+  console.error(
+    "[api] VITE_API_BASE_URL is not set in a PRODUCTION build — falling back to localhost. " +
+    "This will break every API call once deployed. Set it in .env.production.",
+  );
+}
 
 export const API_ENDPOINTS = {
   BASE: API_BASE_URL,

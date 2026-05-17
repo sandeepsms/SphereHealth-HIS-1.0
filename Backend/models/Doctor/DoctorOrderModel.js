@@ -128,7 +128,21 @@ const DoctorOrderSchema = new mongoose.Schema({
 
   orderDetails: {
     // Medication / IV Fluid / Blood fields
-    medicineName: String, dose: String, frequency: String, duration: String, route: String,
+    // `dose` is `String` because real prescriptions write "500 mg", "1 unit",
+    // "5 ml" etc. — but plain String accepted "", "abc", "-500mg" silently
+    // (audit A-01). The validator below enforces the format
+    // "<positive number><whitespace><unit>" with a known unit list. Empty /
+    // negative / non-numeric values now fail Mongoose validation.
+    medicineName: String,
+    dose: {
+      type: String,
+      trim: true,
+      validate: {
+        validator: (v) => v == null || v === "" || /^\s*\d+(?:\.\d+)?\s*(?:mg|mcg|µg|g|kg|ml|l|iu|u|units?|drops?|tabs?|caps?|puffs?|sprays?|patch(?:es)?|tsp|tbsp|%)\b/i.test(v),
+        message: (props) => `dose "${props.value}" is not a valid amount + unit (e.g. "500 mg", "5 ml")`,
+      },
+    },
+    frequency: String, duration: String, route: String,
     rate: String, accessSite: String, additives: String,
     dilution: String, totalVolume: String, titrationGoal: String, startTime: String,
     // Blood Transfusion

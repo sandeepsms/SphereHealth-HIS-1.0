@@ -26,7 +26,7 @@ NABH / DPDP auditor can replay the trail end-to-end.
 
 | ID | Title | Severity | Files | Status | Fixed-on | Verifier |
 | -- | ----- | -------- | ----- | ------ | -------- | -------- |
-| A-01 | Medication `dose` is plain String — accepts "abc", "-100", "" | HIGH | models/Doctor/DoctorOrderModel.js:131 | BACKLOG | — | — |
+| A-01 | Medication `dose` is plain String — accepts "abc", "-100", "" | HIGH | models/Doctor/DoctorOrderModel.js:131 | **FIXED** | 2026-05-17 (r3) | Mongoose validator: positive number + unit regex |
 | A-02 | Prescription vitals (BP, pulse, temp, RR, SPO2) accept NaN/negative | HIGH | models/Doctor/prescription.js:42–49 | **FIXED** | 2026-05-17 | Live `temp:50` rejected by Mongoose validation |
 | A-03 | Nurse vitals fields lack min/max ranges | HIGH | models/Nurse/NurseNotesModel.js:6–16 | **FIXED** | 2026-05-17 | Live `pulse:-100` returns validation error |
 | A-04 | I/O sheet accepts negative ml | HIGH | models/Nurse/NurseNotesModel.js:40–49 | **FIXED** | 2026-05-17 | min/max 0–20000 added |
@@ -40,7 +40,7 @@ NABH / DPDP auditor can replay the trail end-to-end.
 | A-12 | Receptionist can edit clinical patient fields (blood group, DOB, allergies) | **CRITICAL** | routes/Patient/patientRoutes.js, controllers/Patient/patientController.js | **FIXED** | 2026-05-17 | Live receptionist PUT bloodGroup → 403 |
 | A-13 | Receptionist can hit `POST /:id/discharge` with no role guard | **CRITICAL** | routes/Patient/admissionRoutes.js:52 | **FIXED** | 2026-05-17 | Live receptionist discharge → 403 |
 | A-14 | Receptionist can cancel admissions | HIGH | routes/Patient/admissionRoutes.js:53 | **FIXED** | 2026-05-17 | requireAction("ipd.cancel") gate |
-| A-15 | Receptionist can edit prescription medicines + diagnosis | HIGH | controllers/Doctor/prescriptionController.js:5–88 | BACKLOG | — | Roll into Section A round-2 commit |
+| A-15 | Receptionist can edit prescription medicines + diagnosis | HIGH | routes/Doctor/doctorPrescriptionRoutes.js | **FIXED** | 2026-05-17 (r3) | requireAction("rx.write") on POST/PUT/PATCH/DELETE; live receptionist → 403 |
 
 ### Malicious-insider scenario (receptionist) — Section A
 Receptionist now blocked from rewriting clinical patient fields, cannot
@@ -104,8 +104,8 @@ edit (A-15) remain open — listed in re-audit backlog.
 
 | ID | Title | Severity | Files | Status | Fixed-on | Verifier |
 | -- | ----- | -------- | ----- | ------ | -------- | -------- |
-| E-01 | Nursing assessments cached in localStorage keyed by patient `_id` | HIGH | pages/nursing/*.jsx (5 files) | BACKLOG | — | Needs clear-on-logout hook |
-| E-02 | Break-glass justification stored in sessionStorage only | HIGH | Components/clinical/PatientPanelShell.jsx:160 | BACKLOG | — | Needs backend audit POST |
+| E-01 | Nursing assessments cached in localStorage keyed by patient `_id` | HIGH | context/AuthContext.jsx | **FIXED** | 2026-05-17 (r3) | logout() now sweeps `nabh_*`, `his_patient_*`, `his_admission_*`, `rc_*`, `break-glass:*` from local + sessionStorage |
+| E-02 | Break-glass justification stored in sessionStorage only | HIGH | Components/clinical/PatientPanelShell.jsx:160 | **FIXED** | 2026-05-17 (r3) | handleBreakGlassAllow now POSTs to /api/patient-file/:uhid/log with action=BREAK_GLASS, severity=HIGH, isFlagged=true |
 | E-03 | Reception form draft cached in sessionStorage | MEDIUM | pages/reception/ReceptionConsole.jsx:718 | BACKLOG | — | — |
 | E-04 | UHID exposed in URL params | MEDIUM | pages/clinical/MARPage.jsx:797, others | BACKLOG | — | Router-level rewrite |
 | E-05 | useEffect async-IIFE without AbortController | MEDIUM | pages/RoleDashboardPage.jsx, PharmacyHomePage.jsx, others | BACKLOG | — | — |
@@ -123,7 +123,7 @@ edit (A-15) remain open — listed in re-audit backlog.
 | F-02 | Lab results editable post-verification | HIGH | models/Investigation/InvestigationOrderModel.js | **FIXED** | 2026-05-17 | post-init snapshot + pre-save lock — editing a VERIFIED item throws |
 | F-03 | Pharmacy pre-flight stock check non-atomic | MEDIUM | controllers/Pharmacy/pharmacyController.js:391 | BACKLOG | — | — |
 | F-04 | Drug expiry check uses UTC `new Date()` | MEDIUM | controllers/Pharmacy/pharmacyController.js:279 | BACKLOG | — | — |
-| F-05 | Bill items still editable in PARTIAL state | MEDIUM | services/Billing/billingService.js:173 | BACKLOG | — | — |
+| F-05 | Bill items still editable in PARTIAL state | MEDIUM | services/Billing/billingService.js | **FIXED** | 2026-05-17 (r3) | Freeze list expanded to GENERATED/PARTIAL/PAID/CANCELLED/REFUNDED; mutation throws 409 |
 | F-06 | Appointment NoShow→Booked race allows overlap | MEDIUM | models/Appointment/appointmentModel.js:59 | BACKLOG | — | — |
 | F-07 | Prescription editable post-dispense | LOW | models/Doctor/prescription.js:54 | BACKLOG | — | — |
 | F-08 | No drug-allergy / interaction check at prescribe time | LOW | models/Doctor/prescription.js | BACKLOG | — | Feature, not bug |
@@ -151,7 +151,7 @@ edit (A-15) remain open — listed in re-audit backlog.
 | H-02 | No `uncaughtException` / `unhandledRejection` handler | HIGH | index.js | **FIXED** | 2026-05-17 | Both handlers wired with log + setImmediate exit |
 | H-03 | No `/health` / `/api/health` endpoint | MEDIUM | routes/ | **FIXED** | 2026-05-17 | Live `/api/health` → 200 with mongo state |
 | H-04 | Mongoose connect has no retry | MEDIUM | config/db.js | **FIXED** | 2026-05-17 | Exponential backoff 1s→30s, MAX_RETRIES=12, reconnect listeners |
-| H-05 | Frontend `api.js` hardcodes localhost fallback | MEDIUM | Frontend/src/config/api.js:5 | BACKLOG | — | — |
+| H-05 | Frontend `api.js` hardcodes localhost fallback | MEDIUM | Frontend/src/config/api.js | **FIXED** | 2026-05-17 (r3) | Loud `console.error` on PROD build when VITE_API_BASE_URL missing |
 | H-06 | CORS dev fallback hardcodes `http://localhost:5173` | LOW | index.js:14 | **FIXED** | 2026-05-17 | Now WARNs on missing CORS_ORIGINS instead of silently defaulting |
 | H-07 | No backup script in repo | MEDIUM | scripts/ (absent) | BACKLOG | — | Ops decision |
 

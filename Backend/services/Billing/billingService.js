@@ -170,8 +170,19 @@ class BillingService {
   ) {
     const bill = await PatientBill.findById(billId);
     if (!bill) throw new Error("Bill not found");
-    if (["PAID", "CANCELLED"].includes(bill.billStatus)) {
-      throw new Error("Cannot modify a PAID or CANCELLED bill");
+    // Bill-edit freeze (business audit F-05). Originally only PAID /
+    // CANCELLED bills were locked — that left PARTIAL bills (some payment
+    // already received) editable, so a receptionist could add new line
+    // items and inflate what the patient still owed AFTER the cashier
+    // had counted money. Locking from GENERATED onward stops the leak;
+    // legitimate "patient consumed more services" goes through the
+    // dedicated `recordPayment` / `amendItem` (Accountant) path instead.
+    if (["GENERATED", "PARTIAL", "PAID", "CANCELLED", "REFUNDED"].includes(bill.billStatus)) {
+      const err = new Error(
+        `Cannot modify a ${bill.billStatus} bill — use the amendment workflow.`,
+      );
+      err.status = 409;
+      throw err;
     }
 
     const service = await ServiceMaster.findById(serviceId);
@@ -230,8 +241,19 @@ class BillingService {
   async removeItemFromBill(billId, itemId) {
     const bill = await PatientBill.findById(billId);
     if (!bill) throw new Error("Bill not found");
-    if (["PAID", "CANCELLED"].includes(bill.billStatus)) {
-      throw new Error("Cannot modify a PAID or CANCELLED bill");
+    // Bill-edit freeze (business audit F-05). Originally only PAID /
+    // CANCELLED bills were locked — that left PARTIAL bills (some payment
+    // already received) editable, so a receptionist could add new line
+    // items and inflate what the patient still owed AFTER the cashier
+    // had counted money. Locking from GENERATED onward stops the leak;
+    // legitimate "patient consumed more services" goes through the
+    // dedicated `recordPayment` / `amendItem` (Accountant) path instead.
+    if (["GENERATED", "PARTIAL", "PAID", "CANCELLED", "REFUNDED"].includes(bill.billStatus)) {
+      const err = new Error(
+        `Cannot modify a ${bill.billStatus} bill — use the amendment workflow.`,
+      );
+      err.status = 409;
+      throw err;
     }
 
     bill.billItems = bill.billItems.filter(
@@ -247,8 +269,19 @@ class BillingService {
 
     const bill = await PatientBill.findById(billId);
     if (!bill) throw new Error("Bill not found");
-    if (["PAID", "CANCELLED"].includes(bill.billStatus)) {
-      throw new Error("Cannot modify a PAID or CANCELLED bill");
+    // Bill-edit freeze (business audit F-05). Originally only PAID /
+    // CANCELLED bills were locked — that left PARTIAL bills (some payment
+    // already received) editable, so a receptionist could add new line
+    // items and inflate what the patient still owed AFTER the cashier
+    // had counted money. Locking from GENERATED onward stops the leak;
+    // legitimate "patient consumed more services" goes through the
+    // dedicated `recordPayment` / `amendItem` (Accountant) path instead.
+    if (["GENERATED", "PARTIAL", "PAID", "CANCELLED", "REFUNDED"].includes(bill.billStatus)) {
+      const err = new Error(
+        `Cannot modify a ${bill.billStatus} bill — use the amendment workflow.`,
+      );
+      err.status = 409;
+      throw err;
     }
 
     const item = bill.billItems.id(itemId);

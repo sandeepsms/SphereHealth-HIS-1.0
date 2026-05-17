@@ -42,9 +42,28 @@ export function AuthProvider({ children }) {
     return u;
   }, []);
 
-  /* ── Logout ── */
+  /* ── Logout ──
+     Sweeps every PHI-tinged cache (nursing assessments, reception drafts,
+     break-glass tokens) from local + session storage so the next user on
+     a shared terminal can't open DevTools and harvest the previous user's
+     patient context. Security audit 2026-05-17 finding E-01 / E-02. */
   const logout = useCallback(() => {
     localStorage.removeItem("his_token");
+    // PHI prefixes used by NABH nursing pages + reception autosave +
+    // break-glass justifications. Keep this list in sync with whatever
+    // pages call localStorage.setItem with a patient-scoped key.
+    const phiPrefixes = ["nabh_", "his_patient_", "his_admission_", "rc_"];
+    for (const store of [window.localStorage, window.sessionStorage]) {
+      try {
+        const keys = Object.keys(store);
+        for (const k of keys) {
+          if (phiPrefixes.some((p) => k.startsWith(p))) store.removeItem(k);
+          if (k.startsWith("break-glass:")) store.removeItem(k);
+        }
+      } catch {
+        // private-mode browser may throw on storage access — ignore
+      }
+    }
     setToken(null);
     setUser(null);
   }, []);
