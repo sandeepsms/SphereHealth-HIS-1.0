@@ -1,3 +1,6 @@
+// Cache-bust: ActivePatientDirectory was moved to a shared component
+// (Frontend/src/Components/ActivePatientDirectory.jsx). If you see a
+// "duplicate declaration" error pointing at line 1415, restart Vite.
 /**
  * PatientLookupPage.jsx — unified search · directory · timeline · billing
  *
