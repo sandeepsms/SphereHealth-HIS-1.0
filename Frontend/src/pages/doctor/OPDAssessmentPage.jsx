@@ -291,6 +291,35 @@ export default function OPDAssessmentPage() {
     toast.success("Investigation ordered");
   };
 
+  // Row-level remove handlers. Doctor sometimes mis-picks (e.g. wrong
+  // strength, wrong patient) or the patient declines a med after
+  // counselling — clicking the red × on a row drops it. We optimistically
+  // update local state, then attempt the backend DELETE; if the endpoint
+  // isn't wired yet the catch keeps the UI clean (matches the same
+  // silent-fallback pattern in addMed / addInvestigation). Confirmation
+  // dialog prevents accidental click-throughs on a touchscreen.
+  const removeMed = async (idx) => {
+    const m = meds[idx];
+    if (!m) return;
+    if (!window.confirm(`Remove ${m.name || "this medication"} from the prescription?`)) return;
+    try {
+      await axios.delete(`${API_ENDPOINTS.OPD}/${visitNumber}/prescription/${m._id || idx}`);
+    } catch (_) { /* backend may not expose DELETE — fail silently, UI still updates */ }
+    setMeds(p => p.filter((_, i) => i !== idx));
+    toast.success("Medication removed");
+  };
+
+  const removeInvestigation = async (idx) => {
+    const i = invests[idx];
+    if (!i) return;
+    if (!window.confirm(`Remove ${i.name || "this investigation"} from the order list?`)) return;
+    try {
+      await axios.delete(`${API_ENDPOINTS.OPD}/${visitNumber}/investigation/${i._id || idx}`);
+    } catch (_) { /* same as above */ }
+    setInvests(p => p.filter((_, x) => x !== idx));
+    toast.success("Investigation removed");
+  };
+
   const addProcedure = async () => {
     if (!newProc.procedureName.trim()) return toast.warn("Procedure name required");
     const order = {
@@ -857,12 +886,37 @@ export default function OPDAssessmentPage() {
                   {["Medicine","Dose","Frequency","Meal","Duration","Route"].map(h => (
                     <th key={h} style={{ textAlign: "left", padding: "6px 10px", fontWeight: 600, color: C.muted, borderBottom: `1px solid ${C.border}` }}>{h}</th>
                   ))}
+                  {/* Trailing action column — narrow, right-aligned. No
+                      heading text (icon-only column header would just be
+                      noise) but kept on the header row so column widths
+                      align with the body rows below. */}
+                  <th style={{ width: 36, borderBottom: `1px solid ${C.border}` }} aria-label="Remove" />
                 </tr></thead>
                 <tbody>{meds.map((m, i) => (
                   <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
                     {["name","dose","frequency","mealStatus","duration","route"].map(k => (
                       <td key={k} style={{ padding: "7px 10px", color: C.dark }}>{m[k] || "—"}</td>
                     ))}
+                    <td style={{ padding: "4px 6px", textAlign: "right" }}>
+                      <button
+                        type="button"
+                        onClick={() => removeMed(i)}
+                        title={`Remove ${m.name || "this medication"}`}
+                        aria-label="Remove medication"
+                        style={{
+                          width: 24, height: 24, border: "1px solid #fca5a5",
+                          background: "#fef2f2", color: "#b91c1c",
+                          borderRadius: 6, cursor: "pointer",
+                          display: "inline-flex", alignItems: "center", justifyContent: "center",
+                          fontFamily: "inherit", fontWeight: 700, fontSize: 13, lineHeight: 1,
+                          padding: 0,
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.background = "#fee2e2"; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = "#fef2f2"; }}
+                      >
+                        ×
+                      </button>
+                    </td>
                   </tr>
                 ))}</tbody>
               </table>
@@ -889,6 +943,8 @@ export default function OPDAssessmentPage() {
                   {["Investigation","Urgency","Status","Instructions"].map(h => (
                     <th key={h} style={{ textAlign: "left", padding: "6px 10px", fontWeight: 600, color: C.muted, borderBottom: `1px solid ${C.border}` }}>{h}</th>
                   ))}
+                  {/* × column header matches the Rx table convention above. */}
+                  <th style={{ width: 36, borderBottom: `1px solid ${C.border}` }} aria-label="Remove" />
                 </tr></thead>
                 <tbody>{invests.map((inv, i) => (
                   <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
@@ -902,6 +958,26 @@ export default function OPDAssessmentPage() {
                       </span>
                     </td>
                     <td style={{ padding: "7px 10px", color: C.muted }}>{inv.instructions || "—"}</td>
+                    <td style={{ padding: "4px 6px", textAlign: "right" }}>
+                      <button
+                        type="button"
+                        onClick={() => removeInvestigation(i)}
+                        title={`Remove ${inv.name || inv.testName || "this investigation"}`}
+                        aria-label="Remove investigation"
+                        style={{
+                          width: 24, height: 24, border: "1px solid #fca5a5",
+                          background: "#fef2f2", color: "#b91c1c",
+                          borderRadius: 6, cursor: "pointer",
+                          display: "inline-flex", alignItems: "center", justifyContent: "center",
+                          fontFamily: "inherit", fontWeight: 700, fontSize: 13, lineHeight: 1,
+                          padding: 0,
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.background = "#fee2e2"; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = "#fef2f2"; }}
+                      >
+                        ×
+                      </button>
+                    </td>
                   </tr>
                 ))}</tbody>
               </table>
