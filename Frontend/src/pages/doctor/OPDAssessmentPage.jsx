@@ -13,6 +13,7 @@ import { toast } from "react-toastify";
 import API_ENDPOINTS from "../../config/api";
 import { openPrint } from "../../Components/print/openPrint";
 import FingerprintConsentModal from "../../Components/clinical/FingerprintConsentModal";
+import DrugAutocomplete, { parseStrength } from "../../Components/clinical/DrugAutocomplete";
 import { useHospitalSettings } from "../../context/HospitalSettingsContext";
 import { useAutoSave } from "../../hooks/useAutoSave";
 import { useDigitalSignature } from "../../hooks/useDigitalSignature";
@@ -662,7 +663,33 @@ export default function OPDAssessmentPage() {
           {/* Prescription */}
           <Card title="Prescription" icon="pi-pencil" color={C.warn}>
             <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr auto", gap: 8, marginBottom: 12, alignItems: "center" }}>
-              {[["name","Medicine *"],["dose","Dose"],["frequency","Frequency"],["duration","Duration"],["route","Route"]].map(([k,ph]) => (
+              {/* Medicine name now searches the pharmacy drug master so the
+                  doctor picks a real SKU instead of free-typing. Picking
+                  a row mirrors generic + strength into dose, and brand
+                  spelling is locked to whatever pharmacy stocks. */}
+              <DrugAutocomplete
+                value={newMed.name}
+                onChange={(v) => setNewMed(p => ({ ...p, name: v }))}
+                onPick={(d) => {
+                  setNewMed(p => {
+                    const next = { ...p, name: d.name };
+                    if (d.genericName) next.genericName = d.genericName;
+                    const { value, unit } = parseStrength(d.strength);
+                    // Existing input shows raw "Dose" (e.g. "500mg") so combine
+                    // value + unit if both parsed, otherwise leave the raw
+                    // strength string — easier for the doctor to edit.
+                    if (value && unit) next.dose = `${value}${unit}`;
+                    else if (d.strength) next.dose = d.strength;
+                    if (d.form) next.form = d.form;
+                    return next;
+                  });
+                }}
+                placeholder="Medicine * — start typing"
+                inputStyle={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark, width: "100%" }}
+                inputClassName=""
+                showLabel={false}
+              />
+              {[["dose","Dose"],["frequency","Frequency"],["duration","Duration"],["route","Route"]].map(([k,ph]) => (
                 <input key={k} value={newMed[k]} onChange={e => setNewMed(p => ({ ...p, [k]: e.target.value }))}
                   placeholder={ph}
                   style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark }} />

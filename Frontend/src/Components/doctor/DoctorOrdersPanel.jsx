@@ -10,6 +10,7 @@ import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
+import SharedDrugAutocomplete, { parseStrength } from "../clinical/DrugAutocomplete";
 
 /* ── Design tokens ── */
 const C = {
@@ -158,131 +159,31 @@ function Field({ form, set, label, name, placeholder, type = "text",
 }
 
 /* ══════════════════════════════════════════════════════════════
-   DrugAutocomplete — replaces the plain "Drug Name" text field on
-   Medication orders. As the doctor types, fetches matching drugs
-   from the pharmacy master (/api/pharmacy/drugs/search?q=…) and
-   shows a dropdown of name + generic + strength + form so the
-   doctor can pick the exact SKU and avoid typos.
-
-   Picking a row:
-     • writes the drug's primary name into `medicineName`
-     • mirrors strength → `dose` + `doseUnit` (best-effort parse,
-       e.g. "500 mg" → dose 500, unit "mg")
-     • mirrors genericName → `genericName` (audited; doctor can
-       still override)
-     • keeps focus + lets typing continue (no implicit save)         */
+   DrugAutocomplete (form-bound thin wrapper) — delegates the actual
+   search/render UI to the shared <SharedDrugAutocomplete> in
+   Components/clinical/DrugAutocomplete.jsx so OPDAssessmentPage,
+   discharge summary, MAR, and this panel all share one source of
+   truth. We just adapt the (form, set, name) shape this panel uses
+   into the (value, onChange, onPick) shape the shared component
+   exposes, and mirror the picked drug's strength + generic into
+   `dose / doseUnit / genericName / dosageForm` for downstream
+   audit + dispense.                                                */
 function DrugAutocomplete({ form, set, label, name, placeholder }) {
-  const [open, setOpen] = useState(false);
-  const [results, setResults] = useState([]);
-  const [busy, setBusy] = useState(false);
-  const debRef = React.useRef(null);
-  const val = form[name] ?? "";
-
-  useEffect(() => {
-    if (debRef.current) clearTimeout(debRef.current);
-    const q = (val || "").trim();
-    if (q.length < 2) { setResults([]); return; }
-    const ac = new AbortController();
-    debRef.current = setTimeout(async () => {
-      setBusy(true);
-      try {
-        const { data } = await axios.get(
-          `${API_ENDPOINTS.BASE}/pharmacy/drugs/search`,
-          { params: { q }, signal: ac.signal },
-        );
-        if (!ac.signal.aborted) setResults(data?.data || []);
-      } catch (e) {
-        if (!axios.isCancel(e)) console.warn("[DrugAutocomplete]", e?.message);
-      } finally {
-        if (!ac.signal.aborted) setBusy(false);
-      }
-    }, 200);
-    return () => { ac.abort(); if (debRef.current) clearTimeout(debRef.current); };
-  }, [val]);
-
-  const pick = (drug) => {
-    set(name, drug.name);
-    if (drug.genericName) set("genericName", drug.genericName);
-    // Try to split strength like "500 mg" or "5 mg/5 mL" into a numeric
-    // dose + unit. Doctor can still override either field afterwards.
-    const m = String(drug.strength || "").match(/^\s*([\d.]+)\s*([a-zA-Z/%μ]+)?/);
-    if (m) {
-      set("dose", Number(m[1]));
-      if (m[2]) set("doseUnit", m[2]);
-    }
-    if (drug.form) set("dosageForm", drug.form);  // optional, future-friendly
-    setOpen(false);
-    setResults([]);
-  };
-
   return (
-    <div style={{ position: "relative" }}>
-      <label className="his-label">{label}</label>
-      <input
-        className="his-field"
-        type="text"
-        placeholder={placeholder}
-        value={val}
-        onFocus={() => setOpen(true)}
-        onChange={e => { set(name, e.target.value); setOpen(true); }}
-        onBlur={() => setTimeout(() => setOpen(false), 180)}
-        autoComplete="off"
-      />
-      {open && (results.length > 0 || busy) && (
-        <div style={{
-          position: "absolute", top: "100%", left: 0, right: 0, zIndex: 20,
-          marginTop: 4, maxHeight: 280, overflowY: "auto",
-          background: "#fff", border: "1px solid #cbd5e1", borderRadius: 8,
-          boxShadow: "0 10px 24px rgba(15,23,42,.12)",
-        }}>
-          {busy && results.length === 0 && (
-            <div style={{ padding: 10, fontSize: 12, color: "#64748b" }}>
-              <i className="pi pi-spin pi-spinner" /> Searching pharmacy master…
-            </div>
-          )}
-          {results.map(d => (
-            <button
-              key={d._id}
-              type="button"
-              onMouseDown={() => pick(d)}
-              style={{
-                display: "block", width: "100%", textAlign: "left",
-                padding: "8px 10px", border: 0,
-                borderBottom: "1px solid #f1f5f9", background: "#fff",
-                cursor: "pointer", fontFamily: "inherit",
-              }}
-              onMouseEnter={e => e.currentTarget.style.background = "#eff6ff"}
-              onMouseLeave={e => e.currentTarget.style.background = "#fff"}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                <span style={{ fontWeight: 700, color: "#0f172a", fontSize: 13 }}>
-                  {d.name}
-                  {d.strength ? ` · ${d.strength}` : ""}
-                </span>
-                {d.form && (
-                  <span style={{ fontSize: 10, color: "#0e7490", background: "#ecfeff", padding: "1px 8px", borderRadius: 999, fontWeight: 700 }}>
-                    {d.form}
-                  </span>
-                )}
-              </div>
-              <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
-                {d.genericName && <span>Generic: <strong>{d.genericName}</strong></span>}
-                {d.genericName && d.manufacturer && " · "}
-                {d.manufacturer && <span>{d.manufacturer}</span>}
-                {d.isHighAlert && <span style={{ marginLeft: 6, color: "#b91c1c", fontWeight: 700 }}>⚠ HIGH-ALERT</span>}
-                {d.isLASA && <span style={{ marginLeft: 6, color: "#c2410c", fontWeight: 700 }}>LASA</span>}
-                {d.schedule && d.schedule !== "OTC" && <span style={{ marginLeft: 6, fontWeight: 700, color: "#7c3aed" }}>Sch-{d.schedule}</span>}
-              </div>
-            </button>
-          ))}
-          {!busy && results.length === 0 && val.trim().length >= 2 && (
-            <div style={{ padding: 10, fontSize: 12, color: "#94a3b8" }}>
-              No drug found — you can still type the name manually.
-            </div>
-          )}
-        </div>
-      )}
-    </div>
+    <SharedDrugAutocomplete
+      label={label}
+      placeholder={placeholder}
+      value={form[name] ?? ""}
+      onChange={(v) => set(name, v)}
+      onPick={(d) => {
+        set(name, d.name);
+        if (d.genericName) set("genericName", d.genericName);
+        const { value, unit } = parseStrength(d.strength);
+        if (value != null) set("dose", value);
+        if (unit) set("doseUnit", unit);
+        if (d.form) set("dosageForm", d.form);
+      }}
+    />
   );
 }
 
