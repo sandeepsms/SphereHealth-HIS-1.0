@@ -189,7 +189,68 @@ export default function OPDAssessmentPage() {
     icd10Description:     "",
     patientStatus:        "",
     generalExamination: "",
-    systemicExamination: "", advice: "", followUpDate: "", doctorNotes: "",
+    systemicExamination: "",
+    // Structured Gen-Ex + Sys-Ex — let the doctor tick the typical
+    // findings instead of re-typing them every visit. The free-text
+    // generalExamination / systemicExamination fields stay too (used
+    // as "Other findings" so a doctor can record anything not in the
+    // standard list). When the visit saves we serialise both — the
+    // structured checkboxes feed audit & analytics; the free text is
+    // the human-readable summary on printed slips.
+    genExam: {
+      built:           "",     // Average / Lean / Obese / Cachectic
+      nourishment:     "",     // Well / Moderate / Poor
+      consciousness:   "",     // Conscious / Drowsy / Stuporous / Comatose
+      orientation:     "",     // Oriented / Disoriented
+      hydration:       "",     // Well hydrated / Mild / Moderate / Severe
+      pallor:          "",     // None / + / ++ / +++
+      pedalEdema:      "",     // None / + / ++ / +++ Pitting / Non-pitting
+      icterus:         false,
+      cyanosis:        false,
+      clubbing:        false,
+      lymphadenopathy: false,
+      lymphLocation:   "",     // free text — e.g. "cervical, axillary"
+      jvp:             "",     // Normal / Raised
+      febrile:         false,  // afebrile by default
+    },
+    sysExam: {
+      cvs: {
+        s1s2:      "",          // Normal / Muffled / Abnormal
+        murmur:    false,
+        murmurDetails: "",
+        rhythm:    "",          // Regular / Irregular
+        other:     "",
+      },
+      rs: {
+        airEntry:      "",      // Bilateral equal / Decreased on R / Decreased on L / Unequal
+        breathSounds:  "",      // Vesicular / Bronchial / Bronchovesicular
+        crepts:        false,
+        wheeze:        false,
+        rhonchi:       false,
+        other:         "",
+      },
+      cns: {
+        gcs:       "",          // e.g. E4V5M6
+        speech:    "",          // Normal / Slurred / Aphasia
+        tone:      "",          // Normal / Hypertonia / Hypotonia
+        power:     "",          // 5/5 all / weak side
+        reflexes:  "",          // Normal / Brisk / Absent
+        plantar:   "",          // Flexor / Extensor / Equivocal
+        other:     "",
+      },
+      pa: {
+        soft:        false,
+        tender:      false,
+        tenderLocation: "",
+        distended:   false,
+        bowelSounds: "",        // Present / Sluggish / Absent / Hyperactive
+        organomegaly: false,
+        organomegalyDetails: "",
+        mass:        false,
+        other:       "",
+      },
+    },
+    advice: "", followUpDate: "", doctorNotes: "",
   });
 
   const [hopi, setHopi] = useState({
@@ -284,7 +345,11 @@ export default function OPDAssessmentPage() {
       const { data } = await axios.get(`${API_ENDPOINTS.OPD}/${visitNumber}`);
       const v = data.data || data;
       setVisit(v);
-      setSoap({
+      // Functional setSoap so we can merge new visit data into the
+      // default structured Gen-Ex / Sys-Ex skeletons — otherwise a
+      // visit that's never been touched by the new UI would drop
+      // back to undefined nested objects and crash the JSX below.
+      setSoap(s => ({
         subjectiveNote:       v.subjectiveNote || v.chiefComplaint || "",
         objectiveNote:        v.objectiveNote || "",
         assessmentNote:       v.assessmentNote || "",
@@ -295,12 +360,19 @@ export default function OPDAssessmentPage() {
         icd10Code:            v.icd10Code            || "",
         icd10Description:     v.icd10Description     || "",
         patientStatus:        v.patientStatus        || "",
+        genExam: { ...s.genExam, ...(v.genExam || {}) },
+        sysExam: {
+          cvs: { ...s.sysExam.cvs, ...((v.sysExam && v.sysExam.cvs) || {}) },
+          rs:  { ...s.sysExam.rs,  ...((v.sysExam && v.sysExam.rs)  || {}) },
+          cns: { ...s.sysExam.cns, ...((v.sysExam && v.sysExam.cns) || {}) },
+          pa:  { ...s.sysExam.pa,  ...((v.sysExam && v.sysExam.pa)  || {}) },
+        },
         generalExamination:   v.generalExamination || "",
         systemicExamination:  v.systemicExamination || "",
         advice:               v.advice || "",
         followUpDate:         v.followUpDate ? v.followUpDate.slice(0, 10) : "",
         doctorNotes:          v.doctorNotes || "",
-      });
+      }));
       setMeds(v.prescribedMedications || []);
       setInvests(v.investigationsOrdered || []);
       setHopi({
@@ -1143,16 +1215,282 @@ export default function OPDAssessmentPage() {
             </div>
           </Card>
 
-          {/* Clinical Examination */}
+          {/* ─── Clinical Examination (structured) ─────────────────
+              Doctor-of-the-day checklist replaces the old free-text
+              boxes: tick the common findings (Pallor / Icterus / Edema
+              etc.) and the severity, drop a one-liner in "Other"
+              for anything not in the list. Same idea on the systemic
+              side — 4 mini blocks for CVS / RS / CNS / P-A each with
+              their typical quick-picks. The free-text "Other findings"
+              still lives at the bottom so a surgical reg can paste
+              an entire detailed exam if needed.
+              All structured fields live under soap.genExam /
+              soap.sysExam — the existing soap.generalExamination /
+              soap.systemicExamination free-text fields are kept for
+              backward compat + the "Other findings" textareas below. */}
           <Card title="Clinical Examination" icon="pi-search" color={C.primary}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-              <Field label="General Examination">
-                <Textarea value={soap.generalExamination} onChange={v => setSoap(p => ({ ...p, generalExamination: v }))}
-                  placeholder="Conscious, oriented, afebrile…" />
-              </Field>
-              <Field label="Systemic Examination">
-                <Textarea value={soap.systemicExamination} onChange={v => setSoap(p => ({ ...p, systemicExamination: v }))}
-                  placeholder="CVS, RS, CNS, Abdomen findings…" />
+            {/* ── General Examination ── */}
+            <div style={{ fontSize: 11, fontWeight: 800, color: C.primary, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+              General Examination
+            </div>
+
+            {/* Row 1 — categorical dropdowns */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10, marginBottom: 10 }}>
+              {[
+                ["Built",         "built",         ["Average","Lean","Obese","Cachectic"]],
+                ["Nourishment",   "nourishment",   ["Well-nourished","Moderate","Poor"]],
+                ["Consciousness", "consciousness", ["Conscious","Drowsy","Stuporous","Comatose"]],
+                ["Orientation",   "orientation",   ["Oriented","Disoriented (Time)","Disoriented (Place)","Disoriented (Person)"]],
+              ].map(([lbl, key, opts]) => (
+                <Field key={key} label={lbl}>
+                  <select value={soap.genExam[key]}
+                    onChange={e => setSoap(p => ({ ...p, genExam: { ...p.genExam, [key]: e.target.value } }))}
+                    style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", cursor: "pointer", background: "#fff" }}>
+                    <option value="">—</option>
+                    {opts.map(o => <option key={o}>{o}</option>)}
+                  </select>
+                </Field>
+              ))}
+            </div>
+
+            {/* Row 2 — severity-scaled findings + JVP */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10, marginBottom: 10 }}>
+              {[
+                ["Pallor",      "pallor",      ["None","+","++","+++"]],
+                ["Pedal Edema", "pedalEdema",  ["None","+ Pitting","++ Pitting","+++ Pitting","Non-pitting"]],
+                ["Hydration",   "hydration",   ["Well hydrated","Mild dehydration","Moderate","Severe"]],
+                ["JVP",         "jvp",         ["Normal","Raised"]],
+              ].map(([lbl, key, opts]) => (
+                <Field key={key} label={lbl}>
+                  <select value={soap.genExam[key]}
+                    onChange={e => setSoap(p => ({ ...p, genExam: { ...p.genExam, [key]: e.target.value } }))}
+                    style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", cursor: "pointer", background: "#fff" }}>
+                    <option value="">—</option>
+                    {opts.map(o => <option key={o}>{o}</option>)}
+                  </select>
+                </Field>
+              ))}
+            </div>
+
+            {/* Row 3 — quick checkbox findings */}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px", padding: "10px 12px", background: "#f8fafc", border: `1px solid ${C.border}`, borderRadius: 8, marginBottom: 10 }}>
+              {[
+                ["Icterus",         "icterus"],
+                ["Cyanosis",        "cyanosis"],
+                ["Clubbing",        "clubbing"],
+                ["Lymphadenopathy", "lymphadenopathy"],
+                ["Febrile",         "febrile"],
+              ].map(([lbl, key]) => (
+                <label key={key} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: C.dark, fontWeight: 600, cursor: "pointer" }}>
+                  <input type="checkbox"
+                    checked={!!soap.genExam[key]}
+                    onChange={e => setSoap(p => ({ ...p, genExam: { ...p.genExam, [key]: e.target.checked } }))} />
+                  {lbl}
+                </label>
+              ))}
+            </div>
+
+            {/* Conditional: lymph node location if lymphadenopathy ticked */}
+            {soap.genExam.lymphadenopathy && (
+              <div style={{ marginBottom: 10 }}>
+                <Field label="Lymph node location">
+                  <Input value={soap.genExam.lymphLocation}
+                    onChange={v => setSoap(p => ({ ...p, genExam: { ...p.genExam, lymphLocation: v } }))}
+                    placeholder="e.g. Cervical, axillary, inguinal — single / matted / firm…" />
+                </Field>
+              </div>
+            )}
+
+            {/* Other gen-ex findings (free text) */}
+            <Field label="Other General Findings">
+              <Textarea value={soap.generalExamination}
+                onChange={v => setSoap(p => ({ ...p, generalExamination: v }))}
+                placeholder="Anything not in the standard checklist (skin lesions, pulse character, scars, oedema location, etc.)"
+                rows={2} />
+            </Field>
+
+            {/* ── Systemic Examination ── */}
+            <div style={{ fontSize: 11, fontWeight: 800, color: C.primary, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 16, marginBottom: 8 }}>
+              Systemic Examination
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              {/* CVS */}
+              <div style={{ padding: "10px 12px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 8 }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: "#b91c1c", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>♥ CVS — Cardiovascular</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 6 }}>
+                  <select value={soap.sysExam.cvs.s1s2}
+                    onChange={e => setSoap(p => ({ ...p, sysExam: { ...p.sysExam, cvs: { ...p.sysExam.cvs, s1s2: e.target.value } } }))}
+                    style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 11, fontFamily: "inherit", cursor: "pointer", background: "#fff" }}>
+                    <option value="">S1 S2 —</option>
+                    <option>S1 S2 Normal</option>
+                    <option>S1 S2 Muffled</option>
+                    <option>S1 S2 Abnormal</option>
+                  </select>
+                  <select value={soap.sysExam.cvs.rhythm}
+                    onChange={e => setSoap(p => ({ ...p, sysExam: { ...p.sysExam, cvs: { ...p.sysExam.cvs, rhythm: e.target.value } } }))}
+                    style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 11, fontFamily: "inherit", cursor: "pointer", background: "#fff" }}>
+                    <option value="">Rhythm —</option>
+                    <option>Regular</option>
+                    <option>Irregular</option>
+                  </select>
+                </div>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: C.dark, fontWeight: 600, cursor: "pointer", marginBottom: 6 }}>
+                  <input type="checkbox" checked={soap.sysExam.cvs.murmur}
+                    onChange={e => setSoap(p => ({ ...p, sysExam: { ...p.sysExam, cvs: { ...p.sysExam.cvs, murmur: e.target.checked } } }))} />
+                  Murmur
+                </label>
+                {soap.sysExam.cvs.murmur && (
+                  <input value={soap.sysExam.cvs.murmurDetails}
+                    onChange={e => setSoap(p => ({ ...p, sysExam: { ...p.sysExam, cvs: { ...p.sysExam.cvs, murmurDetails: e.target.value } } }))}
+                    placeholder="Site, grade, systolic/diastolic, radiation…"
+                    style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 11, fontFamily: "inherit", marginBottom: 6 }} />
+                )}
+                <input value={soap.sysExam.cvs.other}
+                  onChange={e => setSoap(p => ({ ...p, sysExam: { ...p.sysExam, cvs: { ...p.sysExam.cvs, other: e.target.value } } }))}
+                  placeholder="Other CVS findings"
+                  style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 11, fontFamily: "inherit" }} />
+              </div>
+
+              {/* RS */}
+              <div style={{ padding: "10px 12px", background: "#ecfeff", border: "1px solid #67e8f9", borderRadius: 8 }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: "#0e7490", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>🫁 RS — Respiratory</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 6 }}>
+                  <select value={soap.sysExam.rs.airEntry}
+                    onChange={e => setSoap(p => ({ ...p, sysExam: { ...p.sysExam, rs: { ...p.sysExam.rs, airEntry: e.target.value } } }))}
+                    style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 11, fontFamily: "inherit", cursor: "pointer", background: "#fff" }}>
+                    <option value="">Air entry —</option>
+                    <option>B/L equal</option>
+                    <option>Decreased R</option>
+                    <option>Decreased L</option>
+                    <option>Unequal</option>
+                  </select>
+                  <select value={soap.sysExam.rs.breathSounds}
+                    onChange={e => setSoap(p => ({ ...p, sysExam: { ...p.sysExam, rs: { ...p.sysExam.rs, breathSounds: e.target.value } } }))}
+                    style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 11, fontFamily: "inherit", cursor: "pointer", background: "#fff" }}>
+                    <option value="">Breath sounds —</option>
+                    <option>Vesicular</option>
+                    <option>Bronchial</option>
+                    <option>Broncho-vesicular</option>
+                    <option>Diminished</option>
+                  </select>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 6 }}>
+                  {[["Crepts","crepts"],["Wheeze","wheeze"],["Rhonchi","rhonchi"]].map(([lbl, k]) => (
+                    <label key={k} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, color: C.dark, fontWeight: 600, cursor: "pointer" }}>
+                      <input type="checkbox" checked={soap.sysExam.rs[k]}
+                        onChange={e => setSoap(p => ({ ...p, sysExam: { ...p.sysExam, rs: { ...p.sysExam.rs, [k]: e.target.checked } } }))} />
+                      {lbl}
+                    </label>
+                  ))}
+                </div>
+                <input value={soap.sysExam.rs.other}
+                  onChange={e => setSoap(p => ({ ...p, sysExam: { ...p.sysExam, rs: { ...p.sysExam.rs, other: e.target.value } } }))}
+                  placeholder="Other RS findings"
+                  style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 11, fontFamily: "inherit" }} />
+              </div>
+
+              {/* CNS */}
+              <div style={{ padding: "10px 12px", background: "#f5f3ff", border: "1px solid #c4b5fd", borderRadius: 8 }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: "#6d28d9", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>🧠 CNS — Neurological</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 6 }}>
+                  <input value={soap.sysExam.cns.gcs}
+                    onChange={e => setSoap(p => ({ ...p, sysExam: { ...p.sysExam, cns: { ...p.sysExam.cns, gcs: e.target.value } } }))}
+                    placeholder="GCS (E4V5M6)"
+                    style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 11, fontFamily: "inherit" }} />
+                  <select value={soap.sysExam.cns.speech}
+                    onChange={e => setSoap(p => ({ ...p, sysExam: { ...p.sysExam, cns: { ...p.sysExam.cns, speech: e.target.value } } }))}
+                    style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 11, fontFamily: "inherit", cursor: "pointer", background: "#fff" }}>
+                    <option value="">Speech —</option>
+                    <option>Normal</option>
+                    <option>Slurred</option>
+                    <option>Aphasia (Expressive)</option>
+                    <option>Aphasia (Receptive)</option>
+                  </select>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 6 }}>
+                  <select value={soap.sysExam.cns.tone}
+                    onChange={e => setSoap(p => ({ ...p, sysExam: { ...p.sysExam, cns: { ...p.sysExam.cns, tone: e.target.value } } }))}
+                    style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 11, fontFamily: "inherit", cursor: "pointer", background: "#fff" }}>
+                    <option value="">Tone —</option>
+                    <option>Normal</option>
+                    <option>Hypertonia</option>
+                    <option>Hypotonia</option>
+                  </select>
+                  <select value={soap.sysExam.cns.reflexes}
+                    onChange={e => setSoap(p => ({ ...p, sysExam: { ...p.sysExam, cns: { ...p.sysExam.cns, reflexes: e.target.value } } }))}
+                    style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 11, fontFamily: "inherit", cursor: "pointer", background: "#fff" }}>
+                    <option value="">Reflexes —</option>
+                    <option>Normal</option>
+                    <option>Brisk</option>
+                    <option>Absent</option>
+                  </select>
+                  <select value={soap.sysExam.cns.plantar}
+                    onChange={e => setSoap(p => ({ ...p, sysExam: { ...p.sysExam, cns: { ...p.sysExam.cns, plantar: e.target.value } } }))}
+                    style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 11, fontFamily: "inherit", cursor: "pointer", background: "#fff" }}>
+                    <option value="">Plantar —</option>
+                    <option>Flexor</option>
+                    <option>Extensor</option>
+                    <option>Equivocal</option>
+                  </select>
+                </div>
+                <input value={soap.sysExam.cns.power}
+                  onChange={e => setSoap(p => ({ ...p, sysExam: { ...p.sysExam, cns: { ...p.sysExam.cns, power: e.target.value } } }))}
+                  placeholder="Power (e.g. 5/5 all limbs, or 3/5 R UL)"
+                  style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 11, fontFamily: "inherit", marginBottom: 6 }} />
+                <input value={soap.sysExam.cns.other}
+                  onChange={e => setSoap(p => ({ ...p, sysExam: { ...p.sysExam, cns: { ...p.sysExam.cns, other: e.target.value } } }))}
+                  placeholder="Other CNS findings"
+                  style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 11, fontFamily: "inherit" }} />
+              </div>
+
+              {/* P/A — Abdomen */}
+              <div style={{ padding: "10px 12px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8 }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: "#a16207", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>🫃 P/A — Per Abdomen</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 6 }}>
+                  {[["Soft","soft"],["Tender","tender"],["Distended","distended"],["Organomegaly","organomegaly"],["Mass","mass"]].map(([lbl, k]) => (
+                    <label key={k} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, color: C.dark, fontWeight: 600, cursor: "pointer" }}>
+                      <input type="checkbox" checked={soap.sysExam.pa[k]}
+                        onChange={e => setSoap(p => ({ ...p, sysExam: { ...p.sysExam, pa: { ...p.sysExam.pa, [k]: e.target.checked } } }))} />
+                      {lbl}
+                    </label>
+                  ))}
+                </div>
+                <select value={soap.sysExam.pa.bowelSounds}
+                  onChange={e => setSoap(p => ({ ...p, sysExam: { ...p.sysExam, pa: { ...p.sysExam.pa, bowelSounds: e.target.value } } }))}
+                  style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 11, fontFamily: "inherit", cursor: "pointer", background: "#fff", marginBottom: 6 }}>
+                  <option value="">Bowel sounds —</option>
+                  <option>Present</option>
+                  <option>Sluggish</option>
+                  <option>Absent</option>
+                  <option>Hyperactive</option>
+                </select>
+                {soap.sysExam.pa.tender && (
+                  <input value={soap.sysExam.pa.tenderLocation}
+                    onChange={e => setSoap(p => ({ ...p, sysExam: { ...p.sysExam, pa: { ...p.sysExam.pa, tenderLocation: e.target.value } } }))}
+                    placeholder="Tenderness location (RIF, epigastric, McBurney's…)"
+                    style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 11, fontFamily: "inherit", marginBottom: 6 }} />
+                )}
+                {soap.sysExam.pa.organomegaly && (
+                  <input value={soap.sysExam.pa.organomegalyDetails}
+                    onChange={e => setSoap(p => ({ ...p, sysExam: { ...p.sysExam, pa: { ...p.sysExam.pa, organomegalyDetails: e.target.value } } }))}
+                    placeholder="Organomegaly (Hepato- / Spleno- + size in cm)"
+                    style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 11, fontFamily: "inherit", marginBottom: 6 }} />
+                )}
+                <input value={soap.sysExam.pa.other}
+                  onChange={e => setSoap(p => ({ ...p, sysExam: { ...p.sysExam, pa: { ...p.sysExam.pa, other: e.target.value } } }))}
+                  placeholder="Other P/A findings"
+                  style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 11, fontFamily: "inherit" }} />
+              </div>
+            </div>
+
+            {/* Catch-all for systems not covered above */}
+            <div style={{ marginTop: 10 }}>
+              <Field label="Other Systemic Findings (ENT, Musculoskeletal, Skin, etc.)">
+                <Textarea value={soap.systemicExamination}
+                  onChange={v => setSoap(p => ({ ...p, systemicExamination: v }))}
+                  placeholder="Anything not covered by the CVS / RS / CNS / P-A blocks above"
+                  rows={2} />
               </Field>
             </div>
           </Card>
