@@ -14,6 +14,7 @@ import API_ENDPOINTS from "../../config/api";
 import { openPrint } from "../../Components/print/openPrint";
 import FingerprintConsentModal from "../../Components/clinical/FingerprintConsentModal";
 import DrugAutocomplete, { parseStrength, drugDisplayName } from "../../Components/clinical/DrugAutocomplete";
+import ServiceAutocomplete from "../../Components/clinical/ServiceAutocomplete";
 import { useHospitalSettings } from "../../context/HospitalSettingsContext";
 import { useAutoSave } from "../../hooks/useAutoSave";
 import { useDigitalSignature } from "../../hooks/useDigitalSignature";
@@ -144,6 +145,20 @@ export default function OPDAssessmentPage() {
   const [procedures,   setProcedures]   = useState([]);
   const [newProc,      setNewProc]      = useState({ procedureName: "", procedureType: "Minor", consentRequired: true, estimatedDuration: "", notes: "" });
   const [consentModal, setConsentModal] = useState({ open: false, order: null });
+
+  // ── Unified "Services & Orders" line (LAB / RADIOLOGY / PROCEDURE /
+  // CONSUMABLE / etc.). Doctor picks from ServiceMaster, an OPD DRAFT
+  // bill auto-spins-up if there isn't one yet, and the service goes
+  // straight onto the bill so the receptionist sees it the moment the
+  // patient reaches the counter. `service` holds the picked ServiceMaster
+  // doc; `qty`/`urgency`/`instructions` are the row-level extras.
+  const [newOrder, setNewOrder] = useState({ service: null, name: "", qty: 1, urgency: "Routine", instructions: "" });
+  // Line items the doctor has added in THIS session. Mirrors the bill's
+  // billItems for the same DRAFT — refreshed after every add/remove.
+  const [orderItems,    setOrderItems]    = useState([]);
+  const [orderBillId,   setOrderBillId]   = useState(null);   // /api/billing DRAFT id
+  const [orderBillNum,  setOrderBillNum]  = useState("");     // human-readable bill number
+  const [orderSaving,   setOrderSaving]   = useState(false);
 
   /* ── Auto-save draft ── */
   const draftKey = visitNumber ? `sphere_draft_opd_${visitNumber}` : null;
@@ -319,6 +334,107 @@ export default function OPDAssessmentPage() {
     setInvests(p => p.filter((_, x) => x !== idx));
     toast.success("Investigation removed");
   };
+
+  // ── Unified Services & Orders → DRAFT bill flow ────────────────
+  // When the doctor adds ANY chargeable line (lab test, imaging,
+  // procedure, consumable, etc.) we want the receptionist to see it
+  // immediately as a draft bill on /reception-billing. The flow:
+  //   1. Get-or-create an OPD DRAFT bill for this UHID (idempotent —
+  //      backend's getOrCreateDraftBill returns the existing draft if
+  //      one already exists for the same patient + visitType).
+  //   2. Append the picked ServiceMaster row via add-service.
+  //   3. Refresh local orderItems from the bill response so the table
+  //      below stays in sync.
+  // Patient pays at reception — receptionist clicks Generate + Collect
+  // on the same DRAFT and we're done.
+  const ensureDraftBill = async () => {
+    if (orderBillId) return orderBillId;
+    const uhidValue = visit?.UHID || uhid;
+    if (!uhidValue) throw new Error("Patient UHID unknown — cannot create bill");
+    const { data } = await axios.post(`${API_ENDPOINTS.BASE}/billing/create`, {
+      UHID:      uhidValue,
+      visitType: "OPD",
+    });
+    const bill = data?.data || data;
+    if (!bill?._id) throw new Error("Could not create draft bill");
+    setOrderBillId(bill._id);
+    setOrderBillNum(bill.billNumber || "(DRAFT)");
+    setOrderItems(Array.isArray(bill.billItems) ? bill.billItems : []);
+    return bill._id;
+  };
+
+  const addOrderToBill = async () => {
+    const svc = newOrder.service;
+    if (!svc?._id) return toast.warn("Pick a service from the list first");
+    const qty = Math.max(1, Number(newOrder.qty) || 1);
+
+    setOrderSaving(true);
+    try {
+      const billId = await ensureDraftBill();
+      const { data } = await axios.post(
+        `${API_ENDPOINTS.BASE}/billing/${billId}/add-service`,
+        {
+          serviceId: svc._id,
+          quantity: qty,
+          remarks: [newOrder.urgency, newOrder.instructions].filter(Boolean).join(" · ") || undefined,
+          addedBySource: "Doctor",
+          addedBy:       visit?.consultantName || "Doctor",
+        },
+      );
+      const bill = data?.data || data;
+      setOrderItems(Array.isArray(bill?.billItems) ? bill.billItems : []);
+      setOrderBillNum(bill?.billNumber || orderBillNum || "(DRAFT)");
+      setNewOrder({ service: null, name: "", qty: 1, urgency: "Routine", instructions: "" });
+      toast.success(`${svc.serviceName} added — bill ${bill?.billNumber || "(DRAFT)"}`);
+    } catch (e) {
+      toast.error(e?.response?.data?.message || e?.message || "Could not add to bill");
+    } finally {
+      setOrderSaving(false);
+    }
+  };
+
+  const removeOrderFromBill = async (item) => {
+    if (!orderBillId || !item?._id) return;
+    if (!window.confirm(`Remove ${item.serviceName} from the bill?`)) return;
+    try {
+      const { data } = await axios.delete(
+        `${API_ENDPOINTS.BASE}/billing/${orderBillId}/items/${item._id}`,
+      );
+      const bill = data?.data || data;
+      setOrderItems(Array.isArray(bill?.billItems) ? bill.billItems : []);
+      toast.success("Removed from bill");
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Could not remove — bill may already be generated");
+    }
+  };
+
+  // On mount / visit change, look for an existing OPD DRAFT for this UHID
+  // so the doctor sees the partial bill if (s)he revisits the page or
+  // another team member already started the bill. Silent fallback when
+  // no DRAFT — the next add-service click will spin one up.
+  useEffect(() => {
+    const u = visit?.UHID || uhid;
+    if (!u) return;
+    const ac = new AbortController();
+    (async () => {
+      try {
+        const { data } = await axios.get(
+          `${API_ENDPOINTS.BASE}/billing/uhid/${encodeURIComponent(u)}`,
+          { signal: ac.signal },
+        );
+        const bills = data?.bills || data?.data?.bills || [];
+        const draft = bills.find(b => b.visitType === "OPD" && b.billStatus === "DRAFT");
+        if (draft) {
+          setOrderBillId(draft._id);
+          setOrderBillNum(draft.billNumber || "(DRAFT)");
+          setOrderItems(Array.isArray(draft.billItems) ? draft.billItems : []);
+        }
+      } catch (e) {
+        if (!axios.isCancel(e)) console.warn("[OPDAssessment] draft bill lookup:", e?.message);
+      }
+    })();
+    return () => ac.abort();
+  }, [visit?.UHID, uhid]);
 
   const addProcedure = async () => {
     if (!newProc.procedureName.trim()) return toast.warn("Procedure name required");
@@ -923,47 +1039,124 @@ export default function OPDAssessmentPage() {
             )}
           </Card>
 
-          {/* Investigations */}
-          <Card title="Investigation Orders" icon="pi-search-plus" color="#0284c7">
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 2fr auto", gap: 8, marginBottom: 12, alignItems: "center" }}>
-              {[["name","Investigation *"],["urgency","Urgency (Routine/STAT)"],["instructions","Special instructions"]].map(([k,ph]) => (
-                <input key={k} value={newInvest[k]} onChange={e => setNewInvest(p => ({ ...p, [k]: e.target.value }))}
-                  placeholder={ph}
-                  style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark }} />
-              ))}
-              <button onClick={addInvestigation} style={{ background: "#0284c7", color: "#fff", border: "none", borderRadius: 7, padding: "8px 14px", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
-                + Order
+          {/* ─── Unified Services & Orders → DRAFT bill ──────────────
+              Replaces the old Investigation Orders + Procedures cards
+              with a single space. Doctor picks ANY chargeable line
+              (lab / imaging / consumable / minor procedure / consult)
+              from the ServiceMaster autocomplete; clicking Add appends
+              it to a DRAFT OPD bill (auto-spun-up the first time).
+              Receptionist sees the same DRAFT on /reception-billing →
+              clicks Generate + Collect → done. The flow eliminates the
+              "doctor wrote it in notes but it never reached the cashier"
+              gap that needed daily reconciliation. */}
+          <Card title="Services & Orders — auto-billed" icon="pi-list" color="#0284c7">
+            {/* Status banner — shows the linked DRAFT bill number so
+                the doctor can verbally tell the patient "show this at
+                reception". Hidden until the first add. */}
+            {orderBillId && (
+              <div style={{
+                marginBottom: 10, padding: "8px 12px",
+                background: "#f0f9ff", border: "1px solid #bae6fd",
+                borderRadius: 8, fontSize: 12, color: "#075985",
+                display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+              }}>
+                <i className="pi pi-receipt" style={{ color: "#0284c7" }} />
+                <span>
+                  Linked to DRAFT bill <strong style={{ fontFamily: "'DM Mono', monospace" }}>{orderBillNum}</strong>
+                  {" "}— receptionist will see it on the Billing Counter.
+                </span>
+              </div>
+            )}
+
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,2.2fr) minmax(0,0.6fr) minmax(0,0.9fr) minmax(0,1.4fr) auto", gap: 8, marginBottom: 12, alignItems: "center" }}>
+              <ServiceAutocomplete
+                value={newOrder.name}
+                applicableTo="OPD"
+                onChange={(v) => setNewOrder(p => ({ ...p, name: v, service: null }))}
+                onPick={(s) => setNewOrder(p => ({
+                  ...p,
+                  service: s,
+                  name: `${s.serviceCode ? s.serviceCode + " · " : ""}${s.serviceName}`,
+                }))}
+                placeholder="Service / Investigation / Procedure — start typing"
+                inputStyle={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark, width: "100%" }}
+                inputClassName=""
+                showLabel={false}
+              />
+              <input
+                type="number" min="1" step="1"
+                value={newOrder.qty}
+                onChange={e => setNewOrder(p => ({ ...p, qty: e.target.value === "" ? 1 : Number(e.target.value) }))}
+                placeholder="Qty"
+                title="Quantity / Units"
+                style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark }}
+              />
+              <select
+                value={newOrder.urgency}
+                onChange={e => setNewOrder(p => ({ ...p, urgency: e.target.value }))}
+                style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark, background: "#fff" }}
+              >
+                <option value="Routine">Routine</option>
+                <option value="Urgent">Urgent</option>
+                <option value="STAT">STAT</option>
+              </select>
+              <input
+                value={newOrder.instructions}
+                onChange={e => setNewOrder(p => ({ ...p, instructions: e.target.value }))}
+                placeholder="Special instructions (optional)"
+                style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark }}
+              />
+              <button
+                onClick={addOrderToBill}
+                disabled={orderSaving || !newOrder.service}
+                title={newOrder.service ? "" : "Pick a service from the dropdown first"}
+                style={{
+                  background: !newOrder.service ? "#cbd5e1" : (orderSaving ? "#7dd3fc" : "#0284c7"),
+                  color: "#fff", border: "none", borderRadius: 7, padding: "8px 14px",
+                  cursor: orderSaving || !newOrder.service ? "not-allowed" : "pointer",
+                  fontWeight: 600, fontSize: 12,
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                }}
+              >
+                <i className={`pi ${orderSaving ? "pi-spin pi-spinner" : "pi-plus"}`} />
+                {orderSaving ? "Adding…" : "Add to Bill"}
               </button>
             </div>
-            {invests.length === 0 ? (
-              <p style={{ color: C.muted, fontSize: 12, margin: 0 }}>No investigations ordered.</p>
+
+            {orderItems.length === 0 ? (
+              <p style={{ color: C.muted, fontSize: 12, margin: 0 }}>
+                No services added yet. Pick a lab test, imaging, consumable, or minor procedure above —
+                it'll go onto a DRAFT bill the receptionist can collect from.
+              </p>
             ) : (
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead><tr style={{ background: C.bg }}>
-                  {["Investigation","Urgency","Status","Instructions"].map(h => (
+                  {["Service / Order","Code","Qty","Rate","Net","Notes"].map(h => (
                     <th key={h} style={{ textAlign: "left", padding: "6px 10px", fontWeight: 600, color: C.muted, borderBottom: `1px solid ${C.border}` }}>{h}</th>
                   ))}
-                  {/* × column header matches the Rx table convention above. */}
                   <th style={{ width: 36, borderBottom: `1px solid ${C.border}` }} aria-label="Remove" />
                 </tr></thead>
-                <tbody>{invests.map((inv, i) => (
-                  <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
-                    <td style={{ padding: "7px 10px", color: C.dark }}>{inv.name || inv.testName}</td>
-                    <td style={{ padding: "7px 10px", color: inv.urgency === "STAT" ? C.danger : C.muted }}>{inv.urgency || "Routine"}</td>
-                    <td style={{ padding: "7px 10px" }}>
-                      <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20,
-                        background: inv.status === "Resulted" ? "#d1fae5" : "#fef3c7",
-                        color: inv.status === "Resulted" ? C.success : C.warn }}>
-                        {inv.status || "Ordered"}
-                      </span>
+                <tbody>{orderItems.map((it) => (
+                  <tr key={it._id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                    <td style={{ padding: "7px 10px", color: C.dark, fontWeight: 500 }}>
+                      {it.serviceName}
+                      {it.category && <span style={{ fontSize: 10, color: C.muted, marginLeft: 6 }}>· {it.category}</span>}
                     </td>
-                    <td style={{ padding: "7px 10px", color: C.muted }}>{inv.instructions || "—"}</td>
+                    <td style={{ padding: "7px 10px", color: C.muted, fontFamily: "'DM Mono', monospace", fontSize: 11 }}>{it.serviceCode || "—"}</td>
+                    <td style={{ padding: "7px 10px", color: C.dark, fontFamily: "'DM Mono', monospace" }}>{it.quantity ?? 1}</td>
+                    <td style={{ padding: "7px 10px", color: C.muted, fontFamily: "'DM Mono', monospace" }}>
+                      ₹{Number(it.unitPrice?.$numberDecimal ?? it.unitPrice ?? 0).toLocaleString("en-IN")}
+                    </td>
+                    <td style={{ padding: "7px 10px", color: C.dark, fontFamily: "'DM Mono', monospace", fontWeight: 700 }}>
+                      ₹{Number(it.netAmount?.$numberDecimal ?? it.netAmount ?? 0).toLocaleString("en-IN")}
+                    </td>
+                    <td style={{ padding: "7px 10px", color: C.muted, fontSize: 11 }}>{it.remarks || "—"}</td>
                     <td style={{ padding: "4px 6px", textAlign: "right" }}>
                       <button
                         type="button"
-                        onClick={() => removeInvestigation(i)}
-                        title={`Remove ${inv.name || inv.testName || "this investigation"}`}
-                        aria-label="Remove investigation"
+                        onClick={() => removeOrderFromBill(it)}
+                        title={`Remove ${it.serviceName}`}
+                        aria-label="Remove service"
                         style={{
                           width: 24, height: 24, border: "1px solid #fca5a5",
                           background: "#fef2f2", color: "#b91c1c",
@@ -979,70 +1172,27 @@ export default function OPDAssessmentPage() {
                       </button>
                     </td>
                   </tr>
-                ))}</tbody>
+                ))}
+                {/* Total row */}
+                <tr style={{ background: C.bg, fontWeight: 700 }}>
+                  <td colSpan={4} style={{ padding: "8px 10px", color: C.muted, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.4 }}>
+                    Bill total (DRAFT)
+                  </td>
+                  <td style={{ padding: "8px 10px", color: "#0f172a", fontFamily: "'DM Mono', monospace", fontSize: 13 }}>
+                    ₹{orderItems.reduce((s, it) => s + Number(it.netAmount?.$numberDecimal ?? it.netAmount ?? 0), 0).toLocaleString("en-IN")}
+                  </td>
+                  <td colSpan={2} />
+                </tr>
+                </tbody>
               </table>
             )}
           </Card>
 
-          {/* Procedures */}
-          <Card title="Procedures" icon="pi-cog" color={C.nurse}>
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr auto auto", gap: 8, marginBottom: 12, alignItems: "center" }}>
-              <input value={newProc.procedureName} onChange={e => setNewProc(p => ({ ...p, procedureName: e.target.value }))}
-                placeholder="Procedure name *"
-                style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark }} />
-              <select value={newProc.procedureType} onChange={e => setNewProc(p => ({ ...p, procedureType: e.target.value }))}
-                style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark, background: C.card }}>
-                {["Minor","Major","Diagnostic","Therapeutic"].map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-              <input value={newProc.estimatedDuration} onChange={e => setNewProc(p => ({ ...p, estimatedDuration: e.target.value }))}
-                placeholder="Est. Duration"
-                style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark }} />
-              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: C.muted, whiteSpace: "nowrap", cursor: "pointer" }}>
-                <input type="checkbox" checked={newProc.consentRequired} onChange={e => setNewProc(p => ({ ...p, consentRequired: e.target.checked }))} />
-                Consent
-              </label>
-              <button onClick={addProcedure} style={{ background: C.nurse, color: "#fff", border: "none", borderRadius: 7, padding: "8px 14px", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
-                + Add
-              </button>
-            </div>
-            {procedures.length === 0 ? (
-              <p style={{ color: C.muted, fontSize: 12, margin: 0 }}>No procedures added.</p>
-            ) : (
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                <thead><tr style={{ background: C.bg }}>
-                  {["Procedure","Type","Duration","Consent Req.","Consent Status","Actions"].map(h => (
-                    <th key={h} style={{ textAlign: "left", padding: "6px 10px", fontWeight: 600, color: C.muted, borderBottom: `1px solid ${C.border}` }}>{h}</th>
-                  ))}
-                </tr></thead>
-                <tbody>{procedures.map((proc, i) => {
-                  const cs = proc.consentStatus || "NotRequired";
-                  const csStyle = { NotRequired: { bg: "#f1f5f9", color: C.muted }, Pending: { bg: "#fef3c7", color: C.warn }, Obtained: { bg: "#d1fae5", color: C.success }, Declined: { bg: "#fee2e2", color: C.danger } };
-                  const s = csStyle[cs] || csStyle.NotRequired;
-                  return (
-                    <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
-                      <td style={{ padding: "7px 10px", color: C.dark, fontWeight: 500 }}>{proc.procedureName}</td>
-                      <td style={{ padding: "7px 10px", color: C.muted }}>{proc.procedureType}</td>
-                      <td style={{ padding: "7px 10px", color: C.muted }}>{proc.estimatedDuration || "—"}</td>
-                      <td style={{ padding: "7px 10px" }}>{proc.consentRequired ? "Yes" : "No"}</td>
-                      <td style={{ padding: "7px 10px" }}>
-                        <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: s.bg, color: s.color }}>
-                          {cs === "Obtained" ? "✓ Obtained" : cs}
-                        </span>
-                      </td>
-                      <td style={{ padding: "7px 10px" }}>
-                        <button
-                          disabled={!proc.consentRequired || cs === "Obtained"}
-                          onClick={() => setConsentModal({ open: true, order: { ...proc, orderDetails: { procedureName: proc.procedureName, procedureType: proc.procedureType, notes: proc.notes, consentRequired: proc.consentRequired } } })}
-                          style={{ padding: "4px 10px", fontSize: 11, fontWeight: 600, border: "none", borderRadius: 6, background: (!proc.consentRequired || cs === "Obtained") ? C.border : "#fce7f3", color: (!proc.consentRequired || cs === "Obtained") ? C.muted : "#be185d", cursor: (!proc.consentRequired || cs === "Obtained") ? "not-allowed" : "pointer" }}>
-                          Consent
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}</tbody>
-              </table>
-            )}
-          </Card>
+          {/* The old standalone Procedures card was removed — its
+              chargeable line items are now handled by the unified
+              Services & Orders panel above. Major procedures with
+              consent requirements should still go through the IPD
+              admission + ConsentModal flow rather than walk-in OPD. */}
 
         </div>
 
