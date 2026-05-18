@@ -10,7 +10,7 @@ import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
-import SharedDrugAutocomplete, { parseStrength } from "../clinical/DrugAutocomplete";
+import SharedDrugAutocomplete, { parseStrength, drugDisplayName } from "../clinical/DrugAutocomplete";
 
 /* ── Design tokens ── */
 const C = {
@@ -176,7 +176,13 @@ function DrugAutocomplete({ form, set, label, name, placeholder }) {
       value={form[name] ?? ""}
       onChange={(v) => set(name, v)}
       onPick={(d) => {
-        set(name, d.name);
+        // Form-prefixed canonical name in the visible Drug Name field
+        // ("Tab Paracetamol 500mg" instead of bare "Paracetamol 500mg")
+        // per Indian Rx convention. Structured fields (genericName /
+        // dose / doseUnit / dosageForm) mirror separately so the order
+        // service, MAR, and dispense flow all have machine-readable
+        // values without parsing the display string.
+        set(name, drugDisplayName(d));
         if (d.genericName) set("genericName", d.genericName);
         const { value, unit } = parseStrength(d.strength);
         if (value != null) set("dose", value);

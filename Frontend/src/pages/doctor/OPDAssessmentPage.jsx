@@ -13,7 +13,7 @@ import { toast } from "react-toastify";
 import API_ENDPOINTS from "../../config/api";
 import { openPrint } from "../../Components/print/openPrint";
 import FingerprintConsentModal from "../../Components/clinical/FingerprintConsentModal";
-import DrugAutocomplete, { parseStrength } from "../../Components/clinical/DrugAutocomplete";
+import DrugAutocomplete, { parseStrength, drugDisplayName } from "../../Components/clinical/DrugAutocomplete";
 import { useHospitalSettings } from "../../context/HospitalSettingsContext";
 import { useAutoSave } from "../../hooks/useAutoSave";
 import { useDigitalSignature } from "../../hooks/useDigitalSignature";
@@ -672,12 +672,15 @@ export default function OPDAssessmentPage() {
                 onChange={(v) => setNewMed(p => ({ ...p, name: v }))}
                 onPick={(d) => {
                   setNewMed(p => {
-                    const next = { ...p, name: d.name };
+                    // Write the form-prefixed name into Medicine (per Indian
+                    // Rx convention: "Tab Paracetamol 500mg", "Cap Amoxicillin
+                    // 500mg", "Syp Crocin 60ml"). The dose / generic / form
+                    // mirrored alongside so audit + print receipt have the
+                    // structured fields too — Medicine is the human-readable
+                    // line; the others power downstream automation.
+                    const next = { ...p, name: drugDisplayName(d) };
                     if (d.genericName) next.genericName = d.genericName;
                     const { value, unit } = parseStrength(d.strength);
-                    // Existing input shows raw "Dose" (e.g. "500mg") so combine
-                    // value + unit if both parsed, otherwise leave the raw
-                    // strength string — easier for the doctor to edit.
                     if (value && unit) next.dose = `${value}${unit}`;
                     else if (d.strength) next.dose = d.strength;
                     if (d.form) next.form = d.form;

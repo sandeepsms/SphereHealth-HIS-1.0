@@ -51,6 +51,44 @@ const FORM_BADGE = {
 const FORM_DEFAULT = { short: "RX",  bg: "#f1f5f9", fg: "#475569" };
 const formBadge = (form) => FORM_BADGE[form] || FORM_DEFAULT;
 
+/* Doctor-friendly short prefix written INTO the prescription text
+   when an autocomplete row is picked. Matches Indian Rx convention:
+   "Tab Paracetamol 500mg", "Cap Amoxicillin 500mg", "Syp Crocin 60ml".
+   Forms that don't have a customary abbreviation use the full word
+   (Cream / Inhaler / Drops). Empty for "Other" / unknown so we don't
+   prepend noise like "Other Whatever". */
+export const FORM_PREFIX = {
+  Tablet:      "Tab",
+  Capsule:     "Cap",
+  Syrup:       "Syp",
+  Injection:   "Inj",
+  Drops:       "Drops",
+  Cream:       "Cream",
+  Ointment:    "Oint",
+  Inhaler:     "Inhaler",
+  Patch:       "Patch",
+  Powder:      "Powder",
+  Suppository: "Supp",
+  Other:       "",
+};
+
+/* Canonical display name for a drug — used both by the dropdown
+   row label and (more importantly) by the value written into the
+   prescription form when the doctor picks a row. Keeps the on-screen
+   text identical to what gets stored, which the audit log / print
+   receipt then consumes verbatim.
+
+   Example outputs:
+     {form:"Tablet", name:"Paracetamol 500mg"}  → "Tab Paracetamol 500mg"
+     {form:"Cream",  name:"Mupirocin 2%"}       → "Cream Mupirocin 2%"
+     {form:"Other",  name:"Custom Compound"}    → "Custom Compound"
+     {              name:"Just A Name"}         → "Just A Name"          */
+export function drugDisplayName(drug) {
+  if (!drug || !drug.name) return "";
+  const px = drug.form ? (FORM_PREFIX[drug.form] ?? drug.form) : "";
+  return px ? `${px} ${drug.name}` : drug.name;
+}
+
 export default function DrugAutocomplete({
   label,
   value,
