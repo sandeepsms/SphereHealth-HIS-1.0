@@ -84,6 +84,208 @@ const STAT_STYLE = {
   OnHold:       { bg: "#f1f5f9",color: C.muted  },
 };
 
+/* Shared grid row style — same victim of commit 768830a as `Field`.
+   `g(cols)` below spreads this onto each grid wrapper so the form
+   fields sit on a proper css grid with consistent gap + margin. */
+const row = { display: "grid", gap: 10, marginBottom: 10 };
+
+/* ══════════════════════════════════════════════════════════════
+   Field — generic labelled input/select/textarea used everywhere in
+   OrderForm. Originally lived as a closure inside OrderForm; the
+   2026-05-13 CSS refactor (commit 768830a) lifted it out but the
+   refactor accidentally dropped the definition, leaving every
+   <Field ...> reference unresolved and crashing the Medication form
+   the moment the doctor selected it. Restored here.
+
+   Supports the variants the caller uses today:
+     • plain text/number     (default)
+     • select with options[] (options prop)
+     • textarea              (type="textarea")
+     • value + adjacent unit picker (unitOptions[] + unitName, OR a
+       fixed unit string)
+     • span={N} to widen the cell in a grid                          */
+function Field({ form, set, label, name, placeholder, type = "text",
+                 options, unitOptions, unitName, unit, span }) {
+  const val = form[name] ?? "";
+  const wrapStyle = span ? { gridColumn: `span ${span}` } : undefined;
+
+  const renderInput = () => {
+    if (Array.isArray(options)) {
+      return (
+        <select className="his-select" value={val} onChange={e => set(name, e.target.value)}>
+          <option value="">— select —</option>
+          {options.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+      );
+    }
+    if (type === "textarea") {
+      return (
+        <textarea className="his-textarea" rows={2}
+                  placeholder={placeholder} value={val}
+                  onChange={e => set(name, e.target.value)} />
+      );
+    }
+    const onChange = (e) => {
+      const v = e.target.value;
+      set(name, type === "number" && v !== "" ? Number(v) : v);
+    };
+    return (
+      <input className="his-field" type={type}
+             placeholder={placeholder} value={val} onChange={onChange} />
+    );
+  };
+
+  return (
+    <div style={wrapStyle}>
+      <label className="his-label">{label}</label>
+      {Array.isArray(unitOptions) ? (
+        <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ flex: 1 }}>{renderInput()}</div>
+          <select className="his-select" style={{ width: 90 }}
+                  value={form[unitName] || unitOptions[0]}
+                  onChange={e => set(unitName, e.target.value)}>
+            {unitOptions.map(u => <option key={u} value={u}>{u}</option>)}
+          </select>
+        </div>
+      ) : unit ? (
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          {renderInput()}
+          <span style={{ fontSize: 11, color: "#64748b" }}>{unit}</span>
+        </div>
+      ) : renderInput()}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════
+   DrugAutocomplete — replaces the plain "Drug Name" text field on
+   Medication orders. As the doctor types, fetches matching drugs
+   from the pharmacy master (/api/pharmacy/drugs/search?q=…) and
+   shows a dropdown of name + generic + strength + form so the
+   doctor can pick the exact SKU and avoid typos.
+
+   Picking a row:
+     • writes the drug's primary name into `medicineName`
+     • mirrors strength → `dose` + `doseUnit` (best-effort parse,
+       e.g. "500 mg" → dose 500, unit "mg")
+     • mirrors genericName → `genericName` (audited; doctor can
+       still override)
+     • keeps focus + lets typing continue (no implicit save)         */
+function DrugAutocomplete({ form, set, label, name, placeholder }) {
+  const [open, setOpen] = useState(false);
+  const [results, setResults] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const debRef = React.useRef(null);
+  const val = form[name] ?? "";
+
+  useEffect(() => {
+    if (debRef.current) clearTimeout(debRef.current);
+    const q = (val || "").trim();
+    if (q.length < 2) { setResults([]); return; }
+    const ac = new AbortController();
+    debRef.current = setTimeout(async () => {
+      setBusy(true);
+      try {
+        const { data } = await axios.get(
+          `${API_ENDPOINTS.BASE}/pharmacy/drugs/search`,
+          { params: { q }, signal: ac.signal },
+        );
+        if (!ac.signal.aborted) setResults(data?.data || []);
+      } catch (e) {
+        if (!axios.isCancel(e)) console.warn("[DrugAutocomplete]", e?.message);
+      } finally {
+        if (!ac.signal.aborted) setBusy(false);
+      }
+    }, 200);
+    return () => { ac.abort(); if (debRef.current) clearTimeout(debRef.current); };
+  }, [val]);
+
+  const pick = (drug) => {
+    set(name, drug.name);
+    if (drug.genericName) set("genericName", drug.genericName);
+    // Try to split strength like "500 mg" or "5 mg/5 mL" into a numeric
+    // dose + unit. Doctor can still override either field afterwards.
+    const m = String(drug.strength || "").match(/^\s*([\d.]+)\s*([a-zA-Z/%μ]+)?/);
+    if (m) {
+      set("dose", Number(m[1]));
+      if (m[2]) set("doseUnit", m[2]);
+    }
+    if (drug.form) set("dosageForm", drug.form);  // optional, future-friendly
+    setOpen(false);
+    setResults([]);
+  };
+
+  return (
+    <div style={{ position: "relative" }}>
+      <label className="his-label">{label}</label>
+      <input
+        className="his-field"
+        type="text"
+        placeholder={placeholder}
+        value={val}
+        onFocus={() => setOpen(true)}
+        onChange={e => { set(name, e.target.value); setOpen(true); }}
+        onBlur={() => setTimeout(() => setOpen(false), 180)}
+        autoComplete="off"
+      />
+      {open && (results.length > 0 || busy) && (
+        <div style={{
+          position: "absolute", top: "100%", left: 0, right: 0, zIndex: 20,
+          marginTop: 4, maxHeight: 280, overflowY: "auto",
+          background: "#fff", border: "1px solid #cbd5e1", borderRadius: 8,
+          boxShadow: "0 10px 24px rgba(15,23,42,.12)",
+        }}>
+          {busy && results.length === 0 && (
+            <div style={{ padding: 10, fontSize: 12, color: "#64748b" }}>
+              <i className="pi pi-spin pi-spinner" /> Searching pharmacy master…
+            </div>
+          )}
+          {results.map(d => (
+            <button
+              key={d._id}
+              type="button"
+              onMouseDown={() => pick(d)}
+              style={{
+                display: "block", width: "100%", textAlign: "left",
+                padding: "8px 10px", border: 0,
+                borderBottom: "1px solid #f1f5f9", background: "#fff",
+                cursor: "pointer", fontFamily: "inherit",
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = "#eff6ff"}
+              onMouseLeave={e => e.currentTarget.style.background = "#fff"}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                <span style={{ fontWeight: 700, color: "#0f172a", fontSize: 13 }}>
+                  {d.name}
+                  {d.strength ? ` · ${d.strength}` : ""}
+                </span>
+                {d.form && (
+                  <span style={{ fontSize: 10, color: "#0e7490", background: "#ecfeff", padding: "1px 8px", borderRadius: 999, fontWeight: 700 }}>
+                    {d.form}
+                  </span>
+                )}
+              </div>
+              <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
+                {d.genericName && <span>Generic: <strong>{d.genericName}</strong></span>}
+                {d.genericName && d.manufacturer && " · "}
+                {d.manufacturer && <span>{d.manufacturer}</span>}
+                {d.isHighAlert && <span style={{ marginLeft: 6, color: "#b91c1c", fontWeight: 700 }}>⚠ HIGH-ALERT</span>}
+                {d.isLASA && <span style={{ marginLeft: 6, color: "#c2410c", fontWeight: 700 }}>LASA</span>}
+                {d.schedule && d.schedule !== "OTC" && <span style={{ marginLeft: 6, fontWeight: 700, color: "#7c3aed" }}>Sch-{d.schedule}</span>}
+              </div>
+            </button>
+          ))}
+          {!busy && results.length === 0 && val.trim().length >= 2 && (
+            <div style={{ padding: 10, fontSize: 12, color: "#94a3b8" }}>
+              No drug found — you can still type the name manually.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ══════════════════════════════════════════════════════════════
    ORDER FORM — dynamic fields per type
 ══════════════════════════════════════════════════════════════ */
@@ -93,7 +295,12 @@ function OrderForm({ typeId, form, set }) {
   if (typeId === "Medication") return (
     <>
       <div style={g("2fr 1fr")}>
-        <Field form={form} set={set} label="Drug Name *" name="medicineName" placeholder="e.g. Amoxicillin"/>
+        {/* Drug Name now auto-completes from the Pharmacy drug master so
+            the doctor picks the exact SKU (avoids typos that desync from
+            stock + dispense audit). Picking an entry also pre-fills dose
+            + dose unit from the drug's strength field — doctor can still
+            override either. */}
+        <DrugAutocomplete form={form} set={set} label="Drug Name *" name="medicineName" placeholder="Start typing — e.g. Amox, Paracet, Aug…"/>
         <Field form={form} set={set} label="Dose *" name="dose" type="number" placeholder="e.g. 500"
           unitOptions={["mg","mcg","g","ml","units","IU","mEq"]} unitName="doseUnit"/>
       </div>
