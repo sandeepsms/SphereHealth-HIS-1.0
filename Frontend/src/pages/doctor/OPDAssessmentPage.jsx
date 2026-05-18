@@ -692,11 +692,124 @@ export default function OPDAssessmentPage() {
                 inputClassName=""
                 showLabel={false}
               />
-              {[["dose","Dose"],["frequency","Frequency"],["duration","Duration"],["route","Route"]].map(([k,ph]) => (
-                <input key={k} value={newMed[k]} onChange={e => setNewMed(p => ({ ...p, [k]: e.target.value }))}
-                  placeholder={ph}
-                  style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark }} />
-              ))}
+              {/* Dose — free text; doctor types "500mg", "5ml", "1 tab", etc.
+                  Pre-filled by the autocomplete pick handler from drug.strength. */}
+              <input
+                value={newMed.dose}
+                onChange={e => setNewMed(p => ({ ...p, dose: e.target.value }))}
+                placeholder="Dose"
+                style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark }}
+              />
+              {/* Frequency — common Indian Rx schedules. <select> with empty
+                  default so the doctor sees "Frequency" placeholder until
+                  picking. Covers everything from STAT (single dose) through
+                  multi-times-daily, hourly, and as-needed (SOS/PRN). The
+                  ─── divider options force a logical grouping inside the
+                  native dropdown without needing optgroup overhead. */}
+              <select
+                value={newMed.frequency}
+                onChange={e => setNewMed(p => ({ ...p, frequency: e.target.value }))}
+                style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: newMed.frequency ? C.dark : "#94a3b8", background: "#fff" }}
+              >
+                <option value="">Frequency</option>
+                <optgroup label="Common">
+                  <option value="OD">OD — Once daily</option>
+                  <option value="BD">BD — Twice daily (1-0-1)</option>
+                  <option value="TDS">TDS — Thrice daily (1-1-1)</option>
+                  <option value="QID">QID — Four times daily</option>
+                  <option value="HS">HS — At bedtime</option>
+                  <option value="SOS">SOS — As needed (PRN)</option>
+                  <option value="Stat">Stat — Single dose now</option>
+                </optgroup>
+                <optgroup label="Hourly">
+                  <option value="q1h">q1h — Every 1 hour</option>
+                  <option value="q2h">q2h — Every 2 hours</option>
+                  <option value="q4h">q4h — Every 4 hours</option>
+                  <option value="q6h">q6h — Every 6 hours</option>
+                  <option value="q8h">q8h — Every 8 hours</option>
+                  <option value="q12h">q12h — Every 12 hours</option>
+                </optgroup>
+                <optgroup label="Less frequent">
+                  <option value="Alt day">Alt day — Every other day</option>
+                  <option value="Weekly">Weekly</option>
+                  <option value="Twice weekly">Twice weekly</option>
+                  <option value="Monthly">Monthly</option>
+                </optgroup>
+                <optgroup label="Meal-timed">
+                  <option value="BBF">BBF — Before breakfast</option>
+                  <option value="ABF">ABF — After breakfast</option>
+                  <option value="AC">AC — Before meals</option>
+                  <option value="PC">PC — After meals</option>
+                </optgroup>
+              </select>
+              {/* Duration — common course lengths. Free-text via datalist so
+                  the doctor can pick "5 days" / "1 week" with one click but
+                  also type "Until reviewed" or a custom value. Datalist
+                  options appear as a native dropdown below the input. */}
+              <input
+                list="rx-duration-options"
+                value={newMed.duration}
+                onChange={e => setNewMed(p => ({ ...p, duration: e.target.value }))}
+                placeholder="Duration"
+                style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark }}
+              />
+              <datalist id="rx-duration-options">
+                <option value="1 day" />
+                <option value="3 days" />
+                <option value="5 days" />
+                <option value="7 days" />
+                <option value="10 days" />
+                <option value="14 days" />
+                <option value="1 week" />
+                <option value="2 weeks" />
+                <option value="3 weeks" />
+                <option value="1 month" />
+                <option value="2 months" />
+                <option value="3 months" />
+                <option value="6 months" />
+                <option value="1 year" />
+                <option value="Single dose" />
+                <option value="Until reviewed" />
+                <option value="Continuous / Long-term" />
+              </datalist>
+              {/* Route — WHO administration routes. Default "Oral" since
+                  that's >80% of OPD prescriptions; doctor changes only when
+                  IV/IM/topical applies. */}
+              <select
+                value={newMed.route}
+                onChange={e => setNewMed(p => ({ ...p, route: e.target.value }))}
+                style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: newMed.route ? C.dark : "#94a3b8", background: "#fff" }}
+              >
+                <option value="">Route</option>
+                <optgroup label="Enteral">
+                  <option value="Oral">Oral (PO)</option>
+                  <option value="Sublingual">Sublingual (SL)</option>
+                  <option value="Buccal">Buccal</option>
+                  <option value="NG Tube">NG Tube</option>
+                  <option value="PEG Tube">PEG Tube</option>
+                  <option value="Per Rectum">Per Rectum (PR)</option>
+                </optgroup>
+                <optgroup label="Parenteral">
+                  <option value="IV">IV — Intravenous</option>
+                  <option value="IM">IM — Intramuscular</option>
+                  <option value="SC">SC — Subcutaneous</option>
+                  <option value="Intradermal">Intradermal (ID)</option>
+                  <option value="Intra-articular">Intra-articular</option>
+                  <option value="Epidural">Epidural</option>
+                  <option value="Spinal">Spinal / Intrathecal</option>
+                </optgroup>
+                <optgroup label="Topical / Local">
+                  <option value="Topical">Topical (skin)</option>
+                  <option value="Transdermal">Transdermal Patch</option>
+                  <option value="Eye drops">Eye drops</option>
+                  <option value="Ear drops">Ear drops</option>
+                  <option value="Nasal">Nasal</option>
+                  <option value="Inhalation">Inhalation</option>
+                  <option value="Nebulization">Nebulization</option>
+                  <option value="Per Vagina">Per Vagina (PV)</option>
+                  <option value="Local infiltration">Local infiltration</option>
+                </optgroup>
+              </select>
               <button onClick={addMed} style={{ background: C.warn, color: "#fff", border: "none", borderRadius: 7, padding: "8px 14px", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
                 + Add
               </button>
