@@ -176,14 +176,18 @@ export default function OPDAssessmentPage() {
 
   const [soap, setSoap] = useState({
     subjectiveNote: "", objectiveNote: "", assessmentNote: "", planNote: "",
-    // Three-tier diagnosis tracking — Provisional (initial guess),
-    // Working (current best clinical impression as more info arrives),
-    // Final (confirmed at end of episode). Each has a paired ICD-10
-    // code so coding + insurance + epidemiology stats line up against
-    // a real ontology rather than free-text whatever-the-doctor-typed.
-    provisionalDiagnosis: "",    provisionalDiagnosisICD: "",
-    workingDiagnosis:     "",    workingDiagnosisICD:     "",
-    finalDiagnosis:       "",    finalDiagnosisICD:       "",
+    // Three-tier diagnosis (Provisional / Working / Final) + a SHARED
+    // ICD-10 code applied to the patient's overall episode (matches the
+    // DoctorNotes "Patient Diagnosis" panel layout). patientStatus is
+    // a clinical trajectory chip — Stable / Improving / Unchanged /
+    // Deteriorating / Critical / Ready for Discharge — saved alongside
+    // the diagnosis so handover docs + discharge summary auto-fill.
+    provisionalDiagnosis: "",
+    workingDiagnosis:     "",
+    finalDiagnosis:       "",
+    icd10Code:            "",
+    icd10Description:     "",
+    patientStatus:        "",
     generalExamination: "",
     systemicExamination: "", advice: "", followUpDate: "", doctorNotes: "",
   });
@@ -285,12 +289,12 @@ export default function OPDAssessmentPage() {
         objectiveNote:        v.objectiveNote || "",
         assessmentNote:       v.assessmentNote || "",
         planNote:             v.planNote || "",
-        provisionalDiagnosis:    v.provisionalDiagnosis    || "",
-        provisionalDiagnosisICD: v.provisionalDiagnosisICD || "",
-        workingDiagnosis:        v.workingDiagnosis        || "",
-        workingDiagnosisICD:     v.workingDiagnosisICD     || "",
-        finalDiagnosis:          v.finalDiagnosis          || "",
-        finalDiagnosisICD:       v.finalDiagnosisICD       || "",
+        provisionalDiagnosis: v.provisionalDiagnosis || "",
+        workingDiagnosis:     v.workingDiagnosis     || "",
+        finalDiagnosis:       v.finalDiagnosis       || "",
+        icd10Code:            v.icd10Code            || "",
+        icd10Description:     v.icd10Description     || "",
+        patientStatus:        v.patientStatus        || "",
         generalExamination:   v.generalExamination || "",
         systemicExamination:  v.systemicExamination || "",
         advice:               v.advice || "",
@@ -1168,33 +1172,107 @@ export default function OPDAssessmentPage() {
               Advice / Follow-up / Additional Notes that used to live
               here have moved to the SOAP card's Plan section — they
               were duplicating that field. */}
-          <Card title="Diagnosis" icon="pi-verified" color={C.success}>
-            {[
-              { tier: "Provisional", desc: "provisionalDiagnosis", icd: "provisionalDiagnosisICD", required: true,  hint: "First-look clinical impression (e.g. AGE with Dehydration)" },
-              { tier: "Working",     desc: "workingDiagnosis",     icd: "workingDiagnosisICD",     required: false, hint: "Refined after labs/imaging (may differ from provisional)" },
-              { tier: "Final",       desc: "finalDiagnosis",       icd: "finalDiagnosisICD",       required: false, hint: "Confirmed diagnosis at episode closure" },
-            ].map(({ tier, desc, icd, required, hint }) => (
-              <div key={tier} style={{ marginBottom: 14 }}>
-                <div style={{ fontSize: 11, fontWeight: 800, color: C.success, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
-                  {tier} Diagnosis{required ? " *" : ""}
+          {/* Visual style matches the Doctor Notes "Patient Diagnosis"
+              panel so the same fields look the same wherever the doctor
+              edits them — orange Provisional, blue Working, green Final,
+              purple ICD-10 row, and a status pill strip. Wrapped in the
+              OPD page's <Card> so collapsibility + section ordering stay
+              consistent with the rest of the OPD slip. */}
+          <Card title="Patient Diagnosis" icon="pi-bookmark" color="#1d4ed8">
+            <div style={{ fontSize: 11, color: "#64748b", fontWeight: 500, marginBottom: 12, marginTop: -6 }}>
+              Provisional → Working → Final + ICD-10 coding
+            </div>
+
+            {/* Three diagnosis tiers — color-coded by clinical certainty */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+              {/* Provisional (orange) — first-contact impression */}
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#f59e0b", flexShrink: 0 }} />
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#92400e", textTransform: "uppercase", letterSpacing: ".6px" }}>Provisional Dx *</span>
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "150px 1fr", gap: 10 }}>
-                  <Input
-                    value={soap[icd]}
-                    onChange={v => setSoap(p => ({ ...p, [icd]: v }))}
-                    placeholder="ICD-10 code"
-                  />
-                  <Input
-                    value={soap[desc]}
-                    onChange={v => setSoap(p => ({ ...p, [desc]: v }))}
-                    placeholder={hint}
-                  />
-                </div>
+                <input
+                  value={soap.provisionalDiagnosis}
+                  onChange={e => setSoap(p => ({ ...p, provisionalDiagnosis: e.target.value }))}
+                  placeholder="Suspected diagnosis on first contact"
+                  style={{ width: "100%", border: "1.5px solid #fcd34d", borderRadius: 8, padding: "9px 12px", fontFamily: "inherit", fontSize: 13, color: "#1e293b", outline: "none", background: "#fffbeb", boxSizing: "border-box" }}
+                />
               </div>
-            ))}
-            <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>
-              💡 ICD code helps the coding desk + insurance bill straight away. Leave Working blank
-              if no refinement yet; leave Final blank until closure.
+              {/* Working (blue) — evolving impression */}
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#3b82f6", flexShrink: 0 }} />
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#1d4ed8", textTransform: "uppercase", letterSpacing: ".6px" }}>Working Dx</span>
+                </div>
+                <input
+                  value={soap.workingDiagnosis}
+                  onChange={e => setSoap(p => ({ ...p, workingDiagnosis: e.target.value }))}
+                  placeholder="Current evolving diagnosis"
+                  style={{ width: "100%", border: "1.5px solid #93c5fd", borderRadius: 8, padding: "9px 12px", fontFamily: "inherit", fontSize: 13, color: "#1e293b", outline: "none", background: "#eff6ff", boxSizing: "border-box" }}
+                />
+              </div>
+              {/* Final (green) — confirmed at closure */}
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#22c55e", flexShrink: 0 }} />
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#166534", textTransform: "uppercase", letterSpacing: ".6px" }}>Final Dx</span>
+                </div>
+                <input
+                  value={soap.finalDiagnosis}
+                  onChange={e => setSoap(p => ({ ...p, finalDiagnosis: e.target.value }))}
+                  placeholder="Confirmed final diagnosis"
+                  style={{ width: "100%", border: "1.5px solid #86efac", borderRadius: 8, padding: "9px 12px", fontFamily: "inherit", fontSize: 13, color: "#1e293b", outline: "none", background: "#f0fdf4", boxSizing: "border-box" }}
+                />
+              </div>
+            </div>
+
+            {/* ICD-10 row — single coding applied to the episode */}
+            <div style={{ display: "grid", gridTemplateColumns: "200px 1fr", gap: 12 }}>
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#8b5cf6", flexShrink: 0 }} />
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#5b21b6", textTransform: "uppercase", letterSpacing: ".6px" }}>ICD-10 Code</span>
+                </div>
+                <input
+                  value={soap.icd10Code}
+                  onChange={e => setSoap(p => ({ ...p, icd10Code: e.target.value }))}
+                  placeholder="e.g. J18.9"
+                  style={{ width: "100%", border: "1.5px solid #c4b5fd", borderRadius: 8, padding: "9px 12px", fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 700, color: "#5b21b6", outline: "none", background: "#faf5ff", boxSizing: "border-box", letterSpacing: ".5px" }}
+                />
+              </div>
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#8b5cf6", flexShrink: 0 }} />
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#5b21b6", textTransform: "uppercase", letterSpacing: ".6px" }}>ICD-10 Description</span>
+                </div>
+                <input
+                  value={soap.icd10Description}
+                  onChange={e => setSoap(p => ({ ...p, icd10Description: e.target.value }))}
+                  placeholder="e.g. Unspecified pneumonia, AGE with dehydration, Type 2 DM…"
+                  style={{ width: "100%", border: "1.5px solid #c4b5fd", borderRadius: 8, padding: "9px 12px", fontFamily: "inherit", fontSize: 13, color: "#1e293b", outline: "none", background: "#faf5ff", boxSizing: "border-box" }}
+                />
+              </div>
+            </div>
+
+            {/* Patient status chips — clinical trajectory at a glance.
+                Click an already-selected chip to clear it (toggle), since
+                "no status set" is a valid state for an OPD walk-in. */}
+            <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: ".5px" }}>Patient Status:</span>
+              {["Stable","Improving","Unchanged","Deteriorating","Critical","Ready for Discharge"].map(s => (
+                <button key={s} type="button"
+                  onClick={() => setSoap(p => ({ ...p, patientStatus: p.patientStatus === s ? "" : s }))}
+                  style={{
+                    padding: "4px 13px", borderRadius: 20,
+                    border: `1.5px solid ${soap.patientStatus === s ? "#2563eb" : "#e2e8f0"}`,
+                    background: soap.patientStatus === s ? "#2563eb" : "white",
+                    color: soap.patientStatus === s ? "white" : "#64748b",
+                    fontFamily: "inherit", fontSize: 11, fontWeight: 700,
+                    cursor: "pointer", transition: "all .15s ease",
+                  }}>
+                  {s}
+                </button>
+              ))}
             </div>
           </Card>
 
