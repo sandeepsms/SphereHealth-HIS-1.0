@@ -133,6 +133,47 @@ export default function OPDAssessmentPage() {
 
   const [chronic, setChronic] = useState({ conditions: [], others: "" });
 
+  /* ── Obstetric & Gynaecological History ────────────────────────
+   * Surfaces only for female patients (or any Gynae / OBG consult)
+   * — the rest of the form is gender-neutral. Fields chosen from
+   * the standard Indian Gynae OPD slip:
+   *
+   *   Menstrual: LMP, EDD (estimated due date if pregnant), menarche
+   *              age, cycle length (days between periods), flow days,
+   *              regularity, dysmenorrhea, menopausal status
+   *
+   *   Obstetric: G/P/A/L formula (Gravida / Para / Abortion / Living),
+   *              last child birth, mode of delivery, complications
+   *
+   *   Sexual / Marital: married, years married, contraception method
+   *
+   *   Past Gynae: Pap smear date, USG date, prior surgery (D&C,
+   *              hysterectomy, LSCS), other gynae conditions */
+  const [obg, setObg] = useState({
+    lmp: "",                  // YYYY-MM-DD
+    edd: "",                  // computed from LMP+280d if pregnant
+    menarche: "",             // age in years
+    cycleLength: "",          // days between cycles, e.g. "28"
+    flowDays: "",             // duration of flow in days
+    regularity: "",           // Regular / Irregular
+    dysmenorrhea: "",         // None / Mild / Moderate / Severe
+    menopause: "",            // Pre / Peri / Post (with age)
+    gravida: "",              // total pregnancies
+    para: "",                 // birth events ≥20 wk
+    abortion: "",             // spontaneous or induced
+    living: "",               // children alive
+    lastChildBirth: "",       // YYYY-MM-DD
+    deliveryMode: "",         // Normal / LSCS / Forceps / Vacuum / Other
+    obComplications: "",      // free text
+    married: "",              // Yes / No
+    yearsMarried: "",         // numeric
+    contraception: "",        // None / OCP / IUD / Tubectomy / Vasectomy / Barrier / Other
+    lastPapSmear: "",         // YYYY-MM-DD
+    lastUSG: "",              // YYYY-MM-DD
+    priorSurgery: "",         // free text
+    notes: "",                // anything else
+  });
+
   const [meds,     setMeds]     = useState([]);
   // mealStatus is its own field because frequency answers "how often"
   // while meal status answers "WHEN relative to food" — they're
@@ -164,7 +205,7 @@ export default function OPDAssessmentPage() {
   const draftKey = visitNumber ? `sphere_draft_opd_${visitNumber}` : null;
   const { savedAt, hasDraft, loadDraft, clearDraft } = useAutoSave(
     draftKey,
-    { soap, hopi, chronic, meds, invests, procedures },
+    { soap, hopi, chronic, meds, invests, procedures, obg },
     2000
   );
 
@@ -204,19 +245,52 @@ export default function OPDAssessmentPage() {
       });
       setChronic({ conditions: v.chronicConditions || [], others: v.chronicOthers || "" });
 
+      // Hydrate OBG history from whatever the backend already stored.
+      // The fields are stored flat on the visit doc (prefixed obg*) so a
+      // future printable / discharge summary / referral can pull them
+      // without reaching into a nested object.
+      if (v.obgLmp || v.obgGravida || v.obgMenarche || v.obgNotes) {
+        setObg(o => ({
+          ...o,
+          lmp:             v.obgLmp             ? String(v.obgLmp).slice(0, 10) : "",
+          edd:             v.obgEdd             ? String(v.obgEdd).slice(0, 10) : "",
+          menarche:        v.obgMenarche        || "",
+          cycleLength:     v.obgCycleLength     || "",
+          flowDays:        v.obgFlowDays        || "",
+          regularity:      v.obgRegularity      || "",
+          dysmenorrhea:    v.obgDysmenorrhea    || "",
+          menopause:       v.obgMenopause       || "",
+          gravida:         v.obgGravida         || "",
+          para:            v.obgPara            || "",
+          abortion:        v.obgAbortion        || "",
+          living:          v.obgLiving          || "",
+          lastChildBirth:  v.obgLastChildBirth  ? String(v.obgLastChildBirth).slice(0, 10) : "",
+          deliveryMode:    v.obgDeliveryMode    || "",
+          obComplications: v.obgObComplications || "",
+          married:         v.obgMarried         || "",
+          yearsMarried:    v.obgYearsMarried    || "",
+          contraception:   v.obgContraception   || "",
+          lastPapSmear:    v.obgLastPapSmear    ? String(v.obgLastPapSmear).slice(0, 10) : "",
+          lastUSG:         v.obgLastUSG         ? String(v.obgLastUSG).slice(0, 10) : "",
+          priorSurgery:    v.obgPriorSurgery    || "",
+          notes:           v.obgNotes           || "",
+        }));
+      }
+
       // Restore draft if one exists (unsaved form data)
       const dKey = visitNumber ? `sphere_draft_opd_${visitNumber}` : null;
       if (dKey) {
         try {
           const raw = localStorage.getItem(dKey);
           if (raw) {
-            const { _meta, soap: ds, hopi: dh, chronic: dc, meds: dm, invests: di, procedures: dp } = JSON.parse(raw);
+            const { _meta, soap: ds, hopi: dh, chronic: dc, meds: dm, invests: di, procedures: dp, obg: dob } = JSON.parse(raw);
             if (ds) setSoap(s => ({ ...s, ...ds }));
             if (dh) setHopi(h => ({ ...h, ...dh }));
             if (dc) setChronic(dc);
             if (dm) setMeds(dm);
             if (di) setInvests(di);
             if (dp) setProcedures(dp);
+            if (dob) setObg(o => ({ ...o, ...dob }));
             toast.info(`📝 Draft restored (${_meta?.savedAt ? new Date(_meta.savedAt).toLocaleTimeString() : "last session"})`, { autoClose: 3000 });
           }
         } catch (_) {}
@@ -256,6 +330,32 @@ export default function OPDAssessmentPage() {
         hopiRelieving:          hopi.relieving,
         chronicConditions:      chronic.conditions,
         chronicOthers:          chronic.others,
+        // OBG history — flat fields prefixed obg* so the print receipt
+        // and discharge summary can read them without nesting. Empty
+        // strings still go through so the backend can clear a previously-
+        // populated field if the doctor edits and removes a value.
+        obgLmp:             obg.lmp,
+        obgEdd:             obg.edd,
+        obgMenarche:        obg.menarche,
+        obgCycleLength:     obg.cycleLength,
+        obgFlowDays:        obg.flowDays,
+        obgRegularity:      obg.regularity,
+        obgDysmenorrhea:    obg.dysmenorrhea,
+        obgMenopause:       obg.menopause,
+        obgGravida:         obg.gravida,
+        obgPara:            obg.para,
+        obgAbortion:        obg.abortion,
+        obgLiving:          obg.living,
+        obgLastChildBirth:  obg.lastChildBirth,
+        obgDeliveryMode:    obg.deliveryMode,
+        obgObComplications: obg.obComplications,
+        obgMarried:         obg.married,
+        obgYearsMarried:    obg.yearsMarried,
+        obgContraception:   obg.contraception,
+        obgLastPapSmear:    obg.lastPapSmear,
+        obgLastUSG:         obg.lastUSG,
+        obgPriorSurgery:    obg.priorSurgery,
+        obgNotes:           obg.notes,
       });
       // Push meds + investigations as DoctorOrders (bulk)
       const baseOrder = {
@@ -749,6 +849,203 @@ export default function OPDAssessmentPage() {
                 placeholder="Other conditions, previous surgeries, major illnesses…" />
             </Field>
           </Card>
+
+          {/* ─── Obstetric & Gynaecological History ──────────────────
+              Surfaces ONLY for cases where it actually matters: female
+              patients, or any consult tagged Gynae / Obstetrics / OBG /
+              Women's Health regardless of patient gender (covers cases
+              like trans / non-binary patients seen for gynae issues).
+              The data is structured (24 fields) so a future Gynae
+              referral letter or pre-natal record can pull from it. */}
+          {(() => {
+            const dept = String(visit?.department || "").toLowerCase();
+            const isFemale = String(visit?.gender || "").toLowerCase() === "female";
+            const isGynaeDept = /gynae|obstetric|obg|women/.test(dept);
+            if (!isFemale && !isGynaeDept) return null;
+            return (
+              <Card title="Obstetric & Gynaecological History" icon="pi-female" color="#be185d">
+                {/* Menstrual history */}
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#be185d", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+                  Menstrual
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10, marginBottom: 14 }}>
+                  <Field label="LMP (Last Menstrual Period)">
+                    <input type="date" value={obg.lmp}
+                      onChange={e => setObg(p => ({ ...p, lmp: e.target.value }))}
+                      style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", boxSizing: "border-box" }} />
+                  </Field>
+                  <Field label="EDD (if pregnant)">
+                    <input type="date" value={obg.edd}
+                      onChange={e => setObg(p => ({ ...p, edd: e.target.value }))}
+                      style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", boxSizing: "border-box" }} />
+                  </Field>
+                  <Field label="Menarche (age yrs)">
+                    <Input type="number" value={obg.menarche}
+                      onChange={v => setObg(p => ({ ...p, menarche: v }))}
+                      placeholder="e.g. 13" />
+                  </Field>
+                  <Field label="Cycle / Flow (days)">
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <input type="number" value={obg.cycleLength}
+                        onChange={e => setObg(p => ({ ...p, cycleLength: e.target.value }))}
+                        placeholder="28"
+                        style={{ width: "50%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", boxSizing: "border-box" }} />
+                      <span style={{ alignSelf: "center", fontSize: 12, color: C.muted }}>/</span>
+                      <input type="number" value={obg.flowDays}
+                        onChange={e => setObg(p => ({ ...p, flowDays: e.target.value }))}
+                        placeholder="4"
+                        style={{ width: "50%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", boxSizing: "border-box" }} />
+                    </div>
+                  </Field>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10, marginBottom: 16 }}>
+                  <Field label="Regularity">
+                    <select value={obg.regularity} onChange={e => setObg(p => ({ ...p, regularity: e.target.value }))}
+                      style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", cursor: "pointer", background: "#fff" }}>
+                      <option value="">—</option>
+                      <option value="Regular">Regular</option>
+                      <option value="Irregular">Irregular</option>
+                      <option value="Oligomenorrhea">Oligomenorrhea</option>
+                      <option value="Polymenorrhea">Polymenorrhea</option>
+                      <option value="Amenorrhea">Amenorrhea</option>
+                    </select>
+                  </Field>
+                  <Field label="Dysmenorrhea">
+                    <select value={obg.dysmenorrhea} onChange={e => setObg(p => ({ ...p, dysmenorrhea: e.target.value }))}
+                      style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", cursor: "pointer", background: "#fff" }}>
+                      <option value="">—</option>
+                      <option value="None">None</option>
+                      <option value="Mild">Mild</option>
+                      <option value="Moderate">Moderate</option>
+                      <option value="Severe">Severe</option>
+                    </select>
+                  </Field>
+                  <Field label="Menopausal status">
+                    <select value={obg.menopause} onChange={e => setObg(p => ({ ...p, menopause: e.target.value }))}
+                      style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", cursor: "pointer", background: "#fff" }}>
+                      <option value="">—</option>
+                      <option value="Pre-menopausal">Pre-menopausal</option>
+                      <option value="Peri-menopausal">Peri-menopausal</option>
+                      <option value="Post-menopausal">Post-menopausal</option>
+                    </select>
+                  </Field>
+                </div>
+
+                {/* Obstetric history — G/P/A/L formula */}
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#be185d", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+                  Obstetric (G / P / A / L)
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10, marginBottom: 10 }}>
+                  <Field label="Gravida (G)">
+                    <Input type="number" value={obg.gravida}
+                      onChange={v => setObg(p => ({ ...p, gravida: v }))}
+                      placeholder="Total pregnancies" />
+                  </Field>
+                  <Field label="Para (P)">
+                    <Input type="number" value={obg.para}
+                      onChange={v => setObg(p => ({ ...p, para: v }))}
+                      placeholder="Births ≥ 20 wk" />
+                  </Field>
+                  <Field label="Abortion (A)">
+                    <Input type="number" value={obg.abortion}
+                      onChange={v => setObg(p => ({ ...p, abortion: v }))}
+                      placeholder="Spontaneous + induced" />
+                  </Field>
+                  <Field label="Living children (L)">
+                    <Input type="number" value={obg.living}
+                      onChange={v => setObg(p => ({ ...p, living: v }))}
+                      placeholder="Alive today" />
+                  </Field>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10, marginBottom: 16 }}>
+                  <Field label="Last child birth">
+                    <input type="date" value={obg.lastChildBirth}
+                      onChange={e => setObg(p => ({ ...p, lastChildBirth: e.target.value }))}
+                      style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", boxSizing: "border-box" }} />
+                  </Field>
+                  <Field label="Mode of last delivery">
+                    <select value={obg.deliveryMode} onChange={e => setObg(p => ({ ...p, deliveryMode: e.target.value }))}
+                      style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", cursor: "pointer", background: "#fff" }}>
+                      <option value="">—</option>
+                      <option value="Normal vaginal">Normal vaginal</option>
+                      <option value="LSCS">LSCS</option>
+                      <option value="Forceps">Forceps</option>
+                      <option value="Vacuum">Vacuum</option>
+                      <option value="Breech">Breech</option>
+                      <option value="Twin">Twin</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </Field>
+                  <Field label="Obstetric complications">
+                    <Input value={obg.obComplications}
+                      onChange={v => setObg(p => ({ ...p, obComplications: v }))}
+                      placeholder="GDM, PIH, PPH, stillbirth…" />
+                  </Field>
+                </div>
+
+                {/* Marital + Contraception + Past Gynae */}
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#be185d", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+                  Marital · Contraception · Past Gynae
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10, marginBottom: 10 }}>
+                  <Field label="Married">
+                    <select value={obg.married} onChange={e => setObg(p => ({ ...p, married: e.target.value }))}
+                      style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", cursor: "pointer", background: "#fff" }}>
+                      <option value="">—</option>
+                      <option value="Yes">Yes</option>
+                      <option value="No">No</option>
+                      <option value="Widowed">Widowed</option>
+                      <option value="Divorced">Divorced</option>
+                    </select>
+                  </Field>
+                  <Field label="Years married">
+                    <Input type="number" value={obg.yearsMarried}
+                      onChange={v => setObg(p => ({ ...p, yearsMarried: v }))}
+                      placeholder="e.g. 7" />
+                  </Field>
+                  <Field label="Contraception">
+                    <select value={obg.contraception} onChange={e => setObg(p => ({ ...p, contraception: e.target.value }))}
+                      style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", cursor: "pointer", background: "#fff" }}>
+                      <option value="">—</option>
+                      <option value="None">None</option>
+                      <option value="OCP">OCP — Oral Contraceptive</option>
+                      <option value="IUCD">IUCD / Copper-T</option>
+                      <option value="Tubectomy">Tubectomy</option>
+                      <option value="Vasectomy">Vasectomy (partner)</option>
+                      <option value="Barrier">Barrier (Condom / Diaphragm)</option>
+                      <option value="Injection">Hormonal Injection</option>
+                      <option value="Implant">Implant</option>
+                      <option value="Natural">Natural / Rhythm</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </Field>
+                  <Field label="Last Pap smear">
+                    <input type="date" value={obg.lastPapSmear}
+                      onChange={e => setObg(p => ({ ...p, lastPapSmear: e.target.value }))}
+                      style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", boxSizing: "border-box" }} />
+                  </Field>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10, marginBottom: 10 }}>
+                  <Field label="Last USG">
+                    <input type="date" value={obg.lastUSG}
+                      onChange={e => setObg(p => ({ ...p, lastUSG: e.target.value }))}
+                      style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", boxSizing: "border-box" }} />
+                  </Field>
+                  <Field label="Prior gynae surgery">
+                    <Input value={obg.priorSurgery}
+                      onChange={v => setObg(p => ({ ...p, priorSurgery: v }))}
+                      placeholder="D&C, hysterectomy, myomectomy, LSCS yr…" />
+                  </Field>
+                </div>
+                <Field label="Additional notes">
+                  <Textarea value={obg.notes}
+                    onChange={v => setObg(p => ({ ...p, notes: v }))}
+                    placeholder="Discharge, IMB, dyspareunia, infertility workup, family planning counselling, vaccination status (HPV / Tdap)…"
+                    rows={2} />
+                </Field>
+              </Card>
+            );
+          })()}
 
           {/* SOAP */}
           <Card title="SOAP Assessment" icon="pi-file-edit" color={C.doctor} badge="NABH">
