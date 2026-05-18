@@ -58,15 +58,69 @@ function Input({ value, onChange, placeholder, type = "text" }) {
   );
 }
 
-function Card({ title, icon, color = C.doctor, children, badge }) {
+/* Collapsible Card — every doctor asked for the OPD slip cards to
+   fold up so they can hide sections they're not editing. State is
+   per-card-title, persisted in localStorage so the doctor's preferred
+   layout survives reloads + reopens. Each card defaults to OPEN so
+   the existing flow isn't disturbed for first-time users. Click the
+   header (title bar) anywhere to toggle. A chevron rotates 90° to
+   signal the state. */
+function Card({ title, icon, color = C.doctor, children, badge, defaultOpen = true }) {
+  // localStorage key uses the title — same card across visits keeps
+  // its collapsed/expanded state ("OBG always collapsed for me" etc).
+  const storageKey = `sphere_opd_card_${title}`;
+  const [open, setOpen] = useState(() => {
+    try {
+      const stored = localStorage.getItem(storageKey);
+      if (stored === "open") return true;
+      if (stored === "closed") return false;
+    } catch (_) {}
+    return defaultOpen;
+  });
+  const toggle = () => {
+    setOpen(prev => {
+      const next = !prev;
+      try { localStorage.setItem(storageKey, next ? "open" : "closed"); } catch (_) {}
+      return next;
+    });
+  };
   return (
     <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, marginBottom: 20, overflow: "hidden", boxShadow: "0 1px 6px rgba(0,0,0,.05)" }}>
-      <div style={{ padding: "12px 18px", background: color + "08", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10 }}>
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={open}
+        aria-controls={`opd-card-body-${title.replace(/\s+/g, "-")}`}
+        style={{
+          width: "100%", padding: "12px 18px",
+          background: color + "08", borderBottom: open ? `1px solid ${C.border}` : "none",
+          border: "none", textAlign: "left",
+          display: "flex", alignItems: "center", gap: 10,
+          cursor: "pointer", fontFamily: "inherit",
+          transition: "background 0.15s ease",
+        }}
+        onMouseEnter={e => { e.currentTarget.style.background = color + "12"; }}
+        onMouseLeave={e => { e.currentTarget.style.background = color + "08"; }}
+      >
         <i className={`pi ${icon}`} style={{ fontSize: 14, color }} />
         <span style={{ fontWeight: 700, fontSize: 13, color }}>{title}</span>
         {badge && <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: ".6px", padding: "2px 8px", borderRadius: 20, background: color + "18", color, border: `1px solid ${color}30` }}>{badge}</span>}
-      </div>
-      <div style={{ padding: "18px" }}>{children}</div>
+        {/* Chevron — rotates 90° to face down (open) or right (collapsed). */}
+        <i
+          className="pi pi-chevron-down"
+          style={{
+            marginLeft: "auto", fontSize: 12, color,
+            transform: open ? "rotate(0deg)" : "rotate(-90deg)",
+            transition: "transform 0.18s ease",
+          }}
+          aria-hidden="true"
+        />
+      </button>
+      {open && (
+        <div id={`opd-card-body-${title.replace(/\s+/g, "-")}`} style={{ padding: "18px" }}>
+          {children}
+        </div>
+      )}
     </div>
   );
 }
