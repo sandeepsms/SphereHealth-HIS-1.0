@@ -176,7 +176,15 @@ export default function OPDAssessmentPage() {
 
   const [soap, setSoap] = useState({
     subjectiveNote: "", objectiveNote: "", assessmentNote: "", planNote: "",
-    provisionalDiagnosis: "", finalDiagnosis: "", generalExamination: "",
+    // Three-tier diagnosis tracking — Provisional (initial guess),
+    // Working (current best clinical impression as more info arrives),
+    // Final (confirmed at end of episode). Each has a paired ICD-10
+    // code so coding + insurance + epidemiology stats line up against
+    // a real ontology rather than free-text whatever-the-doctor-typed.
+    provisionalDiagnosis: "",    provisionalDiagnosisICD: "",
+    workingDiagnosis:     "",    workingDiagnosisICD:     "",
+    finalDiagnosis:       "",    finalDiagnosisICD:       "",
+    generalExamination: "",
     systemicExamination: "", advice: "", followUpDate: "", doctorNotes: "",
   });
 
@@ -277,8 +285,12 @@ export default function OPDAssessmentPage() {
         objectiveNote:        v.objectiveNote || "",
         assessmentNote:       v.assessmentNote || "",
         planNote:             v.planNote || "",
-        provisionalDiagnosis: v.provisionalDiagnosis || "",
-        finalDiagnosis:       v.finalDiagnosis || "",
+        provisionalDiagnosis:    v.provisionalDiagnosis    || "",
+        provisionalDiagnosisICD: v.provisionalDiagnosisICD || "",
+        workingDiagnosis:        v.workingDiagnosis        || "",
+        workingDiagnosisICD:     v.workingDiagnosisICD     || "",
+        finalDiagnosis:          v.finalDiagnosis          || "",
+        finalDiagnosisICD:       v.finalDiagnosisICD       || "",
         generalExamination:   v.generalExamination || "",
         systemicExamination:  v.systemicExamination || "",
         advice:               v.advice || "",
@@ -372,6 +384,10 @@ export default function OPDAssessmentPage() {
     try {
       const user = (() => { try { return JSON.parse(localStorage.getItem("his_user") || "{}"); } catch { return {}; } })();
       await axios.post(`${API_ENDPOINTS.OPD}/${visitNumber}/assessment`, {
+        // ...soap already includes the 6 new diagnosis fields
+        // (provisionalDiagnosis + ICD, workingDiagnosis + ICD, finalDiagnosis + ICD)
+        // because they all live inside the soap object — no separate
+        // payload mapping needed.
         ...soap,
         doctorName: user.fullName || user.name || "Doctor",
         hopiOnset:              hopi.onset,
@@ -1137,29 +1153,49 @@ export default function OPDAssessmentPage() {
             </div>
           </Card>
 
-          {/* Diagnosis */}
-          <Card title="Diagnosis & Plan" icon="pi-verified" color={C.success}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-              <Field label="Provisional Diagnosis" required>
-                <Input value={soap.provisionalDiagnosis} onChange={v => setSoap(p => ({ ...p, provisionalDiagnosis: v }))}
-                  placeholder="e.g. Viral fever, URTI, Type 2 DM…" />
-              </Field>
-              <Field label="Final Diagnosis">
-                <Input value={soap.finalDiagnosis} onChange={v => setSoap(p => ({ ...p, finalDiagnosis: v }))}
-                  placeholder="Confirmed diagnosis…" />
-              </Field>
-              <Field label="Advice / Counselling">
-                <Textarea value={soap.advice} onChange={v => setSoap(p => ({ ...p, advice: v }))}
-                  placeholder="Diet, lifestyle, precautions…" rows={2} />
-              </Field>
-              <Field label="Follow-up Date">
-                <Input type="date" value={soap.followUpDate} onChange={v => setSoap(p => ({ ...p, followUpDate: v }))} />
-              </Field>
+          {/* ─── Diagnosis (Provisional → Working → Final) ──────────
+              Per user's clinical convention, the OPD/IPD chart should
+              carry THREE distinct diagnosis tiers:
+                • Provisional — best guess at first contact
+                • Working     — current best impression as lab/imaging
+                                results refine the picture
+                • Final       — confirmed at discharge / case closure
+              Each row pairs a free-text description with the ICD-10
+              code so the coding desk, insurance claim, and hospital
+              epidemiology stats all align to a real ontology rather
+              than "viral fever" vs "URTI" vs "fever NOS" free-text
+              chaos.
+              Advice / Follow-up / Additional Notes that used to live
+              here have moved to the SOAP card's Plan section — they
+              were duplicating that field. */}
+          <Card title="Diagnosis" icon="pi-verified" color={C.success}>
+            {[
+              { tier: "Provisional", desc: "provisionalDiagnosis", icd: "provisionalDiagnosisICD", required: true,  hint: "First-look clinical impression (e.g. AGE with Dehydration)" },
+              { tier: "Working",     desc: "workingDiagnosis",     icd: "workingDiagnosisICD",     required: false, hint: "Refined after labs/imaging (may differ from provisional)" },
+              { tier: "Final",       desc: "finalDiagnosis",       icd: "finalDiagnosisICD",       required: false, hint: "Confirmed diagnosis at episode closure" },
+            ].map(({ tier, desc, icd, required, hint }) => (
+              <div key={tier} style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: C.success, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
+                  {tier} Diagnosis{required ? " *" : ""}
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "150px 1fr", gap: 10 }}>
+                  <Input
+                    value={soap[icd]}
+                    onChange={v => setSoap(p => ({ ...p, [icd]: v }))}
+                    placeholder="ICD-10 code"
+                  />
+                  <Input
+                    value={soap[desc]}
+                    onChange={v => setSoap(p => ({ ...p, [desc]: v }))}
+                    placeholder={hint}
+                  />
+                </div>
+              </div>
+            ))}
+            <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>
+              💡 ICD code helps the coding desk + insurance bill straight away. Leave Working blank
+              if no refinement yet; leave Final blank until closure.
             </div>
-            <Field label="Additional Notes">
-              <Textarea value={soap.doctorNotes} onChange={v => setSoap(p => ({ ...p, doctorNotes: v }))}
-                placeholder="Any additional observations…" rows={2} />
-            </Field>
           </Card>
 
           {/* Prescription */}
