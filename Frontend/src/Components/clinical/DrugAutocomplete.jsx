@@ -26,6 +26,7 @@
  * SKU might arrive before pharmacy admin updates the master.
  */
 import React, { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 
@@ -67,7 +68,33 @@ export default function DrugAutocomplete({
   const [results, setResults] = useState([]);
   const [busy, setBusy] = useState(false);
   const debRef = useRef(null);
+  const inputRef = useRef(null);
+  // Portal-rendered dropdown needs absolute viewport coordinates,
+  // recomputed whenever the input moves (scroll, resize, focus).
+  // Tracking left/top/width separately so we can also widen the
+  // dropdown beyond the input's narrow grid cell.
+  const [pos, setPos] = useState({ left: 0, top: 0, width: 0 });
   const val = value ?? "";
+
+  // Recompute dropdown position whenever it's open, on scroll, and
+  // on resize. Using getBoundingClientRect → coords relative to the
+  // viewport → matches `position: fixed` rendering in the portal.
+  useEffect(() => {
+    if (!open) return;
+    const recalc = () => {
+      const el = inputRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      setPos({ left: r.left, top: r.bottom + 4, width: r.width });
+    };
+    recalc();
+    window.addEventListener("scroll", recalc, true);
+    window.addEventListener("resize", recalc);
+    return () => {
+      window.removeEventListener("scroll", recalc, true);
+      window.removeEventListener("resize", recalc);
+    };
+  }, [open]);
 
   useEffect(() => {
     if (debRef.current) clearTimeout(debRef.current);
@@ -101,6 +128,7 @@ export default function DrugAutocomplete({
     <div style={{ position: "relative" }}>
       {showLabel && label && <label className="his-label">{label}</label>}
       <input
+        ref={inputRef}
         className={inputClassName}
         style={inputStyle}
         type="text"
@@ -111,17 +139,20 @@ export default function DrugAutocomplete({
         onBlur={() => setTimeout(() => setOpen(false), 180)}
         autoComplete="off"
       />
-      {open && (results.length > 0 || busy || val.trim().length >= 2) && (
+      {open && (results.length > 0 || busy || val.trim().length >= 2) && createPortal(
         <div style={{
-          // Wider + taller per user feedback. minWidth lets the dropdown
-          // spill beyond a narrow input cell (e.g. the Prescription row
-          // on /opd-assessment has a 2fr column ≈ 200px; doctor wants to
-          // read the full drug name). Capped at 92vw so we still fit on
-          // a laptop screen. Height ~50% of viewport so most relevant
-          // matches fit without scrolling.
-          position: "absolute", top: "100%", left: 0, zIndex: 50,
-          marginTop: 4,
-          minWidth: 520,
+          // Portal-rendered at <body> root so the dropdown escapes any
+          // ancestor `overflow: hidden` (the Prescription Card on
+          // /opd-assessment was clipping it to ~3 rows even though 14
+          // results were returned). `position: fixed` + computed
+          // input-bound coords keep it visually attached to the input
+          // while scrolling. min/max width still apply so it stays
+          // wider than the 200px input cell but caps at 92vw.
+          position: "fixed",
+          left: pos.left,
+          top: pos.top,
+          zIndex: 9000,
+          minWidth: Math.max(pos.width, 520),
           maxWidth: "min(720px, 92vw)",
           width: "max-content",
           maxHeight: "min(440px, 60vh)", overflowY: "auto",
@@ -141,11 +172,17 @@ export default function DrugAutocomplete({
                 type="button"
                 onMouseDown={() => handlePick(d)}
                 style={{
+                  // Compact row: 5-line ratio per user — 5 medicines must
+                  // fit without scrolling. Total row height now ~36-40px
+                  // (4-5 rows in the previous 280px = 1 row each every
+                  // 70px). Padding cut from 10px → 5px; fonts dropped a
+                  // tier; badge shrunk from 46x26 → 36x18 — still legible
+                  // but no longer the visual anchor.
                   display: "flex", width: "100%", textAlign: "left",
-                  padding: "10px 12px", border: 0, gap: 12,
+                  padding: "5px 10px", border: 0, gap: 8,
                   borderBottom: "1px solid #f1f5f9", background: "#fff",
                   cursor: "pointer", fontFamily: "inherit",
-                  alignItems: "flex-start",
+                  alignItems: "center",
                 }}
                 onMouseEnter={(e) => (e.currentTarget.style.background = "#eff6ff")}
                 onMouseLeave={(e) => (e.currentTarget.style.background = "#fff")}
@@ -157,26 +194,25 @@ export default function DrugAutocomplete({
                 <span style={{
                   flexShrink: 0,
                   display: "inline-flex", alignItems: "center", justifyContent: "center",
-                  width: 46, height: 26,
+                  width: 36, height: 18,
                   background: fb.bg, color: fb.fg,
-                  borderRadius: 6, fontWeight: 800, fontSize: 11,
-                  letterSpacing: 0.5, fontFamily: "'DM Mono', monospace",
-                  marginTop: 1,
+                  borderRadius: 4, fontWeight: 800, fontSize: 10,
+                  letterSpacing: 0.4, fontFamily: "'DM Mono', monospace",
                 }}>
                   {fb.short}
                 </span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-                    <span style={{ fontWeight: 700, color: "#0f172a", fontSize: 14 }}>
+                <div style={{ flex: 1, minWidth: 0, lineHeight: 1.3 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" }}>
+                    <span style={{ fontWeight: 700, color: "#0f172a", fontSize: 12 }}>
                       {d.form ? `${d.form} ` : ""}{d.name}
                     </span>
                     {d.strength && (
-                      <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 12, color: "#0369a1", fontWeight: 700 }}>
+                      <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 11, color: "#0369a1", fontWeight: 700 }}>
                         {d.strength}
                       </span>
                     )}
                   </div>
-                  <div style={{ fontSize: 11, color: "#64748b", marginTop: 3 }}>
+                  <div style={{ fontSize: 10, color: "#64748b", marginTop: 1 }}>
                     {d.genericName && (
                       <span>
                         Generic: <strong>{d.genericName}</strong>
@@ -185,17 +221,17 @@ export default function DrugAutocomplete({
                     {d.genericName && d.manufacturer && " · "}
                     {d.manufacturer && <span>{d.manufacturer}</span>}
                     {d.isHighAlert && (
-                      <span style={{ marginLeft: 6, color: "#b91c1c", fontWeight: 700 }}>
+                      <span style={{ marginLeft: 5, color: "#b91c1c", fontWeight: 700 }}>
                         ⚠ HIGH-ALERT
                       </span>
                     )}
                     {d.isLASA && (
-                      <span style={{ marginLeft: 6, color: "#c2410c", fontWeight: 700 }}>
+                      <span style={{ marginLeft: 5, color: "#c2410c", fontWeight: 700 }}>
                         LASA
                       </span>
                     )}
                     {d.schedule && d.schedule !== "OTC" && (
-                      <span style={{ marginLeft: 6, fontWeight: 700, color: "#7c3aed" }}>
+                      <span style={{ marginLeft: 5, fontWeight: 700, color: "#7c3aed" }}>
                         Sch-{d.schedule}
                       </span>
                     )}
@@ -209,7 +245,8 @@ export default function DrugAutocomplete({
               No drug found — you can still type the name manually.
             </div>
           )}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
