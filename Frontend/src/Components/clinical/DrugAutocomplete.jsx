@@ -163,7 +163,14 @@ export default function DrugAutocomplete({
   };
 
   return (
-    <div style={{ position: "relative" }}>
+    // width:100% makes the wrapper fill whatever grid/flex cell it
+    // lands in. Without it the wrapper collapsed to the input's
+    // intrinsic min-width — so on /opd-assessment the Medicine
+    // column was rendering as a sliver next to the other Rx fields.
+    // min-width:0 is also required because CSS grid `1fr` columns
+    // default to `minmax(auto, 1fr)` — they shrink to min-content
+    // unless we explicitly say "you can shrink past content size".
+    <div style={{ position: "relative", width: "100%", minWidth: 0 }}>
       {showLabel && label && <label className="his-label">{label}</label>}
       <input
         ref={inputRef}

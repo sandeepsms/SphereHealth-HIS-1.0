@@ -669,10 +669,13 @@ export default function OPDAssessmentPage() {
           {/* Prescription */}
           <Card title="Prescription" icon="pi-pencil" color={C.warn}>
             {/* Grid widened to 7 cells (Med | Dose | Freq | Meal | Duration | Route | + Add).
-                Med stays 2fr because the auto-completed name is the
-                longest string; the other 5 share 1fr each so they line
-                up evenly even when one's empty. */}
-            <div style={{ display: "grid", gridTemplateColumns: "1.6fr 0.7fr 1fr 0.95fr 0.95fr 1fr auto", gap: 8, marginBottom: 12, alignItems: "center" }}>
+                Each fr column wrapped in minmax(0, …) so cells actually
+                shrink to their fr share instead of defaulting to
+                min-content (which left the Medicine column collapsed
+                to ~20px and unusable). Med gets 1.8fr because the
+                auto-completed name (e.g. "Tab Paracetamol 500mg") is
+                the longest string. */}
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.8fr) minmax(0,0.7fr) minmax(0,1fr) minmax(0,0.95fr) minmax(0,0.95fr) minmax(0,1fr) auto", gap: 8, marginBottom: 12, alignItems: "center" }}>
               {/* Medicine name now searches the pharmacy drug master so the
                   doctor picks a real SKU instead of free-typing. Picking
                   a row mirrors generic + strength into dose, and brand
