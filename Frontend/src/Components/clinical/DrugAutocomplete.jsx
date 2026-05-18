@@ -29,6 +29,27 @@ import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 
+/* Short prefix + colour per dosage form. Lets the doctor scan the
+   dropdown by shape ("which one's the syrup?") before reading the
+   name. Keys match the Drug model's `form` enum verbatim, so a new
+   form value added on the backend just falls through to FORM_DEFAULT
+   without breaking the layout. */
+const FORM_BADGE = {
+  Tablet:      { short: "TAB", bg: "#dbeafe", fg: "#1d4ed8" },
+  Capsule:     { short: "CAP", bg: "#fef3c7", fg: "#a16207" },
+  Syrup:       { short: "SYP", bg: "#fce7f3", fg: "#be185d" },
+  Injection:   { short: "INJ", bg: "#fee2e2", fg: "#b91c1c" },
+  Drops:       { short: "DRP", bg: "#e0f2fe", fg: "#0369a1" },
+  Cream:       { short: "CRM", bg: "#fef9c3", fg: "#854d0e" },
+  Ointment:    { short: "OIN", bg: "#fef9c3", fg: "#854d0e" },
+  Inhaler:     { short: "INH", bg: "#dcfce7", fg: "#15803d" },
+  Patch:       { short: "PAT", bg: "#ede9fe", fg: "#6d28d9" },
+  Powder:      { short: "PWD", bg: "#f3e8ff", fg: "#7e22ce" },
+  Suppository: { short: "SUP", bg: "#ffe4e6", fg: "#9f1239" },
+};
+const FORM_DEFAULT = { short: "RX",  bg: "#f1f5f9", fg: "#475569" };
+const formBadge = (form) => FORM_BADGE[form] || FORM_DEFAULT;
+
 export default function DrugAutocomplete({
   label,
   value,
@@ -92,69 +113,99 @@ export default function DrugAutocomplete({
       />
       {open && (results.length > 0 || busy || val.trim().length >= 2) && (
         <div style={{
-          position: "absolute", top: "100%", left: 0, right: 0, zIndex: 50,
-          marginTop: 4, maxHeight: 280, overflowY: "auto",
-          background: "#fff", border: "1px solid #cbd5e1", borderRadius: 8,
-          boxShadow: "0 10px 24px rgba(15,23,42,.12)",
+          // Wider + taller per user feedback. minWidth lets the dropdown
+          // spill beyond a narrow input cell (e.g. the Prescription row
+          // on /opd-assessment has a 2fr column ≈ 200px; doctor wants to
+          // read the full drug name). Capped at 92vw so we still fit on
+          // a laptop screen. Height ~50% of viewport so most relevant
+          // matches fit without scrolling.
+          position: "absolute", top: "100%", left: 0, zIndex: 50,
+          marginTop: 4,
+          minWidth: 520,
+          maxWidth: "min(720px, 92vw)",
+          width: "max-content",
+          maxHeight: "min(440px, 60vh)", overflowY: "auto",
+          background: "#fff", border: "1px solid #cbd5e1", borderRadius: 10,
+          boxShadow: "0 12px 30px rgba(15,23,42,.18)",
         }}>
           {busy && results.length === 0 && (
-            <div style={{ padding: 10, fontSize: 12, color: "#64748b" }}>
+            <div style={{ padding: 12, fontSize: 12, color: "#64748b" }}>
               <i className="pi pi-spin pi-spinner" /> Searching pharmacy master…
             </div>
           )}
-          {results.map((d) => (
-            <button
-              key={d._id}
-              type="button"
-              onMouseDown={() => handlePick(d)}
-              style={{
-                display: "block", width: "100%", textAlign: "left",
-                padding: "8px 10px", border: 0,
-                borderBottom: "1px solid #f1f5f9", background: "#fff",
-                cursor: "pointer", fontFamily: "inherit",
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = "#eff6ff")}
-              onMouseLeave={(e) => (e.currentTarget.style.background = "#fff")}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                <span style={{ fontWeight: 700, color: "#0f172a", fontSize: 13 }}>
-                  {d.name}
-                  {d.strength ? ` · ${d.strength}` : ""}
+          {results.map((d) => {
+            const fb = formBadge(d.form);
+            return (
+              <button
+                key={d._id}
+                type="button"
+                onMouseDown={() => handlePick(d)}
+                style={{
+                  display: "flex", width: "100%", textAlign: "left",
+                  padding: "10px 12px", border: 0, gap: 12,
+                  borderBottom: "1px solid #f1f5f9", background: "#fff",
+                  cursor: "pointer", fontFamily: "inherit",
+                  alignItems: "flex-start",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "#eff6ff")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "#fff")}
+              >
+                {/* Form prefix badge — left-aligned so the doctor reads
+                    SHAPE before NAME (TAB Paracetamol vs SYP Paracetamol).
+                    Coloured per FORM_BADGE map so the dropdown is also
+                    visually scannable by colour. */}
+                <span style={{
+                  flexShrink: 0,
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  width: 46, height: 26,
+                  background: fb.bg, color: fb.fg,
+                  borderRadius: 6, fontWeight: 800, fontSize: 11,
+                  letterSpacing: 0.5, fontFamily: "'DM Mono', monospace",
+                  marginTop: 1,
+                }}>
+                  {fb.short}
                 </span>
-                {d.form && (
-                  <span style={{ fontSize: 10, color: "#0e7490", background: "#ecfeff", padding: "1px 8px", borderRadius: 999, fontWeight: 700 }}>
-                    {d.form}
-                  </span>
-                )}
-              </div>
-              <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
-                {d.genericName && (
-                  <span>
-                    Generic: <strong>{d.genericName}</strong>
-                  </span>
-                )}
-                {d.genericName && d.manufacturer && " · "}
-                {d.manufacturer && <span>{d.manufacturer}</span>}
-                {d.isHighAlert && (
-                  <span style={{ marginLeft: 6, color: "#b91c1c", fontWeight: 700 }}>
-                    ⚠ HIGH-ALERT
-                  </span>
-                )}
-                {d.isLASA && (
-                  <span style={{ marginLeft: 6, color: "#c2410c", fontWeight: 700 }}>
-                    LASA
-                  </span>
-                )}
-                {d.schedule && d.schedule !== "OTC" && (
-                  <span style={{ marginLeft: 6, fontWeight: 700, color: "#7c3aed" }}>
-                    Sch-{d.schedule}
-                  </span>
-                )}
-              </div>
-            </button>
-          ))}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                    <span style={{ fontWeight: 700, color: "#0f172a", fontSize: 14 }}>
+                      {d.form ? `${d.form} ` : ""}{d.name}
+                    </span>
+                    {d.strength && (
+                      <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 12, color: "#0369a1", fontWeight: 700 }}>
+                        {d.strength}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 11, color: "#64748b", marginTop: 3 }}>
+                    {d.genericName && (
+                      <span>
+                        Generic: <strong>{d.genericName}</strong>
+                      </span>
+                    )}
+                    {d.genericName && d.manufacturer && " · "}
+                    {d.manufacturer && <span>{d.manufacturer}</span>}
+                    {d.isHighAlert && (
+                      <span style={{ marginLeft: 6, color: "#b91c1c", fontWeight: 700 }}>
+                        ⚠ HIGH-ALERT
+                      </span>
+                    )}
+                    {d.isLASA && (
+                      <span style={{ marginLeft: 6, color: "#c2410c", fontWeight: 700 }}>
+                        LASA
+                      </span>
+                    )}
+                    {d.schedule && d.schedule !== "OTC" && (
+                      <span style={{ marginLeft: 6, fontWeight: 700, color: "#7c3aed" }}>
+                        Sch-{d.schedule}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </button>
+            );
+          })}
           {!busy && results.length === 0 && val.trim().length >= 2 && (
-            <div style={{ padding: 10, fontSize: 12, color: "#94a3b8" }}>
+            <div style={{ padding: 12, fontSize: 12, color: "#94a3b8" }}>
               No drug found — you can still type the name manually.
             </div>
           )}
