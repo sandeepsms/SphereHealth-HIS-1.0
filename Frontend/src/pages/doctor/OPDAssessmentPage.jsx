@@ -133,7 +133,11 @@ export default function OPDAssessmentPage() {
   const [chronic, setChronic] = useState({ conditions: [], others: "" });
 
   const [meds,     setMeds]     = useState([]);
-  const [newMed,   setNewMed]   = useState({ name: "", dose: "", frequency: "", duration: "", route: "Oral" });
+  // mealStatus is its own field because frequency answers "how often"
+  // while meal status answers "WHEN relative to food" — they're
+  // orthogonal (e.g. "TDS, after food"). Keeping them separate lets
+  // the Pharmacy / MAR / print receipt consume each independently.
+  const [newMed,   setNewMed]   = useState({ name: "", dose: "", frequency: "", mealStatus: "", duration: "", route: "Oral" });
   const [invests,  setInvests]  = useState([]);
   const [newInvest,setNewInvest]= useState({ name: "", urgency: "Routine", instructions: "" });
 
@@ -273,7 +277,9 @@ export default function OPDAssessmentPage() {
     if (!newMed.name.trim()) return toast.warn("Medicine name required");
     try { await axios.post(`${API_ENDPOINTS.OPD}/${visitNumber}/prescription`, newMed); } catch (_) {}
     setMeds(p => [...p, { ...newMed }]);
-    setNewMed({ name: "", dose: "", frequency: "", duration: "", route: "Oral" });
+    // Reset must mirror the initial state — including mealStatus, else
+    // the new field stays sticky across rows.
+    setNewMed({ name: "", dose: "", frequency: "", mealStatus: "", duration: "", route: "Oral" });
     toast.success("Medication added");
   };
 
@@ -662,7 +668,11 @@ export default function OPDAssessmentPage() {
 
           {/* Prescription */}
           <Card title="Prescription" icon="pi-pencil" color={C.warn}>
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr auto", gap: 8, marginBottom: 12, alignItems: "center" }}>
+            {/* Grid widened to 7 cells (Med | Dose | Freq | Meal | Duration | Route | + Add).
+                Med stays 2fr because the auto-completed name is the
+                longest string; the other 5 share 1fr each so they line
+                up evenly even when one's empty. */}
+            <div style={{ display: "grid", gridTemplateColumns: "1.6fr 0.7fr 1fr 0.95fr 0.95fr 1fr auto", gap: 8, marginBottom: 12, alignItems: "center" }}>
               {/* Medicine name now searches the pharmacy drug master so the
                   doctor picks a real SKU instead of free-typing. Picking
                   a row mirrors generic + strength into dose, and brand
@@ -735,12 +745,30 @@ export default function OPDAssessmentPage() {
                   <option value="Twice weekly">Twice weekly</option>
                   <option value="Monthly">Monthly</option>
                 </optgroup>
-                <optgroup label="Meal-timed">
-                  <option value="BBF">BBF — Before breakfast</option>
-                  <option value="ABF">ABF — After breakfast</option>
-                  <option value="AC">AC — Before meals</option>
-                  <option value="PC">PC — After meals</option>
-                </optgroup>
+              </select>
+              {/* Meal status — separate from Frequency because they answer
+                  different questions. Frequency = how often (TDS / BD /
+                  q6h …); Meal = relative to food (after / before / with /
+                  empty stomach / bedtime). Empty option lets the doctor
+                  leave it unspecified (most acute meds don't care).
+                  The shown labels include the Latin/abbreviated form in
+                  parentheses so PC / AC / HS still work as a quick
+                  visual cue. */}
+              <select
+                value={newMed.mealStatus}
+                onChange={e => setNewMed(p => ({ ...p, mealStatus: e.target.value }))}
+                title="Meal status"
+                style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: newMed.mealStatus ? C.dark : "#94a3b8", background: "#fff" }}
+              >
+                <option value="">Meal status</option>
+                <option value="After Food">After Food (PC)</option>
+                <option value="Before Food">Before Food (AC)</option>
+                <option value="With Food">With Food</option>
+                <option value="Empty Stomach">Empty Stomach</option>
+                <option value="Before Breakfast">Before Breakfast (BBF)</option>
+                <option value="After Breakfast">After Breakfast (ABF)</option>
+                <option value="Bedtime">At Bedtime (HS)</option>
+                <option value="Any Time">Any Time</option>
               </select>
               {/* Duration — common course lengths. Free-text via datalist so
                   the doctor can pick "5 days" / "1 week" with one click but
@@ -819,13 +847,13 @@ export default function OPDAssessmentPage() {
             ) : (
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead><tr style={{ background: C.bg }}>
-                  {["Medicine","Dose","Frequency","Duration","Route"].map(h => (
+                  {["Medicine","Dose","Frequency","Meal","Duration","Route"].map(h => (
                     <th key={h} style={{ textAlign: "left", padding: "6px 10px", fontWeight: 600, color: C.muted, borderBottom: `1px solid ${C.border}` }}>{h}</th>
                   ))}
                 </tr></thead>
                 <tbody>{meds.map((m, i) => (
                   <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
-                    {["name","dose","frequency","duration","route"].map(k => (
+                    {["name","dose","frequency","mealStatus","duration","route"].map(k => (
                       <td key={k} style={{ padding: "7px 10px", color: C.dark }}>{m[k] || "—"}</td>
                     ))}
                   </tr>
