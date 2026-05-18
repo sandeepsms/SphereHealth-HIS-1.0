@@ -730,6 +730,10 @@ export default function OPDAssessmentPage() {
                   <option value="HS">HS — At bedtime</option>
                   <option value="SOS">SOS — As needed (PRN)</option>
                   <option value="Stat">Stat — Single dose now</option>
+                  {/* Common combo for symptomatic relief — e.g. pain meds,
+                      antihistamines, anti-nausea: give the first dose
+                      immediately, repeat only if the symptom returns. */}
+                  <option value="Stat & SOS">Stat & SOS — First dose now, repeat PRN</option>
                 </optgroup>
                 <optgroup label="Hourly">
                   <option value="q1h">q1h — Every 1 hour</option>
