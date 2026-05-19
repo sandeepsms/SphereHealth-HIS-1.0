@@ -160,6 +160,14 @@ export default function DischargeQueue() {
               <button className="rx-action-btn" onClick={() => navigate(`/billing/ipd/${adm._id}`)}>
                 <i className="pi pi-list" /> Live Ledger
               </button>
+              {/* R7i: One-click jump to the complete patient file
+                  (read-only paperless MRD). Available at every stage —
+                  doctors / admin / MRD use this to review the entire
+                  admission record (notes, MAR, vitals, labs, bills) without
+                  having to dig through 8 different pages. */}
+              <button className="rx-action-btn" onClick={() => navigate(`/patient-file/${adm.UHID}`)}>
+                <i className="pi pi-folder-open" /> Medical Records
+              </button>
               {w.stage === "DoctorApproved" && (
                 <button className="rx-action-btn rx-action-btn--primary" onClick={() => setClearing(adm)}>
                   <i className="pi pi-wallet" /> Clear Final Bill

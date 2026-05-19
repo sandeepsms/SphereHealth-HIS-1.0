@@ -70,12 +70,22 @@ const vitalSheetRoutes = require("./Vitals/vitalSheetRoutes");
 // Every other mount below this line gets `authenticate` as a baseline so
 // no controller is reachable by anonymous traffic. Individual routes can
 // still demand specific roles via `authorize(...)`.
-const { authenticate } = require("../middleware/auth");
+const { authenticate, blockReadOnlyRoleWrites } = require("../middleware/auth");
 
 router.use("/auth", authRoutes);
 
 // ── Everything below requires a valid JWT ────────────────────
 router.use(authenticate);
+
+// ── R7i: Read-only role write-blocker ────────────────────────
+// Defense-in-depth for the MRD role. Rejects POST/PUT/PATCH/DELETE
+// for read-only roles (currently just "MRD") with a 403 before any
+// downstream router can run. This protects the existing 15+ clinical
+// write endpoints that don't yet have per-action gates. Mounted
+// AFTER authenticate (so req.user is populated) and BEFORE every
+// feature router below (so it intercepts before the controller).
+// Allow-list (audit logging) lives inside the middleware itself.
+router.use(blockReadOnlyRoleWrites);
 
 // ── Patient-file activity audit (auto-capture POST/PUT/PATCH/DELETE) ─
 // Mounted right after authenticate so req.user is populated and BEFORE

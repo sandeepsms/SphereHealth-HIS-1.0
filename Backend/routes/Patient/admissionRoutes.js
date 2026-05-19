@@ -23,6 +23,11 @@ router.post("/:id/doctor-approve-discharge",      idGuard, ctrl.doctorApproveDis
 router.post("/:id/clear-final-bill",              idGuard, ctrl.clearFinalBill);
 router.post("/:id/issue-gate-pass",               idGuard, ctrl.issueGatePass);
 
+// R7i: Same-day discharge undo — Admin only, time-gated by the controller
+// (≤ 24h since actualDischargeDate). The action permission is the trust
+// boundary — the controller adds business rules on top.
+router.post("/:id/reactivate",                    idGuard, authenticate, requireAction("admission.reactivate"), ctrl.reactivate);
+
 // ── Lists ────────────────────────────────────────────────────
 router.get("/active", ctrl.getActiveAdmissions);
 router.get("/today", ctrl.getTodayAdmissions);

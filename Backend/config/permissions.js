@@ -173,6 +173,20 @@ const ACTIONS = {
   // Accountant added so /billing-audit-trail is reachable — audit-trail review
   // is a core accountant function (catch unauthorized refunds / cancellations).
   "reports.audit":         ["Admin", "Accountant"],
+
+  // ── Medical Records Department (R7i) ────────────────────────
+  // Replaces the paper MRD function. Read-only access to every
+  // discharged patient's complete file: notes, MAR, vitals,
+  // labs, consents, bills, payments. MRD users cannot WRITE
+  // anywhere — the only "write" is admin-only same-day
+  // re-activation when a discharged patient's condition
+  // deteriorates before they leave the premises.
+  "mrd.read":              ["Admin", "Doctor", "MRD"],
+  "mrd.list":              ["Admin", "Doctor", "MRD"],
+  // Same-day discharge undo — Admin ONLY, time-gated by
+  // controller (≤ 24h since actualDischargeDate) and bed
+  // must still be free.
+  "admission.reactivate":  ["Admin"],
 };
 
 function roleCan(role, action) {

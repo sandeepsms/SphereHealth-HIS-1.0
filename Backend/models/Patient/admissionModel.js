@@ -180,6 +180,14 @@ const AdmissionSchema = new mongoose.Schema(
       gatePassNumber:      String,
       gatePassIssuedAt:    Date,
       gatePassIssuedBy:    String,
+      // R7i: Same-day discharge undo (Admin override). Populated by
+      // POST /admissions/:id/reactivate when an admin re-activates a
+      // patient within 24h of discharge. The audit trail travels with
+      // the admission so MRD / NABH auditors can see exactly why a
+      // closed discharge was reopened, by whom, and when.
+      reactivatedAt:       Date,
+      reactivatedBy:       String,
+      reactivationReason:  String,
     },
 
     // ── Cancel ───────────────────────────────────────────────

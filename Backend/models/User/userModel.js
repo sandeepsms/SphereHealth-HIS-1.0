@@ -94,6 +94,10 @@ const UserSchema = new mongoose.Schema(
         "Housekeeping",
         "Dietician",
         "TPA Coordinator",
+        // R7i: Medical Records Department — read-only access to
+        // every discharged patient's complete file (NABH MOI.1
+        // record retention). Replaces the paper MRD function.
+        "MRD",
       ],
     },
 

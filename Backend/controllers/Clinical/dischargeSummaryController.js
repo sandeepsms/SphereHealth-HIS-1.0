@@ -164,15 +164,36 @@ class DischargeSummaryController {
     // Audit-Pass-17 found the bed was never released on finalize — the bed
     // stayed Occupied forever, blocking new admissions. Now we free it
     // atomically (Available + clear patient + clear currentAdmission).
+    //
+    // R7h-FIX: Also flip dischargeWorkflow.stage to "Completed" so the
+    // patient surfaces in /discharge-queue → "Discharged Today" tab.
+    // Previously a doctor-driven finalize left dischargeWorkflow.stage
+    // as "NotRequested", so the discharge was invisible in the
+    // receptionist queue — status was already Discharged but the
+    // workflow stage never advanced. The clinical fast-path counts as a
+    // complete discharge: doctor approved + nursing handover gate
+    // passed + bed released, equivalent to the 3-stage receptionist
+    // flow. We stamp the timestamps the queue page expects so the
+    // "Discharged Today" filter ($gte: startOfToday on
+    // gatePassIssuedAt) picks it up.
     if (summary.admissionId) {
+      const now = new Date();
+      const finalizedBy = finalizedByName || req.user?.fullName || "Doctor";
       const admission = await Admission.findByIdAndUpdate(
         summary.admissionId,
         {
           status: "Discharged",
-          actualDischargeDate: summary.dischargeDate || new Date(),
+          actualDischargeDate: summary.dischargeDate || now,
           conditionOnDischarge: summary.conditionOnDischarge,
           dischargeSummary: summary._id.toString(),
           followUpInstructions: summary.followUpInstructions,
+          "dischargeWorkflow.stage":              "Completed",
+          "dischargeWorkflow.doctorApprovedAt":   now,
+          "dischargeWorkflow.doctorApprovedBy":   finalizedBy,
+          "dischargeWorkflow.billClearedAt":      now,
+          "dischargeWorkflow.billClearedBy":      finalizedBy,
+          "dischargeWorkflow.gatePassIssuedAt":   now,
+          "dischargeWorkflow.gatePassIssuedBy":   finalizedBy,
         },
         { new: true, runValidators: true },
       );

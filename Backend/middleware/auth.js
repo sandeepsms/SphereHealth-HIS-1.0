@@ -125,6 +125,53 @@ const restrictToOwnDoctorPatients = (req, filters = {}, opts = {}) => {
   return filters;
 };
 
+/* ── R7i: Read-only role write-blocker ──
+   Defense-in-depth for the MRD (Medical Records Department) role.
+   MRD is a paperless-archive role: its members can READ every patient
+   file but must never WRITE anything. The clean way to enforce that
+   would be to put `requireAction(...)` on every mutating endpoint in
+   the codebase, but the audit found 15+ clinical write endpoints
+   (nurse notes, doctor notes, MAR, discharge summary, consents, …)
+   that don't yet have action gates. Adding gates one-by-one risks
+   breaking existing role flows that depend on the current loose
+   behaviour.
+   This middleware fixes the MRD-specific hole without touching any
+   other role: if the authenticated user is MRD and the request uses
+   a mutating verb (POST/PUT/PATCH/DELETE), reject it with 403.
+   Mount it globally AFTER `authenticate` so req.user is populated.
+
+   Exceptions (allow-list): MRD users still need to write a few
+   harmless "I viewed this file" audit-log entries. Those paths
+   are whitelisted below — they create read-only audit records
+   that *describe* MRD access, not patient data.
+*/
+const READ_ONLY_ROLES = new Set(["MRD"]);
+const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+// Each entry is { method, suffix } — suffix is matched against the
+// END of req.originalUrl (so /api prefix is implicit). Keep this
+// list TINY and audit-friendly.
+const READ_ONLY_WRITE_ALLOWLIST = [
+  // Activity logger — patient-file viewing events. Audit trail of
+  // who looked at what. Records MRD activity, not patient data.
+  { method: "POST", regex: /\/patient-file\/[^/]+\/log\/?$/ },
+];
+const blockReadOnlyRoleWrites = (req, res, next) => {
+  if (!req.user) return next();
+  if (!READ_ONLY_ROLES.has(req.user.role)) return next();
+  if (!WRITE_METHODS.has(req.method)) return next();
+  // Match the allow-list on req.originalUrl (preserves the /api prefix).
+  const url = req.originalUrl.split("?")[0];
+  for (const rule of READ_ONLY_WRITE_ALLOWLIST) {
+    if (rule.method === req.method && rule.regex.test(url)) return next();
+  }
+  return res.status(403).json({
+    message: `Access denied. Role '${req.user.role}' is read-only.`,
+    role: req.user.role,
+    method: req.method,
+    url,
+  });
+};
+
 module.exports = {
   authenticate,
   authorize,
@@ -133,4 +180,5 @@ module.exports = {
   attemptAuth,
   attachDoctorProfile,
   restrictToOwnDoctorPatients,
+  blockReadOnlyRoleWrites,
 };
