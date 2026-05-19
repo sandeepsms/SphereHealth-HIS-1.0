@@ -23,6 +23,7 @@
  *   </AdminPage>
  */
 import React from "react";
+import { createPortal } from "react-dom";
 
 export const C = {
   bg: "#f8fafc", card: "#fff", border: "#e2e8f0",
@@ -95,10 +96,49 @@ export function Hero({ icon, title, subtitle, color = "orange", right }) {
 //   gray pill so the click target reads clearly.
 // - 220ms cubic-bezier transition on all pill properties so switching
 //   between tabs feels animated without being slow.
-// - Optional badge prop per tab (`{ key, label, icon, badge }`) renders
-//   a small count pill — useful for "Unsaved", inbox counts, etc.
+// - Optional badge prop per tab (`{ key, label, icon, badge, badgeTone }`)
+//   renders a small count pill — colour driven by `badgeTone`:
+//     "idle"    → green calm dot (no pending work)
+//     "normal"  → blue (some pending work, nothing urgent)
+//     "warn"    → amber (Urgent-priority pending work)
+//     "urgent"  → red + soft pulse (STAT or stale work — demands attention)
+//   Default tone is "idle" so the pill is always visible (R7-style "always
+//   resonant" badge) but doesn't scream when there's nothing to act on.
 // - Mobile: horizontal scroll with snap; tabs never wrap.
+
+// Tone → background colour. Active tab still wins (accent colour) when
+// the tab itself is selected, but inactive tabs honour the tone so the
+// receptionist/pharmacist sees urgency at a glance even from another tab.
+const BADGE_TONE_BG = {
+  idle:   "#10b981", // emerald — calm "all clear"
+  normal: "#2563eb", // blue — work in queue
+  warn:   "#d97706", // amber — urgent (non-STAT)
+  urgent: "#dc2626", // red — STAT / stuck — demands attention
+};
+
+// One-time injection of the pulse keyframes. Idempotent so HMR / multi-mount
+// doesn't duplicate the <style> tag. Inline-style is the codebase convention
+// (R1 only restricts Reception pages, not Components).
+let _badgePulseInjected = false;
+function ensureBadgePulseKeyframes() {
+  if (_badgePulseInjected || typeof document === "undefined") return;
+  const id = "admin-theme-badge-pulse";
+  if (document.getElementById(id)) { _badgePulseInjected = true; return; }
+  const style = document.createElement("style");
+  style.id = id;
+  style.textContent = `
+    @keyframes adminBadgePulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, .55); transform: scale(1); }
+      50%      { box-shadow: 0 0 0 6px rgba(220, 38, 38, 0);  transform: scale(1.08); }
+    }
+  `;
+  document.head.appendChild(style);
+  _badgePulseInjected = true;
+}
+
 export function TabStrip({ tabs, value, onChange, accent = C.orange, accentL = C.orangeL }) {
+  // Mount-once side effect (cheap — guarded by module flag).
+  if (typeof document !== "undefined") ensureBadgePulseKeyframes();
   return (
     <div role="tablist" style={{
       background: C.card,
@@ -165,19 +205,40 @@ export function TabStrip({ tabs, value, onChange, accent = C.orange, accentL = C
               }} />
             </span>
             <span>{t.label}</span>
-            {t.badge != null && (
-              <span style={{
-                marginLeft: 2,
-                minWidth: 18, height: 18,
-                padding: "0 6px",
-                borderRadius: 999,
-                background: active ? accent : "#cbd5e1",
-                color: "#fff",
-                fontSize: 10, fontWeight: 800,
-                display: "inline-flex", alignItems: "center", justifyContent: "center",
-                lineHeight: 1,
-              }}>{t.badge}</span>
-            )}
+            {t.badge != null && (() => {
+              // Pick badge background — active tab wins (accent), otherwise
+              // tone drives colour. Unknown tone → slate (back-compat with
+              // older tab definitions that don't set badgeTone).
+              const tone     = t.badgeTone;
+              const toneBg   = BADGE_TONE_BG[tone] || "#cbd5e1";
+              const bg       = active ? accent : toneBg;
+              const isUrgent = tone === "urgent";
+              return (
+                <span
+                  // aria-live so screen readers announce STAT/escalation
+                  // transitions without the user having to focus the tab.
+                  aria-live={isUrgent ? "polite" : undefined}
+                  style={{
+                    marginLeft: 2,
+                    minWidth: 18, height: 18,
+                    padding: "0 6px",
+                    borderRadius: 999,
+                    background: bg,
+                    color: "#fff",
+                    fontSize: 10, fontWeight: 800,
+                    display: "inline-flex", alignItems: "center", justifyContent: "center",
+                    lineHeight: 1,
+                    transition: "background .25s ease",
+                    // Soft pulsing ring for STAT / stuck work — only when
+                    // the tab is NOT currently active (active state is
+                    // already visually loud, don't double-up).
+                    animation: isUrgent && !active
+                      ? "adminBadgePulse 1.4s ease-in-out infinite"
+                      : "none",
+                  }}
+                >{t.badge}</span>
+              );
+            })()}
           </button>
         );
       })}
@@ -294,9 +355,40 @@ export function Badge({ value, palette }) {
   );
 }
 
+// Modal — rendered via React portal at document.body to decouple it
+// from the caller's render tree. This fixes the bed-visual blink bug:
+// the BedVisualLayout listens to SSE bed events and refetches every
+// 400ms-debounced; each refetch caused the bed-card subtree (where the
+// inline modal lived) to re-render, which in turn could unmount the
+// modal mid-interaction whenever a conditional ancestor (`{occ && pName
+// && <RequestWardBoyButton />}`) flipped during the brief in-flight
+// fetch window. With the portal, the modal lives at document.body and
+// is unaffected by parent re-renders.
+//
+// Also: ESC key closes the modal, and body scroll is locked while open
+// so the page underneath doesn't jiggle when the user scrolls inside
+// the modal's content area.
 export function Modal({ title, color = C.orange, onClose, onSubmit, submitting, submitLabel = "Save", children, hideFooter, size = 560, icon }) {
-  return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+  // ESC-to-close + body scroll lock. Both effects run only while the
+  // Modal is mounted, so multiple stacked modals each push/pop their
+  // own listeners and restore overflow on cleanup.
+  React.useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape" && typeof onClose === "function") onClose(); };
+    document.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [onClose]);
+
+  // SSR-safe portal target — `document` is undefined during SSR; fall
+  // back to inline render in that environment.
+  if (typeof document === "undefined") return null;
+
+  const tree = (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, width: size, maxWidth: "100%", maxHeight: "88vh", display: "flex", flexDirection: "column", boxShadow: "0 20px 50px rgba(0,0,0,.25)", overflow: "hidden" }}>
         <div style={{ padding: "12px 18px", background: `linear-gradient(135deg, ${color}, ${color}cc)`, color: "#fff", display: "flex", alignItems: "center", gap: 10 }}>
           {icon && <i className={`pi ${icon}`} style={{ fontSize: 16 }} />}
@@ -313,6 +405,7 @@ export function Modal({ title, color = C.orange, onClose, onSubmit, submitting, 
       </div>
     </div>
   );
+  return createPortal(tree, document.body);
 }
 
 export function Field({ label, required, children }) {

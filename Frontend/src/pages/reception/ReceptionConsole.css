@@ -480,6 +480,106 @@
   color: #0e7490;
 }
 
+/* ─── Post-registration success card (Live Receipt Preview) ───────
+   Replaces the form-state-driven preview body after a successful
+   registration. Hosts: success banner + frozen patient summary +
+   Print Slip button + Register Another button. */
+.rc-receipt-saved {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.rc-receipt-saved-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  background: linear-gradient(135deg, #ecfdf5, #d1fae5);
+  border: 1.5px solid #34d399;
+  border-radius: 10px;
+}
+.rc-receipt-saved-banner > .pi {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #16a34a;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 800;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.rc-receipt-saved-banner-title {
+  font-size: 12px;
+  font-weight: 800;
+  color: #065f46;
+  letter-spacing: .2px;
+  text-transform: uppercase;
+}
+.rc-receipt-saved-banner-sub {
+  font-size: 11px;
+  color: #047857;
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+/* Primary action — re-fires the cash/payment slip print. Matches
+   rc-btn-save's cyan gradient so it reads as the dominant action in
+   the success card. */
+.rc-btn-print-slip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 11px 18px;
+  background: linear-gradient(135deg, #0891b2, #0e7490);
+  color: #fff;
+  border: 0;
+  border-radius: 10px;
+  font-weight: 800;
+  font-size: 13.5px;
+  cursor: pointer;
+  font-family: inherit;
+  box-shadow: 0 4px 12px rgba(8, 145, 178, .3);
+  transition: transform .12s, box-shadow .18s;
+  margin-top: 4px;
+  width: 100%;
+}
+.rc-btn-print-slip:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(8, 145, 178, .4);
+}
+.rc-btn-print-slip:active {
+  transform: translateY(0);
+}
+
+/* Secondary action — dismiss the success card and return to the live
+   form preview. Quieter slate styling so it doesn't compete with the
+   Print Slip primary. */
+.rc-btn-new-patient {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 9px 16px;
+  background: #f8fafc;
+  color: #475569;
+  border: 1.5px solid #cbd5e1;
+  border-radius: 10px;
+  font-weight: 700;
+  font-size: 12.5px;
+  cursor: pointer;
+  font-family: inherit;
+  width: 100%;
+}
+.rc-btn-new-patient:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+}
+
 /* Action bar (sticky bottom) */
 .rc-actions {
   position: sticky;

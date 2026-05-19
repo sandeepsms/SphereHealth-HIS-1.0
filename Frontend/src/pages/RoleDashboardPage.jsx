@@ -214,7 +214,7 @@ function AdminDashboard({ user }) {
             { icon: "pi-sitemap",    label: "Departments",          sub: "Hospital departments + services",        color: C.orange,  onClick: () => navigate("/department") },
             { icon: "pi-user-edit",  label: "Doctor Master",        sub: "Consultants, specialisations",           color: C.purple,  onClick: () => navigate("/doctors") },
             { icon: "pi-dollar",     label: "Hospital Charges",     sub: "TPA tariff sheets",                      color: C.amber,   onClick: () => navigate("/hospital-charges") },
-            { icon: "pi-chart-bar",  label: "Reports",              sub: "Operational + financial",                color: C.green,   onClick: () => navigate("/billing-intelligence") },
+            { icon: "pi-chart-bar",  label: "Reports",              sub: "Operational + financial",                color: C.green,   onClick: () => navigate("/billing-audit-trail") },
             { icon: "pi-print",      label: "Print Gallery",        sub: "Preview every printable",                color: C.pink,    onClick: () => navigate("/print-gallery") },
           ]} />
         </Card>

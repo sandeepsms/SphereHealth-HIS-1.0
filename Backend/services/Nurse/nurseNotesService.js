@@ -22,7 +22,24 @@ const createNurseNote = async (data, nurseUserId) => {
     "nursingCare","remarks","status","noteType","tags","isCriticalEvent",
     "signature","signedByName","nurseName","nurseEmployeeId","nurseId",
     "nurseDesignation","nurseStaffId",
+    // Late-entry / retroactive note metadata — reserved so it lands in
+    // dedicated schema columns instead of being swept into noteData.
+    "lateEntry","lateEntryReason","lateEntryBy","lateEntryByRole",
   ]);
+
+  // ── Late-entry validation (NABH HIC.6) ─────────────────────────
+  // If the caller marks this as a retroactive entry against a
+  // discharged admission, a non-empty reason is mandatory. We reject
+  // the save here so the audit log is never polluted with a flagged
+  // entry that has no justification.
+  if (data.lateEntry) {
+    const reason = String(data.lateEntryReason || "").trim();
+    if (!reason) {
+      const err = new Error("Late-entry note requires a reason (NABH HIC.6 — backdated entry justification)");
+      err.statusCode = 400;
+      throw err;
+    }
+  }
 
   const {
     patientId, ipdNo, noteDate, shift, doctorId,
@@ -98,6 +115,15 @@ const createNurseNote = async (data, nurseUserId) => {
     status: noteStatus,
     submittedAt: noteStatus === "submitted" ? new Date() : undefined,
     createdBy: nurse?._id || undefined,
+    // Late-entry stamps — only persisted when caller opts in. lateEntryAt
+    // is always "now" (when the entry was actually typed); noteDate is
+    // the clinical date being documented. Both together give NABH
+    // surveyors an unambiguous timeline on the audit replay.
+    lateEntry:       !!data.lateEntry,
+    lateEntryReason: data.lateEntry ? String(data.lateEntryReason || "").trim() : undefined,
+    lateEntryAt:     data.lateEntry ? new Date() : undefined,
+    lateEntryBy:     data.lateEntry ? (data.lateEntryBy || data.nurseName || nurse?.personalInfo?.fullName || "") : undefined,
+    lateEntryByRole: data.lateEntry ? (data.lateEntryByRole || data.nurseDesignation || "Nurse") : undefined,
   });
 
   // Update TreatmentChart executions

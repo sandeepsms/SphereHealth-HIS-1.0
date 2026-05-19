@@ -220,11 +220,20 @@ class PatientService {
     }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
+    // ── Sort order: today-first ──────────────────────────────────
+    // Receptionist needs the people who walked in today at the top,
+    // even if they registered months ago. So we sort by lastVisitDate
+    // DESC first (captures "active today / yesterday" patients), then
+    // fall back to createdAt DESC so freshly-registered patients with
+    // no visit row yet still float up over historical records.
+    // Mongo treats `null` as smaller than any date when sorting DESC,
+    // so patients with no lastVisitDate naturally sink — which is the
+    // behaviour we want here.
     const patients = await Patient.find(query)
       .populate("department", "departmentName")
       .populate("doctor", "personalInfo")
       .populate("tpa", "tpaName tpaCode")
-      .sort({ createdAt: -1 })
+      .sort({ lastVisitDate: -1, createdAt: -1 })
       .limit(parseInt(limit))
       .skip(skip);
 

@@ -10,6 +10,7 @@ import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
+import SharedDrugAutocomplete, { parseStrength, drugDisplayName } from "../clinical/DrugAutocomplete";
 
 /* ── Design tokens ── */
 const C = {
@@ -84,6 +85,114 @@ const STAT_STYLE = {
   OnHold:       { bg: "#f1f5f9",color: C.muted  },
 };
 
+/* Shared grid row style — same victim of commit 768830a as `Field`.
+   `g(cols)` below spreads this onto each grid wrapper so the form
+   fields sit on a proper css grid with consistent gap + margin. */
+const row = { display: "grid", gap: 10, marginBottom: 10 };
+
+/* ══════════════════════════════════════════════════════════════
+   Field — generic labelled input/select/textarea used everywhere in
+   OrderForm. Originally lived as a closure inside OrderForm; the
+   2026-05-13 CSS refactor (commit 768830a) lifted it out but the
+   refactor accidentally dropped the definition, leaving every
+   <Field ...> reference unresolved and crashing the Medication form
+   the moment the doctor selected it. Restored here.
+
+   Supports the variants the caller uses today:
+     • plain text/number     (default)
+     • select with options[] (options prop)
+     • textarea              (type="textarea")
+     • value + adjacent unit picker (unitOptions[] + unitName, OR a
+       fixed unit string)
+     • span={N} to widen the cell in a grid                          */
+function Field({ form, set, label, name, placeholder, type = "text",
+                 options, unitOptions, unitName, unit, span }) {
+  const val = form[name] ?? "";
+  const wrapStyle = span ? { gridColumn: `span ${span}` } : undefined;
+
+  const renderInput = () => {
+    if (Array.isArray(options)) {
+      return (
+        <select className="his-select" value={val} onChange={e => set(name, e.target.value)}>
+          <option value="">— select —</option>
+          {options.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+      );
+    }
+    if (type === "textarea") {
+      return (
+        <textarea className="his-textarea" rows={2}
+                  placeholder={placeholder} value={val}
+                  onChange={e => set(name, e.target.value)} />
+      );
+    }
+    const onChange = (e) => {
+      const v = e.target.value;
+      set(name, type === "number" && v !== "" ? Number(v) : v);
+    };
+    return (
+      <input className="his-field" type={type}
+             placeholder={placeholder} value={val} onChange={onChange} />
+    );
+  };
+
+  return (
+    <div style={wrapStyle}>
+      <label className="his-label">{label}</label>
+      {Array.isArray(unitOptions) ? (
+        <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ flex: 1 }}>{renderInput()}</div>
+          <select className="his-select" style={{ width: 90 }}
+                  value={form[unitName] || unitOptions[0]}
+                  onChange={e => set(unitName, e.target.value)}>
+            {unitOptions.map(u => <option key={u} value={u}>{u}</option>)}
+          </select>
+        </div>
+      ) : unit ? (
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          {renderInput()}
+          <span style={{ fontSize: 11, color: "#64748b" }}>{unit}</span>
+        </div>
+      ) : renderInput()}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════
+   DrugAutocomplete (form-bound thin wrapper) — delegates the actual
+   search/render UI to the shared <SharedDrugAutocomplete> in
+   Components/clinical/DrugAutocomplete.jsx so OPDAssessmentPage,
+   discharge summary, MAR, and this panel all share one source of
+   truth. We just adapt the (form, set, name) shape this panel uses
+   into the (value, onChange, onPick) shape the shared component
+   exposes, and mirror the picked drug's strength + generic into
+   `dose / doseUnit / genericName / dosageForm` for downstream
+   audit + dispense.                                                */
+function DrugAutocomplete({ form, set, label, name, placeholder }) {
+  return (
+    <SharedDrugAutocomplete
+      label={label}
+      placeholder={placeholder}
+      value={form[name] ?? ""}
+      onChange={(v) => set(name, v)}
+      onPick={(d) => {
+        // Form-prefixed canonical name in the visible Drug Name field
+        // ("Tab Paracetamol 500mg" instead of bare "Paracetamol 500mg")
+        // per Indian Rx convention. Structured fields (genericName /
+        // dose / doseUnit / dosageForm) mirror separately so the order
+        // service, MAR, and dispense flow all have machine-readable
+        // values without parsing the display string.
+        set(name, drugDisplayName(d));
+        if (d.genericName) set("genericName", d.genericName);
+        const { value, unit } = parseStrength(d.strength);
+        if (value != null) set("dose", value);
+        if (unit) set("doseUnit", unit);
+        if (d.form) set("dosageForm", d.form);
+      }}
+    />
+  );
+}
+
 /* ══════════════════════════════════════════════════════════════
    ORDER FORM — dynamic fields per type
 ══════════════════════════════════════════════════════════════ */
@@ -93,7 +202,12 @@ function OrderForm({ typeId, form, set }) {
   if (typeId === "Medication") return (
     <>
       <div style={g("2fr 1fr")}>
-        <Field form={form} set={set} label="Drug Name *" name="medicineName" placeholder="e.g. Amoxicillin"/>
+        {/* Drug Name now auto-completes from the Pharmacy drug master so
+            the doctor picks the exact SKU (avoids typos that desync from
+            stock + dispense audit). Picking an entry also pre-fills dose
+            + dose unit from the drug's strength field — doctor can still
+            override either. */}
+        <DrugAutocomplete form={form} set={set} label="Drug Name *" name="medicineName" placeholder="Start typing — e.g. Amox, Paracet, Aug…"/>
         <Field form={form} set={set} label="Dose *" name="dose" type="number" placeholder="e.g. 500"
           unitOptions={["mg","mcg","g","ml","units","IU","mEq"]} unitName="doseUnit"/>
       </div>

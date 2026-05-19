@@ -87,7 +87,55 @@ class DischargeSummaryController {
 
   // PATCH /api/discharge-summary/:id/finalize
   finalize = handle(async (req, res) => {
-    const { finalizedByName } = req.body;
+    const { finalizedByName, allowOverride, overrideReason } = req.body;
+
+    // ── Workflow gate (NABH-CRIT-03 / N-CRIT-02) ──────────────────
+    // Discharge cannot be finalized until the nurse handover step is
+    // documented. Without this gate the workflow was order-agnostic —
+    // a doctor could click "Finalize & Discharge" directly from the
+    // discharge summary page, releasing the bed before the nurse had
+    // recorded the handover note. NABH COP.20 explicitly requires the
+    // nursing handover before discharge.
+    //
+    // The gate accepts EITHER signal that the nursing step is done:
+    //   1. `admission.initialAssessment.nurseCompleted === true` —
+    //      explicitly set by NursingNotes (covers full IPD stays)
+    //   2. At least one NurseNote document exists for this admission's
+    //      ipdNo — covers short / Daycare stays where the assessment
+    //      flag was never flipped but actual notes do exist
+    //
+    // Explicit override is allowed for LAMA / Absconded / Death
+    // cases — caller MUST send allowOverride: true AND a non-empty
+    // reason, both of which land on the discharge summary's audit
+    // trail (nursingHandoverOverride*).
+    const draftSummary = await DischargeSummary.findById(req.params.id).lean();
+    if (draftSummary?.admissionId) {
+      const adm = await Admission.findById(draftSummary.admissionId).lean();
+      const nurseFlagged = !!adm?.initialAssessment?.nurseCompleted;
+      let hasNurseNotes = false;
+      if (!nurseFlagged && draftSummary?.ipdNo) {
+        try {
+          const NurseNotes = require("../../models/Nurse/NurseNotesModel");
+          hasNurseNotes = (await NurseNotes.countDocuments({ ipdNo: draftSummary.ipdNo })) > 0;
+        } catch (_) { /* model may be optional */ }
+      }
+      const nursingDone = nurseFlagged || hasNurseNotes;
+      if (!nursingDone && !allowOverride) {
+        return res.status(409).json({
+          success: false,
+          message: "Cannot finalize discharge — nursing handover note required (NABH COP.20). Add the note via /nursing-notes, OR pass { allowOverride: true, overrideReason: '...' } for LAMA / Absconded / Death cases.",
+          code: "NURSING_HANDOVER_REQUIRED",
+        });
+      }
+      if (!nursingDone && allowOverride && !String(overrideReason || "").trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Override requires a documented reason (e.g. 'LAMA at 14:30, signed AMA form on file').",
+          code: "OVERRIDE_REASON_REQUIRED",
+        });
+      }
+    }
+
     // runValidators added per audit C-07 — without it, the status flip
     // and the date/condition writes bypass the schema's enum/format
     // checks; a future bad value (e.g. status: "FINAL_GREATEST") would
@@ -98,6 +146,15 @@ class DischargeSummaryController {
         status: "finalized",
         finalizedByName: finalizedByName || "Doctor",
         finalizedAt: new Date(),
+        // Record override (when used) for the NABH audit trail. Stored
+        // on the discharge summary itself so the override evidence
+        // travels with the discharge record.
+        ...(allowOverride ? {
+          nursingHandoverOverride: true,
+          nursingHandoverOverrideReason: String(overrideReason || "").trim(),
+          nursingHandoverOverrideAt: new Date(),
+          nursingHandoverOverrideBy: finalizedByName || req.user?.fullName || "Doctor",
+        } : {}),
       },
       { new: true, runValidators: true }
     );

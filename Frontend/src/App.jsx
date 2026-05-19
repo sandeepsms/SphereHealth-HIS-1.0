@@ -83,8 +83,15 @@ const BillGeneration = lazy(() => import("./pages/billing/Billgeneration"));
 const PatientBilling = lazy(() => import("./Components/billing/PatientBilling"));
 const ServiceMasterManager = lazy(() => import("./Components/ServiceMaster/ServiceMasterManager"));
 const ChargeableServices = lazy(() => import("./pages/services/ChargeableServices"));
-const BillingIntelligencePage = lazy(() => import("./pages/billing/BillingIntelligencePage"));
+// BillingIntelligencePage removed — receptionist Billing Counter is now
+// the single billing surface; AI suggestions are no longer auto-applied.
 const BillingAuditTrailPage = lazy(() => import("./pages/billing/BillingAuditTrailPage"));
+// IPD / Day-Care live billing ledger — admission → discharge per-charge view
+// with undo (15-min) / override / cancel actions gated by role.
+const IPDBillingLedger = lazy(() => import("./pages/billing/IPDBillingLedger"));
+// Nurse → Pharmacy indent workflow
+const IndentRaisePage     = lazy(() => import("./pages/nursing/IndentRaisePage"));
+const PharmacyIndentsPage = lazy(() => import("./pages/pharmacy/PharmacyIndentsPage"));
 
 // Vitals
 const UpdateVitalSheet = lazy(() => import("./Components/vital/UpdateVitalSheet"));
@@ -434,13 +441,8 @@ function AppLayout({ collapsed, setCollapsed }) {
               <RoleGuard action="billing.read"><ChargeableServices /></RoleGuard>
             } />
 
-            {/* ── AI Billing Intelligence — admin/accountant only ── */}
-            <Route path="/billing-intelligence" element={
-              <RoleGuard action="reports.financial"><BillingIntelligencePage /></RoleGuard>
-            } />
-            <Route path="/billing-intelligence/:uhid" element={
-              <RoleGuard action="reports.financial"><BillingIntelligencePage /></RoleGuard>
-            } />
+            {/* /billing-intelligence routes removed — receptionist Billing
+                Counter at /reception-billing now handles the full flow. */}
 
             {/* ── Billing Audit Trail — admin only ───────────────── */}
             <Route path="/billing-audit-trail" element={
@@ -448,6 +450,35 @@ function AppLayout({ collapsed, setCollapsed }) {
             } />
             <Route path="/billing-audit-trail/:uhid" element={
               <RoleGuard action="reports.audit"><BillingAuditTrailPage /></RoleGuard>
+            } />
+
+            {/* ── IPD / Day-Care Live Billing Ledger ───────────────
+                The end-to-end ledger view: every auto-fired charge from
+                admission to discharge with undo (15-min) / override /
+                cancel actions. Read-gated by billing.read so all the
+                billing-eligible roles can pull it up; the per-row
+                actions are further gated server-side. */}
+            <Route path="/billing/ipd/:admissionId" element={
+              <RoleGuard action="billing.read"><IPDBillingLedger /></RoleGuard>
+            } />
+            {/* No-admission-id variant — sidebar IPD Live Ledger tile
+                lands here. The component detects `!admissionId` and
+                renders the admission picker (active list + UHID search)
+                instead of the ledger; clicking a row redirects to
+                /billing/ipd/{id}. Same RoleGuard. */}
+            <Route path="/billing/ipd" element={
+              <RoleGuard action="billing.read"><IPDBillingLedger /></RoleGuard>
+            } />
+
+            {/* ── Pharmacy Indent Workflow ─────────────────────────
+                Nurse raises an indent from an admission; pharmacist
+                sees the live queue + releases stock. Both routes are
+                lazy-loaded; backend enforces the same action gates. */}
+            <Route path="/nursing/indent/raise/:admissionId" element={
+              <RoleGuard action="indent.raise"><IndentRaisePage /></RoleGuard>
+            } />
+            <Route path="/pharmacy/indents" element={
+              <RoleGuard action="indent.read"><PharmacyIndentsPage /></RoleGuard>
             } />
 
             {/* ── Main / Default ───────────────────────────────── */}

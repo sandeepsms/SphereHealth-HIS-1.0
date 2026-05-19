@@ -862,6 +862,13 @@ function DischargeSummaryPageContent({ selectedPatient }) {
   const [printData, setPrintData] = useState(null);
 
   const [form, setForm] = useState({
+    // BOTH ObjectId refs are mandatory on the backend (DischargeSummary
+    // schema marks `patient` as `required: true`; `admissionId` drives the
+    // upsert + finalize-discharge chain). They were missing from the
+    // initial form state which caused every Save/Finalize click to die
+    // with a silent 400 validation error.
+    patient: null,
+    admissionId: null,
     UHID: "", patientName: "", age: "", gender: "", contactNumber: "",
     ipdNo: "", admissionDate: "", dischargeDate: new Date().toISOString().slice(0, 10),
     stayDays: "", doctorName: "", doctorRegNo: "", department: "",
@@ -944,6 +951,12 @@ function DischargeSummaryPageContent({ selectedPatient }) {
     const stayDays = admDate ? Math.ceil((new Date() - admDate) / 86400000) : "";
     setForm(p => ({
       ...p,
+      // ObjectId refs the backend requires. admissionId is the admission
+      // we're discharging; patient is the Patient master row. Without
+      // these, POST returns 400 validation error and the doctor sees a
+      // bare "Save failed" toast.
+      patient:        (typeof found.patientId === "object" ? found.patientId?._id : found.patientId) || p.patient,
+      admissionId:    found._id || p.admissionId,
       UHID: found.UHID || "",
       patientName: found.patientName || found.patientId?.fullName || "",
       ipdNo: found.admissionNumber || "",
@@ -983,6 +996,11 @@ function DischargeSummaryPageContent({ selectedPatient }) {
           || (pat?.dateOfBirth ? Math.max(0, Math.floor((Date.now() - new Date(pat.dateOfBirth).getTime()) / (365.25 * 86400000))) : "");
         setForm(p => ({
           ...p,
+          // Backend requires patient (ObjectId) and uses admissionId for
+          // the upsert + finalize → discharge chain. Without these,
+          // POST /discharge-summary fails Mongoose validation silently.
+          patient:        pat?._id || (typeof found.patientId === "object" ? found.patientId?._id : found.patientId) || p.patient,
+          admissionId:    found._id || p.admissionId,
           UHID:           found.UHID,
           patientName:    found.patientName || pat?.fullName || found.patientId?.fullName || "",
           age:            ageNow ? String(ageNow) : p.age,
@@ -1054,6 +1072,15 @@ function DischargeSummaryPageContent({ selectedPatient }) {
 
   const handleSave = async () => {
     if (!form.UHID) { toast.warn("Load a patient first"); return; }
+    // The backend's DischargeSummary schema marks `patient` as required.
+    // If the doctor typed a UHID that isn't an active IPD admission, the
+    // search above silently left form.patient null — surface that here
+    // with a meaningful message instead of letting the POST 400 with a
+    // bare "Save failed" toast.
+    if (!form.patient) {
+      toast.error("This UHID has no active IPD admission — load an admitted patient first");
+      return;
+    }
     setSaving(true);
     try {
       const payload = { ...form, deptTemplate: selectedDept?.key, medications, investigations, procedures };
@@ -1071,7 +1098,17 @@ function DischargeSummaryPageContent({ selectedPatient }) {
         clearDraft();
         openPrint();
       } else {
-        toast.error(err.response?.data?.message || "Save failed");
+        // Surface the backend's validation message verbatim so the doctor
+        // sees exactly which field is missing (e.g. "Path `patient` is
+        // required") instead of the generic "Save failed".
+        const msg = err.response?.data?.message
+          || err.response?.data?.errors?.[0]?.message
+          || err.message
+          || "Save failed";
+        toast.error(msg);
+        // Dev-only — log the full error to console so we can debug
+        // future schema-mismatch issues quickly.
+        console.error("[DischargeSummary] save failed:", err.response?.data || err);
       }
     } finally { setSaving(false); }
   };

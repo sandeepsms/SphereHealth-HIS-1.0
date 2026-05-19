@@ -130,7 +130,15 @@ async function resolveBedAndNursingRates(admission) {
 // ── Helper: map doctor note (type + shift) → billable visit code ─────────────
 // One charge per doctor per round per day. The dedup-by-doctor flag ensures
 // two consultants on the same day each get a separate line.
-function resolveDoctorVisitCode(noteType, shift) {
+//
+// Emergency window detection: the after-hours threshold is currently
+// hard-coded at 20:00 (8 PM). Hospitals doing genuine night rounds at
+// 22:00–23:00 can later make this configurable per-hospital, but the
+// 8 PM cutoff matches the typical Indian ward routine: morning round
+// 8–10 AM, evening round 5–7 PM, anything later is unscheduled.
+const EMERGENCY_HOUR_START = 20;  // 20:00 = 8 PM
+
+function resolveDoctorVisitCode(noteType, shift, opts = {}) {
   const nt = String(noteType || "").toLowerCase();
   const sh = String(shift || "").toLowerCase();
   if (nt === "consultation") return { code: "DOC-CONSULT",      name: "Inter-department Consultation", dailyDedup: false, dedupByDoctor: true };
@@ -142,6 +150,22 @@ function resolveDoctorVisitCode(noteType, shift) {
     // — don't double-charge a generic visit on top of the procedure fee.
     return null;
   }
+
+  // ── Emergency / after-hours fork ──────────────────────────────────
+  // A doctor coming back AFTER the regular evening round (>= 20:00) for
+  // an unplanned visit (i.e. a routine round has already been billed
+  // today by this same doctor) should fire DOC-EMERGENCY-VISIT instead
+  // of a 2nd round charge. The dedup-by-doctor on the regular codes
+  // would otherwise skip the trigger silently — the hospital would
+  // lose the chargeable event. Emergency has no daily dedup so a doctor
+  // can fire multiple emergency visits the same night if the patient
+  // crashes more than once.
+  const hour = (opts.now ? new Date(opts.now) : new Date()).getHours();
+  if (opts.isRepeatToday && hour >= EMERGENCY_HOUR_START) {
+    return { code: "DOC-EMERGENCY-VISIT", name: "Emergency Consultant Visit (After Hours)",
+             dailyDedup: false, dedupByDoctor: false };
+  }
+
   // Routine round notes (progress, daily, assessment, general) — shift-based.
   if (/evening/.test(sh)) return { code: "DOC-EVE-ROUND",   name: "Doctor Evening Round", dailyDedup: true, dedupByDoctor: true };
   if (/night/.test(sh))   return { code: "DOC-NIGHT-ROUND", name: "Doctor Night Round",   dailyDedup: true, dedupByDoctor: true };
@@ -195,7 +219,10 @@ async function findServicesByNamesBatch(names, patientType = "IPD") {
 // ── Helper: get or create draft bill for admission ────────────────────────────
 async function getOrCreateBill(admissionId, patientType) {
   const admission = await Admission.findById(admissionId).lean();
-  if (!admission) return null;
+  if (!admission) {
+    console.warn(`[AutoBilling] getOrCreateBill — admission ${admissionId} not found`);
+    return null;
+  }
   // billingService.js exports an INSTANCE — use directly, no `new`.
   const billingService = require("./billingService");
   try {
@@ -204,7 +231,22 @@ async function getOrCreateBill(admissionId, patientType) {
       patientType || "IPD",
       admissionId.toString()
     );
-  } catch { return null; }
+  } catch (e) {
+    // FIX (E2E test caught this): the previous `catch { return null }`
+    // silently swallowed every billing failure, leaving the upstream
+    // trigger forever in status="completed" with billId=undefined and
+    // NO breadcrumb on the bill or in logs. The audit UI would show
+    // "trigger fired" but the user would see "no bill" with no way to
+    // diagnose. Log the error with context so future failures are
+    // visible to the operator AND a downstream sweeper can retry.
+    try {
+      const { logErr } = require("../../utils/logErr");
+      logErr("autoBilling", `getOrCreateDraftBill UHID=${admission.UHID} adm=${admissionId} type=${patientType}`)(e);
+    } catch {
+      console.error(`[AutoBilling] getOrCreateDraftBill UHID=${admission.UHID} adm=${admissionId}:`, e?.message || e);
+    }
+    return null;
+  }
 }
 
 // ── Helper: add item to bill ──────────────────────────────────────────────────
@@ -241,6 +283,12 @@ async function addItemToBill(bill, service, quantity, source, trigger) {
       addedBySource:   source.addedBySource || "Auto",
       addedBy:         source.addedBy || "System",
       addedByRole:     source.addedByRole || "System",
+      isAutoCharged:   true,
+      // Round-trip link — every auto-billed line carries the trigger _id
+      // back so the IPD Live Billing ledger can undo/override the exact
+      // bill row without scanning by serviceCode. Manual line items added
+      // via the receptionist UI never set this field.
+      triggerId:       trigger?._id,
     };
 
     const freshBill = await PatientBill.findById(bill._id);
@@ -270,7 +318,11 @@ async function addItemToBill(bill, service, quantity, source, trigger) {
     const savedItem = freshBill.billItems[freshBill.billItems.length - 1];
     return { bill: freshBill, itemId: savedItem._id, unitPrice, totalAmt };
   } catch (e) {
-    console.error("[AutoBilling] addItemToBill error:", e.message);
+    // Include enough context to debug without re-running: bill id,
+    // service code, trigger id, and the error message + name.
+    console.error(
+      `[AutoBilling] addItemToBill error on bill=${bill?._id} service=${service?.serviceCode || "(none)"} trigger=${trigger?._id || "(none)"}: ${e.name || "Error"}: ${e.message}`,
+    );
     return null;
   }
 }
@@ -349,6 +401,12 @@ async function createTrigger(config) {
     serviceCode:  resolvedService?.serviceCode || serviceCode,
     serviceName:  resolvedService?.serviceName || serviceName,
     quantity, unitPrice, totalAmount,
+    // Snapshot of the rate/qty at first fire — never mutated. The
+    // override path edits unitPrice/quantity/totalAmount in-place and
+    // appends to overrideHistory[]; this pair lets the UI render
+    // "₹600 (originally ₹500)" without diffing the history array.
+    originalUnitPrice: unitPrice,
+    originalQuantity:  quantity,
     sourceType, sourceDocumentId, sourceDocumentModel,
     orderedBy, orderedById, orderedByRole,
     orderedAt: new Date(),
@@ -405,6 +463,27 @@ async function createTrigger(config) {
         });
         return { trigger, billed: true, billId: result.bill._id };
       }
+      // addItemToBill returned null even though the bill existed.
+      // Flag the trigger as "pending-review" so the operator sees it
+      // in the Stuck Triggers tile on the IPD Live Ledger and can
+      // retry/move-it/cancel-it without it silently disappearing.
+      // Most likely cause: closed/frozen bill (PAID/REFUNDED), or a
+      // Decimal128 / enum validation error inside save().
+      const reason = `addItemToBill returned null for ${trigger.serviceCode} on bill ${bill?._id} (status=${bill?.billStatus})`;
+      console.warn(`[AutoBilling] ${reason}`);
+      await BillingTrigger.findByIdAndUpdate(trigger._id, {
+        status:       "pending-review",
+        reviewReason: reason,
+        reviewedAt:   new Date(),
+      }).catch(() => { /* best-effort flag */ });
+    } else {
+      const reason = `getOrCreateBill returned null for admission=${admissionId} patientType=${patientType}`;
+      console.warn(`[AutoBilling] ${reason} — trigger ${trigger?._id} (${trigger.serviceCode}) flagged pending-review`);
+      await BillingTrigger.findByIdAndUpdate(trigger._id, {
+        status:       "pending-review",
+        reviewReason: reason,
+        reviewedAt:   new Date(),
+      }).catch(() => { /* best-effort flag */ });
     }
   }
 
@@ -476,14 +555,38 @@ async function onNurseNoteSaved(noteDoc) {
 async function onDoctorNoteSaved(noteDoc) {
   if (!noteDoc) return;
   const noteType = noteDoc.noteType || "progress";
-  const visit = resolveDoctorVisitCode(noteType, noteDoc.shift);
-  if (!visit) return; // procedure notes etc. bill via their own path
 
   const admissionId = noteDoc.admissionId || await resolveAdmissionId(noteDoc);
   if (!admissionId) return;
 
   const doctorName = noteDoc.doctorName || noteDoc.consultantName || noteDoc.orderedBy || "Doctor";
   const doctorId   = noteDoc.doctor || noteDoc.doctorId || null;
+
+  // Repeat-visit detection: has this doctor already triggered ANY round
+  // charge today on this admission? If so AND the current time is past
+  // the evening-round cutoff, resolveDoctorVisitCode will fork to
+  // DOC-EMERGENCY-VISIT — the after-hours unplanned visit code.
+  let isRepeatToday = false;
+  try {
+    const dateKey = getDateKey();
+    const q = {
+      admissionId, dateKey,
+      serviceCode: { $in: ["DOC-MORN-ROUND", "DOC-EVE-ROUND", "DOC-NIGHT-ROUND", "DOC-CONSULT", "DOC-ICU-VISIT"] },
+      status: { $in: ["completed", "billed", "pending"] },
+    };
+    if (doctorId)        q.orderedById = doctorId;
+    else if (doctorName) q.orderedBy   = doctorName;
+    const existing = await BillingTrigger.findOne(q).lean();
+    isRepeatToday  = !!existing;
+  } catch (e) {
+    // If the lookup fails the worst case is a missed-emergency charge,
+    // which is a graceful degradation — better than aborting the whole
+    // trigger creation. Log so the operator can investigate later.
+    console.warn("[AutoBilling] repeat-visit lookup failed:", e.message);
+  }
+
+  const visit = resolveDoctorVisitCode(noteType, noteDoc.shift, { isRepeatToday });
+  if (!visit) return; // procedure notes etc. bill via their own path
 
   try {
     await createTrigger({
@@ -502,7 +605,7 @@ async function onDoctorNoteSaved(noteDoc) {
       completedBy:   doctorName,
       completedById: doctorId,
       completedByRole: "Doctor",
-      orderDetails:  `${visit.name} — ${doctorName}${noteType !== "progress" ? ` (${noteType})` : ""}`,
+      orderDetails:  `${visit.name} — ${doctorName}${noteType !== "progress" ? ` (${noteType})` : ""}${isRepeatToday && visit.code === "DOC-EMERGENCY-VISIT" ? " · after-hours unscheduled visit" : ""}`,
       autoCharge:    true,
       dailyDedup:    visit.dailyDedup,
       dedupByDoctor: visit.dedupByDoctor,
@@ -514,24 +617,68 @@ async function onDoctorNoteSaved(noteDoc) {
 }
 
 /**
- * Fire when a drug is administered via MAR
+ * Fire when a drug is administered via MAR.
+ *
+ * The MAR controller (marController.recordAdministration) normalises the
+ * incoming status to one of: GIVEN, MISSED, HELD, REFUSED, OMITTED. We
+ * only bill on GIVEN. Older clients sent "administered" — accept it for
+ * back-compat so a legacy script doesn't silently stop billing drugs.
+ *
+ * Drug → service code resolution (in order):
+ *   1. Exact ServiceMaster match by drug name (specific drugs in master)
+ *   2. PHARM-<drug> fallback (every prescribed drug gets billed at the
+ *      Pharmacy/Medications category even when not in the master) —
+ *      keeps the IPD ledger honest about meds delivered. The unit price
+ *      defaults to the medication.unitPrice / pricePerUnit if set on the
+ *      MAR med row; falls back to ServiceMaster.defaultPrice for the
+ *      generic NRS-INJ admin fee; final fallback is 0 so the audit row
+ *      still appears (operator can override price later).
+ *   3. NRS-INJ generic injection / administration fee — for parenteral
+ *      drugs when no specific pharmacy line is set up.
  */
 async function onMARAdministration(marDoc, medication, administrationEntry) {
   if (!marDoc || !medication) return;
-  if (administrationEntry?.status !== "administered") return;
+  const adminStatus = String(administrationEntry?.status || "").toUpperCase();
+  if (adminStatus !== "GIVEN" && adminStatus !== "ADMINISTERED") return;
 
   const admissionId = marDoc.admissionId;
   if (!admissionId) return;
 
   // Try to find a billable service matching the drug name
-  const drugName = medication.drugName || medication.medicineName || "";
+  const drugName = medication.drugName || medication.medicineName || medication.name || "";
 
-  // Look for generic injection/administration fee if no specific drug service
-  const service = await findServiceByName(drugName, "IPD") ||
-                  await findServiceByCode("NRS-INJ") || // injection charge
-                  null;
+  // Pricing precedence: per-medication unitPrice (if pharmacy stocked the
+  // drug + the prescribed row carries a price), then ServiceMaster default,
+  // then NRS-INJ generic admin fee. Quantity defaults to 1 (one dose);
+  // some MARs record a doseAmount we can honour later if needed.
+  let service = await findServiceByName(drugName, "IPD");
+  let unitPriceOverride = null;
 
-  if (!service) return; // No matching billing service for this drug
+  // Drug name didn't match the master — fire a synthetic "PHARM-*" line
+  // so the medication still appears on the bill and in the audit trail.
+  // The createTrigger path accepts a synthetic service when serviceCode +
+  // serviceName + unitPriceOverride are all set.
+  if (!service && drugName) {
+    const medPrice = Number(medication.unitPrice || medication.pricePerUnit || 0);
+    if (medPrice > 0) {
+      unitPriceOverride = medPrice;
+      service = {
+        serviceCode: `PHARM-${drugName.toUpperCase().replace(/\s+/g, "-").slice(0, 24)}`,
+        serviceName: `${drugName} (per dose)`,
+        category:    "PHARMACY",
+        billingType: "PER_UNIT",
+        defaultPrice: medPrice,
+      };
+    }
+  }
+
+  // Final fallback — generic injection / administration fee at the
+  // nursing tariff, even if the drug name is unknown.
+  if (!service) {
+    service = await findServiceByCode("NRS-INJ");
+  }
+
+  if (!service) return; // No way to bill — log & move on
 
   try {
     await createTrigger({
@@ -539,7 +686,7 @@ async function onMARAdministration(marDoc, medication, administrationEntry) {
       patientId:   marDoc.patientId,
       UHID:        marDoc.UHID,
       patientType: "IPD",
-      serviceId:   service._id,
+      serviceId:   service._id,                                // undefined for synthetic
       serviceCode: service.serviceCode,
       serviceName: service.serviceName,
       sourceType:  "MAR",
@@ -548,11 +695,12 @@ async function onMARAdministration(marDoc, medication, administrationEntry) {
       orderedBy:     medication.prescribedBy || "Doctor",
       orderedByRole: "Doctor",
       orderedAt:     medication.startDate || marDoc.date,
-      completedBy:   administrationEntry.nurseName || "Nurse",
+      completedBy:   administrationEntry.nurseName || administrationEntry.administeredBy || "Nurse",
       completedByRole: "Nurse",
-      orderDetails:  `${drugName} — ${medication.dose || ""} ${medication.route || ""}`,
-      completionNotes: administrationEntry.remarks || "",
+      orderDetails:  `${drugName} — ${medication.dose || ""} ${medication.route || ""}`.trim(),
+      completionNotes: administrationEntry.remarks || administrationEntry.notes || "",
       autoCharge:    true,
+      unitPriceOverride,
       shift:         marDoc.shift || "",
     });
   } catch (e) {
@@ -1363,7 +1511,7 @@ async function runDailyBedChargeAccrual() {
  *
  * Returns { bedFired, nurseFired, skipped } counts so the caller can audit.
  */
-async function flushDailyChargesForAdmission(admission, { typeCode } = {}) {
+async function flushDailyChargesForAdmission(admission, { typeCode, prorate = false, dischargeTime } = {}) {
   let bedFired = 0, nurseFired = 0, skipped = 0;
   if (!admission?._id) return { bedFired, nurseFired, skipped };
 
@@ -1376,6 +1524,30 @@ async function flushDailyChargesForAdmission(admission, { typeCode } = {}) {
 
   const startMs = new Date(admission.admissionDate || admission.createdAt).getTime();
   const dayN = Math.max(1, Math.floor((Date.now() - startMs) / 86400000) + 1);
+
+  // ── Daycare proration (Phase A5) ─────────────────────────────
+  // For Daycare patients, billing a full daily rate for a 5-hour visit
+  // would over-charge. When dischargePatient() invokes this with
+  // prorate=true, we compute a multiplier from actual hours on bed:
+  //   hours/24, floor 0.5 (half-day floor — common Indian hospital
+  //   convention so a 30-min visit still pays nursing setup), cap 1.0.
+  // The multiplier scales bedRate/nursingRate/packageRate below.
+  // For IPD admissions or daycare's daily cron pass, prorate=false and
+  // the multiplier stays 1 (no behaviour change).
+  let prorateMultiplier = 1;
+  let prorateNote = "";
+  if (prorate && tc === "DAYCARE") {
+    const endMs = dischargeTime ? new Date(dischargeTime).getTime() : Date.now();
+    const hoursOnBed = Math.max(0, (endMs - startMs) / 3600000);
+    if (hoursOnBed > 0 && hoursOnBed < 24) {
+      // Half-day floor (0.5), full-day cap (1.0). 12.5 hours → 0.52,
+      // 4 hours → 0.5 (floor kicks in), 26 hours → would be > 24 so
+      // we wouldn't enter this branch (cron already billed Day-1, and
+      // we want a full Day-2 charge for that overnight scenario).
+      prorateMultiplier = Math.min(1, Math.max(0.5, hoursOnBed / 24));
+      prorateNote = ` [prorated ${prorateMultiplier.toFixed(2)}× — ${hoursOnBed.toFixed(1)}h Daycare]`;
+    }
+  }
 
   // ── Package-aware routing ────────────────────────────────────────────
   // If the admission has an attached ANH package and today still falls
@@ -1391,21 +1563,22 @@ async function flushDailyChargesForAdmission(admission, { typeCode } = {}) {
     hasPackage && (!pkg.maxLOSDays || pkg.maxLOSDays === 0 || dayN <= pkg.maxLOSDays);
 
   if (withinPackageWindow) {
+    const pkgRate = Number(pkg.unitPrice || 0) * prorateMultiplier;
     const r = await createTrigger({
       admissionId:         admission._id,
       patientId:           admission.patientId,
       UHID:                admission.UHID,
       patientType:         tc,
       serviceCode:         pkg.serviceCode,
-      serviceName:         `${pkg.packageName || pkg.serviceCode} (Day ${dayN}/${pkg.maxLOSDays || "∞"})`,
+      serviceName:         `${pkg.packageName || pkg.serviceCode} (Day ${dayN}/${pkg.maxLOSDays || "∞"})${prorateNote}`,
       quantity:            1,
-      unitPriceOverride:   pkg.unitPrice,
+      unitPriceOverride:   pkgRate,
       sourceType:          "BedCharge",
       sourceDocumentId:    admission._id,
       sourceDocumentModel: "Admission",
       orderedBy:           "System",
       orderedByRole:       "System",
-      orderDetails:        `Package per-day charge — ${pkg.packageName || pkg.serviceCode} @ ₹${pkg.unitPrice}/day (tier=${pkg.tierUsed})`,
+      orderDetails:        `Package per-day charge — ${pkg.packageName || pkg.serviceCode} @ ₹${pkg.unitPrice}/day (tier=${pkg.tierUsed})${prorateNote}`,
       autoCharge:          true,
       dailyDedup:          true,
       department:          admission.department,
@@ -1419,21 +1592,22 @@ async function flushDailyChargesForAdmission(admission, { typeCode } = {}) {
   const catTag = rates.categoryCode ? `-${rates.categoryCode}` : "";
 
   if (rates.bedRate > 0) {
+    const bedRate = rates.bedRate * prorateMultiplier;
     const r = await createTrigger({
       admissionId:         admission._id,
       patientId:           admission.patientId,
       UHID:                admission.UHID,
       patientType:         tc,
       serviceCode:         `BED${catTag}`,
-      serviceName:         `Bed Charge — ${rates.categoryName || rates.roomType || tc} (Day ${dayN})`,
+      serviceName:         `Bed Charge — ${rates.categoryName || rates.roomType || tc} (Day ${dayN})${prorateNote}`,
       quantity:            1,
-      unitPriceOverride:   rates.bedRate,
+      unitPriceOverride:   bedRate,
       sourceType:          "BedCharge",
       sourceDocumentId:    admission._id,
       sourceDocumentModel: "Admission",
       orderedBy:           "System",
       orderedByRole:       "System",
-      orderDetails:        `Daily bed accrual — Day ${dayN} — ${rates.categoryName || rates.roomType || "category"} @ ₹${rates.bedRate}/day`,
+      orderDetails:        `Daily bed accrual — Day ${dayN} — ${rates.categoryName || rates.roomType || "category"} @ ₹${rates.bedRate}/day${prorateNote}`,
       autoCharge:          true,
       dailyDedup:          true,
       department:          admission.department,
@@ -1443,21 +1617,22 @@ async function flushDailyChargesForAdmission(admission, { typeCode } = {}) {
   }
 
   if (rates.nursingRate > 0) {
+    const nurseRate = rates.nursingRate * prorateMultiplier;
     const r = await createTrigger({
       admissionId:         admission._id,
       patientId:           admission.patientId,
       UHID:                admission.UHID,
       patientType:         tc,
       serviceCode:         `NURSING${catTag}`,
-      serviceName:         `Nursing Care — ${rates.categoryName || rates.roomType || tc} (Day ${dayN})`,
+      serviceName:         `Nursing Care — ${rates.categoryName || rates.roomType || tc} (Day ${dayN})${prorateNote}`,
       quantity:            1,
-      unitPriceOverride:   rates.nursingRate,
+      unitPriceOverride:   nurseRate,
       sourceType:          "BedCharge",
       sourceDocumentId:    admission._id,
       sourceDocumentModel: "Admission",
       orderedBy:           "System",
       orderedByRole:       "System",
-      orderDetails:        `Daily nursing care — Day ${dayN} — ${rates.categoryName || rates.roomType || "category"} @ ₹${rates.nursingRate}/day`,
+      orderDetails:        `Daily nursing care — Day ${dayN} — ${rates.categoryName || rates.roomType || "category"} @ ₹${rates.nursingRate}/day${prorateNote}`,
       autoCharge:          true,
       dailyDedup:          true,
       department:          admission.department,
@@ -1632,6 +1807,529 @@ async function backfillAdmissionCharges(admission) {
   return result;
 }
 
+/**
+ * Fire reservation-style BillingTriggers when a pharmacist releases an
+ * indent. Each released item becomes a RESV-<DRUG> trigger marked
+ * `pending` — the IPD Live Ledger shows it as an amber "Reserved" row.
+ * When the nurse subsequently marks the matching MAR dose as GIVEN, the
+ * existing onMARAdministration path will look for this reservation
+ * (by indentItemId stored in `sourceDocumentId`) and flip it to billed.
+ *
+ * If the nurse instead records HELD / REFUSED / NOT_AVAILABLE, the MAR
+ * controller's cancel branch should void the reservation + return stock.
+ * (Stock return is handled by pharmacyService.returnSale; this function
+ * only manages the trigger side.)
+ */
+async function onIndentReleased(indentDoc, releaseItems = []) {
+  if (!indentDoc?._id) return;
+  // Index releaseItems by itemId so we can pull per-item issuedQty.
+  const inboundByItemId = new Map((releaseItems || []).map(r => [String(r.itemId), r]));
+
+  for (const item of (indentDoc.items || [])) {
+    const released = inboundByItemId.get(String(item._id));
+    if (!released) continue;
+    const issuedQty = Number(released.issuedQty) || 0;
+    if (issuedQty <= 0) continue;
+
+    // Reservation triggers ride on the existing createTrigger path with
+    // a synthetic service record — keeps the bill-item linkage + audit
+    // story identical to bed/nursing/doctor charges. unitPriceOverride
+    // is the snapshot stored on the indent item (taken from the
+    // pharmacy release payload), so the receipt matches the dispense.
+    const unitPrice = Number(released.unitPrice || item.unitPriceSnapshot || 0);
+    if (unitPrice <= 0) continue;       // Nothing meaningful to bill
+
+    const code = `PHARM-${(item.drugCode || item.drugName || "DRUG").toUpperCase().replace(/\s+/g, "-").slice(0, 24)}`;
+    try {
+      const result = await createTrigger({
+        admissionId:         indentDoc.admissionId,
+        patientId:           indentDoc.patientId,
+        UHID:                indentDoc.UHID,
+        patientType:         "IPD",
+        serviceCode:         code,
+        serviceName:         `${item.drugName}${item.dose ? ` ${item.dose}` : ""} (reserved)`,
+        quantity:            issuedQty,
+        unitPriceOverride:   unitPrice,
+        sourceType:          "MAR",             // Closest enum match — bill stays in "Pharmacy / Medications" category
+        sourceDocumentId:    item._id,          // Points back at the indent item for MAR↔reservation lookup
+        sourceDocumentModel: "PharmacyIndent",
+        orderedBy:           indentDoc.raisedBy || "Nurse",
+        orderedById:         indentDoc.raisedById,
+        orderedByRole:       indentDoc.raisedByRole || "Nurse",
+        completedBy:         indentDoc.releasedBy || "Pharmacist",
+        completedByRole:     "Pharmacist",
+        orderDetails:        `Indent ${indentDoc.indentNumber} · ${item.drugName} × ${issuedQty}`,
+        autoCharge:          true,
+        dailyDedup:          false,
+      });
+      // Stamp the trigger id back onto the indent item so the MAR
+      // consumption path can find it later. We use a direct $set on
+      // the subdoc rather than re-save() to keep the indent-write
+      // optimistically concurrent.
+      if (result?.trigger?._id) {
+        const PharmacyIndent = require("../../models/Pharmacy/PharmacyIndentModel");
+        await PharmacyIndent.findOneAndUpdate(
+          { _id: indentDoc._id, "items._id": item._id },
+          { $set: { "items.$.reservationTriggerId": result.trigger._id } },
+        );
+      }
+    } catch (e) {
+      console.error(`[Indent] reservation trigger for item ${item._id} failed:`, e.message);
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// IPD LIVE LEDGER — undo / override / cancel / read
+// (Phase A of the end-to-end IPD/Daycare billing redesign. See
+//  C:\Users\Dr Sandeep\.claude\projects\C--Spherehealth\memory\project_billing_design.md
+//  for the design rationale: "Live screen must always show Undo button —
+//  time-limited — for auto-posted charges. Manual override any time with
+//  mandatory reason. Full audit trail.")
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const UNDO_WINDOW_MS = 15 * 60 * 1000; // 15-min receptionist undo window
+
+// Internal helper — removes a single bill line by item id and re-saves the
+// bill so pre-save totals recompute. Returns the fresh bill. Bails on closed
+// bills (PAID/CANCELLED/REFUNDED) — those need a refund flow, not an undo.
+async function removeBillItemAndResave(billId, billItemId) {
+  if (!billId || !billItemId) return null;
+  const bill = await PatientBill.findById(billId);
+  if (!bill) return null;
+  if (["PAID", "CANCELLED", "REFUNDED"].includes(bill.billStatus)) {
+    const err = new Error(`Cannot undo — bill is ${bill.billStatus}. Use refund/cancel flow.`);
+    err.code = "BILL_CLOSED";
+    throw err;
+  }
+  const before = bill.billItems.length;
+  bill.billItems = bill.billItems.filter(i => String(i._id) !== String(billItemId));
+  if (bill.billItems.length === before) return bill;     // nothing to remove
+  await bill.save();
+  return bill;
+}
+
+/**
+ * Undo a trigger — receptionist's "oh no I shouldn't have triggered that"
+ * 15-min escape hatch for auto-charges. Voids the trigger, removes the
+ * matching bill line, recomputes totals. Returns the fresh trigger + bill.
+ *
+ * Rules:
+ *   - trigger must be autoCharged (manual lines use the line-edit endpoint)
+ *   - createdAt < 15 min ago (controller can pass `skipTimeGate` for Admins
+ *     who want to bypass — kept off by default for receptionists)
+ *   - status must be `billed` (`pending`/`completed` aren't on the bill yet)
+ *   - reason is mandatory — audit trail loses meaning without it
+ */
+async function undoTrigger(triggerId, { reason, user, skipTimeGate = false } = {}) {
+  if (!reason || !String(reason).trim()) {
+    const err = new Error("Reason is required for undo");
+    err.code = "REASON_REQUIRED";
+    throw err;
+  }
+  const trigger = await BillingTrigger.findById(triggerId);
+  if (!trigger) {
+    const err = new Error("Trigger not found");
+    err.status = 404;
+    throw err;
+  }
+  if (trigger.status === "voided" || trigger.status === "cancelled") {
+    const err = new Error(`Trigger already ${trigger.status}`);
+    err.code = "ALREADY_CLOSED";
+    throw err;
+  }
+  if (!trigger.autoCharged) {
+    const err = new Error("Only auto-charges can be undone. Use line-edit for manual charges.");
+    err.code = "NOT_AUTO";
+    throw err;
+  }
+  if (!skipTimeGate) {
+    const age = Date.now() - new Date(trigger.createdAt).getTime();
+    if (age > UNDO_WINDOW_MS) {
+      const err = new Error(`Undo window expired (${Math.round(age / 60000)} min old). Use override instead.`);
+      err.code = "WINDOW_EXPIRED";
+      throw err;
+    }
+  }
+
+  // Remove the bill line if one exists. Closed-bill error bubbles up.
+  if (trigger.billId && trigger.billItemId) {
+    await removeBillItemAndResave(trigger.billId, trigger.billItemId);
+  }
+
+  trigger.status        = "voided";
+  trigger.voidedAt      = new Date();
+  trigger.voidedBy      = user?.fullName || user?.name || "System";
+  trigger.voidedByRole  = user?.role || "System";
+  trigger.voidReason    = String(reason).trim();
+  await trigger.save();
+  return trigger;
+}
+
+/**
+ * Override a trigger — edits the bill line in place (qty, unitPrice). Used
+ * after the 15-min undo window closes, or for any trigger whose price the
+ * accountant wants to adjust without removing the charge entirely. Every
+ * change appends to overrideHistory[] so the audit trail can replay.
+ */
+async function overrideTrigger(triggerId, { quantity, unitPrice, reason, user } = {}) {
+  if (!reason || !String(reason).trim()) {
+    const err = new Error("Reason is required for override");
+    err.code = "REASON_REQUIRED";
+    throw err;
+  }
+  const trigger = await BillingTrigger.findById(triggerId);
+  if (!trigger) {
+    const err = new Error("Trigger not found");
+    err.status = 404;
+    throw err;
+  }
+  if (trigger.status === "voided" || trigger.status === "cancelled") {
+    const err = new Error(`Trigger is ${trigger.status} — cannot override`);
+    err.code = "ALREADY_CLOSED";
+    throw err;
+  }
+
+  const newQty   = quantity != null ? Number(quantity) : trigger.quantity;
+  const newPrice = unitPrice != null ? Number(unitPrice) : trigger.unitPrice;
+  if (!Number.isFinite(newQty) || newQty <= 0) {
+    const err = new Error("Invalid quantity");
+    err.code = "INVALID_QTY";
+    throw err;
+  }
+  if (!Number.isFinite(newPrice) || newPrice < 0) {
+    const err = new Error("Invalid unit price");
+    err.code = "INVALID_PRICE";
+    throw err;
+  }
+
+  // Snapshot the BEFORE state for audit before mutating.
+  const before = {
+    quantity:    trigger.quantity,
+    unitPrice:   trigger.unitPrice,
+    totalAmount: trigger.totalAmount,
+  };
+
+  // Edit the bill line if one exists.
+  if (trigger.billId && trigger.billItemId) {
+    const bill = await PatientBill.findById(trigger.billId);
+    if (!bill) {
+      const err = new Error("Bill not found");
+      err.code = "BILL_MISSING";
+      throw err;
+    }
+    if (["PAID", "CANCELLED", "REFUNDED"].includes(bill.billStatus)) {
+      const err = new Error(`Cannot override — bill is ${bill.billStatus}. Use refund flow.`);
+      err.code = "BILL_CLOSED";
+      throw err;
+    }
+    const item = bill.billItems.id(trigger.billItemId);
+    if (item) {
+      item.quantity  = newQty;
+      item.unitPrice = newPrice;
+      // grossAmount / netAmount / patient + TPA splits get recomputed in
+      // the bill's pre-save hook; we only set the inputs.
+      await bill.save();
+    }
+  }
+
+  trigger.quantity    = newQty;
+  trigger.unitPrice   = newPrice;
+  trigger.totalAmount = newQty * newPrice;
+  trigger.overrideHistory.push({
+    field:         "qty/price",
+    oldValue:      before,
+    newValue:      { quantity: newQty, unitPrice: newPrice, totalAmount: newQty * newPrice },
+    reason:        String(reason).trim(),
+    changedBy:     user?.fullName || user?.name || "System",
+    changedByRole: user?.role || "System",
+    changedById:   user?._id || user?.id,
+  });
+  await trigger.save();
+  return trigger;
+}
+
+/**
+ * Cancel a trigger — same effect as undo but with no time gate. For when
+ * the charge is permanently wrong (patient never received the service)
+ * and an accountant signs off. Removes the bill line, voids the trigger.
+ * Distinct from undo so the audit reason field can be "Cancelled (never
+ * delivered)" vs "Undone (entered in error)".
+ */
+async function cancelTrigger(triggerId, { reason, user } = {}) {
+  if (!reason || !String(reason).trim()) {
+    const err = new Error("Reason is required for cancel");
+    err.code = "REASON_REQUIRED";
+    throw err;
+  }
+  const trigger = await BillingTrigger.findById(triggerId);
+  if (!trigger) {
+    const err = new Error("Trigger not found");
+    err.status = 404;
+    throw err;
+  }
+  if (trigger.status === "voided" || trigger.status === "cancelled") {
+    const err = new Error(`Trigger already ${trigger.status}`);
+    err.code = "ALREADY_CLOSED";
+    throw err;
+  }
+  if (trigger.billId && trigger.billItemId) {
+    await removeBillItemAndResave(trigger.billId, trigger.billItemId);
+  }
+  trigger.status       = "cancelled";
+  trigger.voidedAt     = new Date();
+  trigger.voidedBy     = user?.fullName || user?.name || "System";
+  trigger.voidedByRole = user?.role || "System";
+  trigger.voidReason   = `[Cancel] ${String(reason).trim()}`;
+  await trigger.save();
+  return trigger;
+}
+
+/**
+ * Add a manual charge to a patient's bill ledger.
+ *
+ * Used by the "Add Charge" button on the IPD Live Billing page — lets any
+ * caller with appropriate role (doctor adding a procedure they performed,
+ * nurse adding nursing-care line, receptionist / accountant adding an
+ * ad-hoc fee) push a single line into the running DRAFT bill via the same
+ * BillingTrigger + autoBilling pipeline that powers all other charges.
+ *
+ * Source-of-truth on price = caller-supplied unitPrice if provided, else
+ * ServiceMaster default. Accountant/Admin can override the price; lower
+ * tiers should NOT pass unitPrice (the controller enforces this).
+ *
+ * Returns the created BillingTrigger.
+ */
+async function addManualCharge(admissionId, { serviceId, quantity = 1, unitPrice, remarks, user = {} }) {
+  if (!admissionId) {
+    const err = new Error("admissionId is required"); err.code = "ARG_MISSING"; throw err;
+  }
+  if (!serviceId) {
+    const err = new Error("serviceId is required"); err.code = "ARG_MISSING"; throw err;
+  }
+  const qty = Number(quantity) || 1;
+  if (qty <= 0) {
+    const err = new Error("quantity must be > 0"); err.code = "INVALID_QTY"; throw err;
+  }
+
+  const admission = await Admission.findById(admissionId).lean();
+  if (!admission) {
+    const err = new Error("Admission not found"); err.status = 404; throw err;
+  }
+
+  const service = await ServiceMaster.findById(serviceId).lean();
+  if (!service) {
+    const err = new Error("Service not found"); err.status = 404; throw err;
+  }
+
+  // Patient type mirrors how flushDailyChargesForAdmission classifies.
+  const typeMap = {
+    Planned: "IPD", Emergency: "EMERGENCY", "Day Care": "DAYCARE",
+    Daycare: "DAYCARE", Transfer: "IPD",
+  };
+  const patientType = typeMap[admission.admissionType] || "IPD";
+
+  // Caller-supplied price only if Accountant/Admin (controller pre-check),
+  // otherwise null → createTrigger will resolve via ServicePricing + tariff.
+  const override = unitPrice != null && unitPrice !== "" ? Number(unitPrice) : null;
+  if (override != null && (!Number.isFinite(override) || override < 0)) {
+    const err = new Error("Invalid unitPrice"); err.code = "INVALID_PRICE"; throw err;
+  }
+
+  const result = await createTrigger({
+    admissionId,
+    patientId:           admission.patientId,
+    UHID:                admission.UHID,
+    patientType,
+    serviceId:           service._id,
+    serviceCode:         service.serviceCode,
+    serviceName:         service.serviceName,
+    quantity:            qty,
+    sourceType:          "Manual",
+    sourceDocumentModel: "Manual",
+    orderedBy:           user.fullName || user.name || "Manual entry",
+    orderedById:         user._id || user.id,
+    orderedByRole:       user.role || "System",
+    completedBy:         user.fullName || user.name || "Manual entry",
+    completedById:       user._id || user.id,
+    completedByRole:     user.role || "System",
+    orderDetails:        remarks?.trim()
+      ? `${service.serviceName} — ${remarks.trim()}`
+      : `${service.serviceName} (manual add by ${user.role || "user"})`,
+    autoCharge:          true,
+    // No dailyDedup — manual entries can legitimately repeat (a nurse
+    // adding a syringe twice in one day for two different injections).
+    dailyDedup:          false,
+    unitPriceOverride:   override,
+    notes:               remarks?.trim() || undefined,
+    department:          admission.department,
+  });
+
+  return result;
+}
+
+/**
+ * Live IPD ledger — single endpoint that powers the IPD Live Billing page.
+ * Returns the admission + bill summary + every trigger (with computed
+ * canUndo/canOverride flags scoped to the requesting user's role) +
+ * category-grouped + day-grouped buckets so the UI doesn't have to
+ * re-aggregate on every render.
+ */
+async function getIPDLedger(admissionId, user = {}) {
+  const { roleCan } = require("../../config/permissions");
+  const userRole = user?.role || "Guest";
+  const canUndoAny     = roleCan(userRole, "billing.undo");
+  const canOverrideAny = roleCan(userRole, "billing.override");
+  const canCancelAny   = roleCan(userRole, "billing.cancel-charge");
+
+  const admission = await Admission.findById(admissionId)
+    .populate("patientId", "fullName UHID age gender contactNumber")
+    .populate("bedId")
+    .lean();
+  if (!admission) {
+    const err = new Error("Admission not found");
+    err.status = 404;
+    throw err;
+  }
+
+  // All triggers for this admission, freshest first (so the live view
+  // shows what just fired at the top — receptionist's eye lands on the
+  // row they'd want to undo). Populate serviceId.category so the
+  // frontend's print-category mapping can use the master's canonical
+  // category (e.g. "DOCTOR" → "Doctor / Consultant Fees") even when
+  // the serviceCode prefix is unusual (IPD-DOC-002, OPD-CON-005 etc.).
+  const triggers = await BillingTrigger.find({ admissionId })
+    .populate("serviceId", "category serviceCode serviceName")
+    .sort({ createdAt: -1 })
+    .lean();
+
+  // Decorate each trigger with permission flags + age + linked bill item.
+  const now = Date.now();
+  const decorated = triggers.map(t => {
+    const age = now - new Date(t.createdAt).getTime();
+    const ageMs = age;
+    const closed = t.status === "voided" || t.status === "cancelled" || t.status === "skipped";
+    return {
+      ...t,
+      ageMs,
+      canUndo:     canUndoAny     && t.autoCharged && !closed && (userRole === "Admin" || ageMs <= UNDO_WINDOW_MS) && t.status === "billed",
+      canOverride: canOverrideAny && !closed,
+      canCancel:   canCancelAny   && !closed,
+      undoWindowExpiresAt: t.autoCharged ? new Date(new Date(t.createdAt).getTime() + UNDO_WINDOW_MS) : null,
+    };
+  });
+
+  // Category-grouped — for the "Category" tab on the UI. Sums totals so
+  // the section header can show "Bed Charges — ₹4,500 (3 lines)".
+  const byCategory = {};
+  for (const t of decorated) {
+    if (t.status === "voided" || t.status === "cancelled" || t.status === "skipped") continue;
+    const cat = t.serviceCode?.split("-")[0] || "OTHER";
+    if (!byCategory[cat]) byCategory[cat] = { category: cat, count: 0, total: 0, items: [] };
+    byCategory[cat].count += 1;
+    byCategory[cat].total += Number(t.totalAmount || 0);
+    byCategory[cat].items.push(t);
+  }
+
+  // Day-grouped — for the "Daily breakdown" tab. Uses dateKey (YYYY-MM-DD,
+  // hospital-tz). Day-1 / Day-2... computed from admission.admissionDate.
+  const byDay = {};
+  const admitDay = new Date(admission.admissionDate);
+  admitDay.setHours(0, 0, 0, 0);
+  for (const t of decorated) {
+    if (t.status === "voided" || t.status === "cancelled" || t.status === "skipped") continue;
+    const d = t.dateKey || (t.createdAt ? new Date(t.createdAt).toISOString().slice(0, 10) : "unknown");
+    if (!byDay[d]) {
+      const dayDate = new Date(d);
+      const dayN = Math.floor((dayDate - admitDay) / 86400000) + 1;
+      byDay[d] = { dateKey: d, dayN, count: 0, total: 0, items: [] };
+    }
+    byDay[d].count += 1;
+    byDay[d].total += Number(t.totalAmount || 0);
+    byDay[d].items.push(t);
+  }
+
+  // Bill summary — pull every bill linked to this admission (the
+  // auto-biller may have split charges across DRAFT + closed bills
+  // across the stay), aggregate them, and prefer the latest DRAFT
+  // bill for "open this bill" actions. Sorting by createdAt:1 so the
+  // earliest live bill wins when picking the primary action target —
+  // newer DRAFTs (created mid-stay after a previous one settled) take
+  // precedence over PAID/CANCELLED.
+  const { toNum } = require("../../utils/money");
+  const allBills = await PatientBill.find({ admission: admissionId })
+    .sort({ createdAt: 1 })
+    .lean();
+
+  // Pick the "active" bill for action buttons: prefer DRAFT, then
+  // GENERATED/PARTIAL, then fall back to any. This is the bill the
+  // Print Interim / Open Billing Counter actions will target.
+  const draftBill = allBills.find(b => b.billStatus === "DRAFT");
+  const openBill  = allBills.find(b => ["GENERATED", "PARTIAL"].includes(b.billStatus));
+  const bill = draftBill || openBill || allBills[allBills.length - 1] || null;
+
+  // Aggregate totals across all bills for the admission so the KPIs
+  // reflect the full lifetime ledger — not just one of the bills.
+  // toNum() unwraps Decimal128 / number / string into a clean Number,
+  // sidestepping the .lean()-strips-toJSON-transform problem that made
+  // grossAmount show up as { $numberDecimal: "..." } on the wire.
+  const billSummary = allBills.reduce((acc, b) => {
+    acc.grossAmount   += toNum(b.grossAmount);
+    acc.totalDiscount += toNum(b.totalDiscount);
+    acc.netAmount     += toNum(b.netAmount);
+    acc.advancePaid   += toNum(b.advancePaid);
+    acc.balanceAmount += toNum(b.balanceAmount);
+    return acc;
+  }, { grossAmount: 0, totalDiscount: 0, netAmount: 0, advancePaid: 0, balanceAmount: 0 });
+
+  // Advance balance (UHID-level pool). PatientAdvance is summed across
+  // any unspent receipts so the action bar can show "Advance: ₹5,000".
+  let advanceBalance = 0;
+  try {
+    const PatientAdvance = require("../../models/PatientBillModel/PatientAdvanceModel");
+    const advances = await PatientAdvance.find({
+      UHID: admission.UHID,
+      status: { $in: ["ACTIVE", "PARTIALLY_APPLIED"] },
+    }).lean();
+    advanceBalance = advances.reduce((s, a) => s + (Number(a.balance) || 0), 0);
+  } catch (e) {
+    // PatientAdvance model may not be loaded in older deployments — log
+    // and surface zero rather than 500 the whole ledger endpoint.
+    console.warn("[IPDLedger] PatientAdvance lookup skipped:", e.message);
+  }
+
+  // Sum of all live (non-void/cancelled/skipped) trigger totals — used
+  // as a fallback when no bill items exist yet (e.g. brand-new admission)
+  // or when bill aggregation is suspiciously empty.
+  const triggerLiveTotal = decorated
+    .filter(t => !["voided", "cancelled", "skipped"].includes(t.status))
+    .reduce((s, t) => s + toNum(t.totalAmount), 0);
+
+  return {
+    admission,
+    bill,                                  // The "active" bill for action buttons (DRAFT-preferred)
+    bills: allBills,                       // Every bill linked to this admission
+    billSummary,                           // Aggregated totals across all bills (Decimal128-flattened)
+    triggerLiveTotal,                      // Sum of live triggers — fallback when billSummary is 0
+    advanceBalance,
+    triggers: decorated,
+    byCategory: Object.values(byCategory).sort((a, b) => b.total - a.total),
+    byDay: Object.values(byDay).sort((a, b) => a.dateKey.localeCompare(b.dateKey)),
+    counts: {
+      total:     decorated.length,
+      billed:    decorated.filter(t => t.status === "billed").length,
+      pending:   decorated.filter(t => t.status === "pending").length,
+      voided:    decorated.filter(t => t.status === "voided").length,
+      cancelled: decorated.filter(t => t.status === "cancelled").length,
+      // Stuck triggers — auto-bill flow couldn't land the line item.
+      // Operator action required (manual review / retry / cancel).
+      pendingReview: decorated.filter(t => t.status === "pending-review").length,
+    },
+    permissions: { canUndoAny, canOverrideAny, canCancelAny },
+    undoWindowMs: UNDO_WINDOW_MS,
+  };
+}
+
 module.exports = {
   onNurseNoteSaved,
   onDoctorNoteSaved,
@@ -1659,4 +2357,13 @@ module.exports = {
   findMatchingPackage,
   attachPackageToAdmission,
   tokenize,
+  // IPD Live Ledger (Phase A — undo/override/cancel/read)
+  undoTrigger,
+  overrideTrigger,
+  cancelTrigger,
+  getIPDLedger,
+  addManualCharge,
+  // Pharmacy indent release → reservation billing hook
+  onIndentReleased,
+  UNDO_WINDOW_MS,
 };

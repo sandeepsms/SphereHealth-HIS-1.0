@@ -501,7 +501,7 @@ function QuickActions() {
     { icon: "pi-sitemap",    label: "Departments",        sub: "Hospital departments + services",  color: C.orange, to: "/department" },
     { icon: "pi-user-edit",  label: "Doctor Master",      sub: "Consultants, specialisations",     color: C.purple, to: "/doctors" },
     { icon: "pi-dollar",     label: "Hospital Charges",   sub: "TPA tariff sheets",                color: C.amber,  to: "/hospital-charges" },
-    { icon: "pi-chart-bar",  label: "Reports",            sub: "Operational + financial",          color: C.green,  to: "/billing-intelligence" },
+    { icon: "pi-chart-bar",  label: "Reports",            sub: "Operational + financial",          color: C.green,  to: "/billing-audit-trail" },
     { icon: "pi-print",      label: "Print Gallery",      sub: "Preview every printable",          color: C.pink,   to: "/print-gallery" },
   ];
   return (

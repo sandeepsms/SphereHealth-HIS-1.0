@@ -67,9 +67,10 @@ export const API_ENDPOINTS = {
   BILLING: `${API_BASE_URL}/billing`,
   // Bills, payments, TPA claims
   INVESTIGATIONS: `${API_BASE_URL}/investigations`, // Investigation master
-  // ── AI Billing Intelligence ───────────────────────────────────
-  BILLING_AI_SUGGEST:     `${API_BASE_URL}/billing/ai-suggest`,
-  BILLING_AI_CONFIRM:     `${API_BASE_URL}/billing/ai-confirm`,
+  // AI Billing Intelligence endpoints (BILLING_AI_SUGGEST /
+  // BILLING_AI_CONFIRM) were removed along with BillingIntelligencePage.
+  // The receptionist now handles billing entirely through the Billing
+  // Counter page; AI-suggested charges are no longer auto-applied.
   BILLING_NURSE_SERVICES: `${API_BASE_URL}/billing/nurse-services`,
   // ── Billing Audit Trail ───────────────────────────────────────
   BILLING_AUDIT_TRAIL:    `${API_BASE_URL}/billing/audit-trail`,

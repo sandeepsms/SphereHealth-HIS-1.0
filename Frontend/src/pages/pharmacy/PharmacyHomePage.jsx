@@ -18,6 +18,7 @@ import { useAuth } from "../../context/AuthContext";
 import TEMPLATES from "../../Components/print/printables/PharmacyBillTemplates";
 import PharmacyBill from "../../Components/print/printables/PharmacyBill";
 import PharmacyRegister, { REGISTER_HEADERS } from "../../Components/print/printables/PharmacyRegister";
+import PharmacyIndentsPage from "./PharmacyIndentsPage";
 import {
   listDrugs, createDrug, updateDrug, deleteDrug,
   listSuppliers, createSupplier, updateSupplier, deleteSupplier,
@@ -93,12 +94,18 @@ const C = {
   slate: "#475569",
 };
 
-const TABS = [
+// Static tab skeleton — the Live Indents tab gets its `badge` + `badgeTone`
+// computed at render time from a poll of the open-indents queue (see
+// useLiveIndentStats below). Lives inside the Pharmacy tab strip (rather
+// than the sidebar) so the pharmacist sees it next to Dispense + Sales —
+// their primary surface.
+const BASE_TABS = [
   { key: "dashboard", label: "Dashboard",  icon: "pi-th-large" },
   { key: "drugs",     label: "Drug Master",icon: "pi-list" },
   { key: "inventory", label: "Inventory",  icon: "pi-box" },
   { key: "grn",       label: "Goods Receipt", icon: "pi-download" },
   { key: "dispense",  label: "Dispense",   icon: "pi-shopping-cart" },
+  { key: "indents",   label: "Live Indents", icon: "pi-inbox" }, // badge + tone wired dynamically
   { key: "sales",     label: "Sales Register", icon: "pi-receipt" },
   { key: "registers", label: "Registers",  icon: "pi-book" },
   { key: "suppliers", label: "Suppliers",  icon: "pi-truck" },
@@ -109,8 +116,75 @@ const fmtINR = (n) => `₹${Number(n || 0).toLocaleString("en-IN", { maximumFrac
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 const daysUntil = (d) => d ? Math.floor((new Date(d).getTime() - Date.now()) / 86400000) : null;
 
+/* ─── Live Indents poll ──────────────────────────────────────────────────
+   Drives the Live Indents tab's badge text + tone. Polled at 15 s — slower
+   than PharmacyIndentsPage's own 10 s queue refresh because we only need
+   counts here, not row-level freshness.
+
+   Tone matrix:
+     • STAT count > 0           → "urgent" (red + soft pulse, label = STAT count)
+     • Urgent count > 0 (no STAT) → "warn"   (amber, label = open count)
+     • Open count > 0            → "normal" (blue, label = open count)
+     • No open indents           → "idle"   (green, label = "LIVE" — always shown)
+
+   The pill is ALWAYS rendered (idle is green and calm, not absent) so the
+   pharmacist always knows the queue is being watched, per the user spec
+   "always resonant, different colour code per situation". */
+function useLiveIndentStats(pollMs = 15000) {
+  const [stats, setStats] = useState({ open: 0, stat: 0, urgent: 0 });
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchStats = async () => {
+      try {
+        const { data } = await axios.get(`${API_ENDPOINTS.BASE}/indents?openOnly=true`);
+        const list = Array.isArray(data?.data) ? data.data : [];
+        if (cancelled) return;
+        const stat    = list.filter(i => i.urgency === "STAT").length;
+        const urgent  = list.filter(i => i.urgency === "Urgent").length;
+        setStats({ open: list.length, stat, urgent });
+      } catch (_) {
+        // Non-fatal — keep the last-known counts. The dedicated
+        // PharmacyIndentsPage will surface its own error toast if needed.
+      }
+    };
+    fetchStats();
+    const id = setInterval(fetchStats, pollMs);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [pollMs]);
+
+  return stats;
+}
+
+// Pure helper: given the indent stats, decide badge label + tone for the
+// Live Indents tab. Exported-style helper so the matrix is easy to test +
+// adjust without touching the polling logic.
+function indentBadgeFor(stats) {
+  if (!stats || (stats.open === 0 && stats.stat === 0 && stats.urgent === 0)) {
+    return { badge: "LIVE", badgeTone: "idle" };           // green — all clear
+  }
+  if (stats.stat > 0) {
+    return { badge: String(stats.stat), badgeTone: "urgent" }; // red + pulse
+  }
+  if (stats.urgent > 0) {
+    return { badge: String(stats.open), badgeTone: "warn" };   // amber
+  }
+  return { badge: String(stats.open), badgeTone: "normal" };   // blue
+}
+
 export default function PharmacyHomePage() {
   const [tab, setTab] = useState("dashboard");
+
+  // Poll open indents and recompute the Live Indents tab badge/tone every
+  // render. useMemo keeps the array reference stable when counts haven't
+  // changed so TabStrip doesn't re-mount its buttons unnecessarily.
+  const indentStats = useLiveIndentStats();
+  const tabs = useMemo(() => {
+    const { badge, badgeTone } = indentBadgeFor(indentStats);
+    return BASE_TABS.map(t =>
+      t.key === "indents" ? { ...t, badge, badgeTone } : t
+    );
+  }, [indentStats]);
 
   return (
     <div style={{ minHeight: "100vh", background: C.bg, padding: 20, fontFamily: "'DM Sans', sans-serif" }}>
@@ -138,8 +212,10 @@ export default function PharmacyHomePage() {
           </div>
         </div>
 
-        {/* Tab strip — shared admin TabStrip for design consistency */}
-        <TabStrip tabs={TABS} value={tab} onChange={setTab} accent={C.orange} accentL={C.orangeL} />
+        {/* Tab strip — shared admin TabStrip for design consistency.
+            The Live Indents tab carries a dynamic badge + tone so the
+            pharmacist can spot STAT/urgent work from any other tab. */}
+        <TabStrip tabs={tabs} value={tab} onChange={setTab} accent={C.orange} accentL={C.orangeL} />
 
         {/* Tab body */}
         {tab === "dashboard" && <DashboardTab />}
@@ -147,6 +223,7 @@ export default function PharmacyHomePage() {
         {tab === "inventory" && <InventoryTab />}
         {tab === "grn"       && <GRNTab />}
         {tab === "dispense"  && <DispenseTab />}
+        {tab === "indents"   && <PharmacyIndentsPage embedded />}
         {tab === "sales"     && <SalesTab />}
         {tab === "registers" && <RegistersTab />}
         {tab === "suppliers" && <SuppliersTab />}

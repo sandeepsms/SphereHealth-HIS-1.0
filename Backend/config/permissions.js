@@ -74,6 +74,15 @@ const ACTIONS = {
 
   // Pharmacy
   "pharmacy.dispense":     ["Admin", "Pharmacist"],
+  // ── Pharmacy indent workflow ──────────────────────────────────
+  //   raise   = nurse/doctor creates an indent for an admitted patient
+  //   read    = anyone in the loop (nurse sees own, pharmacist sees queue)
+  //   fulfill = pharmacist acknowledges + releases (full pharmacy tier)
+  //   cancel  = either side can cancel (nurse-raised-in-error / pharm reject)
+  "indent.raise":          ["Admin", "Nurse", "Doctor"],
+  "indent.read":           ["Admin", "Nurse", "Doctor", "Pharmacist", "Receptionist"],
+  "indent.fulfill":        ["Admin", "Pharmacist"],
+  "indent.cancel":         ["Admin", "Nurse", "Pharmacist"],
   "pharmacy.grn":          ["Admin", "Pharmacist"],
   "pharmacy.return":       ["Admin", "Pharmacist"],
   "pharmacy.add-items":    ["Admin", "Pharmacist"],
@@ -102,6 +111,23 @@ const ACTIONS = {
   "billing.write":         ["Admin", "Accountant", "Receptionist"],
   "billing.refund":        ["Admin", "Accountant"],
   "billing.discount":      ["Admin", "Accountant"],
+  // IPD Live Ledger — strict tiered actions per design memo
+  //   undo     = receptionist's 15-min "oh no I shouldn't have triggered that"
+  //              window. Auto-charges only. Controller enforces the time gate
+  //              + auto-charge gate; the action just opens the door.
+  //   override = edit qty / unit price after the fact, mandatory reason.
+  //              Accountant-grade — affects revenue, needs audit.
+  //   cancel-charge = irreversibly mark a trigger as cancelled (won't bill
+  //              even if it was still pending). Same tier as override.
+  "billing.undo":          ["Admin", "Accountant", "Receptionist"],
+  "billing.override":      ["Admin", "Accountant"],
+  "billing.cancel-charge": ["Admin", "Accountant"],
+  // Manual charge add — any clinician/desk staff who's expected to bill
+  // ad-hoc items (consultant fee, procedure, nursing consumable). Doctors
+  // and nurses can ADD a charge (they know what they delivered) but
+  // CANNOT set the price — controller drops req.body.unitPrice for them
+  // so they bill at ServiceMaster tariff. Accountant/Admin can override.
+  "billing.manual-charge": ["Admin", "Accountant", "Receptionist", "Doctor", "Nurse"],
 
   // TPA / cashless
   "tpa.pre-auth":          ["Admin", "TPA Coordinator", "Receptionist"],

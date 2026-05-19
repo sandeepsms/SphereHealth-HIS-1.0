@@ -56,12 +56,30 @@ exports.getBillById = async (req, res) => {
 // ── POST /api/billing/:billId/add-service ─────────────────────
 exports.addService = async (req, res) => {
   try {
-    const { serviceId, quantity = 1, chargeDate, remarks } = req.body;
+    const {
+      serviceId, quantity = 1, chargeDate, remarks,
+      // Order-lifecycle hints (NABH AAC.5). When the doctor adds a lab/
+      // imaging/procedure line from the OPD orders panel, the frontend
+      // passes addedBySource: "Doctor" → the service infers
+      // orderStatus: "Ordered" and the item does NOT count toward the
+      // billable total until the executing team confirms completion.
+      // Walk-in flows (Reception) pass addedBySource: "Reception" → the
+      // service writes orderStatus: "Completed" and the charge lands
+      // immediately, preserving the existing front-desk cash flow.
+      addedBySource, addedBy, addedByRole, orderStatus,
+    } = req.body;
     if (!serviceId) {
       return res
         .status(400)
         .json({ success: false, message: "serviceId required" });
     }
+
+    // Auth context — fall back through fullName → employeeId → role so
+    // older client builds that don't send addedBy explicitly still get
+    // a meaningful audit trail entry.
+    const u = req.user || {};
+    const resolvedAddedBy   = addedBy     || u.fullName || u.employeeId || "";
+    const resolvedAddedRole = addedByRole || u.role || "";
 
     const data = await billingService.addServiceToBill(
       req.params.billId,
@@ -69,10 +87,58 @@ exports.addService = async (req, res) => {
       quantity,
       chargeDate ? new Date(chargeDate) : new Date(),
       remarks,
+      {
+        addedBySource: addedBySource || "Reception",
+        addedBy: resolvedAddedBy,
+        addedByRole: resolvedAddedRole,
+        orderStatus, // optional explicit override
+        orderedBy: resolvedAddedBy,
+        orderedById: u._id,
+        orderedByRole: resolvedAddedRole,
+      },
     );
     res.json({ success: true, data });
   } catch (e) {
-    res.status(400).json({ success: false, message: e.message });
+    res.status(e.status || 400).json({ success: false, message: e.message });
+  }
+};
+
+// ── PATCH /api/billing/:billId/items/:itemId/complete ─────────
+// Flip an Active Order (Ordered / InProgress) → Completed. After this,
+// the line counts toward the patient's billable total. Used by the lab
+// tech / radiologist / proceduralist who actually executed the work
+// (or by the doctor for procedure orders they performed themselves).
+exports.completeItemOrder = async (req, res) => {
+  try {
+    const u = req.user || {};
+    const data = await billingService.completeBillItemOrder(
+      req.params.billId,
+      req.params.itemId,
+      {
+        completedBy: req.body?.completedBy || u.fullName || u.employeeId || "",
+        completedByRole: req.body?.completedByRole || u.role || "",
+      },
+    );
+    res.json({ success: true, data });
+  } catch (e) {
+    res.status(e.status || 400).json({ success: false, message: e.message });
+  }
+};
+
+// ── PATCH /api/billing/:billId/items/:itemId/cancel-order ─────
+// Soft-cancel an Active Order — keeps the line in the bill document for
+// audit (NABH AAC.5) but excludes it from billable + pending totals.
+// Refuses on Completed lines — use refund / accountant cancel for those.
+exports.cancelItemOrder = async (req, res) => {
+  try {
+    const data = await billingService.cancelBillItemOrder(
+      req.params.billId,
+      req.params.itemId,
+      { cancelReason: req.body?.cancelReason || "" },
+    );
+    res.json({ success: true, data });
+  } catch (e) {
+    res.status(e.status || 400).json({ success: false, message: e.message });
   }
 };
 
@@ -106,6 +172,67 @@ exports.updateItemQty = async (req, res) => {
     res.json({ success: true, data });
   } catch (e) {
     const status = e.message.includes("not found") ? 404 : 400;
+    res.status(status).json({ success: false, message: e.message });
+  }
+};
+
+// ── POST /api/billing/uhid/:UHID/collect-all ────────────────
+// Bulk-collect across every outstanding bill for the UHID. Distributes
+// the lump sum FIFO (oldest bill first), capping each leg at that
+// bill's balance. Returns the allocation list + a parent transaction
+// id that joins every per-bill payment row.
+exports.bulkCollectByUHID = async (req, res) => {
+  try {
+    const data = await billingService.bulkCollectByUHID(
+      req.params.UHID,
+      req.body,
+    );
+    res.json({
+      success: true,
+      data,
+      message: `₹${data.totalCollected} collected across ${data.billsTouched} bill(s)`,
+    });
+  } catch (e) {
+    res.status(e.status || 400).json({ success: false, message: e.message });
+  }
+};
+
+// ── POST /api/billing/uhid/:UHID/bulk-settle ────────────────
+// One discount distributed across every outstanding bill for the
+// UHID. PERCENT mode applies the same % to each bill's balance;
+// AMOUNT mode distributes the flat ₹ proportionally to each bill's
+// share of total outstanding. Every touched bill gets its own audit
+// log entry.
+exports.bulkSettleByUHID = async (req, res) => {
+  try {
+    const data = await billingService.bulkSettleByUHID(
+      req.params.UHID,
+      req.body,
+    );
+    res.json({
+      success: true,
+      data,
+      message: `Bulk settlement applied to ${data.billsTouched} bill(s)`,
+    });
+  } catch (e) {
+    res.status(e.status || 400).json({ success: false, message: e.message });
+  }
+};
+
+// ── POST /api/billing/:billId/settlement-adjust ──────────────
+// Lets the receptionist adjust a GENERATED/PARTIAL bill at settlement
+// time (extra discount + per-item qty/price edits). Audited — backend
+// requires `adjustedBy` + `reason` and pushes a before/after snapshot
+// onto bill.adjustmentLog.
+exports.settlementAdjust = async (req, res) => {
+  try {
+    const data = await billingService.settlementAdjust(
+      req.params.billId,
+      req.body,
+    );
+    res.json({ success: true, data, message: "Settlement adjustment recorded" });
+  } catch (e) {
+    const status = e.status || 400;
     res.status(status).json({ success: false, message: e.message });
   }
 };
@@ -260,11 +387,29 @@ exports.getRevenueBreakdown = async (req, res) => {
       inc(byDepartment,b.department || "Unspecified",            paid, gross);
 
       // Service-line cut — sum each line item's gross into its category.
+      // R7c-REP-CRIT-01: previously this loop only added to `.gross` and
+      // `.count`, leaving `.paid` permanently at 0. The accountant's
+      // "Revenue by Category" tile would render every row with paid=0,
+      // suggesting nothing had been collected even when the bill was
+      // fully paid. The fix is to distribute the bill's `paid` total
+      // across its categories proportionally to each item's gross share
+      // (so a Pharmacy line that's 30% of the bill's gross gets credited
+      // with 30% of the bill's paid amount). For bills where gross is 0
+      // (corner case: fully discounted), we fall back to per-item count.
+      const billItemsGross = (b.billItems || []).reduce(
+        (s, it) => s + Number(it.grossAmount || it.unitPrice * (it.quantity || 1) || 0),
+        0,
+      );
       for (const it of (b.billItems || [])) {
+        const itGross = Number(it.grossAmount || it.unitPrice * (it.quantity || 1) || 0);
+        const itPaidShare = billItemsGross > 0
+          ? (itGross / billItemsGross) * paid
+          : paid / Math.max(1, (b.billItems || []).length); // equal split fallback
         const cat = (it.category || it.serviceName || "Other").toString();
         if (!byCategory[cat]) byCategory[cat] = { count: 0, paid: 0, gross: 0 };
         byCategory[cat].count += 1;
-        byCategory[cat].gross += Number(it.grossAmount || it.unitPrice * (it.quantity || 1) || 0);
+        byCategory[cat].gross += itGross;
+        byCategory[cat].paid  += itPaidShare;
       }
 
       if (b.doctor) {
@@ -400,48 +545,11 @@ exports.listBills = async (req, res) => {
   }
 };
 
-// ── POST /api/billing/ai-suggest ──────────────────────────────
-exports.aiSuggest = async (req, res, next) => {
-  try {
-    const { billId, diagnosis, patientType, additionalContext } = req.body;
-    if (!billId || !diagnosis) {
-      return res
-        .status(400)
-        .json({ success: false, message: "billId and diagnosis are required" });
-    }
-    const aiSvc = require("../../services/Billing/aiChargeService");
-    const result = await aiSvc.suggestMissedCharges({
-      billId,
-      diagnosis,
-      patientType: patientType || "IPD",
-      additionalContext,
-    });
-    res.json({ success: true, data: result });
-  } catch (e) {
-    next(e);
-  }
-};
-
-// ── POST /api/billing/ai-confirm ──────────────────────────────
-exports.aiConfirm = async (req, res, next) => {
-  try {
-    const { billId, serviceIds, confirmedBy } = req.body;
-    if (!billId || !Array.isArray(serviceIds)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "billId and serviceIds[] required" });
-    }
-    const aiSvc = require("../../services/Billing/aiChargeService");
-    const result = await aiSvc.confirmAISuggestions(
-      billId,
-      serviceIds,
-      confirmedBy || "Staff",
-    );
-    res.json({ success: true, data: result });
-  } catch (e) {
-    next(e);
-  }
-};
+// AI-billing endpoints (aiSuggest / aiConfirm) and their backing
+// aiChargeService.js were removed — see commit "Remove AI billing
+// surface from HIS". If the AI suggestion engine ever comes back it
+// should be re-introduced as a separate audit-confirmable flow, not
+// auto-applied to bills.
 
 // ── POST /api/billing/:billId/nurse-charge ────────────────────
 exports.addNurseCharge = async (req, res, next) => {
@@ -502,6 +610,141 @@ exports.confirmTriggerBill = async (req, res, next) => {
     const result = await autoBilling.confirmAndBillTrigger(req.params.triggerId, { confirmedBy, confirmedByRole });
     res.json({ success: true, data: result });
   } catch (e) { next(e); }
+};
+
+// ─── IPD Live Ledger (Phase A) ────────────────────────────────
+// GET /api/billing/ipd/:admissionId/ledger
+// Single read returns admission + bill summary + every trigger
+// (with role-aware canUndo / canOverride / canCancel flags) +
+// category- and day-grouped totals. Powers the IPD Live Billing
+// page so the UI doesn't have to re-aggregate on every render.
+exports.getIPDLedger = async (req, res, next) => {
+  try {
+    const autoBilling = require("../../services/Billing/autoBillingService");
+    const data = await autoBilling.getIPDLedger(req.params.admissionId, req.user || {});
+    res.json({ success: true, data });
+  } catch (e) {
+    if (e.status === 404) return res.status(404).json({ success: false, message: e.message });
+    next(e);
+  }
+};
+
+// Shared error → HTTP mapping for undo/override/cancel. All three throw
+// `err.code` values the UI can act on (show a toast vs an inline error vs
+// a modal). 400 for client-side mistakes (no reason, expired window),
+// 404 for missing, 409 for state conflicts (closed bill, already voided).
+function ledgerErrorStatus(code) {
+  if (code === "REASON_REQUIRED" || code === "INVALID_QTY" || code === "INVALID_PRICE" || code === "NOT_AUTO" || code === "WINDOW_EXPIRED") return 400;
+  if (code === "BILL_CLOSED" || code === "ALREADY_CLOSED" || code === "BILL_MISSING") return 409;
+  return 500;
+}
+
+// POST /api/billing/trigger/:triggerId/undo  { reason }
+// Receptionist (15-min auto-charge undo) + Accountant/Admin (no time gate)
+exports.undoTrigger = async (req, res, next) => {
+  try {
+    const autoBilling = require("../../services/Billing/autoBillingService");
+    const user = req.user || {};
+    const skipTimeGate = user.role === "Admin" || user.role === "Accountant";
+    const trigger = await autoBilling.undoTrigger(req.params.triggerId, {
+      reason: req.body?.reason,
+      user,
+      skipTimeGate,
+    });
+    res.json({ success: true, data: trigger });
+  } catch (e) {
+    const status = e.status || ledgerErrorStatus(e.code);
+    if (status !== 500) return res.status(status).json({ success: false, message: e.message, code: e.code });
+    next(e);
+  }
+};
+
+// POST /api/billing/trigger/:triggerId/override  { quantity, unitPrice, reason }
+exports.overrideTrigger = async (req, res, next) => {
+  try {
+    const autoBilling = require("../../services/Billing/autoBillingService");
+    const trigger = await autoBilling.overrideTrigger(req.params.triggerId, {
+      quantity: req.body?.quantity,
+      unitPrice: req.body?.unitPrice,
+      reason: req.body?.reason,
+      user: req.user || {},
+    });
+    res.json({ success: true, data: trigger });
+  } catch (e) {
+    const status = e.status || ledgerErrorStatus(e.code);
+    if (status !== 500) return res.status(status).json({ success: false, message: e.message, code: e.code });
+    next(e);
+  }
+};
+
+// POST /api/billing/ipd/:admissionId/manual-charge
+// Body: { serviceId, quantity, unitPrice, remarks }
+// Permissions: doctor (any service in their dept), nurse (nursing services),
+// receptionist/accountant (anything). Pricing override is locked to
+// Accountant/Admin — lower tiers' unitPrice is dropped so they can't
+// silently undercut the tariff.
+exports.addManualCharge = async (req, res, next) => {
+  try {
+    const autoBilling = require("../../services/Billing/autoBillingService");
+    const user = req.user || {};
+    const role = user.role || "";
+    const canSetPrice = role === "Admin" || role === "Accountant";
+    const result = await autoBilling.addManualCharge(req.params.admissionId, {
+      serviceId:  req.body?.serviceId,
+      quantity:   req.body?.quantity,
+      unitPrice:  canSetPrice ? req.body?.unitPrice : undefined,
+      remarks:    req.body?.remarks,
+      user,
+    });
+    res.json({ success: true, data: result });
+  } catch (e) {
+    const code = e.code;
+    const status = e.status
+      || (code === "ARG_MISSING" || code === "INVALID_QTY" || code === "INVALID_PRICE" ? 400 : 500);
+    if (status !== 500) return res.status(status).json({ success: false, message: e.message, code });
+    next(e);
+  }
+};
+
+// POST /api/billing/:billId/payment/:paymentId/void  { reason }
+// Cashier-typo 15-min undo. Receptionist can void their OWN payment
+// within 15 min of recording; Accountant/Admin can void anyone's
+// payment any time (effectively a soft-refund). Logs to bill.payments
+// as a negative row so the audit replay stays intact.
+exports.voidPayment = async (req, res, next) => {
+  try {
+    const user = req.user || {};
+    const skipTimeGate = user.role === "Admin" || user.role === "Accountant";
+    const bill = await billingService.voidPayment(req.params.billId, req.params.paymentId, {
+      reason: req.body?.reason,
+      user,
+      skipTimeGate,
+    });
+    res.json({ success: true, data: bill });
+  } catch (e) {
+    const code = e.code;
+    const status = e.status
+      || (code === "REASON_REQUIRED" || code === "WINDOW_EXPIRED" || code === "NOT_OWNER" ? 400 :
+          code === "ALREADY_VOIDED" || code === "ALREADY_REVERSAL" ? 409 : 500);
+    if (status !== 500) return res.status(status).json({ success: false, message: e.message, code });
+    next(e);
+  }
+};
+
+// POST /api/billing/trigger/:triggerId/cancel  { reason }
+exports.cancelTrigger = async (req, res, next) => {
+  try {
+    const autoBilling = require("../../services/Billing/autoBillingService");
+    const trigger = await autoBilling.cancelTrigger(req.params.triggerId, {
+      reason: req.body?.reason,
+      user: req.user || {},
+    });
+    res.json({ success: true, data: trigger });
+  } catch (e) {
+    const status = e.status || ledgerErrorStatus(e.code);
+    if (status !== 500) return res.status(status).json({ success: false, message: e.message, code: e.code });
+    next(e);
+  }
 };
 
 /* ─────────────────────────────────────────────────────────────
@@ -583,68 +826,32 @@ exports.tpaApprove = async (req, res, next) => {
 };
 
 // POST /api/billing/:billId/refund
-//   Body: { amount, reason, mode?, refundedBy?, transactionId? }
-// Records a refund payment row (negative amount) on the bill, recalculates
-// balance, and flips status to REFUNDED if the full amount was refunded.
-// Cannot refund more than what's already been paid.
+//   Body: { amount, reason, mode?, refundedBy?, transactionId?, creditToAdvance? }
+// R7a: thin wrapper — all validation + state + concurrency lives in
+// billingService.recordRefund() so it gets the same VersionError retry
+// protection as recordPayment. Service throws typed errors with
+// `code` + `status`; we map them to HTTP responses.
+// R7c: response now carries both `data` (the bill) AND `advance` (the
+// PatientAdvance row created when creditToAdvance=true). Frontend
+// uses `advance.receiptNumber` to print the second receipt.
 exports.refundPayment = async (req, res, next) => {
   try {
-    const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
-    const bill = await PatientBill.findById(req.params.billId);
-    if (!bill) return res.status(404).json({ success: false, message: "Bill not found" });
-
-    // FIX (audit P6-B4): bill state guard. Refunds were previously allowed
-    // on any bill that had a payment row — including DRAFT/GENERATED bills
-    // that the cashier shouldn't even be looking at, and already REFUNDED
-    // bills, which would let staff drive the balance arbitrarily negative.
-    if (!["PAID", "PARTIAL"].includes(bill.billStatus)) {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot refund a ${bill.billStatus} bill — only PAID or PARTIAL bills can be refunded`,
-      });
-    }
-
-    const amt = Number(req.body.amount);
-    if (!amt || amt <= 0) {
-      return res.status(400).json({ success: false, message: "Refund amount must be greater than zero" });
-    }
-    const paid = (bill.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
-    if (amt > paid + 0.5) {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot refund ₹${amt} — only ₹${paid} has been collected on this bill`,
-      });
-    }
-    if (!req.body.reason || !String(req.body.reason).trim()) {
-      return res.status(400).json({ success: false, message: "Refund reason is required for audit trail" });
-    }
-
-    // Allowed payment modes (must match PaymentSchema enum exactly)
-    const ALLOWED = ["CASH", "CARD", "UPI", "CHEQUE", "ONLINE", "TPA_CLAIM"];
-    const reqMode = String(req.body.mode || "CASH").toUpperCase();
-    const mode = ALLOWED.includes(reqMode) ? reqMode : "CASH";
-
-    bill.payments.push({
-      amount:        -amt, // negative entry = refund
-      paymentMode:   mode,
-      transactionId: req.body.transactionId,
-      receivedBy:    req.body.refundedBy || "Reception",
-      remarks:       `REFUND: ${req.body.reason}`,
+    const billingService = require("../../services/Billing/billingService");
+    const { bill, advance } = await billingService.recordRefund(req.params.billId, {
+      amount:           req.body.amount,
+      reason:           req.body.reason,
+      mode:             req.body.mode,
+      refundedBy:       req.body.refundedBy,
+      transactionId:    req.body.transactionId,
+      creditToAdvance:  !!req.body.creditToAdvance,
     });
-
-    // Status: fully refunded → REFUNDED, partial refund of a PAID bill → PARTIAL.
-    // (advancePaid / balanceAmount are recomputed in the pre-save hook based on
-    // billStatus, so we just set the status here.)
-    const newPaid = paid - amt;
-    if (newPaid <= 0.5) {
-      bill.billStatus = "REFUNDED";
-    } else if (bill.billStatus === "PAID") {
-      bill.billStatus = "PARTIAL";
+    return res.json({ success: true, data: bill, advance });
+  } catch (e) {
+    if (e?.status && e?.code) {
+      return res.status(e.status).json({ success: false, message: e.message, code: e.code });
     }
-    bill.remarks = (bill.remarks || "") + ` | Refund ₹${amt}: ${req.body.reason}`;
-    await bill.save();
-    return res.json({ success: true, data: bill });
-  } catch (e) { next(e); }
+    return next(e);
+  }
 };
 
 // POST /api/billing/:billId/cancel-bill
@@ -814,6 +1021,77 @@ exports.getCollectionSummary = async (req, res, next) => {
       byReceptionist: Object.values(byReceptionist),
     });
   } catch (e) { next(e); }
+};
+
+// ─────────────────────────────────────────────────────────────────────
+// PATIENT ADVANCE — UHID-level prepayment ledger
+// Cash/UPI/card collected from a patient before any bill is generated
+// (typical IPD admission deposit) lives here. Later applied to bills.
+// ─────────────────────────────────────────────────────────────────────
+
+// POST /api/billing/advance  { UHID, amount, paymentMode, transactionId?, receivedBy, admission?, remarks? }
+exports.createAdvance = async (req, res) => {
+  try {
+    const svc = require("../../services/Billing/patientAdvanceService");
+    const adv = await svc.createAdvance({
+      ...req.body,
+      receivedBy:     req.body.receivedBy     || req.user?.fullName     || req.user?.employeeId,
+      receivedById:   req.body.receivedById   || req.user?._id,
+      receivedByRole: req.body.receivedByRole || req.user?.role,
+    });
+    res.status(201).json({ success: true, data: adv });
+  } catch (e) {
+    res.status(400).json({ success: false, message: e?.message || "Advance create failed" });
+  }
+};
+
+// GET /api/billing/advance/uhid/:UHID?unspentOnly=true
+exports.listAdvancesByUHID = async (req, res) => {
+  try {
+    const svc = require("../../services/Billing/patientAdvanceService");
+    const unspentOnly = String(req.query?.unspentOnly || "").toLowerCase() === "true";
+    const rows = await svc.listAdvancesForUHID(req.params.UHID, { unspentOnly });
+    const totalUnspent = await svc.getUnspentBalance(req.params.UHID);
+    res.json({ success: true, data: { advances: rows, totalUnspent } });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e?.message || "Advance list failed" });
+  }
+};
+
+// POST /api/billing/advance/:advanceId/apply  { billId, amount? }
+exports.applyAdvanceToBill = async (req, res) => {
+  try {
+    const svc = require("../../services/Billing/patientAdvanceService");
+    const { billId, amount } = req.body || {};
+    if (!billId) return res.status(400).json({ success: false, message: "billId required" });
+    const result = await svc.applyAdvanceToBill(req.params.advanceId, billId, {
+      amount,
+      appliedBy:   req.user?.fullName || req.user?.employeeId || "Reception",
+      appliedById: req.user?._id || null,
+    });
+    res.json({
+      success: true,
+      appliedAmount: result.appliedAmount,
+      advance: result.advance,
+      bill: { _id: result.bill._id, billNumber: result.bill.billNumber, balanceAmount: result.bill.balanceAmount, billStatus: result.bill.billStatus },
+    });
+  } catch (e) {
+    res.status(400).json({ success: false, message: e?.message || "Advance apply failed" });
+  }
+};
+
+// POST /api/billing/advance/:advanceId/refund  { refundedBy, refundReason }
+exports.refundAdvance = async (req, res) => {
+  try {
+    const svc = require("../../services/Billing/patientAdvanceService");
+    const adv = await svc.refundAdvance(req.params.advanceId, {
+      refundedBy:   req.body?.refundedBy   || req.user?.fullName || req.user?.employeeId,
+      refundReason: req.body?.refundReason || "Refund at patient request",
+    });
+    res.json({ success: true, data: adv });
+  } catch (e) {
+    res.status(400).json({ success: false, message: e?.message || "Refund failed" });
+  }
 };
 
 // ─────────────────────────────────────────────────────────────────────

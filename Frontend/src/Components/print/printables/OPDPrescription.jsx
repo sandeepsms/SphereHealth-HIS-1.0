@@ -25,6 +25,19 @@ const VitalCell = ({ label, value, unit }) => (
   </div>
 );
 
+/* Patient status pill — mirrors the on-screen Diagnosis card status strip
+   so the printout reads as "Stable / Improving / Critical / etc." in the
+   same colour the doctor saw while typing. */
+const STATUS_TONE = {
+  Stable:        { bg: "#dcfce7", fg: "#15803d", border: "#86efac" },
+  Improving:     { bg: "#dbeafe", fg: "#1d4ed8", border: "#93c5fd" },
+  Worsening:     { bg: "#fee2e2", fg: "#b91c1c", border: "#fca5a5" },
+  Critical:      { bg: "#fecaca", fg: "#7f1d1d", border: "#f87171" },
+  "Under Review":{ bg: "#fef3c7", fg: "#a16207", border: "#fcd34d" },
+  Recovered:     { bg: "#d1fae5", fg: "#065f46", border: "#6ee7b7" },
+};
+const statusTone = (s) => STATUS_TONE[s] || { bg: "#f1f5f9", fg: "#475569", border: "#cbd5e1" };
+
 const OPDPrescription = ({ settings, receipt = {} }) => {
   const vitals = receipt.vitals || {};
   const drugs  = Array.isArray(receipt.drugs)        ? receipt.drugs        : [];
@@ -32,6 +45,13 @@ const OPDPrescription = ({ settings, receipt = {} }) => {
   const advice = Array.isArray(receipt.advice)
     ? receipt.advice
     : (receipt.advice ? String(receipt.advice).split("\n").filter(Boolean) : []);
+
+  // System-exam lines are pre-joined by "\n" in the payload — split so we
+  // can render each system on its own row (CVS:, RS:, CNS:, P/A:).
+  const sysLines = (receipt.systemicExam || "")
+    .split("\n")
+    .map(s => s.trim())
+    .filter(Boolean);
 
   return (
     <PrintShell
@@ -69,39 +89,155 @@ const OPDPrescription = ({ settings, receipt = {} }) => {
         </div>
       )}
 
-      {/* ── Complaints + history ── */}
-      {(receipt.chiefComplaints || receipt.history) && (
+      {/* ── Complaints + HOPI + history + chronic ──
+           Renders the whole subjective block in one card: chief complaints
+           on top, then a HOPI (history of present illness) line, then the
+           free-text history note from soap.objectiveNote, and finally any
+           chronic comorbidities the doctor ticked. Each row is conditional
+           so the section gracefully shrinks if some pieces are blank. */}
+      {(receipt.chiefComplaints || receipt.hopi || receipt.history || receipt.chronic) && (
         <div className="pr-section">
           <div className="pr-section__title">Chief Complaints &amp; History</div>
           <div className="pr-section__body" style={{ whiteSpace: "pre-wrap" }}>
-            {receipt.chiefComplaints || ""}
+            {receipt.chiefComplaints && (
+              <div style={{ marginBottom: 4 }}>{receipt.chiefComplaints}</div>
+            )}
+            {receipt.hopi && (
+              <div style={{ marginBottom: 4 }}>
+                <strong>HOPI: </strong>{receipt.hopi}
+              </div>
+            )}
             {receipt.history && (
-              <>
-                {"\n"}
+              <div style={{ marginBottom: 4 }}>
                 <strong>History: </strong>{receipt.history}
-              </>
+              </div>
+            )}
+            {receipt.chronic && (
+              <div>
+                <strong>Chronic / Comorbidities: </strong>{receipt.chronic}
+              </div>
             )}
           </div>
         </div>
       )}
 
-      {/* ── Diagnosis ── */}
-      {(receipt.provisionalDx || receipt.diagnosis || receipt.icd10) && (
+      {/* ── Diagnosis (three-tier + ICD-10 + Patient Status) ──
+           Provisional → Working → Final mirrors the on-screen card. The
+           Patient Status pill prints in the same colour family the doctor
+           saw on /opd-assessment so it reads as a clinical at-a-glance. */}
+      {(receipt.provisionalDx || receipt.workingDx || receipt.diagnosis || receipt.icd10 || receipt.patientStatus) && (
         <div className="pr-section">
           <div className="pr-section__title">Diagnosis</div>
           <div className="pr-section__body">
             {receipt.provisionalDx && (
-              <div><strong>Provisional:</strong> {receipt.provisionalDx}</div>
+              <div style={{ marginBottom: 2 }}>
+                <span style={{
+                  display: "inline-block", minWidth: 90,
+                  fontWeight: 800, color: "#c2410c",
+                }}>Provisional:</span> {receipt.provisionalDx}
+              </div>
+            )}
+            {receipt.workingDx && (
+              <div style={{ marginBottom: 2 }}>
+                <span style={{
+                  display: "inline-block", minWidth: 90,
+                  fontWeight: 800, color: "#1d4ed8",
+                }}>Working:</span> {receipt.workingDx}
+              </div>
             )}
             {receipt.diagnosis && (
-              <div><strong>Diagnosis:</strong> {receipt.diagnosis}</div>
+              <div style={{ marginBottom: 2 }}>
+                <span style={{
+                  display: "inline-block", minWidth: 90,
+                  fontWeight: 800, color: "#15803d",
+                }}>Final:</span> {receipt.diagnosis}
+              </div>
             )}
             {receipt.icd10 && (
-              <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
-                ICD-10: <strong style={{ color: "#0f172a" }}>{receipt.icd10}</strong>
+              <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>
+                ICD-10: <strong style={{
+                  color: "#6d28d9", fontFamily: "'DM Mono', monospace",
+                  background: "#ede9fe", padding: "1px 6px", borderRadius: 4,
+                }}>{receipt.icd10}</strong>
                 {receipt.icd10Desc && <> — {receipt.icd10Desc}</>}
               </div>
             )}
+            {receipt.patientStatus && (() => {
+              const t = statusTone(receipt.patientStatus);
+              return (
+                <div style={{ marginTop: 6 }}>
+                  <span style={{
+                    display: "inline-block",
+                    background: t.bg, color: t.fg,
+                    border: `1px solid ${t.border}`,
+                    padding: "2px 10px", borderRadius: 12,
+                    fontSize: 10.5, fontWeight: 800,
+                    textTransform: "uppercase", letterSpacing: ".4px",
+                  }}>
+                    Status: {receipt.patientStatus}
+                  </span>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
+      {/* ── Clinical Examination (general + per-system findings) ──
+           Both fields are compacted on the assessment page so this just
+           renders the resulting strings — keeps the printable dumb. */}
+      {(receipt.generalExam || sysLines.length > 0) && (
+        <div className="pr-section">
+          <div className="pr-section__title">Clinical Examination</div>
+          <div className="pr-section__body">
+            {receipt.generalExam && (
+              <div style={{ marginBottom: sysLines.length ? 4 : 0 }}>
+                <strong>General:</strong> {receipt.generalExam}
+              </div>
+            )}
+            {sysLines.length > 0 && (
+              <div>
+                <strong>Systemic:</strong>
+                <ul style={{ margin: "2px 0 0 18px", padding: 0, fontSize: 11.5 }}>
+                  {sysLines.map((line, i) => (
+                    <li key={i} style={{ marginBottom: 1 }}>{line}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Assessment & Plan (SOAP A/P) ──
+           Separate from the diagnosis card — these are the doctor's
+           free-text clinical reasoning + management plan notes. */}
+      {(receipt.assessmentNote || receipt.planNote) && (
+        <div className="pr-section">
+          <div className="pr-section__title">Assessment &amp; Plan</div>
+          <div className="pr-section__body" style={{ whiteSpace: "pre-wrap" }}>
+            {receipt.assessmentNote && (
+              <div style={{ marginBottom: 4 }}>
+                <strong>Assessment: </strong>{receipt.assessmentNote}
+              </div>
+            )}
+            {receipt.planNote && (
+              <div>
+                <strong>Plan: </strong>{receipt.planNote}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Obstetric & Gynae History (only when populated) ──
+           Doctor only fills this card for Gynae visits, so the section
+           silently disappears on non-OBG prescriptions. */}
+      {receipt.obgHistory && (
+        <div className="pr-section">
+          <div className="pr-section__title">Obstetric &amp; Gynae History</div>
+          <div className="pr-section__body" style={{ whiteSpace: "pre-wrap" }}>
+            {receipt.obgHistory}
           </div>
         </div>
       )}
@@ -165,6 +301,71 @@ const OPDPrescription = ({ settings, receipt = {} }) => {
               </li>
             ))}
           </ol>
+        </div>
+      )}
+
+      {/* ── Procedures advised ──
+           From either the standalone procedures card (with consent
+           tracking) or PROCEDURE/SURGERY/PHYSIOTHERAPY services raised
+           on the unified Services & Orders panel. */}
+      {Array.isArray(receipt.procedures) && receipt.procedures.length > 0 && (
+        <div className="pr-section">
+          <div className="pr-section__title">Procedures Advised</div>
+          <ol style={{ margin: "4px 0 0 18px", padding: 0, fontSize: 11.5 }}>
+            {receipt.procedures.map((p, i) => (
+              <li key={i} style={{ marginBottom: 2 }}>
+                <strong>{p.name}</strong>
+                {p.type && <span className="muted"> · {p.type}</span>}
+                {p.duration && <span className="muted"> · {p.duration} min</span>}
+                {p.consent && p.consent !== "NotRequired" && (
+                  <span style={{
+                    marginLeft: 6, fontSize: 9, fontWeight: 700,
+                    padding: "1px 5px", borderRadius: 8,
+                    background: p.consent === "Obtained" ? "#dcfce7" : "#fef3c7",
+                    color:      p.consent === "Obtained" ? "#15803d" : "#a16207",
+                  }}>
+                    Consent: {p.consent}
+                  </span>
+                )}
+                {p.notes && <span className="muted"> — {p.notes}</span>}
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+
+      {/* ── Services Billed (non-lab/non-procedure ServiceMaster rows) ──
+           Renders consumables / packages / room / equipment lines so
+           the patient sees on the slip exactly what the receptionist's
+           DRAFT bill contains. */}
+      {Array.isArray(receipt.otherServices) && receipt.otherServices.length > 0 && (
+        <div className="pr-section">
+          <div className="pr-section__title">Services Billed</div>
+          <table className="pr-table" style={{ marginTop: 4 }}>
+            <thead>
+              <tr>
+                <th style={{ width: 30 }}>#</th>
+                <th>Service</th>
+                <th style={{ width: 100 }}>Category</th>
+                <th className="center" style={{ width: 50 }}>Qty</th>
+                <th className="right" style={{ width: 80 }}>Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {receipt.otherServices.map((s, i) => (
+                <tr key={i}>
+                  <td>{i + 1}</td>
+                  <td>
+                    <div style={{ fontWeight: 600 }}>{s.name}</div>
+                    {s.notes && <div className="muted" style={{ fontSize: 10 }}>{s.notes}</div>}
+                  </td>
+                  <td className="muted" style={{ fontSize: 10 }}>{s.category || "—"}</td>
+                  <td className="center">{s.qty ?? 1}</td>
+                  <td className="right">{s.total != null ? `₹${Number(s.total).toLocaleString("en-IN")}` : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 

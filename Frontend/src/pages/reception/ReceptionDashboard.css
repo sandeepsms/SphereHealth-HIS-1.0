@@ -539,3 +539,178 @@
   z-index: 999;
 }
 .rd-floating-loader .pi-spinner { margin-right: 6px; }
+
+/* ─── Overview / Collection tab strip ─────────────────────────
+   Sits right under the quick-actions row. Pill-style tabs match
+   the .rx-tab pattern but darker because dashboard tiles are
+   already busy with colour. */
+.rd-tabs {
+  display: flex;
+  gap: 6px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 6px;
+  margin-bottom: 14px;
+}
+.rd-tab {
+  padding: 9px 18px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  color: #475569;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all .15s ease;
+}
+.rd-tab:hover:not(.rd-tab--active) { background: #f1f5f9; }
+.rd-tab--active {
+  background: linear-gradient(135deg, #0f172a, #1e293b);
+  color: #fff;
+}
+.rd-tab-count {
+  background: rgba(255,255,255,.18);
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-family: 'DM Mono', monospace;
+}
+.rd-tab:not(.rd-tab--active) .rd-tab-count {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+/* ─── Collection tab — toolbar, chips, table ────────────────── */
+.rd-collection {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 14px;
+}
+.rd-coll-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.rd-coll-search { flex: 1 1 280px; margin-bottom: 0; }
+.rd-coll-status {
+  padding: 8px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  background: #fff;
+  cursor: pointer;
+}
+.rd-coll-myonly {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #475569;
+  background: #f1f5f9;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.rd-coll-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.rd-coll-chip {
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  font-size: 12px;
+  color: #475569;
+}
+.rd-coll-chip strong {
+  color: #0f172a;
+  font-family: 'DM Mono', monospace;
+  margin-left: 4px;
+}
+.rd-coll-chip--success {
+  background: #f0fdf4;
+  border-color: #86efac;
+  color: #15803d;
+}
+.rd-coll-chip--success strong { color: #047857; }
+.rd-coll-chip--danger {
+  background: #fef2f2;
+  border-color: #fca5a5;
+  color: #b91c1c;
+}
+.rd-coll-chip--danger strong { color: #991b1b; }
+
+.rd-coll-tablewrap { overflow-x: auto; }
+.rd-coll-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.rd-coll-table thead th {
+  text-align: left;
+  padding: 8px 10px;
+  background: #f8fafc;
+  color: #475569;
+  font-weight: 800;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  border-bottom: 1px solid #e2e8f0;
+}
+.rd-coll-table th.right, .rd-coll-table td.right { text-align: right; font-family: 'DM Mono', monospace; }
+.rd-coll-table tbody tr {
+  border-bottom: 1px solid #f1f5f9;
+  cursor: pointer;
+  transition: background .12s ease;
+}
+.rd-coll-table tbody tr:hover { background: #f8fafc; }
+.rd-coll-table td { padding: 9px 10px; vertical-align: middle; }
+.rd-coll-time {
+  font-family: 'DM Mono', monospace;
+  font-size: 12px;
+  color: #64748b;
+}
+.rd-coll-billno {
+  font-family: 'DM Mono', monospace;
+  font-weight: 700;
+  color: #0f172a;
+}
+.rd-coll-patient { font-weight: 600; color: #0f172a; }
+.rd-coll-uhid {
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  color: #94a3b8;
+}
+.rd-coll-mode {
+  font-size: 11px;
+  font-family: 'DM Mono', monospace;
+  color: #0e7490;
+}
+.rd-coll-status {
+  display: inline-flex;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  border: 1px solid transparent;
+}
+.rd-status-draft     { background: #f1f5f9; color: #475569; border-color: #cbd5e1; }
+.rd-status-generated { background: #fff7ed; color: #c2410c; border-color: #fed7aa; }
+.rd-status-partial   { background: #fef9c3; color: #a16207; border-color: #fde68a; }
+.rd-status-paid      { background: #f0fdf4; color: #15803d; border-color: #86efac; }
+.rd-status-cancelled { background: #fef2f2; color: #b91c1c; border-color: #fca5a5; }
+.rd-status-other     { background: #f3f4f6; color: #6b7280; border-color: #d1d5db; }

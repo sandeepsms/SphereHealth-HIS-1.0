@@ -57,7 +57,7 @@ export const MODULES = [
   { id: "maintenance",label: "Maintenance",     icon: "pi-wrench",        home: "/maintenance",       color: "#0d9488" },
   { id: "security",   label: "Visitor Security",icon: "pi-lock",          home: "/visitor-passes",    color: "#374151" },
   { id: "admin",      label: "Masters & Admin", icon: "pi-cog",           home: "/admin/users",       color: "#1e293b" },
-  { id: "reports",    label: "Reports & MIS",   icon: "pi-chart-bar",     home: "/billing-intelligence", color: "#1d4ed8" },
+  { id: "reports",    label: "Reports & MIS",   icon: "pi-chart-bar",     home: "/billing-audit-trail",  color: "#1d4ed8" },
 ];
 
 /* ── Module access per role.
@@ -135,6 +135,11 @@ export const ACTIONS = {
 
   // Pharmacy
   "pharmacy.dispense":     ["Admin", "Pharmacist"],
+  // Nurse → Pharmacy drug indent workflow (mirror of backend)
+  "indent.raise":          ["Admin", "Nurse", "Doctor"],
+  "indent.read":           ["Admin", "Nurse", "Doctor", "Pharmacist", "Receptionist"],
+  "indent.fulfill":        ["Admin", "Pharmacist"],
+  "indent.cancel":         ["Admin", "Nurse", "Pharmacist"],
   "pharmacy.grn":          ["Admin", "Pharmacist"],
   "pharmacy.return":       ["Admin", "Pharmacist"],
   "pharmacy.add-items":    ["Admin", "Pharmacist"],
@@ -159,6 +164,15 @@ export const ACTIONS = {
   "billing.write":         ["Admin", "Accountant", "Receptionist"],
   "billing.refund":        ["Admin", "Accountant"],
   "billing.discount":      ["Admin", "Accountant"],
+  // IPD Live Ledger — mirror of backend permissions for the same actions.
+  // Backend keeps the source of truth (controllers re-check); these are
+  // used to show/hide the buttons on the IPD Live Billing page.
+  "billing.undo":          ["Admin", "Accountant", "Receptionist"],
+  "billing.override":      ["Admin", "Accountant"],
+  "billing.cancel-charge": ["Admin", "Accountant"],
+  // Manual charge add — clinicians + desk staff (Doctors/Nurses can add
+  // but only Admin/Accountant can override the price; controller enforces).
+  "billing.manual-charge": ["Admin", "Accountant", "Receptionist", "Doctor", "Nurse"],
 
   // TPA / cashless
   "tpa.pre-auth":          ["Admin", "TPA Coordinator", "Receptionist"],

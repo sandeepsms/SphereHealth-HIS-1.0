@@ -98,6 +98,22 @@ exports.taskComplete = async (req, res) => {
       { new: true, runValidators: true }
     ).lean();
     if (!t) return res.status(409).json({ success: false, message: "Task not completable or not yours." });
+
+    // ── Bed cleaning round-trip ────────────────────────────────
+    // When a discharge-clean / bed-turnover / terminal task completes
+    // AND it's linked to a specific bed (bedId set), flip the bed's
+    // housekeeping.state to "Idle" so the bed shows as Available + clean
+    // on the Live Bed Map. Failure to update the bed is non-fatal —
+    // task is already saved; we log and continue.
+    if (t.bedId && ["discharge-clean", "bed-turnover", "terminal"].includes(t.type)) {
+      try {
+        const bedService = require("../../services/bedMgmt/bedService");
+        await bedService.updateHousekeeping(t.bedId, { state: "Idle" });
+      } catch (e) {
+        console.error("[Housekeeping] post-complete bed update failed:", e.message);
+      }
+    }
+
     res.json({ success: true, data: t });
   } catch (e) { res.status(400).json({ success: false, message: e.message }); }
 };

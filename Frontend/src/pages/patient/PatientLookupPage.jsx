@@ -1,3 +1,6 @@
+// Cache-bust: ActivePatientDirectory was moved to a shared component
+// (Frontend/src/Components/ActivePatientDirectory.jsx). If you see a
+// "duplicate declaration" error pointing at line 1415, restart Vite.
 /**
  * PatientLookupPage.jsx — unified search · directory · timeline · billing
  *
@@ -32,6 +35,7 @@ import { useNavigate, useSearchParams, useParams } from "react-router-dom";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
+import ActivePatientDirectory from "../../Components/ActivePatientDirectory";
 import "../reception/reception-shared.css";
 import "./PatientLookupPage.css";
 
@@ -137,6 +141,17 @@ async function loadBillsForUHID(uhid, signal) {
     return inner.length ? inner : toArray(r?.data);
   } catch { return []; }
 }
+async function loadAdvancesForUHID(uhid, signal) {
+  if (!uhid) return { advances: [], totalUnspent: 0 };
+  try {
+    const r = await axios.get(`${API_ENDPOINTS.BASE}/billing/advance/uhid/${encodeURIComponent(uhid)}`, { signal });
+    const d = r?.data?.data || {};
+    return {
+      advances:     toArray(d.advances),
+      totalUnspent: Number(d.totalUnspent) || 0,
+    };
+  } catch { return { advances: [], totalUnspent: 0 }; }
+}
 
 /* ════════════════ MAIN COMPONENT ════════════════ */
 export default function PatientLookupPage({ initialView = "auto" }) {
@@ -193,6 +208,9 @@ export default function PatientLookupPage({ initialView = "auto" }) {
   const [adm, setAdm]           = useState([]);
   const [er, setEr]             = useState([]);
   const [bills, setBills]       = useState([]);
+  const [advances,     setAdvances]     = useState([]);
+  const [unspentAdv,   setUnspentAdv]   = useState(0);
+  const [showAdvDlg,   setShowAdvDlg]   = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [timelineFilter, setTimelineFilter] = useState("ALL");
   const [detailTab, setDetailTab] = useState("profile"); // profile · visits · billing
@@ -217,17 +235,20 @@ export default function PatientLookupPage({ initialView = "auto" }) {
       if (!patient || ac.signal.aborted) return;
       setSelected(patient);
 
-      const [opdRows, admRows, erRows, billRows] = await Promise.all([
+      const [opdRows, admRows, erRows, billRows, advData] = await Promise.all([
         loadOPDForPatient(patient._id, ac.signal),
         loadAdmissions(patient._id, patient.UHID, ac.signal),
         loadEmergencyForPatient(patient._id, ac.signal),
         loadBillsForUHID(patient.UHID, ac.signal),
+        loadAdvancesForUHID(patient.UHID, ac.signal),
       ]);
       if (ac.signal.aborted) return;
       setOpd(Array.isArray(opdRows) ? opdRows : []);
       setAdm(Array.isArray(admRows) ? admRows : []);
       setEr(Array.isArray(erRows) ? erRows : []);
       setBills(Array.isArray(billRows) ? billRows : []);
+      setAdvances(advData?.advances || []);
+      setUnspentAdv(advData?.totalUnspent || 0);
     } finally {
       if (!ac.signal.aborted) setDetailLoading(false);
     }
@@ -244,6 +265,33 @@ export default function PatientLookupPage({ initialView = "auto" }) {
     loadPatientDetail(p.UHID);
     setDetailTab("profile");
   };
+
+  /* ─── Idle-state directory (SEARCH view) ─────────────────────
+   When the receptionist lands on /patient-search and hasn't typed
+   anything yet, we still want to show them WHO's currently active
+   (mirrors the ReceptionBilling pattern). Pill tabs filter by
+   registrationType; today's patients float to the top because the
+   backend now sorts by lastVisitDate DESC. */
+  const [idleType, setIdleType]       = useState("OPD");
+  const [idleRows, setIdleRows]       = useState([]);
+  const [idleLoading, setIdleLoading] = useState(false);
+  useEffect(() => {
+    if (view !== "search") return;
+    if (q.trim().length >= 2) return;  // user is actively searching
+    const ac = new AbortController();
+    setIdleLoading(true);
+    const params = new URLSearchParams({ limit: "60" });
+    if (idleType !== "ALL") params.set("registrationType", idleType);
+    axios.get(`${API_ENDPOINTS.PATIENTS}?${params.toString()}`, { signal: ac.signal })
+      .then(({ data }) => {
+        if (ac.signal.aborted) return;
+        const rows = data?.patients || data?.data || (Array.isArray(data) ? data : []);
+        setIdleRows(Array.isArray(rows) ? rows : []);
+      })
+      .catch((e) => { if (!axios.isCancel(e)) console.warn("[PatientLookup] idle directory:", e?.message); })
+      .finally(() => { if (!ac.signal.aborted) setIdleLoading(false); });
+    return () => ac.abort();
+  }, [view, q, idleType]);
 
   /* ─── Directory mode (paginated) ───────────────────────────── */
   const [dirRows,     setDirRows]     = useState([]);
@@ -408,6 +456,22 @@ export default function PatientLookupPage({ initialView = "auto" }) {
 
       {/* ════════════════ SEARCH VIEW ════════════════ */}
       {view === "search" && (
+        <>
+          {/* ── Idle-state directory — visible whenever the cashier
+              isn't actively searching for / viewing a specific patient.
+              Same pill-tab pattern as ReceptionBilling so the staff
+              sees who's checked in today (sort: lastVisitDate DESC
+              then createdAt DESC, today-first). ── */}
+          {q.trim().length < 2 && !selected && (
+            <ActivePatientDirectory
+              listType={idleType}
+              setListType={setIdleType}
+              rows={idleRows}
+              loading={idleLoading}
+              onPick={pickPatient}
+            />
+          )}
+
         <div className="pl-search-grid">
           {/* ── Search column ── */}
           <div className="rx-card pl-search-col">
@@ -474,8 +538,20 @@ export default function PatientLookupPage({ initialView = "auto" }) {
             canNewVisit={canNewVisit}
             canEdit={canEdit}
             navigate={navigate}
+            advancesList={advances}
+            unspentAdv={unspentAdv}
+            onTakeAdvance={() => setShowAdvDlg(true)}
+            onApplyAdvance={async (advanceId, billId) => {
+              try {
+                await axios.post(`${API_ENDPOINTS.BASE}/billing/advance/${advanceId}/apply`, { billId });
+                loadPatientDetail(selected.UHID);
+              } catch (e) {
+                window.alert(e?.response?.data?.message || "Apply failed");
+              }
+            }}
           />
         </div>
+        </>
       )}
 
       {/* ════════════════ DIRECTORY VIEW ════════════════ */}
@@ -610,6 +686,17 @@ export default function PatientLookupPage({ initialView = "auto" }) {
           canNewVisit={canNewVisit}
           canEdit={canEdit}
           navigate={navigate}
+          advancesList={advances}
+          unspentAdv={unspentAdv}
+          onTakeAdvance={() => setShowAdvDlg(true)}
+          onApplyAdvance={async (advanceId, billId) => {
+            try {
+              await axios.post(`${API_ENDPOINTS.BASE}/billing/advance/${advanceId}/apply`, { billId });
+              loadPatientDetail(selected.UHID);
+            } catch (e) {
+              window.alert(e?.response?.data?.message || "Apply failed");
+            }
+          }}
           fullWidth
           emptyHint={!selected && (
             <div className="rx-empty">
@@ -621,6 +708,18 @@ export default function PatientLookupPage({ initialView = "auto" }) {
               </button>
             </div>
           )}
+        />
+      )}
+
+      {/* ── TAKE-ADVANCE MODAL ─────────────────────────────────────── */}
+      {showAdvDlg && selected && (
+        <TakeAdvanceModal
+          patient={selected}
+          onClose={() => setShowAdvDlg(false)}
+          onSaved={() => {
+            setShowAdvDlg(false);
+            loadPatientDetail(selected.UHID);
+          }}
         />
       )}
     </div>
@@ -635,6 +734,7 @@ function PatientDetailPanel({
   patient, opd, adm, er, bills, tab, setTab,
   timelineFilter, setTimelineFilter, timelineRows, totals, loading,
   canNewVisit, canEdit, navigate, fullWidth, emptyHint,
+  advancesList = [], unspentAdv = 0, onTakeAdvance, onApplyAdvance,
 }) {
   if (!patient && emptyHint) return emptyHint;
   if (!patient) {
@@ -676,6 +776,13 @@ function PatientDetailPanel({
               <i className="pi pi-plus" /> New Visit
             </button>
           )}
+          {canNewVisit && onTakeAdvance && (
+            <button className="rx-action-btn"
+                    onClick={onTakeAdvance}
+                    title="Take cash / UPI / card deposit before bills are generated">
+              <i className="pi pi-wallet" /> Take Advance
+            </button>
+          )}
           <button className="rx-action-btn"
                   onClick={() => navigate(`/reception-billing?uhid=${encodeURIComponent(patient.UHID || "")}`)}>
             <i className="pi pi-receipt" /> Billing
@@ -712,6 +819,14 @@ function PatientDetailPanel({
           <div className="rx-kpi pl-kpi-due">
             <span className="rx-kpi-label">Outstanding</span>
             <span className="rx-kpi-value">{fmtCur(totals.outstanding)}</span>
+          </div>
+        )}
+        {unspentAdv > 0 && (
+          <div className="rx-kpi pl-kpi-credit"
+               title="Advance deposit on file — applicable to upcoming bills">
+            <span className="rx-kpi-label">Advance Credit</span>
+            <span className="rx-kpi-value">{fmtCur(unspentAdv)}</span>
+            <span className="rx-kpi-sub">{advancesList?.filter?.((a) => (a.remainingAmount || 0) > 0).length} deposit{advancesList?.filter?.((a) => (a.remainingAmount || 0) > 0).length === 1 ? "" : "s"}</span>
           </div>
         )}
       </div>
@@ -763,7 +878,15 @@ function PatientDetailPanel({
           </>
         )}
 
-        {!loading && tab === "billing" && <BillingBody bills={bills} />}
+        {!loading && tab === "billing" && (
+          <BillingBody
+            patient={patient}
+            bills={bills}
+            advancesList={advancesList}
+            unspentAdv={unspentAdv}
+            onApplyAdvance={onApplyAdvance}
+          />
+        )}
       </div>
     </div>
   );
@@ -827,65 +950,139 @@ function ProfileBody({ patient }) {
   );
 }
 
-/* ─── Billing body — full bill + payment ledger ──────────────── */
-function BillingBody({ bills }) {
+/* ─── Billing body — full bill + payment ledger + advance section ── */
+function BillingBody({ bills, advancesList = [], unspentAdv = 0, onApplyAdvance, patient }) {
   const list = Array.isArray(bills) ? bills : [];
+  const unspentAdvances = (advancesList || []).filter((a) => (a.remainingAmount || 0) > 0);
+
+  // ── Advance section — visible whenever the patient has unspent
+  //    deposits OR has any advance history (so refunded/applied
+  //    advances stay traceable too).
+  const advanceSection = (advancesList && advancesList.length > 0) ? (
+    <div className="pl-advance-panel">
+      <div className="pl-advance-head">
+        <i className="pi pi-wallet" /> Advance Deposits
+        <span className="pl-advance-unspent">
+          {unspentAdv > 0 ? `Available: ${fmtCur(unspentAdv)}` : "Fully applied"}
+        </span>
+      </div>
+      {advancesList.map((a) => (
+        <div key={a._id} className={`pl-advance-row pl-advance-row--${(a.status || "").toLowerCase()}`}>
+          <div className="pl-advance-line">
+            <span className="rx-mono-tag">{a.receiptNumber || "ADV"}</span>
+            <span className="rx-mode-pill">{a.paymentMode}</span>
+            {a.transactionId && <span className="rx-mono-tag rx-mono-tag--subtle">{a.transactionId}</span>}
+            <span className="pl-pay-by">by {a.receivedBy}</span>
+            <span className="pl-advance-amt">
+              {fmtCur(a.amount)}
+              {a.remainingAmount > 0 && a.remainingAmount < a.amount && (
+                <span className="pl-advance-rem"> ({fmtCur(a.remainingAmount)} left)</span>
+              )}
+            </span>
+            {/* Reprint button — admin / cashier can reprint at any time
+                (e.g. patient asks for a duplicate copy). Hidden for
+                refunded / cancelled rows since their receipt is no
+                longer valid evidence of held money. */}
+            {patient && a.status !== "REFUNDED" && a.status !== "CANCELLED" && (
+              <button
+                type="button"
+                className="pl-advance-print"
+                title={`Reprint receipt ${a.receiptNumber}`}
+                onClick={(e) => { e.stopPropagation(); printAdvanceReceipt(a, patient); }}
+              >
+                <i className="pi pi-print" />
+              </button>
+            )}
+          </div>
+          <div className="pl-advance-meta">
+            {fmtDateTime(a.paidAt)} · status: <strong>{a.status}</strong>
+            {a.appliedTo?.length > 0 && ` · applied to ${a.appliedTo.map((x) => x.billNumber).join(", ")}`}
+            {a.remarks && ` · ${a.remarks}`}
+          </div>
+        </div>
+      ))}
+    </div>
+  ) : null;
+
   if (list.length === 0) {
     return (
-      <div className="rx-empty">
-        <span className="rx-empty-icon">🧾</span>
-        No bills on file
-      </div>
+      <>
+        {advanceSection}
+        <div className="rx-empty">
+          <span className="rx-empty-icon">🧾</span>
+          No bills on file
+        </div>
+      </>
     );
   }
   return (
-    <div className="pl-bills">
-      {list.map((b) => {
-        const balance = Number(b.balanceAmount) || Number(b.balance) || 0;
-        const total   = Number(b.netAmount)     || Number(b.totalAmount) || 0;
-        const paid    = Number(b.totalPaid)     || Number(b.paidAmount)  || (total - balance);
-        return (
-          <div key={b._id} className="pl-bill-card">
-            <div className="pl-bill-head">
-              <div>
-                <div className="pl-bill-num">
-                  <i className="pi pi-receipt" /> {b.billNumber}
-                  <span className={`rx-pill rx-pill--${(b.visitType || "").toLowerCase()}`}>{b.visitType}</span>
-                </div>
-                <div className="pl-bill-sub">{fmtDateTime(b.billDate || b.createdAt)}</div>
-              </div>
-              <span className={`pl-bill-status pl-bill-status--${(b.billStatus || "").toLowerCase()}`}>
-                {b.billStatus}
-              </span>
-            </div>
-            <div className="pl-bill-rows">
-              <BillRow label="Gross"     v={b.grossAmount} />
-              <BillRow label="Discount"  v={b.totalDiscount} discount />
-              <BillRow label="Tax (GST)" v={b.totalTax || b.taxAmount} />
-              <BillRow label="Net"       v={total} bold />
-              <BillRow label="Paid"      v={paid} success />
-              {balance > 0 && <BillRow label="Outstanding" v={balance} due />}
-            </div>
-            {Array.isArray(b.payments) && b.payments.length > 0 && (
-              <div className="pl-payments">
-                <div className="pl-payments-head">
-                  <i className="pi pi-wallet" /> Payment ledger
-                </div>
-                {b.payments.map((p, i) => (
-                  <div key={p._id || i} className="pl-pay-row">
-                    <span>{fmtDate(p.paymentDate || p.createdAt)}</span>
-                    <span className="rx-mode-pill">{p.paymentMode || "CASH"}</span>
-                    {p.transactionId && <span className="rx-mono-tag rx-mono-tag--subtle">{p.transactionId}</span>}
-                    {p.receivedBy && <span className="pl-pay-by">by {p.receivedBy}</span>}
-                    <span className="pl-pay-amt">{fmtCur(p.amount)}</span>
+    <>
+      {advanceSection}
+      <div className="pl-bills">
+        {list.map((b) => {
+          const balance = Number(b.balanceAmount) || Number(b.balance) || 0;
+          const total   = Number(b.netAmount)     || Number(b.totalAmount) || 0;
+          const paid    = Number(b.totalPaid)     || Number(b.paidAmount)  || (total - balance);
+          const canApply = balance > 0 && unspentAdvances.length > 0 && b.billStatus !== "DRAFT";
+          return (
+            <div key={b._id} className="pl-bill-card">
+              <div className="pl-bill-head">
+                <div>
+                  <div className="pl-bill-num">
+                    <i className="pi pi-receipt" /> {b.billNumber}
+                    <span className={`rx-pill rx-pill--${(b.visitType || "").toLowerCase()}`}>{b.visitType}</span>
                   </div>
-                ))}
+                  <div className="pl-bill-sub">{fmtDateTime(b.billDate || b.createdAt)}</div>
+                </div>
+                <span className={`pl-bill-status pl-bill-status--${(b.billStatus || "").toLowerCase()}`}>
+                  {b.billStatus}
+                </span>
               </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
+              <div className="pl-bill-rows">
+                <BillRow label="Gross"     v={b.grossAmount} />
+                <BillRow label="Discount"  v={b.totalDiscount} discount />
+                <BillRow label="Tax (GST)" v={b.totalTax || b.taxAmount} />
+                <BillRow label="Net"       v={total} bold />
+                <BillRow label="Paid"      v={paid} success />
+                {balance > 0 && <BillRow label="Outstanding" v={balance} due />}
+              </div>
+              {Array.isArray(b.payments) && b.payments.length > 0 && (
+                <div className="pl-payments">
+                  <div className="pl-payments-head">
+                    <i className="pi pi-wallet" /> Payment ledger
+                  </div>
+                  {b.payments.map((p, i) => (
+                    <div key={p._id || i} className="pl-pay-row">
+                      <span>{fmtDate(p.paymentDate || p.createdAt)}</span>
+                      <span className="rx-mode-pill">{p.paymentMode || "CASH"}</span>
+                      {p.transactionId && <span className="rx-mono-tag rx-mono-tag--subtle">{p.transactionId}</span>}
+                      {p.receivedBy && <span className="pl-pay-by">by {p.receivedBy}</span>}
+                      <span className="pl-pay-amt">{fmtCur(p.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {canApply && onApplyAdvance && (
+                <div className="pl-bill-apply">
+                  <button
+                    className="rx-action-btn rx-action-btn--primary"
+                    onClick={() => {
+                      // Auto-pick the oldest unspent advance (FIFO) for the
+                      // typical case. A future enhancement could open a picker.
+                      const adv = unspentAdvances[unspentAdvances.length - 1] || unspentAdvances[0];
+                      if (adv) onApplyAdvance(adv._id, b._id);
+                    }}
+                    title="Apply oldest advance deposit to this bill (FIFO)"
+                  >
+                    <i className="pi pi-arrow-circle-down" /> Apply Advance ({fmtCur(unspentAdv)} available)
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </>
   );
 }
 
@@ -984,3 +1181,231 @@ function BillRow({ label, v, bold, success, due, discount }) {
     </div>
   );
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   Helper: open /print/advance-receipt in a popup with the payload
+   pre-loaded in sessionStorage. Matches the contract documented in
+   PrintRouterPage.jsx — sessionStorage["printPayload-<slug>"] is
+   the canonical channel for large payloads.
+═══════════════════════════════════════════════════════════════ */
+function printAdvanceReceipt(advance, patient) {
+  if (!advance || !patient) return;
+  const payload = {
+    receiptNo:    advance.receiptNumber,
+    patientName:  [patient.title, patient.fullName].filter(Boolean).join(" "),
+    uhid:         patient.UHID,
+    ipdNo:        advance.admission?.admissionNumber || null,
+    admissionDate: advance.admission?.admissionDate || null,
+    bedNumber:    null,
+    wardName:     null,
+    date:         advance.paidAt || advance.createdAt || new Date().toISOString(),
+    amount:       Number(advance.amount?.$numberDecimal ?? advance.amount) || 0,
+    method:       advance.paymentMode,
+    refNo:        advance.transactionId,
+    depositPurpose: advance.remarks || "hospitalization advance",
+    estimatedCost: advance.estimatedCost || null,
+  };
+  try {
+    sessionStorage.setItem(`printPayload-advance-receipt`, JSON.stringify(payload));
+  } catch (e) {
+    console.error("[print] sessionStorage write failed:", e?.message);
+  }
+  // Open in a new window so the existing app session stays open
+  // behind the print dialog. Width/height match the printable's A5
+  // default layout — toolbar lets the user upsize to A4 if needed.
+  window.open("/print/advance-receipt", "_blank", "noopener,noreferrer,width=900,height=1100");
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   TakeAdvanceModal — cash/UPI/card deposit before bills exist
+   Posts to /api/billing/advance and refreshes the parent panel.
+═══════════════════════════════════════════════════════════════ */
+function TakeAdvanceModal({ patient, onClose, onSaved }) {
+  const [amount,        setAmount]        = useState("");
+  const [paymentMode,   setPaymentMode]   = useState("CASH");
+  const [transactionId, setTransactionId] = useState("");
+  const [bankName,      setBankName]      = useState("");
+  const [remarks,       setRemarks]       = useState("");
+  const [saving,        setSaving]        = useState(false);
+  const [err,           setErr]           = useState(null);
+  const [savedAdv,      setSavedAdv]      = useState(null);   // set once POST returns
+
+  const submit = async () => {
+    const amt = Number(amount);
+    if (!amt || amt <= 0) { setErr("Enter a valid amount"); return; }
+    if (paymentMode !== "CASH" && !transactionId) {
+      setErr(`Transaction reference required for ${paymentMode}`);
+      return;
+    }
+    setErr(null);
+    setSaving(true);
+    try {
+      const { data } = await axios.post(`${API_ENDPOINTS.BASE}/billing/advance`, {
+        UHID: patient.UHID,
+        amount: amt,
+        paymentMode,
+        transactionId: transactionId || null,
+        bankName:      bankName      || null,
+        remarks:       remarks       || null,
+      });
+      // Switch modal into success state so the cashier can either
+      // print immediately or close + take the next deposit. The parent
+      // is NOT notified yet — onSaved fires when user clicks Done so
+      // the lookup panel only refreshes after they've moved on.
+      setSavedAdv(data?.data || null);
+    } catch (e) {
+      setErr(e?.response?.data?.message || e?.message || "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // ── Success state — receipt summary + print button ───────────────
+  if (savedAdv) {
+    const amt = Number(savedAdv.amount?.$numberDecimal ?? savedAdv.amount) || 0;
+    return (
+      <div className="pl-modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) { onSaved && onSaved(); } }}>
+        <div className="pl-modal" role="dialog" aria-label="Advance saved">
+          <div className="pl-modal-head pl-modal-head--success">
+            <i className="pi pi-check-circle" /> Advance Received
+            <button className="pl-modal-close" onClick={() => onSaved && onSaved()} aria-label="Close">✕</button>
+          </div>
+          <div className="pl-modal-body">
+            <div className="pl-success-card">
+              <div className="pl-success-rno">{savedAdv.receiptNumber}</div>
+              <div className="pl-success-amt">₹{amt.toLocaleString("en-IN")}</div>
+              <div className="pl-success-meta">
+                {savedAdv.paymentMode}
+                {savedAdv.transactionId ? ` · ref ${savedAdv.transactionId}` : ""}
+              </div>
+              <div className="pl-success-meta">
+                from {patient.title ? patient.title + " " : ""}{patient.fullName} ({patient.UHID})
+              </div>
+            </div>
+            <div className="pl-modal-info">
+              <i className="pi pi-info-circle" /> This credit is now on the UHID with status
+              <strong> ACTIVE</strong>. It auto-applies to future bills via the
+              "Apply Advance" button on each bill card.
+            </div>
+          </div>
+          <div className="pl-modal-foot">
+            <button className="rx-action-btn" onClick={() => onSaved && onSaved()}>
+              Done
+            </button>
+            <button
+              className="rx-action-btn rx-action-btn--primary"
+              onClick={() => {
+                printAdvanceReceipt(savedAdv, patient);
+                // keep the modal open so the cashier can click again
+                // if the popup blocker swallowed the first try.
+              }}
+            >
+              <i className="pi pi-print" /> Print Receipt
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="pl-modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="pl-modal" role="dialog" aria-label="Take advance deposit">
+        <div className="pl-modal-head">
+          <i className="pi pi-wallet" /> Take Advance Deposit
+          <button className="pl-modal-close" onClick={onClose} aria-label="Close">✕</button>
+        </div>
+        <div className="pl-modal-body">
+          <div className="pl-advance-patient">
+            <div><strong>{patient.title ? `${patient.title} ` : ""}{patient.fullName}</strong></div>
+            <div className="pl-bill-sub">{patient.UHID} · {patient.contactNumber || "no phone"}</div>
+          </div>
+
+          <div className="pl-modal-grid">
+            <div className="pl-field">
+              <div className="pl-field-label">Amount (₹) *</div>
+              <input
+                type="number"
+                min="1"
+                className="pl-modal-input"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="e.g. 10000"
+                autoFocus
+              />
+            </div>
+            <div className="pl-field">
+              <div className="pl-field-label">Payment Mode *</div>
+              <select
+                className="pl-modal-input"
+                value={paymentMode}
+                onChange={(e) => setPaymentMode(e.target.value)}
+              >
+                <option value="CASH">CASH</option>
+                <option value="UPI">UPI</option>
+                <option value="CARD">CARD</option>
+                <option value="CHEQUE">CHEQUE</option>
+                <option value="ONLINE">ONLINE</option>
+              </select>
+            </div>
+            {paymentMode !== "CASH" && (
+              <div className="pl-field pl-field--full">
+                <div className="pl-field-label">
+                  {paymentMode === "CHEQUE" ? "Cheque No" : paymentMode === "CARD" ? "Card Auth / Last 4" : "Transaction Reference"} *
+                </div>
+                <input
+                  className="pl-modal-input"
+                  value={transactionId}
+                  onChange={(e) => setTransactionId(e.target.value)}
+                  placeholder={paymentMode === "UPI" ? "UPI ref id (12 digits)" : ""}
+                />
+              </div>
+            )}
+            {(paymentMode === "CHEQUE" || paymentMode === "ONLINE") && (
+              <div className="pl-field pl-field--full">
+                <div className="pl-field-label">Bank Name</div>
+                <input
+                  className="pl-modal-input"
+                  value={bankName}
+                  onChange={(e) => setBankName(e.target.value)}
+                  placeholder="e.g. HDFC, SBI"
+                />
+              </div>
+            )}
+            <div className="pl-field pl-field--full">
+              <div className="pl-field-label">Remarks</div>
+              <input
+                className="pl-modal-input"
+                value={remarks}
+                onChange={(e) => setRemarks(e.target.value)}
+                placeholder="e.g. IPD admission deposit"
+              />
+            </div>
+          </div>
+
+          {err && <div className="pl-modal-err">{err}</div>}
+
+          <div className="pl-modal-info">
+            <i className="pi pi-info-circle" /> Deposit will land on this patient's UHID as
+            <strong> ADV-YYYY-NNNNNN</strong> with status <strong>ACTIVE</strong>. It
+            auto-applies to bills via the "Apply Advance" button until the credit is exhausted.
+            Refund is gated to Accountant/Admin.
+          </div>
+        </div>
+        <div className="pl-modal-foot">
+          <button className="rx-action-btn" onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button
+            className="rx-action-btn rx-action-btn--primary"
+            onClick={submit}
+            disabled={saving || !amount || Number(amount) <= 0}
+          >
+            <i className="pi pi-check" /> {saving ? "Saving…" : "Save Deposit"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+

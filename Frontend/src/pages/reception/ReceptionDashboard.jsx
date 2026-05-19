@@ -37,8 +37,21 @@ const STATUS_DOT_CLASS = {
   Offline:          "rd-doc-status-dot--offline",
 };
 
-const fmtCur = (n) => `₹${(Number(n) || 0).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
-const fmtCurExact = (n) => `₹${(Number(n) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// Backend's listBills uses `.lean()` which bypasses the schema's
+// toJSON transform — so Decimal128 money fields come over the wire as
+// `{ $numberDecimal: "50.00" }` objects instead of flat Numbers. Other
+// endpoints (getBillById, getBillsByUHID) DON'T use lean and serialise
+// fine. Rather than touch every consumer of listBills, this helper
+// flattens whichever shape we receive.
+const toMoney = (v) => {
+  if (v == null) return 0;
+  if (typeof v === "number") return v;
+  if (typeof v === "string") return Number(v) || 0;
+  if (typeof v === "object" && v.$numberDecimal != null) return Number(v.$numberDecimal) || 0;
+  return Number(v) || 0;
+};
+const fmtCur = (n) => `₹${(toMoney(n) || 0).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+const fmtCurExact = (n) => `₹${(toMoney(n) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const today = () => new Date().toISOString().slice(0, 10);
 const fmtDateLong = (d) => new Date(d).toLocaleDateString("en-IN", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
@@ -62,6 +75,25 @@ export default function ReceptionDashboard() {
   const [queues,     setQueues]     = useState([]);
   const [presence,   setPresence]   = useState([]);
   const [loading,    setLoading]    = useState(true);
+
+  // ── Tab state ──────────────────────────────────────────────
+  // Two views on this page:
+  //   "overview"   — the legacy stat tiles + breakdown cards
+  //   "collection" — a line-by-line list of every bill the cashier
+  //                  collected or generated today (request from
+  //                  receptionist team — they wanted to "see what
+  //                  I touched today" without leaving the dashboard).
+  const [activeTab, setActiveTab] = useState("overview");
+  // Today's bills for the Collection tab — fetched lazily the first
+  // time the tab is opened, then refreshed on date change or manual
+  // reload. Filtered client-side by `myOnly`, `statusFilter`, and a
+  // free-text search box so the table stays responsive even when the
+  // day's transaction count climbs into the hundreds.
+  const [todaysBills,     setTodaysBills]     = useState([]);
+  const [billsLoading,    setBillsLoading]    = useState(false);
+  const [myOnly,          setMyOnly]          = useState(false);
+  const [statusFilter,    setStatusFilter]    = useState("ALL");
+  const [collSearch,      setCollSearch]      = useState("");
 
   // Broadcast our own presence (so the other receptionist can see us)
   useReceptionistPresence({ type: "idle", action: "viewing-dashboard" });
@@ -118,6 +150,49 @@ export default function ReceptionDashboard() {
     return () => { clearInterval(t); window.removeEventListener("focus", onFocus); };
   }, [date, load]);
 
+  // ── Today's bills (Collection tab) ─────────────────────────
+  // Lazy-fetch: only fires when the user actually clicks the
+  // Collection tab, then refreshes whenever date changes or on a
+  // 25-second cadence (rather than fighting with the 20s overview
+  // poll). Reuses /api/billing?startDate=…&endDate=… which already
+  // supports the same UI semantics (and a populated patient ref so
+  // we can show names without an extra round-trip).
+  const loadTodaysBills = useCallback(async (signal) => {
+    setBillsLoading(true);
+    try {
+      // listBills parses startDate/endDate via `new Date(str)` — passing
+      // bare YYYY-MM-DD for both ends produces a zero-width range
+      // (midnight UTC of that day for BOTH bounds, so $gte and $lte
+      // collapse and nothing matches). Pad the end to 23:59:59.999 so
+      // the query actually covers the full local day.
+      const { data } = await axios.get(`${API_ENDPOINTS.BASE}/billing`, {
+        params: {
+          startDate: `${date}T00:00:00.000`,
+          endDate:   `${date}T23:59:59.999`,
+          limit:     500,
+        },
+        signal,
+      });
+      if (signal?.aborted) return;
+      setTodaysBills(data?.data || []);
+    } catch (e) {
+      if (!axios.isCancel(e)) console.error("[ReceptionDashboard] todaysBills:", e?.message);
+    } finally {
+      if (!signal?.aborted) setBillsLoading(false);
+    }
+  }, [date]);
+
+  useEffect(() => {
+    if (activeTab !== "collection") return;
+    const ac = new AbortController();
+    loadTodaysBills(ac.signal);
+    if (date === today()) {
+      const t = setInterval(() => loadTodaysBills(ac.signal), 25000);
+      return () => { clearInterval(t); ac.abort(); };
+    }
+    return () => ac.abort();
+  }, [activeTab, date, loadTodaysBills]);
+
   /* ─── Mark current token served (doctor's panel will call this, but
    *     reception can also trigger if doctor forgets) ─── */
   const serveNext = async (doctorId) => {
@@ -152,6 +227,59 @@ export default function ReceptionDashboard() {
 
   const isToday = date === today();
   const isFuture = date > today();
+
+  // ── Collection-tab derived values ──────────────────────────
+  // Filter the day's bills by the toolbar controls. Search matches
+  // bill number, patient name, or UHID — same semantics as the
+  // Billing Counter smart-search so the receptionist's muscle memory
+  // carries over.
+  const filteredBills = useMemo(() => {
+    const q = (collSearch || "").trim().toLowerCase();
+    let rows = todaysBills.slice();
+    if (myOnly) {
+      const me = String(myUserId || "");
+      rows = rows.filter(b => {
+        const ids = [
+          b.generatedBy, b.receivedBy, b.collectedBy,
+          ...((b.payments || []).map(p => p.receivedById || p.receivedBy)),
+        ].filter(Boolean).map(String);
+        return ids.some(x => x === me);
+      });
+    }
+    if (statusFilter !== "ALL") {
+      rows = rows.filter(b => (b.billStatus || "").toUpperCase() === statusFilter);
+    }
+    if (q) {
+      rows = rows.filter(b =>
+        (b.billNumber || "").toLowerCase().includes(q) ||
+        (b.patientName || b.patient?.fullName || "").toLowerCase().includes(q) ||
+        (b.UHID || b.patient?.UHID || "").toLowerCase().includes(q),
+      );
+    }
+    return rows;
+  }, [todaysBills, myOnly, statusFilter, collSearch, myUserId]);
+
+  const collectionTotals = useMemo(() => {
+    const sum = filteredBills.reduce((acc, b) => {
+      const net  = toMoney(b.netAmount);
+      const paid = toMoney(b.advancePaid ?? b.totalPaid);
+      acc.net  += net;
+      acc.paid += paid;
+      acc.due  += Math.max(0, net - paid);
+      if ((b.billStatus || "").toUpperCase() === "DRAFT")     acc.drafts += 1;
+      if ((b.billStatus || "").toUpperCase() === "GENERATED") acc.open   += 1;
+      if ((b.billStatus || "").toUpperCase() === "PAID")      acc.paidBills += 1;
+      return acc;
+    }, { net: 0, paid: 0, due: 0, drafts: 0, open: 0, paidBills: 0 });
+    return sum;
+  }, [filteredBills]);
+
+  // Payment-mode summary on each row — "CASH+UPI" if the bill saw
+  // multiple modes today, single label otherwise. Empty for DRAFTs.
+  const modesFor = (b) => {
+    const set = new Set((b.payments || []).map(p => (p.paymentMode || p.mode || "").toUpperCase()).filter(Boolean));
+    return Array.from(set).join("+");
+  };
 
   /* ════════════════ RENDER ════════════════ */
   return (
@@ -217,6 +345,21 @@ export default function ReceptionDashboard() {
         </button>
       </div>
 
+      {/* ── Tab strip — Overview / Collection ── */}
+      <div className="rd-tabs">
+        <button className={`rd-tab ${activeTab === "overview"   ? "rd-tab--active" : ""}`}
+                onClick={() => setActiveTab("overview")}>
+          <i className="pi pi-th-large" /> Overview
+        </button>
+        <button className={`rd-tab ${activeTab === "collection" ? "rd-tab--active" : ""}`}
+                onClick={() => setActiveTab("collection")}>
+          <i className="pi pi-receipt" /> Collection
+          {todaysBills.length > 0 && (
+            <span className="rd-tab-count">{todaysBills.length}</span>
+          )}
+        </button>
+      </div>
+
       {/* ── Live Receptionist Presence strip ── */}
       {isToday && presence.length > 0 && (
         <div className="rd-presence-strip rd-presence-row">
@@ -239,6 +382,9 @@ export default function ReceptionDashboard() {
         </div>
       )}
 
+      {/* Overview wraps the stat tiles + breakdown grid below. */}
+      {activeTab === "overview" && (
+      <>
       {/* ── Stat tiles ── */}
       <div className="rd-stats rd-stats--mb">
         <div className="rd-stat rd-stat--total">
@@ -440,6 +586,140 @@ export default function ReceptionDashboard() {
         </div>
 
       </div>
+      </>
+      )}
+
+      {/* ════════════════ COLLECTION TAB ════════════════════════════
+          Line-by-line list of every bill the receptionist DRAFTed,
+          generated, or collected today. Click a row to jump back into
+          /reception-billing/:UHID with that bill highlighted. Mirrors
+          the columns the Accountant uses for end-of-day reconciliation
+          so a handover snapshot is one screenshot away. */}
+      {activeTab === "collection" && (
+        <div className="rd-collection">
+          {/* Toolbar — search + status filter + "my bills only" toggle */}
+          <div className="rd-coll-toolbar">
+            <div className="rx-search rd-coll-search">
+              <i className="pi pi-search" />
+              <input type="text"
+                     placeholder="Bill #, patient name, or UHID…"
+                     value={collSearch}
+                     onChange={e => setCollSearch(e.target.value)} />
+            </div>
+            <select className="his-select rd-coll-status"
+                    value={statusFilter}
+                    onChange={e => setStatusFilter(e.target.value)}>
+              <option value="ALL">All Statuses</option>
+              <option value="DRAFT">Draft</option>
+              <option value="GENERATED">Generated</option>
+              <option value="PARTIAL">Partial</option>
+              <option value="PAID">Paid</option>
+              <option value="CANCELLED">Cancelled</option>
+              <option value="REFUNDED">Refunded</option>
+            </select>
+            <label className="rd-coll-myonly" title="Show only bills I personally touched today">
+              <input type="checkbox"
+                     checked={myOnly}
+                     onChange={e => setMyOnly(e.target.checked)} />
+              My bills only
+            </label>
+            <button className="rd-btn-ghost"
+                    onClick={() => { const ac = new AbortController(); loadTodaysBills(ac.signal); }}
+                    title="Refresh">
+              <i className={`pi ${billsLoading ? "pi-spin pi-spinner" : "pi-refresh"}`} /> Refresh
+            </button>
+          </div>
+
+          {/* Strip-summary chips — quick eyeballable numbers above the table */}
+          <div className="rd-coll-chips">
+            <span className="rd-coll-chip">
+              <strong>{filteredBills.length}</strong> bill{filteredBills.length === 1 ? "" : "s"}
+            </span>
+            <span className="rd-coll-chip rd-coll-chip--success">
+              Collected <strong>{fmtCur(collectionTotals.paid)}</strong>
+            </span>
+            <span className="rd-coll-chip rd-coll-chip--danger">
+              Due <strong>{fmtCur(collectionTotals.due)}</strong>
+            </span>
+            <span className="rd-coll-chip">
+              Net <strong>{fmtCur(collectionTotals.net)}</strong>
+            </span>
+            <span className="rd-coll-chip">
+              {collectionTotals.drafts} draft · {collectionTotals.open} open · {collectionTotals.paidBills} paid
+            </span>
+          </div>
+
+          {/* Table */}
+          <div className="rd-coll-tablewrap">
+            {billsLoading && filteredBills.length === 0 ? (
+              <div className="rd-empty"><i className="pi pi-spin pi-spinner" /> Loading…</div>
+            ) : filteredBills.length === 0 ? (
+              <div className="rd-empty">
+                <span className="rd-empty-icon">🧾</span>
+                {todaysBills.length === 0
+                  ? "No bills touched yet today."
+                  : "No bills match the current filters."}
+              </div>
+            ) : (
+              <table className="rd-coll-table">
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Bill #</th>
+                    <th>Patient</th>
+                    <th>Visit</th>
+                    <th>Status</th>
+                    <th>Mode</th>
+                    <th className="right">Net</th>
+                    <th className="right">Paid</th>
+                    <th className="right">Balance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredBills.map(b => {
+                    const net  = toMoney(b.netAmount);
+                    const paid = toMoney(b.advancePaid ?? b.totalPaid);
+                    const bal  = Math.max(0, net - paid);
+                    const status = (b.billStatus || "—").toUpperCase();
+                    const statusCls = status === "PAID"      ? "rd-status-paid"
+                                   : status === "PARTIAL"   ? "rd-status-partial"
+                                   : status === "GENERATED" ? "rd-status-generated"
+                                   : status === "DRAFT"     ? "rd-status-draft"
+                                   : status === "CANCELLED" ? "rd-status-cancelled"
+                                   : "rd-status-other";
+                    const when = b.payments?.length
+                      ? new Date(b.payments[b.payments.length - 1].paidAt || b.updatedAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })
+                      : new Date(b.billDate || b.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+                    const uhid = b.UHID || b.patient?.UHID;
+                    const name = b.patientName || b.patient?.fullName || "—";
+                    return (
+                      <tr key={b._id}
+                          className="rd-coll-row"
+                          onClick={() => uhid && navigate(`/reception-billing/${encodeURIComponent(uhid)}`)}
+                          title={`Open ${name} (${uhid || ""})`}>
+                        <td className="rd-coll-time">{when}</td>
+                        <td className="rd-coll-billno">{b.billNumber || "DRAFT"}</td>
+                        <td>
+                          <div className="rd-coll-patient">{name}</div>
+                          {uhid && <div className="rd-coll-uhid">{uhid}</div>}
+                        </td>
+                        <td>{b.visitType || "—"}</td>
+                        <td><span className={`rd-coll-status ${statusCls}`}>{status}</span></td>
+                        <td className="rd-coll-mode">{modesFor(b) || "—"}</td>
+                        <td className="right">{fmtCur(net)}</td>
+                        <td className="right rx-text-success">{fmtCur(paid)}</td>
+                        <td className={`right ${bal > 0 ? "rx-text-danger" : "rx-text-success"}`}>
+                          {fmtCur(bal)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
 
       {loading && (
         <div className="rd-floating-loader">
