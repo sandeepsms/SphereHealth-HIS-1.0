@@ -180,11 +180,14 @@ const NAV = [
       { label: "Nursing Notes",         icon: "pi-file-edit",  path: "/nursing-notes",           roles: [ADMIN, NR], nabh: true },
       { label: "Patient Panel",         icon: "pi-id-card",    path: "/nurse-patient-panel",     roles: [ADMIN, NR, WB] },
       { label: "OPD Queue",             icon: "pi-list",       path: "/opd-queue",               roles: [ADMIN, NR] },
-      { label: "Initial Assessment",    icon: "pi-clipboard",  path: "/nurse-initial-assessment",roles: [ADMIN, NR], nabh: true },
-      { label: "Daily Assessment",      icon: "pi-calendar",   path: "/daily-nursing-assessment",roles: [ADMIN, NR], nabh: true },
-      { label: "Care Plan",             icon: "pi-heart",      path: "/nursing-care-plan",       roles: [ADMIN, NR], nabh: true },
-      { label: "Fall Risk",             icon: "pi-exclamation-triangle", path: "/fall-risk-assessment", roles: [ADMIN, NR], nabh: true },
-      { label: "Pain Assessment",       icon: "pi-minus-circle", path: "/pain-assessment",       roles: [ADMIN, NR], nabh: true },
+      // R7e: Removed 5 duplicate sidebar entries (Initial Assessment /
+      // Daily Assessment / Care Plan / Fall Risk / Pain Assessment) —
+      // every one of those is already accessible as a chip button on the
+      // Nursing Notes page itself (the "ASSESSMENT & MONITORING" +
+      // "INTERVENTIONS" + "DOCUMENTATION" row), so the sidebar entries
+      // were redundant navigation that created 5 extra clicks the nurse
+      // didn't need. Routes themselves stay in App.jsx so deep links
+      // and chip-button navigation continue to work.
     ],
   },
 

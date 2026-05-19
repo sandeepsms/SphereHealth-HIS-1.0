@@ -112,6 +112,11 @@ const DoctorNotesSchema = new mongoose.Schema(
       enum: [
         "general",
         "admission",
+        // R7g: "initial" is the NABH COP.1 first contact note — distinct
+        // from "admission" (administrative) and "progress" (daily). The
+        // frontend's Initial Assessment modal posts this value; without
+        // it, save fails enum validation silently.
+        "initial",
         "progress",
         "daily",
         "icu",

@@ -7,6 +7,11 @@ const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser]       = useState(null);   // current user object
+  // R7f: when role === "Doctor", backend /api/auth/me also returns the
+  // linked Doctor collection profile (id + doctorId). Frontend uses this
+  // for "am I the consultant of record?" checks because Admission stores
+  // `attendingDoctorId` as the Doctor collection's _id (NOT the User _id).
+  const [doctorProfile, setDoctorProfile] = useState(null);
   const [token, setToken]     = useState(() => localStorage.getItem("his_token") || null);
   const [loading, setLoading] = useState(true);   // initial session check
 
@@ -20,11 +25,13 @@ export function AuthProvider({ children }) {
           headers: { Authorization: `Bearer ${saved}` },
         });
         setUser(res.data.user);
+        setDoctorProfile(res.data.doctorProfile || null);
         setToken(saved);
       } catch {
         localStorage.removeItem("his_token");
         setToken(null);
         setUser(null);
+        setDoctorProfile(null);
       } finally {
         setLoading(false);
       }
@@ -35,10 +42,20 @@ export function AuthProvider({ children }) {
   /* ── Login ── */
   const login = useCallback(async (email, password) => {
     const res = await axios.post(API_ENDPOINTS.AUTH_LOGIN, { email, password });
-    const { token: t, user: u } = res.data;
+    const { token: t, user: u, doctorProfile: dp } = res.data;
     localStorage.setItem("his_token", t);
     setToken(t);
     setUser(u);
+    // login response may not include doctorProfile (older clients);
+    // re-fetch /me right after so the value is hydrated for any role check.
+    if (dp) {
+      setDoctorProfile(dp);
+    } else if (u?.role === "Doctor") {
+      try {
+        const me = await axios.get(API_ENDPOINTS.AUTH_ME, { headers: { Authorization: `Bearer ${t}` } });
+        setDoctorProfile(me.data?.doctorProfile || null);
+      } catch { /* non-fatal */ }
+    }
     return u;
   }, []);
 
@@ -66,6 +83,7 @@ export function AuthProvider({ children }) {
     }
     setToken(null);
     setUser(null);
+    setDoctorProfile(null);
   }, []);
 
   /* ── Role helpers ── */
@@ -79,7 +97,7 @@ export function AuthProvider({ children }) {
   const homePath    = user ? homePathForRole(user.role) : "/login";
 
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, logout, hasRole, isAdmin, can, seesModule, homePath }}>
+    <AuthContext.Provider value={{ user, doctorProfile, token, loading, login, logout, hasRole, isAdmin, can, seesModule, homePath }}>
       {children}
     </AuthContext.Provider>
   );

@@ -16,8 +16,13 @@ class DoctorNotesController {
   // POST /api/doctor-notes
   createNote = handle(async (req, res) => {
     // ✅ doctorId: body se lo, ya header se, ya req.user se
+    // R7g-FIX: when no doctorId is sent in body/header, fall back to the
+    // authenticated user's id — NOT the whole `req.user` object (which is
+    // the JWT-decoded blob including role, jti, iat, exp). Casting the
+    // full object to ObjectId fails with BSONError, which is why
+    // `Sign & Submit` was silently failing 400.
     const doctorUserId =
-      req.body.doctorId || req.body.doctor || req.headers["x-user-id"] || req.user;
+      req.body.doctorId || req.body.doctor || req.headers["x-user-id"] || req.user?.id;
     if (!doctorUserId)
       return res
         .status(400)
@@ -71,8 +76,13 @@ class DoctorNotesController {
 
   // PUT /api/doctor-notes/:id
   updateNote = handle(async (req, res) => {
+    // R7g-FIX: when no doctorId is sent in body/header, fall back to the
+    // authenticated user's id — NOT the whole `req.user` object (which is
+    // the JWT-decoded blob including role, jti, iat, exp). Casting the
+    // full object to ObjectId fails with BSONError, which is why
+    // `Sign & Submit` was silently failing 400.
     const doctorUserId =
-      req.body.doctorId || req.body.doctor || req.headers["x-user-id"] || req.user;
+      req.body.doctorId || req.body.doctor || req.headers["x-user-id"] || req.user?.id;
     const note = await doctorNotesService.updateDoctorNote(
       req.params.id,
       req.body,
@@ -83,8 +93,13 @@ class DoctorNotesController {
 
   // PATCH /api/doctor-notes/:id/sign
   signNote = handle(async (req, res) => {
+    // R7g-FIX: when no doctorId is sent in body/header, fall back to the
+    // authenticated user's id — NOT the whole `req.user` object (which is
+    // the JWT-decoded blob including role, jti, iat, exp). Casting the
+    // full object to ObjectId fails with BSONError, which is why
+    // `Sign & Submit` was silently failing 400.
     const doctorUserId =
-      req.body.doctorId || req.body.doctor || req.headers["x-user-id"] || req.user;
+      req.body.doctorId || req.body.doctor || req.headers["x-user-id"] || req.user?.id;
     // Allow the frontend signature pad to push a base64 PNG + display name
     // through at sign-time so we can stamp it on the note.
     const { signature, signedByName, signedByReg } = req.body || {};
@@ -104,8 +119,13 @@ class DoctorNotesController {
 
   // DELETE /api/doctor-notes/:id
   deleteNote = handle(async (req, res) => {
+    // R7g-FIX: when no doctorId is sent in body/header, fall back to the
+    // authenticated user's id — NOT the whole `req.user` object (which is
+    // the JWT-decoded blob including role, jti, iat, exp). Casting the
+    // full object to ObjectId fails with BSONError, which is why
+    // `Sign & Submit` was silently failing 400.
     const doctorUserId =
-      req.body.doctorId || req.body.doctor || req.headers["x-user-id"] || req.user;
+      req.body.doctorId || req.body.doctor || req.headers["x-user-id"] || req.user?.id;
     await doctorNotesService.deleteDoctorNote(req.params.id, doctorUserId);
     return res.json({ success: true, message: "Note deleted" });
   });

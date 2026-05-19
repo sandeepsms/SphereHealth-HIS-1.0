@@ -64,8 +64,20 @@ class AdmissionController {
 
   getActiveAdmissions = handle(async (req, res) => {
     const filters = { ...req.query };
+    // R7g: Doctor-scope filter previously required exact match on
+    // attendingDoctorId only — meaning admins / cross-cover doctors /
+    // doctors on the treatment team but not the primary attending
+    // couldn't see the patient in their picker. Now:
+    //  - Admin / Accountant: no filter (see all) — needed for handover,
+    //    audit, billing reconciliation.
+    //  - Doctor: $or match against attendingDoctorId OR
+    //    treatmentTeam[].doctorId so consulting / cross-cover doctors
+    //    are recognized too.
     if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
-      filters.attendingDoctorId = req.doctorProfile._id;
+      filters.$or = [
+        { attendingDoctorId: req.doctorProfile._id },
+        { "treatmentTeam.doctorId": req.doctorProfile._id },
+      ];
     }
     const admissions = await AdmissionService.getActiveAdmissions(filters);
     return res.json({ success: true, data: admissions });
