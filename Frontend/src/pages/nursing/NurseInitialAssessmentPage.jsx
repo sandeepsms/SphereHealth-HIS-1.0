@@ -99,6 +99,31 @@ function F({ label, required, children, hint }) {
   );
 }
 
+/* R7g-FIX: `fld` (form field) + `ta` (textarea) base style objects.
+ * Referenced via `{...fld, ...}` spreads throughout the file (lines 631,
+ * 635, 1171) but were never defined → ReferenceError at render,
+ * page crashed to blank screen. Recovered the look from sibling
+ * Nursing pages (NursingNotes.jsx style props) so layouts stay
+ * consistent. NABH-compliant input affordance + readable focus state. */
+const fld = {
+  width: "100%",
+  padding: "8px 12px",
+  border: `1.5px solid ${C.border}`,
+  borderRadius: 7,
+  fontSize: 13,
+  fontFamily: "'DM Sans', sans-serif",
+  color: C.text,
+  background: "white",
+  outline: "none",
+  transition: "border-color .15s",
+};
+const ta = {
+  ...fld,
+  minHeight: 70,
+  resize: "vertical",
+  lineHeight: 1.5,
+};
+
 /* ── Pill toggle for Yes/No ── */
 function YesNo({ value, onChange }) {
   return (

@@ -416,16 +416,30 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
   };
 
   const saveNote = async (status = "draft") => {
-    if (!ipdNo) { showToast("Search for a patient first", "warn"); return; }
+    // R7g: ipdNo derivation is robust now. When DoctorAssessmentContent
+    // is embedded inside DoctorNotesPage's modal, `selectedPatient` is
+    // passed in but local `ipdNo` state may not be hydrated by the
+    // useEffect at line 218 before the user clicks Sign & Submit (race
+    // when admission record lacks .ipdNo / .admissionNumber fields).
+    // Fall back to patient / selectedPatient props at call-time.
+    const effectiveIpdNo =
+      ipdNo
+      || patient?.ipdNo || patient?.admissionNumber || patient?._id
+      || selectedPatient?.ipdNo || selectedPatient?.admissionNumber || selectedPatient?._id
+      || "";
+    if (!effectiveIpdNo) {
+      showToast("Search for a patient first (no admission ID resolved)", "warn");
+      return;
+    }
     if (!isOwner) { showToast("Access denied — you are not the attending doctor for this patient", "err"); return; }
     setLoading(true);
     const token = localStorage.getItem("his_token");
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
     const payload = {
-      ipdNo,
-      patient: patient?.patientId?._id || patient?.patientId || patient?._id || patient?.patient?._id,
-      patientName: patient?.patientName || patient?.patient?.name || "",
-      patientUHID: patient?.uhid || patient?.UHID || search,
+      ipdNo: effectiveIpdNo,
+      patient: patient?.patientId?._id || patient?.patientId || patient?._id || patient?.patient?._id || selectedPatient?.patientId?._id || selectedPatient?._id,
+      patientName: patient?.patientName || patient?.patient?.name || selectedPatient?.patientName || "",
+      patientUHID: patient?.uhid || patient?.UHID || selectedPatient?.UHID || selectedPatient?.uhid || search,
       doctor: user?._id || user?.id,
       doctorId: user?._id || user?.id,
       doctorName: form.doctorName || doctorDisplayName, doctorRegNo: form.doctorRegNo || doctorReg,
@@ -509,12 +523,22 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
       setOrders([]);
       setForm(p => ({ ...p, soap: { subjective:"",objective:"",assessment:"",plan:"" }, vitals: { bp_sys:"",bp_dia:"",pulse:"",temp:"",rr:"",spo2:"",bsl:"",gcs:"",urine:"" }, provisionalDiagnosis:"", finalDiagnosis:"", investigations:"" }));
       setEditingNote(null);
-      await fetchNotes(ipdNo);
-      await fetchOrders(ipdNo);
-      await fetchTreatmentOrders(patient?.UHID || patient?.uhid);
+      await fetchNotes(effectiveIpdNo);
+      await fetchOrders(effectiveIpdNo);
+      await fetchTreatmentOrders(patient?.UHID || patient?.uhid || selectedPatient?.UHID);
       // Notify parent (DoctorNotesPage) to refresh patient state and close modal
       if (onSaved) onSaved();
-    } catch (err) { showToast(err?.response?.data?.message || "Save failed — check that all required fields are filled", "err"); }
+    } catch (err) {
+      // R7g: surface backend error message clearly. Previously caught
+      // errors only showed a generic "Save failed" — making it hard to
+      // diagnose validation failures vs network failures vs auth issues.
+      const msg = err?.response?.data?.message
+        || err?.response?.data?.error
+        || (err?.response?.status ? `Save failed (HTTP ${err.response.status})` : err?.message)
+        || "Save failed — check that all required fields are filled";
+      console.error("[saveNote] Failed:", err);
+      showToast(msg, "err");
+    }
     finally { setLoading(false); }
   };
 
