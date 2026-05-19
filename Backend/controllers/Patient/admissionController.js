@@ -765,6 +765,170 @@ class AdmissionController {
       ...(bedReleased ? {} : { bedReleased: false, warning: bedWarning }),
     });
   });
+
+  // ═══════════════════════════════════════════════════════════
+  // R7i: POST /api/admissions/:id/reactivate
+  // ───────────────────────────────────────────────────────────
+  // Same-day discharge undo. Admin-only emergency path for the
+  // case where a patient was finalized as Discharged but their
+  // condition deteriorated before they physically left the
+  // premises — we re-occupy the same bed and flip status back
+  // to Active instead of forcing a brand-new admission with a
+  // new admission number / new IPD billing cycle.
+  //
+  // GUARDS (defense in depth — all must pass):
+  //   1. Role gate: action="admission.reactivate" → Admin only
+  //      (enforced by route-level requireAction middleware)
+  //   2. Current status must be "Discharged"
+  //   3. actualDischargeDate must be within the last 24 hours.
+  //      Older discharges should go through a fresh admission
+  //      to keep NABH continuity-of-care + billing cycles clean.
+  //   4. The original bed must still be Available — if someone
+  //      else has been admitted to it, we 409 the request and
+  //      let the caller pick a different bed via normal admit.
+  //   5. Atomic CAS on both admission AND bed — if either fails
+  //      we roll back so we never end up half-active.
+  //
+  // The pre('save') state-machine guard (Discharged is terminal)
+  // is intentionally BYPASSED here via findOneAndUpdate (Mongoose
+  // skips pre('save') hooks on raw update operators). That bypass
+  // is gated by the action permission, so it cannot be triggered
+  // outside this controlled path.
+  reactivate = handle(async (req, res) => {
+    const Admission = require("../../models/Patient/admissionModel");
+    const Bed       = require("../../models/bedMgmt/bedsModel");
+
+    const reason = String(req.body?.reason || "").trim();
+    if (!reason || reason.length < 10) {
+      return res.status(400).json({
+        success: false,
+        message: "Reactivation reason is required (min 10 chars) — patient safety + NABH audit trail.",
+      });
+    }
+
+    const adm = await Admission.findById(req.params.id).lean();
+    if (!adm) return res.status(404).json({ success: false, message: "Admission not found" });
+    if (adm.status !== "Discharged") {
+      return res.status(409).json({
+        success: false,
+        message: `Cannot reactivate — admission is currently "${adm.status}", not "Discharged".`,
+      });
+    }
+
+    // 24-hour window — same-day undo only.
+    const dischargedAt =
+      adm.actualDischargeDate
+      || adm.dischargeWorkflow?.gatePassIssuedAt
+      || adm.dischargeWorkflow?.billClearedAt
+      || adm.dischargeWorkflow?.doctorApprovedAt;
+    if (!dischargedAt) {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot determine when this admission was discharged — manual review required.",
+      });
+    }
+    const hoursSince = (Date.now() - new Date(dischargedAt).getTime()) / (1000 * 60 * 60);
+    if (hoursSince > 24) {
+      return res.status(409).json({
+        success: false,
+        message: `Discharge is ${Math.floor(hoursSince)}h old — same-day reactivation window (24h) has closed. Create a new admission instead.`,
+      });
+    }
+
+    // Check bed availability first (cheap pre-check; CAS below is the real guard).
+    if (adm.bedId) {
+      const bed = await Bed.findById(adm.bedId).select("status").lean();
+      if (bed && bed.status !== "Available" && bed.status !== "Cleaning") {
+        return res.status(409).json({
+          success: false,
+          message: `Original bed is now "${bed.status}" — cannot reactivate to the same bed. Admit fresh and assign a new bed.`,
+        });
+      }
+    }
+
+    // Atomic CAS — only flip status if it is STILL Discharged. Two concurrent
+    // admin clicks then become a clean winner / 409 instead of double-active.
+    const now = new Date();
+    const reactivatedBy = req.body?.byName || req.user?.fullName || "Admin";
+    const updatedAdm = await Admission.findOneAndUpdate(
+      { _id: req.params.id, status: "Discharged" },
+      {
+        $set: {
+          status: "Active",
+          actualDischargeDate: null,
+          "dischargeWorkflow.stage": "NotRequested",
+          "dischargeWorkflow.reactivatedAt": now,
+          "dischargeWorkflow.reactivatedBy": reactivatedBy,
+          "dischargeWorkflow.reactivationReason": reason,
+        },
+        // Clear the per-stage timestamps so the queue doesn't keep
+        // showing this admission as "Discharged Today".
+        $unset: {
+          "dischargeWorkflow.doctorApprovedAt": "",
+          "dischargeWorkflow.billClearedAt": "",
+          "dischargeWorkflow.gatePassIssuedAt": "",
+          "dischargeWorkflow.gatePassNumber": "",
+        },
+      },
+      { new: true, runValidators: true },
+    );
+    if (!updatedAdm) {
+      return res.status(409).json({
+        success: false,
+        message: "Admission status changed underneath us — reactivation aborted.",
+      });
+    }
+
+    // Re-occupy the bed. CAS on Available/Cleaning so we never steal an
+    // already-allocated bed. If the bed was taken between our pre-check
+    // and now, we ROLLBACK the admission flip and return 409.
+    let bedRestored = false;
+    if (updatedAdm.bedId) {
+      const restored = await Bed.findOneAndUpdate(
+        { _id: updatedAdm.bedId, status: { $in: ["Available", "Cleaning"] } },
+        {
+          $set: {
+            status: "Occupied",
+            patient: updatedAdm.patientId,
+            currentAdmission: updatedAdm._id,
+          },
+        },
+        { new: true, runValidators: true },
+      );
+      if (!restored) {
+        // Bed was taken between our pre-check and CAS — undo the admission flip.
+        await Admission.findByIdAndUpdate(req.params.id, {
+          $set: {
+            status: "Discharged",
+            actualDischargeDate: adm.actualDischargeDate || dischargedAt,
+            "dischargeWorkflow.stage": adm.dischargeWorkflow?.stage || "Completed",
+            ...(adm.dischargeWorkflow?.gatePassIssuedAt && {
+              "dischargeWorkflow.gatePassIssuedAt": adm.dischargeWorkflow.gatePassIssuedAt,
+            }),
+            ...(adm.dischargeWorkflow?.gatePassNumber && {
+              "dischargeWorkflow.gatePassNumber": adm.dischargeWorkflow.gatePassNumber,
+            }),
+          },
+          $unset: {
+            "dischargeWorkflow.reactivatedAt": "",
+            "dischargeWorkflow.reactivatedBy": "",
+            "dischargeWorkflow.reactivationReason": "",
+          },
+        });
+        return res.status(409).json({
+          success: false,
+          message: "Bed was reassigned between check and reactivate — rolled back. Admit fresh.",
+        });
+      }
+      bedRestored = true;
+    }
+
+    return res.json({
+      success: true,
+      message: `Discharge undone — patient is Active again${bedRestored ? " on the original bed" : ""}.`,
+      data: { admission: updatedAdm, bedRestored },
+    });
+  });
 }
 
 module.exports = new AdmissionController();

@@ -210,6 +210,15 @@ export const ACTIONS = {
   "reports.clinical":      ["Admin", "Doctor"],
   // Accountant needs audit-trail review to catch unauthorized refunds/cancels.
   "reports.audit":         ["Admin", "Accountant"],
+
+  // ── Medical Records Department (R7i) ────────────────────────
+  // Replaces the paper MRD function. Read-only access to every
+  // discharged patient's complete file (notes, MAR, vitals,
+  // labs, consents, bills, payments).
+  "mrd.read":              ["Admin", "Doctor", "MRD"],
+  "mrd.list":              ["Admin", "Doctor", "MRD"],
+  // Same-day discharge undo — Admin only, controller gates 24h window.
+  "admission.reactivate":  ["Admin"],
 };
 
 /* ── Helpers ─────────────────────────────────────────────────────── */

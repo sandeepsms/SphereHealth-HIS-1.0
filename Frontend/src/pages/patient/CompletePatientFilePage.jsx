@@ -137,6 +137,125 @@ function IdentityBanner({ patient, currentAdmission, role, onBack, onPrint }) {
   );
 }
 
+/* ── R7i: Re-activate Admission banner ───────────────────────────
+   Admin-only emergency path for the case where a patient was just
+   discharged but their condition deteriorated before they left.
+   Hidden unless ALL of:
+     • Current admission is "Discharged"
+     • Discharge happened within the last 24h
+     • Logged-in user is Admin
+   Renders a prompt + Reason input + Re-activate button. On confirm,
+   POSTs /api/admissions/:id/reactivate — the backend re-occupies
+   the same bed atomically (or 409s if the bed was reassigned).
+*/
+function ReactivateBanner({ admission, viewerRole, onReactivated }) {
+  const [reason, setReason] = React.useState("");
+  const [busy, setBusy]     = React.useState(false);
+  const [error, setError]   = React.useState("");
+  const [show, setShow]     = React.useState(false);
+
+  if (viewerRole !== "Admin") return null;
+  if (admission?.status !== "Discharged") return null;
+
+  const dischargedAt =
+    admission.actualDischargeDate
+    || admission.dischargeWorkflow?.gatePassIssuedAt
+    || admission.dischargeWorkflow?.billClearedAt
+    || admission.dischargeWorkflow?.doctorApprovedAt;
+  if (!dischargedAt) return null;
+  const hoursSince = (Date.now() - new Date(dischargedAt).getTime()) / 3.6e6;
+  if (hoursSince > 24) return null;
+
+  const doReactivate = async () => {
+    setError("");
+    if (reason.trim().length < 10) {
+      setError("Please describe why this discharge needs to be undone (min 10 chars).");
+      return;
+    }
+    setBusy(true);
+    try {
+      const { data } = await axios.post(
+        `${BASE}/admissions/${admission._id}/reactivate`,
+        { reason: reason.trim() },
+      );
+      onReactivated?.(data);
+    } catch (e) {
+      setError(e?.response?.data?.message || e.message || "Reactivation failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const styles = {
+    wrap: {
+      margin: "12px 0 16px",
+      padding: 14,
+      borderRadius: 10,
+      border: "2px solid #f59e0b",
+      background: "linear-gradient(135deg, #fff7ed, #fffbeb)",
+      display: "flex",
+      flexDirection: "column",
+      gap: 10,
+    },
+    head: { display: "flex", alignItems: "center", gap: 10, fontWeight: 700, color: "#92400e" },
+    sub:  { fontSize: 12.5, color: "#78350f" },
+    row:  { display: "flex", gap: 10, alignItems: "stretch" },
+    inp:  { flex: 1, padding: "8px 10px", border: "1.5px solid #fbbf24", borderRadius: 6, fontSize: 13, background: "white" },
+    btn:  { padding: "8px 14px", borderRadius: 6, fontWeight: 700, fontSize: 13, cursor: busy ? "wait" : "pointer", border: "none", color: "white", background: "#dc2626" },
+    btnGhost: { padding: "8px 14px", borderRadius: 6, fontWeight: 600, fontSize: 13, cursor: "pointer", border: "1.5px solid #fbbf24", color: "#92400e", background: "white" },
+    err:  { color: "#b91c1c", fontSize: 12.5, fontWeight: 600 },
+  };
+
+  if (!show) {
+    return (
+      <div style={styles.wrap}>
+        <div style={styles.head}>
+          ⚠ Same-day discharge — Admin override available
+        </div>
+        <div style={styles.sub}>
+          Discharged {Math.max(1, Math.round(hoursSince))}h ago. If the patient's condition deteriorated
+          before leaving the premises, you can undo this discharge and put them back on the same bed
+          without creating a new admission cycle. Audit-logged.
+        </div>
+        <div>
+          <button style={styles.btnGhost} onClick={() => setShow(true)}>
+            ↺ Re-activate this admission
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={styles.wrap}>
+      <div style={styles.head}>
+        ⚠ Confirm — undo discharge and re-activate admission
+      </div>
+      <div style={styles.sub}>
+        This will flip status Active and re-occupy bed <b>{admission.bedNumber || "—"}</b>.
+        Bills + notes already on file stay; the discharge workflow timestamps are cleared.
+      </div>
+      <div style={styles.row}>
+        <input
+          style={styles.inp}
+          placeholder="Reason (e.g. patient collapsed in waiting area, BP dropped, etc.) — min 10 chars"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          maxLength={500}
+          autoFocus
+        />
+        <button style={styles.btnGhost} onClick={() => { setShow(false); setReason(""); setError(""); }} disabled={busy}>
+          Cancel
+        </button>
+        <button style={styles.btn} onClick={doReactivate} disabled={busy}>
+          {busy ? "Re-activating…" : "Confirm Re-activate"}
+        </button>
+      </div>
+      {error && <div style={styles.err}>⚠ {error}</div>}
+    </div>
+  );
+}
+
 /* ── Pending-actions summary banner ──────────────────────────────
    Sits below the NABH completeness strip and answers "what's left
    to do RIGHT NOW for this patient?". Each pill scrolls the page
@@ -2919,6 +3038,19 @@ export default function CompletePatientFilePage() {
           role={role}
           onBack={() => navigate(-1)}
           onPrint={() => window.open(`/patient-file/${uhid}?role=${role}&autoprint=1`, "_blank", "noopener,width=1100,height=900")}
+        />
+        {/* R7i: Same-day discharge undo (Admin only). Component
+            short-circuits when conditions aren't met. */}
+        <ReactivateBanner
+          admission={currentAdmission}
+          viewerRole={viewerRole}
+          onReactivated={() => {
+            // Force a fresh fetch so the page reflects status=Active.
+            setData(null);
+            axios.get(`${BASE}/patient-file/${uhid}/complete`)
+              .then((res) => setData(res.data?.data || null))
+              .catch((e) => setErr(e.response?.data?.message || e.message));
+          }}
         />
         <Completeness completeness={completeness} />
         <PendingActions data={data} />

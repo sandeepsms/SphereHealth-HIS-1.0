@@ -145,6 +145,8 @@ const DoctorOPDPanelPage = lazy(() => import("./pages/doctor/DoctorOPDPanelPage"
 // hasn't been migrated, but the routes below point at the unified one.
 const PatientLookupPage = lazy(() => import("./pages/patient/PatientLookupPage"));
 const CompletePatientFilePage = lazy(() => import("./pages/patient/CompletePatientFilePage"));
+// R7i — Medical Records Department (paperless MRD)
+const MRDRecentDischargesPage = lazy(() => import("./pages/mrd/MRDRecentDischargesPage"));
 const GateLogPage = lazy(() => import("./pages/security/GateLogPage"));
 const IncidentsPage = lazy(() => import("./pages/security/IncidentsPage"));
 const MARPage = lazy(() => import("./pages/clinical/MARPage"));
@@ -549,6 +551,11 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/patient-history" element={<PatientLookupPage initialView="timeline" />} />
             {/* Complete patient file — one page with every clinical record + UI audit feed. */}
             <Route path="/patient-file/:uhid" element={<CompletePatientFilePage />} />
+            {/* R7i: Medical Records Department — read-only archive of
+                every discharged patient. Doctor/Admin/MRD only. */}
+            <Route path="/medical-records/discharges" element={
+              <RoleGuard action="mrd.list"><MRDRecentDischargesPage /></RoleGuard>
+            } />
             <Route path="/mar" element={<MARPage />} />
             <Route path="/diabetic-chart" element={<DiabeticChartPage />} />
             <Route path="/maintenance"    element={<MaintenanceDashboardPage />} />

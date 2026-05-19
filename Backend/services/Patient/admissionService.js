@@ -563,6 +563,29 @@ class AdmissionService {
       if (filters.toDate) query.admissionDate.$lte = new Date(filters.toDate);
     }
 
+    // R7i: Discharge-date window. Used by the MRD recent-discharges
+    // page (/medical-records/discharges) to fetch admissions
+    // discharged within the last N days. Without this filter, the
+    // page would either pull every discharge ever or fall back to
+    // client-side filtering of a huge result set.
+    if (filters.dischargedSince || filters.dischargedUntil) {
+      query.actualDischargeDate = {};
+      if (filters.dischargedSince) {
+        const since = new Date(filters.dischargedSince);
+        if (!isNaN(since.getTime())) query.actualDischargeDate.$gte = since;
+      }
+      if (filters.dischargedUntil) {
+        const until = new Date(filters.dischargedUntil);
+        if (!isNaN(until.getTime())) query.actualDischargeDate.$lte = until;
+      }
+      // Defensive: if both dates failed to parse, drop the empty
+      // operator so we don't accidentally restrict to "has any
+      // actualDischargeDate at all".
+      if (Object.keys(query.actualDischargeDate).length === 0) {
+        delete query.actualDischargeDate;
+      }
+    }
+
     const page = Math.max(1, parseInt(filters.page) || 1);
     const limit = Math.min(500, parseInt(filters.limit) || 50);
     const skip = (page - 1) * limit;

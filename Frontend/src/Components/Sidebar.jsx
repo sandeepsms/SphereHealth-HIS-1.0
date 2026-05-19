@@ -34,6 +34,7 @@ const ROLE_META = {
   Dietician:         { color: "#16a34a", light: "#f0fdf4",  icon: "pi-apple",            label: "Dietician" },
   Security:          { color: "#374151", light: "#f9fafb",  icon: "pi-lock",             label: "Security" },
   Housekeeping:      { color: "#64748b", light: "#f8fafc",  icon: "pi-home",             label: "Housekeeping" },
+  MRD:               { color: "#0f766e", light: "#ecfeff",  icon: "pi-folder-open",      label: "Medical Records" },
 };
 
 /* Role shorthand groups for readability */
@@ -168,6 +169,30 @@ const NAV = [
       { label: "Discharge Summary",     icon: "pi-sign-out",          path: "/discharge-summary",      roles: [ADMIN, DR], nabh: true },
       { label: "Consent Forms",         icon: "pi-shield",            path: "/consent-forms",          roles: [ADMIN, DR], nabh: true },
       { label: "Medico-Legal (MLC)",    icon: "pi-shield",            path: "/mlc",                    roles: [ADMIN, DR], nabh: true },
+    ],
+  },
+
+  /* ── Medical Records (MRD) — R7i ─────────────────────
+     Replaces the paper MRD function. Read-only access to
+     every discharged patient's complete file. Doctor sees
+     it so they can pull up any old case during a follow-up;
+     Admin/MRD see the full archive list.
+
+     "MRD" is a string literal here because it's not in the
+     short-form aliases at the top of this file — Sidebar's
+     filter uses string equality against user.role. */
+  {
+    id: "mrd", label: "Medical Records",
+    icon: "pi-folder-open", color: "#0f766e", light: "#ecfeff",
+    nabh: true, roles: [ADMIN, DR, "MRD"],
+    items: [
+      // Discharged-patient archive — the primary MRD entry point.
+      // Clicking a row navigates to /patient-file/:uhid (read-only
+      // complete file). Filterable by Today / 7d / 30d / 1y.
+      { label: "Patient Files",         icon: "pi-folder-open",       path: "/medical-records/discharges", nabh: true, badge: "MRD",       roles: [ADMIN, DR, "MRD"] },
+      // Generic UHID search — same target page; convenient when
+      // the user knows the UHID but not the discharge date.
+      { label: "UHID Search",           icon: "pi-search",            path: "/patient-search",                                            roles: [ADMIN, DR, "MRD"] },
     ],
   },
 
