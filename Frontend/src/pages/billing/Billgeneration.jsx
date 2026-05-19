@@ -263,7 +263,10 @@ const BillGeneration = () => {
           rate:     it.unitPrice,
           amount:   it.netAmount,
         })),
-        discount: bill.discountAmount,
+        // R7d: bill-level discount is `totalDiscount` (BillItem also has
+        // `discountAmount` — different field). Fallback retained for any
+        // legacy shape readers.
+        discount: bill.totalDiscount ?? bill.discountAmount,
         tax:      bill.taxAmount,
         advanceReceived: bill.advanceReceived,
         tpaPaid: bill.tpaApprovedAmount,

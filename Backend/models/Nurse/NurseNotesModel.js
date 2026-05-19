@@ -150,6 +150,21 @@ const NurseNotesSchema = new mongoose.Schema(
     submittedAt: { type: Date },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "NurseStaff" },
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "NurseStaff" },
+
+    // ── Late-entry / retroactive note (NABH HIC.6 — backdated entries) ──
+    // When a nurse note is added AFTER the admission has been discharged
+    // (e.g. the discharge was finalized prematurely and the handover note
+    // was missed), we permit the entry but flag it as retroactive so the
+    // audit trail is unambiguous. Reason is REQUIRED on late-entry — NABH
+    // surveyors look for documented justification on any backdated
+    // clinical record. `lateEntryAt` is the wall-clock time the entry was
+    // actually typed (vs `noteDate` which is the clinical date being
+    // documented); having both lets us prove the timing on audit.
+    lateEntry:        { type: Boolean, default: false, index: true },
+    lateEntryReason:  { type: String, trim: true },
+    lateEntryAt:      { type: Date },
+    lateEntryBy:      { type: String, trim: true },
+    lateEntryByRole:  { type: String, trim: true },
   },
   { timestamps: true, collection: "nurse_notes" },
 );

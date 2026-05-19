@@ -6,6 +6,21 @@ const ServicePricing = require("../../models/ServicePricing/ServicePricingModel"
 const AutoBilledItems = require("../../models/PatientBillModel/AutoBilledItemsModel");
 const { toNum } = require("../../utils/money");
 
+// R7d: Indian GST slabs allowed on BillItem.taxPercent enum. ServiceMaster
+// + InvestigationMaster historically allow 0-28 without an enum, so seeded
+// off-slab values (e.g. 9, 13, 20) would crash bill.save() with the new
+// enum guard. Sanitize on write — clamp to nearest valid slab, fall back
+// to 0 when value is null/undefined/negative or not a finite number.
+const GST_SLABS = [0, 0.25, 3, 5, 12, 18, 28];
+function sanitizeTaxPct(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  if (GST_SLABS.includes(n)) return n;
+  // Snap to nearest valid slab (defensive — never throws).
+  return GST_SLABS.reduce((best, slab) =>
+    Math.abs(slab - n) < Math.abs(best - n) ? slab : best, 0);
+}
+
 async function generateBillNumber() {
   const today = new Date();
   const dateStr = today.toISOString().slice(0, 10).replace(/-/g, "");
@@ -167,7 +182,35 @@ class BillingService {
     quantity = 1,
     chargeDate = new Date(),
     remarks = "",
+    opts = {},
   ) {
+    // opts shape:
+    //   addedBySource  — "Doctor" | "Nurse" | "Lab" | "Radiology" |
+    //                    "Reception" | "Auto" | "AI-Confirmed"
+    //   addedBy        — display name of the staff member
+    //   addedByRole    — role label for the audit trail
+    //   orderStatus    — optional explicit override. When omitted, the
+    //                    status is INFERRED from addedBySource:
+    //                      Doctor / Nurse / Lab / Radiology  → "Ordered"
+    //                      (this is the order-to-completion flow — the
+    //                      lab/imaging/proceduralist team will mark it
+    //                      complete once the work is done, and only
+    //                      THEN does it count toward the patient's bill)
+    //                      Reception / Auto / AI-Confirmed   → "Completed"
+    //                      (walk-in paid upfront, system auto-charge,
+    //                      and AI-confirmed are already-billable events)
+    //   orderedBy / orderedById / orderedByRole — actor metadata for the
+    //                    NABH audit trail on AAC.5 / MOM.6 orders
+    const {
+      addedBySource = "Reception",
+      addedBy = "",
+      addedByRole = "",
+      orderStatus, // explicit override; otherwise inferred below
+      orderedBy,
+      orderedById,
+      orderedByRole,
+    } = opts;
+
     const bill = await PatientBill.findById(billId);
     if (!bill) throw new Error("Bill not found");
     // Bill-edit freeze (business audit F-05). Originally only PAID /
@@ -194,22 +237,41 @@ class BillingService {
       bill.tpa,
     );
 
-    const unitPrice = pricing ? pricing.finalPrice : service.defaultPrice;
+    // R2: money fields are Decimal128 at rest. `pricing.finalPrice` and
+    // `tpaApprovedLimit` may arrive as Decimal128 objects from ServicePricing;
+    // multiplying a Decimal128 by a Number gives a garbled
+    // `{$numberDecimal: "..."}` shape that breaks downstream display and
+    // bill-total recalc. Unwrap with toNum() before any arithmetic.
+    const unitPrice = toNum(pricing?.finalPrice ?? service.defaultPrice);
     const grossAmount = unitPrice * quantity;
-    const discountPct = pricing?.discount || 0;
+    const discountPct = toNum(pricing?.discount) || 0;
     const discountAmt = (grossAmount * discountPct) / 100;
     const netAmount = grossAmount - discountAmt;
     const taxAmount = service.isTaxable
-      ? (netAmount * (service.taxPercentage || 0)) / 100
+      ? (netAmount * toNum(service.taxPercentage)) / 100
       : 0;
     const lineTotal = netAmount + taxAmount;
 
     let tpaPayableAmount = 0;
     if (bill.paymentType === "TPA") {
-      tpaPayableAmount = pricing?.tpaApprovedLimit
-        ? Math.min(pricing.tpaApprovedLimit * quantity, lineTotal)
+      const tpaCap = toNum(pricing?.tpaApprovedLimit);
+      tpaPayableAmount = tpaCap > 0
+        ? Math.min(tpaCap * quantity, lineTotal)
         : lineTotal;
     }
+
+    // Decide order lifecycle. Clinical sources (Doctor / Nurse / Lab /
+    // Radiology) open the line as "Ordered" — it stays pending in the
+    // executing team's queue and DOES NOT charge the patient until the
+    // executing team marks it complete via the /complete endpoint.
+    // Front-desk + automated sources skip the order workflow and write
+    // the line directly as Completed so existing flows (walk-in cash,
+    // bed-day cron, doctor-visit auto-charge) keep working unchanged.
+    const CLINICAL_ORDER_SOURCES = ["Doctor", "Nurse", "Lab", "Radiology"];
+    const resolvedOrderStatus =
+      orderStatus ||
+      (CLINICAL_ORDER_SOURCES.includes(addedBySource) ? "Ordered" : "Completed");
+    const now = new Date();
 
     bill.billItems.push({
       serviceId: service._id,
@@ -226,13 +288,107 @@ class BillingService {
       tpaPayableAmount,
       patientPayableAmount: lineTotal - tpaPayableAmount,
       isTaxable: service.isTaxable,
-      taxPercent: service.taxPercentage || 0,
+      // R7d-CRIT: BillItem.taxPercent now has enum [0, 0.25, 3, 5, 12, 18, 28].
+      // ServiceMaster.taxPercentage is min:0/max:28 with no enum, so an
+      // off-slab value (e.g. 9, 13, 20) from older seeds would crash
+      // bill.save() with ValidationError. Sanitize to nearest valid slab
+      // when isTaxable is true; otherwise 0. Future cleanup: tighten
+      // ServiceMaster enum to match.
+      taxPercent: sanitizeTaxPct(service.isTaxable ? service.taxPercentage : 0),
       taxAmount,
       appliedTariff: bill.paymentType,
       chargeDate,
       remarks,
+      addedBySource,
+      addedBy,
+      addedByRole,
+      // Order lifecycle stamps. We capture orderedAt/By for every line so
+      // even Completed-on-create items (walk-in / auto-charge) carry a
+      // creation timestamp for the audit trail. completedAt fires for
+      // Completed-on-create OR later via the /complete endpoint.
+      orderStatus: resolvedOrderStatus,
+      orderedAt: now,
+      orderedBy: orderedBy || addedBy || "",
+      orderedByRole: orderedByRole || addedByRole || addedBySource || "",
+      completedAt: resolvedOrderStatus === "Completed" ? now : undefined,
+      completedBy: resolvedOrderStatus === "Completed" ? (addedBy || "") : undefined,
+      completedByRole: resolvedOrderStatus === "Completed" ? (addedByRole || addedBySource || "") : undefined,
     });
 
+    await bill.save();
+    return bill;
+  }
+
+  /* ─── Mark an Active Order as Completed ─────────────────────────────
+     Used by the lab / radiologist / proceduralist who executes the work
+     ordered by the doctor. Flips the BillItem's orderStatus → "Completed",
+     stamps the completer, and saves the bill so the pre-save totals
+     recalc — at which point the item lands on grossAmount / balance and
+     becomes payable. */
+  async completeBillItemOrder(billId, itemId, opts = {}) {
+    const bill = await PatientBill.findById(billId);
+    if (!bill) {
+      const e = new Error("Bill not found");
+      e.status = 404;
+      throw e;
+    }
+    if (["CANCELLED", "REFUNDED"].includes(bill.billStatus)) {
+      const e = new Error(`Cannot complete orders on a ${bill.billStatus} bill`);
+      e.status = 409;
+      throw e;
+    }
+    const item = bill.billItems.id(itemId);
+    if (!item) {
+      const e = new Error("Bill item not found");
+      e.status = 404;
+      throw e;
+    }
+    if (item.orderStatus === "Completed") {
+      // Idempotent — already completed, just return the bill so the
+      // frontend can refresh without surfacing a confusing error.
+      return bill;
+    }
+    if (item.orderStatus === "Cancelled") {
+      const e = new Error("Order was cancelled — cannot mark it complete");
+      e.status = 409;
+      throw e;
+    }
+    item.orderStatus = "Completed";
+    item.completedAt = new Date();
+    item.completedBy = opts.completedBy || "";
+    item.completedByRole = opts.completedByRole || "";
+    await bill.save();
+    return bill;
+  }
+
+  /* ─── Cancel an Active Order ───────────────────────────────────────
+     Used when the doctor or executing team decides an order shouldn't
+     proceed (patient declined, contraindication discovered, sample
+     spoilt, etc.). Sets orderStatus → "Cancelled" so the line is
+     preserved for audit but excluded from billable + pending totals.
+     Throws if the line is already Completed (use the standard
+     /items/:itemId DELETE path or accountant cancel for those). */
+  async cancelBillItemOrder(billId, itemId, opts = {}) {
+    const bill = await PatientBill.findById(billId);
+    if (!bill) {
+      const e = new Error("Bill not found");
+      e.status = 404;
+      throw e;
+    }
+    const item = bill.billItems.id(itemId);
+    if (!item) {
+      const e = new Error("Bill item not found");
+      e.status = 404;
+      throw e;
+    }
+    if (item.orderStatus === "Completed") {
+      const e = new Error("Cannot cancel an order that's already been completed — use accountant refund instead");
+      e.status = 409;
+      throw e;
+    }
+    item.orderStatus = "Cancelled";
+    item.cancelledAt = new Date();
+    item.cancelReason = (opts.cancelReason || "").trim() || "Cancelled by clinician";
     await bill.save();
     return bill;
   }
@@ -437,21 +593,20 @@ class BillingService {
       throw err;
     }
 
-    bill.adjustmentLog.push({
-      at:     new Date(),
-      by:     String(adjustedBy).trim(),
-      type:   touchedLines && touchedDiscount ? "BOTH" : (touchedLines ? "LINE_EDIT" : "EXTRA_DISCOUNT"),
-      reason: String(reason).trim(),
-      before: beforeSnap,
-      after:  null,  // filled below from the saved doc
-    });
-
-    await bill.save();
-
-    // Capture AFTER snap so the log row stands on its own without needing
-    // to read both itself and the next entry.
-    const lastIdx = bill.adjustmentLog.length - 1;
-    bill.adjustmentLog[lastIdx].after = {
+    // R7b-FIX: collapse the previous double-save pattern (push log with
+    // after=null → save → patch after → save again). The second save
+    // opened a window where a concurrent payment / void could land,
+    // trigger VersionError, and lose the audit-log `after` snapshot.
+    //
+    // The model's pre-save hook is now refactored into a `recalcTotals()`
+    // method we can run BEFORE persisting: in-memory mutation applies all
+    // pre-save math (per-item totals, gross/disc/tax/net, balance) so we
+    // can read the post-save state directly off `bill` and build the
+    // `after` snap in one pass. Single save preserves audit integrity
+    // even under concurrent writes (VersionError fires once and the
+    // caller can retry the whole adjustment cleanly).
+    bill.recalcTotals();
+    const afterSnap = {
       netAmount:     toNum(bill.netAmount),
       totalDiscount: toNum(bill.totalDiscount),
       extraDiscount: toNum(bill.extraDiscount) || 0,
@@ -465,8 +620,17 @@ class BillingService {
         netAmount:       toNum(it.netAmount),
       })),
     };
-    await bill.save();
 
+    bill.adjustmentLog.push({
+      at:     new Date(),
+      by:     String(adjustedBy).trim(),
+      type:   touchedLines && touchedDiscount ? "BOTH" : (touchedLines ? "LINE_EDIT" : "EXTRA_DISCOUNT"),
+      reason: String(reason).trim(),
+      before: beforeSnap,
+      after:  afterSnap,
+    });
+
+    await bill.save();
     return bill;
   }
 
@@ -600,8 +764,25 @@ class BillingService {
     }
 
     const adjustments = [];
+    const skipped = [];
 
     for (const bill of bills) {
+      // R7b-HIGH-1: state-predicate re-check. Between the find() above
+      // and now, a concurrent payment / refund / cancel could have
+      // transitioned this bill out of the adjustable set. The schema-
+      // level filter caught it at QUERY time, but the in-loop window
+      // (especially for large batches) can let stale entries slip
+      // through. Skipping is safer than blindly stamping a discount
+      // onto a PAID / CANCELLED / REFUNDED bill — and we surface the
+      // skip in the response so the cashier knows what changed.
+      if (!["GENERATED", "PARTIAL"].includes(bill.billStatus)) {
+        skipped.push({
+          billId: bill._id.toString(),
+          billNumber: bill.billNumber,
+          reason: `bill is ${bill.billStatus} — no longer adjustable`,
+        });
+        continue;
+      }
       const bal = toNum(bill.balanceAmount);
       if (bal <= 0) continue;
 
@@ -629,31 +810,55 @@ class BillingService {
       bill.extraDiscountReason = String(reason).trim();
       bill.extraDiscountBy     = String(adjustedBy).trim();
 
+      // R7a-CRIT-3: collapse the previous double-save pattern (which
+      // pushed adjustmentLog with `after: null`, then saved, then patched
+      // `after`, then saved again — opening a window for VersionError
+      // and concurrent-payment loss). The `after` snapshot is fully
+      // predictable from the in-memory mutation we just performed:
+      //   • extraDiscount = prev + billDisc           (set above)
+      //   • netAmount drops by exactly billDisc       (pre-save rule: net = gross-disc+tax-extra)
+      //   • balance drops by exactly billDisc         (pre-save rule for non-CANCELLED bills)
+      // so we can pre-compute it without re-reading the pre-save hook.
+      const afterSnap = {
+        netAmount:     toNum(bill.netAmount) - billDisc,
+        extraDiscount: prev + billDisc,
+        balanceAmount: Math.max(0, bal - billDisc),
+      };
+
       bill.adjustmentLog.push({
         at: new Date(),
         by: String(adjustedBy).trim(),
         type: "EXTRA_DISCOUNT",
         reason: `[BULK-${m}] ${String(reason).trim()}`,
         before: beforeSnap,
-        after: null,  // filled below
+        after:  afterSnap,
       });
 
-      await bill.save();
-
-      const lastIdx = bill.adjustmentLog.length - 1;
-      bill.adjustmentLog[lastIdx].after = {
-        netAmount:     toNum(bill.netAmount),
-        extraDiscount: toNum(bill.extraDiscount) || 0,
-        balanceAmount: toNum(bill.balanceAmount),
-      };
-      await bill.save();
-
-      adjustments.push({
-        billId:        bill._id.toString(),
-        billNumber:    bill.billNumber,
-        discountApplied: Number(billDisc.toFixed(2)),
-        newBalance:    Number(toNum(bill.balanceAmount).toFixed(2)),
-      });
+      // Single save — the pre-save hook recomputes netAmount + balance
+      // and matches afterSnap. If a concurrent payment landed between
+      // fetch and now, VersionError fires here — we surface it as a
+      // skip so the OTHER bills in this batch still settle. Cashier
+      // sees both the touched and the skipped lists and can retry the
+      // affected bills individually with fresh state.
+      try {
+        await bill.save();
+        adjustments.push({
+          billId:        bill._id.toString(),
+          billNumber:    bill.billNumber,
+          discountApplied: Number(billDisc.toFixed(2)),
+          newBalance:    Number(toNum(bill.balanceAmount).toFixed(2)),
+        });
+      } catch (err) {
+        if (err?.name === "VersionError") {
+          skipped.push({
+            billId: bill._id.toString(),
+            billNumber: bill.billNumber,
+            reason: "concurrent write — retry individually",
+          });
+          continue;
+        }
+        throw err;
+      }
     }
 
     const newTotalDue = adjustments.reduce((s, a) => s + a.newBalance, 0);
@@ -664,6 +869,7 @@ class BillingService {
       totalDiscount:    Number(totalDiscount.toFixed(2)),
       newTotalDue:      Number(newTotalDue.toFixed(2)),
       adjustments,
+      skipped,
     };
   }
 
@@ -755,6 +961,235 @@ class BillingService {
     );
   }
 
+  // ── 11. Void a payment (same-day same-cashier 15-min undo) ─────
+  // Reversal flow for cashier typos — same pattern as the IPD Live
+  // Ledger's trigger undo. Gated to:
+  //   • Receptionist: only their OWN payments, within 15 min of recording
+  //   • Accountant / Admin: any payment, no time gate
+  // Posts a NEGATIVE payment row (so the audit trail stays intact)
+  // and recomputes balance + status. Bill stays usable for fresh
+  // payments; the original row + the reversal are both visible.
+  async voidPayment(billId, paymentId, { reason, user = {}, skipTimeGate = false } = {}) {
+    if (!reason || !String(reason).trim()) {
+      const err = new Error("Reason is required for void");
+      err.code = "REASON_REQUIRED"; throw err;
+    }
+    const VOID_WINDOW_MS = 15 * 60 * 1000;
+    const bill = await PatientBill.findById(billId);
+    if (!bill) {
+      const err = new Error("Bill not found"); err.status = 404; throw err;
+    }
+    const pay = bill.payments.id(paymentId);
+    if (!pay) {
+      const err = new Error("Payment row not found"); err.status = 404; throw err;
+    }
+    if (pay.voidedAt) {
+      const err = new Error("Payment already voided");
+      err.code = "ALREADY_VOIDED"; throw err;
+    }
+    if (Number(pay.amount) <= 0) {
+      const err = new Error("Cannot void a reversal entry");
+      err.code = "ALREADY_REVERSAL"; throw err;
+    }
+    if (!skipTimeGate) {
+      const age = Date.now() - new Date(pay.paidAt).getTime();
+      if (age > VOID_WINDOW_MS) {
+        const err = new Error(`Void window expired (${Math.round(age / 60000)} min old). Use refund instead.`);
+        err.code = "WINDOW_EXPIRED"; throw err;
+      }
+      // Only same cashier can void within window — Accountant gets skipTimeGate=true
+      if (pay.receivedBy && user.fullName && pay.receivedBy !== user.fullName) {
+        const err = new Error(`Only ${pay.receivedBy} can void this payment within the 15-min window. Use refund flow.`);
+        err.code = "NOT_OWNER"; throw err;
+      }
+    }
+
+    // Stamp the original row as voided so the receipt history shows
+    // why it's no longer counted.
+    pay.voidedAt     = new Date();
+    pay.voidedBy     = user.fullName || user.name || "Receptionist";
+    pay.voidedByRole = user.role || "Receptionist";
+    pay.voidReason   = String(reason).trim();
+
+    // Post a negative payment row that cancels the original. Receipt
+    // history reads cleanly: original ₹500 entry + reversal -₹500.
+    bill.payments.push({
+      amount:        -Number(pay.amount),
+      paymentMode:    pay.paymentMode,
+      transactionId:  `VOID-${pay.transactionId || pay._id}`,
+      receivedBy:     user.fullName || user.name || "Receptionist",
+      paidAt:         new Date(),
+      remarks:        `VOID of payment ${pay._id} — ${String(reason).trim()}`,
+    });
+
+    // Recompute balance + status (pre-save hook also does this, but
+    // we set explicit values so the response is correct first try).
+    const totalPaid = bill.payments.reduce((s, p) => s + toNum(p.amount), 0);
+    bill.advancePaid   = totalPaid;
+    bill.balanceAmount = Math.max(0, toNum(bill.patientPayableAmount) - totalPaid);
+    bill.billStatus    = bill.balanceAmount <= 0.005 && totalPaid > 0 ? "PAID"
+                        : totalPaid > 0 ? "PARTIAL" : "GENERATED";
+    await bill.save();
+    return bill;
+  }
+
+  // ── 11b. Record refund (negative payment row + status flip) ────
+  // R7a: hoisted out of controller so it gets the same VersionError retry
+  // protection as recordPayment. Refund is a sensitive money operation
+  // and the controller-level version had no concurrency guard — two
+  // simultaneous refunds could each read the same snapshot and produce
+  // duplicate negative rows. Mirrors recordPayment + voidPayment patterns:
+  //   • Validate (positive amount, non-empty reason) once up front
+  //   • Inside retry loop: re-read bill, re-check state + over-refund cap,
+  //     push negative row, flip status, save with VersionError retry
+  // Throws errors with `code` + `status` so controller can map cleanly.
+  //
+  // R7c-EXT: optional `creditToAdvance` flag — when true, the refund is
+  // NOT given back as cash. Instead, a new PatientAdvance row is created
+  // with the refund amount so the patient's deposit pool grows. Used for
+  // IPD patients who still have bills coming and want the credit to flow
+  // forward rather than handle cash on the counter. The bill side
+  // remains identical (negative payment row + status flip) — the advance
+  // pool growth is the SECOND leg of the transfer. We still print a
+  // refund-receipt; the frontend also prints an advance-receipt for the
+  // pool credit so both ledger sides have audit paper.
+  async recordRefund(
+    billId,
+    { amount, reason, mode, refundedBy, transactionId, creditToAdvance = false } = {},
+  ) {
+    const amt = Number(amount);
+    if (!amt || amt <= 0) {
+      const err = new Error("Refund amount must be greater than zero");
+      err.code = "INVALID_AMOUNT"; err.status = 400; throw err;
+    }
+    if (!reason || !String(reason).trim()) {
+      const err = new Error("Refund reason is required for audit trail");
+      err.code = "REASON_REQUIRED"; err.status = 400; throw err;
+    }
+    // Allowed payment modes (must match PaymentSchema enum exactly)
+    const ALLOWED = ["CASH", "CARD", "UPI", "CHEQUE", "ONLINE", "TPA_CLAIM"];
+    const reqMode = String(mode || "CASH").toUpperCase();
+    const payMode = ALLOWED.includes(reqMode) ? reqMode : "CASH";
+    // creditToAdvance can't be paired with TPA — that money has to flow
+    // back to the insurer, not stay in the patient's pool.
+    if (creditToAdvance && payMode === "TPA_CLAIM") {
+      const err = new Error("Cannot credit TPA refund to patient's advance pool — TPA refunds must go back to the insurer");
+      err.code = "INVALID_MODE"; err.status = 400; throw err;
+    }
+
+    const MAX_RETRIES = 5;
+    let lastErr;
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      const bill = await PatientBill.findById(billId);
+      if (!bill) {
+        const err = new Error("Bill not found"); err.status = 404; throw err;
+      }
+      // State guard: only PAID/PARTIAL bills are refundable. DRAFT/GENERATED
+      // bills don't have money on them; REFUNDED/CANCELLED are terminal.
+      if (!["PAID", "PARTIAL"].includes(bill.billStatus)) {
+        const err = new Error(
+          `Cannot refund a ${bill.billStatus} bill — only PAID or PARTIAL bills can be refunded`,
+        );
+        err.code = "INVALID_STATE"; err.status = 400; throw err;
+      }
+      // Cap refund at net collected (sum of all rows; prior refunds are
+      // already negative so the cap shrinks correctly).
+      const paid = (bill.payments || []).reduce((s, p) => s + toNum(p.amount), 0);
+      if (amt > paid + 0.5) {
+        const err = new Error(
+          `Cannot refund ₹${amt} — only ₹${paid.toFixed(2)} has been collected on this bill`,
+        );
+        err.code = "OVER_REFUND"; err.status = 400; throw err;
+      }
+
+      bill.payments.push({
+        amount:        -amt, // negative entry = refund
+        paymentMode:   payMode,
+        transactionId,
+        receivedBy:    refundedBy || "Reception",
+        paidAt:        new Date(),
+        remarks:       creditToAdvance
+          ? `REFUND → advance pool: ${String(reason).trim()}`
+          : `REFUND: ${String(reason).trim()}`,
+      });
+
+      // Fully refunded → REFUNDED, partial refund of PAID → PARTIAL.
+      // Pre-save hook recomputes advancePaid + balanceAmount.
+      const newPaid = paid - amt;
+      if (newPaid <= 0.5) {
+        bill.billStatus = "REFUNDED";
+      } else if (bill.billStatus === "PAID") {
+        bill.billStatus = "PARTIAL";
+      }
+      bill.remarks = (bill.remarks || "") + ` | Refund ₹${amt}: ${String(reason).trim()}`;
+
+      try {
+        await bill.save();
+      } catch (err) {
+        if (err?.name === "VersionError") { lastErr = err; continue; }
+        throw err;
+      }
+
+      // Second leg (optional): credit the patient's advance pool with
+      // the refund amount. The bill side already saved cleanly so even
+      // if PatientAdvance creation fails we don't roll back — the
+      // refund receipt still reflects the truth (money left the bill).
+      // The cashier sees the error and can manually create the advance
+      // row from the standard advance-deposit UI.
+      let advance = null;
+      if (creditToAdvance && bill.UHID) {
+        try {
+          const PatientAdvance = require("../../models/PatientBillModel/PatientAdvanceModel");
+          const Admission = require("../../models/Patient/admissionModel");
+          // Use bill.patient ref if present; otherwise resolve via UHID
+          let patientId = bill.patient || null;
+          if (!patientId) {
+            const Patient = require("../../models/Patient/patientModel");
+            const p = await Patient.findOne({ UHID: bill.UHID }).select("_id").lean();
+            patientId = p?._id || null;
+          }
+          // Find an open admission if this bill is IPD-tied, so the
+          // advance is earmarked correctly. admissionModel.js enum is
+          // ["Active", "Discharged", "Transferred", "Cancelled"] — only
+          // Active is open. Discharged/Transferred bills can still have
+          // refunds (post-discharge corrections), but in that case the
+          // advance just goes to the UHID pool, not earmarked.
+          let admissionId = bill.admission || null;
+          if (!admissionId && bill.admissionNumber) {
+            const a = await Admission.findOne({ admissionNumber: bill.admissionNumber, status: "Active" }).select("_id").lean();
+            admissionId = a?._id || null;
+          }
+          if (patientId) {
+            advance = await PatientAdvance.create({
+              UHID:           bill.UHID,
+              patientId,
+              admission:      admissionId,
+              amount:         amt,
+              paymentMode:    payMode === "TPA_CLAIM" ? "CASH" : payMode, // (TPA already gated above)
+              transactionId:  transactionId || null,
+              receivedBy:     refundedBy || "Reception",
+              receivedByRole: "Receptionist",
+              remarks:        `Credit from bill refund ${bill.billNumber}: ${String(reason).trim()}`,
+            });
+          }
+        } catch (err) {
+          // Don't fail the refund just because the second leg failed.
+          // Log and continue — the receptionist can chase manually.
+          console.error("[recordRefund] advance-pool credit failed for bill", bill.billNumber, "—", err?.message);
+        }
+      }
+
+      // Return both legs so the controller can include the advance
+      // receipt number in the response. Frontend uses it to print the
+      // accompanying advance-receipt.
+      return { bill, advance };
+    }
+    const err = new Error(
+      `Refund concurrency conflict after ${MAX_RETRIES} retries: ${lastErr?.message || "unknown"}`,
+    );
+    err.code = "CONCURRENCY"; err.status = 409; throw err;
+  }
+
   // ── 11. Update TPA claim status ───────────────────────────────
   async updateTPAClaimStatus(billId, { status, claimNumber, approvedAmount }) {
     const bill = await PatientBill.findById(billId);
@@ -834,7 +1269,9 @@ class BillingService {
         tariff,
         patient.tpa?._id,
       );
-      const unitPrice = pricing ? pricing.finalPrice : service.defaultPrice;
+      // R2: Decimal128 unwrap — pricing.finalPrice may arrive as a
+      // Decimal128 object; raw assignment + arithmetic later mangles it.
+      const unitPrice = toNum(pricing?.finalPrice ?? service.defaultPrice);
 
       await AutoBilledItems.create({
         admission: admission._id,
@@ -944,7 +1381,8 @@ class BillingService {
       bill.paymentType,
       bill.tpa?.toString(),
     );
-    const unitPrice = pricing?.finalPrice ?? service.defaultPrice ?? 0;
+    // R2: Decimal128 unwrap before arithmetic — see addServiceToBill.
+    const unitPrice = toNum(pricing?.finalPrice ?? service.defaultPrice);
     const gross = unitPrice * (quantity || 1);
 
     const item = {

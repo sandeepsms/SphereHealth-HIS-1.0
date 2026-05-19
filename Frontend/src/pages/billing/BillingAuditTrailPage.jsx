@@ -34,6 +34,30 @@ const STATUS_META = {
   skipped:     { color:C.muted,   bg:"#f1f5f9", border:C.border,  icon:"pi-minus-circle",   label:"Skipped"     },
 };
 
+// ─── Source metadata ──────────────────────────────────────────────────────────
+// Maps the BillingTrigger.sourceType enum to a label + icon + colour family
+// so audit rows render with a visual hint of what clinical event spawned
+// the charge. Mirrors the enum in `Backend/models/Billing/BillingTrigger.js`.
+// Falls back to `Manual` for any unmapped sourceType (defensive — older
+// rows may have legacy enum values that have since been renamed).
+const SOURCE_META = {
+  NurseNote:         { color:"#be185d", bg:"#fce7f3", icon:"pi-heart",         label:"Nurse Note" },
+  DoctorNote:        { color:"#1d4ed8", bg:"#dbeafe", icon:"pi-user-edit",     label:"Doctor Note" },
+  DoctorAssessment:  { color:"#7c3aed", bg:"#ede9fe", icon:"pi-file-edit",     label:"Doctor Assessment" },
+  DoctorVisit:       { color:"#1d4ed8", bg:"#dbeafe", icon:"pi-user-edit",     label:"Doctor Visit" },
+  MAR:               { color:"#15803d", bg:"#dcfce7", icon:"pi-box",           label:"MAR (Drug)" },
+  InvestigationOrder:{ color:"#854d0e", bg:"#fef9c3", icon:"pi-search-plus",   label:"Investigation" },
+  Equipment:         { color:"#0369a1", bg:"#e0f2fe", icon:"pi-server",        label:"Equipment" },
+  CarePlan:          { color:"#0d9488", bg:"#ccfbf1", icon:"pi-clipboard",     label:"Care Plan" },
+  Discharge:         { color:"#d97706", bg:"#fef3c7", icon:"pi-sign-out",      label:"Discharge" },
+  Procedure:         { color:"#c2410c", bg:"#fed7aa", icon:"pi-bolt",          label:"Procedure" },
+  Manual:            { color:"#64748b", bg:"#f1f5f9", icon:"pi-pencil",        label:"Manual" },
+  AutoCharge:        { color:"#0891b2", bg:"#cffafe", icon:"pi-cog",           label:"Auto Charge" },
+  Admission:         { color:"#475569", bg:"#f1f5f9", icon:"pi-id-card",       label:"Admission" },
+  BedCharge:         { color:"#1d4ed8", bg:"#dbeafe", icon:"pi-th-large",      label:"Bed Charge" },
+  Emergency:         { color:"#dc2626", bg:"#fee2e2", icon:"pi-flag",          label:"Emergency" },
+};
+
 // ─── Role badge ───────────────────────────────────────────────────────────────
 const ROLE_COLOR = { Doctor:"#1d4ed8", Nurse:"#0d9488", Lab:"#16a34a", System:"#64748b", Receptionist:"#7c3aed", Auto:"#64748b" };
 

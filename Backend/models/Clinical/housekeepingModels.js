@@ -31,6 +31,14 @@ const CleaningTaskSchema = new Schema({
   area:         { type: String, default: "" },    // OT-3 / Lab / Corridor-G1
   roomNumber:   { type: String, default: "" },
   bedNumber:    { type: String, default: "" },
+  // Direct ref to the bed for discharge-clean / bed-turnover tasks —
+  // lets the controller flip bed.housekeeping.state on completion without
+  // a fuzzy bedNumber lookup. Optional for area/spillage tasks.
+  bedId:        { type: Schema.Types.ObjectId, ref: "Bed", default: null, index: true },
+  // Original admission whose discharge spawned this task — useful for
+  // turnover-SLA reports + audit ("how long after Mr Patel's discharge
+  // did Bed-204 become available again?").
+  admissionId:  { type: Schema.Types.ObjectId, ref: "Admission", default: null },
   // Patient context (optional — discharge-clean / spillage from patient)
   UHID:         { type: String, default: "" },
   patientName:  { type: String, default: "" },

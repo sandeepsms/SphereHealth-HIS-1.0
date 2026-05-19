@@ -10,6 +10,7 @@ import CompleteIPDFile   from "./CompleteIPDFile";
 import DischargeSummary  from "./DischargeSummary";
 import CostEstimate      from "./CostEstimate";
 import RefundReceipt     from "./RefundReceipt";
+import ServiceReceipt    from "./ServiceReceipt";
 import ConsentForm       from "./ConsentForm";
 import MedicalCertificate from "./MedicalCertificate";
 import ReferralLetter    from "./ReferralLetter";
@@ -23,11 +24,20 @@ import PharmacyRegister  from "./PharmacyRegister";
 export const PRINTABLES = {
   // ── Receipts / billing ─────────────────────────────────
   "opd-receipt":      { component: OPDReceipt,        title: "OPD Bill / Receipt",        defaultPaper: "half-a4" },
+  // R7b-HIGH-3b: SERVICE bills used to reuse opd-receipt, which forced
+  // OPD-only fields (Doctor / Department / Visit Date) onto walk-in lab
+  // tests + imaging + day procedures. Distinct slug + dedicated component
+  // so the header reads correctly (Service Date / Reference / Counter).
+  "service-receipt":  { component: ServiceReceipt,    title: "Service Bill / Receipt",    defaultPaper: "half-a4" },
   "payment-receipt":  { component: PaymentReceipt,    title: "Payment Receipt",           defaultPaper: "half-a4" },
   "advance-receipt":  { component: AdvanceReceipt,    title: "Advance / Deposit Receipt", defaultPaper: "half-a4" },
   "refund-receipt":   { component: RefundReceipt,     title: "Refund Receipt",            defaultPaper: "half-a4" },
   "cost-estimate":    { component: CostEstimate,      title: "Cost Estimate · Indicative",defaultPaper: "a4"      },
   "final-bill":       { component: FinalBill,         title: "Final Bill (IPD)",          defaultPaper: "a4"      },
+  // Interim Bill — same component, caller passes { isInterim: true } in
+  // the receipt payload to flip the title + the "snapshot as of …" banner.
+  // Used by the IPD Live Ledger to print a running bill mid-stay.
+  "interim-bill":     { component: FinalBill,         title: "Interim Bill (IPD)",        defaultPaper: "a4"      },
   "pharmacy-bill":    { component: PharmacyBill,      title: "Pharmacy GST Tax Invoice",  defaultPaper: "half-a4", defaultOrient: "portrait" },
   "pharmacy-register":{ component: PharmacyRegister,  title: "Pharmacy Register",         defaultPaper: "a4",      defaultOrient: "portrait" },
 

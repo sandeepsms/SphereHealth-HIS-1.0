@@ -16,7 +16,7 @@
  *   GET  /api/billing/collection-summary?date=YYYY-MM-DD
  */
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
@@ -43,13 +43,16 @@ const STATUS_CLASS = {
 const PAYMENT_MODES = ["CASH", "UPI", "CARD", "CHEQUE", "ONLINE", "TPA_CLAIM"];
 const ADVANCE_MODES = ["CASH", "UPI", "CARD", "CHEQUE", "ONLINE"];
 
-/* Open /print/advance-receipt in a popup with the payload preloaded in
-   sessionStorage. Matches the contract documented in PrintRouterPage.jsx.
-   Single source of truth — both the success-state Print button and the
-   per-row Reprint icon call this helper. */
+/* R7b-HIGH-3a: standardized on the central `openPrint()` helper so the
+   advance-receipt flow benefits from the same sessionStorage handling,
+   popup-blocker alert, fresh-window timestamp, and slug encoding as
+   every other print in the app (R14 invariant). Previously this used a
+   handcrafted sessionStorage write + window.open which diverged on the
+   popup-blocked UX path. Single source of truth — both the
+   success-state Print button and the per-row Reprint icon call this. */
 function printAdvanceReceipt(advance, patient) {
   if (!advance || !patient) return;
-  const payload = {
+  openPrint("advance-receipt", {
     receiptNo:    advance.receiptNumber,
     patientName:  [patient.title, patient.fullName].filter(Boolean).join(" "),
     uhid:         patient.UHID,
@@ -62,18 +65,25 @@ function printAdvanceReceipt(advance, patient) {
     method:       advance.paymentMode,
     refNo:        advance.transactionId,
     depositPurpose: advance.remarks || "hospitalization advance",
-  };
-  try {
-    sessionStorage.setItem("printPayload-advance-receipt", JSON.stringify(payload));
-  } catch (e) {
-    console.error("[print] sessionStorage write failed:", e?.message);
-  }
-  window.open("/print/advance-receipt", "_blank", "noopener,noreferrer,width=900,height=1100");
+  });
 }
 
 export default function ReceptionBilling() {
   const { uhid: paramUhid } = useParams();
   const navigate = useNavigate();
+  // ?action= query param drives a deep-link from ReceptionConsole's
+  // post-registration success card. After a fresh OPD/IPD/DC/ER
+  // registration the receptionist clicks "Collect Payment / Advance"
+  // and lands here with one of:
+  //   ?action=opd-payment   → auto-open PaymentModal on the latest
+  //                            DRAFT OPD bill once it loads
+  //   ?action=advance       → auto-open TakeAdvanceModal so the
+  //                            receptionist can record the IPD / DC /
+  //                            ER admission deposit without hunting for
+  //                            the button
+  // Consumed exactly once per query-param value so reopening the page
+  // doesn't keep popping the modal.
+  const [searchParams, setSearchParams] = useSearchParams();
   const [uhid, setUhid] = useState(paramUhid || "");
   const [patient, setPatient] = useState(null);
   const [bills, setBills] = useState([]);
@@ -139,6 +149,43 @@ export default function ReceptionBilling() {
   }, []);
 
   useEffect(() => { if (paramUhid) load(paramUhid); }, [paramUhid, load]);
+
+  /* ─── Deep-link modal opener ────────────────────────────────────
+     Once the patient + bills finish loading, honour the ?action=
+     hint from ReceptionConsole's post-registration redirect:
+       opd-payment → open PaymentModal on the most recent OPD bill
+                     (DRAFT auto-generates inside PaymentModal.submit()
+                     per Fix B, so it doesn't matter if the bill is
+                     still DRAFT here)
+       advance     → open TakeAdvanceModal so the receptionist can
+                     record the admission deposit immediately
+     Self-consumes the URL param via setSearchParams so a page
+     refresh / back-navigation doesn't re-trigger the modal. ─── */
+  useEffect(() => {
+    if (!patient || loading) return;
+    const action = searchParams.get("action");
+    if (!action) return;
+
+    if (action === "opd-payment") {
+      // Prefer a DRAFT OPD bill (just-created), else any GENERATED/PARTIAL
+      // OPD bill with balance > 0, else the most recent OPD bill at all.
+      const opdBills = (bills || []).filter(b => b.visitType === "OPD");
+      const target =
+        opdBills.find(b => b.billStatus === "DRAFT") ||
+        opdBills.find(b => ["GENERATED","PARTIAL"].includes(b.billStatus) && Number(b.balanceAmount) > 0) ||
+        opdBills[0];
+      if (target) setPayTarget(target);
+      else toast.info("No OPD bill found yet — try again in a moment");
+    } else if (action === "advance") {
+      setShowAdvDlg(true);
+    }
+
+    // Self-consume so refresh doesn't re-pop the modal.
+    const next = new URLSearchParams(searchParams);
+    next.delete("action");
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patient, loading, bills]);
 
   // ── Live search — fires 250ms after the user stops typing. ─────
   // The /patients/search endpoint searches name + UHID + contact +
@@ -260,6 +307,75 @@ export default function ReceptionBilling() {
     }
   };
 
+  /* Print a per-payment receipt — fires after EVERY payment recorded so
+     the receptionist can hand the patient a physical slip. Distinct
+     from `printReceipt` (which is the full bill / OPD receipt). Pulls
+     the latest payment from bill.payments[] — caller must re-fetch the
+     bill BEFORE calling this so the last row is the one just recorded. */
+  const printPaymentReceipt = (bill, paymentOverride) => {
+    if (!bill) return;
+    const pay = paymentOverride || (bill.payments || []).slice(-1)[0];
+    if (!pay) return;
+    const balanceAfter = Number(bill.balanceAmount || 0);
+    const isFullyPaid  = balanceAfter <= 0.5;
+    openPrint("payment-receipt", {
+      receiptNo:    `${bill.billNumber}-P${(bill.payments || []).length || 1}`,
+      patientName:  patient?.fullName || bill.patientName,
+      uhid:         patient?.UHID || bill.UHID,
+      ipdNo:        bill.admissionNumber,
+      age:          patient?.age,
+      gender:       patient?.gender,
+      amount:       Number(pay.amount || 0),
+      method:       pay.paymentMode,
+      refNo:        pay.transactionId || "",
+      receivedBy:   pay.receivedBy || "Reception",
+      paidAt:       pay.paidAt || new Date().toISOString(),
+      purpose:      isFullyPaid
+        ? `Full settlement of bill ${bill.billNumber}`
+        : `Part-payment towards bill ${bill.billNumber}`,
+      billTotal:    Number(bill.netAmount || 0),
+      totalPaid:    Number(bill.advancePaid || 0),
+      runningBalance: balanceAfter,
+      remarks:      pay.remarks || "",
+    });
+  };
+
+  /* R7a: Refund-receipt slip — fires after every refund recorded so the
+     audit trail produces a physical document for the patient + NABH file.
+     The fresh bill should be re-fetched BEFORE calling this so the
+     latest negative payment row is included in totals. `refundInfo`
+     carries what the cashier just submitted (amount/mode/reason/etc.). */
+  const printRefundReceipt = (bill, refundInfo) => {
+    if (!bill || !refundInfo) return;
+    const amt = Number(refundInfo.amount) || 0;
+    // Find the original (positive) payment row this refund is most
+    // logically linked to — the largest positive row before the refund.
+    // Best-effort: helps the audit file but not critical.
+    const positiveRows = (bill.payments || []).filter(p => Number(p.amount) > 0);
+    const source = positiveRows.length
+      ? positiveRows.reduce((a, b) => (Number(a.amount) >= Number(b.amount) ? a : b))
+      : null;
+    const refundCount = (bill.payments || []).filter(p => Number(p.amount) < 0).length || 1;
+    openPrint("refund-receipt", {
+      receiptNo:    `${bill.billNumber}-R${refundCount}`,
+      patientName:  patient?.fullName || bill.patientName,
+      uhid:         patient?.UHID || bill.UHID,
+      ipdNo:        bill.admissionNumber,
+      opdNo:        bill.opdNumber,
+      date:         new Date().toISOString(),
+      approvedBy:   refundInfo.refundedBy || "Reception",
+      refundedBy:   refundInfo.refundedBy || "Reception",
+      amount:       amt,
+      method:       refundInfo.mode,
+      refNo:        refundInfo.transactionId || "",
+      reason:       refundInfo.reason,
+      sourceReceiptNo: source ? `${bill.billNumber}-P${(bill.payments || []).indexOf(source) + 1}` : "—",
+      sourceMethod:    source?.paymentMode || "—",
+      sourceAmount:    source ? Number(source.amount) : null,
+      runningBalance:  Number(bill.balanceAmount || 0),
+    });
+  };
+
   /* Open the unified printable system (CSS-driven, paper-size picker,
    * header/footer auto-pulled from Hospital Settings). The legacy
    * receiptHTML() path below is kept as a fallback if anyone needs it
@@ -273,17 +389,32 @@ export default function ReceptionBilling() {
       amount: it.netAmount,
     }));
     const lastPay = (bill.payments || []).slice(-1)[0];
-    openPrint("opd-receipt", {
+    // R7b-HIGH-3b: SERVICE bills (walk-in lab/imaging/day procedures with
+    // no admission) get a dedicated service-receipt slug so the printable
+    // header reads "Service Date / Reference / Counter" instead of the
+    // OPD-only "Doctor / Department / Visit Date". Falls back to OPD
+    // receipt for everything else (OPD/IPD interim/Daycare/Emergency).
+    const isService = bill.visitType === "SERVICE" || bill.billType === "SERVICE";
+    openPrint(isService ? "service-receipt" : "opd-receipt", {
       receiptNo:   bill.billNumber,
       patientName: patient?.fullName,
       uhid:        patient?.UHID,
       age:         patient?.age,
       gender:      patient?.gender,
+      // OPD-only fields (ignored by ServiceReceipt)
       doctorName:  bill.doctorName || bill.consultantName,
       department:  bill.department,
       visitDate:   bill.createdAt,
+      // SERVICE-only fields (ignored by OPDReceipt)
+      serviceDate: bill.createdAt,
+      referredBy:  bill.referredBy || bill.referralSource,
+      counter:     bill.counter || bill.generatedBy,
       items,
-      discount:    bill.discountAmount,
+      // R7d: bill-level field is `totalDiscount` (includes both per-item
+      // discounts + extra settlement discount). `bill.discountAmount`
+      // only exists at the BillItem level, so reading it here would
+      // always be undefined → 0 on the printed receipt.
+      discount:    bill.totalDiscount ?? bill.discountAmount,
       tax:         bill.taxAmount,
       paymentMethod: lastPay?.paymentMode,
       paymentRef:    lastPay?.transactionId,
@@ -784,6 +915,15 @@ export default function ReceptionBilling() {
             setPayTarget(null);
             await load(uhid);
             await loadBill(id);
+            // Auto-print the payment receipt as soon as the bill refresh
+            // settles. The fresh fetch is in activeBill state by now,
+            // so we re-read it; fallback to direct refetch if state
+            // hasn't propagated yet (e.g. cashier closed modal fast).
+            try {
+              const { data } = await axios.get(`${API_ENDPOINTS.BILLING}/${id}`);
+              const fresh = data?.data || data;
+              if (fresh) printPaymentReceipt(fresh);
+            } catch (_) { /* don't block on receipt-print issues */ }
           }}
         />
       )}
@@ -894,11 +1034,29 @@ export default function ReceptionBilling() {
         <RefundModal
           bill={refundTarget}
           onClose={() => setRefundTarget(null)}
-          onDone={async () => {
+          onDone={async (refundInfo) => {
             const id = refundTarget._id;
             setRefundTarget(null);
             await load(uhid);
             await loadBill(id);
+            // R7a: auto-print refund-receipt — same pattern as PaymentModal.
+            // Fresh-fetch so the latest negative payment row + balance are
+            // included; don't block UI if print payload fails.
+            try {
+              const { data } = await axios.get(`${API_ENDPOINTS.BILLING}/${id}`);
+              const fresh = data?.data || data;
+              if (fresh && refundInfo) printRefundReceipt(fresh, refundInfo);
+            } catch (_) { /* refund itself succeeded — receipt is best-effort */ }
+            // R7c: when the cashier elected to credit-to-advance, the
+            // backend returned the freshly-created PatientAdvance row.
+            // Print the advance receipt for the second leg of the
+            // transfer so the patient gets both slips (refund out of the
+            // bill + advance deposit in the pool).
+            if (refundInfo?.creditToAdvance && refundInfo?.advance && patient) {
+              try {
+                printAdvanceReceipt(refundInfo.advance, patient);
+              } catch (_) { /* receipt is best-effort */ }
+            }
           }}
         />
       )}
@@ -1101,6 +1259,25 @@ function PaymentModal({ bill, onClose, onDone }) {
     }
     setSaving(true);
     try {
+      // If bill is still DRAFT, auto-generate first — receptionist's
+      // expectation is "take payment NOW". Calling /generate makes the
+      // backend payment endpoint accept the request (it rejects DRAFT
+      // bills hard). Skip generate if there are zero line items (would
+      // 400 server-side anyway).
+      if (bill.billStatus === "DRAFT") {
+        if (!(bill.billItems || []).length) {
+          toast.error("Bill has no items — add a service before generating");
+          setSaving(false);
+          return;
+        }
+        try {
+          await axios.post(`${API_ENDPOINTS.BILLING}/${bill._id}/generate`, { generatedBy: receivedBy || "Reception" });
+        } catch (e) {
+          toast.error(e?.response?.data?.message || "Auto-generate failed before payment");
+          setSaving(false);
+          return;
+        }
+      }
       await axios.post(`${API_ENDPOINTS.BILLING}/${bill._id}/payment`, {
         amount: amt, paymentMode: mode,
         transactionId: txnId || undefined,
@@ -1185,6 +1362,11 @@ function RefundModal({ bill, onClose, onDone }) {
   const [reason, setReason] = useState("");
   const [refundedBy, setRefundedBy] = useState("");
   const [txnId, setTxnId] = useState("");
+  // R7c: when true, the refund stays inside the hospital — money flows
+  // back into the patient's advance pool instead of leaving the till.
+  // Useful for IPD patients with bills still coming. Gated to non-TPA
+  // modes because TPA money must return to the insurer.
+  const [creditToAdvance, setCreditToAdvance] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
@@ -1194,13 +1376,29 @@ function RefundModal({ bill, onClose, onDone }) {
     if (!reason.trim()) return toast.error("Refund reason is mandatory for audit");
     setSaving(true);
     try {
-      await axios.post(`${API_ENDPOINTS.BILLING}/${bill._id}/refund`, {
+      const { data: resp } = await axios.post(`${API_ENDPOINTS.BILLING}/${bill._id}/refund`, {
         amount: amt, mode, reason: reason.trim(),
         refundedBy: refundedBy || undefined,
         transactionId: txnId || undefined,
+        creditToAdvance,
       });
-      toast.success(`Refund ${fmtCur(amt)} recorded`);
-      onDone();
+      const msg = creditToAdvance && resp?.advance
+        ? `Refund ${fmtCur(amt)} credited to patient's advance pool`
+        : `Refund ${fmtCur(amt)} recorded`;
+      toast.success(msg);
+      // R7a + R7c: pass refund details up so the parent prints the
+      // refund-receipt; also pass the created PatientAdvance row (when
+      // creditToAdvance was set) so the parent fires the advance-receipt
+      // print for the second leg of the transfer.
+      onDone({
+        amount: amt,
+        mode,
+        reason: reason.trim(),
+        refundedBy: refundedBy || "Reception",
+        transactionId: txnId || "",
+        creditToAdvance,
+        advance: resp?.advance || null,
+      });
     } catch (e) {
       toast.error(e?.response?.data?.message || "Refund failed");
     } finally { setSaving(false); }
@@ -1254,11 +1452,28 @@ function RefundModal({ bill, onClose, onDone }) {
               </div>
             )}
           </div>
+
+          {/* R7c: credit-to-advance toggle. Hidden for TPA refunds because
+              insurer money can't sit in patient's pool. Disabled when the
+              user picks TPA mode — defensive defence in case backend
+              changes accept it later. */}
+          {mode !== "TPA_CLAIM" && (
+            <label className="rx-checkbox-row">
+              <input type="checkbox" checked={creditToAdvance}
+                     onChange={e => setCreditToAdvance(e.target.checked)} />
+              <span>
+                <strong>Credit to patient's advance pool</strong>
+                {" "}— no cash handed back; the amount becomes deposit
+                credit usable on future bills (a separate advance receipt
+                will print alongside the refund slip).
+              </span>
+            </label>
+          )}
         </div>
         <div className="rx-modal-foot">
           <button className="rx-modal-btn-cancel" onClick={onClose}>Keep Payment</button>
           <button className="rx-modal-btn-primary rx-modal-btn-primary--danger" onClick={submit} disabled={saving}>
-            <i className={`pi ${saving ? "pi-spin pi-spinner" : "pi-undo"}`} /> Confirm Refund
+            <i className={`pi ${saving ? "pi-spin pi-spinner" : "pi-undo"}`} /> {creditToAdvance ? "Credit to Advance Pool" : "Confirm Refund"}
           </button>
         </div>
       </div>
@@ -1860,7 +2075,19 @@ function BulkSettleModal({ uhid, patient, bills, totalDue, onClose, onDone }) {
         { mode, value, adjustedBy: adjustedBy.trim(), reason: reason.trim() },
       );
       const meta = data?.data;
-      toast.success(`Bulk discount ${fmtCur(meta?.totalDiscount || preview.totalDiscount)} applied to ${meta?.billsTouched || preview.rows.length} bill(s)`);
+      const touched = meta?.billsTouched || 0;
+      const skipped = Array.isArray(meta?.skipped) ? meta.skipped : [];
+      // R7d: surface the skipped[] array from R7b's bulk-settle state-
+      // predicate fix. If any bills were skipped (state changed mid-
+      // batch or VersionError race), the cashier needs to know they
+      // weren't included in the discount so they can retry individually.
+      toast.success(`Bulk discount ${fmtCur(meta?.totalDiscount || preview.totalDiscount)} applied to ${touched} bill(s)`);
+      if (skipped.length > 0) {
+        toast.error(
+          `${skipped.length} bill(s) skipped: ${skipped.map(s => `${s.billNumber} (${s.reason})`).join("; ")}`,
+          { duration: 8000 },
+        );
+      }
       onDone(openCollectAfter);
     } catch (e) {
       toast.error(e?.response?.data?.message || "Bulk settlement failed");

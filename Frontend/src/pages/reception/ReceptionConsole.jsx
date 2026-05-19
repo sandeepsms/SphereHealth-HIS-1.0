@@ -188,6 +188,20 @@ export default function ReceptionConsole() {
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState({});
 
+  /* ── Just-registered receipt snapshot ────────────────────────────
+     After a successful registration we wipe the form so the receptionist
+     can start the next patient, but we ALSO keep a frozen snapshot of
+     everything needed to reprint the cash/payment slip. The Live Receipt
+     Preview panel flips into a "Registered ✓" confirmation card with a
+     Print Slip button until the receptionist either prints, dismisses,
+     or starts typing a new patient — covering the two failure modes that
+     surfaced in practice:
+       1. Browser blocks the auto-popup → no slip printed → receptionist
+          needs an explicit re-fire path.
+       2. Patient asks for a duplicate copy a minute later (one for the
+          ward, one for the file) — saves a round-trip to billing. */
+  const [lastSaved, setLastSaved] = useState(null);
+
   /* ── Today's stats ── */
   const [stats, setStats] = useState({ opd: 0, ipd: 0, dc: 0, er: 0, svc: 0, beds: "—" });
 
@@ -369,6 +383,17 @@ export default function ReceptionConsole() {
     setSearchOpen(false);
     toast.success(`Patient loaded: ${p.fullName || p.UHID}`);
   };
+
+  /* ─── Auto-dismiss the post-save success card the moment the
+         receptionist starts typing the next patient's name (or picks one
+         from the search dropdown). Without this, the success card would
+         linger until manually dismissed and could be confused with the
+         next registration. Guarded by `lastSaved` so it stays a no-op
+         when there's nothing to dismiss. ─── */
+  useEffect(() => {
+    if (lastSaved && patient.fullName) setLastSaved(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patient.fullName]);
 
   /* ─── New patient (clear all form) ─── */
   const newPatient = () => {
@@ -652,7 +677,59 @@ export default function ReceptionConsole() {
           createdBy:    user?._id,
         };
 
-        await admissionService.createAdmission(admissionPayload);
+        const admResp = await admissionService.createAdmission(admissionPayload);
+        // Service wraps axios — response is the raw body (no extra .data wrap).
+        const createdAdm = admResp?.data || admResp || null;
+
+        // ── IPD initial advance → PatientAdvance row + receipt ─────
+        // Receptionist enters the advance amount on the IPD form. Previously
+        // that number went onto `admissionPayload.advancePaid` (used purely
+        // for the visit-receipt summary) but no PatientAdvance ledger row
+        // was ever written — so the money sat in nobody's books, never
+        // applied to the bill at discharge. This block fixes that:
+        // create the advance, print the dedicated AdvanceReceipt. Default
+        // mode = CASH (no payment-mode field on the admission form yet —
+        // receptionist can edit via Billing Counter if needed).
+        const advAmt = Number(ipd.advancePayment) || 0;
+        if (visitType === "IPD" && advAmt > 0 && createdAdm?._id) {
+          try {
+            const advResp = await axios.post(`${API_ENDPOINTS.BILLING}/advance`, {
+              UHID:        patientUHID,
+              amount:      advAmt,
+              paymentMode: "CASH",
+              admission:   createdAdm._id,
+              remarks:     "Admission advance deposit",
+              receivedBy:  user?.fullName || user?.employeeId || "Reception",
+              receivedById:   user?._id,
+              receivedByRole: user?.role,
+            });
+            const adv = advResp?.data?.data || advResp?.data || {};
+
+            // Fire the AdvanceReceipt print via sessionStorage handoff
+            // (matches ReceptionBilling printAdvanceReceipt helper).
+            const advPayload = {
+              receiptNo:     adv.receiptNumber || null,
+              patientName:   [patient.title, patient.fullName].filter(Boolean).join(" "),
+              uhid:          patientUHID,
+              ipdNo:         createdAdm.admissionNumber || null,
+              admissionDate: createdAdm.admissionDate || new Date().toISOString(),
+              bedNumber:     bedData.bedNumber || null,
+              wardName:      null, // bedData only carries IDs — name shown on visit receipt
+              date:          adv.paidAt || adv.createdAt || new Date().toISOString(),
+              amount:        Number(adv.amount?.$numberDecimal ?? adv.amount ?? advAmt) || 0,
+              method:        adv.paymentMode || "CASH",
+              refNo:         adv.transactionId || null,
+              depositPurpose: "hospitalization advance",
+            };
+            try {
+              sessionStorage.setItem("printPayload-advance-receipt", JSON.stringify(advPayload));
+            } catch (e) { /* sessionStorage full / unavailable */ }
+            window.open("/print/advance-receipt", "_blank", "noopener,noreferrer,width=900,height=1100");
+          } catch (e) {
+            console.error("Advance creation failed:", e);
+            toast.warning("Admission saved, but advance deposit could not be recorded — please add via Billing Counter. " + (e?.response?.data?.message || e?.message || ""));
+          }
+        }
 
         // If Emergency, also create the emergency-visit record (parallel)
         // The Emergency model uses specific enum values + field names; map
@@ -713,9 +790,13 @@ export default function ReceptionConsole() {
         // endpoints (`/billing/create` + `/billing/:id/add-service`) so the
         // bill draft is fully persisted before navigation.
         try {
+          // visitType = "SERVICE" for walk-in service-only bills (lab tests /
+           // imaging / vaccination). Was previously hard-coded to "OPD" which
+           // inflated OPD revenue reports — audit caught it. Backend enum
+           // was extended in the same patch.
           const draftRes = await axios.post(`${API_ENDPOINTS.BILLING}/create`, {
             UHID: patientUHID,
-            visitType: "OPD",
+            visitType: "SERVICE",
           });
           const draft = draftRes.data?.data || draftRes.data;
           if (draft?._id) {
@@ -742,14 +823,27 @@ export default function ReceptionConsole() {
       }
 
       // ── Step 3: Print receipt ──
-      printReceipt({ patient: { ...patient, UHID: patientUHID }, visitType, opd, ipd, dayCare, er, services, bedData,
+      // Build a stable snapshot first so we can both fire the print AND
+      // hand the receptionist a manual "Print Slip" reprint button on the
+      // Live Receipt Preview card after the form is wiped.
+      const savedSnapshot = {
+        patient: { ...patient, UHID: patientUHID },
+        visitType,
+        opd, ipd, dayCare, er, services, bedData,
         deptLabel: departments.find(d => d.value === (opd.department || ipd.department || dayCare.department))?.label,
         docLabel: doctors.find(d => d.value === (opd.doctor || ipd.admittingDoctor || dayCare.doctor || er.attendingDoctor))?.label,
         receiptTotal,
         tokenNumber,  // OPD token (null for non-OPD)
-      });
+        savedAt: new Date().toISOString(),
+      };
+      setLastSaved(savedSnapshot);
+      printReceipt(savedSnapshot);
 
-      // Reset for next patient + clear the auto-saved snapshot
+      // Reset for next patient + clear the auto-saved snapshot.
+      // Note: newPatient() does NOT clear lastSaved — that's intentional
+      // so the success card with the Print Slip button survives the form
+      // wipe. lastSaved is cleared when the receptionist either presses
+      // "New Patient" on the success card or starts typing in the form.
       clearAutosave();
       newPatient();
 
@@ -1561,12 +1655,181 @@ export default function ReceptionConsole() {
         </div>
 
         {/* ─── RECEIPT PREVIEW (right) ─── */}
+        {/* Flips between two modes:
+            (a) Live form preview — while the receptionist is filling
+                the form, render the form-state-driven receipt summary.
+            (b) Post-save success card — after a successful registration,
+                show a "Registered ✓" confirmation card with the assigned
+                UHID + token (OPD), the total payable, a primary "Print
+                Slip" button to re-fire the cash/payment slip (handles
+                blocked popups + duplicate-copy requests), and a "New
+                Patient" dismiss button. Auto-clears the moment the
+                receptionist starts typing the next patient (see the
+                useEffect on patient.fullName above). */}
         <div className="rc-receipt">
           <div className="rc-receipt-head">
-            <i className="pi pi-receipt" />
-            <span className="rc-receipt-head-title">Live Receipt Preview</span>
-            <span className="rc-receipt-head-badge">{visitType}</span>
+            <i className={`pi ${lastSaved ? "pi-check-circle" : "pi-receipt"}`} />
+            <span className="rc-receipt-head-title">
+              {lastSaved ? `${lastSaved.visitType} Registered` : "Live Receipt Preview"}
+            </span>
+            <span className="rc-receipt-head-badge">
+              {lastSaved ? lastSaved.visitType : visitType}
+            </span>
           </div>
+          {lastSaved ? (
+            /* ── Post-save success card ── */
+            <div className="rc-receipt-body rc-receipt-saved">
+              <div className="rc-receipt-saved-banner">
+                <i className="pi pi-check" />
+                <div>
+                  <div className="rc-receipt-saved-banner-title">Registration complete</div>
+                  <div className="rc-receipt-saved-banner-sub">
+                    {lastSaved.visitType === "OPD"
+                      ? "Cash slip auto-printed. Collect the consultation fee below."
+                      : "Cash slip auto-printed. Collect the admission advance below if applicable."}
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <div className="rc-receipt-section-label">Patient</div>
+                <div className="rc-receipt-line">
+                  <span className="rc-receipt-line-key">Name</span>
+                  <span className="rc-receipt-line-value">
+                    {[lastSaved.patient.title, lastSaved.patient.fullName].filter(Boolean).join(" ") || "—"}
+                  </span>
+                </div>
+                <div className="rc-receipt-line">
+                  <span className="rc-receipt-line-key">UHID</span>
+                  <span className="rc-receipt-line-value">{lastSaved.patient.UHID || "—"}</span>
+                </div>
+                {lastSaved.tokenNumber != null && (
+                  <div className="rc-receipt-line">
+                    <span className="rc-receipt-line-key">Token #</span>
+                    <span className="rc-receipt-line-value">{lastSaved.tokenNumber}</span>
+                  </div>
+                )}
+                <div className="rc-receipt-line">
+                  <span className="rc-receipt-line-key">Phone</span>
+                  <span className="rc-receipt-line-value">{lastSaved.patient.contactNumber || "—"}</span>
+                </div>
+              </div>
+
+              <div>
+                <div className="rc-receipt-section-label">{lastSaved.visitType} Details</div>
+                {lastSaved.visitType === "OPD" && <>
+                  <div className="rc-receipt-line"><span className="rc-receipt-line-key">Dept</span><span className="rc-receipt-line-value">{lastSaved.deptLabel || "—"}</span></div>
+                  <div className="rc-receipt-line"><span className="rc-receipt-line-key">Doctor</span><span className="rc-receipt-line-value">{lastSaved.docLabel || "—"}</span></div>
+                  <div className="rc-receipt-line"><span className="rc-receipt-line-key">Consult Fee</span><span className="rc-receipt-line-value">{fmtCur(lastSaved.opd?.consultationFee)}</span></div>
+                </>}
+                {lastSaved.visitType === "IPD" && <>
+                  <div className="rc-receipt-line"><span className="rc-receipt-line-key">Dept</span><span className="rc-receipt-line-value">{lastSaved.deptLabel || "—"}</span></div>
+                  <div className="rc-receipt-line"><span className="rc-receipt-line-key">Doctor</span><span className="rc-receipt-line-value">{lastSaved.docLabel || "—"}</span></div>
+                  <div className="rc-receipt-line"><span className="rc-receipt-line-key">Bed</span><span className="rc-receipt-line-value">{lastSaved.bedData?.bedNumber || "—"}</span></div>
+                  <div className="rc-receipt-line"><span className="rc-receipt-line-key">Adv Payment</span><span className="rc-receipt-line-value">{fmtCur(lastSaved.ipd?.advancePayment)}</span></div>
+                </>}
+                {lastSaved.visitType === "Daycare" && <>
+                  <div className="rc-receipt-line"><span className="rc-receipt-line-key">Procedure</span><span className="rc-receipt-line-value">{lastSaved.dayCare?.procedureName || "—"}</span></div>
+                  <div className="rc-receipt-line"><span className="rc-receipt-line-key">Doctor</span><span className="rc-receipt-line-value">{lastSaved.docLabel || "—"}</span></div>
+                  <div className="rc-receipt-line"><span className="rc-receipt-line-key">Bed</span><span className="rc-receipt-line-value">{lastSaved.bedData?.bedNumber || "—"}</span></div>
+                </>}
+                {lastSaved.visitType === "Emergency" && <>
+                  <div className="rc-receipt-line"><span className="rc-receipt-line-key">Triage</span><span className="rc-receipt-line-value">{lastSaved.er?.triageLevel || "—"}</span></div>
+                  <div className="rc-receipt-line"><span className="rc-receipt-line-key">Type</span><span className="rc-receipt-line-value">{lastSaved.er?.erType || "—"}</span></div>
+                  <div className="rc-receipt-line"><span className="rc-receipt-line-key">MLC</span><span className="rc-receipt-line-value">{lastSaved.er?.isMLC ? (lastSaved.er.mlcNumber || "Yes") : "No"}</span></div>
+                  <div className="rc-receipt-line"><span className="rc-receipt-line-key">Bed</span><span className="rc-receipt-line-value">{lastSaved.bedData?.bedNumber || "—"}</span></div>
+                </>}
+              </div>
+
+              <div className="rc-receipt-total">
+                <span className="rc-receipt-total-label">Total Payable</span>
+                <span className="rc-receipt-total-value">{fmtCur(lastSaved.receiptTotal)}</span>
+              </div>
+
+              {/* Primary action — context-aware money-collection.
+                  Replaces the previous "Print Slip" primary (slip
+                  auto-prints inside submit() already; the receptionist's
+                  next real task is to take the money). Routes to the
+                  Billing Counter with an ?action= hint so the right
+                  modal pops open the moment the page loads:
+                    OPD       → PaymentModal on the just-created OPD
+                                bill (consultation fee). DRAFT bills
+                                auto-generate inside PaymentModal per
+                                Fix B, so this works for the brand-new
+                                DRAFT case too.
+                    IPD / DC  → TakeAdvanceModal so the receptionist can
+                    / ER        record the admission deposit (cash / UPI
+                                / card / cheque) and print the
+                                AdvanceReceipt. If `ipd.advancePayment`
+                                was already filled on the form, Fix C
+                                created the advance + receipt during
+                                submit(); this lets the receptionist
+                                top up or take a SECOND advance without
+                                hunting for the button. */}
+              {(() => {
+                const isOPD = lastSaved.visitType === "OPD";
+                const isAdmissionType = ["IPD", "Daycare", "Emergency"].includes(lastSaved.visitType);
+                const action = isOPD ? "opd-payment" : (isAdmissionType ? "advance" : null);
+                const label = isOPD
+                  ? `Collect Payment · ${fmtCur(lastSaved.receiptTotal)}`
+                  : (isAdmissionType
+                      ? (Number(lastSaved.ipd?.advancePayment) > 0
+                          ? `Collect Additional Advance`
+                          : `Collect Advance`)
+                      : `Open Billing Counter`);
+                const icon = isOPD ? "pi-indian-rupee" : "pi-wallet";
+                return (
+                  <button
+                    type="button"
+                    className="rc-btn-print-slip"
+                    onClick={() => {
+                      const uhid = lastSaved.patient?.UHID;
+                      if (!uhid) {
+                        toast.error("UHID missing — cannot open billing counter");
+                        return;
+                      }
+                      // Dismiss the success card BEFORE navigating so when
+                      // the receptionist comes back the live preview is
+                      // clean and ready for the next patient.
+                      setLastSaved(null);
+                      const qs = action ? `?action=${action}` : "";
+                      navigate(`/reception-billing/${encodeURIComponent(uhid)}${qs}`);
+                    }}
+                  >
+                    <i className={`pi ${icon}`} />
+                    {label}
+                  </button>
+                );
+              })()}
+
+              {/* Secondary action — dismiss the success card and return
+                  to the live form preview. Form is already wiped by the
+                  newPatient() call inside submit(), so this is a pure
+                  visual reset. Print slip auto-fires during submit(); if
+                  the popup got blocked, this button is the escape
+                  hatch — keeps reprint available without making it the
+                  primary CTA (collecting money is the primary CTA). */}
+              <button
+                type="button"
+                className="rc-btn-new-patient"
+                onClick={() => {
+                  printReceipt(lastSaved);
+                }}
+                title="Reprint the cash slip (in case the auto-print was blocked or the patient needs a duplicate)"
+              >
+                <i className="pi pi-print" />
+                Reprint Slip
+              </button>
+              <button
+                type="button"
+                className="rc-btn-new-patient"
+                onClick={() => setLastSaved(null)}
+              >
+                <i className="pi pi-plus" />
+                Register Another Patient
+              </button>
+            </div>
+          ) : (
           <div className="rc-receipt-body">
             <div>
               <div className="rc-receipt-section-label">Patient</div>
@@ -1637,6 +1900,7 @@ export default function ReceptionConsole() {
               <span className="rc-receipt-total-value">{fmtCur(receiptTotal)}</span>
             </div>
           </div>
+          )}
         </div>
       </div>
 

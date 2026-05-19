@@ -625,13 +625,18 @@ export default function OPDAssessmentPage() {
           remarks: [newOrder.urgency, newOrder.instructions].filter(Boolean).join(" · ") || undefined,
           addedBySource: "Doctor",
           addedBy:       visit?.consultantName || "Doctor",
+          addedByRole:   "Doctor",
+          // No explicit orderStatus — backend infers "Ordered" from
+          // addedBySource === "Doctor". The line sits in Active Orders
+          // until the lab / radiologist / proceduralist confirms
+          // completion, at which point it becomes billable.
         },
       );
       const bill = data?.data || data;
       setOrderItems(Array.isArray(bill?.billItems) ? bill.billItems : []);
       setOrderBillNum(bill?.billNumber || orderBillNum || "(DRAFT)");
       setNewOrder({ service: null, name: "", qty: 1, urgency: "Routine", instructions: "" });
-      toast.success(`${svc.serviceName} added — bill ${bill?.billNumber || "(DRAFT)"}`);
+      toast.success(`${svc.serviceName} ordered — will bill once completed`);
     } catch (e) {
       toast.error(e?.response?.data?.message || e?.message || "Could not add to bill");
     } finally {
@@ -651,6 +656,49 @@ export default function OPDAssessmentPage() {
       toast.success("Removed from bill");
     } catch (e) {
       toast.error(e?.response?.data?.message || "Could not remove — bill may already be generated");
+    }
+  };
+
+  /* ─── Mark Active Order → Completed ─────────────────────────
+     Flips the BillItem's orderStatus to Completed on the backend, which
+     in turn triggers the bill's pre-save recalc — moving the charge
+     from the "Pending Orders" bucket into the billable total. Used when
+     the lab/imaging team confirms the test was performed, or when the
+     doctor performs the procedure themselves and wants to charge it. */
+  const completeOrderItem = async (item) => {
+    if (!orderBillId || !item?._id) return;
+    try {
+      const { data } = await axios.patch(
+        `${API_ENDPOINTS.BASE}/billing/${orderBillId}/items/${item._id}/complete`,
+      );
+      const bill = data?.data || data;
+      setOrderItems(Array.isArray(bill?.billItems) ? bill.billItems : []);
+      toast.success(`${item.serviceName} marked completed — now billable`);
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Could not complete order");
+    }
+  };
+
+  /* ─── Soft-cancel an Active Order ───────────────────────────
+     Sets orderStatus → "Cancelled" so the line is preserved for audit
+     but excluded from both billable and pending totals. Distinct from
+     remove (DELETE) — refuses on Completed lines so a charge that's
+     already on the patient's bill must go through accountant refund
+     instead. */
+  const cancelOrderItem = async (item) => {
+    if (!orderBillId || !item?._id) return;
+    const reason = window.prompt(`Cancel order "${item.serviceName}"? Enter reason:`, "");
+    if (reason == null) return;       // user pressed Cancel on the prompt
+    try {
+      const { data } = await axios.patch(
+        `${API_ENDPOINTS.BASE}/billing/${orderBillId}/items/${item._id}/cancel-order`,
+        { cancelReason: reason },
+      );
+      const bill = data?.data || data;
+      setOrderItems(Array.isArray(bill?.billItems) ? bill.billItems : []);
+      toast.success(`Order cancelled: ${item.serviceName}`);
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Could not cancel order");
     }
   };
 
@@ -707,14 +755,159 @@ export default function OPDAssessmentPage() {
   };
 
   /* ── OPD Paper Print ──
-   * Rewired to the unified print system. The CSS-driven OPD Prescription
-   * printable pulls header / footer from Hospital Settings, supports the
-   * paper-size selector (A4 / Half-A4 / A5), and handles the same fields. */
+   * Builds a print-ready prescription with everything the doctor just
+   * entered: diagnosis (provisional/working/final + ICD-10), structured
+   * gen-ex/sys-ex findings, full Rx list (form prefix + meal status),
+   * Obs/Gynae history when applicable, and the unified Services & Orders
+   * lines from the auto-DRAFT bill. Uses the CSS-driven OPD Prescription
+   * printable which pulls hospital header/footer from Hospital Settings
+   * and supports the paper-size selector (A4 / Half-A4 / A5). */
   const handlePrint = () => {
     const v   = visit || {};
     const vit = v.vitals || {};
     const docUser = (() => { try { return JSON.parse(localStorage.getItem("his_user") || "{}"); } catch { return {}; } })();
     const drName = v.consultantName || docUser?.fullName || docUser?.name || "Consultant";
+
+    // Build a one-line summary of the structured Gen-Ex checklist so
+    // the printable doesn't have to know about every checkbox. Skips
+    // empty selects and false booleans.
+    const genExBits = [];
+    const g = soap.genExam || {};
+    if (g.built)         genExBits.push(`Built: ${g.built}`);
+    if (g.nourishment)   genExBits.push(`Nourishment: ${g.nourishment}`);
+    if (g.consciousness) genExBits.push(g.consciousness);
+    if (g.orientation)   genExBits.push(g.orientation);
+    if (g.hydration)     genExBits.push(g.hydration);
+    if (g.pallor)        genExBits.push(`Pallor ${g.pallor}`);
+    if (g.pedalEdema)    genExBits.push(`Pedal Edema ${g.pedalEdema}`);
+    if (g.jvp)           genExBits.push(`JVP ${g.jvp}`);
+    if (g.icterus)         genExBits.push("Icterus +");
+    if (g.cyanosis)        genExBits.push("Cyanosis +");
+    if (g.clubbing)        genExBits.push("Clubbing +");
+    if (g.lymphadenopathy) genExBits.push(`Lymphadenopathy${g.lymphLocation ? ` (${g.lymphLocation})` : ""}`);
+    if (g.febrile)         genExBits.push("Febrile");
+    const genExStructured = genExBits.join(", ");
+    const generalExamLine = [genExStructured, soap.generalExamination].filter(s => s && s.trim()).join(" · ");
+
+    // System examination — same compaction trick, but per system so
+    // each line on the printable reads "CVS: S1 S2 normal, Regular, Murmur".
+    const sx = soap.sysExam || {};
+    const sysLines = [];
+    const cvs = sx.cvs || {};
+    const cvsBits = [cvs.s1s2, cvs.rhythm, cvs.murmur && `Murmur${cvs.murmurDetails ? ` (${cvs.murmurDetails})` : ""}`, cvs.other].filter(Boolean);
+    if (cvsBits.length) sysLines.push(`CVS: ${cvsBits.join(", ")}`);
+    const rs = sx.rs || {};
+    const rsBits = [rs.airEntry, rs.breathSounds, rs.crepts && "Crepts +", rs.wheeze && "Wheeze +", rs.rhonchi && "Rhonchi +", rs.other].filter(Boolean);
+    if (rsBits.length) sysLines.push(`RS: ${rsBits.join(", ")}`);
+    const cns = sx.cns || {};
+    const cnsBits = [cns.gcs && `GCS ${cns.gcs}`, cns.speech, cns.tone && `Tone ${cns.tone}`, cns.power && `Power ${cns.power}`, cns.reflexes && `Reflexes ${cns.reflexes}`, cns.plantar && `Plantar ${cns.plantar}`, cns.other].filter(Boolean);
+    if (cnsBits.length) sysLines.push(`CNS: ${cnsBits.join(", ")}`);
+    const pa = sx.pa || {};
+    const paBits = [
+      pa.soft && "Soft", pa.tender && `Tender${pa.tenderLocation ? ` (${pa.tenderLocation})` : ""}`,
+      pa.distended && "Distended", pa.bowelSounds && `BS ${pa.bowelSounds}`,
+      pa.organomegaly && `Organomegaly${pa.organomegalyDetails ? ` (${pa.organomegalyDetails})` : ""}`,
+      pa.mass && "Mass", pa.other,
+    ].filter(Boolean);
+    if (paBits.length) sysLines.push(`P/A: ${paBits.join(", ")}`);
+    if (soap.systemicExamination?.trim()) sysLines.push(soap.systemicExamination.trim());
+    const systemicExamLine = sysLines.join("\n");
+
+    // OBG history — only included on the printout when the doctor
+    // actually filled something in (avoids printing an empty section
+    // for non-gynae cases).
+    const o = obg || {};
+    const obgSummary = [];
+    if (o.lmp)       obgSummary.push(`LMP: ${o.lmp}`);
+    if (o.edd)       obgSummary.push(`EDD: ${o.edd}`);
+    if (o.menarche)  obgSummary.push(`Menarche: ${o.menarche}y`);
+    if (o.cycleLength || o.flowDays) obgSummary.push(`Cycle: ${o.cycleLength || "?"}/${o.flowDays || "?"} days`);
+    if (o.regularity)   obgSummary.push(o.regularity);
+    if (o.dysmenorrhea && o.dysmenorrhea !== "None") obgSummary.push(`Dysmenorrhea ${o.dysmenorrhea}`);
+    if (o.menopause)    obgSummary.push(o.menopause);
+    if (o.gravida || o.para || o.abortion || o.living) obgSummary.push(`G${o.gravida || 0}P${o.para || 0}A${o.abortion || 0}L${o.living || 0}`);
+    if (o.deliveryMode)  obgSummary.push(`Last delivery: ${o.deliveryMode}`);
+    if (o.contraception) obgSummary.push(`Contraception: ${o.contraception}`);
+    if (o.lastPapSmear)  obgSummary.push(`Last Pap: ${o.lastPapSmear}`);
+    if (o.lastUSG)       obgSummary.push(`Last USG: ${o.lastUSG}`);
+    if (o.priorSurgery)  obgSummary.push(`Prior surgery: ${o.priorSurgery}`);
+    if (o.notes)         obgSummary.push(o.notes);
+    const obgLine = obgSummary.join(" · ");
+
+    // HOPI — one-line summary the printable can render as a single
+    // "History of Present Illness" row. Each token is skipped if empty
+    // so the line never reads "Onset: , Duration: ".
+    const h = hopi || {};
+    const hopiBits = [];
+    if (h.onset)         hopiBits.push(`Onset: ${h.onset}`);
+    if (h.durationValue) hopiBits.push(`Duration: ${h.durationValue} ${h.durationUnit || ""}`.trim());
+    if (h.progression)   hopiBits.push(`Progression: ${h.progression}`);
+    if (h.character)     hopiBits.push(`Character: ${h.character}`);
+    if (Array.isArray(h.associatedSymptoms) && h.associatedSymptoms.length)
+      hopiBits.push(`Associated: ${h.associatedSymptoms.join(", ")}`);
+    if (h.aggravating)   hopiBits.push(`Aggravating: ${h.aggravating}`);
+    if (h.relieving)     hopiBits.push(`Relieving: ${h.relieving}`);
+    const hopiLine = hopiBits.join(" · ");
+
+    // Chronic comorbidities — merges the picklist + any "others" free
+    // text into a single comma-separated string for the printable.
+    const chronicAll = [
+      ...(Array.isArray(chronic?.conditions) ? chronic.conditions : []),
+      chronic?.others,
+    ].filter(s => s && String(s).trim()).join(", ");
+
+    // Map meds → the shape the printable consumes. Includes the new
+    // mealStatus field as part of the Instructions column.
+    const drugs = (meds || []).map(m => ({
+      name:       m.name,
+      generic:    m.genericName,
+      dose:       m.dose,
+      frequency:  m.frequency,
+      duration:   m.duration,
+      instructions: [m.mealStatus, m.route && `Route: ${m.route}`, m.instructions].filter(Boolean).join(" · "),
+    }));
+
+    // Investigations from the existing free-text list PLUS the
+    // structured Services & Orders bill items (so labs / imaging
+    // ordered via the unified panel print too).
+    const investigationsForPrint = [
+      ...(invests || []).map(i => ({ name: i.name || i.testName, urgent: (i.urgency || "").toUpperCase() === "STAT", notes: i.instructions })),
+      ...(orderItems || []).filter(it => /LAB|RADIOLOGY|IMAGING|SUPPORT/i.test(it.category || "")).map(it => ({
+        name: it.serviceName, notes: it.remarks,
+      })),
+    ];
+
+    // Procedures advised — combines the standalone procedures card
+    // (with consent state) and any PROCEDURE/SURGERY/PHYSIOTHERAPY rows
+    // booked from the unified Services & Orders panel.
+    const proceduresForPrint = [
+      ...(procedures || []).map(p => ({
+        name:     p.procedureName,
+        type:     p.procedureType,
+        duration: p.estimatedDuration,
+        consent:  p.consentStatus,
+        notes:    p.notes,
+      })),
+      ...(orderItems || []).filter(it => /PROCEDURE|SURGERY|PHYSIOTHERAPY/i.test(it.category || "")).map(it => ({
+        name: it.serviceName, type: it.category, notes: it.remarks,
+      })),
+    ];
+
+    // Consumables / packages / room from the bill — anything that's
+    // not a lab/imaging/procedure goes into a "Services Billed" section
+    // so the patient sees on the slip exactly what's been raised on
+    // the receptionist's draft bill.
+    const otherServicesForPrint = (orderItems || [])
+      .filter(it => !/LAB|RADIOLOGY|IMAGING|SUPPORT|PROCEDURE|SURGERY|PHYSIOTHERAPY/i.test(it.category || ""))
+      .map(it => ({
+        name:     it.serviceName,
+        category: it.category,
+        qty:      it.quantity,
+        price:    it.unitPrice,
+        total:    it.totalAmount,
+        notes:    it.remarks,
+      }));
+
     openPrint("opd-prescription", {
       rxNo:         v.visitNumber,
       patientName:  v.patientName || v.UHID,
@@ -737,16 +930,36 @@ export default function OPDAssessmentPage() {
         bmi:    vit.bmi,
       },
       chiefComplaints: v.chiefComplaint || soap.subjectiveNote,
-      history:        soap.objectiveNote,
-      provisionalDx:  soap.provisionalDiagnosis,
-      diagnosis:      soap.finalDiagnosis,
-      icd10:          soap.icd10,
-      icd10Desc:      soap.icd10Description,
-      drugs:          medications || [],
-      investigations: investigations || [],
-      advice:         soap.advice ? String(soap.advice).split("\n").filter(Boolean) : [],
-      followUpDate:   soap.followUpDate,
-      followUpNotes:  soap.doctorNotes,
+      // HOPI compacted one-line + chronic comorbidities for the history block
+      hopi:            hopiLine,
+      chronic:         chronicAll,
+      history:         soap.objectiveNote,
+      // Three-tier diagnosis + ICD coding — matches the on-screen card
+      provisionalDx:   soap.provisionalDiagnosis,
+      workingDx:       soap.workingDiagnosis,
+      diagnosis:       soap.finalDiagnosis,
+      icd10:           soap.icd10Code,
+      icd10Desc:       soap.icd10Description,
+      patientStatus:   soap.patientStatus,
+      // SOAP narrative — Assessment & Plan notes (separate from the
+      // structured diagnosis & advice; doctors use these for the
+      // clinical reasoning that doesn't fit elsewhere)
+      assessmentNote:  soap.assessmentNote,
+      planNote:        soap.planNote,
+      // Structured + free-text examination findings, compacted
+      generalExam:     generalExamLine,
+      systemicExam:    systemicExamLine,
+      // Obs/Gynae one-liner (rendered only when populated)
+      obgHistory:      obgLine,
+      drugs,
+      investigations:  investigationsForPrint,
+      // Procedures advised + non-lab/non-procedure services billed
+      procedures:      proceduresForPrint,
+      otherServices:   otherServicesForPrint,
+      // Plan-side fields still live on soap (Advice / Follow-up / Notes)
+      advice:          soap.advice ? String(soap.advice).split("\n").filter(Boolean) : [],
+      followUpDate:    soap.followUpDate,
+      followUpNotes:   soap.doctorNotes,
     });
   };
 
@@ -1852,7 +2065,7 @@ export default function OPDAssessmentPage() {
               clicks Generate + Collect → done. The flow eliminates the
               "doctor wrote it in notes but it never reached the cashier"
               gap that needed daily reconciliation. */}
-          <Card title="Services & Orders — auto-billed" icon="pi-list" color="#0284c7">
+          <Card title="Services & Orders — bills on completion" icon="pi-list" color="#0284c7">
             {/* Status banner — shows the linked DRAFT bill number so
                 the doctor can verbally tell the patient "show this at
                 reception". Hidden until the first add. */}
@@ -1866,7 +2079,7 @@ export default function OPDAssessmentPage() {
                 <i className="pi pi-receipt" style={{ color: "#0284c7" }} />
                 <span>
                   Linked to DRAFT bill <strong style={{ fontFamily: "'DM Mono', monospace" }}>{orderBillNum}</strong>
-                  {" "}— receptionist will see it on the Billing Counter.
+                  {" "}— orders appear under <strong>Active Orders</strong> and are billed to the patient only after the executing team marks them complete.
                 </span>
               </div>
             )}
@@ -1928,67 +2141,183 @@ export default function OPDAssessmentPage() {
 
             {orderItems.length === 0 ? (
               <p style={{ color: C.muted, fontSize: 12, margin: 0 }}>
-                No services added yet. Pick a lab test, imaging, consumable, or minor procedure above —
-                it'll go onto a DRAFT bill the receptionist can collect from.
+                No orders yet. Pick a lab test, imaging, consumable, or minor procedure above —
+                it'll go to Active Orders. The patient is only billed once the executing team confirms completion.
               </p>
-            ) : (
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                <thead><tr style={{ background: C.bg }}>
-                  {["Service / Order","Code","Qty","Rate","Net","Notes"].map(h => (
-                    <th key={h} style={{ textAlign: "left", padding: "6px 10px", fontWeight: 600, color: C.muted, borderBottom: `1px solid ${C.border}` }}>{h}</th>
-                  ))}
-                  <th style={{ width: 36, borderBottom: `1px solid ${C.border}` }} aria-label="Remove" />
-                </tr></thead>
-                <tbody>{orderItems.map((it) => (
-                  <tr key={it._id} style={{ borderBottom: `1px solid ${C.border}` }}>
+            ) : (() => {
+              // Split items into the two visual buckets. Backward compat:
+              // legacy items (no orderStatus field) and explicit
+              // "Completed" both go into "Billed". Active = pending work.
+              const unwrap = (n) => Number(n?.$numberDecimal ?? n ?? 0);
+              const isBillable = (it) => !it.orderStatus || it.orderStatus === "Completed";
+              const isCancelled = (it) => it.orderStatus === "Cancelled";
+              const activeOrders = orderItems.filter(it => !isBillable(it) && !isCancelled(it));
+              const billedItems  = orderItems.filter(isBillable);
+              const cancelledItems = orderItems.filter(isCancelled);
+              const activeTotal = activeOrders.reduce((s, it) => s + unwrap(it.netAmount), 0);
+              const billedTotal = billedItems.reduce((s, it) => s + unwrap(it.netAmount), 0);
+
+              // Status pill colours mirror PharmacyIndentsPage URGENCY map.
+              const STATUS_PILL = {
+                Ordered:    { bg: "#dbeafe", fg: "#1d4ed8", label: "Ordered" },
+                InProgress: { bg: "#fef3c7", fg: "#a16207", label: "In Progress" },
+                Completed:  { bg: "#dcfce7", fg: "#15803d", label: "Billed" },
+                Cancelled:  { bg: "#fee2e2", fg: "#b91c1c", label: "Cancelled" },
+              };
+
+              // Reusable row renderer so Active + Billed share identical
+              // layout, only differing in the action buttons.
+              const renderRow = (it) => {
+                const status = it.orderStatus || "Completed"; // legacy fallback
+                const pill = STATUS_PILL[status] || STATUS_PILL.Completed;
+                return (
+                  <tr key={it._id} style={{ borderBottom: `1px solid ${C.border}`, opacity: status === "Cancelled" ? 0.55 : 1 }}>
                     <td style={{ padding: "7px 10px", color: C.dark, fontWeight: 500 }}>
                       {it.serviceName}
                       {it.category && <span style={{ fontSize: 10, color: C.muted, marginLeft: 6 }}>· {it.category}</span>}
+                      <span style={{
+                        display: "inline-block", marginLeft: 8,
+                        padding: "1px 7px", borderRadius: 999,
+                        background: pill.bg, color: pill.fg,
+                        fontSize: 9, fontWeight: 800, textTransform: "uppercase",
+                        letterSpacing: 0.3, verticalAlign: "middle",
+                      }}>{pill.label}</span>
                     </td>
                     <td style={{ padding: "7px 10px", color: C.muted, fontFamily: "'DM Mono', monospace", fontSize: 11 }}>{it.serviceCode || "—"}</td>
                     <td style={{ padding: "7px 10px", color: C.dark, fontFamily: "'DM Mono', monospace" }}>{it.quantity ?? 1}</td>
                     <td style={{ padding: "7px 10px", color: C.muted, fontFamily: "'DM Mono', monospace" }}>
-                      ₹{Number(it.unitPrice?.$numberDecimal ?? it.unitPrice ?? 0).toLocaleString("en-IN")}
+                      ₹{unwrap(it.unitPrice).toLocaleString("en-IN")}
                     </td>
-                    <td style={{ padding: "7px 10px", color: C.dark, fontFamily: "'DM Mono', monospace", fontWeight: 700 }}>
-                      ₹{Number(it.netAmount?.$numberDecimal ?? it.netAmount ?? 0).toLocaleString("en-IN")}
+                    <td style={{ padding: "7px 10px", color: status === "Completed" ? C.dark : C.muted, fontFamily: "'DM Mono', monospace", fontWeight: 700 }}>
+                      ₹{unwrap(it.netAmount).toLocaleString("en-IN")}
                     </td>
                     <td style={{ padding: "7px 10px", color: C.muted, fontSize: 11 }}>{it.remarks || "—"}</td>
-                    <td style={{ padding: "4px 6px", textAlign: "right" }}>
-                      <button
-                        type="button"
-                        onClick={() => removeOrderFromBill(it)}
-                        title={`Remove ${it.serviceName}`}
-                        aria-label="Remove service"
-                        style={{
-                          width: 24, height: 24, border: "1px solid #fca5a5",
-                          background: "#fef2f2", color: "#b91c1c",
-                          borderRadius: 6, cursor: "pointer",
-                          display: "inline-flex", alignItems: "center", justifyContent: "center",
-                          fontFamily: "inherit", fontWeight: 700, fontSize: 13, lineHeight: 1,
-                          padding: 0,
-                        }}
-                        onMouseEnter={e => { e.currentTarget.style.background = "#fee2e2"; }}
-                        onMouseLeave={e => { e.currentTarget.style.background = "#fef2f2"; }}
-                      >
-                        ×
-                      </button>
+                    <td style={{ padding: "4px 6px", textAlign: "right", whiteSpace: "nowrap" }}>
+                      {/* Active orders get Complete (✓) + Cancel (⊘);
+                          Billed + Cancelled rows just get a Remove (×)
+                          on still-editable bills. Remove is intentionally
+                          NOT shown on Completed rows — once billed, the
+                          accountant refund path is the right tool. */}
+                      {(status === "Ordered" || status === "InProgress") && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => completeOrderItem(it)}
+                            title={`Mark ${it.serviceName} completed (will charge ₹${unwrap(it.netAmount).toLocaleString("en-IN")} to the bill)`}
+                            aria-label="Mark completed"
+                            style={{
+                              width: 26, height: 24, border: "1px solid #86efac",
+                              background: "#ecfdf5", color: "#15803d",
+                              borderRadius: 6, cursor: "pointer",
+                              display: "inline-flex", alignItems: "center", justifyContent: "center",
+                              fontFamily: "inherit", fontWeight: 700, fontSize: 12, lineHeight: 1,
+                              padding: 0, marginRight: 4,
+                            }}
+                          >✓</button>
+                          <button
+                            type="button"
+                            onClick={() => cancelOrderItem(it)}
+                            title={`Cancel order ${it.serviceName} (audit-preserved, not charged)`}
+                            aria-label="Cancel order"
+                            style={{
+                              width: 26, height: 24, border: "1px solid #fcd34d",
+                              background: "#fffbeb", color: "#a16207",
+                              borderRadius: 6, cursor: "pointer",
+                              display: "inline-flex", alignItems: "center", justifyContent: "center",
+                              fontFamily: "inherit", fontWeight: 700, fontSize: 13, lineHeight: 1,
+                              padding: 0,
+                            }}
+                          >⊘</button>
+                        </>
+                      )}
+                      {(status !== "Ordered" && status !== "InProgress") && (
+                        <button
+                          type="button"
+                          onClick={() => removeOrderFromBill(it)}
+                          title={`Remove ${it.serviceName}`}
+                          aria-label="Remove service"
+                          style={{
+                            width: 24, height: 24, border: "1px solid #fca5a5",
+                            background: "#fef2f2", color: "#b91c1c",
+                            borderRadius: 6, cursor: "pointer",
+                            display: "inline-flex", alignItems: "center", justifyContent: "center",
+                            fontFamily: "inherit", fontWeight: 700, fontSize: 13, lineHeight: 1,
+                            padding: 0,
+                          }}
+                          onMouseEnter={e => { e.currentTarget.style.background = "#fee2e2"; }}
+                          onMouseLeave={e => { e.currentTarget.style.background = "#fef2f2"; }}
+                        >×</button>
+                      )}
                     </td>
                   </tr>
-                ))}
-                {/* Total row */}
-                <tr style={{ background: C.bg, fontWeight: 700 }}>
-                  <td colSpan={4} style={{ padding: "8px 10px", color: C.muted, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.4 }}>
-                    Bill total (DRAFT)
-                  </td>
-                  <td style={{ padding: "8px 10px", color: "#0f172a", fontFamily: "'DM Mono', monospace", fontSize: 13 }}>
-                    ₹{orderItems.reduce((s, it) => s + Number(it.netAmount?.$numberDecimal ?? it.netAmount ?? 0), 0).toLocaleString("en-IN")}
-                  </td>
-                  <td colSpan={2} />
-                </tr>
-                </tbody>
-              </table>
-            )}
+                );
+              };
+
+              return (
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead><tr style={{ background: C.bg }}>
+                    {["Service / Order","Code","Qty","Rate","Net","Notes"].map(h => (
+                      <th key={h} style={{ textAlign: "left", padding: "6px 10px", fontWeight: 600, color: C.muted, borderBottom: `1px solid ${C.border}` }}>{h}</th>
+                    ))}
+                    <th style={{ width: 70, borderBottom: `1px solid ${C.border}` }} aria-label="Actions" />
+                  </tr></thead>
+                  <tbody>
+                    {/* ── Active Orders (Ordered + InProgress) ── */}
+                    {activeOrders.length > 0 && (
+                      <tr style={{ background: "#eff6ff" }}>
+                        <td colSpan={7} style={{ padding: "6px 10px", color: "#1d4ed8", fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                          <i className="pi pi-clock" style={{ marginRight: 6 }} />
+                          Active Orders · {activeOrders.length} pending · ₹{activeTotal.toLocaleString("en-IN")} will bill on completion
+                        </td>
+                      </tr>
+                    )}
+                    {activeOrders.map(renderRow)}
+
+                    {/* ── Billed (Completed) ── */}
+                    {billedItems.length > 0 && (
+                      <tr style={{ background: "#ecfdf5" }}>
+                        <td colSpan={7} style={{ padding: "6px 10px", color: "#15803d", fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                          <i className="pi pi-check-circle" style={{ marginRight: 6 }} />
+                          Billed (Completed) · {billedItems.length} item{billedItems.length === 1 ? "" : "s"}
+                        </td>
+                      </tr>
+                    )}
+                    {billedItems.map(renderRow)}
+
+                    {/* ── Cancelled (audit-only, dimmed) ── */}
+                    {cancelledItems.length > 0 && (
+                      <tr style={{ background: "#fef2f2" }}>
+                        <td colSpan={7} style={{ padding: "6px 10px", color: "#b91c1c", fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                          <i className="pi pi-ban" style={{ marginRight: 6 }} />
+                          Cancelled · {cancelledItems.length} item{cancelledItems.length === 1 ? "" : "s"} (audit only, not charged)
+                        </td>
+                      </tr>
+                    )}
+                    {cancelledItems.map(renderRow)}
+
+                    {/* ── Twin totals ── */}
+                    <tr style={{ background: C.bg, fontWeight: 700, borderTop: `2px solid ${C.border}` }}>
+                      <td colSpan={4} style={{ padding: "8px 10px", color: "#1d4ed8", textTransform: "uppercase", fontSize: 11, letterSpacing: 0.4 }}>
+                        Pending orders (not yet billed)
+                      </td>
+                      <td style={{ padding: "8px 10px", color: "#1d4ed8", fontFamily: "'DM Mono', monospace", fontSize: 13 }}>
+                        ₹{activeTotal.toLocaleString("en-IN")}
+                      </td>
+                      <td colSpan={2} />
+                    </tr>
+                    <tr style={{ background: C.bg, fontWeight: 700 }}>
+                      <td colSpan={4} style={{ padding: "8px 10px", color: "#0f172a", textTransform: "uppercase", fontSize: 11, letterSpacing: 0.4 }}>
+                        Billed total (due now)
+                      </td>
+                      <td style={{ padding: "8px 10px", color: "#0f172a", fontFamily: "'DM Mono', monospace", fontSize: 13 }}>
+                        ₹{billedTotal.toLocaleString("en-IN")}
+                      </td>
+                      <td colSpan={2} />
+                    </tr>
+                  </tbody>
+                </table>
+              );
+            })()}
           </Card>
 
           {/* The old standalone Procedures card was removed — its

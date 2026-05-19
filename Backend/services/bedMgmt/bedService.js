@@ -81,12 +81,18 @@ class BedService {
     return bed;
   }
 
-  async dischargeBed(bedId, dischargeDate) {
+  async dischargeBed(bedId, dischargeDate, opts = {}) {
     // On discharge we mark the bed Available AND queue it for
     // housekeeping cleaning. The dashboard's "beds in cleaning"
     // panel + SLA timer keys off `housekeeping.state` and
     // `housekeeping.startedAt`. Cleaning workflow:
     //   CleaningPending → CleaningInProgress → CleaningDone → Idle
+    //
+    // `opts.admission` (optional) carries the just-discharged admission
+    // doc so we can stamp patient + admission context onto the auto-
+    // created CleaningTask. Without it the task still gets created — just
+    // with bed-only context.
+    const bedBefore = await Bed.findById(bedId).lean();
     const bed = await Bed.findByIdAndUpdate(
       bedId,
       {
@@ -104,6 +110,44 @@ class BedService {
       { new: true },
     );
     if (!bed) throw new Error("Bed not found");
+
+    // Auto-create a CleaningTask in the housekeeping queue so the
+    // Housekeeping console picks it up immediately. Priority + protocol
+    // depend on whether the bed had any isolation flags (terminal clean
+    // for COVID/TB/MRSA etc.; routine bed-turnover for everything else).
+    // Failure to create the task should NEVER block the discharge — log
+    // and continue. The bed is still flagged via housekeeping.state.
+    try {
+      const { CleaningTask } = require("../../models/Clinical/housekeepingModels");
+      const isolation = (bedBefore?.isolationFlags || []).filter(Boolean);
+      const isIsolation = isolation.length > 0;
+      const adm = opts.admission || {};
+      await CleaningTask.create({
+        type:        isIsolation ? "terminal" : "discharge-clean",
+        title:       isIsolation
+          ? `Terminal clean — Bed ${bed.bedNumber} (${isolation.join(", ")})`
+          : `Discharge clean — Bed ${bed.bedNumber}`,
+        description: adm.patientName
+          ? `Bed turnover after discharge of ${adm.patientName} (${adm.UHID || ""}).${isIsolation ? " Follow isolation cleaning protocol." : ""}`
+          : `Bed turnover required.${isIsolation ? " Follow isolation cleaning protocol." : ""}`,
+        ward:        bed.wardName || "",
+        area:        "",
+        roomNumber:  bed.roomNumber || "",
+        bedNumber:   bed.bedNumber || "",
+        bedId:       bed._id,
+        admissionId: adm._id || null,
+        UHID:        adm.UHID || "",
+        patientName: adm.patientName || "",
+        priority:    isIsolation ? "urgent" : "high",
+        protocolFollowed: isIsolation ? "terminal-icu" : "discharge",
+        status:      "open",
+        requestedByName: "System (Auto on discharge)",
+        requestedByRole: "System",
+      });
+    } catch (e) {
+      console.error("[Discharge] CleaningTask auto-create failed:", e.message);
+    }
+
     bus.emit("bed-update", { kind: "discharged", bedId });
     return bed;
   }

@@ -14,7 +14,12 @@ const DrugSchema = new mongoose.Schema(
 
     form: {
       type: String,
-      enum: ["Tablet","Capsule","Syrup","Injection","Drops","Cream","Ointment","Inhaler","Patch","Powder","Suppository","Other"],
+      // Drug dosage forms + non-drug item forms. The four trailing values
+      // (Device, Disposable, Dressing, Pack) cover non-pharmaceutical
+      // pharmacy stock so surgical items + ward consumables can live in
+      // the same DrugMaster collection (one inventory + one batch ledger
+      // + one FIFO/expiry pipeline for everything).
+      enum: ["Tablet","Capsule","Syrup","Injection","Drops","Cream","Ointment","Inhaler","Patch","Powder","Suppository","Device","Disposable","Dressing","Pack","Other"],
       default: "Tablet",
     },
     strength:     { type: String, default: "" },        // "500 mg" / "5 mg/5 mL"
@@ -22,9 +27,15 @@ const DrugSchema = new mongoose.Schema(
 
     category: {
       type: String,
+      // Pharmaceutical categories + non-drug categories. "Surgical" covers
+      // OT-specific items (blades, sutures, drapes, sterile gowns, etc.);
+      // "Consumable" covers daily ward use (syringes, gauze, gloves,
+      // masks, catheters, IV sets, electrodes, etc.). Keeping both in the
+      // same collection lets the pharmacist run a single dispense flow
+      // for any item — drug or device — without a second app.
       enum: ["Antibiotic","Analgesic","Antipyretic","Antihypertensive","Antidiabetic",
              "Cardiac","Respiratory","Neuro","Gastro","Steroid","Vitamin","Insulin",
-             "IV Fluid","Topical","Other"],
+             "IV Fluid","Topical","Surgical","Consumable","Other"],
       default: "Other",
       index: true,
     },

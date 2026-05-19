@@ -194,7 +194,10 @@ const NAV = [
     icon: "pi-box", color: "#ea580c", light: "#fff7ed",
     nabh: true, roles: [ADMIN, PH, NR, DR],
     items: [
-      // MAR is the canonical record — Doctor reads it (gets to "DR" too)
+      // MAR is the canonical record — Doctor reads it (gets to "DR" too).
+      // Live Indents is NOT a separate sidebar entry — it lives as a
+      // tab inside the Pharmacy page (next to Dispense + Sales) so the
+      // pharmacist sees it on their primary workspace.
       { label: "Pharmacy",         icon: "pi-box",           path: "/pharmacy",        nabh: true, badge: "NEW", roles: [ADMIN, PH] },
       { label: "MAR",              icon: "pi-table",         path: "/mar",             nabh: true, roles: [ADMIN, PH, NR, DR] },
       { label: "Diabetic Chart",   icon: "pi-chart-bar",     path: "/diabetic-chart",  nabh: true, badge: "NEW", roles: [ADMIN, NR, DR] },
@@ -228,6 +231,13 @@ const NAV = [
       // The accountant / admin still see the deeper UIs below, but
       // for the receptionist this is the only billing entry.
       { label: "Billing Counter",       icon: "pi-credit-card", path: "/reception-billing", badge: "COUNTER", roles: [RX] },
+      // IPD Live Ledger — direct entry to the per-admission ledger with
+      // Category / Daily Breakdown / Audit Trail tabs and the
+      // Generate-Final-Bill + Print-Final-Bill buttons. Opens the picker
+      // when no admissionId is in the URL so users can search instead of
+      // memorising MongoDB ids. Distinct from Billing Counter (which is
+      // a per-UHID bill list) — this is the IPD-stay-wide rolling tab.
+      { label: "IPD Live Ledger",       icon: "pi-chart-line",  path: "/billing/ipd",        badge: "IPD",     roles: [ADMIN, AC, RX] },
       // Full billing UIs for accountants / admin
       { label: "Patient Bill",          icon: "pi-user",    path: "/patient-billing",       roles: [ADMIN, AC, TPA] },
       { label: "Bills List",            icon: "pi-file",    path: "/billing",               roles: [ADMIN, AC] },
@@ -457,6 +467,22 @@ const RECEPTION_NAV = [
     path: "/reception-billing",
     badge: "COUNTER",
   },
+
+  // ── IPD Live Ledger — per-admission rolling tab ──
+  // Distinct from Billing Counter (which is a per-UHID bill list).
+  // This is the IPD-stay-wide ledger: bed-day + nursing + doctor visits
+  // + medicines + procedures all consolidated under one admission, with
+  // Category / Daily Breakdown / Audit Trail tabs and the
+  // Generate-Final-Bill + Print-Final-Bill buttons. Opens the picker
+  // when no admissionId is in the URL so the receptionist can search
+  // instead of memorising MongoDB ids.
+  {
+    id: "ipd-ledger", label: "IPD Live Ledger",
+    icon: "pi-chart-line", color: "#7c3aed", light: "#f5f3ff",
+    nabh: true, single: true, roles: ["Receptionist"],
+    path: "/billing/ipd",
+    badge: "IPD",
+  },
 ];
 
 function filterNav(nav, userRole) {
@@ -525,6 +551,7 @@ function NavItem({ item, color, collapsed, navigate, isActive }) {
           {item.nabh  && <Pill label="NABH" color="#7c3aed" />}
           {item.badge === "AI"      && <Pill label="AI"      color="#059669" />}
           {item.badge === "NEW"     && <Pill label="NEW"     color="#d97706" />}
+          {item.badge === "LIVE"    && <Pill label="LIVE"    color="#dc2626" />}
           {item.badge === "ALL-IN-ONE" && <Pill label="ALL-IN-ONE" color="#0891b2" />}
           {item.badge === "COUNTER" && <Pill label="COUNTER" color="#d97706" />}
         </>

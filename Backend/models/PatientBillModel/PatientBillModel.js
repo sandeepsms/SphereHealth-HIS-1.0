@@ -56,7 +56,20 @@ const BillItemSchema = new mongoose.Schema(
 
     // Tax
     isTaxable: { type: Boolean, default: false },
-    taxPercent: { type: Number, default: 0 },
+    // R7c-HIGH-3 (BILL-HIGH-03): taxPercent is restricted to the valid
+    // Indian GST slabs (0 / 0.25 / 3 / 5 / 12 / 18 / 28). The previous
+    // schema (`type: Number, default: 0`) would silently accept a typo
+    // like 180 instead of 18 and over-tax the patient 10×. The enum is
+    // a hard server-side guard — any client-side validation can sit on
+    // top of it but won't be the only defence.
+    taxPercent: {
+      type: Number,
+      default: 0,
+      enum: {
+        values: [0, 0.25, 3, 5, 12, 18, 28],
+        message: "taxPercent {VALUE} is not a valid GST slab (0, 0.25, 3, 5, 12, 18, 28)",
+      },
+    },
     taxAmount: { type: Dec, default: () => toDec(0) },
 
     appliedTariff: {
@@ -68,6 +81,13 @@ const BillItemSchema = new mongoose.Schema(
     chargeDate: { type: Date, default: Date.now },
     remarks: { type: String, trim: true },
 
+    // Round-trip link back to the BillingTrigger that fired this line.
+    // Set whenever autoBillingService converts a trigger → bill item so a
+    // later undo/override (Phase A endpoints) can find + edit the exact
+    // bill row without scanning for serviceCode matches. Optional — manual
+    // line items added by the receptionist won't have a trigger.
+    triggerId: { type: mongoose.Schema.Types.ObjectId, ref: "BillingTrigger" },
+
     // ── AI Billing Intelligence ──────────────────────────────────
     // Who added this charge — source role
     addedBySource: {
@@ -78,9 +98,55 @@ const BillItemSchema = new mongoose.Schema(
     addedByRole: { type: String, trim: true },  // role label for display
     aiSuggested: { type: Boolean, default: false }, // was this charge suggested by AI?
     aiReason: { type: String, trim: true },    // clinical justification from AI
+
+    // ── Order lifecycle (NABH AAC.5 — order-to-completion audit) ──
+    // For services that have a delivery step (lab tests, imaging, minor
+    // procedures, OT consumables, physiotherapy sessions, etc.) the doctor
+    // raises an ORDER first; the actual charge only lands on the patient's
+    // bill once the lab / radiologist / proceduralist confirms completion.
+    // This prevents two failure modes the audit caught:
+    //   (1) Patient billed for a test the lab never actually ran.
+    //   (2) Doctor cancels an order after billing → bill shows the charge
+    //       but the work was never done.
+    //
+    // Field semantics:
+    //   undefined / "Completed"  → billable now. Counted in bill totals.
+    //   "Ordered"                → in queue, waiting for the executing
+    //                              team. NOT counted in grossAmount /
+    //                              netAmount / balance.
+    //   "InProgress"             → executing team has picked it up.
+    //                              Still not billable.
+    //   "Cancelled"              → never executed; excluded from totals
+    //                              forever, kept for audit trail.
+    //
+    // Backward compat: existing items predating this field have no
+    // orderStatus → treated as "Completed" so legacy bills behave
+    // exactly as before. Default is intentionally omitted so the field
+    // stays undefined unless the writer explicitly opts in.
+    orderStatus: {
+      type: String,
+      enum: ["Ordered", "InProgress", "Completed", "Cancelled"],
+    },
+    orderedAt:     { type: Date },
+    orderedBy:     { type: String, trim: true },
+    orderedByRole: { type: String, trim: true },
+    expectedCompletionAt: { type: Date },
+    completedAt:     { type: Date },
+    completedBy:     { type: String, trim: true },
+    completedByRole: { type: String, trim: true },
+    cancelledAt:     { type: Date },
+    cancelReason:    { type: String, trim: true },
   },
   { _id: true },
 );
+
+// Helper — a bill item is BILLABLE (contributes to totals) when its order
+// lifecycle is either complete OR not used at all (legacy items, walk-in
+// charges that were paid upfront, auto-charges like bed days). Pending
+// orders (Ordered / InProgress) and Cancelled orders are excluded.
+function isItemBillable(item) {
+  return !item.orderStatus || item.orderStatus === "Completed";
+}
 
 // ── Payment record ─────────────────────────────────────────────
 const PaymentSchema = new mongoose.Schema(
@@ -98,7 +164,16 @@ const PaymentSchema = new mongoose.Schema(
     transactionId: { type: String, trim: true },
     paidAt: { type: Date, default: Date.now },
     receivedBy: { type: String, trim: true },
-    remarks: { type: String, trim: true } },
+    remarks: { type: String, trim: true },
+    // 15-min reversal audit (cashier-typo undo). When a payment is
+    // voided, the original row stays in place (audit immutability)
+    // and a NEGATIVE payment row is pushed alongside it; the void*
+    // fields on the original row record who voided + when + why so
+    // a receipt re-print or audit replay reads cleanly.
+    voidedAt:     { type: Date },
+    voidedBy:     { type: String, trim: true },
+    voidedByRole: { type: String, trim: true },
+    voidReason:   { type: String, trim: true } },
   { _id: true },
 );
 
@@ -128,7 +203,13 @@ const PatientBillSchema = new mongoose.Schema(
     visitType: {
       type: String,
       required: true,
-      enum: ["OPD", "IPD", "DAYCARE", "EMERGENCY"] },
+      // SERVICE = walk-in service-only bill (lab tests / imaging / vaccination /
+      // procedure with no OPD visit or IPD admission attached). Was previously
+      // being mislabeled as "OPD" by the reception Services tab — audit caught
+      // it. Keep at the end of the list so existing data doesn't need
+      // migration; the reception bill list groups by visitType and stat
+      // reports filter on this column.
+      enum: ["OPD", "IPD", "DAYCARE", "EMERGENCY", "SERVICE"] },
 
     // ── Payment Info ───────────────────────────────────────
     paymentType: {
@@ -150,6 +231,14 @@ const PatientBillSchema = new mongoose.Schema(
     patientPayableAmount: { type: Dec, default: () => toDec(0) },
     advancePaid:          { type: Dec, default: () => toDec(0) },
     balanceAmount:        { type: Dec, default: () => toDec(0) },
+
+    // Sum of net+tax for line items still in Ordered / InProgress state —
+    // i.e. work the doctor has booked but the executing team hasn't yet
+    // confirmed complete. Surfaced on the bill UI as "Pending Orders" so
+    // the patient (and the cashier) can see what's coming once those
+    // orders land. Excluded from grossAmount / patientPayableAmount /
+    // balanceAmount so the patient is never asked to pay for it yet.
+    pendingOrdersAmount:  { type: Dec, default: () => toDec(0) },
 
     // ── Settlement-time adjustment (post-generation) ──────
     // The receptionist can apply an extra bill-level discount at
@@ -224,14 +313,13 @@ const PatientBillSchema = new mongoose.Schema(
 // `required`, so validation order is irrelevant here.
 const { nextSequence: nextSeqBill } = require("../../utils/counter");
 
-// ── Pre-save: bill number + recalculate all totals ─────────────
-PatientBillSchema.pre("save", async function (next) {
-  if (this.isNew && !this.billNumber) {
-    const year = new Date().getFullYear();
-    const seq  = await nextSeqBill(`bill:${year}`);
-    this.billNumber = `BILL-${year}-${String(seq).padStart(6, "0")}`;
-  }
-
+// ── Recalc helper ───────────────────────────────────────────────
+// R7b: extracted from the pre-save hook so other code paths
+// (settlementAdjust, audit log "after" snapshots) can mirror what the
+// hook would compute WITHOUT triggering an extra save. Pure mutation
+// of `this` — totals + per-item snapshots are written in place; the
+// caller decides when to persist.
+PatientBillSchema.methods.recalcTotals = function () {
   // Recalculate totals from items
   if (this.billItems && this.billItems.length > 0) {
     let gross = 0,
@@ -239,6 +327,10 @@ PatientBillSchema.pre("save", async function (next) {
       tax = 0,
       tpaPay = 0,
       ptPay = 0;
+    // Pending orders (Ordered / InProgress) accumulate into a parallel
+    // bucket so the UI can show "₹X coming once those orders complete"
+    // without affecting what the patient owes right now.
+    let pendingNet = 0;
 
     // Money fields are Decimal128 at rest; convert to Number for arithmetic,
     // then back to Decimal128 (with 2-dp rounding) before writing. Accumulators
@@ -252,6 +344,9 @@ PatientBillSchema.pre("save", async function (next) {
       const tAmt = item.isTaxable ? (nAmt * toNum(item.taxPercent)) / 100 : 0;
       const lineTotal = nAmt + tAmt;
 
+      // Per-item snapshot fields stay accurate for ALL items (including
+      // pending orders) so the UI can render the row's expected total.
+      // Only the bill-level aggregates differ.
       item.grossAmount    = toDec(gAmt);
       item.discountAmount = toDec(dAmt);
       item.netAmount      = toDec(nAmt);
@@ -276,12 +371,24 @@ PatientBillSchema.pre("save", async function (next) {
       item.tpaPayableAmount     = toDec(tpaShare);
       item.patientPayableAmount = toDec(ptShare);
 
-      gross  += gAmt;
-      disc   += dAmt;
-      tax    += tAmt;
-      tpaPay += tpaShare;
-      ptPay  += ptShare;
+      // Skip non-billable items (Ordered / InProgress / Cancelled) from
+      // the bill aggregate. Backward-compat: missing orderStatus is
+      // treated as Completed via isItemBillable() so legacy bills behave
+      // identically to before this field was introduced.
+      if (isItemBillable(item)) {
+        gross  += gAmt;
+        disc   += dAmt;
+        tax    += tAmt;
+        tpaPay += tpaShare;
+        ptPay  += ptShare;
+      } else if (item.orderStatus !== "Cancelled") {
+        // Cancelled items contribute to NOTHING — pending bucket captures
+        // only Ordered + InProgress (the "coming soon" charges).
+        pendingNet += lineTotal;
+      }
     });
+
+    this.pendingOrdersAmount = toDec(pendingNet);
 
     // Settlement-time extra discount — capped at the patient share so the
     // patient never owes a negative amount, and to totalDiscount so the
@@ -309,7 +416,16 @@ PatientBillSchema.pre("save", async function (next) {
   } else {
     this.balanceAmount = toDec(Math.max(0, toNum(this.patientPayableAmount) - totalPaid));
   }
+};
 
+// ── Pre-save: bill number + recalculate all totals ─────────────
+PatientBillSchema.pre("save", async function (next) {
+  if (this.isNew && !this.billNumber) {
+    const year = new Date().getFullYear();
+    const seq  = await nextSeqBill(`bill:${year}`);
+    this.billNumber = `BILL-${year}-${String(seq).padStart(6, "0")}`;
+  }
+  this.recalcTotals();
   next();
 });
 
@@ -333,6 +449,23 @@ PatientBillSchema.index({ tpa: 1 });
 PatientBillSchema.index(
   { UHID: 1, visitType: 1, admission: 1 },
   { unique: true, partialFilterExpression: { billStatus: "DRAFT" } }
+);
+
+// Companion index for OPD/Service/Walk-in DRAFTs where `admission` is null
+// — the index above treats {null, null} pairs as distinct, so without
+// this second guard two receptionists could simultaneously POST
+// /api/billing/create for the same OPD patient and end up with split
+// drafts. Filters on both DRAFT status AND admission=null so it doesn't
+// fight with the admission-scoped index above.
+PatientBillSchema.index(
+  { UHID: 1, visitType: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      billStatus: "DRAFT",
+      admission: null,
+    },
+  }
 );
 
 // Enable optimistic concurrency — every save() bumps __v and refuses to

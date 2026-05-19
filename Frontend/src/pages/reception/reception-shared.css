@@ -612,6 +612,15 @@
 .rx-bed--reserved .rx-bed-status-dot { background: #3b82f6; }
 .rx-bed--blocked { background: #f3f4f6; border-color: #cbd5e1; }
 .rx-bed--blocked .rx-bed-status-dot { background: #9ca3af; }
+/* Cleaning — orange/amber striped pattern so it visually stands out
+   from plain Available. Used when housekeeping.state is CleaningPending
+   or CleaningInProgress (bed.status remains "Available" underneath). */
+.rx-bed--cleaning {
+  background: repeating-linear-gradient(
+    45deg, #fff7ed, #fff7ed 6px, #ffedd5 6px, #ffedd5 12px);
+  border-color: #fb923c;
+}
+.rx-bed--cleaning .rx-bed-status-dot { background: #ea580c; }
 .rx-bed:hover { transform: translateY(-1px); box-shadow: 0 4px 10px rgba(0,0,0,.08); }
 
 /* Bill list rows */
@@ -814,6 +823,31 @@
   border: 1px solid #fca5a5;
   color: #b91c1c;
 }
+
+/* R7c — checkbox row used by RefundModal for the "credit to advance pool"
+   toggle. Two-column layout: checkbox + descriptive label. The label
+   wraps and stays close to the checkbox via flex-start alignment. */
+.rx-checkbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  border-radius: 8px;
+  font-size: 12px;
+  color: #7c2d12;
+  cursor: pointer;
+  line-height: 1.4;
+}
+.rx-checkbox-row input[type="checkbox"] {
+  margin-top: 2px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.rx-checkbox-row strong { color: #9a3412; }
+
 .rx-banner--neutral {
   background: #f3f4f6;
   border: 1px solid #d1d5db;
@@ -1078,6 +1112,9 @@
 .rx-kpi-tile--maintenance { border-left: 4px solid #f59e0b; cursor: pointer; }
 .rx-kpi-tile--reserved    { border-left: 4px solid #3b82f6; cursor: pointer; }
 .rx-kpi-tile--blocked     { border-left: 4px solid #9ca3af; cursor: pointer; }
+/* Cleaning — orange to match the bed-tile striped pattern. */
+.rx-kpi-tile--cleaning    { border-left: 4px solid #ea580c; cursor: pointer; }
+.rx-ward-count-clean      { background: rgba(234,88,12,.18); color: #c2410c; padding: 1px 6px; border-radius: 8px; }
 .rx-kpi-tile--filtering   { outline: 2px solid #06b6d4; }
 
 /* Date-picker pill on the dark header bar */

@@ -179,6 +179,11 @@ router.use("/equipment",        require("./Equipment/equipmentRoutes"));
 // Pharmacy — drug master, batches, GRN, dispense, sales register
 router.use("/pharmacy",         require("./Pharmacy/pharmacyRoutes"));
 
+// Nurse → Pharmacy drug indent workflow (raise / acknowledge / release / cancel).
+// Mounted as /api/indents — kept separate from /pharmacy so a nurse with
+// indent.raise but no pharmacy.dispense can still POST to it.
+router.use("/indents",          require("./Pharmacy/indentRoutes"));
+
 // Dietician — diet plan templates + per-patient assessment & assigned plans
 router.use("/dietitian",        require("./Clinical/dietitianRoutes"));
 

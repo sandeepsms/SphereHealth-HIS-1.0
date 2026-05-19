@@ -26,11 +26,27 @@ const daysBetween = (a, b) => {
   return Math.max(0, Math.floor(ms / 86400000));
 };
 
-const STATUSES = ["Available", "Occupied", "Reserved", "Maintenance", "Blocked"];
+// "Cleaning" is a synthetic top-level status driven by housekeeping.state.
+// A bed in CleaningPending / CleaningInProgress is technically Available
+// but should not be assigned to a new patient until housekeeping flips it
+// back to Idle — so we render it as its own visual tier on the bed map.
+const STATUSES = ["Available", "Occupied", "Cleaning", "Reserved", "Maintenance", "Blocked"];
 const STATUS_TONE = {
   Available: "available", Occupied: "occupied",
   Maintenance: "maintenance", Reserved: "reserved", Blocked: "blocked",
+  Cleaning: "cleaning",
 };
+
+// Maps a bed doc to its effective display status (housekeeping wins
+// over the raw `status` field so a freshly-discharged "Available" bed
+// shows as "Cleaning" until the housekeeper marks it done).
+function effectiveStatus(bed) {
+  const hk = bed?.housekeeping?.state;
+  if (bed?.status === "Available" && (hk === "CleaningPending" || hk === "CleaningInProgress")) {
+    return "Cleaning";
+  }
+  return bed?.status || "Available";
+}
 
 export default function ReceptionBedView() {
   const navigate = useNavigate();
@@ -60,11 +76,16 @@ export default function ReceptionBedView() {
     return () => clearInterval(t);
   }, [load]);
 
-  // KPI counts (across all beds, ignoring statusFilter)
+  // KPI counts (across all beds, ignoring statusFilter). Uses
+  // effectiveStatus so the "Cleaning" tier counts beds that are
+  // technically Available but still in housekeeping queue.
   const counts = useMemo(() => {
     const acc = { total: beds.length };
     STATUSES.forEach(s => acc[s] = 0);
-    beds.forEach(b => { if (acc[b.status] != null) acc[b.status]++; });
+    beds.forEach(b => {
+      const s = effectiveStatus(b);
+      if (acc[s] != null) acc[s]++;
+    });
     return acc;
   }, [beds]);
 
@@ -77,7 +98,7 @@ export default function ReceptionBedView() {
     const s = search.trim().toLowerCase();
     const tree = {}; // building → floor → ward → []
     beds.forEach(b => {
-      if (statusFilter && b.status !== statusFilter) return;
+      if (statusFilter && effectiveStatus(b) !== statusFilter) return;
       if (s) {
         const patientName = b.currentAdmission?.patientId?.fullName || "";
         const patientUHID = b.currentAdmission?.patientId?.UHID || "";
@@ -159,8 +180,9 @@ export default function ReceptionBedView() {
                   <i className="pi pi-arrow-right" /> {flr}
                 </div>
                 {Object.entries(wards).map(([ward, list]) => {
-                  const occ = list.filter(b => b.status === "Occupied").length;
-                  const avail = list.filter(b => b.status === "Available").length;
+                  const occ   = list.filter(b => effectiveStatus(b) === "Occupied").length;
+                  const avail = list.filter(b => effectiveStatus(b) === "Available").length;
+                  const clean = list.filter(b => effectiveStatus(b) === "Cleaning").length;
                   return (
                     <div key={ward} className="rx-ward-block">
                       <div className="rx-ward-head">
@@ -169,6 +191,7 @@ export default function ReceptionBedView() {
                         <span className="rx-ward-count">
                           <span className="rx-ward-count-avail">{avail} avail</span>
                           <span className="rx-ward-count-occ">{occ} occ</span>
+                          {clean > 0 && <span className="rx-ward-count-clean">{clean} cleaning</span>}
                           <span className="rx-ward-count-tot">{list.length} total</span>
                         </span>
                       </div>
@@ -192,26 +215,44 @@ export default function ReceptionBedView() {
 /* ───────────────────────────────────────────────────────────── */
 
 function BedTile({ bed, onClick }) {
-  const tone = STATUS_TONE[bed.status] || "available";
+  const effective = effectiveStatus(bed);
+  const tone = STATUS_TONE[effective] || "available";
   const adm = bed.currentAdmission;
   const patientName = adm?.patientId?.fullName;
   const patientUHID = adm?.patientId?.UHID;
   const admittedDate = adm?.admissionDate || bed.currentBooking?.admittedDate;
   const days = admittedDate ? daysBetween(admittedDate) : 0;
+  const hkState = bed.housekeeping?.state;
+
+  // SLA timer for cleaning beds — how long has it been since the
+  // housekeeping queue started? Render as MM:SS to nudge the
+  // housekeeper if a bed is sitting too long.
+  let slaLabel = "";
+  if (effective === "Cleaning" && bed.housekeeping?.startedAt) {
+    const mins = Math.max(0, Math.floor((Date.now() - new Date(bed.housekeeping.startedAt)) / 60000));
+    slaLabel = mins >= 60
+      ? `${Math.floor(mins / 60)}h ${mins % 60}m`
+      : `${mins}m`;
+  }
 
   return (
-    <div className={`rx-bed rx-bed--${tone}`} onClick={onClick} title={`Bed ${bed.bedNumber} — ${bed.status}`}>
+    <div className={`rx-bed rx-bed--${tone}`} onClick={onClick} title={`Bed ${bed.bedNumber} — ${effective}${hkState && hkState !== "Idle" ? ` (${hkState})` : ""}`}>
       <div className="rx-bed-num">
         <span>{bed.bedNumber}</span>
         <span className="rx-bed-status-dot" />
       </div>
-      {bed.status === "Occupied" && patientName ? (
+      {effective === "Occupied" && patientName ? (
         <>
           <div className="rx-bed-name">{patientName}</div>
           <div className="rx-bed-sub">{patientUHID || "—"} · Day {days || 1}</div>
         </>
+      ) : effective === "Cleaning" ? (
+        <>
+          <div className="rx-bed-name"><i className="pi pi-spin pi-cog" style={{ fontSize: 11, marginRight: 4 }} />Cleaning</div>
+          <div className="rx-bed-sub">{hkState === "CleaningInProgress" ? "In progress" : "Pending"}{slaLabel ? ` · ${slaLabel}` : ""}</div>
+        </>
       ) : (
-        <div className="rx-bed-sub rx-bed-sub--strong">{bed.status}</div>
+        <div className="rx-bed-sub rx-bed-sub--strong">{effective}</div>
       )}
     </div>
   );
@@ -238,6 +279,27 @@ function BedDetailModal({ bed, onClose, navigate }) {
             <div>Room: <strong>{bed.roomNumber || bed.room?.roomNumber || bed.room?.name || "—"}</strong></div>
             {bed.category && <div>Category: <strong>{bed.category}</strong></div>}
           </div>
+
+          {effectiveStatus(bed) === "Cleaning" && (
+            <div className="rx-modal-section" style={{ background: "#fff7ed", border: "1px solid #fdba74", padding: "10px 14px", borderRadius: 8 }}>
+              <div className="rx-modal-section-title" style={{ color: "#c2410c" }}>
+                <i className="pi pi-spin pi-cog" style={{ marginRight: 6 }} />
+                Housekeeping Cleaning In Queue
+              </div>
+              <div className="rx-grid-fit-2col" style={{ fontSize: 12 }}>
+                <div>State: <strong>{bed.housekeeping?.state}</strong></div>
+                {bed.housekeeping?.startedAt && (
+                  <div>Started: <strong>{fmtDate(bed.housekeeping.startedAt)}</strong></div>
+                )}
+                {bed.housekeeping?.assignedTo && (
+                  <div className="rx-grid-full-row">Assigned to: <strong>{bed.housekeeping.assignedTo}</strong></div>
+                )}
+                <div className="rx-grid-full-row" style={{ color: "#92400e", fontStyle: "italic", marginTop: 4 }}>
+                  Ward Boy / Housekeeping team will mark this bed cleaned. Once cleaned, the bed automatically becomes Available for next admission.
+                </div>
+              </div>
+            </div>
+          )}
 
           {isOcc && (
             <>
@@ -277,6 +339,15 @@ function BedDetailModal({ bed, onClose, navigate }) {
                       onClick={() => { onClose(); navigate(`/reception-billing/${p.UHID}`); }}>
                 <i className="pi pi-receipt" /> Billing
               </button>
+              {/* IPD Live Ledger — opens the running bill with per-charge
+                  undo/override/cancel buttons. Only meaningful when an
+                  admission is attached to this bed. */}
+              {adm?._id && (
+                <button className="rx-modal-btn-primary"
+                        onClick={() => { onClose(); navigate(`/billing/ipd/${adm._id}`); }}>
+                  <i className="pi pi-list" /> Live Ledger
+                </button>
+              )}
             </>
           )}
         </div>

@@ -237,9 +237,24 @@ class AdmissionService {
     // The daily-accrual cron stops touching this admission the moment its
     // status leaves "Active", so without this flush an overnight discharge
     // would lose the final day's bed + nursing fee.
+    //
+    // Daycare proration: when the admission type is Daycare/Day Care, we
+    // pass prorate=true + the discharge timestamp so flushDailyCharges
+    // bills a fraction of the daily rate (hours/24, half-day floor) instead
+    // of the full day. A 5-hour Daycare visit pays half-day; a 12-hour
+    // visit pays half-day-rounded-up; anything past 24h falls back to
+    // full-day (the cron has already fired Day-1 and we want Day-2 full).
+    const isDaycare = admission.admissionType === "Day Care" ||
+                      admission.admissionType === "Daycare";
+    const finalDischargeAt = dischargeData.actualDischargeDate
+      ? new Date(dischargeData.actualDischargeDate)
+      : new Date();
     try {
       const autoBilling = require("../Billing/autoBillingService");
-      await autoBilling.flushDailyChargesForAdmission(admission);
+      await autoBilling.flushDailyChargesForAdmission(admission, {
+        prorate:        isDaycare,
+        dischargeTime:  finalDischargeAt,
+      });
     } catch (e) {
       // Bill-side hiccups shouldn't block a clinical discharge — log and
       // continue. The cashier still has the bill open for manual review.
@@ -250,12 +265,35 @@ class AdmissionService {
     const useTx = !!session && (session.client?.s?.options?.replicaSet ||
                                 session.client?.options?.replicaSet);
 
+    // Snapshot the bed (with isolation flags + ward) before clearing it
+    // — used after the transaction to auto-create a CleaningTask with
+    // the right priority + protocol.
+    let bedSnapshot = null;
+    if (admission.bedId) {
+      bedSnapshot = await Bed.findById(admission.bedId).lean();
+    }
+
     const run = async (s) => {
       // bedId is nullable for OPD/Emergency admissions; guard before touching.
+      // We ALSO flip housekeeping.state to "CleaningPending" so the bed
+      // shows up on the Live Bed Map with a "Cleaning" tone and on the
+      // Housekeeping console's pending queue. Cleaning workflow:
+      //   CleaningPending → CleaningInProgress → Idle (ready for admission)
       if (admission.bedId) {
         await Bed.findByIdAndUpdate(
           admission.bedId,
-          { $set: { status: "Available", currentAdmission: null, patient: null } },
+          {
+            $set: {
+              status: "Available",
+              currentAdmission: null,
+              patient: null,
+              "currentBooking.actualDischargeDate": finalDischargeAt,
+              "housekeeping.state":      "CleaningPending",
+              "housekeeping.startedAt":  new Date(),
+              "housekeeping.finishedAt": null,
+              "housekeeping.assignedTo": "",
+            },
+          },
           { session: s || undefined },
         );
       }
@@ -295,6 +333,46 @@ class AdmissionService {
       }
     } finally {
       session?.endSession();
+    }
+
+    // ── Auto-create a CleaningTask in the housekeeping queue ──────
+    // Done OUTSIDE the transaction (CleaningTask is non-clinical, a
+    // failure here must not roll back the discharge). Priority depends
+    // on isolation flags from the bed snapshot — COVID/TB/MRSA → urgent
+    // terminal clean, otherwise high-priority discharge-clean.
+    if (bedSnapshot) {
+      try {
+        const { CleaningTask } = require("../../models/Clinical/housekeepingModels");
+        const isolation = (bedSnapshot.isolationFlags || []).filter(Boolean);
+        const isIsolation = isolation.length > 0;
+        await CleaningTask.create({
+          type:        isIsolation ? "terminal" : "discharge-clean",
+          title:       isIsolation
+            ? `Terminal clean — Bed ${bedSnapshot.bedNumber} (${isolation.join(", ")})`
+            : `Discharge clean — Bed ${bedSnapshot.bedNumber}`,
+          description: admission.patientName
+            ? `Bed turnover after discharge of ${admission.patientName} (${admission.UHID || ""}).${isIsolation ? " Follow isolation cleaning protocol." : ""}`
+            : `Bed turnover required.${isIsolation ? " Follow isolation cleaning protocol." : ""}`,
+          ward:        bedSnapshot.wardName || "",
+          roomNumber:  bedSnapshot.roomNumber || "",
+          bedNumber:   bedSnapshot.bedNumber || "",
+          bedId:       bedSnapshot._id,
+          admissionId: admission._id,
+          UHID:        admission.UHID || "",
+          patientName: admission.patientName || "",
+          priority:    isIsolation ? "urgent" : "high",
+          protocolFollowed: isIsolation ? "terminal-icu" : "discharge",
+          status:      "open",
+          requestedByName: "System (Auto on discharge)",
+          requestedByRole: "System",
+        });
+      } catch (e) {
+        // Same principle as the billing flush — log + continue. The bed
+        // is already flagged with housekeeping.state=CleaningPending, so
+        // even without the task record the housekeeping console will
+        // still see it in the "beds pending cleaning" queue.
+        console.error("[Discharge] CleaningTask auto-create failed:", e.message);
+      }
     }
 
     return admission;

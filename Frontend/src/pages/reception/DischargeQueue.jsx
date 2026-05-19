@@ -154,6 +154,12 @@ export default function DischargeQueue() {
               </div>
             </div>
             <div className="rx-card-actions">
+              {/* Live Ledger — receptionist + accountant can always pop the
+                  full charge breakdown for any admission in the queue, so
+                  they can answer "what's on the bill?" before clearing. */}
+              <button className="rx-action-btn" onClick={() => navigate(`/billing/ipd/${adm._id}`)}>
+                <i className="pi pi-list" /> Live Ledger
+              </button>
               {w.stage === "DoctorApproved" && (
                 <button className="rx-action-btn rx-action-btn--primary" onClick={() => setClearing(adm)}>
                   <i className="pi pi-wallet" /> Clear Final Bill
@@ -251,6 +257,65 @@ function ClearBillModal({ admission, onClose, onCleared, userName }) {
         transactionId: transactionId || undefined,
       });
       toast.success("Final bill cleared — patient ready for gate pass");
+
+      // ── Auto-print the per-payment receipt ───────────────────────
+      // Same pattern as ReceptionBilling's PaymentModal — receptionist
+      // hands a physical slip to the patient. Fires regardless of
+      // payment mode (cash / UPI / card / cheque / online / TPA).
+      try {
+        openPrint("payment-receipt", {
+          receiptNo:    `${billNumber || admission.admissionNumber}-FINAL`,
+          patientName:  admission.patientName,
+          uhid:         admission.UHID || admission.patientId?.UHID,
+          ipdNo:        admission.admissionNumber,
+          age:          admission.patientId?.age,
+          gender:       admission.patientId?.gender,
+          amount:       Number(amount) || 0,
+          method:       paymentMode,
+          refNo:        transactionId || "",
+          receivedBy:   userName,
+          paidAt:       new Date().toISOString(),
+          purpose:      `Final bill settlement — admission ${admission.admissionNumber}`,
+          billTotal:    Number(w.finalBillAmount) || Number(amount) || 0,
+          runningBalance: 0,
+          remarks:      "Discharge final settlement",
+        });
+      } catch (_) { /* don't block on print issues */ }
+
+      // ── Refund-receipt — overage auto-detect ─────────────────────
+      // If advance > final bill, the difference is owed back to the
+      // patient. Fire a refund-receipt automatically so the cashier
+      // has paper proof of the cash returned. Pulls the unspent
+      // advance from the admission's UHID-level pool.
+      try {
+        const advanceRes = await axios.get(
+          `${API_ENDPOINTS.BASE}/billing/advance/uhid/${admission.UHID || admission.patientId?.UHID}`,
+        ).catch(() => null);
+        const advances = advanceRes?.data?.data || advanceRes?.data?.advances || [];
+        const unspent  = advances.reduce((s, a) => s + Number(a.balance || a.unspentAmount || 0), 0);
+        const finalAmt = Number(w.finalBillAmount) || Number(amount) || 0;
+        const overage  = unspent - finalAmt;
+        if (overage > 0.5) {
+          openPrint("refund-receipt", {
+            receiptNo:    `${billNumber || admission.admissionNumber}-REFUND`,
+            patientName:  admission.patientName,
+            uhid:         admission.UHID || admission.patientId?.UHID,
+            ipdNo:        admission.admissionNumber,
+            amount:       overage,
+            method:       paymentMode,                         // refund usually in same mode
+            refNo:        "",
+            reason:       `Unused advance after final settlement (advance ₹${unspent.toFixed(0)} − final ₹${finalAmt.toFixed(0)})`,
+            sourceReceiptNo: advances[0]?.receiptNumber || "",
+            sourceMethod: advances[0]?.paymentMode || "CASH",
+            sourceAmount: advances.reduce((s, a) => s + Number(a.amount || 0), 0),
+            runningBalance: 0,
+            receivedBy:   userName,
+            issuedAt:     new Date().toISOString(),
+          });
+          toast.info(`Refund of ₹${overage.toFixed(0)} owed to patient — slip printed`);
+        }
+      } catch (_) { /* refund detection is best-effort; final bill clearance still succeeds */ }
+
       onCleared();
     } catch (e) {
       toast.error(e?.response?.data?.message || "Could not clear bill");

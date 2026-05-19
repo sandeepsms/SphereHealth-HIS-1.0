@@ -232,9 +232,16 @@ function NursingNotesContent({ selectedPatient }) {
     if (selectedPatient?.UHID) setSearchUHID(selectedPatient.UHID);
   }, [selectedPatient]);
 
-  /* Auto-load when /nursing-notes?uhid=… is opened from /bed-visual */
+  /* Auto-load when /nursing-notes?uhid=… is opened from /bed-visual or
+     /discharge-summary (mode=discharge). When ?mode=discharge is set the
+     loader will FALL BACK to the most recent DISCHARGED admission if no
+     active admission exists — and flip the page into late-entry mode so
+     the nurse can still record the handover note that was skipped during
+     the premature discharge finalize. */
   useEffect(() => {
-    const u = new URLSearchParams(window.location.search).get("uhid");
+    const params = new URLSearchParams(window.location.search);
+    const u    = params.get("uhid");
+    const mode = params.get("mode");
     if (!u || !u.trim()) return;
     setSearchUHID(u.trim());
     (async () => {
@@ -243,12 +250,33 @@ function NursingNotesContent({ selectedPatient }) {
           `${API_ENDPOINTS.ADMISSIONS}/active?UHID=${encodeURIComponent(u.trim())}`,
         );
         const arr = Array.isArray(data) ? data : data.data || [];
-        const active = arr[0];
+        let active = arr[0];
+        let isLateEntry = false;
+        // Active admission not found — try discharged fallback if the
+        // caller explicitly asked for the discharge handover flow.
+        if (!active && mode === "discharge") {
+          try {
+            const r = await axios.get(
+              `${API_ENDPOINTS.ADMISSIONS}?UHID=${encodeURIComponent(u.trim())}&status=Discharged`,
+            );
+            const dis = Array.isArray(r.data) ? r.data : r.data?.data || [];
+            // Most recent discharged admission for this UHID.
+            active = dis.sort((a, b) =>
+              new Date(b.actualDischargeDate || b.updatedAt || 0) -
+              new Date(a.actualDischargeDate || a.updatedAt || 0),
+            )[0];
+            if (active) isLateEntry = true;
+          } catch (_) { /* fall through to silent fail */ }
+        }
         if (active) {
           setPatient(active);
+          setLateEntryMode(isLateEntry);
           const ipd = active.ipdNo || active.admissionNumber || active._id;
           setIpdNoForDraft(ipd);
           await fetchNotes(ipd, active);
+          if (isLateEntry) {
+            toast.info("Discharged admission loaded in LATE-ENTRY mode. Provide a reason for the retroactive note.", { autoClose: 6000 });
+          }
         }
       } catch (_) { /* silent — user can still search manually */ }
     })();
@@ -259,6 +287,16 @@ function NursingNotesContent({ selectedPatient }) {
   const [notes,      setNotes]      = useState([]);
   const [loading,    setLoading]    = useState(false);
   const [activeModal,setActiveModal]= useState(null);
+
+  /* ── Late-entry mode (NABH HIC.6 backdated entry) ──
+     Enabled when the loaded admission is already DISCHARGED — typically
+     because the receptionist (or doctor) finalized discharge before the
+     nursing handover note was written. The page stays usable but every
+     subsequent saveNote() POSTs `lateEntry: true` + the mandatory reason
+     so the audit trail flags the row as retroactive. The reason input
+     blocks save until the nurse fills it. */
+  const [lateEntryMode,   setLateEntryMode]   = useState(false);
+  const [lateEntryReason, setLateEntryReason] = useState("");
 
   /* ── Initial Assessment Gate (NABH COP.2) ──
      Gate lifts when:
@@ -538,7 +576,27 @@ function NursingNotesContent({ selectedPatient }) {
         `${API_ENDPOINTS.ADMISSIONS}/active?UHID=${encodeURIComponent(searchUHID.trim())}`
       );
       const arr = Array.isArray(data) ? data : data.data || [];
-      const active = arr[0]; // all results are already Active; take latest
+      let active = arr[0]; // all results are already Active; take latest
+      let isLateEntry = false;
+      // Fallback: when active is empty, try the discharged-admission lookup
+      // and load the most recent one in late-entry mode. This covers the
+      // "discharge was finalized without nursing handover" recovery path
+      // — page stays usable, but each save is flagged retroactive with a
+      // mandatory reason (NABH HIC.6).
+      if (!active) {
+        try {
+          const r = await axios.get(
+            `${API_ENDPOINTS.ADMISSIONS}?UHID=${encodeURIComponent(searchUHID.trim())}&status=Discharged`
+          );
+          const dis = Array.isArray(r.data) ? r.data : r.data?.data || [];
+          active = dis.sort((a, b) =>
+            new Date(b.actualDischargeDate || b.updatedAt || 0) -
+            new Date(a.actualDischargeDate || a.updatedAt || 0),
+          )[0];
+          if (active) isLateEntry = true;
+        } catch (_) { /* keep active null */ }
+      }
+      setLateEntryMode(isLateEntry);
       if (active) {
         setPatient(active);
         const ipd = active.ipdNo || active.admissionNumber || active._id;
@@ -585,7 +643,11 @@ function NursingNotesContent({ selectedPatient }) {
         setIvMedOrders([]); setIncludedMedIds(new Set());
         await fetchNotes(ipd, active);   // pass active so retroactive flag can run
         await loadTodayCharges(active._id);
-        toast.success(`Loaded: ${active.patientName || active.patientId?.fullName || searchUHID}`);
+        if (isLateEntry) {
+          toast.warn(`Late-entry mode: ${active.patientName || searchUHID} is already DISCHARGED. Every note saved here will be flagged retroactive — provide a reason in the banner above.`, { autoClose: 8000 });
+        } else {
+          toast.success(`Loaded: ${active.patientName || active.patientId?.fullName || searchUHID}`);
+        }
         // ── SphereAI: store active patient context ──
         localStorage.setItem("sphereai_active_patient", JSON.stringify({
           uhid: active.patientUHID || active.patientId?.UHID || searchUHID,
@@ -666,6 +728,13 @@ function NursingNotesContent({ selectedPatient }) {
 
   const saveNote = async () => {
     if (!patient) { toast.warn("No patient loaded"); return; }
+    // Late-entry guard — backend enforces this too (NABH HIC.6), but
+    // catching it here saves a round-trip and surfaces the requirement
+    // before the nurse fills the whole form.
+    if (lateEntryMode && !lateEntryReason.trim()) {
+      toast.error("This admission is DISCHARGED. Please enter a reason for the late-entry note (banner at top) before saving.");
+      return;
+    }
     const ipdNo = patient.ipdNo || patient.admissionNumber || patient._id;
     // patient is an admission object — patientId is the actual Patient ref (may be populated)
     const resolvedPatientId = patient.patientId?._id || patient.patientId || patient._id;
@@ -680,6 +749,13 @@ function NursingNotesContent({ selectedPatient }) {
       nurseName: user?.fullName || user?.name || `${user?.firstName || ""} ${user?.lastName || ""}`.trim(),
       nurseEmployeeId: user?.employeeId || "",
       nurseId: user?._id || user?.id || undefined,
+      // Late-entry flags — only emitted when the admission is already
+      // discharged. Backend persists these on the NurseNote document so
+      // surveyors can filter retroactive entries on audit replay.
+      lateEntry: lateEntryMode || undefined,
+      lateEntryReason: lateEntryMode ? lateEntryReason.trim() : undefined,
+      lateEntryBy: lateEntryMode ? (user?.fullName || user?.employeeId || "") : undefined,
+      lateEntryByRole: lateEntryMode ? (user?.role || "Nurse") : undefined,
     };
     if (activeModal === "vitals")   payload.vitals = { bp: { systolic: Number(vitals.bp_sys || 0), diastolic: Number(vitals.bp_dia || 0) }, pulse: Number(vitals.pulse), temp: Number(vitals.temp), spo2: Number(vitals.spo2), rr: Number(vitals.rr), gcs: vitals.gcs, bsl: Number(vitals.bsl) };
     if (activeModal === "blood")    payload.bloodTransfusion = blood;
@@ -1000,6 +1076,63 @@ function NursingNotesContent({ selectedPatient }) {
         </div>
       ) : (
         <>
+          {/* ── Late-Entry Banner (NABH HIC.6) ──
+              Renders only when the loaded admission is already DISCHARGED.
+              Shows an amber warning + a mandatory "Reason for late entry"
+              textarea. saveNote() blocks the POST until this is filled.
+              Backend persists `lateEntry: true` + the reason on every
+              note row so audit replays can filter retroactive entries. */}
+          {lateEntryMode && (
+            <div style={{
+              background: "linear-gradient(135deg, #fef3c7, #fde68a)",
+              border: "1.5px solid #f59e0b",
+              borderRadius: 10,
+              padding: "12px 14px",
+              marginBottom: 14,
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{
+                  width: 24, height: 24, borderRadius: "50%",
+                  background: "#b45309", color: "#fff",
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  fontWeight: 800, fontSize: 13, flexShrink: 0,
+                }}>!</span>
+                <strong style={{ color: "#78350f", fontSize: 13 }}>
+                  Late-entry mode — admission is already DISCHARGED
+                </strong>
+              </div>
+              <div style={{ fontSize: 11.5, color: "#78350f", lineHeight: 1.5 }}>
+                This nursing note will be flagged as retroactive on the audit trail per NABH HIC.6.
+                A documented reason is mandatory before the note can be saved.
+              </div>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#78350f", textTransform: "uppercase", letterSpacing: 0.4 }}>
+                  Reason for late entry <span style={{ color: "#dc2626" }}>*</span>
+                </span>
+                <textarea
+                  value={lateEntryReason}
+                  onChange={(e) => setLateEntryReason(e.target.value)}
+                  placeholder="e.g. Discharge was finalized at 09:08 AM before the handover note was written. Adding retroactive note to complete the clinical record."
+                  rows={2}
+                  style={{
+                    width: "100%",
+                    padding: "8px 10px",
+                    border: "1.5px solid #fbbf24",
+                    borderRadius: 8,
+                    fontSize: 12,
+                    fontFamily: "inherit",
+                    resize: "vertical",
+                    outline: "none",
+                    background: "#fffbeb",
+                  }}
+                />
+              </label>
+            </div>
+          )}
+
           {/* ── Patient Banner ── */}
           {(() => {
             const patName    = patient.patientName || patient.patient?.name || '—';
