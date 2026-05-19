@@ -126,7 +126,7 @@ const FREQ_TIMES_IA = {
 };
 
 export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
-  const { user } = useAuth();
+  const { user, doctorProfile } = useAuth();
   const location = useLocation();
   const [search,   setSearch]   = useState("");
   const [patient,  setPatient]  = useState(null);
@@ -277,9 +277,23 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
     const ipd = admission.ipdNo || admission.admissionNumber || admission._id;
     const uhid = admission.UHID || admission.uhid;
     setIpdNo(ipd);
-    // Check ownership
+    // Check ownership.
+    // R7f: admission.attendingDoctorId stores the Doctor collection's _id
+    // (NOT the User _id). The original `String(ownerId) === String(user.id)`
+    // check never matched because they're from different collections, so
+    // every doctor — even the consultant of record — falsely saw
+    // "Read-only — not your patient". Compare against doctorProfile._id
+    // first (Doctor collection), fall back to user.id (for legacy bills
+    // / admin acts), and grant admin/accountant override.
     const ownerId = admission.attendingDoctorId?._id || admission.attendingDoctorId;
-    const owned = !ownerId || !user?.id || String(ownerId) === String(user.id);
+    const docProfileId = doctorProfile?._id;
+    const myUserId = user?._id || user?.id;
+    const owned =
+      !ownerId
+      || (docProfileId && String(ownerId) === String(docProfileId))
+      || (myUserId && String(ownerId) === String(myUserId))
+      || user?.role === "Admin"
+      || user?.role === "Accountant";
     setIsOwner(owned);
     await fetchNotes(ipd);
     await fetchOrders(ipd);

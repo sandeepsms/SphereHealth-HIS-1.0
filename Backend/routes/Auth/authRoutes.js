@@ -80,7 +80,13 @@ router.post("/login", async (req, res) => {
   }
 });
 
-/* ── GET /api/auth/me ── (requires token) */
+/* ── GET /api/auth/me ── (requires token)
+ * R7f: when role === "Doctor", also resolve and attach the linked Doctor
+ * collection profile (id + doctorId code). The Admission model stores
+ * `attendingDoctorId` as the Doctor collection's _id (not the User _id),
+ * so the frontend needs this to compute "am I the consultant of record?"
+ * — otherwise every doctor falsely sees "Read-only — not your patient".
+ */
 router.get("/me", async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -90,11 +96,20 @@ router.get("/me", async (req, res) => {
     const token = authHeader.split(" ")[1];
     const decoded = jwt.verify(token, JWT_SECRET);
 
-    const user = await User.findById(decoded.id).select("-password");
+    const user = await User.findById(decoded.id).select("-password").lean();
     if (!user)
       return res.status(404).json({ message: "User not found" });
 
-    res.json({ user });
+    let doctorProfile = null;
+    if (user.role === "Doctor") {
+      try {
+        const Doctor = require("../../models/Doctor/doctorModel");
+        doctorProfile = await Doctor.findOne({ loginUserId: user._id })
+          .select("_id doctorId personalInfo.fullName")
+          .lean();
+      } catch (_) { /* Doctor model not loaded — skip silently */ }
+    }
+    res.json({ user, doctorProfile });
   } catch (err) {
     res.status(401).json({ message: "Invalid or expired token" });
   }
