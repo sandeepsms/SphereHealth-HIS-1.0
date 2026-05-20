@@ -71,7 +71,18 @@ CreditNoteSchema.set("toObject", { transform: decimalToNumber });
 CreditNoteSchema.pre("save", async function (next) {
   if (!this.isNew || this.creditNoteNumber) return next();
   try {
-    const year   = new Date().getFullYear();
+    // R7at-FIX-8/D6-MED-3+D6-R7at-NEW-1: derive year from
+    // `this.creditNoteDate` via IST formatter, not server-clock UTC. The
+    // R7as period-lock override stamps `T00:00:00+05:30` — on a UTC host
+    // near year-rollover (Dec 31 18:30 UTC = Jan 1 IST), the prefix
+    // would land in year Y while creditNoteDate is in Y+1, breaking
+    // IT-Rule-46 gap-less series AND the sequence-audit which filters
+    // by prefix `^CN-${year}-`.
+    const TZ     = process.env.HOSPITAL_TZ || "Asia/Kolkata";
+    const cnDate = this.creditNoteDate || new Date();
+    const year   = Number(new Intl.DateTimeFormat("en-CA", {
+      timeZone: TZ, year: "numeric",
+    }).format(cnDate));
     const prefix = `CN-${year}-`;
     const key    = `creditnote:${year}`;
     const existing = await CounterModel.findOne({ _id: key }).lean();

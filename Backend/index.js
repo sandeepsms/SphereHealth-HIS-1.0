@@ -174,14 +174,20 @@ require("./services/nursing/nursingChargesService")
 // don't double-charge the same admission. The boot-time catch-up still
 // runs 60s after start so a missed midnight cron still flushes the day.
 const autoBilling = require("./services/Billing/autoBillingService");
-const { scheduleDaily, acquireLock } = require("./utils/cronScheduler");
+const { scheduleDaily, acquireLock, releaseLock } = require("./utils/cronScheduler");
 
+// R7at-FIX-1/D10-HIGH-1+2: boot-catchup now uses the SAME lock name as
+// the daily cron (`cron:daily-accrual`, not the divergent `:boot`
+// variant) so a cold-start crossing 00:30 IST doesn't race the
+// scheduled tick. Lock is also explicitly released in `finally` so a
+// successful boot-catchup doesn't sit on the lock for the full 600s
+// TTL — pre-R7at a manual operator re-trigger within 10 min was blocked.
 const _autoBillingBootTimer = setTimeout(async () => {
-  // Boot-catchup also uses a (short) lock so two replicas don't both
-  // run on a coordinated cold start.
+  const _BOOT_LOCK = "cron:daily-accrual";
+  let acquired = false;
   try {
-    const ok = await acquireLock("cron:daily-accrual:boot", 600);
-    if (!ok) {
+    acquired = await acquireLock(_BOOT_LOCK, 600);
+    if (!acquired) {
       console.log("[daily-accrual] boot: another instance handled the catch-up");
       return;
     }
@@ -189,6 +195,10 @@ const _autoBillingBootTimer = setTimeout(async () => {
     console.log("[daily-accrual] boot:", r);
   } catch (e) {
     console.error("[daily-accrual] boot error:", e.stack || e.message);
+  } finally {
+    if (acquired) {
+      try { await releaseLock(_BOOT_LOCK); } catch (_) { /* best-effort */ }
+    }
   }
 }, 60_000);
 
@@ -312,6 +322,28 @@ const _cancelGstSnapshot = scheduleDaily("gst-monthly-snapshot", 2, 0, async () 
     },
     { upsert: true },
   );
+  // R7at-FIX-2/D10-HIGH-3: emit CRON_RECONCILED audit row so the GSTR-1
+  // reconciliation feed shows "system froze period YYYY-MM at HH:MM IST".
+  // Pre-R7at the snapshot freeze was invisible in the audit register —
+  // NABH AAC.7 + GST §35 expect provenance for every period freeze.
+  try {
+    const { emit } = require("./models/Billing/BillingAudit");
+    await emit({
+      event:        "CRON_RECONCILED",
+      actorName:    "System (gst-monthly-snapshot)",
+      amount:       totalTaxOut - totalReversed,
+      reason:       `GST period ${period} frozen — ${o.billsCount} bill(s), ${r.creditNotesCount} CN(s), net tax ₹${(totalTaxOut - totalReversed).toFixed(2)}`,
+      after:        {
+        period, periodStart, periodEnd,
+        billsCount:       o.billsCount,
+        creditNotesCount: r.creditNotesCount,
+        grossSupply,
+        netTotalTax:      totalTaxOut - totalReversed,
+      },
+    });
+  } catch (e) {
+    console.warn(`[gst-monthly-snapshot] audit emit failed: ${e.message}`);
+  }
   return {
     period,
     billsCount:        o.billsCount,
@@ -323,8 +355,20 @@ const _cancelGstSnapshot = scheduleDaily("gst-monthly-snapshot", 2, 0, async () 
 
 // F30 — Daily Day Book PDF / email (23:55 IST). Same skeleton — logs the
 // totals; full PDF mailer is a future deliverable.
+// R7at-FIX-3/D10-MED-1: dayStr now derived from IST calendar (not UTC).
+// Pre-R7at `new Date().toISOString().slice(0,10)` returned the UTC date,
+// which at 23:55 IST = 18:25 UTC same day still resolved correctly — but
+// a DST/leap-second drift or a host with wrong clock could ship the cron
+// off-by-one. Mirroring the GST cron's Intl approach removes the drift.
 const _cancelEodDaybook = scheduleDaily("eod-day-book", 23, 55, async () => {
-  const dayStr = new Date().toISOString().slice(0, 10);
+  const TZ = process.env.HOSPITAL_TZ || "Asia/Kolkata";
+  const istParts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date());
+  const yy = istParts.find((p) => p.type === "year")?.value;
+  const mm = istParts.find((p) => p.type === "month")?.value;
+  const dd = istParts.find((p) => p.type === "day")?.value;
+  const dayStr = `${yy}-${mm}-${dd}`;
   // Sum today's positive payments excluding ADVANCE_ADJUSTMENT.
   const today = new Date(`${dayStr}T00:00:00+05:30`);
   const tomorrow = new Date(today.getTime() + 86400000);
@@ -415,9 +459,16 @@ const _cancelShiftAutoClose = scheduleDaily("shift-auto-close", 23, 50, async ()
     const expectedClosing = toNum(s.openingCash) + cashCollected - cashRefundedOut;
     s.closedAt        = windowEnd;
     s.expectedClosing = expectedClosing;
-    s.closingCash     = expectedClosing;       // assume balanced — manager confirms
-    s.variance        = 0;
-    s.varianceNote    = "AUTO_CLOSED_PENDING_REVIEW — cashier did not close manually";
+    // R7at-FIX-4/D10-MED-2: do NOT force `closingCash = expectedClosing`
+    // and `variance = 0`. Pre-R7at this masked real cash shortages — any
+    // dashboard filtering on `variance != 0` would never see the row.
+    // Now leave both NULL so the manager review queue can identify
+    // un-verified auto-closes by `closedByCron:true` instead. The note
+    // is explicit so an operator filtering on varianceNote contains
+    // "UNVERIFIED" also catches the queue.
+    s.closingCash     = null;
+    s.variance        = null;
+    s.varianceNote    = "UNVERIFIED — auto-closed by cron; cashier did not close manually. Manager must count drawer + reconcile.";
     s.cashCollected   = cashCollected;
     s.cashRefundedOut = cashRefundedOut;
     s.advancesApplied = advancesApplied;
@@ -426,7 +477,15 @@ const _cancelShiftAutoClose = scheduleDaily("shift-auto-close", 23, 50, async ()
     s.chequeCollected = chequeCollected;
     s.closedByCron    = true;
     s.status          = "CLOSED";
-    await s.save().catch((e) => console.warn(`[shift-auto-close] ${s._id} skipped: ${e.message}`));
+    // R7at-FIX-5/D10-LOW-1: track save success so we skip the audit emit
+    // when save fails — pre-R7at a misleading "SHIFT_AUTO_CLOSED" row
+    // landed even when the session was still OPEN.
+    let _saved = true;
+    await s.save().catch((e) => {
+      _saved = false;
+      console.warn(`[shift-auto-close] ${s._id} skipped: ${e.message}`);
+    });
+    if (!_saved) { continue; }
     // R7ar-P1-20/D6-aq-04: chronological audit emit so the GST/NABH register
     // shows a SHIFT_AUTO_CLOSED row alongside the human ones.
     try {

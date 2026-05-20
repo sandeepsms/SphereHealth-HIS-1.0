@@ -493,9 +493,17 @@ PatientBillSchema.methods.recalcTotals = function () {
   }
 };
 
-// ── Pre-save: bill number + recalculate all totals ─────────────
+// ── Pre-save: bill number (for non-DRAFT) + recalculate all totals ─
+// R7at-FIX-11/D1-CRIT-NEW: pre-R7at this hook burned a billNumber on EVERY
+// new bill — including DRAFTs. Then `generateFinalBill` overwrote it with
+// a fresh `generateBillNumber()` call. Net effect: every finalized bill
+// consumed TWO sequence positions, plus every cancelled DRAFT orphaned
+// one number — IT-Rule-46 gap-less series invariant broken on every
+// bill. The fix: only burn a billNumber when the bill is created in a
+// non-DRAFT state (rare — most paths create DRAFT first then call
+// generateFinalBill); DRAFT bills get their number at finalisation only.
 PatientBillSchema.pre("save", async function (next) {
-  if (this.isNew && !this.billNumber) {
+  if (this.isNew && !this.billNumber && this.billStatus && this.billStatus !== "DRAFT") {
     const year = new Date().getFullYear();
     const seq  = await nextSeqBill(`bill:${year}`);
     this.billNumber = `BILL-${year}-${String(seq).padStart(6, "0")}`;
@@ -526,6 +534,13 @@ PatientBillSchema.index({ UHID: 1, billStatus: 1, createdAt: -1 });
 PatientBillSchema.index({ paidAt: -1, billStatus: 1 });
 PatientBillSchema.index({ billStatus: 1, paymentType: 1, billDate: -1 });
 PatientBillSchema.index({ paymentType: 1, tpaClaimStatus: 1, updatedAt: -1 });
+// R7at-FIX-13/D8-HIGH-R7as-2: index on `billGeneratedAt` (immutable bill
+// finalisation timestamp). R7as-FIX-6 switched the hospital GST register
+// + snapshot cron to filter by this field, but no index existed — every
+// monthly tax query did a collscan over 50k-200k rows. Compound with
+// billStatus covers the `$nin: [DRAFT, CANCELLED]` predicate.
+PatientBillSchema.index({ billGeneratedAt: -1, billStatus: 1 });
+
 // payments.paidAt is the new attribution field for getCollectionSummary.
 // Multikey index lets the query pick up bills with any payment row in the
 // day window without scanning the full collection.

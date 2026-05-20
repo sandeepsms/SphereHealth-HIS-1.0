@@ -688,8 +688,15 @@ class AdmissionController {
           // honours billStatus when computing balanceAmount) sees the right
           // value. The hook itself recomputes advancePaid + balanceAmount
           // using patientPayableAmount, so we don't need manual math here.
-          const paid = bill.payments.reduce((s, p) => s + (p.amount || 0), 0);
-          const patientShare = bill.patientPayableAmount || bill.netAmount || 0;
+          // R7at-FIX-12/D1-CRIT-C2: `bill.payments[].amount` is Decimal128
+          // — pre-R7at `s + (p.amount || 0)` coerced via toString and the
+          // reducer produced string-concat values like "0100.00". The
+          // status-flip comparison then string-compared against a
+          // Decimal128 RHS — tiny IPD bills silently stayed PARTIAL at
+          // discharge. Now uses `toNum()` everywhere.
+          const { toNum } = require("../../utils/money");
+          const paid = bill.payments.reduce((s, p) => s + toNum(p.amount), 0);
+          const patientShare = toNum(bill.patientPayableAmount) || toNum(bill.netAmount) || 0;
           bill.billStatus    = paid + 0.5 >= patientShare ? "PAID" : "PARTIAL";
           if (bill.billStatus === "PAID") bill.paidAt = new Date();
           await bill.save();

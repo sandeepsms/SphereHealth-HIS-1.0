@@ -49,24 +49,27 @@ const authenticate = async (req, res, next) => {
     // shared one row), and zeroed `receivedById` on every payment audit.
     req.user = { ...decoded, _id: decoded.id }; // { id, _id, role, employeeId, jti, iat, exp }
 
-    // R7as-FIX-10/D3-high: JWT payload doesn't include `fullName`, so
-    // ~15 controllers reading `req.user.fullName` always fell through to
-    // hard-coded defaults ("Reception", "TPA Desk", "Cashier") — every
-    // audit row lost the real cashier name. Load it lazily from the User
-    // collection on first auth in a short-lived in-process LRU cache so
-    // it doesn't add 1ms per request. Cache TTL is short (5 min) so a
-    // mid-session profile rename surfaces quickly.
+    // R7as-FIX-10/D3-high (revised in R7at-FIX-7): JWT payload doesn't
+    // include `fullName`, so ~15 controllers reading `req.user.fullName`
+    // always fell through to hard-coded defaults ("Reception", "TPA Desk",
+    // "Cashier") — every audit row lost the real cashier name. Load it
+    // lazily via the read-through `lruCache.get(key, compute)` memoizer
+    // so concurrent first-hits piggy-back on a single Mongo round-trip.
+    //
+    // R7at-FIX-7/D2-NEW-CRIT-1: pre-R7at this block called the non-
+    // existent `_fullNameCache.set(key, value)` API — every request hit
+    // the catch branch and FIX-10 silently no-op'd. Now uses the actual
+    // read-through `get(key, compute)` shape exposed by `utils/lruCache.js`.
     if (decoded.id && !req.user.fullName) {
       try {
-        if (!_fullNameCache) _fullNameCache = require("../utils/lruCache")({ max: 500, ttlMs: 5 * 60_000 });
-        let name = _fullNameCache.get(String(decoded.id));
-        if (name === undefined) {
+        if (!_fullNameCache) {
+          _fullNameCache = require("../utils/lruCache")({ max: 500, ttlMs: 5 * 60_000 });
+        }
+        req.user.fullName = await _fullNameCache.get(String(decoded.id), async () => {
           const User = require("../models/User/userModel");
           const u = await User.findById(decoded.id).select("fullName employeeId").lean();
-          name = u?.fullName || u?.employeeId || decoded.employeeId || "";
-          _fullNameCache.set(String(decoded.id), name);
-        }
-        req.user.fullName = name;
+          return u?.fullName || u?.employeeId || decoded.employeeId || "";
+        });
       } catch (e) {
         // best-effort — if user-collection lookup fails, fall through to
         // the existing behaviour (hard-coded defaults in callers).

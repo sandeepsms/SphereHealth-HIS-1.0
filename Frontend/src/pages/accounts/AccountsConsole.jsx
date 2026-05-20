@@ -969,8 +969,12 @@ function RefundsTab() {
     setLoading(true);
     try {
       // Parallel fetch — bill refunds + advance refunds + credit notes.
+      // R7at-FIX-15/D9-HIGH-3: thread `from`/`to` into the bills query too
+      // so the Refunds tab shows ONE end-of-day picture, not "last 50 ever
+      // refunded bills alongside today's CNs". The accountant reconciling
+      // 2026-05-21 EOD now sees just that day's outflow.
       const [billRes, advRes, cnRes] = await Promise.all([
-        axios.get(`${API}/billing?status=${filter}&limit=50`, authHdr()).catch(() => null),
+        axios.get(`${API}/billing?status=${filter}&limit=200&from=${from}&to=${to}`, authHdr()).catch(() => null),
         axios.get(`${API}/billing/advance/refunds?from=${from}&to=${to}`, authHdr()).catch(() => null),
         axios.get(`${API}/billing/credit-notes?from=${from}&to=${to}`, authHdr()).catch(() => null),
       ]);

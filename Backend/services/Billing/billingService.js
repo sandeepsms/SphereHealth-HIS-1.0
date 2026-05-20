@@ -969,11 +969,15 @@ class BillingService {
       // R7as: the retry can land on a bill that ALREADY transitioned to
       // GENERATED on a prior attempt (rare but possible if save throws
       // post-commit). Treat as success and return.
-      if (bill.billStatus !== "DRAFT" && bill.billNumber) {
+      // R7at-FIX-9/D5-NEW: tightened to `=== "GENERATED"` — pre-R7at the
+      // permissive `!= "DRAFT" && billNumber` branch let CANCELLED /
+      // REFUNDED / PAID bills slip through as successful generates on
+      // replay. Now only an already-GENERATED bill returns idempotently.
+      if (bill.billStatus === "GENERATED" && bill.billNumber) {
         return bill;
       }
       if (bill.billStatus !== "DRAFT") {
-        const err = new Error("Only DRAFT bills can be generated"); err.status = 409; throw err;
+        const err = new Error(`Only DRAFT bills can be generated (current: ${bill.billStatus})`); err.status = 409; throw err;
       }
       if (!bill.billItems || bill.billItems.length === 0) {
         const err = new Error("Cannot generate empty bill — pehle services add karo"); err.status = 400; throw err;

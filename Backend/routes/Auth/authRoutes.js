@@ -87,18 +87,21 @@ router.post("/login", async (req, res) => {
  * so the frontend needs this to compute "am I the consultant of record?"
  * — otherwise every doctor falsely sees "Read-only — not your patient".
  */
-router.get("/me", async (req, res) => {
+// R7at-FIX-10/D3-NEW-CRIT: `/me`, PATCH `/signature`, GET `/signature`
+// previously re-implemented JWT verification inline — bypassing the
+// global `authenticate` middleware (which checks the TokenRevocation
+// collection). A revoked / logged-out token kept hitting these
+// endpoints (the routes most clients use for "am I still logged in"
+// checks) until natural exp (up to 8h). Now they go through
+// `authenticate` so revocation is enforced.
+const { authenticate } = require("../../middleware/auth");
+
+router.get("/me", authenticate, async (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith("Bearer "))
-      return res.status(401).json({ message: "No token provided" });
-
-    const token = authHeader.split(" ")[1];
-    const decoded = jwt.verify(token, JWT_SECRET);
-
-    const user = await User.findById(decoded.id).select("-password").lean();
-    if (!user)
-      return res.status(404).json({ message: "User not found" });
+    const user = await User.findById(req.user.id).select("-password").lean();
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
 
     let doctorProfile = null;
     if (user.role === "Doctor") {
@@ -111,52 +114,38 @@ router.get("/me", async (req, res) => {
     }
     res.json({ user, doctorProfile });
   } catch (err) {
-    res.status(401).json({ message: "Invalid or expired token" });
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
 /* ── PATCH /api/auth/signature ── save user's digital signature */
-router.patch("/signature", async (req, res) => {
+router.patch("/signature", authenticate, async (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith("Bearer "))
-      return res.status(401).json({ message: "No token provided" });
-
-    const token = authHeader.split(" ")[1];
-    const decoded = jwt.verify(token, JWT_SECRET);
-
     const { signature } = req.body;
-    if (!signature) return res.status(400).json({ message: "Signature data required" });
+    if (!signature) return res.status(400).json({ success: false, message: "Signature data required" });
 
     const user = await User.findByIdAndUpdate(
-      decoded.id,
+      req.user.id,
       { signature },
       { new: true, select: "-password" }
     );
-    if (!user) return res.status(404).json({ message: "User not found" });
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
 
     res.json({ message: "Signature saved", signature: user.signature });
   } catch (err) {
-    res.status(401).json({ message: "Invalid or expired token" });
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
 /* ── GET /api/auth/signature ── get user's digital signature */
-router.get("/signature", async (req, res) => {
+router.get("/signature", authenticate, async (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith("Bearer "))
-      return res.status(401).json({ message: "No token provided" });
-
-    const token = authHeader.split(" ")[1];
-    const decoded = jwt.verify(token, JWT_SECRET);
-
-    const user = await User.findById(decoded.id).select("signature fullName firstName lastName role");
-    if (!user) return res.status(404).json({ message: "User not found" });
+    const user = await User.findById(req.user.id).select("signature fullName firstName lastName role");
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
 
     res.json({ signature: user.signature || null });
   } catch (err) {
-    res.status(401).json({ message: "Invalid or expired token" });
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 

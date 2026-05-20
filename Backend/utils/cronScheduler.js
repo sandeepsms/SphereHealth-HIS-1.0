@@ -119,8 +119,17 @@ function nextRunAt(hourIST, minuteIST) {
  */
 function scheduleDaily(name, hourIST, minuteIST, fn) {
   let timer = null;
+  // R7at-FIX-6/D10-MED-4: `cancelled` flag captured in closure. On SIGTERM
+  // the returned cancel() sets `cancelled=true` AND clears the pending
+  // `timer`. But if a tick is mid-execution when shutdown fires, the
+  // `finally` block was previously re-arming a NEW setTimeout that the
+  // cancel() closure no longer had a reference to — that timer survived
+  // shutdown intent and could fire against a half-dead Mongo connection.
+  // Now we check the flag before re-arming.
+  let cancelled = false;
 
   const tick = async () => {
+    if (cancelled) return;                             // R7at-FIX-6
     const t0 = Date.now();
     let acquired = false;
     try {
@@ -138,10 +147,12 @@ function scheduleDaily(name, hourIST, minuteIST, fn) {
       console.error(`[cron:${name}] error:`, e.stack || e.message);
     } finally {
       if (acquired) await releaseLock(`cron:${name}`);
-      // Reschedule for next IST occurrence.
-      const at = nextRunAt(hourIST, minuteIST);
-      const ms = Math.max(1000, at.getTime() - Date.now());
-      timer = setTimeout(tick, ms);
+      // R7at-FIX-6: don't re-arm if shutdown has been signalled.
+      if (!cancelled) {
+        const at = nextRunAt(hourIST, minuteIST);
+        const ms = Math.max(1000, at.getTime() - Date.now());
+        timer = setTimeout(tick, ms);
+      }
     }
   };
 
@@ -151,7 +162,10 @@ function scheduleDaily(name, hourIST, minuteIST, fn) {
   console.log(`[cron:${name}] armed — next IST fire @ ${HOUR_FMT.format(at)} IST (in ${(ms/60000).toFixed(1)} min)`);
   timer = setTimeout(tick, ms);
 
-  return () => { if (timer) clearTimeout(timer); };
+  return () => {
+    cancelled = true;                                  // R7at-FIX-6
+    if (timer) clearTimeout(timer);
+  };
 }
 
 module.exports = { scheduleDaily, acquireLock, releaseLock };

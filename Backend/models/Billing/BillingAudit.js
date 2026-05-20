@@ -104,6 +104,13 @@ BillingAuditSchema.index({ createdAt: -1 });
 BillingAuditSchema.index({ event: 1, createdAt: -1 });
 BillingAuditSchema.index({ UHID: 1, createdAt: -1 });
 BillingAuditSchema.index({ billId: 1, createdAt: -1 });
+// R7at-FIX-14/D8-MED-3: TTL index on retainUntil. Pre-R7at the field
+// was declared with a 7-year default but Mongo never auto-expired old
+// rows — the audit-archive Sunday cron handled cold-storage migration
+// but if it stalled, the hot collection grew unbounded. This TTL acts
+// as a safety net so retainUntil>now docs are reaped within ~60s of
+// expiry even when the archiver is down.
+BillingAuditSchema.index({ retainUntil: 1 }, { expireAfterSeconds: 0 });
 
 // Decimal128 → Number on serialise
 const { decimalToNumber } = require("../../utils/money");
