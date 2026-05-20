@@ -5,20 +5,17 @@
 const express = require("express");
 const router  = express.Router();
 const autoBilling = require("../../services/Billing/autoBillingService");
+const { adminOnly } = require("../../middleware/auth");
 
-// ── Role gate ──────────────────────────────────────────────────────────────
-// authenticate middleware runs upstream; here we check role manually so the
-// daily-accrual button is only callable by admins.
-function requireAdmin(req, res, next) {
-  const role = (req.user?.role || "").toLowerCase();
-  if (role === "admin" || role === "superadmin" || role === "owner") return next();
-  return res.status(403).json({ success: false, message: "Admin role required" });
-}
+// R7au-FIX-14/D3-HIGH: replaced the ad-hoc inline `requireAdmin` (which
+// matched on case-insensitive role names including "superadmin"/"owner"
+// that don't exist in the enum) with the shared `adminOnly` middleware.
+// Single source of truth → no drift if the enum changes.
 
 // POST /api/admin-ops/run-daily-accrual
 // Force-runs the daily bed-charge accrual sweep. Safe to call repeatedly —
 // dailyDedup prevents double-charging the same admission on the same day.
-router.post("/run-daily-accrual", requireAdmin, async (req, res) => {
+router.post("/run-daily-accrual", adminOnly, async (req, res) => {
   try {
     const result = await autoBilling.runDailyBedChargeAccrual();
     res.json({ success: true, result });
@@ -30,7 +27,7 @@ router.post("/run-daily-accrual", requireAdmin, async (req, res) => {
 
 // GET /api/admin-ops/health
 // Lightweight health probe that includes the next scheduled accrual hint.
-router.get("/health", requireAdmin, (req, res) => {
+router.get("/health", adminOnly, (req, res) => {
   res.json({
     success: true,
     bootedAt: process.env.BOOT_AT || "—",

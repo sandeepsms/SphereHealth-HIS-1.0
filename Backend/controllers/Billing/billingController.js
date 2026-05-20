@@ -1214,6 +1214,24 @@ exports.tpaSettle = async (req, res, next) => {
               const itemPt = toN(item.patientPayableAmount);
               item.tpaPayableAmount     = Number((itemTpa - move).toFixed(2));
               item.patientPayableAmount = Number((itemPt + move).toFixed(2));
+              // R7au-FIX-4/D5-CRIT-C6: also recompute (or zero) the
+              // line's `tpaPercent` so PatientBill pre-save's
+              // `recalcTotals()` doesn't re-derive the OLD split on
+              // the next save. Pre-R7au we mutated absolute values but
+              // left tpaPercent at the original (e.g. 80%) — the hook
+              // re-applied `lineTotal × 80/100` on next touch and
+              // silently reverted the shortfall split. % policies
+              // (the common TPA case) silently dropped the patient
+              // liability bump. Now: rebase percent to the post-move
+              // share of the line total so subsequent recalc agrees.
+              const lineTotal = toN(item.netAmount) || (itemTpa + itemPt);
+              if (lineTotal > 0) {
+                item.tpaPercent = Math.max(0, Math.min(100,
+                  Number(((item.tpaPayableAmount / lineTotal) * 100).toFixed(2)),
+                ));
+              } else {
+                item.tpaPercent = 0;
+              }
               remaining -= move;
               if (remaining <= 0.005) break;
             }

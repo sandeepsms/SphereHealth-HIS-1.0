@@ -124,8 +124,29 @@ BillingTriggerSchema.index(
     partialFilterExpression: {
       dateKey: { $exists: true, $type: "string" },
       status:  { $in: ["completed", "billed", "pending", "pending-review"] },
+      // R7au-FIX-9/D7-HIGH-C9: scope this single-instance daily index to
+      // rows that DON'T use the multi-doctor pattern. Doctor-round
+      // triggers (dedupByDoctor=true / orderedById set) need their own
+      // partial-unique that includes orderedById so two consultants on
+      // the same day each get their own NABH multi-disciplinary line.
+      orderedById: { $exists: false },
     },
     name: "uniq_daily_charge",
+  },
+);
+// R7au-FIX-9/D7-HIGH-C9: separate partial-unique for doctor-round charges
+// so Dr. A's and Dr. B's same-day rows coexist (each with distinct
+// orderedById) but a SINGLE doctor doesn't double-book.
+BillingTriggerSchema.index(
+  { admissionId: 1, serviceCode: 1, dateKey: 1, orderedById: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      dateKey:     { $exists: true, $type: "string" },
+      orderedById: { $exists: true },
+      status:      { $in: ["completed", "billed", "pending", "pending-review"] },
+    },
+    name: "uniq_daily_charge_per_doctor",
   },
 );
 // Legacy index kept for the query shape used elsewhere (status filter inside).

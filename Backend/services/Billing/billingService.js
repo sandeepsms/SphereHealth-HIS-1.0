@@ -352,8 +352,14 @@ class BillingService {
       e.status = 404;
       throw e;
     }
-    if (["CANCELLED", "REFUNDED"].includes(bill.billStatus)) {
-      const e = new Error(`Cannot complete orders on a ${bill.billStatus} bill`);
+    // R7au-FIX-5/D5-CRIT-C7: PAID is now also rejected — pre-R7au a late
+    // "Ordered → Completed" flip on a PAID bill bumped grossAmount but
+    // pre-save did NOT auto-flip PAID→PARTIAL, leaving the bill in an
+    // inconsistent state (status=PAID with balance > 0). Cashier never
+    // saw the new due. Now refuse the operation explicitly with a
+    // clear message so the clinician knows the bill is sealed.
+    if (["CANCELLED", "REFUNDED", "PAID"].includes(bill.billStatus)) {
+      const e = new Error(`Cannot complete orders on a ${bill.billStatus} bill — use accountant adjust/refund flow instead`);
       e.status = 409;
       throw e;
     }
@@ -393,6 +399,15 @@ class BillingService {
     if (!bill) {
       const e = new Error("Bill not found");
       e.status = 404;
+      throw e;
+    }
+    // R7au-FIX-5/D5-CRIT-C7: pre-R7au this had NO bill-level state guard.
+    // Cancelling an Active order on a PAID / CANCELLED / REFUNDED bill
+    // silently mutated billItems → the audit log drifted from reality.
+    // Now refuse the operation explicitly.
+    if (["CANCELLED", "REFUNDED", "PAID"].includes(bill.billStatus)) {
+      const e = new Error(`Cannot cancel orders on a ${bill.billStatus} bill — use accountant refund/cancel flow instead`);
+      e.status = 409;
       throw e;
     }
     const item = bill.billItems.id(itemId);
@@ -1049,6 +1064,13 @@ class BillingService {
       if (bill.billStatus === "REFUNDED")
         throw new Error("Refunded bill — no further payments allowed");
 
+      // R7au-FIX-16/D5-MED-3: capture prior billStatus BEFORE any
+      // mutation so the audit `before` snapshot is faithful. Pre-R7au
+      // the emit used `bill.billStatus === "PAID" ? "PARTIAL" : ...` —
+      // wrong for first-payment-clears-bill (GENERATED → PAID was
+      // recorded as PARTIAL → PAID).
+      const _priorBillStatus = bill.billStatus;
+
       // R7ab CRITICAL: backend over-payment cap. Pre-R7ab, recordPayment
       // accepted any amount — ₹999 against a ₹100 outstanding balance
       // would post ₹999 into bill.payments, recompute balance as
@@ -1109,7 +1131,7 @@ class BillingService {
             transactionId,
             actorName:    receivedBy,
             reason:       remarks || `Payment received via ${paymentMode}`,
-            before:       { advancePaid: toNum(bill.advancePaid) - toNum(amount), billStatus: bill.billStatus === "PAID" ? "PARTIAL" : bill.billStatus },
+            before:       { advancePaid: toNum(bill.advancePaid) - toNum(amount), billStatus: _priorBillStatus },
             after:        { advancePaid: toNum(bill.advancePaid), balanceAmount: toNum(bill.balanceAmount), billStatus: bill.billStatus },
           });
         } catch (_) { /* audit is best-effort */ }
@@ -1377,8 +1399,16 @@ class BillingService {
           const eligibleItems = (bill.billItems || []).filter((it) => !it.excludedByPackage);
           const eligibleNet   = eligibleItems.reduce((s, it) => s + toNum(it.netAmount), 0);
           const eligibleTax   = eligibleItems.reduce((s, it) => s + toNum(it.taxAmount), 0);
-          const billGross  = eligibleNet || toNum(bill.netAmount) || toNum(bill.grossAmount);
-          const billTax    = eligibleTax || toNum(bill.taxAmount);
+          // R7au-FIX-8/D6-HIGH-C8: when EVERY item is excluded by an ANH
+          // package, `eligibleNet` collapses to 0. Pre-R7au we fell back
+          // to `bill.netAmount`/`bill.taxAmount` which include the
+          // excluded items — the CN then pro-rated tax against an
+          // unrelated denominator (the package-replaced items). Now: if
+          // no eligible items remain, the refund is a package refund —
+          // treat as non-taxable (taxShare=0). The package's bundled
+          // GST is already booked at PER_DAY/PER_PROCEDURE rate.
+          const billGross  = eligibleNet || 0;
+          const billTax    = eligibleTax || 0;
           // taxShare proportional, taxable = refund − tax (pre-tax slice)
           const taxShare    = billGross > 0 ? +((amt / billGross) * billTax).toFixed(2) : 0;
           // R7ar-D2-aq-08: detect inter-state via placeOfSupply, fall back

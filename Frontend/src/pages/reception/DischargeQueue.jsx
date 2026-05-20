@@ -139,17 +139,21 @@ export default function DischargeQueue() {
                    w.stage === "Completed"      ? "Discharged" : w.stage}
                 </span>
                 {/* R7ar-P1-24/D9-aq-04: surface the post-discharge surplus
-                    detected by the cascade. Cashier sees the chip → opens
-                    the IPD ledger → routes the surplus through the standard
-                    refund flow (which writes a CN + Day Book "Cash Out"). */}
+                    detected by the cascade. R7au-FIX-18/D9-HIGH-1 made
+                    the chip clickable so cashier goes one-click into the
+                    IPD ledger refund flow (`/billing/ipd/:id?refundOverage=N`).
+                    Pre-R7au it was a static <span> with title-only hint. */}
                 {Number(adm.dischargeOverage) > 0.5 && (
-                  <span
+                  <button
+                    type="button"
                     className="rx-card-stage rx-card-stage--overage"
-                    title={`Surplus ₹${Number(adm.dischargeOverage).toFixed(2)} owed to patient — open Live Ledger to refund`}
+                    title={`Surplus ₹${Number(adm.dischargeOverage).toFixed(2)} owed to patient — click to refund in Live Ledger`}
+                    onClick={() => navigate(`/billing/ipd/${adm._id}?refundOverage=${Number(adm.dischargeOverage).toFixed(2)}`)}
+                    style={{ cursor: "pointer", border: "none", font: "inherit" }}
                   >
                     <i className="pi pi-exclamation-triangle" />{" "}
                     Refund Owed {fmtCur(adm.dischargeOverage)}
-                  </span>
+                  </button>
                 )}
               </div>
               <div className="rx-card-meta">

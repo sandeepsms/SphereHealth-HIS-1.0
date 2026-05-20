@@ -274,34 +274,32 @@ UserSchema.pre("save", function (next) {
 // Appointment bug fixed in appointmentModel.js.
 UserSchema.pre("validate", async function (next) {
   if (this.isNew && !this.employeeId) {
-    const count = await mongoose.model("User").countDocuments();
     const year = new Date().getFullYear();
     let prefix = "EMP";
 
     switch (this.role) {
-      case "Doctor":
-        prefix = "DOC";
-        break;
-      case "Nurse":
-        prefix = "NUR";
-        break;
-      case "Pharmacist":
-        prefix = "PHR";
-        break;
-      case "Lab Technician":
-        prefix = "LAB";
-        break;
-      case "Receptionist":
-        prefix = "REC";
-        break;
-      case "Admin":
-        prefix = "ADM";
-        break;
-      default:
-        prefix = "EMP";
+      case "Doctor":         prefix = "DOC"; break;
+      case "Nurse":          prefix = "NUR"; break;
+      case "Pharmacist":     prefix = "PHR"; break;
+      case "Lab Technician": prefix = "LAB"; break;
+      case "Receptionist":   prefix = "REC"; break;
+      case "Admin":          prefix = "ADM"; break;
+      default:               prefix = "EMP";
     }
 
-    this.employeeId = `${prefix}-${year}-${String(count + 1).padStart(5, "0")}`;
+    // R7au-FIX-1/D1-CRIT-C1: replaced `countDocuments() + 1` with the
+    // atomic `nextSequence` counter. Pre-R7au two concurrent registrations
+    // both read N → both wrote N+1 → second insert hit the unique-index
+    // E11000 and registration failed at the desk. Seed from current row
+    // count so existing employees keep their numbers when the counter is
+    // first initialised on this prefix.
+    const { nextSequence } = require("../../utils/counter");
+    const key = `employee:${prefix}:${year}`;
+    const seed = await mongoose.model("User").countDocuments({
+      employeeId: { $regex: `^${prefix}-${year}-` },
+    });
+    const seq = await nextSequence(key, seed);
+    this.employeeId = `${prefix}-${year}-${String(seq).padStart(5, "0")}`;
   }
   next();
 });

@@ -210,7 +210,17 @@ exports.closeSession = async (req, res, next) => {
 exports.listSessions = async (req, res, next) => {
   try {
     const filter = {};
-    if (req.query.cashierId) filter.cashierId = req.query.cashierId;
+    // R7au-FIX-15/D2-HIGH-5: validate cashierId ObjectId before stuffing
+    // into the query. Pre-R7au a malformed id was silently coerced to
+    // `null` by Mongo and the endpoint returned `[]` instead of 400 —
+    // the operator had no way to tell their filter was bad.
+    if (req.query.cashierId) {
+      const mongoose = require("mongoose");
+      if (!mongoose.isValidObjectId(req.query.cashierId)) {
+        return res.status(400).json({ success: false, message: "cashierId must be a valid ObjectId" });
+      }
+      filter.cashierId = req.query.cashierId;
+    }
     if (req.query.from || req.query.to) {
       filter.openedAt = {};
       if (req.query.from) filter.openedAt.$gte = new Date(`${req.query.from}T00:00:00`);

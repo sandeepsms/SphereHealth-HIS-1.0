@@ -764,6 +764,37 @@ async function onMARAdministration(marDoc, medication, administrationEntry) {
 
   if (!service) return; // No way to bill — log & move on
 
+  // R7au-FIX-3/D5-CRIT-C5: pharmacy double-count guard.
+  // Pre-R7au every MAR administration created a fresh PHARM-* trigger
+  // even when the drug had already been billed via `onIndentReleased`
+  // (which stamped a `reservationTriggerId` onto the indent item). Net
+  // effect: any drug dispensed by pharmacy and then administered by
+  // nurse got charged TWICE.
+  //
+  // Heuristic: look for a recent (≤ 24h), still-billable PHARM-* trigger
+  // for this admission + drug code. If we find one, skip the synthetic
+  // MAR trigger — the indent-release path already billed it. We don't
+  // mark the existing trigger as "administered" (it's an audit row for
+  // the dispense event), just suppress the duplicate charge.
+  try {
+    const BillingTrigger = require("../../models/Billing/BillingTrigger");
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const reservation = await BillingTrigger.findOne({
+      admissionId,
+      serviceCode: service.serviceCode,
+      sourceType: { $in: ["PharmacyIndent", "INDENT", "PHARM_RELEASE"] },
+      status: { $in: ["completed", "billed", "pending"] },
+      createdAt: { $gte: since },
+    }).select("_id status").lean();
+    if (reservation) {
+      console.log(`[AutoBilling] onMARAdministration skipped duplicate — reservation trigger ${reservation._id} already covers ${service.serviceCode}`);
+      return;
+    }
+  } catch (e) {
+    // Dedup lookup failed — proceed (bias toward billing, not skipping).
+    console.warn("[AutoBilling] MAR-dedup lookup skipped:", e.message);
+  }
+
   try {
     await createTrigger({
       admissionId,
@@ -1444,7 +1475,31 @@ async function attachPackageToAdmission(admissionDoc, packageDoc, opts = {}) {
       admission: admissionDoc._id,
       billStatus: { $in: ["DRAFT", "GENERATED", "PARTIAL"] },
     });
-    for (const b of affected) await b.save().catch((e) => console.warn(`[ANH attach] recalc skipped on ${b.billNumber}: ${e.message}`));
+    // R7au-FIX-11/D7-HIGH-C11: per-bill retry on VersionError. Pre-R7au
+    // a concurrent payment on any of these bills caused `b.save()` to
+    // throw VersionError → the `.catch` swallowed it and the bill's
+    // `excludedByPackage` recalc was silently lost. With cashier traffic
+    // running during a package attach, package math could drift on
+    // multiple bills. Now each save retries up to 5 times with a fresh
+    // read on VersionError; only unrelated errors are logged-and-skipped.
+    const _retryVE = require("../../utils/retryVersionError");
+    for (const b of affected) {
+      try {
+        await _retryVE(async () => {
+          // Re-fetch fresh so the retry has the latest __v + items.
+          const fresh = await PatientBill.findById(b._id);
+          if (!fresh) return null;
+          // Re-apply the excludedByPackage flag predicate on the fresh
+          // doc — Mongoose may have lost subdoc mutations on the stale
+          // reference between retries.
+          fresh.markModified("billItems");
+          await fresh.save();
+          return fresh;
+        }, { label: `ANH-attach:${b.billNumber}`, maxRetries: 5 });
+      } catch (e) {
+        console.warn(`[ANH attach] recalc skipped on ${b.billNumber}: ${e.message}`);
+      }
+    }
   } catch (e) {
     console.warn("[AutoBilling] excludedByPackage flag-flip skipped:", e.message);
   }
@@ -1653,8 +1708,15 @@ async function onEmergencyVisitCreated(emergencyVisit, admission) {
  * Returns { active, fired, skipped } counts.
  */
 async function runDailyBedChargeAccrual() {
+  // R7au-FIX-17/D5-MED-5: include `Transferred` admissions. The R7-series
+  // allowed bed-transfer-in-progress admissions to sit in status
+  // "Transferred" briefly while housekeeping moves the patient — pre-
+  // R7au the daily cron filter on `status:"Active"` excluded them, so
+  // transfer-day bed/nursing charges were silently skipped. The
+  // createTrigger zombie-guard only rejects Cancelled/Discharged, so
+  // Transferred passes through cleanly.
   const active = await Admission.find({
-    status: "Active",
+    status: { $in: ["Active", "Transferred"] },
     admissionType: { $in: ["Planned", "Emergency", "Day Care", "Daycare", "Transfer"] },
   }).lean();
 
@@ -2085,20 +2147,28 @@ const UNDO_WINDOW_MS = 15 * 60 * 1000; // 15-min receptionist undo window
 // Internal helper — removes a single bill line by item id and re-saves the
 // bill so pre-save totals recompute. Returns the fresh bill. Bails on closed
 // bills (PAID/CANCELLED/REFUNDED) — those need a refund flow, not an undo.
+// R7au-FIX-10/D7-HIGH-C10: wrap in retryVersionError so concurrent
+// payment/charge writes between findById and save() don't 500 the IPD
+// ledger. Pre-R7au every undo/override/cancel on a live IPD bill could
+// throw VersionError under cashier traffic — clinician saw "Internal
+// Server Error" and tried again, sometimes double-undoing.
 async function removeBillItemAndResave(billId, billItemId) {
   if (!billId || !billItemId) return null;
-  const bill = await PatientBill.findById(billId);
-  if (!bill) return null;
-  if (["PAID", "CANCELLED", "REFUNDED"].includes(bill.billStatus)) {
-    const err = new Error(`Cannot undo — bill is ${bill.billStatus}. Use refund/cancel flow.`);
-    err.code = "BILL_CLOSED";
-    throw err;
-  }
-  const before = bill.billItems.length;
-  bill.billItems = bill.billItems.filter(i => String(i._id) !== String(billItemId));
-  if (bill.billItems.length === before) return bill;     // nothing to remove
-  await bill.save();
-  return bill;
+  const retryVE = require("../../utils/retryVersionError");
+  return retryVE(async () => {
+    const bill = await PatientBill.findById(billId);
+    if (!bill) return null;
+    if (["PAID", "CANCELLED", "REFUNDED"].includes(bill.billStatus)) {
+      const err = new Error(`Cannot undo — bill is ${bill.billStatus}. Use refund/cancel flow.`);
+      err.code = "BILL_CLOSED";
+      throw err;
+    }
+    const before = bill.billItems.length;
+    bill.billItems = bill.billItems.filter(i => String(i._id) !== String(billItemId));
+    if (bill.billItems.length === before) return bill;     // nothing to remove
+    await bill.save();
+    return bill;
+  }, { label: "removeBillItemAndResave" });
 }
 
 /**

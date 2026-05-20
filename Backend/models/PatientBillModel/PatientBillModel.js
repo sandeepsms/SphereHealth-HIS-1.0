@@ -397,8 +397,16 @@ PatientBillSchema.methods.recalcTotals = function () {
       // (placeOfSupply blank or matches hospital state) → 50/50 CGST+SGST.
       // Inter-state (placeOfSupply differs) → 100% IGST. Bill-level
       // placeOfSupply is the single source — items inherit from parent.
+      // R7au-FIX-7/D6-HIGH-C7: also treat a non-zero bill-level
+      // `igstAmount` as an inter-state marker for LEGACY bills imported
+      // without `placeOfSupply` (pre-F18 data). Without this, recalcTotals
+      // re-derives 50/50 CGST/SGST and silently zeros out the legacy
+      // IGST — register/snapshot under-reports inter-state IGST.
       const _hosp = (this.constructor?.HOSPITAL_STATE_CODE || process.env.HOSPITAL_STATE_CODE || "").trim();
-      const _isInterState = _hosp && this.placeOfSupply && String(this.placeOfSupply).trim() !== _hosp;
+      const _legacyIgst = this.igstAmount != null && Number(this.igstAmount.toString ? this.igstAmount.toString() : this.igstAmount) > 0;
+      const _isInterState =
+        (_hosp && this.placeOfSupply && String(this.placeOfSupply).trim() !== _hosp) ||
+        _legacyIgst;
       if (_isInterState) {
         item.cgstAmount = toDec(0);
         item.sgstAmount = toDec(0);

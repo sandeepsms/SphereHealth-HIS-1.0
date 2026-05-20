@@ -136,6 +136,11 @@ const globalLimiter = rateLimit({
 app.use("/api/auth/login", loginLimiter);
 app.use("/api/auth/2fa", otpLimiter);
 app.use("/api/auth/otp", otpLimiter);
+// R7au-FIX-13/D3-HIGH: the actual 2FA mount in routes/index.js:166 is
+// `/api/2fa` (no /auth prefix), so the limiter above only protected
+// the never-mounted /api/auth/2fa path. SMS-cost abuse + OTP
+// enumeration were possible. Now both prefixes are throttled.
+app.use("/api/2fa",      otpLimiter);
 // Apply search throttle to the noisiest search routes
 app.use(
   ["/api/patients/search", "/api/billing/search", "/api/appointments/search"],
@@ -267,9 +272,38 @@ const _cancelGstSnapshot = scheduleDaily("gst-monthly-snapshot", 2, 0, async () 
   ]);
   const o = billsAgg[0] || { billsCount: 0, taxableValue: 0, cgst: 0, sgst: 0, igst: 0 };
 
-  // Credit notes — sum the reversals.
+  // R7au-FIX-6/D6-CRIT-C4: GSTR-1 CDNR attribution. A CN reverses GST
+  // against the ORIGINAL bill's tax period, not the CN's own date. If
+  // the original bill is in period P and the CN was issued in period
+  // P+1 (the normal case for a late refund), GSTR-1 wants the reversal
+  // in P's outward supply (Schedule 9, CDNR section), not P+1's.
+  //
+  // Pre-R7au we matched `creditNoteDate ∈ [periodStart, periodEnd)`
+  // which under-counted P's reversals whenever a CN was issued late.
+  // Worse: a CN issued at 00:00-01:59 IST on day-1 of P+1 (before the
+  // 02:00 IST cron fires) had creditNoteDate in P+1 but should reverse
+  // P's tax — that's the 2-hour misattribution window agents flagged.
+  //
+  // Fix: join via originalBillNumber → PatientBill.billGeneratedAt
+  // (immutable, set at DRAFT→GENERATED) so we attribute by the bill's
+  // period regardless of when the CN was issued. The $lookup is
+  // limited to CNs created in a wide outer window (period start to
+  // now+1d) so we don't scan every CN ever.
   const cnAgg = await CreditNote.aggregate([
-    { $match: { creditNoteDate: { $gte: periodStart, $lt: periodEnd } } },
+    { $match: { creditNoteDate: { $gte: periodStart, $lt: new Date() } } },
+    { $lookup: {
+        from: "patientbills",
+        localField: "originalBillNumber",
+        foreignField: "billNumber",
+        as: "_bill",
+        pipeline: [{ $project: { billGeneratedAt: 1 } }],
+    } },
+    { $addFields: {
+        _attributionDate: {
+          $ifNull: [{ $arrayElemAt: ["$_bill.billGeneratedAt", 0] }, "$creditNoteDate"],
+        },
+    } },
+    { $match: { _attributionDate: { $gte: periodStart, $lt: periodEnd } } },
     { $group: {
         _id: null,
         creditNotesCount: { $sum: 1 },
