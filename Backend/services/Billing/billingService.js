@@ -956,6 +956,15 @@ class BillingService {
     const newTotalDue = adjustments.reduce((s, a) => s + a.newBalance, 0);
     const totalDiscount = adjustments.reduce((s, a) => s + a.discountApplied, 0);
 
+    // R7av-FIX-10/D5-MED-2: invalidate Day Book cache so the accountant
+    // sees the bulk discount in the totals tile immediately. Pre-R7av
+    // bulk settlements skipped cache invalidation — 30s stale.
+    if (adjustments.length > 0) {
+      try {
+        require("../../controllers/Billing/billingController").invalidateDayBookCache?.();
+      } catch (_) {}
+    }
+
     return {
       billsTouched:     adjustments.length,
       totalDiscount:    Number(totalDiscount.toFixed(2)),
@@ -1178,6 +1187,20 @@ class BillingService {
       if (Number(pay.amount) <= 0) {
         const err = new Error("Cannot void a reversal entry");
         err.code = "ALREADY_REVERSAL"; throw err;
+      }
+      // R7av-FIX-8/D5-MED-4: refuse if a refund/reversal row already
+      // references this payment. Double-reversal (refund + void of the
+      // same paid row) would push the bill into incoherent state with
+      // net total going negative.
+      const _alreadyReversed = (b.payments || []).some((p) => {
+        if (Number(p.amount) >= 0) return false;       // not a reversal
+        // Match by VOID-<txn> or by remark containing the payment _id.
+        const tx = String(p.transactionId || "");
+        return tx.includes(String(pay._id)) || tx.includes(String(pay.transactionId || ""));
+      });
+      if (_alreadyReversed) {
+        const err = new Error("Cannot void — this payment has already been refunded/reversed");
+        err.code = "ALREADY_REVERSED"; err.status = 409; throw err;
       }
       if (!skipTimeGate) {
         const age = Date.now() - new Date(pay.paidAt).getTime();
@@ -1517,15 +1540,28 @@ class BillingService {
   }
 
   // ── 11. Update TPA claim status ───────────────────────────────
+  // R7av-FIX-12/D7-MED-3: wrap in retryVersionError + state-machine
+  // gate. Pre-R7av this 500'd on concurrent writes and accepted any
+  // status transition (e.g. SETTLED → PENDING, which corrupts the
+  // TPA register).
   async updateTPAClaimStatus(billId, { status, claimNumber, approvedAmount }) {
-    const bill = await PatientBill.findById(billId);
-    if (!bill) throw new Error("Bill not found");
-
-    bill.tpaClaimStatus = status;
-    if (claimNumber) bill.tpaClaimNumber = claimNumber;
-    if (approvedAmount) bill.tpaApprovedAmount = approvedAmount;
-    await bill.save();
-    return bill;
+    const retryVE = require("../../utils/retryVersionError");
+    return retryVE(async () => {
+      const bill = await PatientBill.findById(billId);
+      if (!bill) { const err = new Error("Bill not found"); err.status = 404; throw err; }
+      // Enum guard — schema enum is [NOT_APPLICABLE, PENDING, SUBMITTED,
+      // APPROVED, REJECTED, PARTIAL_APPROVED].
+      const VALID = ["NOT_APPLICABLE", "PENDING", "SUBMITTED", "APPROVED", "REJECTED", "PARTIAL_APPROVED"];
+      if (!VALID.includes(status)) {
+        const err = new Error(`Invalid TPA claim status: ${status}`);
+        err.status = 400; throw err;
+      }
+      bill.tpaClaimStatus = status;
+      if (claimNumber) bill.tpaClaimNumber = claimNumber;
+      if (approvedAmount) bill.tpaApprovedAmount = approvedAmount;
+      await bill.save();
+      return bill;
+    }, { label: "updateTPAClaimStatus" });
   }
 
   // ── 12. Billing dashboard summary ────────────────────────────

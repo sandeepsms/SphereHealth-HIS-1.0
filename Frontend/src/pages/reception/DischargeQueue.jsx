@@ -16,8 +16,13 @@ import { useAuth } from "../../context/AuthContext";
 import WhatsAppButton from "../../Components/whatsapp/WhatsAppButton";
 import "./reception-shared.css";
 import "../../Components/clinical/clinical-forms.css";
+// R7av-FIX-13/D4-R7at-money: use central toMoney so Decimal128 wire shape
+// `{$numberDecimal:"…"}` doesn't render as ₹NaN on the overage chip /
+// final-bill display. Pre-R7av the local `Number(n)` shim NaN'd
+// silently on the new Decimal128 fields from the backend.
+import { toMoney } from "../../utils/money";
 
-const fmtCur  = (n) => `₹${(Number(n) || 0).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+const fmtCur  = (n) => `₹${(toMoney(n) || 0).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
 
 export default function DischargeQueue() {

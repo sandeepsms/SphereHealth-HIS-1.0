@@ -196,7 +196,10 @@ const catBadge = (code) => {
 };
 
 // ── Money formatter ─────────────────────────────────────────────
-const inr = (n) => `₹${(Number(n) || 0).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+// R7av-FIX-13/D4-R7at-money: use central toMoney so Decimal128 fields
+// (grossAmount, totalDiscount, netAmount, advancePaid, balanceAmount,
+// per-medicine prices) don't render as ₹NaN.
+const inr = (n) => `₹${(toMoney(n) || 0).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
 const fmtDate     = (d) => d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 

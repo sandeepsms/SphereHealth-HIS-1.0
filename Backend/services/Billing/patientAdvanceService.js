@@ -285,6 +285,15 @@ class PatientAdvanceService {
               reason:               `Applied ${requested} from advance ${adv.receiptNumber} to ${bill.billNumber}`,
             });
           } catch (_) { /* audit best-effort */ }
+          // R7av-FIX-9/D5-MED-1: invalidate Day Book cache so the
+          // accountant's tile reflects the ADVANCE_ADJUSTMENT row
+          // within milliseconds, not 30s. Pre-R7av the apply flow
+          // skipped this — applied amounts stayed off the dashboard
+          // until next cache rotation.
+          try {
+            const ctrl = require("../../controllers/Billing/billingController");
+            ctrl.invalidateDayBookCache?.();
+          } catch (_) {}
           return { advance: adv, bill, appliedAmount: requested };
         };
 

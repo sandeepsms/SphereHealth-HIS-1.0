@@ -148,6 +148,22 @@ app.use(
 );
 app.use(globalLimiter);
 
+// R7av-FIX-14/D2-MED-3: Cache-Control on PHI endpoints. Pre-R7av no
+// PHI route emitted Cache-Control headers — shared proxy / browser-back
+// could leak patient data. We blanket every /api/patients, /api/billing,
+// /api/admissions, /api/mar, /api/doctor-notes, /api/mlc with
+// `no-store, private` so intermediaries don't cache and a logout
+// browser-back can't replay the page.
+app.use([
+  "/api/patients", "/api/billing", "/api/admissions",
+  "/api/mar", "/api/doctor-orders", "/api/doctor-notes", "/api/nursing-notes",
+  "/api/mlc", "/api/vitals", "/api/discharge", "/api/patient-file",
+  "/api/cashier-sessions", "/api/auth/me", "/api/auth/signature",
+], (req, res, next) => {
+  res.set("Cache-Control", "no-store, private");
+  next();
+});
+
 // ── Eager-load Mongoose models so populate() across collections works ──────
 require("./models/bedMgmt/bedsModel");
 require("./models/bedMgmt/wardModel");

@@ -21,7 +21,9 @@ const authenticate = async (req, res, next) => {
   }
 
   if (!token)
-    return res.status(401).json({ message: "Authentication required. Please login." });
+    // R7av-FIX-15/D2-HIGH-2: include `success:false` so the frontend
+    // can distinguish 401 from server downtime via `response.data.success`.
+    return res.status(401).json({ success: false, message: "Authentication required. Please login." });
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);

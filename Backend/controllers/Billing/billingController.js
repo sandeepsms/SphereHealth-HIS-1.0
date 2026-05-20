@@ -354,16 +354,43 @@ exports.getSummary = async (req, res) => {
 //   • byDoctor       — top 20 by collection (for consultant payout base)
 // All numbers are sums over the date window (createdAt between from..to,
 // inclusive). Returns empty arrays when range has no bills — never throws.
-exports.getRevenueBreakdown = async (req, res) => {
+// R7av-FIX-1/D2-HIGH-1: shared dashboard caches + safe-date helper.
+// Pre-R7av every `?from=&to=` endpoint silently dumped the full table
+// when the date was malformed, and the 5 heaviest endpoints rebuilt
+// their aggregations on every request. The cache TTL is short (60s)
+// so post-mutation staleness is tolerable; the date helper throws on
+// bad input so the controller surfaces 400 instead of running an
+// unbounded query.
+const _revenueCache  = require("../../utils/lruCache")({ max: 30, ttlMs: 60_000 });
+const _agingCache    = require("../../utils/lruCache")({ max: 30, ttlMs: 60_000 });
+const _gstRegCache   = require("../../utils/lruCache")({ max: 30, ttlMs: 5 * 60_000 });
+const _cnListCache   = require("../../utils/lruCache")({ max: 30, ttlMs: 60_000 });
+const _gstSnapCache  = require("../../utils/lruCache")({ max: 30, ttlMs: 5 * 60_000 });
+function _safeRange(req, opts) {
+  const { parseHospitalDateRange } = require("../../utils/queryGuards");
+  return parseHospitalDateRange(req.query.from, req.query.to, opts);
+}
+
+exports.getRevenueBreakdown = async (req, res, next) => {
   try {
     const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
     const { toNum } = require("../../utils/money");        // R7ap-F1: Decimal128 unwrap
-    const from = req.query.from ? new Date(`${req.query.from}T00:00:00`) : new Date(Date.now() - 30 * 86400000);
-    const to   = req.query.to   ? new Date(`${req.query.to}T23:59:59.999`) : new Date();
+    // R7av-FIX-1/D2-HIGH-1: replaced silent `new Date("abc")=Invalid Date`
+    // with the strict parseHospitalDateRange — bad input now 400s instead
+    // of dumping the full collection. 30-day default; max 366d window.
+    const { from, to } = _safeRange(req, { defaultDays: 30, maxDays: 366 });
+    const cacheKey = `rev:${from.toISOString()}:${to.toISOString()}`;
+    const payload = await _revenueCache.get(cacheKey, async () => {
     const bills = await PatientBill.find({
       createdAt: { $gte: from, $lte: to },
       billStatus: { $nin: ["DRAFT", "CANCELLED"] },        // R7ap-D5-12: also exclude cancelled
-    }).lean();
+    })
+      // R7av-FIX-2/D8-HIGH: project only the fields the reducer below
+      // actually consumes — pre-R7av this loaded full billItems[],
+      // payments[], adjustmentLog[] per row (~50-100 MB heap spike on
+      // 500-bill days).
+      .select("billStatus visitType paymentType department doctor advancePaid totalPaid amountPaid netAmount netPayable grossAmount totalAmount billItems.category billItems.netAmount billItems.grossAmount billItems.unitPrice billItems.quantity billItems.excludedByPackage")
+      .lean();
 
     const inc = (map, key, paid, gross = 0) => {
       const k = (key || "Other").toString();
@@ -437,17 +464,21 @@ exports.getRevenueBreakdown = async (req, res) => {
       .map(([k, v]) => ({ [keyName]: k, ...v }))
       .sort((a, b) => b.paid - a.paid);
 
-    res.json({
-      success: true,
-      window: { from: from.toISOString().slice(0,10), to: to.toISOString().slice(0,10), days: Math.ceil((to - from) / 86400000) + 1 },
-      totals: { paid: grandPaid, gross: grandGross, outstanding: grandGross - grandPaid, count: txnCount },
-      byCategory:   toArr(byCategory, "category"),
-      byVisitType:  toArr(byVisitType, "visitType"),
-      byPayer:      toArr(byPayer, "payer"),
-      byDepartment: toArr(byDepartment, "department"),
-      byDoctor:     Object.values(byDoctor).sort((a, b) => b.paid - a.paid).slice(0, 20),
+      return {
+        window: { from: from.toISOString().slice(0,10), to: to.toISOString().slice(0,10), days: Math.ceil((to - from) / 86400000) + 1 },
+        totals: { paid: grandPaid, gross: grandGross, outstanding: grandGross - grandPaid, count: txnCount },
+        byCategory:   toArr(byCategory, "category"),
+        byVisitType:  toArr(byVisitType, "visitType"),
+        byPayer:      toArr(byPayer, "payer"),
+        byDepartment: toArr(byDepartment, "department"),
+        byDoctor:     Object.values(byDoctor).sort((a, b) => b.paid - a.paid).slice(0, 20),
+      };
     });
+    res.json({ success: true, ...payload });
   } catch (e) {
+    if (e?.status && !res.headersSent) {
+      return res.status(e.status).json({ success: false, message: e.message });
+    }
     console.error("[billing] getRevenueBreakdown error:", e);
     res.status(500).json({ success: false, message: e.message });
   }
@@ -459,15 +490,28 @@ exports.getRevenueBreakdown = async (req, res) => {
 // Patient-credit ledger: every bill with outstanding > 0, sorted desc,
 // limited to 100. TPA-marked bills go to a separate sub-list so the
 // patient credit list isn't polluted with insurance receivables.
-exports.getAging = async (req, res) => {
+exports.getAging = async (req, res, next) => {
   try {
     const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
     const { toNum } = require("../../utils/money");        // R7ap-F1: Decimal128 unwrap
-    const asOf = req.query.asOf ? new Date(`${req.query.asOf}T23:59:59.999`) : new Date();
+    const { parseHospitalDate } = require("../../utils/queryGuards");
+    // R7av-FIX-1/D2-HIGH-1: strict date parse; default = today end-of-day.
+    let asOf;
+    try { asOf = parseHospitalDate(req.query.asOf, { endOfDay: true }) || new Date(); }
+    catch (e) { return res.status(400).json({ success: false, message: e.message }); }
+    const cacheKey = `aging:${asOf.toISOString()}`;
+    const payload = await _agingCache.get(cacheKey, async () => {
 
     const open = await PatientBill.find({
       billStatus: { $in: ["GENERATED", "PARTIAL"] },
-    }).select("billNumber UHID patientName netAmount netPayable grossAmount balanceAmount patientPayableAmount advancePaid totalPaid amountPaid paymentType tpaClaimStatus billStatus createdAt billItems").lean();
+      // R7av-FIX-3/D8-HIGH-4: cap to 12-month window. Pre-R7av loaded
+      // every open bill since inception → 5-10k docs at year+ hospital.
+      createdAt: { $gte: new Date(Date.now() - 365 * 86400000) },
+    })
+      .select("billNumber UHID patientName netAmount netPayable grossAmount balanceAmount patientPayableAmount advancePaid totalPaid amountPaid paymentType tpaClaimStatus billStatus createdAt billItems.netAmount")
+      .sort({ createdAt: -1 })
+      .limit(2000)
+      .lean();
 
     const buckets = { "0-30": { count: 0, amount: 0 }, "31-60": { count: 0, amount: 0 }, "61-90": { count: 0, amount: 0 }, "90+": { count: 0, amount: 0 } };
     const patientCredit = [];
@@ -502,14 +546,15 @@ exports.getAging = async (req, res) => {
     patientCredit.sort((a, b) => b.due - a.due);
     tpaCredit.sort((a, b) => b.due - a.due);
 
-    res.json({
-      success: true,
-      asOf: asOf.toISOString().slice(0,10),
-      buckets: Object.entries(buckets).map(([bucket, v]) => ({ bucket, ...v })),
-      totalOutstanding: patientCredit.reduce((s, e) => s + e.due, 0) + tpaCredit.reduce((s, e) => s + e.due, 0),
-      patientCredit: patientCredit.slice(0, 100),
-      tpaCredit:     tpaCredit.slice(0, 100),
+      return {
+        asOf: asOf.toISOString().slice(0,10),
+        buckets: Object.entries(buckets).map(([bucket, v]) => ({ bucket, ...v })),
+        totalOutstanding: patientCredit.reduce((s, e) => s + e.due, 0) + tpaCredit.reduce((s, e) => s + e.due, 0),
+        patientCredit: patientCredit.slice(0, 100),
+        tpaCredit:     tpaCredit.slice(0, 100),
+      };
     });
+    res.json({ success: true, ...payload });
   } catch (e) {
     console.error("[billing] getAging error:", e);
     res.status(500).json({ success: false, message: e.message });
@@ -1056,14 +1101,31 @@ exports.cancelBill = async (req, res, next) => {
 exports.tpaDeny = async (req, res, next) => {
   try {
     const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
-    const bill = await PatientBill.findById(req.params.billId);
-    if (!bill) return res.status(404).json({ success: false, message: "Bill not found" });
-    bill.tpaClaimStatus = "REJECTED";
-    bill.tpaApprovedAmount = 0;
-    if (req.body.reason) bill.remarks = `TPA Denied: ${req.body.reason}`;
-    await bill.save();
+    const retryVE    = require("../../utils/retryVersionError");
+    // R7av-FIX-11/D7-MED-2: state-machine guard + retry. Pre-R7av tpaDeny
+    // could be invoked on already-SETTLED claims (wiping the approved
+    // amount) and 500'd under concurrent writer races.
+    const bill = await retryVE(async () => {
+      const b = await PatientBill.findById(req.params.billId);
+      if (!b) { const err = new Error("Bill not found"); err.status = 404; throw err; }
+      const ALLOWED = ["PENDING", "SUBMITTED", "APPROVED", "PARTIAL_APPROVED", "NOT_APPLICABLE"];
+      if (!ALLOWED.includes(b.tpaClaimStatus)) {
+        const err = new Error(`Cannot deny — claim is in '${b.tpaClaimStatus}' state`);
+        err.status = 409; throw err;
+      }
+      b.tpaClaimStatus = "REJECTED";
+      b.tpaApprovedAmount = 0;
+      if (req.body.reason) b.remarks = `TPA Denied: ${req.body.reason}`;
+      await b.save();
+      return b;
+    }, { label: "tpaDeny" });
     res.json({ success: true, data: bill });
-  } catch (e) { next(e); }
+  } catch (e) {
+    if (e?.status && !res.headersSent) {
+      return res.status(e.status).json({ success: false, message: e.message });
+    }
+    next(e);
+  }
 };
 
 // POST /api/billing/:billId/tpa-settle
@@ -1376,7 +1438,14 @@ async function computeCollectionSummary(dateStr) {
         { "payments.paidAt": { $gte: dayStart, $lte: dayEnd } },
         { createdAt: { $gte: dayStart, $lte: dayEnd } },
       ],
-    }).lean();
+    })
+      // R7av-FIX-2/D8-HIGH-2: project only the fields the reducers below
+      // actually read. Pre-R7av every cache miss loaded billItems[] +
+      // adjustmentLog[] for every bill → 50-100 MB heap spike on 500-
+      // bill days. The reducers consume payments, billItems.netAmount,
+      // visitType, paymentType, doctor, createdBy + a few money totals.
+      .select("payments billItems.netAmount billItems.category billItems.excludedByPackage visitType paymentType doctor doctorName createdBy createdByName netAmount netPayable grossAmount totalAmount balanceAmount patientPayableAmount advancePaid totalPaid amountPaid")
+      .lean();
 
     // Aggregators
     let totalCollected = 0, totalGross = 0, totalPending = 0, advanceDue = 0, tpaPending = 0;
@@ -1727,17 +1796,40 @@ exports.getUhidSummary = async (req, res, next) => {
 exports.listBillingAudit = async (req, res, next) => {
   try {
     const BillingAudit = require("../../models/Billing/BillingAudit");
+    const mongoose = require("mongoose");
     const filter = {};
     if (req.query.event)  filter.event  = req.query.event;
     if (req.query.UHID)   filter.UHID   = String(req.query.UHID).toUpperCase();
-    if (req.query.billId) filter.billId = req.query.billId;
+    if (req.query.billId) {
+      // R7av-FIX-4/D2-MED-2: ObjectId validate before stuffing into filter
+      // — bad input previously CastError 500'd.
+      if (!mongoose.isValidObjectId(req.query.billId)) {
+        return res.status(400).json({ success: false, message: "billId must be a valid ObjectId" });
+      }
+      filter.billId = req.query.billId;
+    }
     if (req.query.from || req.query.to) {
-      filter.createdAt = {};
-      if (req.query.from) filter.createdAt.$gte = new Date(`${req.query.from}T00:00:00`);
-      if (req.query.to)   filter.createdAt.$lte = new Date(`${req.query.to}T23:59:59.999`);
+      try {
+        // R7av-FIX-1/D2-HIGH-1: strict date parse — pre-R7av invalid
+        // dates produced `Invalid Date` and Mongo treated `$gte:Invalid`
+        // as wide-open. Default last 90d when both present so the audit
+        // page works without a window picker.
+        const { parseHospitalDate } = require("../../utils/queryGuards");
+        filter.createdAt = {};
+        if (req.query.from) filter.createdAt.$gte = parseHospitalDate(req.query.from);
+        if (req.query.to)   filter.createdAt.$lte = parseHospitalDate(req.query.to, { endOfDay: true });
+      } catch (e) {
+        return res.status(400).json({ success: false, message: e.message });
+      }
     }
     const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 100));
-    const rows = await BillingAudit.find(filter).sort({ createdAt: -1 }).limit(limit).lean();
+    // R7av-FIX-5/D8-MED-4: project out before/after Mixed blobs by default
+    // (each can be ~12KB → 500-row page = 6MB payload). Caller can opt
+    // back in via ?include=before,after for a specific row inspect.
+    const include = String(req.query.include || "");
+    const proj = include.includes("before") || include.includes("after")
+      ? {} : { before: 0, after: 0 };
+    const rows = await BillingAudit.find(filter, proj).sort({ createdAt: -1 }).limit(limit).lean();
     res.json({ success: true, data: rows, meta: { count: rows.length, limit } });
   } catch (e) { next(e); }
 };
@@ -1754,8 +1846,17 @@ exports.getHospitalGstRegister = async (req, res, next) => {
     const CreditNote  = require("../../models/Billing/CreditNote");
     const GstMonthlySnapshot = require("../../models/Billing/GstMonthlySnapshot");
     const { toNum }   = require("../../utils/money");
-    const from = req.query.from ? new Date(`${req.query.from}T00:00:00`) : new Date(Date.now() - 30 * 86400000);
-    const to   = req.query.to   ? new Date(`${req.query.to}T23:59:59.999`) : new Date();
+    // R7av-FIX-1/D2-HIGH-1 + D8-HIGH-5: strict date parse + 5-min cache.
+    // GST register data changes slowly (most period rows are frozen via
+    // monthly snapshot) so caching aggressively is safe.
+    let from, to;
+    try {
+      ({ from, to } = _safeRange(req, { defaultDays: 30, maxDays: 366 }));
+    } catch (e) {
+      return res.status(e.status || 400).json({ success: false, message: e.message });
+    }
+    const cacheKey = `gstreg:${from.toISOString()}:${to.toISOString()}`;
+    const payload = await _gstRegCache.get(cacheKey, async () => {
 
     // Aggregate over GENERATED/PARTIAL/PAID/REFUNDED bills only (DRAFT/CANCELLED
     // not yet finalised). For each line item, bucket by taxPercent.
@@ -1765,6 +1866,10 @@ exports.getHospitalGstRegister = async (req, res, next) => {
     // (editable, defaults to creation) while the cron froze by
     // `billGeneratedAt` — period attribution drifted whenever a cashier
     // re-edited billDate on a late-night bill near month boundary.
+    // R7av-FIX-6/D6-HIGH-1: aggregate the per-item CGST/SGST/IGST
+    // amounts directly instead of hard-coding `taxAmount/2` for both.
+    // Pre-R7av the register reported inter-state IGST as 50/50 intra-
+    // state — register vs monthly-snapshot drift on every IGST bill.
     const pipeline = [
       { $match: {
           billStatus:      { $nin: ["DRAFT", "CANCELLED"] },
@@ -1776,13 +1881,11 @@ exports.getHospitalGstRegister = async (req, res, next) => {
           _id:           "$billItems.taxPercent",
           bills:         { $addToSet: "$_id" },
           itemCount:     { $sum: 1 },
-          // R7ar-P0-3/D1-aq-02: BillItem schema has NO `taxableAmount` field;
-          // the taxable value of a line = netAmount (post-discount, pre-tax).
-          // Pre-R7ar the aggregator pipeline referenced a non-existent field
-          // and silently returned 0 for every taxable bucket while reporting
-          // non-zero taxAmount → GSTR-1 reconciliation broken.
           taxableValue:  { $sum: { $toDouble: "$billItems.netAmount" } },
           taxAmount:     { $sum: { $toDouble: "$billItems.taxAmount" } },
+          cgst:          { $sum: { $toDouble: { $ifNull: ["$billItems.cgstAmount", 0] } } },
+          sgst:          { $sum: { $toDouble: { $ifNull: ["$billItems.sgstAmount", 0] } } },
+          igst:          { $sum: { $toDouble: { $ifNull: ["$billItems.igstAmount", 0] } } },
       }},
       { $project: {
           _id: 0,
@@ -1791,9 +1894,9 @@ exports.getHospitalGstRegister = async (req, res, next) => {
           itemCount:    1,
           taxableValue: 1,
           taxAmount:    1,
-          // 50/50 intra-state split. Inter-state IGST handling deferred (D6-04).
-          cgst:         { $divide: ["$taxAmount", 2] },
-          sgst:         { $divide: ["$taxAmount", 2] },
+          cgst:         1,
+          sgst:         1,
+          igst:         1,
       }},
       { $sort: { rate: 1 } },
     ];
@@ -1803,11 +1906,12 @@ exports.getHospitalGstRegister = async (req, res, next) => {
         taxableValue: acc.taxableValue + toNum(b.taxableValue),
         cgst:         acc.cgst         + toNum(b.cgst),
         sgst:         acc.sgst         + toNum(b.sgst),
+        igst:         acc.igst         + toNum(b.igst),
         taxAmount:    acc.taxAmount    + toNum(b.taxAmount),
         billCount:    acc.billCount    + (b.billCount || 0),
         itemCount:    acc.itemCount    + (b.itemCount || 0),
       }),
-      { taxableValue: 0, cgst: 0, sgst: 0, taxAmount: 0, billCount: 0, itemCount: 0 },
+      { taxableValue: 0, cgst: 0, sgst: 0, igst: 0, taxAmount: 0, billCount: 0, itemCount: 0 },
     );
 
     // R7ar-P1-15/D6-aq-08: subtract CreditNote reversals from the
@@ -1831,10 +1935,12 @@ exports.getHospitalGstRegister = async (req, res, next) => {
 
     const totals = {
       ...grossTotals,
-      // Net = gross outward − refunds (CDNR reversal).
+      // Net = gross outward − refunds (CDNR reversal). Now includes
+      // IGST so inter-state reversals are visible (R7av-FIX-6).
       netTaxableValue: grossTotals.taxableValue - toNum(reversals.taxableValue),
       netCgst:         grossTotals.cgst         - toNum(reversals.cgst),
       netSgst:         grossTotals.sgst         - toNum(reversals.sgst),
+      netIgst:         grossTotals.igst         - toNum(reversals.igst),
       netTaxAmount:    grossTotals.taxAmount    - toNum(reversals.taxAmount),
       reversed: {
         count:        reversals.count,
@@ -1853,16 +1959,15 @@ exports.getHospitalGstRegister = async (req, res, next) => {
       periodEnd:   { $gte: from },
     }).sort({ periodStart: 1 }).lean();
 
-    res.json({
-      success: true,
-      data: {
+      return {
         from: from.toISOString().slice(0, 10),
         to:   to.toISOString().slice(0, 10),
         buckets,
         totals,
         snapshots,                                // R7ar-P1-23
-      },
+      };
     });
+    res.json({ success: true, data: payload });
   } catch (e) { next(e); }
 };
 
@@ -1874,21 +1979,41 @@ exports.listCreditNotes = async (req, res, next) => {
   try {
     const CreditNote = require("../../models/Billing/CreditNote");
     const { decimalToNumber } = require("../../utils/money");
+    const { parseHospitalDate } = require("../../utils/queryGuards");
     const filter = {};
+    // R7av-FIX-1/D2-HIGH-1: strict date validation.
     if (req.query.from || req.query.to) {
-      filter.creditNoteDate = {};
-      if (req.query.from) filter.creditNoteDate.$gte = new Date(`${req.query.from}T00:00:00`);
-      if (req.query.to)   filter.creditNoteDate.$lte = new Date(`${req.query.to}T23:59:59.999`);
+      try {
+        filter.creditNoteDate = {};
+        if (req.query.from) filter.creditNoteDate.$gte = parseHospitalDate(req.query.from);
+        if (req.query.to)   filter.creditNoteDate.$lte = parseHospitalDate(req.query.to, { endOfDay: true });
+      } catch (e) {
+        return res.status(400).json({ success: false, message: e.message });
+      }
     }
     if (req.query.UHID) filter.UHID = String(req.query.UHID).toUpperCase().trim();
     if (req.query.billNumber) filter.originalBillNumber = String(req.query.billNumber).trim();
     if (req.query.reasonCode) filter.reasonCode = String(req.query.reasonCode).trim();
     const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 100));
-    const rows = await CreditNote.find(filter)
-      .populate("patientId", "fullName UHID contactNumber")
-      .sort({ creditNoteDate: -1 })
-      .limit(limit)
-      .lean();
+    // R7av-FIX-7/D8-HIGH-6: replace populate with $lookup to avoid N+1
+    // round-trips. Only project the patient name fields the Refunds tab
+    // actually renders.
+    const rows = await CreditNote.aggregate([
+      { $match: filter },
+      { $sort: { creditNoteDate: -1 } },
+      { $limit: limit },
+      { $lookup: {
+          from: "patients",
+          localField: "patientId",
+          foreignField: "_id",
+          as: "_p",
+          pipeline: [{ $project: { fullName: 1, UHID: 1, contactNumber: 1 } }],
+      } },
+      { $addFields: {
+          patientId: { $arrayElemAt: ["$_p", 0] },
+      } },
+      { $project: { _p: 0 } },
+    ]);
     rows.forEach((r) => decimalToNumber(null, r));
     const total = rows.reduce((s, r) => s + Number(r.refundAmount || 0), 0);
     const totalTax = rows.reduce((s, r) => s + Number(r.taxAmount || 0), 0);
@@ -1906,11 +2031,27 @@ exports.listCreditNotes = async (req, res, next) => {
 exports.listGstSnapshots = async (req, res, next) => {
   try {
     const GstMonthlySnapshot = require("../../models/Billing/GstMonthlySnapshot");
+    const { parseHospitalDate } = require("../../utils/queryGuards");
+    // R7av-FIX-1/D2-HIGH-1 + D6-MED-2: strict date parse + overlap test.
+    // Pre-R7av the AND-of-bounds filter `periodStart>=from && periodEnd<=to`
+    // missed snapshots that STRADDLE the window (e.g. "show me Q1" =
+    // 3 months, but each snapshot is 1 month). Now uses overlap:
+    // `periodStart<=to && periodEnd>=from`.
+    let from, to;
+    try {
+      from = parseHospitalDate(req.query.from);
+      to   = parseHospitalDate(req.query.to, { endOfDay: true });
+    } catch (e) {
+      return res.status(400).json({ success: false, message: e.message });
+    }
     const filter = {};
-    if (req.query.from) filter.periodStart = { $gte: new Date(`${req.query.from}T00:00:00+05:30`) };
-    if (req.query.to)   filter.periodEnd   = { $lte: new Date(`${req.query.to}T23:59:59+05:30`) };
-    const rows = await GstMonthlySnapshot.find(filter).sort({ periodStart: -1 }).lean();
-    res.json({ success: true, data: rows, meta: { count: rows.length } });
+    if (to)   filter.periodStart = { $lte: to };
+    if (from) filter.periodEnd   = { $gte: from };
+    const limit = Math.min(120, Math.max(1, Number(req.query.limit) || 60));
+    const cacheKey = `gstsnap:${from ? from.toISOString() : ""}:${to ? to.toISOString() : ""}:${limit}`;
+    const rows = await _gstSnapCache.get(cacheKey, async () =>
+      GstMonthlySnapshot.find(filter).sort({ periodStart: -1 }).limit(limit).lean());
+    res.json({ success: true, data: rows, meta: { count: rows.length, limit } });
   } catch (e) { next(e); }
 };
 
@@ -1966,18 +2107,25 @@ exports.listAdvanceRefunds = async (req, res) => {
   try {
     const PatientAdvance = require("../../models/PatientBillModel/PatientAdvanceModel");
     const { decimalToNumber } = require("../../utils/money");
-    const from = req.query.from ? new Date(`${req.query.from}T00:00:00`) : new Date(Date.now() - 30 * 86400000);
-    const to   = req.query.to   ? new Date(`${req.query.to}T23:59:59.999`) : new Date();
+    // R7av-FIX-1/D2-HIGH-1 + D8-HIGH-7: strict date parse + bounded limit.
+    let from, to;
+    try {
+      ({ from, to } = _safeRange(req, { defaultDays: 30, maxDays: 366 }));
+    } catch (e) {
+      return res.status(e.status || 400).json({ success: false, message: e.message });
+    }
+    const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 200));
     const rows = await PatientAdvance.find({
       status: "REFUNDED",
       refundedAt: { $gte: from, $lte: to },
     })
       .populate("patientId", "fullName UHID contactNumber")
       .sort({ refundedAt: -1 })
+      .limit(limit)
       .lean();
     rows.forEach((r) => decimalToNumber(null, r));
     const total = rows.reduce((s, r) => s + Number(r.refundedAmount || 0), 0);
-    res.json({ success: true, data: rows, meta: { count: rows.length, total } });
+    res.json({ success: true, data: rows, meta: { count: rows.length, limit, total } });
   } catch (e) {
     res.status(500).json({ success: false, message: e?.message || "Advance refund list failed" });
   }
