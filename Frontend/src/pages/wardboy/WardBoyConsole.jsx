@@ -23,7 +23,7 @@ import { useAuth } from "../../context/AuthContext";
 import { ShiftTab, EquipmentTab, SuppliesTab, CodeBlueTab, MortuaryTab } from "./WardBoyConsoleTabs";
 
 import { API_BASE_URL as API } from "../../config/api";
-const authHdr = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem("his_token")}` } });
+const authHdr = () => ({ headers: { Authorization: `Bearer ${(sessionStorage.getItem("his_token") || localStorage.getItem("his_token"))}` } });
 
 const TYPE_LABEL = {
   transport: "Transport",

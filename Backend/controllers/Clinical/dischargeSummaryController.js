@@ -140,8 +140,14 @@ class DischargeSummaryController {
     // and the date/condition writes bypass the schema's enum/format
     // checks; a future bad value (e.g. status: "FINAL_GREATEST") would
     // persist silently and break the discharge filter.
-    const summary = await DischargeSummary.findByIdAndUpdate(
-      req.params.id,
+    // R7s: Atomic CAS — only flip status to "finalized" if it is NOT
+    // already finalized. Two doctors clicking Finalize simultaneously
+    // would previously both succeed: both flip status, both run the
+    // bed-release block below, leaving the audit trail with two
+    // finalizedAt timestamps and potentially racing the bed update.
+    // Now the second caller fails the CAS and we return 409 cleanly.
+    const summary = await DischargeSummary.findOneAndUpdate(
+      { _id: req.params.id, status: { $ne: "finalized" } },
       {
         status: "finalized",
         finalizedByName: finalizedByName || "Doctor",
@@ -158,7 +164,17 @@ class DischargeSummaryController {
       },
       { new: true, runValidators: true }
     );
-    if (!summary) return res.status(404).json({ success: false, message: "Discharge summary not found" });
+    if (!summary) {
+      // Either summary missing OR already finalized — disambiguate with a
+      // probe so the caller knows whether to retry or accept.
+      const probe = await DischargeSummary.findById(req.params.id).select("status finalizedAt finalizedByName").lean();
+      if (!probe) return res.status(404).json({ success: false, message: "Discharge summary not found" });
+      return res.status(409).json({
+        success: false,
+        message: `Discharge summary already finalized by ${probe.finalizedByName || "another user"} at ${probe.finalizedAt}.`,
+        code: "ALREADY_FINALIZED",
+      });
+    }
 
     // Also update the admission record status AND release the bed.
     // Audit-Pass-17 found the bed was never released on finalize — the bed

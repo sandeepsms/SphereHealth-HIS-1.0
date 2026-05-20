@@ -2,8 +2,24 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import axios from "axios";
 import { API_ENDPOINTS } from "../config/api";
 import { roleCan, roleSeesModule, homePathForRole } from "../config/permissions";
+import { getAuthToken } from "../config/axiosInterceptor";
 
 const AuthContext = createContext(null);
+
+// R7y: JWT lives in sessionStorage (per-tab) so the user can hold
+// six different role sessions side-by-side in one Chrome window.
+// See axiosInterceptor.js for the migration logic.
+const TOKEN_KEY = "his_token";
+const setStoredToken = (t) => {
+  try { sessionStorage.setItem(TOKEN_KEY, t); } catch (_) {}
+  // Also clear any stale localStorage copy so the migration path
+  // doesn't keep resurrecting an old token.
+  try { localStorage.removeItem(TOKEN_KEY); } catch (_) {}
+};
+const clearStoredToken = () => {
+  try { sessionStorage.removeItem(TOKEN_KEY); } catch (_) {}
+  try { localStorage.removeItem(TOKEN_KEY); } catch (_) {}
+};
 
 export function AuthProvider({ children }) {
   const [user, setUser]       = useState(null);   // current user object
@@ -12,13 +28,13 @@ export function AuthProvider({ children }) {
   // for "am I the consultant of record?" checks because Admission stores
   // `attendingDoctorId` as the Doctor collection's _id (NOT the User _id).
   const [doctorProfile, setDoctorProfile] = useState(null);
-  const [token, setToken]     = useState(() => localStorage.getItem("his_token") || null);
+  const [token, setToken]     = useState(() => getAuthToken());
   const [loading, setLoading] = useState(true);   // initial session check
 
   /* ── Restore session on mount ── */
   useEffect(() => {
     const restore = async () => {
-      const saved = localStorage.getItem("his_token");
+      const saved = getAuthToken();
       if (!saved) { setLoading(false); return; }
       try {
         const res = await axios.get(API_ENDPOINTS.AUTH_ME, {
@@ -28,7 +44,7 @@ export function AuthProvider({ children }) {
         setDoctorProfile(res.data.doctorProfile || null);
         setToken(saved);
       } catch {
-        localStorage.removeItem("his_token");
+        clearStoredToken();
         setToken(null);
         setUser(null);
         setDoctorProfile(null);
@@ -43,7 +59,7 @@ export function AuthProvider({ children }) {
   const login = useCallback(async (email, password) => {
     const res = await axios.post(API_ENDPOINTS.AUTH_LOGIN, { email, password });
     const { token: t, user: u, doctorProfile: dp } = res.data;
-    localStorage.setItem("his_token", t);
+    setStoredToken(t); // R7y: writes to sessionStorage (per-tab)
     setToken(t);
     setUser(u);
     // login response may not include doctorProfile (older clients);
@@ -65,7 +81,7 @@ export function AuthProvider({ children }) {
      a shared terminal can't open DevTools and harvest the previous user's
      patient context. Security audit 2026-05-17 finding E-01 / E-02. */
   const logout = useCallback(() => {
-    localStorage.removeItem("his_token");
+    clearStoredToken(); // R7y: scrubs both sessionStorage + any stale localStorage
     // PHI prefixes used by NABH nursing pages + reception autosave +
     // break-glass justifications. Keep this list in sync with whatever
     // pages call localStorage.setItem with a patient-scoped key.

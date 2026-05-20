@@ -71,6 +71,17 @@ const ACTIONS = {
   "vitals.write":          ["Admin", "Nurse", "Doctor"],
   "mar.write":             ["Admin", "Nurse"],
   "doctor-orders.write":   ["Admin", "Doctor"],
+  // R7m: Nurse-side actions on doctor orders. Acknowledge is the
+  // first formal touch before any dose administration (NABH MOM.3).
+  // Stop/cancel orders are a doctor-only action — nurses can only
+  // hold the next dose, not discontinue the whole prescription.
+  "order.acknowledge":     ["Admin", "Nurse", "Doctor"],
+  "order.stop":            ["Admin", "Doctor"],
+  // R7n: Consent forms (NABH PRE.3 / PRE.4). Doctor / Nurse capture +
+  // sign / refuse / revoke; Admin can also edit. DELETE is Admin-only
+  // because a signed/refused consent is a legal record.
+  "consent.write":         ["Admin", "Doctor", "Nurse"],
+  "consent.delete":        ["Admin"],
 
   // Pharmacy
   "pharmacy.dispense":     ["Admin", "Pharmacist"],
@@ -100,6 +111,13 @@ const ACTIONS = {
   "lab.result-entry":      ["Admin", "Lab Technician"],
   "lab.verify":            ["Admin", "Doctor"],
   "lab.dispatch":          ["Admin", "Lab Technician"],
+  // R7z: split cancellation from dispatch. Lab Tech can print/dispatch
+  // reports but should NOT be able to cancel a doctor's order — that's a
+  // clinical decision (was the test no longer indicated?). The cancel
+  // flow also reverses billing line items, so it doubles as a financial
+  // override — definitely not Lab Tech's call. Sample rejection (bad
+  // collection, hemolysis) stays a Lab Tech action via lab.result-entry.
+  "lab.cancel":            ["Admin", "Doctor"],
   // Manual lab data entry — trend sheets + imaging / micro / histopath
   // reports (everything outsourced labs send back as paper/PDF).
   "lab.records.read":      ["Admin", "Doctor", "Nurse", "Lab Technician"],

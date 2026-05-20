@@ -7,7 +7,7 @@
 // upload files and the raw fetch / EventSource API is cleaner.
 
 export function authToken() {
-  try { return localStorage.getItem("his_token") || ""; } catch { return ""; }
+  try { return (sessionStorage.getItem("his_token") || localStorage.getItem("his_token")) || ""; } catch { return ""; }
 }
 
 export default function authFetch(url, options = {}) {

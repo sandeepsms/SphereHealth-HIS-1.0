@@ -38,7 +38,7 @@ import {
      to the patient-master lookup. */
 async function lookupHisPatient(uhid) {
   if (!uhid || !uhid.trim()) return null;
-  const token = localStorage.getItem("his_token");
+  const token = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
   const headers = { Authorization: `Bearer ${token}` };
   try {
     const r = await axios.get(`${API_ENDPOINTS.BASE}/admissions/active?UHID=${encodeURIComponent(uhid.trim())}`, { headers });

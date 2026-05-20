@@ -452,7 +452,7 @@ function DoctorNotesContent({ selectedPatient }) {
   const saveNote = async (status = "draft") => {
     if (!patient) { toast.warn("No patient loaded"); return; }
     const ipdNo = patient.ipdNo || patient.admissionNumber || patient._id;
-    const token = localStorage.getItem("his_token");
+    const token = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
     const payload = {
@@ -682,7 +682,7 @@ function DoctorNotesContent({ selectedPatient }) {
   const signNote = async (noteId) => {
     if (!patient) return;
     const ipdNo = patient.ipdNo || patient.admissionNumber || patient._id;
-    const token = localStorage.getItem("his_token");
+    const token = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
     try {
       await axios.patch(`${API_ENDPOINTS.DOCTOR_NOTES}/${noteId}/sign`, {}, { headers });
@@ -697,7 +697,7 @@ function DoctorNotesContent({ selectedPatient }) {
   const saveDiagnosis = async () => {
     if (!patient) return;
     const ipdNo = patient.ipdNo || patient.admissionNumber || patient._id;
-    const token = localStorage.getItem("his_token");
+    const token = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
     const payload = {
       provisionalDiagnosis: diag.provisional || "",
@@ -1252,6 +1252,10 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
               <TreatmentChart
                 UHID={patient?.UHID || patient?.uhid || searchUHID}
                 visitId={patient?.ipdNo || patient?.admissionNumber || patient?.visitId}
+                // R7j: enables inline "Raise Indent" button in MAR header.
+                // patient._id is the Admission ObjectId (same source used by
+                // the TreatmentTeamPanel just below).
+                admissionId={patient?._id || patient?.admissionId}
                 patientName={patient?.patientName || patient?.patientId?.fullName || ""}
                 nurseMode={false}
                 refreshTrigger={ordersRefresh}
@@ -2795,7 +2799,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                   if (patient) {
                     const ipdNo = patient.ipdNo || patient.admissionNumber || patient._id;
                     // Re-fetch fresh admission to get doctorCompleted=true
-                    const token = localStorage.getItem("his_token");
+                    const token = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
                     const headers = token ? { Authorization: `Bearer ${token}` } : {};
                     try {
                       const { data } = await (await import("axios")).default.get(

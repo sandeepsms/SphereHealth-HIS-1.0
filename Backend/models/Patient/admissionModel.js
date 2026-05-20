@@ -106,7 +106,22 @@ const AdmissionSchema = new mongoose.Schema(
       type: Date,
       default: Date.now,
       required: true },
-    expectedDischargeDate: Date,
+    // R7u: expectedDischargeDate must be AFTER admissionDate. Without this
+    // a copy-paste typo in the form (e.g. expected = 2026-01-01 vs admitted
+    // 2026-05-19) lands in the DB silently and corrupts the LOS forecast.
+    expectedDischargeDate: {
+      type: Date,
+      validate: {
+        validator: function (v) {
+          if (!v) return true;
+          // `this.admissionDate` is set by default(Date.now) on new docs;
+          // on updates `this` is the query, so fall back to a non-strict check.
+          const adm = this.admissionDate || this.get?.("admissionDate") || Date.now();
+          return new Date(v).getTime() >= new Date(adm).getTime();
+        },
+        message: "expectedDischargeDate must be on or after admissionDate",
+      },
+    },
 
     reasonForAdmission: { type: String, default: "" }, // ✅ No longer required
     // Free-text clinical context captured at admission
@@ -299,6 +314,13 @@ AdmissionSchema.index({ admissionDate: -1 });
 AdmissionSchema.index({ admissionType: 1 });
 AdmissionSchema.index({ attendingDoctor: 1 });
 AdmissionSchema.index({ hasBed: 1 });
+// R7t: Discharge queue / "Discharged Today" tab + R7i MRD-page query
+// (status=Discharged + dischargedSince) — without this compound, every
+// page load scans the entire admissions collection.
+AdmissionSchema.index({ status: 1, actualDischargeDate: -1 });
+// Discharge workflow queue uses dischargeWorkflow.stage. Speeds up the
+// /admissions/discharge-queue endpoint.
+AdmissionSchema.index({ "dischargeWorkflow.stage": 1, "dischargeWorkflow.gatePassIssuedAt": -1 });
 
 module.exports =
   mongoose.models.Admission || mongoose.model("Admission", AdmissionSchema);

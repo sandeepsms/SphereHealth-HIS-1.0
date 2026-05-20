@@ -440,21 +440,31 @@ export default function PatientBilling() {
               </div>
             ) : (
               <>
-                {/* Bill header */}
+                {/* R7o: Bill header — wrapped in a subtle themed card so it
+                    visually connects with the patient banner above + the KPI
+                    strip below. Bill number gets a monospace + small chip
+                    treatment to read like a document id, not a label. */}
                 <div
                   style={{
                     display: "flex",
                     justifyContent: "space-between",
                     alignItems: "center",
-                    marginBottom: 10,
+                    marginBottom: 12,
                     flexWrap: "wrap",
-                    gap: 8,
+                    gap: 10,
+                    padding: "10px 14px",
+                    background: "linear-gradient(135deg, #f8fafc 0%, #eff6ff 100%)",
+                    border: "1px solid #dbeafe",
+                    borderRadius: 10,
                   }}
                 >
                   <div
-                    style={{ display: "flex", alignItems: "center", gap: 8 }}
+                    style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}
                   >
-                    <span style={{ fontWeight: 700, fontSize: 14 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "#64748b", letterSpacing: 0.5, textTransform: "uppercase" }}>
+                      Bill No.
+                    </span>
+                    <span style={{ fontWeight: 800, fontSize: 14, color: "#1e3a8a", fontFamily: "'DM Mono', monospace", letterSpacing: 0.5 }}>
                       {activeBill.billNumber || "DRAFT"}
                     </span>
                     <Tag
@@ -470,7 +480,7 @@ export default function PatientBilling() {
                       />
                     )}
                   </div>
-                  <div style={{ display: "flex", gap: 6 }}>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                     {isDraft && (
                       <Button
                         label="Service Add"
@@ -1346,68 +1356,123 @@ export default function PatientBilling() {
 
 // ═══════════════════════════════════════════════════════════════
 // SUB-COMPONENT: Amount Summary Row
+// R7o: Two fixes in this component:
+// 1. WIRING BUG — bill.grossAmount/netAmount/etc. were sometimes missing
+//    from the backend payload right after /add-service (which returns the
+//    raw bill before totals are re-aggregated). The page rendered ₹0 even
+//    when the line-item table clearly showed ₹300+. Now we fall back to
+//    summing bill.billItems[] client-side when the aggregate is missing
+//    or zero — defensive, never displays wrong data.
+// 2. THEME — replaced pale flat tiles with gradient-tinted cards keyed to
+//    each KPI's semantic colour (Net = blue · Paid = green · Balance = red).
+//    Matches the patient banner's gradient theme above.
 // ═══════════════════════════════════════════════════════════════
 function AmountSummaryRow({ bill }) {
   const isTPA = bill.paymentType === "TPA";
 
+  // R7o: defensive client-side aggregation. When the backend hasn't
+  // recomputed totals yet (e.g. immediately after /add-service), sum
+  // the line items here so the KPI strip stays in sync with the table.
+  // `toNum()` unwraps Decimal128 → number, mirrors the autoBillingService
+  // pattern used everywhere else in the codebase.
+  const toNum = (v) => {
+    if (v == null) return 0;
+    if (typeof v === "number") return v;
+    if (typeof v === "object" && "$numberDecimal" in v) return parseFloat(v.$numberDecimal) || 0;
+    return parseFloat(v) || 0;
+  };
+  const items = Array.isArray(bill.billItems) ? bill.billItems : [];
+  const itemsTotal = items.reduce((s, it) => s + toNum(it.grossAmount ?? it.amount ?? 0), 0);
+  const itemsDiscount = items.reduce((s, it) => s + toNum(it.discountAmount ?? 0), 0);
+  const itemsTax = items.reduce((s, it) => s + toNum(it.taxAmount ?? 0), 0);
+  const itemsNet = items.reduce((s, it) => s + toNum(it.netAmount ?? 0), 0);
+
+  // Prefer backend-aggregated values when present + non-zero; otherwise
+  // fall back to the client-side sum. Treat exact-zero on a non-empty
+  // line-items list as "stale" — the backend hasn't recomputed yet.
+  const pick = (server, client) =>
+    (server != null && toNum(server) > 0) || items.length === 0
+      ? toNum(server)
+      : client;
+
+  const gross    = pick(bill.grossAmount,   itemsTotal);
+  const discount = pick(bill.totalDiscount, itemsDiscount);
+  const tax      = pick(bill.taxAmount,     itemsTax);
+  // Net falls back to gross - discount + tax when neither backend nor
+  // item-net is populated.
+  const net      = (bill.netAmount != null && toNum(bill.netAmount) > 0)
+    ? toNum(bill.netAmount)
+    : (itemsNet > 0 ? itemsNet : gross - discount + tax);
+  const paid     = toNum(bill.advancePaid);
+  const balance  = (bill.balanceAmount != null)
+    ? toNum(bill.balanceAmount)
+    : Math.max(0, net - paid);
+
   const tiles = [
-    { label: "Gross", value: bill.grossAmount, color: "#212529" },
-    { label: "Discount", value: -bill.totalDiscount, color: "#dc3545" },
-    { label: "Tax", value: bill.taxAmount, color: "#6c757d" },
-    { label: "Net Total", value: bill.netAmount, color: "#0d6efd", bold: true },
+    { label: "Gross",     value: gross,           tint: "blue"  },
+    { label: "Discount",  value: -discount,       tint: "red"   },
+    { label: "Tax",       value: tax,             tint: "amber" },
+    { label: "Net Total", value: net,             tint: "blue",  bold: true },
     ...(isTPA
       ? [
-          { label: "TPA Pays", value: bill.tpaPayableAmount, color: "#20c997" },
-          {
-            label: "Pt. Pays",
-            value: bill.patientPayableAmount,
-            color: "#dc3545",
-            bold: true,
-          },
+          { label: "TPA Pays", value: toNum(bill.tpaPayableAmount),     tint: "teal" },
+          { label: "Pt. Pays", value: toNum(bill.patientPayableAmount), tint: "red", bold: true },
         ]
       : []),
-    { label: "Paid", value: bill.advancePaid, color: "#198754" },
-    {
-      label: "Balance",
-      value: bill.balanceAmount,
-      color: bill.balanceAmount > 0 ? "#dc3545" : "#198754",
-      bold: true,
-    },
+    { label: "Paid",      value: paid,             tint: "green" },
+    { label: "Balance",   value: balance,          tint: balance > 0 ? "red" : "green", bold: true },
   ];
+
+  // Pre-baked gradient palette tied to the system theme. Light tints so
+  // values stay legible; thicker left border (4px) calls out the KPI
+  // colour without overpowering the table below.
+  const PALETTE = {
+    blue:  { bg: "linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)", border: "#bfdbfe", text: "#1e40af", accent: "#2563eb" },
+    red:   { bg: "linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%)", border: "#fecaca", text: "#b91c1c", accent: "#dc2626" },
+    green: { bg: "linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)", border: "#a7f3d0", text: "#047857", accent: "#10b981" },
+    amber: { bg: "linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)", border: "#fde68a", text: "#b45309", accent: "#d97706" },
+    teal:  { bg: "linear-gradient(135deg, #ecfeff 0%, #cffafe 100%)", border: "#a5f3fc", text: "#0e7490", accent: "#0891b2" },
+  };
 
   return (
     <div
-      style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}
+      style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}
     >
-      {tiles.map((t, i) => (
-        <div
-          key={i}
-          style={{
-            flex: 1,
-            minWidth: 88,
-            background: "#f8f9fa",
-            borderRadius: 8,
-            padding: "7px 10px",
-            textAlign: "center",
-            border: "1px solid #e9ecef",
-          }}
-        >
-          <div style={{ fontSize: 10, color: "#6c757d", marginBottom: 3 }}>
-            {t.label}
-          </div>
+      {tiles.map((t, i) => {
+        const p = PALETTE[t.tint] || PALETTE.blue;
+        return (
           <div
+            key={i}
             style={{
-              fontSize: 13,
-              fontWeight: t.bold ? 700 : 500,
-              color: t.color,
+              flex: 1,
+              minWidth: 100,
+              background: p.bg,
+              borderRadius: 10,
+              padding: "10px 12px",
+              textAlign: "center",
+              border: `1px solid ${p.border}`,
+              borderLeft: `4px solid ${p.accent}`,
+              boxShadow: "0 1px 2px rgba(15,23,42,.04)",
             }}
           >
-            {t.value < 0
-              ? `-₹${Math.abs(t.value).toLocaleString("en-IN")}`
-              : `₹${(t.value || 0).toLocaleString("en-IN")}`}
+            <div style={{ fontSize: 10, color: p.text, opacity: 0.85, marginBottom: 4, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase" }}>
+              {t.label}
+            </div>
+            <div
+              style={{
+                fontSize: 15,
+                fontWeight: t.bold ? 800 : 700,
+                color: p.text,
+                fontFamily: "'DM Mono', monospace",
+              }}
+            >
+              {t.value < 0
+                ? `-₹${Math.abs(t.value).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`
+                : `₹${(t.value || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

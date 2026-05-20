@@ -132,18 +132,43 @@ export default function IndentRaisePage() {
     if (!admissionId) return;
     setLoading(true);
     try {
-      // Pharmacy stock rollup fetched in parallel — it's a single
-      // aggregated call (sum per drug) so the page stays fast even with
-      // 100s of drugs in inventory. Failure is non-fatal: the indent
-      // form still works without stock hints.
-      const [admRes, orderRes, stockRes] = await Promise.all([
+      // R7w: Two-step fetch — admission first, then doctor-orders keyed
+      // by the admission's UHID + admissionNumber.
+      //
+      // Previously this was one Promise.all that issued
+      //   GET /doctor-orders?admissionId=<ObjectId>&status=Active
+      // Two bugs in that URL:
+      //   1. Backend's GET /doctor-orders only filters by UHID + visitId
+      //      (the admissionNumber string). `admissionId` is silently
+      //      ignored, so the result set was every order ever.
+      //   2. `status=Active` does not exist in the DoctorOrder status
+      //      enum (Pending / Acknowledged / InProgress / Held / OnHold /
+      //      Completed / Cancelled / Stopped). The filter therefore
+      //      always returned an empty array — even on patients with
+      //      live prescriptions.
+      // Pharmacy stock rollup still runs in parallel — non-fatal failure.
+      const [admRes, stockRes] = await Promise.all([
         axios.get(`${API_ENDPOINTS.BASE}/admissions/${admissionId}`),
-        axios.get(`${API_ENDPOINTS.BASE}/doctor-orders?admissionId=${admissionId}&orderType=Medication&status=Active`)
-          .catch(() => ({ data: { data: [] } })),
         axios.get(`${API_ENDPOINTS.BASE}/pharmacy/stock`).catch(() => ({ data: { data: [] } })),
       ]);
-      setAdmission(admRes.data?.data || admRes.data);
-      const list = orderRes.data?.data || orderRes.data?.orders || [];
+      const adm = admRes.data?.data || admRes.data;
+      setAdmission(adm);
+
+      // Now query doctor-orders by the admission's actual identifiers.
+      // ACTIVE_STATUSES is the set of orders the nurse can still indent
+      // against — completed / cancelled / stopped doses are excluded.
+      const ACTIVE_STATUSES = "Pending,Acknowledged,InProgress,Held,OnHold";
+      const visitId = adm?.admissionNumber || adm?.ipdNo || "";
+      const uhid    = adm?.UHID || "";
+      let list = [];
+      if (uhid && visitId) {
+        try {
+          const orderRes = await axios.get(
+            `${API_ENDPOINTS.BASE}/doctor-orders?UHID=${encodeURIComponent(uhid)}&visitId=${encodeURIComponent(visitId)}&orderType=Medication&status=${encodeURIComponent(ACTIVE_STATUSES)}`,
+          );
+          list = orderRes.data?.data || orderRes.data?.orders || [];
+        } catch (_) { /* leave list empty — the form still works via Other Drug */ }
+      }
       setOrders(Array.isArray(list) ? list : []);
 
       // Build the dual-key lookup. The stock endpoint returns rows

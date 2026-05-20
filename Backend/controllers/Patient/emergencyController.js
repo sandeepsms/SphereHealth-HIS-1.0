@@ -257,9 +257,15 @@ class EmergencyController {
 
   async updateDisposition(req, res) {
     try {
+      // Pass through req.user as the implicit actor for nursing-note
+      // attribution when the body doesn't carry an explicit one.
+      const body = req.body || {};
+      if (!body.actor && req.user) {
+        body.actor = req.user.fullName || req.user.email || req.user.role;
+      }
       const visit = await emergencyService.updateDisposition(
         req.params.emergencyNumber,
-        req.body
+        body,
       );
       res.status(200).json({
         success: true,
@@ -267,7 +273,11 @@ class EmergencyController {
         data: visit,
       });
     } catch (error) {
-      res.status(400).json({
+      // R7z: service throws with `error.status` for typed errors
+      // (400 missing attestation, 404 not found, 409 sticky terminal).
+      // Fall back to 400 for unannotated errors so legacy callers
+      // still get a body shape they can render.
+      res.status(error?.status || 400).json({
         success: false,
         message: error.message,
       });

@@ -90,5 +90,66 @@ MARSchema.index({ UHID: 1, date: -1 });
 MARSchema.index({ ipdNo: 1, date: -1 });
 MARSchema.index({ admissionId: 1, date: -1 });
 
+// ──────────────────────────────────────────────────────────────
+// R7r: Append-only guard for administration entries (NABH MOM.4).
+// Once an administration is charted (status=GIVEN / HELD / REFUSED
+// etc.), it cannot be edited or removed by the application layer
+// — only NEW entries can be appended. This prevents post-hoc
+// falsification of dose timing or status. Corrections must be
+// recorded as a NEW administration with status + reason; the
+// original entry stays in the record.
+//
+// The hook fires on .save() paths only. findByIdAndUpdate /
+// updateMany bypass it — controllers that legitimately need to
+// edit an admin entry (e.g. to add `remarks` later) should use
+// $push to append a NEW entry instead of mutating existing ones.
+// ──────────────────────────────────────────────────────────────
+MARSchema.post("init", function () {
+  // Snapshot existing administration ids per medication so the
+  // pre-save hook can detect mutations vs pure appends.
+  this.$__.priorAdmins = {};
+  for (const med of (this.medications || [])) {
+    if (med?._id && Array.isArray(med.administrations)) {
+      this.$__.priorAdmins[String(med._id)] = med.administrations
+        .filter(a => a?._id)
+        .map(a => ({
+          id: String(a._id),
+          status: a.status,
+          actualTime: a.actualTime ? new Date(a.actualTime).getTime() : null,
+          nurseName: a.nurseName,
+        }));
+    }
+  }
+});
+
+MARSchema.pre("save", function (next) {
+  if (this.isNew) return next();
+  const prior = this.$__.priorAdmins || {};
+  for (const med of (this.medications || [])) {
+    if (!med?._id) continue;
+    const existing = prior[String(med._id)];
+    if (!existing || !existing.length) continue;
+    // For each previously-recorded administration, verify it still
+    // exists and its key fields are unchanged.
+    for (const oldRec of existing) {
+      const live = (med.administrations || []).find(a => String(a?._id) === oldRec.id);
+      if (!live) {
+        return next(new Error(
+          `MAR: cannot remove existing administration ${oldRec.id} — NABH MOM.4 requires append-only audit trail. ` +
+          `Record a new administration with a correction status instead.`,
+        ));
+      }
+      const liveTime = live.actualTime ? new Date(live.actualTime).getTime() : null;
+      if (live.status !== oldRec.status || liveTime !== oldRec.actualTime || (live.nurseName || "") !== (oldRec.nurseName || "")) {
+        return next(new Error(
+          `MAR: cannot edit existing administration ${oldRec.id} (status / actualTime / nurseName immutable). ` +
+          `NABH MOM.4 — record a new administration row to amend.`,
+        ));
+      }
+    }
+  }
+  next();
+});
+
 module.exports =
   mongoose.models.MAR || mongoose.model("MAR", MARSchema);

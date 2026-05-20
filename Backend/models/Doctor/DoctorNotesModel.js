@@ -77,11 +77,14 @@ const DoctorNotesSchema = new mongoose.Schema(
 
     department: { type: mongoose.Schema.Types.ObjectId, ref: "Department" },
 
+    // R7u: cap each SOAP field at 50K chars. Real progress notes are <2K
+    // chars; the cap prevents a pasted base64 attachment or runaway
+    // copy-paste from bloating the document beyond Mongo's 16MB limit.
     soap: {
-      subjective: { type: String },
-      objective: { type: String },
-      assessment: { type: String },
-      plan: { type: String } },
+      subjective: { type: String, maxlength: [50000, "subjective too long (max 50,000 chars)"] },
+      objective:  { type: String, maxlength: [50000, "objective too long (max 50,000 chars)"] },
+      assessment: { type: String, maxlength: [50000, "assessment too long (max 50,000 chars)"] },
+      plan:       { type: String, maxlength: [50000, "plan too long (max 50,000 chars)"] } },
 
     vitals: VitalsSchema,
     investigations: [{ type: String }],

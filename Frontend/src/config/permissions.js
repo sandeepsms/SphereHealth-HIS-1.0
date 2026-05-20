@@ -132,6 +132,12 @@ export const ACTIONS = {
   "vitals.write":          ["Admin", "Nurse", "Doctor"],
   "mar.write":             ["Admin", "Nurse"],
   "doctor-orders.write":   ["Admin", "Doctor"],
+  // R7m: Mirror new doctor-order action gates (see Backend/config/permissions.js).
+  "order.acknowledge":     ["Admin", "Nurse", "Doctor"],
+  "order.stop":            ["Admin", "Doctor"],
+  // R7n: Mirror consent gates (see Backend/config/permissions.js).
+  "consent.write":         ["Admin", "Doctor", "Nurse"],
+  "consent.delete":        ["Admin"],
 
   // Pharmacy
   "pharmacy.dispense":     ["Admin", "Pharmacist"],
@@ -155,6 +161,10 @@ export const ACTIONS = {
   "lab.result-entry":      ["Admin", "Lab Technician"],
   "lab.verify":            ["Admin", "Doctor"],
   "lab.dispatch":          ["Admin", "Lab Technician"],
+  // R7z: cancel split from dispatch — Lab Tech can print but can't void
+  // a clinician's order (cancel also reverses billing). Sample rejection
+  // stays a Lab Tech action under lab.result-entry.
+  "lab.cancel":            ["Admin", "Doctor"],
   "lab.records.read":      ["Admin", "Doctor", "Nurse", "Lab Technician"],
   "lab.records.write":     ["Admin", "Lab Technician"],
   "lab.records.verify":    ["Admin", "Doctor"],

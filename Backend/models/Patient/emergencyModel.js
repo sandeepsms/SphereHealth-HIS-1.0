@@ -219,12 +219,68 @@ const EmergencySchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Admission",
     },
+    // R7z: capture the ER→IPD bridge as a single timestamped event so the
+    // patient-file audit shows who admitted, into which bed, and when —
+    // even before the IPD module hydrates the rest of the Admission doc.
+    admittedAt:        { type: Date },
+    admittedBy:        { type: String, trim: true },
+    admittedToBed:     { type: String, trim: true },
+    admittedToWard:    { type: String, trim: true },
+    admittedDepartment:{ type: String, trim: true },
+
     dischargeDate: Date,
     dischargeInstructions: String,
     referredTo: {
       hospital: String,
       department: String,
       reason: String,
+      referredBy:  String,
+      referredAt:  Date,
+    },
+
+    // R7z — DAMA (Left Against Medical Advice) attestation block.
+    // Required by NABH COP.20 + Indian medical-defence guidelines:
+    // before a patient walks out against advice, the treating doctor
+    // must record the risks explained, get the patient (or NoK)
+    // signature, capture a witness, and timestamp it. We persist the
+    // attestation so it can never be retro-fabricated.
+    damaDetails: {
+      reason:           { type: String, trim: true },
+      risksExplained:   { type: String, trim: true },
+      explainedBy:      { type: String, trim: true },  // attending doctor
+      explainedAt:      { type: Date },
+      patientSignature: { type: String, trim: true },  // "self" / NoK name
+      witnessName:      { type: String, trim: true },
+      witnessRelation:  { type: String, trim: true },
+      witnessSignedAt:  { type: Date },
+      followUpAdvised:  { type: String, trim: true },
+    },
+
+    // R7z — Death certification block. Triggered when disposition
+    // becomes "Expired" (or arrival is "Brought Dead"). Mandatory for
+    // the official death certificate, MCCD (Medical Certification of
+    // Cause of Death) submission, and police intimation when MLC.
+    deathDetails: {
+      declaredAt:       { type: Date },                 // wall-clock TOD
+      declaredBy:       { type: String, trim: true },   // attending doctor
+      causeOfDeath: {
+        immediate:  String,                              // direct cause
+        antecedent: String,                              // led to immediate
+        underlying: String,                              // root cause
+        otherContributing: String,
+      },
+      mannerOfDeath: {
+        type: String,
+        enum: ["Natural", "Accident", "Suicide", "Homicide", "Undetermined", "Pending Investigation"],
+      },
+      postMortemRequested: { type: Boolean, default: false },
+      postMortemReason:    { type: String,  trim: true },
+      bodyHandedOverTo:    { type: String,  trim: true },
+      bodyHandedRelation:  { type: String,  trim: true },
+      bodyHandedAt:        { type: Date },
+      policeIntimated:     { type: Boolean, default: false },
+      policeIntimationRef: { type: String,  trim: true },
+      mccdNumber:          { type: String,  trim: true },
     },
     doctorNotes: String,
     nursingNotes: [

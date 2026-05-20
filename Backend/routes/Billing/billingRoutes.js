@@ -31,6 +31,10 @@ router.get ("/tpa-cases",                ctrl.getTPACases);
 router.post("/:billId/tpa-preauth-submit", requireAction("tpa.pre-auth"), ctrl.tpaPreAuthSubmit);
 router.post("/:billId/tpa-approve",        requireAction("tpa.claim"),    ctrl.tpaApprove);
 router.post("/:billId/tpa-deny",           requireAction("tpa.claim"),    ctrl.tpaDeny);
+// R7z: short-pay reconciliation — TPA settles less than approved, this
+// endpoint posts the actual remittance + handles the shortfall (default:
+// bump patientPayableAmount; alt: write off via extraDiscount).
+router.post("/:billId/tpa-settle",         requireAction("tpa.claim"),    ctrl.tpaSettle);
 router.get("/uhid/:UHID", ctrl.getBillsByUHID); // GET  /api/billing/uhid/UH00000001
 // Front-desk bulk actions across every outstanding bill for a UHID.
 // collect-all distributes one lump-sum FIFO; bulk-settle applies a

@@ -109,5 +109,9 @@ const BillingTriggerSchema = new mongoose.Schema({
 // Compound index for daily dedup
 BillingTriggerSchema.index({ admissionId: 1, serviceCode: 1, dateKey: 1, status: 1 });
 BillingTriggerSchema.index({ admissionId: 1, sourceType: 1, createdAt: -1 });
+// R7t: speeds up "pending review" sweeps + per-admission status queries.
+// The IPD ledger page hits this on every load to find stuck triggers.
+BillingTriggerSchema.index({ status: 1, createdAt: -1 });
+BillingTriggerSchema.index({ admissionId: 1, status: 1, createdAt: -1 });
 
 module.exports = mongoose.model("BillingTrigger", BillingTriggerSchema);

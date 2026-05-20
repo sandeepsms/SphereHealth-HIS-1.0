@@ -436,6 +436,11 @@ PatientBillSchema.index({ billStatus: 1 });
 PatientBillSchema.index({ visitType: 1 });
 PatientBillSchema.index({ billDate: -1 });
 PatientBillSchema.index({ tpa: 1 });
+// R7t: Revenue-breakdown reports filter `billStatus != DRAFT` and sort by
+// createdAt — this compound covers that scan. Same for the dashboard
+// "today's bills" feed.
+PatientBillSchema.index({ billStatus: 1, createdAt: -1 });
+PatientBillSchema.index({ UHID: 1, billStatus: 1, createdAt: -1 });
 
 // FIX (audit P6-B1): partial unique index that prevents two concurrent
 // getOrCreateDraftBill() callers from materialising two DRAFT rows for the

@@ -27,8 +27,10 @@ router.post("/:id/enter-external-result",  requireAction("lab.result-entry"), ct
 // Verification: Radiologist / Doctor.
 router.post("/:id/verify",  requireAction("lab.verify"),   ctrl.verify);
 
-// Dispatch + cancel: Lab Technician.
+// Dispatch (Lab Tech) vs cancel (Doctor/Admin). R7z: cancel splits off
+// from dispatch — Lab Tech mustn't be able to wipe a doctor's order or
+// reverse line-item billing without the ordering clinician's call.
 router.post("/:id/print",   requireAction("lab.dispatch"), ctrl.markPrinted);
-router.post("/:id/cancel",  requireAction("lab.dispatch"), ctrl.cancel);
+router.post("/:id/cancel",  requireAction("lab.cancel"),   ctrl.cancel);
 
 module.exports = router;

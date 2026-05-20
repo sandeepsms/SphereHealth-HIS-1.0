@@ -813,13 +813,37 @@ exports.tpaPreAuthSubmit = async (req, res, next) => {
 
 // POST /api/billing/:billId/tpa-approve
 //   Body: { approvedAmount, validUntil, approvedBy, notes }
+//
+// R7z: State-machine guard. Previously a pure flip — any caller could
+// move an already-PAID / SETTLED / DENIED claim back to APPROVED,
+// overwriting desk decisions and corrupting the TPA ledger. Mirror
+// the preauth-submit pattern: only SUBMITTED / PENDING / PARTIAL_APPROVED
+// can transition to APPROVED. Re-approval (idempotent) is allowed but
+// noted.
 exports.tpaApprove = async (req, res, next) => {
   try {
     const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
     const bill = await PatientBill.findById(req.params.billId);
     if (!bill) return res.status(404).json({ success: false, message: "Bill not found" });
-    bill.tpaClaimStatus  = "APPROVED";
+
+    const ALLOWED_FROM = ["SUBMITTED", "PENDING", "PARTIAL_APPROVED", "APPROVED"];
+    if (!ALLOWED_FROM.includes(bill.tpaClaimStatus)) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot approve — claim is in '${bill.tpaClaimStatus}' state (must be SUBMITTED / PENDING / PARTIAL_APPROVED).`,
+      });
+    }
+    if (bill.paymentType !== "TPA" && bill.paymentType !== "CORPORATE") {
+      return res.status(400).json({
+        success: false,
+        message: "Approval is only valid for TPA or Corporate bills",
+      });
+    }
+    bill.tpaClaimStatus    = "APPROVED";
     bill.tpaApprovedAmount = Number(req.body.approvedAmount) || bill.tpaPayableAmount || 0;
+    bill.tpaApprovedAt     = new Date();
+    bill.tpaApprovedBy     = req.body.approvedBy || req.user?.fullName || "TPA Desk";
+    bill.markModified("tpaClaimStatus");
     await bill.save();
     res.json({ success: true, data: bill });
   } catch (e) { next(e); }
@@ -857,6 +881,11 @@ exports.refundPayment = async (req, res, next) => {
 // POST /api/billing/:billId/cancel-bill
 //   Body: { reason, cancelledBy }
 // Marks a bill as CANCELLED. Only allowed when no payments have been made.
+// R7z: also invalidates any live TPA pre-auth/claim attached to the bill.
+// Previously the bill flipped to CANCELLED but its tpaClaimStatus stayed at
+// SUBMITTED / APPROVED, so the TPA register still showed an active claim
+// that could never settle. The shortest correct path is to flip the claim
+// to REJECTED with a "bill-cancelled" reason and zero the approved amount.
 exports.cancelBill = async (req, res, next) => {
   try {
     const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
@@ -872,8 +901,37 @@ exports.cancelBill = async (req, res, next) => {
     if (!req.body.reason || !String(req.body.reason).trim()) {
       return res.status(400).json({ success: false, message: "Cancellation reason is required" });
     }
+    const reason     = String(req.body.reason).trim();
+    const cancelledBy = req.body.cancelledBy || req.user?.fullName || "Reception";
+
     bill.billStatus = "CANCELLED";
-    bill.remarks = (bill.remarks || "") + ` | Cancelled: ${req.body.reason} (by ${req.body.cancelledBy || "Reception"})`;
+    bill.remarks    = (bill.remarks || "") + ` | Cancelled: ${reason} (by ${cancelledBy})`;
+
+    // R7z: invalidate any active TPA claim attached to this bill.
+    // The schema enum doesn't have CANCELLED, so we flip live states to
+    // REJECTED with a system reason and zero the approved amount. Already
+    // terminal (REJECTED / NOT_APPLICABLE) and never-set bills are left
+    // alone so we don't pollute the TPA audit.
+    const ACTIVE = new Set(["PENDING", "SUBMITTED", "APPROVED", "PARTIAL_APPROVED"]);
+    if (ACTIVE.has(bill.tpaClaimStatus)) {
+      const priorStatus = bill.tpaClaimStatus;
+      const priorAmount = bill.tpaApprovedAmount;
+      bill.tpaClaimStatus    = "REJECTED";
+      bill.tpaApprovedAmount = 0;
+      bill.markModified("tpaClaimStatus");
+      bill.remarks += ` | TPA claim auto-invalidated on bill cancel (was ${priorStatus}, ₹${priorAmount || 0} approved)`;
+      // Append to adjustmentLog so the audit trail shows who/when.
+      bill.adjustmentLog = bill.adjustmentLog || [];
+      bill.adjustmentLog.push({
+        at:     new Date(),
+        by:     cancelledBy,
+        type:   "EXTRA_DISCOUNT",   // re-use existing enum; this is a financial state change
+        reason: `TPA claim invalidated due to bill cancellation: ${reason}`,
+        before: { tpaClaimStatus: priorStatus, tpaApprovedAmount: priorAmount },
+        after:  { tpaClaimStatus: "REJECTED",  tpaApprovedAmount: 0 },
+      });
+    }
+
     await bill.save();
     return res.json({ success: true, data: bill });
   } catch (e) { next(e); }
@@ -893,6 +951,148 @@ exports.tpaDeny = async (req, res, next) => {
     if (req.body.reason) bill.remarks = `TPA Denied: ${req.body.reason}`;
     await bill.save();
     res.json({ success: true, data: bill });
+  } catch (e) { next(e); }
+};
+
+// POST /api/billing/:billId/tpa-settle
+//   Body: { settledAmount, transactionId, settledOn?, settledBy?, remarks?,
+//           shortfallTo? ("PATIENT" | "WRITEOFF") }
+//
+// R7z: short-pay reconciliation.
+//
+// TPA payers routinely settle less than the approved amount — disallowed
+// items, room-rent cap excess, co-pay clauses. Previously we had no
+// endpoint to record what they actually paid; staff would either inflate
+// the approval to match or leave the bill APPROVED-but-unpaid forever
+// (TPA register reported a phantom outstanding).
+//
+// This endpoint accepts the actual remittance, posts a TPA_CLAIM payment
+// row, and reconciles the shortfall:
+//   • shortfallTo=PATIENT   (default) — bumps patientPayableAmount by the
+//     shortfall so the cashier can collect it from the patient/family.
+//     tpaClaimStatus → PARTIAL_APPROVED so the TPA register reflects truth.
+//   • shortfallTo=WRITEOFF — recorded as an extraDiscount + adjustmentLog
+//     entry. tpaClaimStatus → REJECTED (with "settled short — wrote off").
+//     Useful for trivial ₹50-100 differences that aren't worth chasing.
+//
+// Net effect either way: bill.balanceAmount lands at zero (or only the
+// patient's intentional liability), the audit log shows the exact path.
+exports.tpaSettle = async (req, res, next) => {
+  try {
+    const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+    const bill = await PatientBill.findById(req.params.billId);
+    if (!bill) return res.status(404).json({ success: false, message: "Bill not found" });
+
+    const ALLOWED = ["APPROVED", "PARTIAL_APPROVED", "SUBMITTED"];
+    if (!ALLOWED.includes(bill.tpaClaimStatus)) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot settle — claim is in '${bill.tpaClaimStatus}' state (must be APPROVED / PARTIAL_APPROVED / SUBMITTED).`,
+      });
+    }
+    if (!["TPA", "CORPORATE"].includes(bill.paymentType)) {
+      return res.status(400).json({ success: false, message: "Settle is only valid for TPA / Corporate bills" });
+    }
+
+    const settledAmount = Number(req.body.settledAmount);
+    if (!Number.isFinite(settledAmount) || settledAmount < 0) {
+      return res.status(400).json({ success: false, message: "settledAmount is required and must be ≥ 0" });
+    }
+    if (!req.body.transactionId || !String(req.body.transactionId).trim()) {
+      return res.status(400).json({ success: false, message: "transactionId (NEFT/UTR/cheque ref) is required for TPA settlement" });
+    }
+
+    // Unwrap Decimal128 to plain number for arithmetic.
+    const toN = (v) => v == null ? 0 : (typeof v === "object" && v.toString ? Number(v.toString()) : Number(v));
+    const approved = toN(bill.tpaApprovedAmount) || toN(bill.tpaPayableAmount);
+    const shortfall = Math.max(0, approved - settledAmount);
+    const overpay   = Math.max(0, settledAmount - approved);
+
+    // Reject suspiciously large overpayments — likely a typo. Tiny
+    // overpayments (≤ ₹10 rounding) we accept silently.
+    if (overpay > 10) {
+      return res.status(400).json({
+        success: false,
+        message: `Settled amount ₹${settledAmount} exceeds approved ₹${approved} by ₹${overpay}. ` +
+                 `Re-approve the higher amount via /tpa-approve first, then settle.`,
+      });
+    }
+
+    const settledBy   = req.body.settledBy || req.user?.fullName || "TPA Desk";
+    const settledOn   = req.body.settledOn ? new Date(req.body.settledOn) : new Date();
+    const shortfallTo = (req.body.shortfallTo || "PATIENT").toUpperCase();
+
+    // Post the TPA payment row (idempotent on transactionId — if the same
+    // UTR has been posted before, reject so we don't double-credit).
+    const duplicate = (bill.payments || []).find(
+      (p) => p.paymentMode === "TPA_CLAIM" && p.transactionId === String(req.body.transactionId).trim(),
+    );
+    if (duplicate) {
+      return res.status(409).json({
+        success: false,
+        message: `TPA payment with transactionId '${req.body.transactionId}' already recorded on this bill.`,
+      });
+    }
+
+    bill.payments = bill.payments || [];
+    if (settledAmount > 0) {
+      bill.payments.push({
+        amount:        settledAmount,
+        paymentMode:   "TPA_CLAIM",
+        transactionId: String(req.body.transactionId).trim(),
+        paidAt:        settledOn,
+        receivedBy:    settledBy,
+        remarks:       req.body.remarks || `TPA settlement against approved ₹${approved}`,
+      });
+    }
+
+    // Reconcile shortfall.
+    const priorStatus  = bill.tpaClaimStatus;
+    const priorPatient = toN(bill.patientPayableAmount);
+    if (shortfall > 0) {
+      if (shortfallTo === "WRITEOFF") {
+        // Treat as additional discount — collapses the bill.
+        const priorExtra = toN(bill.extraDiscount);
+        bill.extraDiscount = priorExtra + shortfall;
+        bill.extraDiscountReason = (bill.extraDiscountReason || "") +
+          ` | TPA short-pay write-off ₹${shortfall.toFixed(2)} on UTR ${req.body.transactionId}`;
+        bill.extraDiscountBy = settledBy;
+        bill.tpaClaimStatus  = "REJECTED";
+        bill.remarks = (bill.remarks || "") +
+          ` | TPA settled ₹${settledAmount} of approved ₹${approved}; ₹${shortfall.toFixed(2)} written off`;
+      } else {
+        // Default — bump patient liability by the shortfall.
+        bill.patientPayableAmount = priorPatient + shortfall;
+        bill.tpaClaimStatus = "PARTIAL_APPROVED";
+        bill.remarks = (bill.remarks || "") +
+          ` | TPA settled ₹${settledAmount} of approved ₹${approved}; ₹${shortfall.toFixed(2)} → patient liability`;
+      }
+    } else {
+      // Fully settled — keep APPROVED (don't downgrade to SETTLED, the
+      // enum doesn't have it; APPROVED + payment row is the signal).
+      bill.remarks = (bill.remarks || "") + ` | TPA fully settled ₹${settledAmount} on UTR ${req.body.transactionId}`;
+    }
+
+    // Audit trail entry — captures the full before/after.
+    bill.adjustmentLog = bill.adjustmentLog || [];
+    bill.adjustmentLog.push({
+      at:     settledOn,
+      by:     settledBy,
+      type:   "EXTRA_DISCOUNT",   // re-use existing enum bucket for any financial event
+      reason: `TPA settlement: paid ₹${settledAmount} of approved ₹${approved} (shortfall ₹${shortfall.toFixed(2)} → ${shortfallTo}). UTR: ${req.body.transactionId}`,
+      before: { tpaClaimStatus: priorStatus, patientPayableAmount: priorPatient },
+      after:  { tpaClaimStatus: bill.tpaClaimStatus, patientPayableAmount: toN(bill.patientPayableAmount), settledAmount },
+    });
+
+    bill.markModified("tpaClaimStatus");
+    bill.markModified("payments");
+
+    await bill.save();
+    return res.json({
+      success: true,
+      data: bill,
+      settled: { approved, settledAmount, shortfall, shortfallTo },
+    });
   } catch (e) { next(e); }
 };
 

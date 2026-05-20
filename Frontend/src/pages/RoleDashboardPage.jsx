@@ -20,7 +20,7 @@ import { ROLES, MODULES, modulesForRole, homePathForRole } from "../config/permi
 import AdminHome from "./AdminHome";
 
 import { API_BASE_URL as API } from "../config/api";
-const authHdr = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem("his_token")}` } });
+const authHdr = () => ({ headers: { Authorization: `Bearer ${(sessionStorage.getItem("his_token") || localStorage.getItem("his_token"))}` } });
 
 const fmtINR = (n) => `₹${Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
 

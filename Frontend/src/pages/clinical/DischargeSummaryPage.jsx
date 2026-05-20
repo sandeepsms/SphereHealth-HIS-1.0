@@ -899,7 +899,7 @@ function DischargeSummaryPageContent({ selectedPatient }) {
   );
   const { signature, showSetup, setShowSetup, saveSignature } = useDigitalSignature();
 
-  const token = localStorage.getItem("his_token");
+  const token = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
   const headers = { Authorization: `Bearer ${token}` };
 
   const handleDeptSelect = (dept) => {

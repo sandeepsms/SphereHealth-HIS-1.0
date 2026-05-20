@@ -537,7 +537,7 @@ function NursingNotesContent({ selectedPatient }) {
     const admissionId = patient._id;
     setEquipSaving(true);
     try {
-      const token = localStorage.getItem("his_token");
+      const token = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const { data } = await axios.post(
         `${API_ENDPOINTS.NURSING_CHARGES}/log`,
@@ -676,7 +676,7 @@ function NursingNotesContent({ selectedPatient }) {
       const admDoc = admissionDoc || patient;
       if (arr.length > 0 && admDoc?._id && !admDoc?.initialAssessment?.nurseCompleted) {
         try {
-          const token = localStorage.getItem("his_token");
+          const token = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
           await axios.post(
             `${API_ENDPOINTS.ADMISSIONS}/${admDoc._id}/nurse-assessment`,
             {
@@ -865,7 +865,7 @@ function NursingNotesContent({ selectedPatient }) {
              on the Admission document so the gate lifts immediately.     ── */
       if (activeModal === "initial" && patient?._id) {
         try {
-          const token = localStorage.getItem("his_token");
+          const token = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
           const signedByName = user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim();
           await axios.post(
             `${API_ENDPOINTS.ADMISSIONS}/${patient._id}/nurse-assessment`,
@@ -1389,6 +1389,11 @@ function NursingNotesContent({ selectedPatient }) {
             <TreatmentChart
               UHID={patient.uhid || patient.UHID || searchUHID}
               visitId={patient.ipdNo || patient.admissionNumber || patient._id}
+              // R7j: admissionId enables the inline "Raise Indent" button
+              // in the MAR header. patient._id is the Admission ObjectId
+              // (this page sets patient to the admission doc — see line 537
+              // where it's also used directly as `admissionId`).
+              admissionId={patient._id}
               patientName={patient.patientName || patient.patientId?.fullName || ""}
               nurseMode={true}
               refreshTrigger={ordersRefresh}
@@ -2049,7 +2054,7 @@ function NursingNotesContent({ selectedPatient }) {
           onClose={() => setConsentOrder(null)}
           onConfirm={async (hash) => {
             try {
-              const token = localStorage.getItem("his_token");
+              const token = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
               const headers = token ? { Authorization: `Bearer ${token}` } : {};
               const nurseName = user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim();
               await axios.patch(

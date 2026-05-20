@@ -566,7 +566,14 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/discharge-summary" element={
               <RoleGuard action="ipd.discharge-summary"><DischargeSummaryPage /></RoleGuard>
             } />
-            <Route path="/consent-forms" element={<ConsentFormPage />} />
+            {/* R7q: Consent capture is gated to Admin/Doctor/Nurse on
+                the backend (consent.write). Add route-level guard so
+                Receptionist / Pharmacist hitting the URL bounce off the
+                guard instead of loading the page and seeing 403 toasts
+                on every save. */}
+            <Route path="/consent-forms" element={
+              <RoleGuard action="consent.write"><ConsentFormPage /></RoleGuard>
+            } />
             <Route path="/nurse-initial-assessment" element={<NurseInitialAssessmentPage />} />
             <Route path="/ipd-initial-assessment" element={<IPDInitialAssessmentPage />} />
             {/* Alias — many pages link to /ipd-assessment which is the same flow */}
@@ -580,8 +587,16 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/investigation-master" element={
               <RoleGuard allow={["Admin", "Lab Technician", "Radiologist"]}><InvestigationMaster /></RoleGuard>
             } />
-            <Route path="/doctor-assessment" element={<DoctorAssessmentPage />} />
-            <Route path="/opd-assessment" element={<OPDAssessmentPage />} />
+            {/* R7n: Both assessment pages call POST /doctor-orders which is
+                now gated to Admin/Doctor. Wrap with RoleGuard so non-doctor
+                users hit a clean "access denied" instead of loading the
+                page and then seeing 403 toasts on every save. */}
+            <Route path="/doctor-assessment" element={
+              <RoleGuard action="doctor-orders.write"><DoctorAssessmentPage /></RoleGuard>
+            } />
+            <Route path="/opd-assessment" element={
+              <RoleGuard action="doctor-orders.write"><OPDAssessmentPage /></RoleGuard>
+            } />
             <Route path="/doctor-patient-panel" element={<DoctorPatientPanel />} />
             <Route path="/doctor-notes" element={<DoctorNotesPage />} />
             <Route path="/nursing-care-plan" element={<NursingCarePlanPage />} />

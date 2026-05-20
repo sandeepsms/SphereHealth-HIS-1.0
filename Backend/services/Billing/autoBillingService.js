@@ -345,6 +345,31 @@ async function createTrigger(config) {
     shift, department, notes,
   } = config;
 
+  // R7u: zombie-charge guard. Reject triggers for admissions that have
+  // moved to a terminal state (Cancelled / Discharged). The daily cron
+  // already filters to status=Active, but manual triggers (e.g. a stray
+  // /add-manual-charge after discharge, or a race where the indent
+  // releases finalise AFTER the admission discharge fires) would
+  // otherwise land charges on a closed file. We allow autoCharge=false
+  // / requiresConfirmation paths to bypass when admissionId is missing
+  // (OPD / Daycare / walk-in services use UHID only).
+  if (admissionId) {
+    try {
+      const Admission = require("../../models/Patient/admissionModel");
+      const adm = await Admission.findById(admissionId).select("status").lean();
+      if (adm && (adm.status === "Cancelled" || adm.status === "Discharged")) {
+        console.warn(`[autoBilling] Rejecting trigger for ${adm.status} admission ${admissionId} (serviceCode=${serviceCode}, source=${sourceType})`);
+        return {
+          skipped: true,
+          reason: `Admission is ${adm.status} — billing closed`,
+        };
+      }
+    } catch (e) {
+      // Look-up failure shouldn't block the existing behaviour — log and proceed.
+      console.error(`[autoBilling] admission-status lookup failed for ${admissionId}:`, e.message);
+    }
+  }
+
   const dateKey = overrideDateKey || getDateKey();
 
   // Daily dedup check. Doctor-round charges set dedupByDoctor=true so two
@@ -709,6 +734,30 @@ async function onMARAdministration(marDoc, medication, administrationEntry) {
 }
 
 /**
+ * Read the list of test/item rows off an InvestigationOrder document
+ * regardless of which generation of the model produced it.
+ *
+ * R7z fix: the canonical schema field is `items[]` (see
+ * InvestigationOrderModel.js) and each row has `investigationName` +
+ * `resultStatus`. The old service code read `tests || investigations`
+ * which were never populated by the current model — that meant lab
+ * billing was silently dead for the entire IPD lab workflow.
+ *
+ * We keep the legacy fallback so any older queued doc still works,
+ * but the live path now reads `items` first.
+ */
+function readOrderRows(orderDoc) {
+  if (!orderDoc) return [];
+  const rows = orderDoc.items || orderDoc.tests || orderDoc.investigations || [];
+  // Normalise to a stable shape: { name, status }
+  return rows.map((r) => ({
+    name: r.investigationName || r.testName || r.name || "",
+    status: r.resultStatus || r.status || "",
+    raw: r,
+  }));
+}
+
+/**
  * Fire when an investigation is ordered
  */
 async function onInvestigationOrdered(orderDoc) {
@@ -716,15 +765,16 @@ async function onInvestigationOrdered(orderDoc) {
   const admissionId = orderDoc.admissionId;
   if (!admissionId) return;
 
-  const tests = orderDoc.tests || orderDoc.investigations || [];
-  const testNames = tests.map((t) => t.testName || t.name || "").filter(Boolean);
+  const rows = readOrderRows(orderDoc);
+  const testNames = rows.map((r) => r.name).filter(Boolean);
 
   // Batch-resolve all services in one query (was N+1 — one findServiceByName
   // per test). For a 30-test panel this collapses 30 round-trips into 1.
   const serviceByName = await findServicesByNamesBatch(testNames, "IPD");
 
-  for (const test of tests) {
-    const testName = test.testName || test.name || "";
+  for (const row of rows) {
+    const testName = row.name;
+    if (!testName) continue;
     const service = serviceByName.get(testName);
     if (!service) continue;
 
@@ -754,26 +804,55 @@ async function onInvestigationOrdered(orderDoc) {
 }
 
 /**
- * Fire when an investigation is resulted/completed
+ * Fire when an investigation is resulted/completed.
+ *
+ * R7z: only bill triggers whose corresponding order item has actually
+ * been resulted. Previously this billed EVERY pending trigger on the
+ * order the moment ANY single test had a result entered — so a 20-test
+ * panel was billed in full after the first CBC line was typed in,
+ * even if the other 19 hadn't been run yet. Now each test bills only
+ * when its own row reaches COMPLETED/VERIFIED.
  */
 async function onInvestigationResulted(orderDoc) {
   if (!orderDoc) return;
   const admissionId = orderDoc.admissionId;
   if (!admissionId) return;
 
-  // Find pending triggers for this investigation order and bill them
+  const rows = readOrderRows(orderDoc);
+  // Set of normalised lowercase names that have actual results entered.
+  // We compare case-insensitively because ServiceMaster.serviceName and
+  // InvestigationMaster.investigationName aren't guaranteed to share
+  // capitalisation across all the historical data we've imported.
+  const resultedNameSet = new Set(
+    rows
+      .filter((r) => r.status === "COMPLETED" || r.status === "VERIFIED")
+      .map((r) => (r.name || "").trim().toLowerCase())
+      .filter(Boolean),
+  );
+
+  // No resulted items → nothing to bill. (Happens when the controller
+  // hits this hook on a partial save that didn't actually advance any
+  // item's state — defensive no-op.)
+  if (resultedNameSet.size === 0) return;
+
+  // Pending triggers for this order — only the ones whose serviceName
+  // matches a resulted item.
   const pendingTriggers = await BillingTrigger.find({
     sourceDocumentId: orderDoc._id,
     sourceType: "InvestigationOrder",
     status: "pending",
   });
 
-  const bill = pendingTriggers.length > 0
+  const billableTriggers = pendingTriggers.filter((t) =>
+    resultedNameSet.has((t.serviceName || "").trim().toLowerCase()),
+  );
+
+  const bill = billableTriggers.length > 0
     ? await getOrCreateBill(admissionId, "IPD")
     : null;
 
   // Batch-resolve services in one query (was N+1 — one findById per trigger).
-  const serviceIds = pendingTriggers
+  const serviceIds = billableTriggers
     .map((t) => t.serviceId)
     .filter(Boolean);
   const services = serviceIds.length
@@ -781,7 +860,7 @@ async function onInvestigationResulted(orderDoc) {
     : [];
   const servicesById = new Map(services.map((s) => [String(s._id), s]));
 
-  for (const trigger of pendingTriggers) {
+  for (const trigger of billableTriggers) {
     const service = trigger.serviceId
       ? servicesById.get(String(trigger.serviceId)) || null
       : null;
@@ -812,16 +891,17 @@ async function onInvestigationResulted(orderDoc) {
     }
   }
 
-  // Also handle newly resulted tests not previously ordered through the trigger system
-  // by looking at the tests array directly
-  for (const test of (orderDoc.tests || [])) {
-    const testName = test.testName || test.name || "";
+  // Catch resulted tests that never had a trigger created (e.g. items
+  // added via addTest after the initial onInvestigationOrdered fan-out
+  // missed them). Only fires for items that actually have a result.
+  for (const row of rows) {
+    const testName = row.name;
     if (!testName) continue;
+    if (row.status !== "COMPLETED" && row.status !== "VERIFIED") continue;
 
-    // Check if we already have a trigger for this test on this order
     const exists = await BillingTrigger.findOne({
       sourceDocumentId: orderDoc._id,
-      serviceName: { $regex: new RegExp(testName, "i") },
+      serviceName: { $regex: new RegExp(`^${testName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") },
       status: { $in: ["billed", "pending"] },
     }).lean();
     if (exists) continue;

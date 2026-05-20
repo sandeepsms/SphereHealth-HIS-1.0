@@ -498,26 +498,32 @@ class AdmissionController {
     if (!["doctor", "nurse"].includes(role))
       return res.status(400).json({ success: false, message: 'role must be "doctor" or "nurse"' });
 
-    const admission = await Admission.findById(req.params.id);
-    if (!admission) return res.status(404).json({ success: false, message: "Admission not found" });
-
+    // R7s: Atomic $set on the specific role's flags only. The previous
+    // read-then-save pattern was vulnerable to a race: if the doctor
+    // marks complete at the same time as the nurse, both load the same
+    // admission doc, each writes their own role's flags, and the last
+    // .save() overwrites the other role's flags entirely (clobbering
+    // the doctor- OR nurse-completed:true that the other request set).
+    // findOneAndUpdate with dotted-path $set updates only the targeted
+    // sub-keys, leaving the other role's flags intact.
     const now = new Date();
-    // Ensure initialAssessment object exists (Mixed type needs explicit init)
-    if (!admission.initialAssessment || typeof admission.initialAssessment !== "object") {
-      admission.initialAssessment = {};
-    }
-    if (role === "doctor") {
-      admission.initialAssessment.doctorCompleted   = true;
-      admission.initialAssessment.doctorCompletedAt = now;
-      admission.initialAssessment.doctorName        = name;
-    } else {
-      admission.initialAssessment.nurseCompleted   = true;
-      admission.initialAssessment.nurseCompletedAt = now;
-      admission.initialAssessment.nurseName        = name;
-    }
-    // markModified is required for Mixed-type fields so Mongoose tracks the change
-    admission.markModified("initialAssessment");
-    await admission.save();
+    const updates = role === "doctor"
+      ? {
+          "initialAssessment.doctorCompleted":   true,
+          "initialAssessment.doctorCompletedAt": now,
+          "initialAssessment.doctorName":        name,
+        }
+      : {
+          "initialAssessment.nurseCompleted":   true,
+          "initialAssessment.nurseCompletedAt": now,
+          "initialAssessment.nurseName":        name,
+        };
+    const admission = await Admission.findByIdAndUpdate(
+      req.params.id,
+      { $set: updates },
+      { new: true, runValidators: true },
+    );
+    if (!admission) return res.status(404).json({ success: false, message: "Admission not found" });
     return res.json({ success: true, message: `${role} initial assessment marked complete`, data: admission.initialAssessment });
   });
 
