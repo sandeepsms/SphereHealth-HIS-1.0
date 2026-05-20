@@ -156,6 +156,21 @@ export default function ReceptionBilling() {
   const [directoryLoading,setDirectoryLoading]= useState(false);
   const searchDebRef = React.useRef(null);
 
+  // R7as-FIX-1: loadTodaySummary declared BEFORE `load` to avoid Temporal-Dead-
+  // Zone ReferenceError. Pre-R7as the function lived ~200 lines below `load`,
+  // but `load`'s deps array `[loadTodaySummary]` evaluated during every render
+  // — TDZ access threw `ReferenceError: Cannot access 'loadTodaySummary' before
+  // initialization` and React rendered a blank tree (caught by the outer
+  // ErrorBoundary). Symptom: clicking "Open" on /accounts → blank screen.
+  const loadTodaySummary = useCallback(() => {
+    const istKey = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date());
+    return axios.get(`${API_ENDPOINTS.BILLING}/collection-summary?date=${istKey}`)
+      .then(({ data }) => setTodayCollection(data?.summary || data?.data?.summary || null))
+      .catch((e) => { if (!axios.isCancel(e)) console.error("[ReceptionBilling] collection-summary:", e?.message); });
+  }, []);
+
   const load = useCallback(async (uhidArg) => {
     if (!uhidArg) return;
     setLoading(true);
@@ -358,23 +373,11 @@ export default function ReceptionBilling() {
   // further down. See "Keyboard shortcuts" block below.
 
   // Today's collection summary — small live tile.
-  // Response shape: { success, date, summary: { totalCollected, totalGross, ... } }
-  // AbortController guards against the receptionist navigating away mid-
-  // request (E-05 pattern). Failure now logs to console instead of being
-  // silently swallowed (E-06) — the live tile just shows no data, but
-  // the operator can see in DevTools that the API call failed.
-  // R7ar-P1-13/D9-aq-02/D4-aq-02: extract loader so it can be called from
-  // payment/refund/advance success paths. Pre-R7ar the "Today: ₹X" header
-  // tile was set once on mount and never updated, so it lied between
-  // collections until a full page reload.
-  const loadTodaySummary = useCallback(() => {
-    const istKey = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
-    }).format(new Date());
-    return axios.get(`${API_ENDPOINTS.BILLING}/collection-summary?date=${istKey}`)
-      .then(({ data }) => setTodayCollection(data?.summary || data?.data?.summary || null))
-      .catch((e) => { if (!axios.isCancel(e)) console.error("[ReceptionBilling] collection-summary:", e?.message); });
-  }, []);
+  // R7as-FIX-1: loadTodaySummary moved above `load` to avoid TDZ ReferenceError.
+  // The mount-only useEffect remains here, but the declaration is now ~200
+  // lines up. R7ar-P1-13 originally extracted this from inline so callers
+  // could refresh after payments/refunds; that part still works — the only
+  // change is the source-order.
 
   useEffect(() => {
     const ac = new AbortController();

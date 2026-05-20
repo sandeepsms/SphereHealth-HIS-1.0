@@ -2,6 +2,10 @@ const jwt = require("jsonwebtoken");
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
+// R7as-FIX-10: per-process LRU for User.fullName resolution. Loaded
+// lazily on first authenticate() so most requests hit cache (5min TTL).
+let _fullNameCache = null;
+
 /* ── Verify JWT token ──
    Supports both the Authorization: Bearer header (preferred) and
    a `?token=` query parameter — the latter is required for
@@ -44,6 +48,31 @@ const authenticate = async (req, res, next) => {
     // — undefined `_id` previously broke F20 CashierSession (every cashier
     // shared one row), and zeroed `receivedById` on every payment audit.
     req.user = { ...decoded, _id: decoded.id }; // { id, _id, role, employeeId, jti, iat, exp }
+
+    // R7as-FIX-10/D3-high: JWT payload doesn't include `fullName`, so
+    // ~15 controllers reading `req.user.fullName` always fell through to
+    // hard-coded defaults ("Reception", "TPA Desk", "Cashier") — every
+    // audit row lost the real cashier name. Load it lazily from the User
+    // collection on first auth in a short-lived in-process LRU cache so
+    // it doesn't add 1ms per request. Cache TTL is short (5 min) so a
+    // mid-session profile rename surfaces quickly.
+    if (decoded.id && !req.user.fullName) {
+      try {
+        if (!_fullNameCache) _fullNameCache = require("../utils/lruCache")({ max: 500, ttlMs: 5 * 60_000 });
+        let name = _fullNameCache.get(String(decoded.id));
+        if (name === undefined) {
+          const User = require("../models/User/userModel");
+          const u = await User.findById(decoded.id).select("fullName employeeId").lean();
+          name = u?.fullName || u?.employeeId || decoded.employeeId || "";
+          _fullNameCache.set(String(decoded.id), name);
+        }
+        req.user.fullName = name;
+      } catch (e) {
+        // best-effort — if user-collection lookup fails, fall through to
+        // the existing behaviour (hard-coded defaults in callers).
+        console.warn("[auth] fullName resolve skipped:", e.message);
+      }
+    }
     next();
   } catch (err) {
     if (err.name === "TokenExpiredError")

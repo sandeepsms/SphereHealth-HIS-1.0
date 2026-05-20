@@ -33,6 +33,11 @@ export const ROLES = [
   { key: "Ward Boy",          label: "Ward Boy",        icon: "pi-user",        color: "#475569", light: "#f8fafc", desc: "Patient transport, vitals support, ward tasks." },
   { key: "Housekeeping",      label: "Housekeeping",    icon: "pi-home",        color: "#64748b", light: "#f8fafc", desc: "Room turnover, ward cleaning, biomedical waste." },
   { key: "Security",          label: "Security",        icon: "pi-lock",        color: "#374151", light: "#f9fafb", desc: "Visitor passes, gate logs, incident reports." },
+  // R7as-FIX-9/D3-high: MRD role was missing from the Frontend ROLES catalogue.
+  // Backend enum has accepted "MRD" since R7i; admin user-create UI couldn't
+  // pick it because this list excluded it. Read-only role — viewer of every
+  // discharged patient file (enforced via blockReadOnlyRoleWrites middleware).
+  { key: "MRD",               label: "Medical Records", icon: "pi-folder-open", color: "#6366f1", light: "#eef2ff", desc: "Read-only access to discharged patient files. Re-activate within 24h." },
 ];
 
 export const ROLE_KEYS = ROLES.map(r => r.key);

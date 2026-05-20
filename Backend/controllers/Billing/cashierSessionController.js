@@ -34,14 +34,34 @@ exports.openSession = async (req, res, next) => {
         data: existing,
       });
     }
-    const created = await CashierSession.create({
-      cashierId,
-      cashierName: req.user.fullName || req.user.employeeId || "Cashier",
-      cashierRole: req.user.role,
-      openedAt:    new Date(),
-      openingCash,
-      openNotes:   req.body?.openNotes || null,
-    });
+    // R7as-FIX-8/D7-high: catch the partial-unique-index race. Two
+    // concurrent open requests (double-click, mobile + desktop) both
+    // pass the `findOne({status:OPEN})` precheck above. The CashierSession
+    // partial-unique index on `(cashierId)` where `status==="OPEN"` then
+    // rejects the LOSER with E11000. Pre-R7as the controller crashed with
+    // a 500; cashier saw a cryptic Mongo error. Now surface a clean 409.
+    let created;
+    try {
+      created = await CashierSession.create({
+        cashierId,
+        cashierName: req.user.fullName || req.user.employeeId || "Cashier",
+        cashierRole: req.user.role,
+        openedAt:    new Date(),
+        openingCash,
+        openNotes:   req.body?.openNotes || null,
+      });
+    } catch (e) {
+      if (e?.code === 11000) {
+        // Race winner already created the session — re-fetch and 409.
+        const winner = await CashierSession.findOne({ cashierId, status: "OPEN" }).lean();
+        return res.status(409).json({
+          success: false,
+          message: "Another OPEN shift was just opened for this cashier — refresh.",
+          data: winner || null,
+        });
+      }
+      throw e;
+    }
     // R7ar-P1-20/D6-aq-04: emit SHIFT_OPENED for chronological audit.
     try {
       const { emit } = require("../../models/Billing/BillingAudit");

@@ -4,10 +4,15 @@
  * all POST to `/api/nursing-assessments/<type>` with a payload specific
  * to that assessment. Stored on the NursingAssessment model.
  */
+// R7as-FIX-11/D3-high: nursing-assessment write/read gating. Daily,
+// fall-risk, pressure-area, pain, nutrition, education assessments are
+// NABH IPSG records. Writes gated on `vitals.write` (Doctor/Nurse/Admin).
+// Reads also gated — Pharmacist/Receptionist should not browse clinical
+// observations they don't need (DPDP purpose-limitation).
 const express = require("express");
 const router  = express.Router();
 const NursingAssessment = require("../../models/Nurse/NursingAssessmentModel");
-const { attemptAuth } = require("../../middleware/auth");
+const { attemptAuth, requireAction } = require("../../middleware/auth");
 
 router.use(attemptAuth);
 
@@ -16,7 +21,7 @@ const ALLOWED = ["daily", "fall-risk", "pressure-area", "pain", "nutrition", "ed
 /* POST /api/nursing-assessments/:type
    Body: any payload object. We split out UHID / admissionId / patientName
    / recordedBy so they index correctly; the rest goes into `data`. */
-router.post("/:type", async (req, res) => {
+router.post("/:type", requireAction("vitals.write"), async (req, res) => {
   try {
     const { type } = req.params;
     if (!ALLOWED.includes(type)) {
@@ -40,7 +45,7 @@ router.post("/:type", async (req, res) => {
 
 /* GET /api/nursing-assessments?type=&admissionId=&UHID=
    List recent assessments for a patient/admission. */
-router.get("/", async (req, res) => {
+router.get("/", requireAction("vitals.write"), async (req, res) => {
   try {
     const filter = {};
     if (req.query.type)        filter.type        = req.query.type;
@@ -57,7 +62,7 @@ router.get("/", async (req, res) => {
 });
 
 /* GET /api/nursing-assessments/:id — single record */
-router.get("/:id", async (req, res) => {
+router.get("/:id", requireAction("vitals.write"), async (req, res) => {
   try {
     const doc = await NursingAssessment.findById(req.params.id).lean();
     if (!doc) return res.status(404).json({ success: false, message: "Not found" });

@@ -461,49 +461,50 @@ const _cancelShiftAutoClose = scheduleDaily("shift-auto-close", 23, 50, async ()
   return { closed, stillOpen: 0 };
 });
 
-// R7ar-P2-37/D10-aq-13: stuck-trigger retry sweeper. BillingTrigger rows
-// stuck in `pending-review` for > 60 min likely failed their original
-// auto-billing path (transient DB error, hook conflict, etc.) and have
-// no one re-queueing them. This cron re-fires the original action so
-// the bill catches up before discharge — and emits CRON_RECONCILED for
-// every fix so the accountant can audit "what got rescued."
+// R7ar-P2-37/D10-aq-13: stuck-trigger ALERT sweeper.
+//
+// R7as-FIX-2/D10-crit-1: pre-R7as this cron silently flipped pending-review
+// → completed WITHOUT re-running the auto-billing path that should have
+// created the bill line. Net effect was silent revenue leakage — the
+// trigger looked "done" but no charge ever landed. The fix here is to
+// keep the trigger in pending-review and emit a CRON_RECONCILED audit
+// row so the operator dashboard / accountant report surfaces the stuck
+// batch for human review. The trigger can then be re-fired through the
+// normal autoBilling code-path with full validation, not from inside a
+// cron that doesn't have the doctor/nurse context to retry safely.
 const _cancelStuckTrigger = scheduleDaily("stuck-trigger-sweeper", 1, 0, async () => {
   const BillingTrigger = require("./models/Billing/BillingTrigger");
   const cutoff = new Date(Date.now() - 60 * 60 * 1000);
   // Pull at most 50 stuck triggers — bigger backlogs likely indicate a
-  // systemic issue and shouldn't be silently auto-fixed.
+  // systemic issue that needs a human-in-the-loop investigation.
   const stuck = await BillingTrigger.find({
     status:    "pending-review",
     updatedAt: { $lt: cutoff },
-  }).limit(50);
-  if (stuck.length === 0) return { reviewed: 0, fixed: 0 };
-  let fixed = 0;
-  for (const t of stuck) {
-    try {
-      // Flip to completed only if the bill it was meant to add to is
-      // still in a writable state. The triggers store enough context
-      // (admissionId, serviceCode) to identify the target.
-      t.status = "completed";
-      t.remarks = (t.remarks || "") + ` | Auto-recovered by stuck-trigger-sweeper at ${new Date().toISOString()}`;
-      await t.save();
-      try {
-        const { emit } = require("./models/Billing/BillingAudit");
-        await emit({
-          event:        "CRON_RECONCILED",
-          UHID:         t.UHID,
-          patientId:    t.patientId,
-          admissionId:  t.admissionId,
-          triggerId:    t._id,
-          actorName:    "System (stuck-trigger-sweeper)",
-          reason:       `Trigger ${t._id} sat in pending-review for >60 min — auto-flipped to completed.`,
-        });
-      } catch (_) {}
-      fixed += 1;
-    } catch (e) {
-      console.warn(`[stuck-trigger-sweeper] ${t._id} skip: ${e.message}`);
-    }
+  }).limit(50).select("_id UHID patientId admissionId serviceCode triggerType createdAt updatedAt remarks").lean();
+  if (stuck.length === 0) return { alerted: 0 };
+  // Single aggregated audit row — flooding the audit feed with N rows per
+  // tick is noisy and the operator just needs the count + the worst case.
+  try {
+    const { emit } = require("./models/Billing/BillingAudit");
+    const oldest = stuck.reduce((a, b) =>
+      new Date(a.updatedAt) < new Date(b.updatedAt) ? a : b);
+    await emit({
+      event:        "CRON_RECONCILED",
+      actorName:    "System (stuck-trigger-sweeper)",
+      reason:       `${stuck.length} BillingTrigger row(s) stuck in pending-review > 60 min. Oldest: trigger ${oldest._id} (admission ${oldest.admissionId}, code ${oldest.serviceCode}, last touched ${new Date(oldest.updatedAt).toISOString()}). Review via /billing-audit-trail.`,
+      after:        {
+        stuckCount:    stuck.length,
+        oldestTriggerId: oldest._id,
+        oldestUpdatedAt: oldest.updatedAt,
+        sampleTriggers:  stuck.slice(0, 5).map((t) => ({
+          _id: t._id, admissionId: t.admissionId, code: t.serviceCode, type: t.triggerType,
+        })),
+      },
+    });
+  } catch (e) {
+    console.warn(`[stuck-trigger-sweeper] audit emit failed: ${e.message}`);
   }
-  return { reviewed: stuck.length, fixed };
+  return { alerted: stuck.length };
 });
 
 // R7ar-P1-20/D6-aq-05: BillingAudit retention archiver.

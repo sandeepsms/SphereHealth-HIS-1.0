@@ -345,11 +345,17 @@ class AdmissionService {
     // R7ar-P1-21/D10-aq-09: flush daily charges NOW that the discharge
     // transaction has committed. If we'd flushed before TX commit and the
     // TX rolled back, bed-day charges would be dedup'd-out from re-attempt.
+    // R7as-FIX-4/D5-crit-1: pass `_dischargingFlush:true` so createTrigger
+    // doesn't reject these as "billing closed" — admission is now
+    // status:Discharged but the discharge-day bed/nursing/package
+    // charges legitimately belong on the bill. Pre-R7as the post-P1-21
+    // flush silently lost every discharge-day charge.
     try {
       const autoBilling = require("../Billing/autoBillingService");
       await autoBilling.flushDailyChargesForAdmission(admission, {
-        prorate:        isDaycare,
-        dischargeTime:  finalDischargeAt,
+        prorate:           isDaycare,
+        dischargeTime:     finalDischargeAt,
+        _dischargingFlush: true,
       });
     } catch (e) {
       console.error("[Discharge] flushDailyCharges (post-TX) error:", e.message);

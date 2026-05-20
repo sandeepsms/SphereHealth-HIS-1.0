@@ -951,43 +951,68 @@ class BillingService {
   }
 
   // ── 9. Generate final bill (DRAFT → GENERATED) ────────────────
+  // R7as-FIX-7/D7-crit-1: wrap the load+save in retryVersionError AND
+  // reserve the billNumber lazily (inside the retry callback) — but ONLY
+  // assign it on the FIRST attempt so a VersionError retry does NOT burn
+  // a second invoice number. Pre-R7as a concurrent addService racing
+  // generateFinalBill caused VersionError → caller retried whole endpoint
+  // → another nextSequence() burned → gap in the IT Rule 46 gap-less
+  // billNumber series (audit-blocking).
   async generateFinalBill(billId, generatedBy = "Staff") {
-    const bill = await PatientBill.findById(billId);
-    if (!bill) throw new Error("Bill not found");
-    if (bill.billStatus !== "DRAFT") {
-      throw new Error("Only DRAFT bills can be generated");
-    }
-    if (!bill.billItems || bill.billItems.length === 0) {
-      throw new Error("Cannot generate empty bill — pehle services add karo");
-    }
+    const retryVE = require("../../utils/retryVersionError");
+    let reservedBillNumber = null;          // burned once at most
+    return retryVE(async () => {
+      const bill = await PatientBill.findById(billId);
+      if (!bill) {
+        const err = new Error("Bill not found"); err.status = 404; throw err;
+      }
+      // R7as: the retry can land on a bill that ALREADY transitioned to
+      // GENERATED on a prior attempt (rare but possible if save throws
+      // post-commit). Treat as success and return.
+      if (bill.billStatus !== "DRAFT" && bill.billNumber) {
+        return bill;
+      }
+      if (bill.billStatus !== "DRAFT") {
+        const err = new Error("Only DRAFT bills can be generated"); err.status = 409; throw err;
+      }
+      if (!bill.billItems || bill.billItems.length === 0) {
+        const err = new Error("Cannot generate empty bill — pehle services add karo"); err.status = 400; throw err;
+      }
 
-    bill.billNumber = await generateBillNumber();
-    bill.billStatus = "GENERATED";
-    bill.billGeneratedAt = new Date();
-    bill.generatedBy = generatedBy;
+      if (!reservedBillNumber) {
+        reservedBillNumber = await generateBillNumber();
+      }
+      bill.billNumber = reservedBillNumber;
+      bill.billStatus = "GENERATED";
+      bill.billGeneratedAt = new Date();
+      bill.generatedBy = generatedBy;
 
-    if (bill.paymentType === "TPA") {
-      bill.tpaClaimStatus = "PENDING";
-    }
+      if (bill.paymentType === "TPA") {
+        bill.tpaClaimStatus = "PENDING";
+      }
 
-    await bill.save();
-    // R7ap-F15: emit BILL_GENERATED audit row
-    try {
-      const { emit } = require("../../models/Billing/BillingAudit");
-      await emit({
-        event:        "BILL_GENERATED",
-        UHID:         bill.UHID,
-        patientId:    bill.patient,
-        billId:       bill._id,
-        billNumber:   bill.billNumber,
-        amount:       toNum(bill.netAmount),
-        actorName:    generatedBy,
-        reason:       `Bill finalized (${bill.billNumber}) — netAmount ₹${toNum(bill.netAmount).toFixed(2)}`,
-        before:       { billStatus: "DRAFT" },
-        after:        { billStatus: "GENERATED", billNumber: bill.billNumber, tpaClaimStatus: bill.tpaClaimStatus },
-      });
-    } catch (_) { /* audit best-effort */ }
-    return bill;
+      await bill.save();
+      return bill;
+    }, { label: "generateFinalBill" }).then(async (bill) => {
+      // R7ap-F15: emit BILL_GENERATED audit row — outside the retry so
+      // a VersionError retry doesn't double-emit.
+      try {
+        const { emit } = require("../../models/Billing/BillingAudit");
+        await emit({
+          event:        "BILL_GENERATED",
+          UHID:         bill.UHID,
+          patientId:    bill.patient,
+          billId:       bill._id,
+          billNumber:   bill.billNumber,
+          amount:       toNum(bill.netAmount),
+          actorName:    generatedBy,
+          reason:       `Bill finalized (${bill.billNumber}) — netAmount ₹${toNum(bill.netAmount).toFixed(2)}`,
+          before:       { billStatus: "DRAFT" },
+          after:        { billStatus: "GENERATED", billNumber: bill.billNumber, tpaClaimStatus: bill.tpaClaimStatus },
+        });
+      } catch (_) { /* audit best-effort */ }
+      return bill;
+    });
   }
 
   // ── 10. Record payment ────────────────────────────────────────
@@ -1302,25 +1327,41 @@ class BillingService {
         try {
           const CreditNote = require("../../models/Billing/CreditNote");
           const GstMonthlySnapshot = require("../../models/Billing/GstMonthlySnapshot");
-          // R7ar-P1-23/D6-aq-06: GST period-lock gate. If the bill date
-          // falls in a month whose GstMonthlySnapshot has been locked
-          // by the accountant (filed GSTR-1), we can't post a CN there
-          // — the CDNR row would mutate a sealed return. Stamp the CN
-          // with the current month and add a note in reasonText so the
-          // accountant can reconcile via amendment in next filing.
-          const billDateForGst = bill.billDate || bill.createdAt;
+          // R7as-FIX-5/D6-crit-1 + R7ar-P1-23/D6-aq-06: GST period-lock
+          // enforcement. Pre-R7as the period-lock was COSMETIC — the CN
+          // was still created stamped with the original bill date,
+          // landing it inside the LOCKED period. GSTR-1 CDNR row would
+          // mutate a filed return. Fix: when the original-bill period
+          // is locked, stamp `creditNoteDate = startOfCurrentMonth` so
+          // the CDNR row lands in the OPEN period (the accountant
+          // reconciles via amendment next month). Always add an audit
+          // note to reasonText.
+          // R7as-FIX-6/D6-crit-2: use billGeneratedAt (immutable) — not
+          // billDate (editable) — so the period attribution can't drift
+          // if the cashier re-saves the bill with a different billDate.
+          const billDateForGst = bill.billGeneratedAt || bill.billDate || bill.createdAt;
           let cnReasonNote = String(reason).trim();
+          let cnDateOverride = null;
           if (billDateForGst) {
+            const TZ = process.env.HOSPITAL_TZ || "Asia/Kolkata";
             const istParts = new Intl.DateTimeFormat("en-CA", {
-              timeZone: process.env.HOSPITAL_TZ || "Asia/Kolkata",
-              year: "numeric", month: "2-digit",
+              timeZone: TZ, year: "numeric", month: "2-digit",
             }).formatToParts(billDateForGst);
             const yy = istParts.find((p) => p.type === "year")?.value;
             const mm = istParts.find((p) => p.type === "month")?.value;
             const billPeriod = `${yy}-${mm}`;
             const lockedSnap = await GstMonthlySnapshot.findOne({ period: billPeriod, lockedAt: { $ne: null } }).lean();
             if (lockedSnap) {
-              cnReasonNote = `${cnReasonNote} | NOTE: original-bill period ${billPeriod} is LOCKED (filed ${lockedSnap.lockedAt.toISOString().slice(0,10)} by ${lockedSnap.lockedBy}); CN dated current month, reconcile via amendment.`;
+              cnReasonNote = `${cnReasonNote} | NOTE: original-bill period ${billPeriod} is LOCKED (filed ${lockedSnap.lockedAt.toISOString().slice(0,10)} by ${lockedSnap.lockedBy}); CN dated current month, reconcile via GSTR-1 amendment.`;
+              // Stamp the CN to the current IST month so it lands in
+              // the open period.
+              const nowParts = new Intl.DateTimeFormat("en-CA", {
+                timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit",
+              }).formatToParts(new Date());
+              const ny = nowParts.find((p) => p.type === "year")?.value;
+              const nm = nowParts.find((p) => p.type === "month")?.value;
+              const nd = nowParts.find((p) => p.type === "day")?.value;
+              cnDateOverride = new Date(`${ny}-${nm}-${nd}T00:00:00+05:30`);
             }
           }
           // R7ar-P1-16/D1-aq-08/D2-aq-07: tax math fix. Pre-R7ar:
@@ -1349,6 +1390,10 @@ class BillingService {
             originalBillNumber:   bill.billNumber,
             UHID:                 bill.UHID,
             patientId:            bill.patient,
+            // R7as-FIX-5/D6-crit-1: explicit date override when the
+            // original-bill period is GST-locked; otherwise default
+            // (= Date.now()) lands the CN in today's period.
+            ...(cnDateOverride ? { creditNoteDate: cnDateOverride } : {}),
             refundAmount:         amt,
             taxableValue:         Math.max(0, amt - taxShare),
             taxAmount:            taxShare,

@@ -364,6 +364,10 @@ async function createTrigger(config) {
                            //       keeping the dailyDedup guard intact
     chargeDate,            // NEW — bill-item chargeDate (defaults to today)
     shift, department, notes,
+    // R7as-FIX-4/D5-crit-1: bypass-flag for the post-TX discharge flush so
+    // bed/nursing/doctor-round charges for the discharge day still land
+    // even though the admission is now status:Discharged.
+    _dischargingFlush = false,
   } = config;
 
   // R7u: zombie-charge guard. Reject triggers for admissions that have
@@ -378,12 +382,22 @@ async function createTrigger(config) {
     try {
       const Admission = require("../../models/Patient/admissionModel");
       const adm = await Admission.findById(admissionId).select("status").lean();
-      if (adm && (adm.status === "Cancelled" || adm.status === "Discharged")) {
-        console.warn(`[autoBilling] Rejecting trigger for ${adm.status} admission ${admissionId} (serviceCode=${serviceCode}, source=${sourceType})`);
-        return {
-          skipped: true,
-          reason: `Admission is ${adm.status} — billing closed`,
-        };
+      // R7as-FIX-4/D5-crit-1: Cancelled is always rejected. Discharged is
+      // rejected UNLESS the caller is `flushDailyChargesForAdmission`'s
+      // post-TX final flush (passes `_dischargingFlush:true` via opts).
+      // Pre-R7as P1-21 moved flush to AFTER admission.save({status:Discharged}),
+      // so every subsequent createTrigger hit this guard and SILENTLY
+      // skipped bed/nursing/doctor-round charges for the discharge day —
+      // revenue leakage on every IPD discharge.
+      if (adm) {
+        if (adm.status === "Cancelled") {
+          console.warn(`[autoBilling] Rejecting trigger for Cancelled admission ${admissionId} (serviceCode=${serviceCode}, source=${sourceType})`);
+          return { skipped: true, reason: "Admission is Cancelled — billing closed" };
+        }
+        if (adm.status === "Discharged" && !_dischargingFlush) {
+          console.warn(`[autoBilling] Rejecting trigger for Discharged admission ${admissionId} (serviceCode=${serviceCode}, source=${sourceType})`);
+          return { skipped: true, reason: "Admission is Discharged — billing closed" };
+        }
       }
     } catch (e) {
       // Look-up failure shouldn't block the existing behaviour — log and proceed.
@@ -1680,9 +1694,15 @@ async function runDailyBedChargeAccrual() {
  *
  * Returns { bedFired, nurseFired, skipped } counts so the caller can audit.
  */
-async function flushDailyChargesForAdmission(admission, { typeCode, prorate = false, dischargeTime } = {}) {
+async function flushDailyChargesForAdmission(admission, { typeCode, prorate = false, dischargeTime, _dischargingFlush = false } = {}) {
   let bedFired = 0, nurseFired = 0, skipped = 0;
   if (!admission?._id) return { bedFired, nurseFired, skipped };
+  // R7as-FIX-4/D5-crit-1: when called from `dischargePatient` AFTER the
+  // status-Discharged TX commits (R7ar-P1-21), createTrigger would
+  // otherwise reject every charge as "billing closed". The flag below
+  // threads through so the final discharge-day bed/nursing/package
+  // charges still land. Other callers (the 00:30 cron, manual flush)
+  // pass `prorate=false` and leave the flag at its default `false`.
 
   const typeMap = {
     Planned: "IPD", Emergency: "EMERGENCY", "Day Care": "DAYCARE",
@@ -1751,6 +1771,7 @@ async function flushDailyChargesForAdmission(admission, { typeCode, prorate = fa
       autoCharge:          true,
       dailyDedup:          true,
       department:          admission.department,
+      _dischargingFlush,                              // R7as-FIX-4
     }).catch((e) => { console.error("[AutoBilling] package daily trigger error:", e.message); return null; });
     if (r?.skipped) skipped++;
     else if (r?.trigger) bedFired++;   // count as "bed" line for the summary
@@ -1780,6 +1801,7 @@ async function flushDailyChargesForAdmission(admission, { typeCode, prorate = fa
       autoCharge:          true,
       dailyDedup:          true,
       department:          admission.department,
+      _dischargingFlush,                              // R7as-FIX-4
     });
     if (r?.skipped) skipped++;
     else if (r?.trigger) bedFired++;
@@ -1805,6 +1827,7 @@ async function flushDailyChargesForAdmission(admission, { typeCode, prorate = fa
       autoCharge:          true,
       dailyDedup:          true,
       department:          admission.department,
+      _dischargingFlush,                              // R7as-FIX-4
     });
     if (r?.skipped) skipped++;
     else if (r?.trigger) nurseFired++;

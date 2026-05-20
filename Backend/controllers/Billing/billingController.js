@@ -1741,10 +1741,16 @@ exports.getHospitalGstRegister = async (req, res, next) => {
 
     // Aggregate over GENERATED/PARTIAL/PAID/REFUNDED bills only (DRAFT/CANCELLED
     // not yet finalised). For each line item, bucket by taxPercent.
+    // R7as-FIX-6/D6-crit-2: unified on `billGeneratedAt` (immutable, set
+    // at DRAFT→GENERATED) so the register window matches the monthly
+    // snapshot cron exactly. Pre-R7as the register filtered by `billDate`
+    // (editable, defaults to creation) while the cron froze by
+    // `billGeneratedAt` — period attribution drifted whenever a cashier
+    // re-edited billDate on a late-night bill near month boundary.
     const pipeline = [
       { $match: {
-          billStatus: { $nin: ["DRAFT", "CANCELLED"] },
-          billDate:   { $gte: from, $lte: to },
+          billStatus:      { $nin: ["DRAFT", "CANCELLED"] },
+          billGeneratedAt: { $gte: from, $lte: to },
       }},
       { $unwind: "$billItems" },
       { $match: { "billItems.isTaxable": true, "billItems.taxPercent": { $gt: 0 } } },
