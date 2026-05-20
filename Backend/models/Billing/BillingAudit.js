@@ -43,6 +43,19 @@ const BillingAuditSchema = new mongoose.Schema(
         "SETTLEMENT_ADJUSTED",       // settlementAdjust (extraDiscount/line edits)
         "ITEM_PRICE_OVERRIDDEN",     // BillingTrigger override
         "ITEM_CANCELLED",            // BillingTrigger cancel
+        // R7ar-P1-20/D6-aq-04: cashier shift lifecycle. The shift table
+        // is the audit anchor for variance/handover; pre-R7ar opens and
+        // closes left no chronological trace in BillingAudit, so the
+        // GST/NABH register was missing the "who held the till at 21:00"
+        // line. Each event captures actor + variance + variance reason.
+        "SHIFT_OPENED",              // cashierSession.openSession
+        "SHIFT_CLOSED",              // cashierSession.closeSession (manual)
+        "SHIFT_AUTO_CLOSED",         // shift-auto-close cron in index.js
+        // R7ar-P1-20/D10-aq-04: cron lifecycle. We don't audit every
+        // tick (would flood the table) — only the discrete outputs:
+        // a day-end snapshot, a successful auto-close, a recon delta.
+        "CRON_RECONCILED",           // advance-recon / receipt-gap cron found+fixed
+        "OVERAGE_DETECTED",          // P1-24 dischargeOverage trigger
       ],
       index: true,
     },
@@ -103,10 +116,44 @@ BillingAuditSchema.set("toObject", { transform: decimalToNumber });
  * billing write. All call sites should wrap in `.catch(() => {})` or
  * use this helper which already swallows.
  */
+// R7ar-P2-40/D1-aq-11: cap before/after blob size. A single audit row
+// holding the full bill snapshot (50 line items × deep BillItem objects)
+// can balloon past 16 KB and (a) bloat the audit collection, (b) push
+// the doc near Mongo's 16 MB limit on chatty IPDs. The cap keeps each
+// blob under 12 KB stringified — well below the 16 KB threshold the
+// MongoDB driver pre-flights at write time.
+const _AUDIT_BLOB_CAP = 12 * 1024;
+function _capBlob(v) {
+  if (v == null || typeof v !== "object") return v;
+  try {
+    const s = JSON.stringify(v);
+    if (s.length <= _AUDIT_BLOB_CAP) return v;
+    // Truncate by dropping array items + deep keys. Keep top-level scalars.
+    const summarised = {};
+    for (const [k, val] of Object.entries(v)) {
+      if (val == null) continue;
+      if (Array.isArray(val)) {
+        summarised[k] = { _length: val.length, _truncated: true, sample: val.slice(0, 2) };
+      } else if (typeof val === "object") {
+        const sub = JSON.stringify(val);
+        summarised[k] = sub.length > 256 ? { _truncated: true, size: sub.length } : val;
+      } else {
+        summarised[k] = val;
+      }
+    }
+    summarised._original_bytes = s.length;
+    return summarised;
+  } catch (_) {
+    return { _truncated: true, _reason: "JSON-stringify failed" };
+  }
+}
+
 async function emitBillingAudit(payload, { req } = {}) {
   try {
     const row = {
       ...payload,
+      before:    _capBlob(payload.before),
+      after:     _capBlob(payload.after),
       actorId:   payload.actorId   || req?.user?._id,
       actorName: payload.actorName || req?.user?.fullName || req?.user?.employeeId,
       actorRole: payload.actorRole || req?.user?.role,

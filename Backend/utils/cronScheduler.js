@@ -42,30 +42,41 @@ function getLockModel() {
   return CronLockModel;
 }
 
-const HOLDER = `${process.pid}@${require("os").hostname()}`;
+// R7ar-P1-19/D10-aq-07: append a per-process UUID so two K8s pods with
+// identical hostname+PID (StatefulSet + container PID 1) don't claim
+// each other's locks.
+const _holderUuid = require("crypto").randomUUID();
+const HOLDER = `${process.pid}@${require("os").hostname()}/${_holderUuid}`;
 
 /**
- * Try-acquire a named distributed lock. Atomic via upsert with $setOnInsert.
- * Returns true if the caller now owns the lock; false if another holder
- * has a live (non-expired) lock for the same name.
+ * Try-acquire a named distributed lock. **Single-roundtrip atomic** via
+ * findOneAndUpdate(upsert) — replaces the prior R7ap two-step
+ * deleteOne+create, which had a race window where a peer could insert
+ * its lock between our delete and create and we'd both think we won.
+ *
+ * Semantics:
+ *   - doc missing                 → upsert inserts our lock → win
+ *   - doc exists & expiresAt < now → filter matches, $set rotates holder → win
+ *   - doc exists & expiresAt ≥ now → filter misses; upsert tries to insert
+ *                                     same _id → DuplicateKey (11000) → lose
  *
  * The Mongo TTL index on expiresAt cleans up dead lock docs automatically
- * within ~60s of expiry — for normal cron runs we just let the doc expire.
+ * within ~60s of expiry — but the `expiresAt < now` predicate above means
+ * we don't have to wait for the TTL reaper to rotate.
  */
 async function acquireLock(name, ttlSec) {
   const Lock = getLockModel();
   const now  = new Date();
   const exp  = new Date(now.getTime() + ttlSec * 1000);
   try {
-    // Atomic: insert only if doc is missing OR exists but expired. We can't
-    // express "expired" as part of an upsert key, so do it in two steps:
-    // 1. delete the doc if expiresAt < now (best-effort).
-    await Lock.deleteOne({ _id: name, expiresAt: { $lt: now } });
-    // 2. insert with $setOnInsert — fails uniquely if another live doc exists.
-    await Lock.create({ _id: name, holder: HOLDER, acquiredAt: now, expiresAt: exp });
+    await Lock.findOneAndUpdate(
+      { _id: name, expiresAt: { $lt: now } },
+      { $set: { holder: HOLDER, acquiredAt: now, expiresAt: exp } },
+      { upsert: true, setDefaultsOnInsert: true, new: true },
+    );
     return true;
   } catch (e) {
-    if (e.code === 11000) return false;  // someone else holds it
+    if (e.code === 11000) return false;  // live holder exists — lose race
     throw e;
   }
 }

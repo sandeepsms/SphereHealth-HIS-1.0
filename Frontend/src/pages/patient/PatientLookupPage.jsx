@@ -38,6 +38,8 @@ import { useAuth } from "../../context/AuthContext";
 import ActivePatientDirectory from "../../Components/ActivePatientDirectory";
 import "../reception/reception-shared.css";
 import "./PatientLookupPage.css";
+// R7ar-P1-14/D4-aq-02: centralised Decimal128 unwrap.
+import { toMoney } from "../../utils/money";
 
 /* ─── Formatters ─────────────────────────────────────────────── */
 const fmtDate = (d) =>
@@ -1322,7 +1324,7 @@ function printAdvanceReceipt(advance, patient) {
     bedNumber:    null,
     wardName:     null,
     date:         advance.paidAt || advance.createdAt || new Date().toISOString(),
-    amount:       Number(advance.amount?.$numberDecimal ?? advance.amount) || 0,
+    amount:       toMoney(advance.amount),
     method:       advance.paymentMode,
     refNo:        advance.transactionId,
     depositPurpose: advance.remarks || "hospitalization advance",
@@ -1385,7 +1387,7 @@ function TakeAdvanceModal({ patient, onClose, onSaved }) {
 
   // ── Success state — receipt summary + print button ───────────────
   if (savedAdv) {
-    const amt = Number(savedAdv.amount?.$numberDecimal ?? savedAdv.amount) || 0;
+    const amt = toMoney(savedAdv.amount);
     return (
       <div className="pl-modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) { onSaved && onSaved(); } }}>
         <div className="pl-modal" role="dialog" aria-label="Advance saved">

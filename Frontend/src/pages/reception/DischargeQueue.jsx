@@ -138,6 +138,19 @@ export default function DischargeQueue() {
                    w.stage === "BillCleared"    ? "Ready for Gate Pass" :
                    w.stage === "Completed"      ? "Discharged" : w.stage}
                 </span>
+                {/* R7ar-P1-24/D9-aq-04: surface the post-discharge surplus
+                    detected by the cascade. Cashier sees the chip → opens
+                    the IPD ledger → routes the surplus through the standard
+                    refund flow (which writes a CN + Day Book "Cash Out"). */}
+                {Number(adm.dischargeOverage) > 0.5 && (
+                  <span
+                    className="rx-card-stage rx-card-stage--overage"
+                    title={`Surplus ₹${Number(adm.dischargeOverage).toFixed(2)} owed to patient — open Live Ledger to refund`}
+                  >
+                    <i className="pi pi-exclamation-triangle" />{" "}
+                    Refund Owed {fmtCur(adm.dischargeOverage)}
+                  </span>
+                )}
               </div>
               <div className="rx-card-meta">
                 <span>UHID: <strong>{adm.UHID || "—"}</strong></span>

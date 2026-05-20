@@ -949,74 +949,80 @@ exports.refundPayment = async (req, res, next) => {
 // SUBMITTED / APPROVED, so the TPA register still showed an active claim
 // that could never settle. The shortest correct path is to flip the claim
 // to REJECTED with a "bill-cancelled" reason and zero the approved amount.
+//
+// R7ar-P1-17/D5-aq-09: the inline load+mutate+save block previously
+// 500'd on VersionError if a concurrent payment / void landed between
+// the findById and the save. We now wrap the whole thing in
+// retryVersionError so a benign concurrent write gets retried with a
+// fresh read instead of bubbling up as "Internal Server Error".
 exports.cancelBill = async (req, res, next) => {
   try {
+    const retryVE    = require("../../utils/retryVersionError");
     const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
-    const bill = await PatientBill.findById(req.params.billId);
-    if (!bill) return res.status(404).json({ success: false, message: "Bill not found" });
 
-    // R7ab: state-machine guard. Terminal statuses (CANCELLED / REFUNDED
-    // / PAID) cannot be cancelled — previously a REFUNDED bill could be
-    // re-cancelled because the `paid` aggregate (negatives + positives)
-    // summed to 0 and bypassed the guard, leaving the bill double-
-    // labelled in the audit register.
-    if (["CANCELLED", "REFUNDED", "PAID"].includes(bill.billStatus)) {
-      return res.status(409).json({
-        success: false,
-        message: `Cannot cancel — bill is already in '${bill.billStatus}' state.`,
-      });
-    }
-    // R7ab: compute "paid" from positive rows only — a refund row is a
-    // negative entry, so the simple sum lets a fully-refunded bill look
-    // unpaid. Cashier-intent collection is what we want to gate on.
-    const paid = (bill.payments || []).reduce(
-      (s, p) => s + Math.max(0, Number(p.amount || 0)), 0,
-    );
-    if (paid > 0) {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot cancel — ₹${paid} already collected. Issue a refund first.`,
-      });
-    }
     if (!req.body.reason || !String(req.body.reason).trim()) {
       return res.status(400).json({ success: false, message: "Cancellation reason is required" });
     }
-    const reason     = String(req.body.reason).trim();
+    const reason      = String(req.body.reason).trim();
     const cancelledBy = req.body.cancelledBy || req.user?.fullName || "Reception";
-    // R7ap-F15: capture before-state for the BillingAudit emit at the end.
-    const _priorBillStatus = bill.billStatus;
-    const _priorTpaStatus  = bill.tpaClaimStatus;
 
-    bill.billStatus = "CANCELLED";
-    bill.remarks    = (bill.remarks || "") + ` | Cancelled: ${reason} (by ${cancelledBy})`;
+    const { bill, _priorBillStatus, _priorTpaStatus } = await retryVE(async () => {
+      const b = await PatientBill.findById(req.params.billId);
+      if (!b) {
+        const err = new Error("Bill not found"); err.status = 404; throw err;
+      }
+      // R7ab: state-machine guard. Terminal statuses (CANCELLED / REFUNDED
+      // / PAID) cannot be cancelled — previously a REFUNDED bill could be
+      // re-cancelled because the `paid` aggregate (negatives + positives)
+      // summed to 0 and bypassed the guard, leaving the bill double-
+      // labelled in the audit register.
+      if (["CANCELLED", "REFUNDED", "PAID"].includes(b.billStatus)) {
+        const err = new Error(`Cannot cancel — bill is already in '${b.billStatus}' state.`);
+        err.status = 409; throw err;
+      }
+      // R7ab: compute "paid" from positive rows only — a refund row is a
+      // negative entry, so the simple sum lets a fully-refunded bill look
+      // unpaid. Cashier-intent collection is what we want to gate on.
+      const paid = (b.payments || []).reduce(
+        (s, p) => s + Math.max(0, Number(p.amount || 0)), 0,
+      );
+      if (paid > 0) {
+        const err = new Error(`Cannot cancel — ₹${paid} already collected. Issue a refund first.`);
+        err.status = 400; throw err;
+      }
+      // R7ap-F15: capture before-state for the BillingAudit emit at the end.
+      const priorBillStatus = b.billStatus;
+      const priorTpaStatus  = b.tpaClaimStatus;
 
-    // R7z: invalidate any active TPA claim attached to this bill.
-    // The schema enum doesn't have CANCELLED, so we flip live states to
-    // REJECTED with a system reason and zero the approved amount. Already
-    // terminal (REJECTED / NOT_APPLICABLE) and never-set bills are left
-    // alone so we don't pollute the TPA audit.
-    const ACTIVE = new Set(["PENDING", "SUBMITTED", "APPROVED", "PARTIAL_APPROVED"]);
-    if (ACTIVE.has(bill.tpaClaimStatus)) {
-      const priorStatus = bill.tpaClaimStatus;
-      const priorAmount = bill.tpaApprovedAmount;
-      bill.tpaClaimStatus    = "REJECTED";
-      bill.tpaApprovedAmount = 0;
-      bill.markModified("tpaClaimStatus");
-      bill.remarks += ` | TPA claim auto-invalidated on bill cancel (was ${priorStatus}, ₹${priorAmount || 0} approved)`;
-      // Append to adjustmentLog so the audit trail shows who/when.
-      bill.adjustmentLog = bill.adjustmentLog || [];
-      bill.adjustmentLog.push({
-        at:     new Date(),
-        by:     cancelledBy,
-        type:   "EXTRA_DISCOUNT",   // re-use existing enum; this is a financial state change
-        reason: `TPA claim invalidated due to bill cancellation: ${reason}`,
-        before: { tpaClaimStatus: priorStatus, tpaApprovedAmount: priorAmount },
-        after:  { tpaClaimStatus: "REJECTED",  tpaApprovedAmount: 0 },
-      });
-    }
+      b.billStatus = "CANCELLED";
+      b.remarks    = (b.remarks || "") + ` | Cancelled: ${reason} (by ${cancelledBy})`;
 
-    await bill.save();
-    // R7ap-F15: cancel-bill audit
+      // R7z: invalidate any active TPA claim attached to this bill.
+      const ACTIVE = new Set(["PENDING", "SUBMITTED", "APPROVED", "PARTIAL_APPROVED"]);
+      if (ACTIVE.has(b.tpaClaimStatus)) {
+        const tpaPriorStatus = b.tpaClaimStatus;
+        const tpaPriorAmount = b.tpaApprovedAmount;
+        b.tpaClaimStatus    = "REJECTED";
+        b.tpaApprovedAmount = 0;
+        b.markModified("tpaClaimStatus");
+        b.remarks += ` | TPA claim auto-invalidated on bill cancel (was ${tpaPriorStatus}, ₹${tpaPriorAmount || 0} approved)`;
+        b.adjustmentLog = b.adjustmentLog || [];
+        b.adjustmentLog.push({
+          at:     new Date(),
+          by:     cancelledBy,
+          type:   "EXTRA_DISCOUNT",
+          reason: `TPA claim invalidated due to bill cancellation: ${reason}`,
+          before: { tpaClaimStatus: tpaPriorStatus, tpaApprovedAmount: tpaPriorAmount },
+          after:  { tpaClaimStatus: "REJECTED",     tpaApprovedAmount: 0 },
+        });
+      }
+
+      await b.save();
+      return { bill: b, _priorBillStatus: priorBillStatus, _priorTpaStatus: priorTpaStatus };
+    }, { label: "cancelBill" });
+
+    // R7ap-F15: cancel-bill audit — outside the retry block so it doesn't
+    // double-emit on a VersionError replay.
     try {
       const { emit } = require("../../models/Billing/BillingAudit");
       await emit({
@@ -1031,8 +1037,16 @@ exports.cancelBill = async (req, res, next) => {
         after:        { billStatus: "CANCELLED", tpaClaimStatus: bill.tpaClaimStatus },
       }, { req });
     } catch (_) { /* audit best-effort */ }
+    // R7ar-P1-7: cache invalidation — a cancel can flip a bill out of
+    // the Day Book's "expected collection" universe.
+    try { exports.invalidateDayBookCache(); } catch (_) {}
     return res.json({ success: true, data: bill });
-  } catch (e) { next(e); }
+  } catch (e) {
+    if (e?.status && !res.headersSent) {
+      return res.status(e.status).json({ success: false, message: e.message });
+    }
+    next(e);
+  }
 };
 
 // POST /api/billing/:billId/tpa-deny  Body: { reason }
@@ -1075,22 +1089,14 @@ exports.tpaDeny = async (req, res, next) => {
 //
 // Net effect either way: bill.balanceAmount lands at zero (or only the
 // patient's intentional liability), the audit log shows the exact path.
+// R7ar-P1-17/D5-aq-09: wrap the full load+validate+mutate+save block in
+// retryVersionError so a concurrent payment / refund / cancel landing
+// between the findById and save() doesn't 500 the TPA desk. The
+// validation throws still surface as 4xx via the err.status handler.
 exports.tpaSettle = async (req, res, next) => {
   try {
+    const retryVE    = require("../../utils/retryVersionError");
     const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
-    const bill = await PatientBill.findById(req.params.billId);
-    if (!bill) return res.status(404).json({ success: false, message: "Bill not found" });
-
-    const ALLOWED = ["APPROVED", "PARTIAL_APPROVED", "SUBMITTED"];
-    if (!ALLOWED.includes(bill.tpaClaimStatus)) {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot settle — claim is in '${bill.tpaClaimStatus}' state (must be APPROVED / PARTIAL_APPROVED / SUBMITTED).`,
-      });
-    }
-    if (!["TPA", "CORPORATE"].includes(bill.paymentType)) {
-      return res.status(400).json({ success: false, message: "Settle is only valid for TPA / Corporate bills" });
-    }
 
     const settledAmount = Number(req.body.settledAmount);
     if (!Number.isFinite(settledAmount) || settledAmount < 0) {
@@ -1100,146 +1106,156 @@ exports.tpaSettle = async (req, res, next) => {
       return res.status(400).json({ success: false, message: "transactionId (NEFT/UTR/cheque ref) is required for TPA settlement" });
     }
 
-    // Unwrap Decimal128 to plain number for arithmetic.
-    const toN = (v) => v == null ? 0 : (typeof v === "object" && v.toString ? Number(v.toString()) : Number(v));
-    const approved = toN(bill.tpaApprovedAmount) || toN(bill.tpaPayableAmount);
-    const shortfall = Math.max(0, approved - settledAmount);
-    const overpay   = Math.max(0, settledAmount - approved);
-
-    // Reject suspiciously large overpayments — likely a typo. Tiny
-    // overpayments (≤ ₹10 rounding) we accept silently.
-    if (overpay > 10) {
-      return res.status(400).json({
-        success: false,
-        message: `Settled amount ₹${settledAmount} exceeds approved ₹${approved} by ₹${overpay}. ` +
-                 `Re-approve the higher amount via /tpa-approve first, then settle.`,
-      });
-    }
-
     const settledBy   = req.body.settledBy || req.user?.fullName || "TPA Desk";
     const settledOn   = req.body.settledOn ? new Date(req.body.settledOn) : new Date();
     const shortfallTo = (req.body.shortfallTo || "PATIENT").toUpperCase();
 
-    // Post the TPA payment row (idempotent on transactionId — if the same
-    // UTR has been posted before, reject so we don't double-credit).
-    const duplicate = (bill.payments || []).find(
-      (p) => p.paymentMode === "TPA_CLAIM" && p.transactionId === String(req.body.transactionId).trim(),
-    );
-    if (duplicate) {
-      return res.status(409).json({
-        success: false,
-        message: `TPA payment with transactionId '${req.body.transactionId}' already recorded on this bill.`,
-      });
-    }
+    const result = await retryVE(async () => {
+      const bill = await PatientBill.findById(req.params.billId);
+      if (!bill) {
+        const err = new Error("Bill not found"); err.status = 404; throw err;
+      }
 
-    bill.payments = bill.payments || [];
-    if (settledAmount > 0) {
-      // R7ap-F28/D6-17: capture TDS deducted by TPA at settlement time
-      // (typically 10% u/s 194J for professional fees, 2% u/s 194C for
-      // contractual). Hospital books need it for 26AS reconciliation.
-      const tdsAmount   = Number(req.body.tdsAmount || 0);
-      const tdsCertNo   = String(req.body.tdsCertificateNo || "").trim() || null;
-      const tdsSection  = String(req.body.tdsSection || "").trim() || null;
-      bill.payments.push({
-        amount:        settledAmount,
-        paymentMode:   "TPA_CLAIM",
-        transactionId: String(req.body.transactionId).trim(),
-        paidAt:        settledOn,
-        receivedBy:    settledBy,
-        remarks:       req.body.remarks || `TPA settlement against approved ₹${approved}` + (tdsAmount > 0 ? ` (TDS ₹${tdsAmount} ${tdsSection || ""})` : ""),
-        tdsAmount,
-        tdsCertificateNo: tdsCertNo,
-        tdsSection,
-      });
-    }
+      const ALLOWED = ["APPROVED", "PARTIAL_APPROVED", "SUBMITTED"];
+      if (!ALLOWED.includes(bill.tpaClaimStatus)) {
+        const err = new Error(`Cannot settle — claim is in '${bill.tpaClaimStatus}' state (must be APPROVED / PARTIAL_APPROVED / SUBMITTED).`);
+        err.status = 400; throw err;
+      }
+      if (!["TPA", "CORPORATE"].includes(bill.paymentType)) {
+        const err = new Error("Settle is only valid for TPA / Corporate bills");
+        err.status = 400; throw err;
+      }
 
-    // Reconcile shortfall.
-    //
-    // R7ab CRITICAL fix: the previous R7z version of this block mutated
-    // `bill.patientPayableAmount` directly, but the bill's pre-save
-    // recalcTotals() ALWAYS overwrites that field from sum(item.tpaPay) /
-    // billing-type — so the bump never persisted and the patient was
-    // never charged for the TPA shortfall. We now route the shortfall
-    // through fields the hook respects:
-    //   • PATIENT (default) — flip every line item's tpaPayableAmount to
-    //     0 + patientPayableAmount to its gross share. The hook re-sums
-    //     and `patientPayableAmount` ends up = net (sans extraDiscount).
-    //   • WRITEOFF — add to extraDiscount + reason. The hook subtracts
-    //     extraDiscount from netAmount + patientPayableAmount in place,
-    //     collapsing the bill to whatever the TPA actually paid.
-    const priorStatus  = bill.tpaClaimStatus;
-    const priorPatient = toN(bill.patientPayableAmount);
-    const priorExtra   = toN(bill.extraDiscount);
-    if (shortfall > 0) {
-      if (shortfallTo === "WRITEOFF") {
-        // Write-off — fold the shortfall into extraDiscount so recalcTotals
-        // collapses the bill (net shrinks to what was actually paid).
-        bill.extraDiscount = priorExtra + shortfall;
-        bill.extraDiscountReason = (bill.extraDiscountReason || "") +
-          ` | TPA short-pay write-off ₹${shortfall.toFixed(2)} on UTR ${req.body.transactionId}`;
-        bill.extraDiscountBy = settledBy;
-        bill.tpaClaimStatus  = "REJECTED";
-        bill.remarks = (bill.remarks || "") +
-          ` | TPA settled ₹${settledAmount} of approved ₹${approved}; ₹${shortfall.toFixed(2)} written off`;
-      } else {
-        // Patient liability bump — re-tag each TPA line item so the hook
-        // recomputes patientPayableAmount upward. We move the shortfall's
-        // worth of per-line tpaPayableAmount onto patientPayableAmount,
-        // proportional to each item's net contribution.
-        const totalTpaShare = (bill.billItems || []).reduce(
-          (s, i) => s + toN(i.tpaPayableAmount), 0);
-        if (totalTpaShare > 0) {
-          let remaining = shortfall;
-          for (const item of bill.billItems) {
-            const itemTpa = toN(item.tpaPayableAmount);
-            if (itemTpa <= 0) continue;
-            const moveRaw = (itemTpa / totalTpaShare) * shortfall;
-            const move = Math.min(moveRaw, itemTpa, remaining);
-            const itemPt = toN(item.patientPayableAmount);
-            item.tpaPayableAmount     = Number((itemTpa - move).toFixed(2));
-            item.patientPayableAmount = Number((itemPt + move).toFixed(2));
-            remaining -= move;
-            if (remaining <= 0.005) break;
-          }
-          bill.markModified("billItems");
-        } else {
-          // Lump-sum TPA bill with no per-line split (older data) — fold
-          // shortfall into extraDiscount with a NEGATIVE sign equivalent:
-          // we instead bump extraDiscount by 0 and ride on the patient
-          // share via a manual line. Cleanest fallback: mirror WRITEOFF
-          // path so the bill closes correctly but flag the TPA status
-          // PARTIAL so the receptionist knows to collect ₹shortfall.
+      // Unwrap Decimal128 to plain number for arithmetic.
+      const toN = (v) => v == null ? 0 : (typeof v === "object" && v.toString ? Number(v.toString()) : Number(v));
+      const approved = toN(bill.tpaApprovedAmount) || toN(bill.tpaPayableAmount);
+      const shortfall = Math.max(0, approved - settledAmount);
+      const overpay   = Math.max(0, settledAmount - approved);
+
+      // Reject suspiciously large overpayments — likely a typo. Tiny
+      // overpayments (≤ ₹10 rounding) we accept silently.
+      if (overpay > 10) {
+        const err = new Error(
+          `Settled amount ₹${settledAmount} exceeds approved ₹${approved} by ₹${overpay}. ` +
+          `Re-approve the higher amount via /tpa-approve first, then settle.`,
+        );
+        err.status = 400; throw err;
+      }
+
+      // Post the TPA payment row (idempotent on transactionId — if the same
+      // UTR has been posted before, reject so we don't double-credit).
+      const duplicate = (bill.payments || []).find(
+        (p) => p.paymentMode === "TPA_CLAIM" && p.transactionId === String(req.body.transactionId).trim(),
+      );
+      if (duplicate) {
+        const err = new Error(`TPA payment with transactionId '${req.body.transactionId}' already recorded on this bill.`);
+        err.status = 409; throw err;
+      }
+
+      bill.payments = bill.payments || [];
+      if (settledAmount > 0) {
+        // R7ap-F28/D6-17: capture TDS deducted by TPA at settlement time
+        // (typically 10% u/s 194J for professional fees, 2% u/s 194C for
+        // contractual). Hospital books need it for 26AS reconciliation.
+        const tdsAmount   = Number(req.body.tdsAmount || 0);
+        const tdsCertNo   = String(req.body.tdsCertificateNo || "").trim() || null;
+        const tdsSection  = String(req.body.tdsSection || "").trim() || null;
+        bill.payments.push({
+          amount:        settledAmount,
+          paymentMode:   "TPA_CLAIM",
+          transactionId: String(req.body.transactionId).trim(),
+          paidAt:        settledOn,
+          receivedBy:    settledBy,
+          remarks:       req.body.remarks || `TPA settlement against approved ₹${approved}` + (tdsAmount > 0 ? ` (TDS ₹${tdsAmount} ${tdsSection || ""})` : ""),
+          tdsAmount,
+          tdsCertificateNo: tdsCertNo,
+          tdsSection,
+        });
+      }
+
+      // Reconcile shortfall.
+      //
+      // R7ab CRITICAL fix: the previous R7z version of this block mutated
+      // `bill.patientPayableAmount` directly, but the bill's pre-save
+      // recalcTotals() ALWAYS overwrites that field from sum(item.tpaPay) /
+      // billing-type — so the bump never persisted and the patient was
+      // never charged for the TPA shortfall. We now route the shortfall
+      // through fields the hook respects:
+      //   • PATIENT (default) — flip every line item's tpaPayableAmount to
+      //     0 + patientPayableAmount to its gross share. The hook re-sums
+      //     and `patientPayableAmount` ends up = net (sans extraDiscount).
+      //   • WRITEOFF — add to extraDiscount + reason. The hook subtracts
+      //     extraDiscount from netAmount + patientPayableAmount in place,
+      //     collapsing the bill to whatever the TPA actually paid.
+      const priorStatus  = bill.tpaClaimStatus;
+      const priorPatient = toN(bill.patientPayableAmount);
+      const priorExtra   = toN(bill.extraDiscount);
+      if (shortfall > 0) {
+        if (shortfallTo === "WRITEOFF") {
           bill.extraDiscount = priorExtra + shortfall;
           bill.extraDiscountReason = (bill.extraDiscountReason || "") +
-            ` | TPA short-pay ₹${shortfall.toFixed(2)} (no per-line split — collected from patient at desk)`;
+            ` | TPA short-pay write-off ₹${shortfall.toFixed(2)} on UTR ${req.body.transactionId}`;
           bill.extraDiscountBy = settledBy;
+          bill.tpaClaimStatus  = "REJECTED";
+          bill.remarks = (bill.remarks || "") +
+            ` | TPA settled ₹${settledAmount} of approved ₹${approved}; ₹${shortfall.toFixed(2)} written off`;
+        } else {
+          // Patient liability bump — re-tag each TPA line item so the hook
+          // recomputes patientPayableAmount upward.
+          const totalTpaShare = (bill.billItems || []).reduce(
+            (s, i) => s + toN(i.tpaPayableAmount), 0);
+          if (totalTpaShare > 0) {
+            let remaining = shortfall;
+            for (const item of bill.billItems) {
+              const itemTpa = toN(item.tpaPayableAmount);
+              if (itemTpa <= 0) continue;
+              const moveRaw = (itemTpa / totalTpaShare) * shortfall;
+              const move = Math.min(moveRaw, itemTpa, remaining);
+              const itemPt = toN(item.patientPayableAmount);
+              item.tpaPayableAmount     = Number((itemTpa - move).toFixed(2));
+              item.patientPayableAmount = Number((itemPt + move).toFixed(2));
+              remaining -= move;
+              if (remaining <= 0.005) break;
+            }
+            bill.markModified("billItems");
+          } else {
+            bill.extraDiscount = priorExtra + shortfall;
+            bill.extraDiscountReason = (bill.extraDiscountReason || "") +
+              ` | TPA short-pay ₹${shortfall.toFixed(2)} (no per-line split — collected from patient at desk)`;
+            bill.extraDiscountBy = settledBy;
+          }
+          bill.tpaClaimStatus = "PARTIAL_APPROVED";
+          bill.remarks = (bill.remarks || "") +
+            ` | TPA settled ₹${settledAmount} of approved ₹${approved}; ₹${shortfall.toFixed(2)} → patient liability`;
         }
-        bill.tpaClaimStatus = "PARTIAL_APPROVED";
-        bill.remarks = (bill.remarks || "") +
-          ` | TPA settled ₹${settledAmount} of approved ₹${approved}; ₹${shortfall.toFixed(2)} → patient liability`;
+      } else {
+        // Fully settled — keep APPROVED (the schema enum has no SETTLED
+        // value; APPROVED + a TPA_CLAIM payment row is the signal).
+        bill.remarks = (bill.remarks || "") + ` | TPA fully settled ₹${settledAmount} on UTR ${req.body.transactionId}`;
       }
-    } else {
-      // Fully settled — keep APPROVED (the schema enum has no SETTLED
-      // value; APPROVED + a TPA_CLAIM payment row is the signal).
-      bill.remarks = (bill.remarks || "") + ` | TPA fully settled ₹${settledAmount} on UTR ${req.body.transactionId}`;
-    }
 
-    // Audit trail entry — captures the full before/after.
-    bill.adjustmentLog = bill.adjustmentLog || [];
-    bill.adjustmentLog.push({
-      at:     settledOn,
-      by:     settledBy,
-      type:   "EXTRA_DISCOUNT",   // re-use existing enum bucket for any financial event
-      reason: `TPA settlement: paid ₹${settledAmount} of approved ₹${approved} (shortfall ₹${shortfall.toFixed(2)} → ${shortfallTo}). UTR: ${req.body.transactionId}`,
-      before: { tpaClaimStatus: priorStatus, patientPayableAmount: priorPatient, extraDiscount: priorExtra },
-      after:  { tpaClaimStatus: bill.tpaClaimStatus, settledAmount, shortfallTo },
-    });
+      // Audit trail entry — captures the full before/after.
+      bill.adjustmentLog = bill.adjustmentLog || [];
+      bill.adjustmentLog.push({
+        at:     settledOn,
+        by:     settledBy,
+        type:   "EXTRA_DISCOUNT",   // re-use existing enum bucket for any financial event
+        reason: `TPA settlement: paid ₹${settledAmount} of approved ₹${approved} (shortfall ₹${shortfall.toFixed(2)} → ${shortfallTo}). UTR: ${req.body.transactionId}`,
+        before: { tpaClaimStatus: priorStatus, patientPayableAmount: priorPatient, extraDiscount: priorExtra },
+        after:  { tpaClaimStatus: bill.tpaClaimStatus, settledAmount, shortfallTo },
+      });
 
-    bill.markModified("tpaClaimStatus");
-    bill.markModified("payments");
+      bill.markModified("tpaClaimStatus");
+      bill.markModified("payments");
 
-    await bill.save();
-    // R7ap-F15: TPA settle audit
+      await bill.save();
+      return { bill, approved, shortfall, priorStatus, priorPatient, priorExtra };
+    }, { label: "tpaSettle" });
+
+    const { bill, approved, shortfall, priorStatus, priorPatient, priorExtra } = result;
+
+    // R7ap-F15: TPA settle audit — emitted outside retry so a retried save
+    // doesn't double-emit.
     try {
       const { emit } = require("../../models/Billing/BillingAudit");
       await emit({
@@ -1257,12 +1273,19 @@ exports.tpaSettle = async (req, res, next) => {
         after:        { tpaClaimStatus: bill.tpaClaimStatus, settledAmount, shortfallTo },
       }, { req });
     } catch (_) { /* audit best-effort */ }
+    // R7ar-P1-7: invalidate Day Book — TPA receipts feed the by-mode tile.
+    try { exports.invalidateDayBookCache(); } catch (_) {}
     return res.json({
       success: true,
       data: bill,
       settled: { approved, settledAmount, shortfall, shortfallTo },
     });
-  } catch (e) { next(e); }
+  } catch (e) {
+    if (e?.status && !res.headersSent) {
+      return res.status(e.status).json({ success: false, message: e.message });
+    }
+    next(e);
+  }
 };
 
 /* ─────────────────────────────────────────────────────────────
@@ -1340,6 +1363,10 @@ async function computeCollectionSummary(dateStr) {
     // Aggregators
     let totalCollected = 0, totalGross = 0, totalPending = 0, advanceDue = 0, tpaPending = 0;
     let advancesApplied = 0, advanceDepositsIn = 0, advanceRefundsOut = 0, billRefundsOut = 0;
+    // R7ar-P2-28/D5-aq-03: TDS deducted by TPA payers at settlement is
+    // NOT cash in the till — it's a govt receivable on Form 26AS. Track
+    // separately so netCashFlow reflects what's actually in the drawer.
+    let totalTdsDeducted = 0;
     let txnCount = 0;
     const byVisitType = { OPD: 0, IPD: 0, DC: 0, ER: 0, Services: 0, Other: 0 };
     const byVisitTxn  = { OPD: 0, IPD: 0, DC: 0, ER: 0, Services: 0, Other: 0 };
@@ -1380,6 +1407,10 @@ async function computeCollectionSummary(dateStr) {
           if (amt > 0) advancesApplied += amt;
           billPaidToday += amt; // counts toward bill-level paid (it's still a payment)
           continue;
+        }
+        // R7ar-P2-28/D5-aq-03: aggregate TDS so we can subtract from netCashFlow.
+        if (p.tdsAmount && Number(p.tdsAmount) > 0) {
+          totalTdsDeducted += Number(p.tdsAmount);
         }
         // Separate refund (negative payment) totals from gross collection so
         // Day Book can show "Cash In" / "Refund Out" cleanly.
@@ -1474,13 +1505,15 @@ async function computeCollectionSummary(dateStr) {
     }
 
     // R7ap-F11/F12: net cash flow = collections − bill refunds − advance refunds.
-    const netCashFlow = totalCollected - billRefundsOut - advanceRefundsOut;
+    // R7ar-P2-28/D5-aq-03: subtract TDS too (it's a receivable, not till cash).
+    const netCashFlow = totalCollected - billRefundsOut - advanceRefundsOut - totalTdsDeducted;
     return {
       success: true,
       date: dateStr,
       summary: {
         totalCollected, totalGross, totalPending, txnCount, advanceDue, tpaPending,
         advancesApplied, advanceDepositsIn, advanceRefundsOut, billRefundsOut, netCashFlow,
+        totalTdsDeducted,           // R7ar-P2-28
       },
       byVisitType: Object.entries(byVisitType).map(([type, amount]) => ({ type, amount, count: byVisitTxn[type] || 0 })),
       byMode:      Object.entries(byMode).filter(([, v]) => v !== 0).map(([mode, amount]) => ({ mode, amount })),
@@ -1700,6 +1733,8 @@ exports.listBillingAudit = async (req, res, next) => {
 exports.getHospitalGstRegister = async (req, res, next) => {
   try {
     const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+    const CreditNote  = require("../../models/Billing/CreditNote");
+    const GstMonthlySnapshot = require("../../models/Billing/GstMonthlySnapshot");
     const { toNum }   = require("../../utils/money");
     const from = req.query.from ? new Date(`${req.query.from}T00:00:00`) : new Date(Date.now() - 30 * 86400000);
     const to   = req.query.to   ? new Date(`${req.query.to}T23:59:59.999`) : new Date();
@@ -1739,7 +1774,7 @@ exports.getHospitalGstRegister = async (req, res, next) => {
       { $sort: { rate: 1 } },
     ];
     const buckets = await PatientBill.aggregate(pipeline);
-    const totals = buckets.reduce(
+    const grossTotals = buckets.reduce(
       (acc, b) => ({
         taxableValue: acc.taxableValue + toNum(b.taxableValue),
         cgst:         acc.cgst         + toNum(b.cgst),
@@ -1751,6 +1786,49 @@ exports.getHospitalGstRegister = async (req, res, next) => {
       { taxableValue: 0, cgst: 0, sgst: 0, taxAmount: 0, billCount: 0, itemCount: 0 },
     );
 
+    // R7ar-P1-15/D6-aq-08: subtract CreditNote reversals from the
+    // register. Pre-R7ar the GST register showed gross outward supply
+    // only — refund credit-notes lived in a separate doc but the
+    // GSTR-1 net (outward − CDNR) was hand-computed by the accountant
+    // every month. Now the API returns gross + reversed + net.
+    const cnAgg = await CreditNote.aggregate([
+      { $match: { creditNoteDate: { $gte: from, $lte: to } } },
+      { $group: {
+          _id: null,
+          count:        { $sum: 1 },
+          taxableValue: { $sum: { $toDouble: "$taxableValue" } },
+          cgst:         { $sum: { $toDouble: "$cgstAmount" } },
+          sgst:         { $sum: { $toDouble: "$sgstAmount" } },
+          igst:         { $sum: { $toDouble: "$igstAmount" } },
+          taxAmount:    { $sum: { $toDouble: "$taxAmount" } },
+      } },
+    ]);
+    const reversals = cnAgg[0] || { count: 0, taxableValue: 0, cgst: 0, sgst: 0, igst: 0, taxAmount: 0 };
+
+    const totals = {
+      ...grossTotals,
+      // Net = gross outward − refunds (CDNR reversal).
+      netTaxableValue: grossTotals.taxableValue - toNum(reversals.taxableValue),
+      netCgst:         grossTotals.cgst         - toNum(reversals.cgst),
+      netSgst:         grossTotals.sgst         - toNum(reversals.sgst),
+      netTaxAmount:    grossTotals.taxAmount    - toNum(reversals.taxAmount),
+      reversed: {
+        count:        reversals.count,
+        taxableValue: toNum(reversals.taxableValue),
+        cgst:         toNum(reversals.cgst),
+        sgst:         toNum(reversals.sgst),
+        igst:         toNum(reversals.igst),
+        taxAmount:    toNum(reversals.taxAmount),
+      },
+    };
+
+    // Surface any frozen monthly snapshots in the window so the
+    // accountant can tell which periods are LOCKED (filed) vs. open.
+    const snapshots = await GstMonthlySnapshot.find({
+      periodStart: { $lte: to },
+      periodEnd:   { $gte: from },
+    }).sort({ periodStart: 1 }).lean();
+
     res.json({
       success: true,
       data: {
@@ -1758,8 +1836,100 @@ exports.getHospitalGstRegister = async (req, res, next) => {
         to:   to.toISOString().slice(0, 10),
         buckets,
         totals,
+        snapshots,                                // R7ar-P1-23
       },
     });
+  } catch (e) { next(e); }
+};
+
+// R7ar-P1-15/D6-aq-08: GET /api/billing/credit-notes?from=&to=&UHID=
+// Surfaces every GST-Act §34 credit note (refund reversal) within the
+// window. Pre-R7ar the CN docs were created by recordRefund but had no
+// listing endpoint — the accountant couldn't see them in /accounts.
+exports.listCreditNotes = async (req, res, next) => {
+  try {
+    const CreditNote = require("../../models/Billing/CreditNote");
+    const { decimalToNumber } = require("../../utils/money");
+    const filter = {};
+    if (req.query.from || req.query.to) {
+      filter.creditNoteDate = {};
+      if (req.query.from) filter.creditNoteDate.$gte = new Date(`${req.query.from}T00:00:00`);
+      if (req.query.to)   filter.creditNoteDate.$lte = new Date(`${req.query.to}T23:59:59.999`);
+    }
+    if (req.query.UHID) filter.UHID = String(req.query.UHID).toUpperCase().trim();
+    if (req.query.billNumber) filter.originalBillNumber = String(req.query.billNumber).trim();
+    if (req.query.reasonCode) filter.reasonCode = String(req.query.reasonCode).trim();
+    const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 100));
+    const rows = await CreditNote.find(filter)
+      .populate("patientId", "fullName UHID contactNumber")
+      .sort({ creditNoteDate: -1 })
+      .limit(limit)
+      .lean();
+    rows.forEach((r) => decimalToNumber(null, r));
+    const total = rows.reduce((s, r) => s + Number(r.refundAmount || 0), 0);
+    const totalTax = rows.reduce((s, r) => s + Number(r.taxAmount || 0), 0);
+    res.json({
+      success: true,
+      data: rows,
+      meta: { count: rows.length, limit, total, totalTax },
+    });
+  } catch (e) { next(e); }
+};
+
+// R7ar-P1-23/D6-aq-06: GET /api/billing/gst-snapshots?from=&to= — list
+// frozen monthly GST snapshots. Lets the accountant confirm what got
+// written to /accounts → GST Register for each closed month.
+exports.listGstSnapshots = async (req, res, next) => {
+  try {
+    const GstMonthlySnapshot = require("../../models/Billing/GstMonthlySnapshot");
+    const filter = {};
+    if (req.query.from) filter.periodStart = { $gte: new Date(`${req.query.from}T00:00:00+05:30`) };
+    if (req.query.to)   filter.periodEnd   = { $lte: new Date(`${req.query.to}T23:59:59+05:30`) };
+    const rows = await GstMonthlySnapshot.find(filter).sort({ periodStart: -1 }).lean();
+    res.json({ success: true, data: rows, meta: { count: rows.length } });
+  } catch (e) { next(e); }
+};
+
+// R7ar-P1-23/D6-aq-06: POST /api/billing/gst-snapshots/:period/lock
+// Body: { lockedBy }
+// Locks a frozen monthly snapshot (period = "YYYY-MM"). Cascades
+// periodLocked:true onto every CreditNote in the same range so the
+// refund flow can refuse to issue notes against the filed period
+// (it'll suggest the current month and inform the patient instead).
+//
+// Requires reports.audit permission — same gate as the register view.
+exports.lockGstSnapshot = async (req, res, next) => {
+  try {
+    const GstMonthlySnapshot = require("../../models/Billing/GstMonthlySnapshot");
+    const CreditNote        = require("../../models/Billing/CreditNote");
+    const period = String(req.params.period || "").trim();
+    if (!/^\d{4}-\d{2}$/.test(period)) {
+      return res.status(400).json({ success: false, message: "period must be YYYY-MM" });
+    }
+    const snap = await GstMonthlySnapshot.findOne({ period });
+    if (!snap) {
+      return res.status(404).json({
+        success: false,
+        message: `No snapshot for ${period} — wait for the next gst-monthly-snapshot cron run on the 1st 02:00 IST.`,
+      });
+    }
+    if (snap.lockedAt) {
+      return res.status(409).json({
+        success: false,
+        message: `Period ${period} is already locked since ${snap.lockedAt.toISOString().slice(0, 10)} by ${snap.lockedBy || "—"}.`,
+        data: snap,
+      });
+    }
+    snap.lockedAt   = new Date();
+    snap.lockedBy   = req.body?.lockedBy || req.user?.fullName || req.user?.employeeId || "Accounts";
+    snap.lockedById = req.user?._id || null;
+    await snap.save();
+    // Cascade onto CreditNotes in the window.
+    const cn = await CreditNote.updateMany(
+      { creditNoteDate: { $gte: snap.periodStart, $lt: snap.periodEnd } },
+      { $set: { periodLocked: true } },
+    );
+    res.json({ success: true, data: snap, meta: { creditNotesLocked: cn.modifiedCount } });
   } catch (e) { next(e); }
 };
 

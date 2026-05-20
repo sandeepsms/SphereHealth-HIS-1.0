@@ -262,17 +262,11 @@ class AdmissionService {
     const finalDischargeAt = dischargeData.actualDischargeDate
       ? new Date(dischargeData.actualDischargeDate)
       : new Date();
-    try {
-      const autoBilling = require("../Billing/autoBillingService");
-      await autoBilling.flushDailyChargesForAdmission(admission, {
-        prorate:        isDaycare,
-        dischargeTime:  finalDischargeAt,
-      });
-    } catch (e) {
-      // Bill-side hiccups shouldn't block a clinical discharge — log and
-      // continue. The cashier still has the bill open for manual review.
-      console.error("[Discharge] flushDailyCharges error:", e.message);
-    }
+    // R7ar-P1-21/D10-aq-09: do NOT flush daily charges here. Pre-R7ar this
+    // ran BEFORE the discharge transaction committed — if the TX rolled
+    // back (validation error, bed re-occupy failure), the bed-day charges
+    // were already fired and dedup-keyed for today, so re-attempting the
+    // discharge silently skipped them. Moved to AFTER endSession() below.
 
     const session = await mongoose.startSession().catch(() => null);
     const useTx = !!session && (session.client?.s?.options?.replicaSet ||
@@ -346,6 +340,19 @@ class AdmissionService {
       }
     } finally {
       session?.endSession();
+    }
+
+    // R7ar-P1-21/D10-aq-09: flush daily charges NOW that the discharge
+    // transaction has committed. If we'd flushed before TX commit and the
+    // TX rolled back, bed-day charges would be dedup'd-out from re-attempt.
+    try {
+      const autoBilling = require("../Billing/autoBillingService");
+      await autoBilling.flushDailyChargesForAdmission(admission, {
+        prorate:        isDaycare,
+        dischargeTime:  finalDischargeAt,
+      });
+    } catch (e) {
+      console.error("[Discharge] flushDailyCharges (post-TX) error:", e.message);
     }
 
     // ── Auto-create a CleaningTask in the housekeeping queue ──────
@@ -427,6 +434,25 @@ class AdmissionService {
         admission.dischargeOverage = overage;
         admission.markModified("dischargeOverage");
         await admission.save();
+        // R7ar-P1-24/D6-aq-09: emit OVERAGE_DETECTED audit row so the
+        // accountant's audit feed shows a chronological line — "this
+        // admission discharged with ₹X surplus that needs refund".
+        // Pre-R7ar the surplus was visible only via the dischargeOverage
+        // field on the admission, with no time-anchored entry in the
+        // BillingAudit register.
+        try {
+          const { emit } = require("../../models/Billing/BillingAudit");
+          await emit({
+            event:        "OVERAGE_DETECTED",
+            UHID:         admission.UHID,
+            patientId:    admission.patient,
+            admissionId:  admission._id,
+            amount:       overage,
+            actorName:    "System (discharge cascade)",
+            reason:       `Patient paid ₹${totalPaid.toFixed(2)} + advance ₹${advAvailable.toFixed(2)} against net ₹${totalNet.toFixed(2)} — surplus ₹${overage.toFixed(2)} needs refund.`,
+            after:        { dischargeOverage: overage, totalPaid, advAvailable, totalNet },
+          });
+        } catch (_) { /* audit best-effort */ }
       }
     } catch (e) {
       // Non-fatal — discharge already complete, refund detection is a

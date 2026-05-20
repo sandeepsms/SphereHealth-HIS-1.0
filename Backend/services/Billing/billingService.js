@@ -531,6 +531,11 @@ class BillingService {
       throw err;
     }
 
+    // R7ar-P1-17/D5-aq-09: wrap the rest in retryVersionError so a
+    // concurrent payment / refund landing between fetch and save retries
+    // with a fresh read instead of 500ing the cashier's adjustment.
+    const retryVE = require("../../utils/retryVersionError");
+    return retryVE(async () => {
     const bill = await PatientBill.findById(billId);
     if (!bill) {
       const err = new Error("Bill not found");
@@ -651,7 +656,13 @@ class BillingService {
     });
 
     await bill.save();
+    // R7ar-P1-7: invalidate Day Book — settlementAdjust can flip a bill's
+    // net into a payment/refund window via extraDiscount.
+    try {
+      require("../../controllers/Billing/billingController").invalidateDayBookCache();
+    } catch (_) {}
     return bill;
+    }, { label: "settlementAdjust" });
   }
 
   // ── 8b. Bulk collect across all outstanding bills for a UHID ───
@@ -701,46 +712,92 @@ class BillingService {
       : `BULK-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
 
     const allocations = [];
+    const skipped     = [];
     let remaining = amt;
 
-    for (const bill of bills) {
+    // R7ar-P1-17/D5-aq-09: per-leg retry. The bulk `find()` snapshot can
+    // go stale during a long loop (another cashier touches a bill, a
+    // refund posts), so each leg re-fetches inside retryVersionError.
+    // VersionError now means "re-read and re-apply" instead of "abort
+    // the whole batch midway and leave the cashier with a partial post."
+    const retryVE = require("../../utils/retryVersionError");
+
+    for (const billRef of bills) {
       if (remaining <= 0.005) break;
-      const bal = toNum(bill.balanceAmount);
-      if (bal <= 0) continue;
-      const leg = Math.min(remaining, bal);
 
-      bill.payments.push({
-        amount: leg,
-        paymentMode: mode,
-        transactionId: parentTxn,
-        receivedBy: receivedBy ? String(receivedBy).trim() : undefined,
-        remarks: remarks
-          ? `${String(remarks).trim()} (bulk-collect)`
-          : `Bulk collect across UHID — parent ${parentTxn}`,
-        paidAt: new Date(),
-      });
+      let legAmount = 0;
+      try {
+        const result = await retryVE(async () => {
+          const fresh = await PatientBill.findById(billRef._id);
+          if (!fresh) return null;
+          // Re-check state: a concurrent cancel/refund could have moved it.
+          if (!["GENERATED", "PARTIAL"].includes(fresh.billStatus)) return null;
+          const bal = toNum(fresh.balanceAmount);
+          if (bal <= 0) return null;
+          const leg = Math.min(remaining, bal);
 
-      // Recompute via pre-save (also flips DRAFT/GENERATED → PARTIAL / PAID).
-      const newPaid =
-        bill.payments.reduce((s, p) => s + toNum(p.amount), 0);
-      const newBal = Math.max(0, toNum(bill.patientPayableAmount) - newPaid);
-      bill.billStatus = newBal <= 0.005 ? "PAID" : "PARTIAL";
-      if (newBal <= 0.005) bill.paidAt = new Date();
+          fresh.payments.push({
+            amount: leg,
+            paymentMode: mode,
+            transactionId: parentTxn,
+            receivedBy: receivedBy ? String(receivedBy).trim() : undefined,
+            remarks: remarks
+              ? `${String(remarks).trim()} (bulk-collect)`
+              : `Bulk collect across UHID — parent ${parentTxn}`,
+            paidAt: new Date(),
+          });
 
-      await bill.save();
-      allocations.push({
-        billId:    bill._id.toString(),
-        billNumber: bill.billNumber,
-        amount:     Number(leg.toFixed(2)),
-        newStatus:  bill.billStatus,
-      });
-      remaining -= leg;
+          // Recompute via pre-save (also flips DRAFT/GENERATED → PARTIAL / PAID).
+          const newPaid = fresh.payments.reduce((s, p) => s + toNum(p.amount), 0);
+          const newBal  = Math.max(0, toNum(fresh.patientPayableAmount) - newPaid);
+          fresh.billStatus = newBal <= 0.005 ? "PAID" : "PARTIAL";
+          if (newBal <= 0.005) fresh.paidAt = new Date();
+
+          await fresh.save();
+          return {
+            billNumber: fresh.billNumber,
+            amount:     leg,
+            newStatus:  fresh.billStatus,
+          };
+        }, { label: `bulkCollect:${billRef._id}` });
+
+        if (!result) {
+          // Bill no longer adjustable (concurrent cancel / state change).
+          skipped.push({
+            billId:    billRef._id.toString(),
+            billNumber: billRef.billNumber,
+            reason:    "bill state changed during bulk collect",
+          });
+          continue;
+        }
+        allocations.push({
+          billId:    billRef._id.toString(),
+          billNumber: result.billNumber,
+          amount:     Number(result.amount.toFixed(2)),
+          newStatus:  result.newStatus,
+        });
+        legAmount = result.amount;
+      } catch (err) {
+        // VersionError exhaustion or unexpected — surface but keep going
+        // so the cashier sees what posted vs what didn't.
+        if (err?.code === "VERSION_RETRY_EXHAUSTED") {
+          skipped.push({
+            billId:    billRef._id.toString(),
+            billNumber: billRef.billNumber,
+            reason:    "concurrent contention — please retry individually",
+          });
+          continue;
+        }
+        throw err;
+      }
+      remaining -= legAmount;
     }
 
     return {
-      totalCollected:    Number((amt - remaining).toFixed(2)),
-      billsTouched:      allocations.length,
+      totalCollected:      Number((amt - remaining).toFixed(2)),
+      billsTouched:        allocations.length,
       allocations,
+      skipped,                       // R7ar-P1-17: surface concurrent-contention bills
       parentTransactionId: parentTxn,
     };
   }
@@ -1057,61 +1114,69 @@ class BillingService {
       err.code = "REASON_REQUIRED"; throw err;
     }
     const VOID_WINDOW_MS = 15 * 60 * 1000;
-    const bill = await PatientBill.findById(billId);
-    if (!bill) {
-      const err = new Error("Bill not found"); err.status = 404; throw err;
-    }
-    const pay = bill.payments.id(paymentId);
-    if (!pay) {
-      const err = new Error("Payment row not found"); err.status = 404; throw err;
-    }
-    if (pay.voidedAt) {
-      const err = new Error("Payment already voided");
-      err.code = "ALREADY_VOIDED"; throw err;
-    }
-    if (Number(pay.amount) <= 0) {
-      const err = new Error("Cannot void a reversal entry");
-      err.code = "ALREADY_REVERSAL"; throw err;
-    }
-    if (!skipTimeGate) {
-      const age = Date.now() - new Date(pay.paidAt).getTime();
-      if (age > VOID_WINDOW_MS) {
-        const err = new Error(`Void window expired (${Math.round(age / 60000)} min old). Use refund instead.`);
-        err.code = "WINDOW_EXPIRED"; throw err;
+    // R7ar-P1-17/D7-aq-01: wrap the read-mutate-save block in a VersionError
+    // retry loop so a concurrent payment-collect on the same bill doesn't
+    // 500 the void. Mirrors recordPayment / recordRefund pattern.
+    const retryVE = require("../../utils/retryVersionError");
+    const bill = await retryVE(async () => {
+      const b = await PatientBill.findById(billId);
+      if (!b) { const err = new Error("Bill not found"); err.status = 404; throw err; }
+      const pay = b.payments.id(paymentId);
+      if (!pay) { const err = new Error("Payment row not found"); err.status = 404; throw err; }
+      if (pay.voidedAt) { const err = new Error("Payment already voided"); err.code = "ALREADY_VOIDED"; throw err; }
+      if (Number(pay.amount) <= 0) {
+        const err = new Error("Cannot void a reversal entry");
+        err.code = "ALREADY_REVERSAL"; throw err;
       }
-      // Only same cashier can void within window — Accountant gets skipTimeGate=true
-      if (pay.receivedBy && user.fullName && pay.receivedBy !== user.fullName) {
-        const err = new Error(`Only ${pay.receivedBy} can void this payment within the 15-min window. Use refund flow.`);
-        err.code = "NOT_OWNER"; throw err;
+      if (!skipTimeGate) {
+        const age = Date.now() - new Date(pay.paidAt).getTime();
+        if (age > VOID_WINDOW_MS) {
+          const err = new Error(`Void window expired (${Math.round(age / 60000)} min old). Use refund instead.`);
+          err.code = "WINDOW_EXPIRED"; throw err;
+        }
+        if (pay.receivedBy && user.fullName && pay.receivedBy !== user.fullName) {
+          const err = new Error(`Only ${pay.receivedBy} can void this payment within the 15-min window. Use refund flow.`);
+          err.code = "NOT_OWNER"; throw err;
+        }
       }
-    }
-
-    // Stamp the original row as voided so the receipt history shows
-    // why it's no longer counted.
-    pay.voidedAt     = new Date();
-    pay.voidedBy     = user.fullName || user.name || "Receptionist";
-    pay.voidedByRole = user.role || "Receptionist";
-    pay.voidReason   = String(reason).trim();
-
-    // Post a negative payment row that cancels the original. Receipt
-    // history reads cleanly: original ₹500 entry + reversal -₹500.
-    bill.payments.push({
-      amount:        -Number(pay.amount),
-      paymentMode:    pay.paymentMode,
-      transactionId:  `VOID-${pay.transactionId || pay._id}`,
-      receivedBy:     user.fullName || user.name || "Receptionist",
-      paidAt:         new Date(),
-      remarks:        `VOID of payment ${pay._id} — ${String(reason).trim()}`,
-    });
-
-    // Recompute balance + status (pre-save hook also does this, but
-    // we set explicit values so the response is correct first try).
-    const totalPaid = bill.payments.reduce((s, p) => s + toNum(p.amount), 0);
-    bill.advancePaid   = totalPaid;
-    bill.balanceAmount = Math.max(0, toNum(bill.patientPayableAmount) - totalPaid);
-    bill.billStatus    = bill.balanceAmount <= 0.005 && totalPaid > 0 ? "PAID"
+      pay.voidedAt     = new Date();
+      pay.voidedBy     = user.fullName || user.name || "Receptionist";
+      pay.voidedByRole = user.role || "Receptionist";
+      pay.voidReason   = String(reason).trim();
+      b.payments.push({
+        amount:        -Number(pay.amount),
+        paymentMode:    pay.paymentMode,
+        transactionId:  `VOID-${pay.transactionId || pay._id}`,
+        receivedBy:     user.fullName || user.name || "Receptionist",
+        paidAt:         new Date(),
+        remarks:        `VOID of payment ${pay._id} — ${String(reason).trim()}`,
+      });
+      const totalPaid = b.payments.reduce((s, p) => s + toNum(p.amount), 0);
+      b.advancePaid   = totalPaid;
+      b.balanceAmount = Math.max(0, toNum(b.patientPayableAmount) - totalPaid);
+      b.billStatus    = b.balanceAmount <= 0.005 && totalPaid > 0 ? "PAID"
                         : totalPaid > 0 ? "PARTIAL" : "GENERATED";
-    await bill.save();
+      await b.save();
+      return b;
+    }, { label: "voidPayment" });
+    // R7ar-P1-7: invalidate Day Book cache + emit audit row.
+    try {
+      const ctrl = require("../../controllers/Billing/billingController");
+      ctrl.invalidateDayBookCache?.();
+    } catch (_) {}
+    try {
+      const { emit } = require("../../models/Billing/BillingAudit");
+      await emit({
+        event:      "BILL_ITEM_VOIDED",
+        UHID:       bill.UHID,
+        patientId:  bill.patient,
+        billId:     bill._id,
+        billNumber: bill.billNumber,
+        paymentId,
+        actorName:  user.fullName || user.name,
+        reason:     String(reason).trim(),
+      });
+    } catch (_) {}
     return bill;
   }
 
@@ -1236,12 +1301,49 @@ class BillingService {
         // partial refunds.
         try {
           const CreditNote = require("../../models/Billing/CreditNote");
-          const billGross  = toNum(bill.netAmount) || toNum(bill.grossAmount);
-          const billTax    = toNum(bill.taxAmount);
-          const taxShare   = billGross > 0 ? (amt / billGross) * billTax : 0;
-          const cgstShare  = bill.igstAmount && toNum(bill.igstAmount) > 0 ? 0 : taxShare / 2;
-          const sgstShare  = bill.igstAmount && toNum(bill.igstAmount) > 0 ? 0 : taxShare / 2;
-          const igstShare  = bill.igstAmount && toNum(bill.igstAmount) > 0 ? taxShare : 0;
+          const GstMonthlySnapshot = require("../../models/Billing/GstMonthlySnapshot");
+          // R7ar-P1-23/D6-aq-06: GST period-lock gate. If the bill date
+          // falls in a month whose GstMonthlySnapshot has been locked
+          // by the accountant (filed GSTR-1), we can't post a CN there
+          // — the CDNR row would mutate a sealed return. Stamp the CN
+          // with the current month and add a note in reasonText so the
+          // accountant can reconcile via amendment in next filing.
+          const billDateForGst = bill.billDate || bill.createdAt;
+          let cnReasonNote = String(reason).trim();
+          if (billDateForGst) {
+            const istParts = new Intl.DateTimeFormat("en-CA", {
+              timeZone: process.env.HOSPITAL_TZ || "Asia/Kolkata",
+              year: "numeric", month: "2-digit",
+            }).formatToParts(billDateForGst);
+            const yy = istParts.find((p) => p.type === "year")?.value;
+            const mm = istParts.find((p) => p.type === "month")?.value;
+            const billPeriod = `${yy}-${mm}`;
+            const lockedSnap = await GstMonthlySnapshot.findOne({ period: billPeriod, lockedAt: { $ne: null } }).lean();
+            if (lockedSnap) {
+              cnReasonNote = `${cnReasonNote} | NOTE: original-bill period ${billPeriod} is LOCKED (filed ${lockedSnap.lockedAt.toISOString().slice(0,10)} by ${lockedSnap.lockedBy}); CN dated current month, reconcile via amendment.`;
+            }
+          }
+          // R7ar-P1-16/D1-aq-08/D2-aq-07: tax math fix. Pre-R7ar:
+          //   taxShare = (amt/billGross) × billTax
+          // But billGross = netAmount which is POST-tax — overstates the
+          // reversal. Correct math: taxableValue = amt × (gross − tax) /
+          // (gross + tax); taxAmount = amt − taxableValue. Also: only
+          // reverse the tax from items still billable (skip excludedByPackage).
+          const eligibleItems = (bill.billItems || []).filter((it) => !it.excludedByPackage);
+          const eligibleNet   = eligibleItems.reduce((s, it) => s + toNum(it.netAmount), 0);
+          const eligibleTax   = eligibleItems.reduce((s, it) => s + toNum(it.taxAmount), 0);
+          const billGross  = eligibleNet || toNum(bill.netAmount) || toNum(bill.grossAmount);
+          const billTax    = eligibleTax || toNum(bill.taxAmount);
+          // taxShare proportional, taxable = refund − tax (pre-tax slice)
+          const taxShare    = billGross > 0 ? +((amt / billGross) * billTax).toFixed(2) : 0;
+          // R7ar-D2-aq-08: detect inter-state via placeOfSupply, fall back
+          // to igstAmount marker for legacy bills missing placeOfSupply.
+          const _hosp       = (process.env.HOSPITAL_STATE_CODE || "").trim();
+          const _isInter    = (bill.igstAmount && toNum(bill.igstAmount) > 0)
+                              || (_hosp && bill.placeOfSupply && String(bill.placeOfSupply).trim() !== _hosp);
+          const cgstShare  = _isInter ? 0 : +(taxShare / 2).toFixed(2);
+          const sgstShare  = _isInter ? 0 : +(taxShare / 2).toFixed(2);
+          const igstShare  = _isInter ? taxShare : 0;
           await CreditNote.create({
             billId:               bill._id,
             originalBillNumber:   bill.billNumber,
@@ -1254,7 +1356,7 @@ class BillingService {
             sgstAmount:           sgstShare,
             igstAmount:           igstShare,
             reasonCode:           "03",      // deficiency in services (closest match for hospital refunds)
-            reasonText:           String(reason).trim(),
+            reasonText:           cnReasonNote,
             refundMode:           payMode,
             refundTransactionId:  transactionId || null,
             issuedBy:             refundedBy || "Reception",

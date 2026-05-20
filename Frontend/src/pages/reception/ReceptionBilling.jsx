@@ -24,8 +24,10 @@ import { openPrint } from "../../Components/print/openPrint";
 import { useAuth } from "../../context/AuthContext";
 import ActivePatientDirectory from "../../Components/ActivePatientDirectory";
 import "./reception-shared.css";
+// R7ar-P1-14/D4-aq-02: centralised Decimal128 unwrap.
+import { toMoney } from "../../utils/money";
 
-const fmtCur  = (n) => `₹${(Number(n) || 0).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+const fmtCur  = (n) => `₹${(toMoney(n) || 0).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
 
@@ -61,7 +63,7 @@ function printAdvanceReceipt(advance, patient) {
     bedNumber:    null,
     wardName:     null,
     date:         advance.paidAt || advance.createdAt || new Date().toISOString(),
-    amount:       Number(advance.amount?.$numberDecimal ?? advance.amount) || 0,
+    amount:       toMoney(advance.amount),
     method:       advance.paymentMode,
     refNo:        advance.transactionId,
     depositPurpose: advance.remarks || "hospitalization advance",
@@ -75,9 +77,9 @@ function printAdvanceReceipt(advance, patient) {
    refund flow so the slip looks identical across both refund types. */
 function printAdvanceRefundReceipt(advance, patient) {
   if (!advance || !patient) return;
-  const refunded  = Number(advance.refundedAmount?.$numberDecimal ?? advance.refundedAmount) || 0;
-  const original  = Number(advance.amount?.$numberDecimal ?? advance.amount) || 0;
-  const applied   = Number(advance.appliedAmount?.$numberDecimal ?? advance.appliedAmount) || 0;
+  const refunded  = toMoney(advance.refundedAmount);
+  const original  = toMoney(advance.amount);
+  const applied   = toMoney(advance.appliedAmount);
   openPrint("refund-receipt", {
     receiptNo:        `${advance.receiptNumber}-RF`,
     patientName:      [patient.title, patient.fullName].filter(Boolean).join(" "),
@@ -1197,11 +1199,11 @@ export default function ReceptionBilling() {
                           <i className="pi pi-undo" style={{ fontSize: 11 }} /> Refund
                         </button>
                       )}
-                      {a.status === "REFUNDED" && Number(a.refundedAmount?.$numberDecimal ?? a.refundedAmount ?? 0) > 0 && (
+                      {a.status === "REFUNDED" && toMoney(a.refundedAmount) > 0 && (
                         <button
                           type="button"
                           onClick={() => printAdvanceRefundReceipt(a, patient)}
-                          title={`Reprint refund slip — ${fmtCur(Number(a.refundedAmount?.$numberDecimal ?? a.refundedAmount ?? 0))} refunded ${a.refundedAt ? `on ${new Date(a.refundedAt).toLocaleDateString("en-IN")}` : ""}`}
+                          title={`Reprint refund slip — ${fmtCur(toMoney(a.refundedAmount))} refunded ${a.refundedAt ? `on ${new Date(a.refundedAt).toLocaleDateString("en-IN")}` : ""}`}
                           style={{ height: 28, padding: "0 10px", borderRadius: 6, border: "1px solid #94a3b8", background: "#f8fafc", color: "#475569", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700 }}
                         >
                           <i className="pi pi-print" style={{ fontSize: 11 }} /> Refund Slip
@@ -1215,9 +1217,9 @@ export default function ReceptionBilling() {
                       {a.remarks && ` · ${a.remarks}`}
                     </div>
                     {/* R7ao: show refund trail under the row when REFUNDED. */}
-                    {a.status === "REFUNDED" && Number(a.refundedAmount?.$numberDecimal ?? a.refundedAmount ?? 0) > 0 && (
+                    {a.status === "REFUNDED" && toMoney(a.refundedAmount) > 0 && (
                       <div style={{ fontSize: 11, color: "#b91c1c", marginTop: 2, paddingLeft: 4, fontWeight: 700 }}>
-                        ↩ Refunded {fmtCur(Number(a.refundedAmount?.$numberDecimal ?? a.refundedAmount ?? 0))}
+                        ↩ Refunded {fmtCur(toMoney(a.refundedAmount))}
                         {a.refundMode  && ` via ${a.refundMode}`}
                         {a.refundedBy  && ` by ${a.refundedBy}`}
                         {a.refundedAt  && ` on ${new Date(a.refundedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}`}
@@ -2881,9 +2883,9 @@ function BulkSettleModal({ uhid, patient, bills, totalDue, onClose, onDone }) {
    any portion already applied to bills stays untouched in the audit
    trail. */
 function RefundAdvanceModal({ advance, patient, onClose, onDone }) {
-  const total    = Number(advance?.amount?.$numberDecimal ?? advance?.amount ?? 0);
-  const applied  = Number(advance?.appliedAmount?.$numberDecimal ?? advance?.appliedAmount ?? 0);
-  const refunded = Number(advance?.refundedAmount?.$numberDecimal ?? advance?.refundedAmount ?? 0);
+  const total    = toMoney(advance?.amount);
+  const applied  = toMoney(advance?.appliedAmount);
+  const refunded = toMoney(advance?.refundedAmount);
   const remaining = Math.max(0, +(total - applied - refunded).toFixed(2));
 
   const [mode,         setMode]         = useState("CASH");
@@ -3483,7 +3485,7 @@ function TakeAdvanceModal({ patient, onClose, onSaved }) {
   };
 
   if (savedAdv) {
-    const amt = Number(savedAdv.amount?.$numberDecimal ?? savedAdv.amount) || 0;
+    const amt = toMoney(savedAdv.amount);
     return (
       <div className="rx-modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) onSaved && onSaved(); }}>
         <div className="rx-modal">

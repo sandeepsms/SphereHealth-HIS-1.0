@@ -16,6 +16,8 @@ import FingerprintConsentModal from "../../Components/clinical/FingerprintConsen
 import DrugAutocomplete, { parseStrength, drugDisplayName } from "../../Components/clinical/DrugAutocomplete";
 import ServiceAutocomplete from "../../Components/clinical/ServiceAutocomplete";
 import { useHospitalSettings } from "../../context/HospitalSettingsContext";
+// R7ar-P1-14/D4-aq-02: centralised Decimal128 unwrap.
+import { toMoney } from "../../utils/money";
 import { useAutoSave } from "../../hooks/useAutoSave";
 import { useDigitalSignature } from "../../hooks/useDigitalSignature";
 import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
@@ -2326,7 +2328,7 @@ export default function OPDAssessmentPage() {
               // Split items into the two visual buckets. Backward compat:
               // legacy items (no orderStatus field) and explicit
               // "Completed" both go into "Billed". Active = pending work.
-              const unwrap = (n) => Number(n?.$numberDecimal ?? n ?? 0);
+              const unwrap = toMoney;
               const isBillable = (it) => !it.orderStatus || it.orderStatus === "Completed";
               const isCancelled = (it) => it.orderStatus === "Cancelled";
               const activeOrders = orderItems.filter(it => !isBillable(it) && !isCancelled(it));

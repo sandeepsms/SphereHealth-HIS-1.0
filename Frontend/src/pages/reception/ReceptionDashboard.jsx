@@ -20,6 +20,9 @@ import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
 import { useReceptionistPresence } from "../../hooks/useReceptionistPresence";
 import { useAuth } from "../../context/AuthContext";
+// R7ar-P1-14/D4-aq-02: centralised Decimal128 unwrap + INR formatters.
+// Replaces the local toMoney/fmtCur shim that used to live near line 46.
+import { toMoney, fmtINR0 as fmtCur, fmtINR2 as fmtCurExact } from "../../utils/money";
 import "./ReceptionDashboard.css";
 
 const STATUS_LABEL = {
@@ -36,22 +39,6 @@ const STATUS_DOT_CLASS = {
   OnLeave:          "rd-doc-status-dot--onleave",
   Offline:          "rd-doc-status-dot--offline",
 };
-
-// Backend's listBills uses `.lean()` which bypasses the schema's
-// toJSON transform — so Decimal128 money fields come over the wire as
-// `{ $numberDecimal: "50.00" }` objects instead of flat Numbers. Other
-// endpoints (getBillById, getBillsByUHID) DON'T use lean and serialise
-// fine. Rather than touch every consumer of listBills, this helper
-// flattens whichever shape we receive.
-const toMoney = (v) => {
-  if (v == null) return 0;
-  if (typeof v === "number") return v;
-  if (typeof v === "string") return Number(v) || 0;
-  if (typeof v === "object" && v.$numberDecimal != null) return Number(v.$numberDecimal) || 0;
-  return Number(v) || 0;
-};
-const fmtCur = (n) => `₹${(toMoney(n) || 0).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
-const fmtCurExact = (n) => `₹${(toMoney(n) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const today = () => new Date().toISOString().slice(0, 10);
 const fmtDateLong = (d) => new Date(d).toLocaleDateString("en-IN", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });

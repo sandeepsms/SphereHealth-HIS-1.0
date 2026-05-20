@@ -29,6 +29,8 @@ import API_ENDPOINTS from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import { openPrint } from "../../Components/print/openPrint";
 import ServiceAutocomplete from "../../Components/clinical/ServiceAutocomplete";
+// R7ar-P1-14/D4-aq-02: centralised Decimal128 unwrap to avoid 7-page drift.
+import { toMoney } from "../../utils/money";
 
 /* Map a trigger to a friendly print-category label that lines up with
    the FinalBill printable's CATEGORY_ORDER (Room/Bed → Doctor → Nursing
@@ -518,7 +520,7 @@ export default function IPDBillingLedger() {
         date:   p.paidAt,
         method: p.paymentMode,
         refNo:  p.transactionId,
-        amount: Number(p.amount?.$numberDecimal ?? p.amount ?? 0),
+        amount: toMoney(p.amount),
       })),
     });
   };
@@ -563,7 +565,7 @@ export default function IPDBillingLedger() {
         date:   p.paidAt,
         method: p.paymentMode,
         refNo:  p.transactionId,
-        amount: Number(p.amount?.$numberDecimal ?? p.amount ?? 0),
+        amount: toMoney(p.amount),
       })),
     };
 

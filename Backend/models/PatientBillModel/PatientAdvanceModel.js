@@ -30,7 +30,13 @@ const mongoose = require("mongoose");
 const PatientAdvanceSchema = new mongoose.Schema(
   {
     // ── Anchor ──────────────────────────────────────────────────────
-    UHID:       { type: String, required: true, uppercase: true, trim: true, index: true },
+    // R7ar-P2-39/D1-aq-15: UHID format guard. Reject malformed values at
+    // save time so a stray service code can't accidentally land in the
+    // UHID slot. Lenient because legacy data exists in varying formats.
+    UHID:       {
+      type: String, required: true, uppercase: true, trim: true, index: true,
+      match: [/^[A-Z][A-Z0-9\-]{3,}$/i, "UHID must look like UHID-NN-NNN or similar identifier"],
+    },
     patientId:  { type: mongoose.Schema.Types.ObjectId, ref: "Patient", required: true },
     // Optional: admission this deposit is earmarked for. Empty when
     // it's a general "credit on UHID" not tied to any visit yet.

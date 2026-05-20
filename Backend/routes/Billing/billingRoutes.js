@@ -34,6 +34,11 @@ router.get("/revenue-breakdown",  requireAction("billing.read"), ctrl.getRevenue
 router.get("/aging",              requireAction("billing.read"), ctrl.getAging);
 // R7ap-F13: hospital-service GST aggregator (CGST/SGST per tax slab)
 router.get("/gst-register",       requireAction("billing.read"), ctrl.getHospitalGstRegister);
+// R7ar-P1-23/D6-aq-06: frozen monthly GST snapshots + lock toggle.
+router.get ("/gst-snapshots",                requireAction("billing.read"),  ctrl.listGstSnapshots);
+router.post("/gst-snapshots/:period/lock",   requireAction("reports.audit"), ctrl.lockGstSnapshot);
+// R7ar-P1-15/D6-aq-08: credit-note listing for the Refunds tab + audit.
+router.get ("/credit-notes",                 requireAction("billing.read"),  ctrl.listCreditNotes);
 // R7ap-F15: unified billing-audit listing (every money event in one feed).
 router.get("/audit",              requireAction("reports.audit"), ctrl.listBillingAudit);
 // R7ap-F34: gap-detector for BILL-* / ADV-* / CN-* sequences (Income-Tax §44AB).

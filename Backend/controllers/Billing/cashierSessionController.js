@@ -42,6 +42,19 @@ exports.openSession = async (req, res, next) => {
       openingCash,
       openNotes:   req.body?.openNotes || null,
     });
+    // R7ar-P1-20/D6-aq-04: emit SHIFT_OPENED for chronological audit.
+    try {
+      const { emit } = require("../../models/Billing/BillingAudit");
+      await emit({
+        event:     "SHIFT_OPENED",
+        actorId:   cashierId,
+        actorName: created.cashierName,
+        actorRole: created.cashierRole,
+        amount:    openingCash,
+        reason:    `Opened with ₹${openingCash} cash drawer${created.openNotes ? ` — ${created.openNotes}` : ""}`,
+        after:     { sessionId: created._id, status: "OPEN", openedAt: created.openedAt },
+      }, { req });
+    } catch (_) { /* audit best-effort */ }
     res.status(201).json({ success: true, data: created });
   } catch (e) { next(e); }
 };
@@ -137,6 +150,38 @@ exports.closeSession = async (req, res, next) => {
     session.chequeCollected = chequeCollected;
     session.status          = "CLOSED";
     await session.save();
+    // R7ar-P1-20/D6-aq-04: emit SHIFT_CLOSED with variance snapshot.
+    try {
+      const { emit } = require("../../models/Billing/BillingAudit");
+      await emit({
+        event:     "SHIFT_CLOSED",
+        actorId:   cashierId,
+        actorName: session.cashierName,
+        actorRole: session.cashierRole,
+        amount:    closingCash,
+        reason:    Math.abs(variance) > 0.5
+          ? `Variance ₹${variance.toFixed(2)}: ${session.varianceNote || "—"}`
+          : `Reconciled (expected ₹${expectedClosing.toFixed(2)}, closed ₹${closingCash.toFixed(2)})`,
+        before:    {
+          openingCash:    toNum(session.openingCash),
+          openedAt:       session.openedAt,
+        },
+        after:     {
+          sessionId:       session._id,
+          status:          "CLOSED",
+          closedAt:        session.closedAt,
+          cashCollected,
+          cashRefundedOut,
+          advancesApplied,
+          upiCollected,
+          cardCollected,
+          chequeCollected,
+          expectedClosing,
+          closingCash,
+          variance,
+        },
+      }, { req });
+    } catch (_) { /* audit best-effort */ }
     res.json({ success: true, data: session });
   } catch (e) { next(e); }
 };

@@ -182,6 +182,9 @@
 .rx-card-stage--revoked   { background: #fef2f2; color: #b91c1c; border-color: #fca5a5; }
 .rx-card-stage--booked    { background: #eff6ff; color: #1d4ed8; border-color: #93c5fd; }
 .rx-card-stage--checkedin { background: #f0fdf4; color: #15803d; border-color: #86efac; }
+/* R7ar-P1-24/D9-aq-04: discharge overage chip — surfaces post-discharge
+   surplus that needs a refund. Red so the cashier can't miss it. */
+.rx-card-stage--overage   { background: #fee2e2; color: #991b1b; border-color: #fca5a5; font-weight: 700; }
 .rx-card-actions {
   display: flex;
   gap: 6px;

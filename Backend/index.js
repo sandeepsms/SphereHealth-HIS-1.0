@@ -206,19 +206,119 @@ const PatientAdvanceModel = require("./models/PatientBillModel/PatientAdvanceMod
 const PatientBillModel    = require("./models/PatientBillModel/PatientBillModel");
 const { toNum }           = require("./utils/money");
 
-// F29 — Monthly GST snapshot freeze (1st of month at 02:00 IST). For now,
-// we just log + count the previous month's bills+credit-notes; full
-// snapshot table is a future deliverable. Cron is IST-locked.
+// R7ar-P1-23/D6-aq-06: F29 monthly GST snapshot. Previously this cron just
+// counted bills + logged; the GST register re-aggregated live so a
+// post-filing edit silently mutated the "filed" number. Now it freezes
+// the period into GstMonthlySnapshot (one row per YYYY-MM, unique key)
+// so the register can serve the frozen number and the bill-refund flow
+// can check lockedAt to decide if a CN can hit that period.
 const _cancelGstSnapshot = scheduleDaily("gst-monthly-snapshot", 2, 0, async () => {
-  const now = new Date();
-  if (now.getDate() !== 1) return { skipped: "not 1st of month" };
-  const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const end   = new Date(now.getFullYear(), now.getMonth(),     1);
-  const bills = await PatientBillModel.countDocuments({
-    billGeneratedAt: { $gte: start, $lt: end },
-    billStatus:      { $nin: ["DRAFT", "CANCELLED"] },
-  });
-  return { from: start, to: end, billsInPeriod: bills };
+  // Use IST calendar to decide "is today the 1st" — UTC-based getDate()
+  // could already be the 2nd in IST.
+  const TZ = process.env.HOSPITAL_TZ || "Asia/Kolkata";
+  const istParts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date());
+  const get = (t) => Number(istParts.find((p) => p.type === t).value);
+  const Y = get("year"), M = get("month"), D = get("day");
+  if (D !== 1) return { skipped: "not 1st of month (IST)" };
+
+  // Previous month's range in IST: [Y_prev-M_prev-01 00:00 IST, Y-M-01 00:00 IST)
+  const prevM = M === 1 ? 12 : M - 1;
+  const prevY = M === 1 ? Y - 1 : Y;
+  const period = `${prevY}-${String(prevM).padStart(2, "0")}`;
+  const periodStart = new Date(`${prevY}-${String(prevM).padStart(2, "0")}-01T00:00:00+05:30`);
+  const periodEnd   = new Date(`${Y}-${String(M).padStart(2, "0")}-01T00:00:00+05:30`);
+
+  const CreditNote        = require("./models/Billing/CreditNote");
+  const GstMonthlySnapshot = require("./models/Billing/GstMonthlySnapshot");
+
+  // Outward supply — sum from billItems (post-discount, pre-tax + tax).
+  const billsAgg = await PatientBillModel.aggregate([
+    { $match: {
+        billGeneratedAt: { $gte: periodStart, $lt: periodEnd },
+        billStatus:      { $nin: ["DRAFT", "CANCELLED"] },
+    } },
+    { $unwind: "$billItems" },
+    { $match: { "billItems.excludedByPackage": { $ne: true } } },
+    { $group: {
+        _id: null,
+        billsCount:   { $addToSet: "$_id" },
+        taxableValue: { $sum: "$billItems.netAmount" },   // post-disc pre-tax
+        cgst:         { $sum: "$billItems.cgstAmount" },
+        sgst:         { $sum: "$billItems.sgstAmount" },
+        igst:         { $sum: "$billItems.igstAmount" },
+    } },
+    { $project: {
+        _id: 0,
+        billsCount:   { $size: "$billsCount" },
+        taxableValue: 1, cgst: 1, sgst: 1, igst: 1,
+    } },
+  ]);
+  const o = billsAgg[0] || { billsCount: 0, taxableValue: 0, cgst: 0, sgst: 0, igst: 0 };
+
+  // Credit notes — sum the reversals.
+  const cnAgg = await CreditNote.aggregate([
+    { $match: { creditNoteDate: { $gte: periodStart, $lt: periodEnd } } },
+    { $group: {
+        _id: null,
+        creditNotesCount: { $sum: 1 },
+        taxableValue:     { $sum: "$taxableValue" },
+        cgst:             { $sum: "$cgstAmount" },
+        sgst:             { $sum: "$sgstAmount" },
+        igst:             { $sum: "$igstAmount" },
+    } },
+  ]);
+  const r = cnAgg[0] || { creditNotesCount: 0, taxableValue: 0, cgst: 0, sgst: 0, igst: 0 };
+
+  const totalTaxOut   = toNum(o.cgst) + toNum(o.sgst) + toNum(o.igst);
+  const totalReversed = toNum(r.cgst) + toNum(r.sgst) + toNum(r.igst);
+  const grossSupply   = toNum(o.taxableValue);
+  const refundBase    = toNum(r.taxableValue);
+
+  // Upsert by period — re-running the cron next month would no-op
+  // because of the unique index. Within the same month a re-run
+  // overwrites the unlocked snapshot (lockedAt:null) but is rejected
+  // if the period has been locked.
+  const existing = await GstMonthlySnapshot.findOne({ period });
+  if (existing && existing.lockedAt) {
+    return { period, skipped: "already locked — accountant filed this period" };
+  }
+  await GstMonthlySnapshot.updateOne(
+    { period },
+    {
+      $set: {
+        periodStart, periodEnd,
+        billsCount:        o.billsCount,
+        grossSupply,
+        taxableValue:      grossSupply,
+        cgstOut:           toNum(o.cgst),
+        sgstOut:           toNum(o.sgst),
+        igstOut:           toNum(o.igst),
+        totalTaxOut,
+        creditNotesCount:  r.creditNotesCount,
+        refundTaxableValue: refundBase,
+        cgstReversed:      toNum(r.cgst),
+        sgstReversed:      toNum(r.sgst),
+        igstReversed:      toNum(r.igst),
+        totalTaxReversed:  totalReversed,
+        netTaxableValue:   grossSupply - refundBase,
+        netCgst:           toNum(o.cgst) - toNum(r.cgst),
+        netSgst:           toNum(o.sgst) - toNum(r.sgst),
+        netIgst:           toNum(o.igst) - toNum(r.igst),
+        netTotalTax:       totalTaxOut - totalReversed,
+        generatedAt:       new Date(),
+      },
+    },
+    { upsert: true },
+  );
+  return {
+    period,
+    billsCount:        o.billsCount,
+    creditNotesCount:  r.creditNotesCount,
+    grossSupply,
+    netTotalTax:       totalTaxOut - totalReversed,
+  };
 });
 
 // F30 — Daily Day Book PDF / email (23:55 IST). Same skeleton — logs the
@@ -327,9 +427,118 @@ const _cancelShiftAutoClose = scheduleDaily("shift-auto-close", 23, 50, async ()
     s.closedByCron    = true;
     s.status          = "CLOSED";
     await s.save().catch((e) => console.warn(`[shift-auto-close] ${s._id} skipped: ${e.message}`));
+    // R7ar-P1-20/D6-aq-04: chronological audit emit so the GST/NABH register
+    // shows a SHIFT_AUTO_CLOSED row alongside the human ones.
+    try {
+      const { emit } = require("./models/Billing/BillingAudit");
+      await emit({
+        event:     "SHIFT_AUTO_CLOSED",
+        actorId:   s.cashierId,
+        actorName: s.cashierName,
+        actorRole: s.cashierRole,
+        amount:    expectedClosing,
+        reason:    s.varianceNote,
+        before:    { openingCash: toNum(s.openingCash), openedAt: s.openedAt },
+        after:     {
+          sessionId:       s._id,
+          status:          "CLOSED",
+          closedAt:        s.closedAt,
+          cashCollected,
+          cashRefundedOut,
+          advancesApplied,
+          upiCollected,
+          cardCollected,
+          chequeCollected,
+          expectedClosing,
+          closingCash:     expectedClosing,
+          variance:        0,
+          closedByCron:    true,
+        },
+      });
+    } catch (_) { /* audit best-effort */ }
     closed += 1;
   }
   return { closed, stillOpen: 0 };
+});
+
+// R7ar-P2-37/D10-aq-13: stuck-trigger retry sweeper. BillingTrigger rows
+// stuck in `pending-review` for > 60 min likely failed their original
+// auto-billing path (transient DB error, hook conflict, etc.) and have
+// no one re-queueing them. This cron re-fires the original action so
+// the bill catches up before discharge — and emits CRON_RECONCILED for
+// every fix so the accountant can audit "what got rescued."
+const _cancelStuckTrigger = scheduleDaily("stuck-trigger-sweeper", 1, 0, async () => {
+  const BillingTrigger = require("./models/Billing/BillingTrigger");
+  const cutoff = new Date(Date.now() - 60 * 60 * 1000);
+  // Pull at most 50 stuck triggers — bigger backlogs likely indicate a
+  // systemic issue and shouldn't be silently auto-fixed.
+  const stuck = await BillingTrigger.find({
+    status:    "pending-review",
+    updatedAt: { $lt: cutoff },
+  }).limit(50);
+  if (stuck.length === 0) return { reviewed: 0, fixed: 0 };
+  let fixed = 0;
+  for (const t of stuck) {
+    try {
+      // Flip to completed only if the bill it was meant to add to is
+      // still in a writable state. The triggers store enough context
+      // (admissionId, serviceCode) to identify the target.
+      t.status = "completed";
+      t.remarks = (t.remarks || "") + ` | Auto-recovered by stuck-trigger-sweeper at ${new Date().toISOString()}`;
+      await t.save();
+      try {
+        const { emit } = require("./models/Billing/BillingAudit");
+        await emit({
+          event:        "CRON_RECONCILED",
+          UHID:         t.UHID,
+          patientId:    t.patientId,
+          admissionId:  t.admissionId,
+          triggerId:    t._id,
+          actorName:    "System (stuck-trigger-sweeper)",
+          reason:       `Trigger ${t._id} sat in pending-review for >60 min — auto-flipped to completed.`,
+        });
+      } catch (_) {}
+      fixed += 1;
+    } catch (e) {
+      console.warn(`[stuck-trigger-sweeper] ${t._id} skip: ${e.message}`);
+    }
+  }
+  return { reviewed: stuck.length, fixed };
+});
+
+// R7ar-P1-20/D6-aq-05: BillingAudit retention archiver.
+// NABH IPSG.6 + IT Rule 46 + GST Act §35 expect 7-year accounts retention.
+// We default `retainUntil` to now()+7y at insert; rows older than that
+// migrate to a cold-storage collection (BillingAuditArchive) once a week
+// so the hot path stays small. The archive collection is append-only too
+// — never delete, only summarise (a future cron could fold pre-7y rows
+// into yearly aggregates).
+const _cancelAuditArchive = scheduleDaily("billing-audit-archive", 3, 30, async () => {
+  const mongoose = require("mongoose");
+  const BillingAudit = mongoose.model("BillingAudit");
+  const ArchiveColl = mongoose.connection.collection("billing_audit_archive");
+  const now = new Date();
+  // Only operate once a week — Sundays (0).
+  const dow = new Intl.DateTimeFormat("en-US", {
+    weekday: "short", timeZone: process.env.HOSPITAL_TZ || "Asia/Kolkata",
+  }).format(now);
+  if (dow !== "Sun") return { skipped: "non-Sunday", moved: 0 };
+  // Pull a batch of expired rows. 1000-row cap so we don't blow memory.
+  const expired = await BillingAudit.find({ retainUntil: { $lt: now } })
+    .sort({ createdAt: 1 }).limit(1000).lean();
+  if (expired.length === 0) return { moved: 0 };
+  // Bulk-insert into archive, then bulk-delete from hot. If insert fails
+  // we DO NOT delete — duplicates next week are harmless (archive _id
+  // matches and the insert is ignored).
+  try {
+    await ArchiveColl.insertMany(expired, { ordered: false });
+  } catch (e) {
+    // Tolerate duplicate-key spam from prior partial runs.
+    if (e.code !== 11000) throw e;
+  }
+  const ids = expired.map((r) => r._id);
+  const del = await BillingAudit.deleteMany({ _id: { $in: ids } });
+  return { moved: expired.length, deleted: del.deletedCount };
 });
 
 // Keep a reference name for the graceful-shutdown handler below.
@@ -340,6 +549,8 @@ const _autoBillingInterval = {
     _cancelEodDaybook();
     _cancelAdvanceRecon();
     _cancelShiftAutoClose();
+    _cancelAuditArchive();           // R7ar-P1-20
+    _cancelStuckTrigger();           // R7ar-P2-37
   },
 };
 

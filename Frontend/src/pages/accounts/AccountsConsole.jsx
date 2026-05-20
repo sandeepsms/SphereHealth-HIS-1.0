@@ -137,6 +137,19 @@ function DayBookTab() {
         <KPI label="IPD advance due"  value={fmtINR(s.advanceDue)}      color={C.amber}   icon="pi-home" />
         <KPI label="TPA pending"      value={fmtINR(s.tpaPending)}      color={C.teal}    icon="pi-briefcase" />
       </div>
+      {/* R7ar-P1-12/D5-aq-04: explicit cash-flow strip so the cashier can
+          see in/out at a glance. Backend already computes these four —
+          they were just not rendered. netCashFlow = totalCollected −
+          billRefundsOut − advanceRefundsOut. */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, margin: "0 0 12px" }}>
+        <KPI label="Advance deposits IN"  value={fmtINR(s.advanceDepositsIn)} color={C.amber}  icon="pi-arrow-down-left" />
+        <KPI label="Advance refunds OUT"  value={fmtINR(s.advanceRefundsOut)} color={C.red}    icon="pi-arrow-up-right" />
+        <KPI label="Bill refunds OUT"     value={fmtINR(s.billRefundsOut)}    color={C.red}    icon="pi-undo" />
+        <KPI label="Net cash flow (today)"
+             value={fmtINR(s.netCashFlow)}
+             color={(s.netCashFlow ?? 0) < 0 ? C.red : C.green}
+             icon={(s.netCashFlow ?? 0) < 0 ? "pi-arrow-down" : "pi-arrow-up"} />
+      </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         {/* Mode-wise */}
@@ -732,63 +745,92 @@ function AllBillsTab() {
    self-track a session even before the persistent backend ships.
    Phase 2 (TBD): /api/cashier-sessions endpoints.
 ══════════════════════════════════════════════════════════════ */
+// R7ar-P1-10/D6-aq-10: Cashier shift backed by the /api/cashier-sessions
+// endpoint (Mongo-persisted, cross-device, audited). Pre-R7ar this tab
+// kept the session in localStorage — so a cashier opening on terminal A
+// couldn't close from terminal B, and the variance never landed in the
+// audit register. The CashierSession backend was built in R7ap-F20 but
+// the frontend was left on the localStorage shim until now.
 function ShiftTab() {
-  const [session, setSession] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("his_cashier_session") || "null"); }
-    catch { return null; }
-  });
-  const [openingCash, setOpeningCash] = useState("");
-  const [closingCash, setClosingCash] = useState("");
+  const [session,      setSession]      = useState(null);
+  const [loadingSess,  setLoadingSess]  = useState(true);
+  const [openingCash,  setOpeningCash]  = useState("");
+  const [openNotes,    setOpenNotes]    = useState("");
+  const [closingCash,  setClosingCash]  = useState("");
   const [closingNotes, setClosingNotes] = useState("");
-  const [today, setToday] = useState(null);
+  const [varianceNote, setVarianceNote] = useState("");
+  const [today,        setToday]        = useState(null);
+  const [busy,         setBusy]         = useState(false);
+
+  const refreshSession = async () => {
+    setLoadingSess(true);
+    try {
+      const r = await axios.get(`${API}/cashier-sessions/current`, authHdr());
+      setSession(r.data?.data || null);
+    } catch (e) {
+      // 401/403 surface clean — no session shown
+      setSession(null);
+    } finally {
+      setLoadingSess(false);
+    }
+  };
 
   useEffect(() => {
+    refreshSession();
     axios.get(`${API}/billing/collection-summary?date=${todayISO()}`, authHdr())
       .then(r => setToday(r.data?.summary))
       .catch(() => {});
   }, []);
 
-  const openShift = () => {
+  const openShift = async () => {
     if (!openingCash) { toast.error("Enter opening cash"); return; }
-    const s = {
-      openedAt: new Date().toISOString(),
-      openingCash: Number(openingCash),
-      status: "open",
-    };
-    localStorage.setItem("his_cashier_session", JSON.stringify(s));
-    setSession(s);
-    setOpeningCash("");
-    toast.success(`Shift opened · opening ${fmtINR(s.openingCash)}`);
+    setBusy(true);
+    try {
+      const r = await axios.post(`${API}/cashier-sessions/open`,
+        { openingCash: Number(openingCash), openNotes: openNotes || undefined },
+        authHdr());
+      setSession(r.data?.data || null);
+      setOpeningCash("");
+      setOpenNotes("");
+      toast.success(`Shift opened · opening ${fmtINR(Number(openingCash))}`);
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Open shift failed");
+    } finally { setBusy(false); }
   };
 
-  const closeShift = () => {
+  const closeShift = async () => {
     if (!session) return;
     if (!closingCash) { toast.error("Enter closing cash"); return; }
-    const expected = Number(session.openingCash) + Number(today?.byMode?.find(m => /cash/i.test(m.mode))?.amount || 0);
-    const variance = Number(closingCash) - expected;
-    const closed = {
-      ...session,
-      closedAt: new Date().toISOString(),
-      closingCash: Number(closingCash),
-      expectedCash: expected,
-      variance,
-      closingNotes,
-      status: "closed",
-    };
-    // Stash the closed session under a date key so the cashier can re-view
-    // past shifts. Active session slot is cleared.
-    const history = JSON.parse(localStorage.getItem("his_cashier_history") || "[]");
-    history.unshift(closed);
-    localStorage.setItem("his_cashier_history", JSON.stringify(history.slice(0, 30)));
-    localStorage.removeItem("his_cashier_session");
-    setSession(null);
-    setClosingCash("");
-    setClosingNotes("");
-    toast.success(`Shift closed · variance ${variance >= 0 ? "+" : ""}${fmtINR(variance)}`);
+    setBusy(true);
+    try {
+      const r = await axios.post(
+        `${API}/cashier-sessions/${session._id}/close`,
+        {
+          closingCash:  Number(closingCash),
+          varianceNote: varianceNote || undefined,
+          closeNotes:   closingNotes || undefined,
+        },
+        authHdr(),
+      );
+      setSession(null);
+      setClosingCash("");
+      setClosingNotes("");
+      setVarianceNote("");
+      const v = Number(r.data?.data?.variance || 0);
+      toast.success(`Shift closed · variance ${v >= 0 ? "+" : ""}${fmtINR(v)}`);
+    } catch (e) {
+      const msg = e?.response?.data?.message || "Close shift failed";
+      // Backend asks for varianceNote on > ₹0.50 variance — surface inline
+      // instead of just toasting, so the cashier can fix it without losing
+      // the closingCash they already typed.
+      if (msg.includes("varianceNote")) toast.error("Variance > ₹0.50 — provide a note explaining the difference.");
+      else                                toast.error(msg);
+    } finally { setBusy(false); }
   };
 
   const cashCollected = today?.byMode?.find(m => /cash/i.test(m.mode))?.amount || 0;
-  const expectedClosing = session ? Number(session.openingCash) + cashCollected : 0;
+  const openingCashN = toMoney(session?.openingCash);
+  const expectedClosing = session ? openingCashN + cashCollected : 0;
   const variance = closingCash ? Number(closingCash) - expectedClosing : 0;
 
   return (
@@ -796,22 +838,24 @@ function ShiftTab() {
       <Card title="Cashier shift" color={C.teal} icon="pi-user-edit"
         right={session
           ? <Badge value={`Open since ${new Date(session.openedAt).toLocaleTimeString("en-IN")}`} />
-          : <Badge value="No active session" />}>
+          : <Badge value={loadingSess ? "Checking…" : "No active session"} />}>
         {!session ? (
-          <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr auto", gap: 10, alignItems: "flex-end" }}>
             <Field label="Opening cash in drawer">
               <input type="number" value={openingCash} onChange={(e) => setOpeningCash(e.target.value)}
                 placeholder="e.g. 2000"
-                style={{ width: 180, padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 13, fontWeight: 700 }} />
+                style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 13, fontWeight: 700 }} />
             </Field>
-            <PrimaryButton label="Open Shift" icon="pi-play" color={C.teal} onClick={openShift} />
-            <div style={{ flex: 1, fontSize: 12, color: C.muted, padding: "8px 0" }}>
-              Phase-1 UI — sessions persist in this browser only (local storage). Phase-2 will write to <code>/api/cashier-sessions</code> for cross-device + audit.
-            </div>
+            <Field label="Notes (optional)">
+              <input value={openNotes} onChange={(e) => setOpenNotes(e.target.value)}
+                placeholder="e.g. Morning till — Sunita"
+                style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 12.5 }} />
+            </Field>
+            <PrimaryButton label="Open Shift" icon="pi-play" color={C.teal} onClick={openShift} busy={busy} />
           </div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-            <KPI label="Opening cash"      value={fmtINR(session.openingCash)} color={C.muted}  icon="pi-wallet" />
+            <KPI label="Opening cash"      value={fmtINR(openingCashN)}         color={C.muted}  icon="pi-wallet" />
             <KPI label="Cash collected"    value={fmtINR(cashCollected)}        color={C.green}  icon="pi-money-bill" />
             <KPI label="Expected closing"  value={fmtINR(expectedClosing)}      color={C.blue}   icon="pi-calculator" />
             {closingCash && (
@@ -825,20 +869,26 @@ function ShiftTab() {
       {session && (
         <div style={{ marginTop: 14 }}>
           <Card title="Close shift" color={C.red} icon="pi-stop">
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 2fr", gap: 12 }}>
               <Field label="Actual cash in drawer">
                 <input type="number" value={closingCash} onChange={(e) => setClosingCash(e.target.value)}
                   placeholder="Count the drawer"
                   style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 13, fontWeight: 700 }} />
               </Field>
-              <Field label="Notes / explanation for variance (optional)">
+              <Field label="Variance note (required if > ₹0.50 off)">
+                <input value={varianceNote} onChange={(e) => setVarianceNote(e.target.value)}
+                  placeholder="e.g. ₹500 short — refund #1234 paid without slip"
+                  style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 12.5 }} />
+              </Field>
+              <Field label="General notes (optional)">
                 <textarea value={closingNotes} onChange={(e) => setClosingNotes(e.target.value)} rows={2}
-                  placeholder="e.g. ₹500 short — receipt #1234 customer refund without slip."
+                  placeholder="Handover instructions, anything the next shift should know."
                   style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 12.5, fontFamily: "inherit" }} />
               </Field>
             </div>
             <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-end" }}>
-              <PrimaryButton label="Close Shift" icon="pi-stop" color={C.red} onClick={closeShift} disabled={!closingCash} />
+              <PrimaryButton label="Close Shift" icon="pi-stop" color={C.red} onClick={closeShift}
+                busy={busy} disabled={!closingCash} />
             </div>
           </Card>
         </div>
@@ -850,31 +900,50 @@ function ShiftTab() {
 }
 
 function ShiftHistory() {
-  const history = (() => {
-    try { return JSON.parse(localStorage.getItem("his_cashier_history") || "[]"); }
-    catch { return []; }
-  })();
-  if (!history.length) return null;
+  const [rows,    setRows]    = useState([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await axios.get(`${API}/cashier-sessions?limit=30`, authHdr());
+        if (!cancelled) setRows(r.data?.data || []);
+      } catch (_) {
+        if (!cancelled) setRows([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  if (loading) return null;
+  if (!rows.length) return null;
+  const num = (v) => toMoney(v);
   return (
     <div style={{ marginTop: 14 }}>
-      <Card title="Previous shifts (this browser)" color={C.muted} icon="pi-history">
+      <Card title="Previous shifts" color={C.muted} icon="pi-history">
         <Table cols={[
-          { label: "Opened" }, { label: "Closed" },
+          { label: "Cashier" }, { label: "Opened" }, { label: "Closed" },
           { label: "Opening", align: "right" }, { label: "Expected", align: "right" },
           { label: "Closing", align: "right" }, { label: "Variance", align: "right" },
         ]}>
-          {history.map((s, i) => (
-            <tr key={i}>
-              <td style={{ fontSize: 11.5 }}>{new Date(s.openedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</td>
-              <td style={{ fontSize: 11.5 }}>{new Date(s.closedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</td>
-              <td style={{ textAlign: "right" }}>{fmtINR(s.openingCash)}</td>
-              <td style={{ textAlign: "right" }}>{fmtINR(s.expectedCash)}</td>
-              <td style={{ textAlign: "right" }}>{fmtINR(s.closingCash)}</td>
-              <td style={{ textAlign: "right", fontWeight: 800, color: Math.abs(s.variance) < 100 ? C.green : C.red }}>
-                {s.variance >= 0 ? "+" : ""}{fmtINR(s.variance)}
-              </td>
-            </tr>
-          ))}
+          {rows.map((s) => {
+            const variance = num(s.variance);
+            const closedAt = s.closedAt ? new Date(s.closedAt) : null;
+            return (
+              <tr key={s._id}>
+                <td style={{ fontSize: 11.5 }}>{s.cashierName || "—"}{s.closedByCron && <Badge value="AUTO" palette={C.amber} />}</td>
+                <td style={{ fontSize: 11.5 }}>{new Date(s.openedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</td>
+                <td style={{ fontSize: 11.5 }}>{closedAt ? closedAt.toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : <Badge value="OPEN" palette={C.green} />}</td>
+                <td style={{ textAlign: "right" }}>{fmtINR(num(s.openingCash))}</td>
+                <td style={{ textAlign: "right" }}>{fmtINR(num(s.expectedClosing))}</td>
+                <td style={{ textAlign: "right" }}>{fmtINR(num(s.closingCash))}</td>
+                <td style={{ textAlign: "right", fontWeight: 800, color: Math.abs(variance) < 100 ? C.green : C.red }}>
+                  {variance >= 0 ? "+" : ""}{fmtINR(variance)}
+                </td>
+              </tr>
+            );
+          })}
         </Table>
       </Card>
     </div>
@@ -888,6 +957,8 @@ function RefundsTab() {
   const navigate = useNavigate();
   const [bills, setBills] = useState([]);
   const [advanceRefunds, setAdvanceRefunds] = useState([]);  // R7ap-F11
+  const [creditNotes,    setCreditNotes]    = useState([]);  // R7ar-P1-15
+  const [cnTotals,       setCnTotals]       = useState({ total: 0, totalTax: 0 });
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState("REFUNDED");
   // R7ap-F11: default 30-day window for the advance-refund register.
@@ -897,13 +968,19 @@ function RefundsTab() {
   const refresh = async () => {
     setLoading(true);
     try {
-      // Parallel fetch — bill refunds + advance refunds.
-      const [billRes, advRes] = await Promise.all([
+      // Parallel fetch — bill refunds + advance refunds + credit notes.
+      const [billRes, advRes, cnRes] = await Promise.all([
         axios.get(`${API}/billing?status=${filter}&limit=50`, authHdr()).catch(() => null),
         axios.get(`${API}/billing/advance/refunds?from=${from}&to=${to}`, authHdr()).catch(() => null),
+        axios.get(`${API}/billing/credit-notes?from=${from}&to=${to}`, authHdr()).catch(() => null),
       ]);
       setBills(billRes?.data?.data || billRes?.data?.bills || billRes?.data || []);
       setAdvanceRefunds(advRes?.data?.data || []);
+      setCreditNotes(cnRes?.data?.data || []);
+      setCnTotals({
+        total:    Number(cnRes?.data?.meta?.total || 0),
+        totalTax: Number(cnRes?.data?.meta?.totalTax || 0),
+      });
     } catch (e) { toast.error("Refunds load failed"); }
     setLoading(false);
   };
@@ -1010,6 +1087,54 @@ function RefundsTab() {
                       Open
                     </button>
                   </td>
+                </tr>
+              ))}
+            </Table>
+          )}
+        </Card>
+      </div>
+
+      {/* R7ar-P1-15/D6-aq-08: Credit notes register — every GST-Act §34 CN
+          emitted on a bill refund. Pre-R7ar these were data-resident only;
+          the GST register subtracted them but they had no list view, so
+          the accountant couldn't audit which CNs cleared this period. */}
+      <div style={{ marginTop: 12 }}>
+        <Card title={`Credit notes · ${from} → ${to}`} color={C.purple} icon="pi-file-edit"
+          right={
+            <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
+              <span style={{ fontSize: 12, color: C.muted }}>Total <b style={{ color: C.red, fontFamily: "'DM Mono', monospace" }}>{fmtINR2(cnTotals.total)}</b></span>
+              <span style={{ fontSize: 12, color: C.muted }}>Tax reversed <b style={{ color: C.red, fontFamily: "'DM Mono', monospace" }}>{fmtINR2(cnTotals.totalTax)}</b></span>
+            </div>
+          }>
+          {!Array.isArray(creditNotes) || creditNotes.length === 0 ? (
+            <Empty icon="pi-inbox" text={`No credit notes in ${from} → ${to}.`} />
+          ) : (
+            <Table cols={[
+              { label: "CN #" },
+              { label: "Date" },
+              { label: "Original Bill" },
+              { label: "Patient" },
+              { label: "Reason" },
+              { label: "Refund Mode" },
+              { label: "Taxable", align: "right" },
+              { label: "Tax", align: "right" },
+              { label: "Refund Total", align: "right" },
+              { label: "Status" },
+            ]}>
+              {creditNotes.map((cn) => (
+                <tr key={cn._id}>
+                  <td style={{ fontFamily: "monospace", fontSize: 11.5 }}>{cn.creditNoteNumber}</td>
+                  <td style={{ color: C.muted, fontSize: 11.5 }}>{cn.creditNoteDate ? new Date(cn.creditNoteDate).toLocaleDateString("en-IN") : "—"}</td>
+                  <td style={{ fontFamily: "monospace", fontSize: 11.5 }}>{cn.originalBillNumber}</td>
+                  <td style={{ fontWeight: 700 }}>{cn.patientId?.fullName || cn.UHID}</td>
+                  <td style={{ color: C.muted, fontSize: 11.5, maxWidth: 240, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={cn.reasonText}>{cn.reasonText || "—"}</td>
+                  <td><Badge value={cn.refundMode || "—"} palette={C.purple} /></td>
+                  <td style={{ textAlign: "right", fontFamily: "'DM Mono', monospace" }}>{fmtINR2(cn.taxableValue)}</td>
+                  <td style={{ textAlign: "right", fontFamily: "'DM Mono', monospace", color: C.red }}>{fmtINR2(cn.taxAmount)}</td>
+                  <td style={{ textAlign: "right", fontFamily: "'DM Mono', monospace", fontWeight: 800, color: C.red }}>{fmtINR2(cn.refundAmount)}</td>
+                  <td>{cn.periodLocked
+                    ? <Badge value="GST LOCKED" palette={C.red} />
+                    : <Badge value="OPEN" palette={C.green} />}</td>
                 </tr>
               ))}
             </Table>
