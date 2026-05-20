@@ -79,6 +79,11 @@ class PatientAdvanceService {
       paidAt: new Date(),
       remarks,
     });
+    // R7ar-P1-7: invalidate Day Book cache so deposit shows immediately.
+    try {
+      const ctrl = require("../../controllers/Billing/billingController");
+      ctrl.invalidateDayBookCache?.();
+    } catch (_) { /* best-effort */ }
     // R7ap-F15: emit audit row for deposit creation.
     try {
       const { emit } = require("../../models/Billing/BillingAudit");
@@ -364,6 +369,11 @@ class PatientAdvanceService {
     if (!updated) {
       throw new Error("Refund race detected — advance state changed between read and write. Please retry.");
     }
+    // R7ar-P1-7: invalidate Day Book cache on refund.
+    try {
+      const ctrl = require("../../controllers/Billing/billingController");
+      ctrl.invalidateDayBookCache?.();
+    } catch (_) { /* best-effort */ }
     // R7ap-F15: emit audit row. Best-effort — never block the refund on
     // audit-collection failure.
     try {

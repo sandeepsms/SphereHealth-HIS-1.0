@@ -40,6 +40,13 @@ const CashierSessionSchema = new mongoose.Schema(
     advancesApplied:  { type: Dec, default: 0 },      // internal — for transparency only
 
     status:        { type: String, enum: ["OPEN", "CLOSED"], default: "OPEN", index: true },
+    // R7ar-P1-22/D10-aq-02: when the EOD cron closes a forgotten shift,
+    // flag it so a manager can review the variance separately.
+    closedByCron:   { type: Boolean, default: false },
+    // R7ar-D5-aq-12: per-mode shift snapshot for NABH per-shift reconciliation.
+    upiCollected:    { type: Dec, default: 0 },
+    cardCollected:   { type: Dec, default: 0 },
+    chequeCollected: { type: Dec, default: 0 },
   },
   { timestamps: true },
 );

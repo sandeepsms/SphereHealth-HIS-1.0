@@ -64,35 +64,50 @@ exports.closeSession = async (req, res, next) => {
       return res.status(400).json({ success: false, message: "closingCash must be a non-negative number" });
     }
 
-    // Compute cash collected / refunded during the shift window from
-    // PatientBill.payments + PatientAdvance create/refund.
+    // R7ar-P1-11/D1-aq-07: scope the cash-flow window to THIS cashier only.
+    // Pre-R7ar the close-window query was admission-wide → two cashiers on
+    // overlapping shifts both claimed the whole drawer.
     const windowStart = session.openedAt;
     const windowEnd   = new Date();
     const bills = await PatientBill.find({
-      "payments.paidAt": { $gte: windowStart, $lte: windowEnd },
+      "payments.paidAt":       { $gte: windowStart, $lte: windowEnd },
+      "payments.receivedById": session.cashierId,
     }).select("payments").lean();
     let cashCollected = 0, cashRefundedOut = 0, advancesApplied = 0;
+    let upiCollected = 0, cardCollected = 0, chequeCollected = 0;   // R7ar-D5-aq-12
     for (const b of bills) {
       for (const p of (b.payments || [])) {
         const pAt = p.paidAt ? new Date(p.paidAt) : null;
         if (!pAt || pAt < windowStart || pAt > windowEnd) continue;
         if (p.voidedAt) continue;
+        // R7ar-P1-11: only count this cashier's rows.
+        if (p.receivedById && String(p.receivedById) !== String(session.cashierId)) continue;
         const amt = toNum(p.amount);
-        const mode = (p.paymentMode || p.mode || "").toString();
+        const mode = (p.paymentMode || p.mode || "").toString().toUpperCase();
         if (mode === "ADVANCE_ADJUSTMENT") { advancesApplied += amt; continue; }
-        if (mode !== "CASH") continue;
-        if (amt < 0) cashRefundedOut += -amt;
-        else         cashCollected   += amt;
+        // R7ar-D5-aq-12: track non-cash modes too so reconciliation can show
+        // UPI/CARD/CHEQUE totals per shift.
+        if (amt < 0) {
+          if (mode === "CASH") cashRefundedOut += -amt;
+          continue;
+        }
+        if (mode === "CASH")    cashCollected   += amt;
+        else if (mode === "UPI")    upiCollected    += amt;
+        else if (mode === "CARD")   cardCollected   += amt;
+        else if (mode === "CHEQUE") chequeCollected += amt;
       }
     }
+    // R7ar-P1-11: filter advance deposits by receivedById too.
     const advanceDeposits = await PatientAdvance.find({
-      paidAt:      { $gte: windowStart, $lte: windowEnd },
-      paymentMode: "CASH",
+      paidAt:        { $gte: windowStart, $lte: windowEnd },
+      paymentMode:   "CASH",
+      receivedById:  session.cashierId,
     }).lean();
     for (const a of advanceDeposits) cashCollected += toNum(a.amount);
     const advanceRefunds = await PatientAdvance.find({
       refundedAt:  { $gte: windowStart, $lte: windowEnd },
       refundMode:  "CASH",
+      refundedBy:  session.cashierName,   // refund records actor by name
     }).lean();
     for (const a of advanceRefunds) cashRefundedOut += toNum(a.refundedAmount);
 
@@ -117,6 +132,9 @@ exports.closeSession = async (req, res, next) => {
     session.cashCollected   = cashCollected;
     session.cashRefundedOut = cashRefundedOut;
     session.advancesApplied = advancesApplied;
+    session.upiCollected    = upiCollected;     // R7ar-D5-aq-12
+    session.cardCollected   = cardCollected;
+    session.chequeCollected = chequeCollected;
     session.status          = "CLOSED";
     await session.save();
     res.json({ success: true, data: session });

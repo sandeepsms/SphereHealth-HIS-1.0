@@ -1002,6 +1002,12 @@ class BillingService {
 
       try {
         await bill.save();
+        // R7ar-P1-7/D2-aq-02: invalidate Day Book LRU cache so the next
+        // refresh reflects this collection within milliseconds, not 30s.
+        try {
+          const ctrl = require("../../controllers/Billing/billingController");
+          ctrl.invalidateDayBookCache?.();
+        } catch (_) { /* invalidation best-effort */ }
         // R7ap-F15: emit audit row for every bill payment. Best-effort —
         // never blocks the cashier on audit-collection failure.
         try {
@@ -1201,6 +1207,11 @@ class BillingService {
 
       try {
         await bill.save();
+        // R7ar-P1-7: invalidate Day Book cache on refund.
+        try {
+          const ctrl = require("../../controllers/Billing/billingController");
+          ctrl.invalidateDayBookCache?.();
+        } catch (_) { /* best-effort */ }
         // R7ap-F15: refund audit row.
         try {
           const { emit } = require("../../models/Billing/BillingAudit");
@@ -1298,6 +1309,12 @@ class BillingService {
               receivedBy:     refundedBy || "Reception",
               receivedByRole: "Receptionist",
               remarks:        `Credit from bill refund ${bill.billNumber}: ${String(reason).trim()}`,
+              // R7ar-P0-5: mark as a refund-credit (internal transfer) so
+              // Day Book Cash In excludes this row — bill's negative payment
+              // row already represents the cash-out side. Without this flag
+              // the same money was counted twice: once as billRefundsOut and
+              // once as advanceDepositsIn.
+              isRefundCredit: true,
             });
           }
         } catch (err) {

@@ -63,8 +63,11 @@ router.get("/uhid/:UHID/summary", requireAction("billing.read"), ctrl.getUhidSum
 // collect-all distributes one lump-sum FIFO; bulk-settle applies a
 // uniform % or proportional ₹ discount. Both writes are audited
 // per-bill via bill.payments + bill.adjustmentLog respectively.
-router.post("/uhid/:UHID/collect-all", ctrl.bulkCollectByUHID);
-router.post("/uhid/:UHID/bulk-settle", ctrl.bulkSettleByUHID);
+// R7ar-P0-2/D3-aq-02: gate the bulk write paths. Pre-R7ar any logged-in
+// user could post a lump-sum cash collection or apply a discount across
+// every bill on a UHID.
+router.post("/uhid/:UHID/collect-all", requireAction("billing.write"),  ctrl.bulkCollectByUHID);
+router.post("/uhid/:UHID/bulk-settle", requireAction("billing.refund"), ctrl.bulkSettleByUHID);
 router.get("/price/:serviceId", requireAction("billing.read"), ctrl.getServicePrice); // R7ap-F5
 router.get("/daycare-check/:admissionId", requireAction("billing.read"), ctrl.checkDaycare); // R7ap-F5
 
@@ -74,7 +77,8 @@ router.get("/daycare-check/:admissionId", requireAction("billing.read"), ctrl.ch
 router.get("/nurse-services", requireAction("billing.read"), ctrl.getNurseChargeableServices); // R7ap-F5
 
 // ── Nurse charge entry ────────────────────────────────────────
-router.post("/:billId/nurse-charge", ctrl.addNurseCharge); // POST /api/billing/:billId/nurse-charge {serviceId, quantity, nurseName}
+// R7ar-P0-2: nurse-charge endpoint is a write — gate on billing.manual-charge
+router.post("/:billId/nurse-charge", vBill, requireAction("billing.manual-charge"), ctrl.addNurseCharge);
 
 // ── Billing Audit Trail ───────────────────────────────────────────
 // R7ap-F5: audit trail exposes admission-level financial detail — gate at
@@ -82,7 +86,8 @@ router.post("/:billId/nurse-charge", ctrl.addNurseCharge); // POST /api/billing/
 // because the controller has its own ownership check on the trigger.
 router.get ("/audit-trail/:admissionId",      requireAction("reports.audit"), ctrl.getAuditTrail);
 router.get ("/audit-summary/:admissionId",    requireAction("reports.audit"), ctrl.getAuditSummary);
-router.post("/audit/:triggerId/confirm-bill", ctrl.confirmTriggerBill);
+// R7ar-P0-2: confirm-bill is a write that flips trigger → bill — gate.
+router.post("/audit/:triggerId/confirm-bill", vTrig, requireAction("billing.write"), ctrl.confirmTriggerBill);
 
 // ── IPD Live Ledger (Phase A) ─────────────────────────────────────
 // Powers /billing/ipd/:admissionId on the frontend. Single read of the
@@ -102,10 +107,13 @@ router.post("/trigger/:triggerId/cancel",
 
 // ── Bill CRUD & actions ───────────────────────────────────────
 router.get("/:billId", vBill, requireAction("billing.read"), ctrl.getBillById); // R7ap-F5/F25
-router.post("/create", ctrl.getOrCreateBill);
-router.post("/:billId/add-service",        vBill, ctrl.addService);
-router.post("/:billId/generate",           vBill, ctrl.generateBill);
-router.post("/:billId/payment",            vBill, ctrl.recordPayment);
+// R7ar-P0-2/D3-aq-03: gate every cashier write on billing.write. Pre-R7ar
+// any authenticated user could POST a payment / create a draft / add a
+// service / generate / adjust settlement — only refund/cancel/TPA were gated.
+router.post("/create",                     requireAction("billing.write"),  ctrl.getOrCreateBill);
+router.post("/:billId/add-service",        vBill, requireAction("billing.write"),  ctrl.addService);
+router.post("/:billId/generate",           vBill, requireAction("billing.write"),  ctrl.generateBill);
+router.post("/:billId/payment",            vBill, requireAction("billing.write"),  ctrl.recordPayment);
 // 15-min same-cashier payment-reversal (cashier-typo undo).
 router.post("/:billId/payment/:paymentId/void",
   vBill, vPay, requireAction("billing.undo"), ctrl.voidPayment);
@@ -113,7 +121,9 @@ router.post("/:billId/payment/:paymentId/void",
 // on GENERATED/PARTIAL bills. Receptionist-accessible (front desk negotiates
 // final settlement), but every change is logged with reason + staff name onto
 // bill.adjustmentLog for NABH review.
-router.post("/:billId/settlement-adjust", vBill, ctrl.settlementAdjust);
+// R7ar-P0-2: settlementAdjust is the line-edit + discount path — gate on
+// billing.refund (Accountant/Admin) since it's a financial reconciliation.
+router.post("/:billId/settlement-adjust", vBill, requireAction("billing.refund"), ctrl.settlementAdjust);
 // Refunds and cancellations are the only billing writes restricted past
 // the Receptionist tier — both require an Accountant (or Admin) per the
 // central ACTIONS map. Receptionists can record charges and payments but
@@ -121,8 +131,9 @@ router.post("/:billId/settlement-adjust", vBill, ctrl.settlementAdjust);
 router.post("/:billId/refund",    vBill, requireAction("billing.refund"), ctrl.refundPayment);
 router.post("/:billId/cancel",    vBill, requireAction("billing.refund"), ctrl.cancelBill);
 router.post("/:billId/tpa-claim", vBill, requireAction("tpa.claim"),     ctrl.setTPAClaimStatus);
-router.put("/:billId/items/:itemId",    vBill, vItem, ctrl.updateItemQty);
-router.delete("/:billId/items/:itemId", vBill, vItem, ctrl.removeItem);
+// R7ar-P0-2: item CRUD is a billing write. Edit gate on override, delete on cancel-charge.
+router.put("/:billId/items/:itemId",    vBill, vItem, requireAction("billing.override"),      ctrl.updateItemQty);
+router.delete("/:billId/items/:itemId", vBill, vItem, requireAction("billing.cancel-charge"), ctrl.removeItem);
 
 // ── Order lifecycle (NABH AAC.5) ──────────────────────────────
 // Order-to-completion flow for lab / imaging / procedure lines added
@@ -134,8 +145,9 @@ router.delete("/:billId/items/:itemId", vBill, vItem, ctrl.removeItem);
 // user can complete or cancel an order they're executing. If finer
 // gating is needed later (e.g. radiologist-only for imaging codes)
 // it can be added at the service layer based on the service category.
-router.patch("/:billId/items/:itemId/complete",     vBill, vItem, ctrl.completeItemOrder);
-router.patch("/:billId/items/:itemId/cancel-order", vBill, vItem, ctrl.cancelItemOrder);
+// R7ar-P0-2: order lifecycle writes — clinical user only.
+router.patch("/:billId/items/:itemId/complete",     vBill, vItem, requireAction("billing.write"), ctrl.completeItemOrder);
+router.patch("/:billId/items/:itemId/cancel-order", vBill, vItem, requireAction("billing.cancel-charge"), ctrl.cancelItemOrder);
 
 // ── Admin one-shot: backfill bills for historical patients whose
 // receptionist registration never landed a billing trigger. Gated by

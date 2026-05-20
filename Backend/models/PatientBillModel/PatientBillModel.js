@@ -432,7 +432,12 @@ PatientBillSchema.methods.recalcTotals = function () {
       // the bill aggregate. Backward-compat: missing orderStatus is
       // treated as Completed via isItemBillable() so legacy bills behave
       // identically to before this field was introduced.
-      if (isItemBillable(item)) {
+      //
+      // R7ar-P0-4/D1-aq-01: ALSO skip items marked excludedByPackage —
+      // these are pre-package per-line charges (bed, nursing, doctor visit)
+      // that have been superseded by an attached ANH package. Pre-R7ar
+      // recalcTotals ignored the flag → receipts double-counted.
+      if (isItemBillable(item) && !item.excludedByPackage) {
         gross  += gAmt;
         disc   += dAmt;
         tax    += tAmt;

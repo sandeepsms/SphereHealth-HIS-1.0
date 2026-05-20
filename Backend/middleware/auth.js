@@ -38,7 +38,12 @@ const authenticate = async (req, res, next) => {
         console.error("[auth] revocation lookup failed:", e.message);
       }
     }
-    req.user = decoded; // { id, role, employeeId, jti, iat, exp }
+    // R7ar-P0-1/D3-aq-01: JWT payload uses `id` (set at sign-time in
+    // authRoutes.js) but many controllers were written using `req.user._id`
+    // (mongoose convention). Expose BOTH keys so neither convention misfires
+    // — undefined `_id` previously broke F20 CashierSession (every cashier
+    // shared one row), and zeroed `receivedById` on every payment audit.
+    req.user = { ...decoded, _id: decoded.id }; // { id, _id, role, employeeId, jti, iat, exp }
     next();
   } catch (err) {
     if (err.name === "TokenExpiredError")
@@ -89,7 +94,8 @@ const attemptAuth = (req, _res, next) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) return next();
   try {
-    req.user = jwt.verify(authHeader.split(" ")[1], JWT_SECRET);
+    const _decoded = jwt.verify(authHeader.split(" ")[1], JWT_SECRET);
+    req.user = { ..._decoded, _id: _decoded.id };  // R7ar-P0-1: expose both id + _id
   } catch (e) { /* ignore — leave req.user undefined */ }
   next();
 };

@@ -261,20 +261,70 @@ const _cancelAdvanceRecon = scheduleDaily("advance-pool-recon", 0, 15, async () 
   return { rows: all.length, total, applied, refunded, unspent, violations };
 });
 
-// F32 — EOD auto-close cashier shift (23:50 IST) — closes any OPEN shift
-// that was opened more than 16h ago AND has no closingCash. Marks variance
-// = 0, varianceNote = "Auto-closed by EOD cron (no closingCash provided)".
+// R7ar-P1-22/D10-aq-02: F32 EOD shift-auto-close compute REAL cash flow
+// for the shift window per cashier. Pre-R7ar this cron faked variance=0,
+// which masked real cash shortages. Now it reuses the same windowed
+// reconciliation that the manual `closeSession` controller does, computes
+// expectedClosing properly, and flags variance with `closedByCron:true` +
+// a fixed "AUTO_CLOSED_PENDING_REVIEW" note so a manager investigates.
 const _cancelShiftAutoClose = scheduleDaily("shift-auto-close", 23, 50, async () => {
   const CashierSession = require("./models/Billing/CashierSession");
   const cutoff = new Date(Date.now() - 16 * 60 * 60 * 1000);
   const open = await CashierSession.find({ status: "OPEN", openedAt: { $lt: cutoff } });
   let closed = 0;
   for (const s of open) {
-    s.closedAt        = new Date();
-    s.expectedClosing = toNum(s.openingCash); // unknown — cashier didn't close
-    s.closingCash     = toNum(s.openingCash);
+    const windowStart = s.openedAt;
+    const windowEnd   = new Date();
+    // Same per-cashier scoping as closeSession (R7ar-P1-11).
+    let cashCollected = 0, cashRefundedOut = 0, advancesApplied = 0;
+    let upiCollected = 0, cardCollected = 0, chequeCollected = 0;
+    try {
+      const billsW = await PatientBillModel.find({
+        "payments.paidAt":       { $gte: windowStart, $lte: windowEnd },
+        "payments.receivedById": s.cashierId,
+      }).select("payments").lean();
+      for (const b of billsW) {
+        for (const p of (b.payments || [])) {
+          const pAt = p.paidAt ? new Date(p.paidAt) : null;
+          if (!pAt || pAt < windowStart || pAt > windowEnd) continue;
+          if (p.voidedAt) continue;
+          if (p.receivedById && String(p.receivedById) !== String(s.cashierId)) continue;
+          const amt = toNum(p.amount);
+          const m = (p.paymentMode || p.mode || "").toString().toUpperCase();
+          if (m === "ADVANCE_ADJUSTMENT") { advancesApplied += amt; continue; }
+          if (amt < 0) { if (m === "CASH") cashRefundedOut += -amt; continue; }
+          if (m === "CASH")   cashCollected   += amt;
+          else if (m === "UPI")    upiCollected    += amt;
+          else if (m === "CARD")   cardCollected   += amt;
+          else if (m === "CHEQUE") chequeCollected += amt;
+        }
+      }
+      const advIn = await PatientAdvanceModel.find({
+        paidAt: { $gte: windowStart, $lte: windowEnd },
+        paymentMode: "CASH", receivedById: s.cashierId,
+      }).lean();
+      for (const a of advIn) cashCollected += toNum(a.amount);
+      const advOut = await PatientAdvanceModel.find({
+        refundedAt: { $gte: windowStart, $lte: windowEnd },
+        refundMode: "CASH", refundedBy: s.cashierName,
+      }).lean();
+      for (const a of advOut) cashRefundedOut += toNum(a.refundedAmount);
+    } catch (e) {
+      console.warn(`[shift-auto-close] reconciliation skipped for ${s._id}: ${e.message}`);
+    }
+    const expectedClosing = toNum(s.openingCash) + cashCollected - cashRefundedOut;
+    s.closedAt        = windowEnd;
+    s.expectedClosing = expectedClosing;
+    s.closingCash     = expectedClosing;       // assume balanced — manager confirms
     s.variance        = 0;
-    s.varianceNote    = "Auto-closed by EOD cron — cashier did not provide closingCash";
+    s.varianceNote    = "AUTO_CLOSED_PENDING_REVIEW — cashier did not close manually";
+    s.cashCollected   = cashCollected;
+    s.cashRefundedOut = cashRefundedOut;
+    s.advancesApplied = advancesApplied;
+    s.upiCollected    = upiCollected;
+    s.cardCollected   = cardCollected;
+    s.chequeCollected = chequeCollected;
+    s.closedByCron    = true;
     s.status          = "CLOSED";
     await s.save().catch((e) => console.warn(`[shift-auto-close] ${s._id} skipped: ${e.message}`));
     closed += 1;

@@ -95,6 +95,14 @@ const PatientAdvanceSchema = new mongoose.Schema(
 
     // ── Notes (free text) ──────────────────────────────────────────
     remarks: { type: String, trim: true, default: null },
+
+    // R7ar-P0-5/D5-aq-01: when a bill refund is credited-to-advance (the
+    // R7c "refund stays inside the hospital" flow), the resulting
+    // PatientAdvance row is NOT new cash inflow — it's an internal
+    // transfer of bill money into the advance pool. Day Book Cash In
+    // must exclude these rows or they double-count alongside the bill's
+    // negative payment row (which is already counted as billRefundsOut).
+    isRefundCredit: { type: Boolean, default: false },
   },
   {
     timestamps: true,

@@ -399,9 +399,14 @@ async function createTrigger(config) {
   // (one-per-admission-per-day, regardless of who) is preserved for
   // bed/nursing/RBS/etc.
   if (dailyDedup && admissionId && serviceCode) {
+    // R7ar-P1-18/D1-aq-06/D7-aq-03: include `pending-review` in the dedup
+    // check so a stuck/silent-error trigger doesn't get duplicated on the
+    // next cron tick. Pre-R7ar the partial-unique index would block create
+    // but the find-then-create dedup would silently skip — leaving the
+    // patient unbilled.
     const dedupQuery = {
       admissionId, serviceCode, dateKey,
-      status: { $in: ["completed", "billed", "pending"] },
+      status: { $in: ["completed", "billed", "pending", "pending-review"] },
     };
     if (dedupByDoctor) {
       // Prefer ObjectId match if we have one; otherwise fall back to
@@ -1385,6 +1390,50 @@ async function attachPackageToAdmission(admissionDoc, packageDoc, opts = {}) {
     department:          admissionDoc.department,
     notes:               packageDoc.inclusions ? `Inclusions: ${packageDoc.inclusions}` : undefined,
   }).catch((e) => { console.error("[AutoBilling] package trigger error:", e.message); return null; });
+
+  // R7ar-P0-4/D5-aq-08: F36 was DORMANT — schema had `excludedByPackage` flag
+  // and the revenue aggregator filtered by it, but no code path ever SET the
+  // flag on existing line items. Bed/nursing/doctor-visit charges already
+  // posted to today's bill kept showing AND the package bundle showed too →
+  // byCategory double-counted on every ANH attach.
+  //
+  // After attach: mark every IPD/Daycare line item on this admission's
+  // active bills as `excludedByPackage=true`. The package bundle itself
+  // (just created above) carries the patient charge from this point on.
+  // Limited to room/nursing/doctor-visit categories — diagnostics + drugs
+  // outside the package scope stay billable.
+  try {
+    const PatientBillM = require("../../models/PatientBillModel/PatientBillModel");
+    const EXCLUDED_CATS = ["Room", "Nursing", "Consultation", "DOC-MORN-ROUND", "DOC-EVE-ROUND", "DOC-EMERGENCY-VISIT"];
+    const EXCLUDED_PREFIXES = ["BED-", "IPD-NUR-", "IPD-RM-", "IPD-ICU-", "DOC-"];
+    await PatientBillM.updateMany(
+      {
+        admission: admissionDoc._id,
+        billStatus: { $in: ["DRAFT", "GENERATED", "PARTIAL"] },
+      },
+      {
+        $set: { "billItems.$[el].excludedByPackage": true },
+      },
+      {
+        arrayFilters: [{
+          $or: [
+            { "el.category": { $in: EXCLUDED_CATS } },
+            { "el.serviceCode": { $regex: `^(${EXCLUDED_PREFIXES.map((p) => p.replace(/-/g, "\\-")).join("|")})` } },
+          ],
+        }],
+      },
+    );
+    // Re-run pre-save totals on each affected bill so the new netAmount
+    // reflects the excluded items (excludedByPackage items still in array,
+    // just won't count toward gross/net).
+    const affected = await PatientBillM.find({
+      admission: admissionDoc._id,
+      billStatus: { $in: ["DRAFT", "GENERATED", "PARTIAL"] },
+    });
+    for (const b of affected) await b.save().catch((e) => console.warn(`[ANH attach] recalc skipped on ${b.billNumber}: ${e.message}`));
+  } catch (e) {
+    console.warn("[AutoBilling] excludedByPackage flag-flip skipped:", e.message);
+  }
 
   return trigger;
 }

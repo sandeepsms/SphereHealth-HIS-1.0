@@ -1278,11 +1278,40 @@ exports.tpaSettle = async (req, res, next) => {
 ───────────────────────────────────────────────────────────── */
 // R7ap-F24/D8-01: 30s LRU cache for Day Book — 5 cashiers refreshing the
 // dashboard no longer translates into 5 collection scans of PatientBill.
+// R7ar-P1-7/D2-aq-02: exported so mutation paths can invalidate after
+// recordPayment / refund / advance / void. Pre-R7ar the cache stayed stale
+// for up to 30s after a cashier touch — head desk handover misled.
 const _collectionSummaryCache = require("../../utils/lruCache")({ max: 30, ttlMs: 30_000 });
+exports._collectionSummaryCache = _collectionSummaryCache;
+// Helper for invalidation — formats today's IST key and clears it from cache.
+exports.invalidateDayBookCache = function invalidateDayBookCache() {
+  try {
+    // IST date key — matches the cache-write side.
+    const istKey = new Intl.DateTimeFormat("en-CA", {
+      timeZone: process.env.HOSPITAL_TZ || "Asia/Kolkata",
+      year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date());
+    _collectionSummaryCache.invalidate(`daybook:${istKey}`);
+    // Also invalidate UTC-key just in case of mismatch (P1-8 fix below).
+    _collectionSummaryCache.invalidate(`daybook:${new Date().toISOString().slice(0, 10)}`);
+  } catch (_) { /* invalidation is best-effort */ }
+};
 
 exports.getCollectionSummary = async (req, res, next) => {
   try {
-    const dateStr  = req.query.date || new Date().toISOString().slice(0, 10);
+    // R7ar-P1-8/D2-aq-03: use IST calendar day not UTC ISO. Pre-R7ar a
+    // request at 00:35 IST defaulted to YESTERDAY because `toISOString()`
+    // returned UTC date which had already rolled over (UTC was 19:05 prev day).
+    const istKey = new Intl.DateTimeFormat("en-CA", {
+      timeZone: process.env.HOSPITAL_TZ || "Asia/Kolkata",
+      year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date());
+    // Validate user-supplied date and reject obvious garbage to prevent
+    // cache-key pollution (D3-aq-06).
+    let dateStr = req.query.date || istKey;
+    if (req.query.date && !/^\d{4}-\d{2}-\d{2}$/.test(req.query.date)) {
+      return res.status(400).json({ success: false, message: "Invalid date — expected YYYY-MM-DD" });
+    }
     const cacheKey = `daybook:${dateStr}`;
     const payload  = await _collectionSummaryCache.get(cacheKey, () => computeCollectionSummary(dateStr));
     res.json(payload);
@@ -1314,7 +1343,17 @@ async function computeCollectionSummary(dateStr) {
     let txnCount = 0;
     const byVisitType = { OPD: 0, IPD: 0, DC: 0, ER: 0, Services: 0, Other: 0 };
     const byVisitTxn  = { OPD: 0, IPD: 0, DC: 0, ER: 0, Services: 0, Other: 0 };
-    const byMode      = { Cash: 0, Card: 0, UPI: 0, TPA: 0, Insurance: 0, Corporate: 0, Other: 0 };
+    // R7ar-P0-6/D2-aq-01: byMode keys are UPPERCASE to match PaymentSchema enum
+    // (CASH/CARD/UPI/CHEQUE/ONLINE/TPA_CLAIM/ADVANCE_ADJUSTMENT). Pre-R7ar
+    // the seed used mixed-case ("Cash"/"Card") but the incoming `paymentMode`
+    // was uppercase, so the loop created NEW keys ("CASH":N, "CARD":M) while
+    // the seeded zero-buckets remained — the UI shows two rows for the same
+    // mode + the seeded row always reads ₹0.
+    const byMode      = {
+      CASH: 0, CARD: 0, UPI: 0, CHEQUE: 0, ONLINE: 0,
+      TPA_CLAIM: 0, TPA: 0, INSURANCE: 0, CORPORATE: 0,
+      BANK_TRANSFER: 0, Other: 0,
+    };
     const byDoctor    = {};  // { doctorId: { name, count, amount } }
     const byReceptionist = {};
 
@@ -1331,7 +1370,9 @@ async function computeCollectionSummary(dateStr) {
         const pAt = p.paidAt ? new Date(p.paidAt) : null;
         if (!pAt || pAt < dayStart || pAt > dayEnd) continue;
         const amt = toNum(p.amount);
-        const m   = (p.mode || p.paymentMode || "Other").toString();
+        // R7ar-P0-6/D2-aq-01: normalise mode to UPPERCASE so byMode buckets
+        // don't get duplicated as Cash/CASH/cash.
+        const m   = (p.mode || p.paymentMode || "Other").toString().toUpperCase();
         // R7ap-F2/D5-03: ADVANCE_ADJUSTMENT is an INTERNAL transfer, not new
         // cash. Track separately so the accountant sees what was "applied
         // from pool" without confusing it with cash inflow.
@@ -1401,12 +1442,17 @@ async function computeCollectionSummary(dateStr) {
     // R7ap-F12/D5-02: include advance DEPOSITS taken today (real cash inflow).
     // PatientAdvance.create is the first cash-touch — bills only see the
     // money later via ADVANCE_ADJUSTMENT (which we explicitly exclude above).
+    // R7ar-P0-5/D5-aq-01: exclude `isRefundCredit:true` rows — those are
+    // internal transfers of refunded bill money into the advance pool,
+    // NOT new cash. They're already counted as billRefundsOut from the
+    // bill's negative payment row.
     const advancesToday = await PatientAdvance.find({
       paidAt: { $gte: dayStart, $lte: dayEnd },
+      isRefundCredit: { $ne: true },
     }).lean();
     for (const a of advancesToday) {
       const amt = toNum(a.amount);
-      const m   = (a.paymentMode || "Cash").toString();
+      const m   = (a.paymentMode || "Cash").toString().toUpperCase();   // R7ar-P0-6
       advanceDepositsIn += amt;
       totalCollected   += amt;
       if (byMode[m] === undefined) byMode[m] = 0;
@@ -1420,7 +1466,8 @@ async function computeCollectionSummary(dateStr) {
     }).lean();
     for (const a of refundsToday) {
       const amt  = toNum(a.refundedAmount);
-      const mode = (a.refundMode || "Cash").toString();
+      // R7ar-P0-6: uppercase normalization
+      const mode = (a.refundMode || "CASH").toString().toUpperCase();
       advanceRefundsOut += amt;
       if (byMode[mode] === undefined) byMode[mode] = 0;
       byMode[mode] -= amt; // refund out reduces mode net
@@ -1670,7 +1717,12 @@ exports.getHospitalGstRegister = async (req, res, next) => {
           _id:           "$billItems.taxPercent",
           bills:         { $addToSet: "$_id" },
           itemCount:     { $sum: 1 },
-          taxableValue:  { $sum: { $toDouble: "$billItems.taxableAmount" } },
+          // R7ar-P0-3/D1-aq-02: BillItem schema has NO `taxableAmount` field;
+          // the taxable value of a line = netAmount (post-discount, pre-tax).
+          // Pre-R7ar the aggregator pipeline referenced a non-existent field
+          // and silently returned 0 for every taxable bucket while reporting
+          // non-zero taxAmount → GSTR-1 reconciliation broken.
+          taxableValue:  { $sum: { $toDouble: "$billItems.netAmount" } },
           taxAmount:     { $sum: { $toDouble: "$billItems.taxAmount" } },
       }},
       { $project: {
@@ -1863,6 +1915,25 @@ exports.detachPackageFromAdmission = async (req, res) => {
       matchScore: 0, autoAttached: false,
     };
     await adm.save();
+    // R7ar-P0-4/D5-aq-09: reverse the excludedByPackage flag on this
+    // admission's active bills so room/nursing/doctor-visit line items
+    // resume contributing to gross/net. Pre-R7ar, detach left items
+    // perma-excluded — patient never billed even after package removed.
+    try {
+      const PatientBillM = require("../../models/PatientBillModel/PatientBillModel");
+      await PatientBillM.updateMany(
+        { admission: adm._id, billStatus: { $in: ["DRAFT", "GENERATED", "PARTIAL"] } },
+        { $set: { "billItems.$[el].excludedByPackage": false } },
+        { arrayFilters: [{ "el.excludedByPackage": true }] },
+      );
+      const affected = await PatientBillM.find({
+        admission: adm._id,
+        billStatus: { $in: ["DRAFT", "GENERATED", "PARTIAL"] },
+      });
+      for (const b of affected) await b.save().catch(() => null);
+    } catch (e) {
+      console.warn("[detachPackage] excludedByPackage reverse skipped:", e.message);
+    }
     res.json({ success: true, message: "Package detached. Future days will bill at room+nursing+investigation rates." });
   } catch (e) {
     res.status(500).json({ success: false, message: e?.message || "Detach failed" });

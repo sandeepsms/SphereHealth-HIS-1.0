@@ -170,15 +170,17 @@ export default function ReceptionBilling() {
       // Parallel fetch — never blocks bill rendering if it 5xxs.
       try {
         const adv = await axios.get(`${API_ENDPOINTS.BILLING}/advance/uhid/${encodeURIComponent(uhidArg)}`);
-        setAdvances(adv?.data?.data?.advances || []);
-        setUnspentAdv(Number(adv?.data?.data?.totalUnspent) || 0);
+        setAdvances(adv?.data?.data?.advances || adv?.data?.advances || []);
+        setUnspentAdv(Number(adv?.data?.data?.totalUnspent ?? adv?.data?.meta?.totalUnspent) || 0);
       } catch (e) {
         console.warn("[ReceptionBilling] advance load failed:", e?.message);
       }
+      // R7ar-P1-13: refresh the Today tile alongside the patient load.
+      loadTodaySummary();
     } catch (e) {
       toast.error(e?.response?.data?.message || "Failed to load bills");
     } finally { setLoading(false); }
-  }, []);
+  }, [loadTodaySummary]);
 
   useEffect(() => { if (paramUhid) load(paramUhid); }, [paramUhid, load]);
 
@@ -359,12 +361,24 @@ export default function ReceptionBilling() {
   // request (E-05 pattern). Failure now logs to console instead of being
   // silently swallowed (E-06) — the live tile just shows no data, but
   // the operator can see in DevTools that the API call failed.
+  // R7ar-P1-13/D9-aq-02/D4-aq-02: extract loader so it can be called from
+  // payment/refund/advance success paths. Pre-R7ar the "Today: ₹X" header
+  // tile was set once on mount and never updated, so it lied between
+  // collections until a full page reload.
+  const loadTodaySummary = useCallback(() => {
+    const istKey = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date());
+    return axios.get(`${API_ENDPOINTS.BILLING}/collection-summary?date=${istKey}`)
+      .then(({ data }) => setTodayCollection(data?.summary || data?.data?.summary || null))
+      .catch((e) => { if (!axios.isCancel(e)) console.error("[ReceptionBilling] collection-summary:", e?.message); });
+  }, []);
+
   useEffect(() => {
     const ac = new AbortController();
-    axios.get(`${API_ENDPOINTS.BILLING}/collection-summary?date=${new Date().toISOString().slice(0, 10)}`, { signal: ac.signal })
-      .then(({ data }) => { if (!ac.signal.aborted) setTodayCollection(data?.summary || data?.data?.summary || null); })
-      .catch((e) => { if (!axios.isCancel(e)) console.error("[ReceptionBilling] collection-summary:", e?.message); });
+    loadTodaySummary();
     return () => ac.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadBill = async (billId) => {
