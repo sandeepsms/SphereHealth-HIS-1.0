@@ -83,38 +83,88 @@ const PatientAdvanceSchema = new mongoose.Schema(
     },
 
     // ── Refund / cancel trail ──────────────────────────────────────
-    refundedAt:     { type: Date, default: null },
-    refundedBy:     { type: String, trim: true, default: null },
-    refundReason:   { type: String, trim: true, default: null },
+    // R7ao: refundedAmount tracks how much was actually returned to the
+    // patient (the unspent remainder). Lets us refund a PARTIALLY_APPLIED
+    // deposit without losing the applied-to-bills history.
+    refundedAt:            { type: Date, default: null },
+    refundedBy:            { type: String, trim: true, default: null },
+    refundReason:          { type: String, trim: true, default: null },
+    refundedAmount:        { type: mongoose.Schema.Types.Decimal128, default: 0, min: 0 },
+    refundMode:            { type: String, trim: true, default: null }, // CASH/UPI/BANK_TRANSFER
+    refundTransactionId:   { type: String, trim: true, default: null },
 
     // ── Notes (free text) ──────────────────────────────────────────
     remarks: { type: String, trim: true, default: null },
   },
-  { timestamps: true },
+  {
+    timestamps: true,
+    // R7ap-F8/D7-01/D1-05: optimistic concurrency — every save now
+    // includes the __v guard so two concurrent `apply` writes can't both
+    // succeed last-writer-wins. Catches the race that the retry loop in
+    // patientAdvanceService.applyAdvanceToBill was designed to handle
+    // but couldn't fire because no version was being checked.
+    optimisticConcurrency: true,
+  },
 );
 
-// ── Virtual: remaining balance (amount - appliedAmount) ─────────────
+// R7ap-F8: invariant guard — appliedAmount + refundedAmount must never
+// exceed amount. A schema validator catches off-by-one races that slipped
+// past the predicate filter (defence-in-depth — should never fire if the
+// atomic findOneAndUpdate path is correct).
+PatientAdvanceSchema.pre("validate", function (next) {
+  const total    = Number(this.amount?.toString?.()         ?? this.amount         ?? 0);
+  const applied  = Number(this.appliedAmount?.toString?.()  ?? this.appliedAmount  ?? 0);
+  const refunded = Number(this.refundedAmount?.toString?.() ?? this.refundedAmount ?? 0);
+  if (applied + refunded > total + 0.005) {
+    return next(new Error(
+      `Advance ${this.receiptNumber || this._id}: applied (${applied}) + refunded (${refunded}) ` +
+      `would exceed total (${total}). Invariant violation — concurrent write?`,
+    ));
+  }
+  next();
+});
+
+// ── Virtual: remaining balance (amount - appliedAmount - refundedAmount) ─────────────
 // Decimal128 needs explicit Number() conversion because subtraction
 // on Decimal128 objects yields NaN.
+// R7ao: subtract refundedAmount so a REFUNDED row shows 0 remaining
+// (otherwise Apply Advance would still try to consume already-refunded money).
 PatientAdvanceSchema.virtual("remainingAmount").get(function () {
-  const total   = Number(this.amount?.toString?.() ?? this.amount ?? 0);
-  const applied = Number(this.appliedAmount?.toString?.() ?? this.appliedAmount ?? 0);
-  return Math.max(0, +(total - applied).toFixed(2));
+  const total    = Number(this.amount?.toString?.() ?? this.amount ?? 0);
+  const applied  = Number(this.appliedAmount?.toString?.() ?? this.appliedAmount ?? 0);
+  const refunded = Number(this.refundedAmount?.toString?.() ?? this.refundedAmount ?? 0);
+  return Math.max(0, +(total - applied - refunded).toFixed(2));
 });
 PatientAdvanceSchema.set("toJSON",   { virtuals: true });
 PatientAdvanceSchema.set("toObject", { virtuals: true });
 
 // ── Receipt-number generator: ADV-YYYY-NNNNNN ─────────────────────
+// R7ab: atomic. Previous find-then-insert race: two concurrent
+// createAdvance calls both found last=ADV-2026-000123, both computed
+// seq=124, both wrote ADV-2026-000124 → one succeeded, the OTHER threw
+// E11000 because `receiptNumber` is unique+sparse — the deposit failed
+// at the desk with a cryptic "duplicate key" error. nextSequence is
+// the shared atomic counter used elsewhere; we seed from the existing
+// max on first call so legacy receipts aren't re-issued.
+const { nextSequence: nextSeqAdv } = require("../../utils/counter");
+const CounterModelForAdv = require("../CounterModel");
 PatientAdvanceSchema.pre("save", async function (next) {
   if (!this.isNew || this.receiptNumber) return next();
   try {
     const year = new Date().getFullYear();
     const prefix = `ADV-${year}-`;
-    const last = await this.constructor
-      .findOne({ receiptNumber: { $regex: `^${prefix}` } })
-      .sort({ receiptNumber: -1 })
-      .lean();
-    const seq = last ? (parseInt(last.receiptNumber.slice(-6), 10) || 0) + 1 : 1;
+    const key = `advance:receipt:${year}`;
+    // Seed from existing max ONCE (first time this year's counter is touched).
+    const existing = await CounterModelForAdv.findOne({ _id: key }).lean();
+    let seed = null;
+    if (!existing) {
+      const last = await this.constructor
+        .findOne({ receiptNumber: { $regex: `^${prefix}` } })
+        .sort({ receiptNumber: -1 })
+        .lean();
+      seed = last ? (parseInt(last.receiptNumber.slice(-6), 10) || 0) : 0;
+    }
+    const seq = await nextSeqAdv(key, seed);
     this.receiptNumber = `${prefix}${String(seq).padStart(6, "0")}`;
     next();
   } catch (e) { next(e); }
@@ -134,6 +184,10 @@ PatientAdvanceSchema.pre("save", function (next) {
 PatientAdvanceSchema.index({ UHID: 1, status: 1 });
 PatientAdvanceSchema.index({ admission: 1, status: 1 });
 PatientAdvanceSchema.index({ paidAt: -1 });
+// R7ap-F14/D1-13: compound index for FIFO sort in apply-advance flow.
+PatientAdvanceSchema.index({ UHID: 1, paidAt: -1 });
+// R7ap-F14: dashboard hits this for "advance refunds in date range" query.
+PatientAdvanceSchema.index({ status: 1, refundedAt: -1 });
 
 module.exports =
   mongoose.models.PatientAdvance ||

@@ -177,6 +177,10 @@ const AdmissionSchema = new mongoose.Schema(
     actualDischargeDate: Date,
     dischargeNotes: String,
     dischargeSummary: String,
+    // R7ap-F37/D5-13: detected overpayment at discharge — Discharge Queue
+    // surfaces this for cashier-confirmed refund (auto-write would race
+    // with manual collections that haven't hit the DB yet).
+    dischargeOverage: { type: Number, default: 0 },
     conditionOnDischarge: {
       type: String,
       enum: ["Stable", "Improved", "Critical", "LAMA", null],
@@ -213,7 +217,7 @@ const AdmissionSchema = new mongoose.Schema(
     transferHistory: [TransferHistorySchema],
 
     // ── Admission / Visit Number ──────────────────────────────
-    admissionNumber: { type: String, trim: true, index: true },  // e.g. ADM-20240417-0001
+    admissionNumber: { type: String, trim: true, index: true },  // R7ag: IPD-YY-NN continuous, e.g. IPD-26-01 (legacy rows may still use ADM26050001 / IPD-2026-000001)
     visitNumber:     { type: String, trim: true, index: true },  // OPD visitNumber link
     paymentType:     { type: String, enum: ["GENERAL","TPA","CORPORATE","CASH"], default: "GENERAL" },
 

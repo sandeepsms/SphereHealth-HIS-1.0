@@ -13,16 +13,29 @@ const { nextSequence } = require("../../utils/counter");
 
 class AdmissionService {
   async _generateAdmissionNumber() {
-    // Atomic counter via utils/counter.js — replaces the previous
-    // findOne+sort+slice pattern, which raced under concurrent admissions
-    // and could produce duplicate admissionNumbers when two receptionists
-    // hit Save in the same tick.
+    // R7ag: format = IPD-YY-NN with a CONTINUOUS counter (no per-year /
+    // per-month reset). The year prefix updates as time rolls over,
+    // but the sequence keeps incrementing — so 2026 may run
+    // IPD-26-01 ... IPD-26-99, and 2027 picks up at IPD-27-100 (or
+    // wherever the counter is). Per the user's specification:
+    //   "IPD-26-01, IPD-26-02 ... next year IPD-27-03, IPD-27-04"
+    //
+    // Counter is seeded once from the existing Admission collection
+    // count via $setOnInsert so legacy ADM/IPD/ER-prefixed rows aren't
+    // re-issued. Subsequent calls just $inc atomically — the same race
+    // safety the old per-month counter gave us.
     const now = new Date();
     const yy = now.getFullYear().toString().slice(-2);
-    const mm = String(now.getMonth() + 1).padStart(2, "0");
-    const prefix = `ADM${yy}${mm}`;
-    const seq = await nextSequence(`admission:${yy}${mm}`);
-    return `${prefix}${String(seq).padStart(4, "0")}`;
+    const key = "admission:ipd:global";
+    let seed = null;
+    const Counter = require("../../models/CounterModel");
+    const existing = await Counter.findOne({ _id: key }).lean();
+    if (!existing) {
+      const Admission = require("../../models/Patient/admissionModel");
+      seed = await Admission.countDocuments();
+    }
+    const seq = await nextSequence(key, seed);
+    return `IPD-${yy}-${String(seq).padStart(2, "0")}`;
   }
 
   _patientName(p) {
@@ -373,6 +386,52 @@ class AdmissionService {
         // still see it in the "beds pending cleaning" queue.
         console.error("[Discharge] CleaningTask auto-create failed:", e.message);
       }
+    }
+
+    // R7ap-F37/D5-13: discharge-overage auto-refund. Once the admission
+    // is marked Discharged and the final bill is generated, check whether
+    // the patient overpaid (paid > netAmount + outstanding) — refund the
+    // excess automatically into a refundable advance so the receptionist
+    // can return it without manual reconciliation.
+    try {
+      const { toNum } = require("../../utils/money");
+      const PatientAdvance = require("../../models/PatientBillModel/PatientAdvanceModel");
+      const PatientBillM   = require("../../models/PatientBillModel/PatientBillModel");
+      // Sum of all finalised (non-DRAFT non-CANCELLED) bills tied to this
+      // admission. Compare against total advance + payments to detect
+      // overpayment.
+      const bills = await PatientBillM.find({
+        admission: admission._id,
+        billStatus: { $nin: ["DRAFT", "CANCELLED", "REFUNDED"] },
+      }).lean();
+      const totalNet = bills.reduce((s, b) => s + Math.max(0, toNum(b.netAmount), toNum(b.patientPayableAmount)), 0);
+      const totalPaid = bills.reduce((s, b) => {
+        const pos = (b.payments || []).reduce((x, p) => x + Math.max(0, toNum(p.amount)), 0);
+        return s + pos;
+      }, 0);
+      // Active advances tied to this admission with remaining balance.
+      const advRows = await PatientAdvance.find({
+        admission: admission._id,
+        status: { $in: ["ACTIVE", "PARTIALLY_APPLIED"] },
+      });
+      const advAvailable = advRows.reduce((s, a) =>
+        s + Math.max(0, toNum(a.amount) - toNum(a.appliedAmount) - toNum(a.refundedAmount)), 0,
+      );
+      const overage = +(totalPaid + advAvailable - totalNet).toFixed(2);
+      if (overage > 0.5) {
+        console.log(`[Discharge] overage detected for admission ${admission._id} = ₹${overage}; surfacing for refund.`);
+        // Do NOT auto-refund — surface via admission.dischargeOverage so
+        // the Discharge Queue UI can prompt the receptionist to confirm.
+        // Auto-write would race with manual collections that haven't
+        // hit the DB yet.
+        admission.dischargeOverage = overage;
+        admission.markModified("dischargeOverage");
+        await admission.save();
+      }
+    } catch (e) {
+      // Non-fatal — discharge already complete, refund detection is a
+      // safety net not a blocker.
+      console.warn("[Discharge] overage detection skipped:", e.message);
     }
 
     return admission;

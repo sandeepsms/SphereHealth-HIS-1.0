@@ -266,11 +266,11 @@ const NAV = [
       // memorising MongoDB ids. Distinct from Billing Counter (which is
       // a per-UHID bill list) — this is the IPD-stay-wide rolling tab.
       { label: "IPD Live Ledger",       icon: "pi-chart-line",  path: "/billing/ipd",        badge: "IPD",     roles: [ADMIN, AC, RX] },
-      // Full billing UIs for accountants / admin
-      { label: "Patient Bill",          icon: "pi-user",    path: "/patient-billing",       roles: [ADMIN, AC, TPA] },
-      { label: "Bills List",            icon: "pi-file",    path: "/billing",               roles: [ADMIN, AC] },
-      // Billing Intelligence (AI) was removed — single Billing Counter
-      // page now handles the full receptionist flow.
+      // R7ah: removed legacy "Patient Bill" (/patient-billing) and
+      // "Bills List" (/billing) entries. Reception Billing Counter
+      // (/reception-billing) and IPD Live Ledger (/billing/ipd) are
+      // the canonical surfaces — the two old pages were redundant.
+      // Billing Intelligence (AI) was removed earlier in the same cleanup.
       { label: "Billing Audit Trail",   icon: "pi-list",    path: "/billing-audit-trail",                 roles: [ADMIN, AC] },
       { label: "TPA Services",          icon: "pi-briefcase", path: "/addservice",          roles: [ADMIN, TPA, AC] },
       { label: "Chargeable Services",   icon: "pi-dollar",  path: "/chargeable-services",   roles: [ADMIN, AC] },

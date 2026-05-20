@@ -131,52 +131,26 @@ class PatientService {
         } catch { console.error("[patientService] OPD auto-visit error:", e?.message); }
       }
     } else if (patientData.registrationType === "Emergency") {
+      // R7ab: previously this branch created a SYNTHETIC Admission +
+      // fired onEmergencyVisitCreated. But the frontend's Emergency
+      // registration flow ALSO POSTs to /admissions (real admission)
+      // and /emergency (Emergency record, which under R7z fires
+      // onEmergencyVisitCreated itself). Net effect was 2 Admission
+      // rows + 2× ER-TRIAGE billing triggers + an admissionNumber race
+      // (the Date.now-slice key only changes per ~ms). Drop the
+      // synthetic branch entirely — the dedicated controller path
+      // (admissionController → emergencyController) is the single
+      // source of truth for ER intake.
+      //
+      // We still increment the visit counter here so the patient's
+      // totalEmergencyVisits is accurate before any redirect.
       try {
-        const autoBilling = require("../Billing/autoBillingService");
-        const Admission   = require("../../models/Patient/admissionModel");
-        // Synthetic Emergency admission so onEmergencyVisitCreated has
-        // a real row to attach BillingTriggers to. The triage screen
-        // updates this admission with clinical detail later.
-        const erAdmNumber = `ER-${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, "0")}${String(new Date().getDate()).padStart(2, "0")}-${String(Date.now()).slice(-4)}`;
-        const adm = await Admission.create({
-          UHID:               patient.UHID,
-          patientId:          patient._id,
-          patientName:        patient.fullName,
-          contactNumber:      patient.contactNumber || "N/A",
-          admissionType:      "Emergency",
-          admissionNumber:    erAdmNumber,
-          attendingDoctor:    patient.doctor?.personalInfo?.fullName || "",
-          attendingDoctorId:  patient.doctor?._id     || patient.doctor || null,
-          department:         patient.department?.departmentName || "Emergency",
-          departmentId:       patient.department?._id || patient.department || null,
-          reasonForAdmission: patientData.chiefComplaint || "Emergency Registration",
-          hasBed:             false,
-          status:             "Active",
-          paymentType:        patient.paymentType || "GENERAL",
-          admissionDate:      new Date(),
-        });
         await this.updateVisitCount(patient._id, "Emergency");
-        autoBilling.onEmergencyVisitCreated(
-          {
-            _id:        adm._id,
-            UHID:       patient.UHID,
-            patientId:  patient._id,
-            visitDate:  new Date(),
-            doctorId:   adm.attendingDoctorId,
-            departmentId: adm.departmentId,
-          },
-          adm,
-        ).catch((e) => {
-          try {
-            const { logErr } = require("../../utils/logErr");
-            logErr("patientService", `ER trigger ${patient.UHID}`)(e);
-          } catch { console.error("[patientService] ER trigger error:", e?.message); }
-        });
       } catch (e) {
         try {
           const { logErr } = require("../../utils/logErr");
-          logErr("patientService", `auto-create ER admission ${patient.UHID}`)(e);
-        } catch { console.error("[patientService] ER auto-admit error:", e?.message); }
+          logErr("patientService", `ER visit-count ${patient.UHID}`)(e);
+        } catch { console.error("[patientService] ER visit-count error:", e?.message); }
       }
     }
 

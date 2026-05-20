@@ -291,37 +291,58 @@ async function addItemToBill(bill, service, quantity, source, trigger) {
       triggerId:       trigger?._id,
     };
 
-    const freshBill = await PatientBill.findById(bill._id);
-    if (!freshBill) return null;
-    // FIX (audit P6-B3): auto-billing was happily pushing new line items onto
-    // bills that were already PAID / CANCELLED / REFUNDED, retroactively
-    // making the patient's "settled" bill look unpaid. Closed bills are now
-    // immutable — caller (createTrigger) decides what to do with the skipped
-    // event (typically it'll spin up a new draft on the next admission day).
-    if (["PAID", "CANCELLED", "REFUNDED"].includes(freshBill.billStatus)) {
-      console.warn(`[AutoBilling] skipping addItemToBill — bill ${freshBill._id} is ${freshBill.billStatus}`);
-      // Audit-clean the trigger: mark "skipped" with a reason instead of
-      // leaving it in "pending" forever — otherwise the audit trail shows
-      // an outstanding charge that will never actually bill.
-      if (trigger?._id) {
-        const { logErr } = require("../../utils/logErr");
-        await BillingTrigger.findByIdAndUpdate(trigger._id, {
-          status: "skipped",
-          skipReason: `Bill ${freshBill.billStatus.toLowerCase()} — no new charges accepted`,
-          skippedAt: new Date(),
-        }).catch(logErr("autoBilling", `mark-trigger-skipped ${trigger._id}`));
+    // R7ab: VersionError-retry loop. The bill schema sets
+    // optimisticConcurrency:true, so a concurrent saver (parallel trigger
+    // fan-out, cron, manual receptionist edit) bumps __v and the second
+    // save throws VersionError — losing the line item AND leaving the
+    // bill's grossAmount/netAmount stale. That's the root cause of bills
+    // showing ₹0 totals with non-zero billItems[] (R7aa). Retry the
+    // load-push-save up to 5 times before giving up; each retry refetches
+    // so the latest __v sticks.
+    const MAX_RETRIES = 5;
+    let attempt = 0;
+    let lastErr = null;
+    while (attempt < MAX_RETRIES) {
+      attempt += 1;
+      try {
+        const freshBill = await PatientBill.findById(bill._id);
+        if (!freshBill) return null;
+        // FIX (audit P6-B3): closed bills are immutable.
+        if (["PAID", "CANCELLED", "REFUNDED"].includes(freshBill.billStatus)) {
+          console.warn(`[AutoBilling] skipping addItemToBill — bill ${freshBill._id} is ${freshBill.billStatus}`);
+          if (trigger?._id) {
+            const { logErr } = require("../../utils/logErr");
+            await BillingTrigger.findByIdAndUpdate(trigger._id, {
+              status: "skipped",
+              skipReason: `Bill ${freshBill.billStatus.toLowerCase()} — no new charges accepted`,
+              skippedAt: new Date(),
+            }).catch(logErr("autoBilling", `mark-trigger-skipped ${trigger._id}`));
+          }
+          return null;
+        }
+        freshBill.billItems.push(item);
+        await freshBill.save();
+        const savedItem = freshBill.billItems[freshBill.billItems.length - 1];
+        return { bill: freshBill, itemId: savedItem._id, unitPrice, totalAmt };
+      } catch (e) {
+        lastErr = e;
+        // Mongoose VersionError name === "VersionError"; some drivers
+        // surface it as a generic Error with .name === "VersionError" or
+        // with a "Cast to ObjectId failed" — only retry the version case.
+        const isVersionErr = e?.name === "VersionError"
+          || (e?.message || "").includes("No matching document found for id");
+        if (!isVersionErr || attempt >= MAX_RETRIES) break;
+        // Brief jittered backoff so concurrent retries don't dogpile.
+        await new Promise((r) => setTimeout(r, 20 + Math.random() * 50));
       }
-      return null;
     }
-    freshBill.billItems.push(item);
-    await freshBill.save();
-    const savedItem = freshBill.billItems[freshBill.billItems.length - 1];
-    return { bill: freshBill, itemId: savedItem._id, unitPrice, totalAmt };
-  } catch (e) {
-    // Include enough context to debug without re-running: bill id,
-    // service code, trigger id, and the error message + name.
     console.error(
-      `[AutoBilling] addItemToBill error on bill=${bill?._id} service=${service?.serviceCode || "(none)"} trigger=${trigger?._id || "(none)"}: ${e.name || "Error"}: ${e.message}`,
+      `[AutoBilling] addItemToBill failed after ${attempt} attempts on bill=${bill?._id} service=${service?.serviceCode || "(none)"} trigger=${trigger?._id || "(none)"}: ${lastErr?.name || "Error"}: ${lastErr?.message}`,
+    );
+    return null;
+  } catch (e) {
+    console.error(
+      `[AutoBilling] addItemToBill outer error on bill=${bill?._id} service=${service?.serviceCode || "(none)"} trigger=${trigger?._id || "(none)"}: ${e.name || "Error"}: ${e.message}`,
     );
     return null;
   }
@@ -446,7 +467,26 @@ async function createTrigger(config) {
     dateKey, shift, department, notes,
   };
 
-  const trigger = await BillingTrigger.create(triggerData);
+  // R7ap-F10/D7-04: wrap create in try/catch on E11000 — the new partial
+  // unique index on (admissionId, serviceCode, dateKey) is the defence
+  // against multi-instance / cron-vs-manual races where the read-side
+  // dedup check above passes for both writers. When the unique index
+  // fires, the loser silently reuses the winner's row.
+  let trigger;
+  try {
+    trigger = await BillingTrigger.create(triggerData);
+  } catch (e) {
+    if (e.code === 11000 && dailyDedup) {
+      const existing = await BillingTrigger.findOne({
+        admissionId, serviceCode, dateKey,
+        status: { $in: ["completed", "billed", "pending", "pending-review"] },
+      });
+      if (existing) {
+        return { skipped: true, reason: "Daily dedup race — concurrent winner already created", existing };
+      }
+    }
+    throw e;
+  }
 
   // Auto-bill immediately if configured. We accept a synthetic service
   // doc (built from the trigger fields) when ServiceMaster doesn't have
@@ -2364,17 +2404,24 @@ async function getIPDLedger(admissionId, user = {}) {
 
   // Advance balance (UHID-level pool). PatientAdvance is summed across
   // any unspent receipts so the action bar can show "Advance: ₹5,000".
+  // R7ap-F6/D2-09/D9-01: PatientAdvance has NO `balance` field — only the
+  // `remainingAmount` virtual (which `.lean()` strips). The previous
+  // `Number(a.balance) || 0` returned 0 for every row → IPD ledger advance
+  // permanently ₹0 even when patient had unspent deposits. Use the same
+  // formula as patientAdvanceService.getUnspentBalance / listAdvancesForUHID.
   let advanceBalance = 0;
   try {
     const PatientAdvance = require("../../models/PatientBillModel/PatientAdvanceModel");
+    const { toNum } = require("../../utils/money");
     const advances = await PatientAdvance.find({
       UHID: admission.UHID,
       status: { $in: ["ACTIVE", "PARTIALLY_APPLIED"] },
     }).lean();
-    advanceBalance = advances.reduce((s, a) => s + (Number(a.balance) || 0), 0);
+    advanceBalance = advances.reduce(
+      (s, a) => s + Math.max(0, toNum(a.amount) - toNum(a.appliedAmount) - toNum(a.refundedAmount)),
+      0,
+    );
   } catch (e) {
-    // PatientAdvance model may not be loaded in older deployments — log
-    // and surface zero rather than 500 the whole ledger endpoint.
     console.warn("[IPDLedger] PatientAdvance lookup skipped:", e.message);
   }
 

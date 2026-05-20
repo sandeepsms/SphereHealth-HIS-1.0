@@ -21,15 +21,35 @@ function sanitizeTaxPct(v) {
     Math.abs(slab - n) < Math.abs(best - n) ? slab : best, 0);
 }
 
+// R7ap-F9/D7-03/D6-02: atomic bill-number generator.
+// Previous implementation used `countDocuments({$regex})` + `count+1` which
+// was race-prone: two concurrent generates both read the same count and
+// produced duplicate billNumbers, second insert hitting E11000 with a
+// cryptic "duplicate key" surfaced to the cashier. Income-Tax Rule 46
+// requires sequential gap-less invoice numbering — the atomic counter
+// (same `nextSequence` used by PatientAdvance receipt + admission ID
+// since R7ab/R7ag) is the only race-safe way.
+//
+// Format unified to `BILL-YYYY-NNNNNN` (matching the PatientBill pre-save
+// hook so both code paths produce the same shape). Legacy bills with
+// `BILL-YYYYMMDD-NNNNN` (5-digit serial) remain queryable — only NEW
+// bills use the unified format.
+const { nextSequence } = require("../../utils/counter");
+
 async function generateBillNumber() {
-  const today = new Date();
-  const dateStr = today.toISOString().slice(0, 10).replace(/-/g, "");
-  const prefix = `BILL-${dateStr}-`;
-  const count = await PatientBill.countDocuments({
-    billNumber: { $regex: `^${prefix}` },
-  });
-  const serial = String(count + 1).padStart(5, "0");
-  return `${prefix}${serial}`;
+  const year = new Date().getFullYear();
+  const key = `bill:${year}`;
+  // Seed from existing max on first call this year so legacy series
+  // continues without a gap.
+  const last = await PatientBill.findOne({
+    billNumber: { $regex: `^BILL-${year}-` },
+  })
+    .sort({ billNumber: -1 })
+    .select({ billNumber: 1 })
+    .lean();
+  const seed = last ? parseInt(last.billNumber.slice(-6), 10) || 0 : 0;
+  const seq  = await nextSequence(key, seed);
+  return `BILL-${year}-${String(seq).padStart(6, "0")}`;
 }
 
 class BillingService {
@@ -894,6 +914,22 @@ class BillingService {
     }
 
     await bill.save();
+    // R7ap-F15: emit BILL_GENERATED audit row
+    try {
+      const { emit } = require("../../models/Billing/BillingAudit");
+      await emit({
+        event:        "BILL_GENERATED",
+        UHID:         bill.UHID,
+        patientId:    bill.patient,
+        billId:       bill._id,
+        billNumber:   bill.billNumber,
+        amount:       toNum(bill.netAmount),
+        actorName:    generatedBy,
+        reason:       `Bill finalized (${bill.billNumber}) — netAmount ₹${toNum(bill.netAmount).toFixed(2)}`,
+        before:       { billStatus: "DRAFT" },
+        after:        { billStatus: "GENERATED", billNumber: bill.billNumber, tpaClaimStatus: bill.tpaClaimStatus },
+      });
+    } catch (_) { /* audit best-effort */ }
     return bill;
   }
 
@@ -927,6 +963,27 @@ class BillingService {
       if (bill.billStatus === "REFUNDED")
         throw new Error("Refunded bill — no further payments allowed");
 
+      // R7ab CRITICAL: backend over-payment cap. Pre-R7ab, recordPayment
+      // accepted any amount — ₹999 against a ₹100 outstanding balance
+      // would post ₹999 into bill.payments, recompute balance as
+      // max(0, 100−999)=0, flip status to PAID, and silently lose the
+      // ₹899 surplus. No advance row, no refund record, no error to
+      // the cashier. With a tolerance of 50 paise for rounding, reject
+      // overpays so the receptionist routes excess to PatientAdvance
+      // explicitly.
+      const currentPaid = bill.payments.reduce((s, p) => s + toNum(p.amount), 0);
+      const balanceNow  = Math.max(0, toNum(bill.patientPayableAmount) - currentPaid);
+      const tolerance   = 0.5;
+      if (toNum(amount) > balanceNow + tolerance) {
+        const err = new Error(
+          `Payment ₹${toNum(amount).toFixed(2)} exceeds outstanding balance ₹${balanceNow.toFixed(2)}. ` +
+          `Cap the amount or route the surplus through POST /api/billing/advance first.`,
+        );
+        err.status = 400;
+        err.code = "OVERPAY";
+        throw err;
+      }
+
       bill.payments.push({
         amount,
         paymentMode,
@@ -945,6 +1002,25 @@ class BillingService {
 
       try {
         await bill.save();
+        // R7ap-F15: emit audit row for every bill payment. Best-effort —
+        // never blocks the cashier on audit-collection failure.
+        try {
+          const { emit } = require("../../models/Billing/BillingAudit");
+          await emit({
+            event:        "BILL_PAYMENT_RECORDED",
+            UHID:         bill.UHID,
+            patientId:    bill.patient,
+            billId:       bill._id,
+            billNumber:   bill.billNumber,
+            amount:       amount,
+            paymentMode:  paymentMode,
+            transactionId,
+            actorName:    receivedBy,
+            reason:       remarks || `Payment received via ${paymentMode}`,
+            before:       { advancePaid: toNum(bill.advancePaid) - toNum(amount), billStatus: bill.billStatus === "PAID" ? "PARTIAL" : bill.billStatus },
+            after:        { advancePaid: toNum(bill.advancePaid), balanceAmount: toNum(bill.balanceAmount), billStatus: bill.billStatus },
+          });
+        } catch (_) { /* audit is best-effort */ }
         return bill;
       } catch (err) {
         // VersionError → another writer hit save() between our read and write.
@@ -1125,6 +1201,58 @@ class BillingService {
 
       try {
         await bill.save();
+        // R7ap-F15: refund audit row.
+        try {
+          const { emit } = require("../../models/Billing/BillingAudit");
+          await emit({
+            event:        creditToAdvance ? "BILL_REFUND_TO_ADVANCE" : "BILL_REFUND_ISSUED",
+            UHID:         bill.UHID,
+            patientId:    bill.patient,
+            billId:       bill._id,
+            billNumber:   bill.billNumber,
+            amount:       amt,
+            paymentMode:  payMode,
+            transactionId,
+            actorName:    refundedBy,
+            reason:       String(reason).trim(),
+            before:       { advancePaid: paid, billStatus: bill.billStatus === "REFUNDED" ? "PAID" : (bill.billStatus === "PARTIAL" ? "PAID" : bill.billStatus) },
+            after:        { advancePaid: paid - amt, billStatus: bill.billStatus, creditToAdvance },
+          });
+        } catch (_) { /* audit best-effort */ }
+        // R7ap-F19/D6-07: CreditNote — required by CGST Act §34 to reverse
+        // the GST liability on the refunded portion. Computed pro-rata
+        // against bill.netAmount so the tax reversal is faithful even on
+        // partial refunds.
+        try {
+          const CreditNote = require("../../models/Billing/CreditNote");
+          const billGross  = toNum(bill.netAmount) || toNum(bill.grossAmount);
+          const billTax    = toNum(bill.taxAmount);
+          const taxShare   = billGross > 0 ? (amt / billGross) * billTax : 0;
+          const cgstShare  = bill.igstAmount && toNum(bill.igstAmount) > 0 ? 0 : taxShare / 2;
+          const sgstShare  = bill.igstAmount && toNum(bill.igstAmount) > 0 ? 0 : taxShare / 2;
+          const igstShare  = bill.igstAmount && toNum(bill.igstAmount) > 0 ? taxShare : 0;
+          await CreditNote.create({
+            billId:               bill._id,
+            originalBillNumber:   bill.billNumber,
+            UHID:                 bill.UHID,
+            patientId:            bill.patient,
+            refundAmount:         amt,
+            taxableValue:         Math.max(0, amt - taxShare),
+            taxAmount:            taxShare,
+            cgstAmount:           cgstShare,
+            sgstAmount:           sgstShare,
+            igstAmount:           igstShare,
+            reasonCode:           "03",      // deficiency in services (closest match for hospital refunds)
+            reasonText:           String(reason).trim(),
+            refundMode:           payMode,
+            refundTransactionId:  transactionId || null,
+            issuedBy:             refundedBy || "Reception",
+          });
+        } catch (e) {
+          // CN failure must not block the refund — log and continue.
+          // eslint-disable-next-line no-console
+          console.warn(`[recordRefund] CreditNote create failed for bill ${bill.billNumber}: ${e?.message}`);
+        }
       } catch (err) {
         if (err?.name === "VersionError") { lastErr = err; continue; }
         throw err;
@@ -1203,31 +1331,59 @@ class BillingService {
   }
 
   // ── 12. Billing dashboard summary ────────────────────────────
+  // R7ap-F3/D2-08/D4-02: rewrite to aggregate over payments[] by paidAt — old
+  // logic summed bill.advancePaid (cumulative lifetime paid) for any bill that
+  // flipped to PAID today, over-counting partial payments from prior days.
+  // Also: excludes ADVANCE_ADJUSTMENT (internal transfer, not new cash) and
+  // voided rows. Casts Decimal128 → Number in the pipeline so wire payload is
+  // a plain number (previously rendered as ₹NaN on the Revenue tab).
   async getBillingSummary() {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const [todayCount, pendingCount, paidToday, tpaPending] = await Promise.all(
-      [
-        PatientBill.countDocuments({ createdAt: { $gte: today } }),
-        PatientBill.countDocuments({
-          billStatus: { $in: ["GENERATED", "PARTIAL"] },
-        }),
-        PatientBill.aggregate([
-          { $match: { billStatus: "PAID", paidAt: { $gte: today } } },
-          { $group: { _id: null, total: { $sum: "$advancePaid" } } },
-        ]),
-        PatientBill.countDocuments({
-          paymentType: "TPA",
-          tpaClaimStatus: "PENDING",
-        }),
-      ],
-    );
+    const [todayCount, pendingCount, paidAgg, tpaPending] = await Promise.all([
+      PatientBill.countDocuments({ createdAt: { $gte: today } }),
+      PatientBill.countDocuments({
+        billStatus: { $in: ["GENERATED", "PARTIAL"] },
+      }),
+      // Sum every payment row that landed TODAY, excluding voids and the
+      // internal-transfer ADVANCE_ADJUSTMENT mode.
+      PatientBill.aggregate([
+        { $match: { billStatus: { $nin: ["DRAFT"] } } },
+        { $unwind: "$payments" },
+        {
+          $match: {
+            "payments.paidAt":      { $gte: today },
+            "payments.voidedAt":    { $exists: false },
+            "payments.paymentMode": { $ne: "ADVANCE_ADJUSTMENT" },
+          },
+        },
+        {
+          $group: {
+            _id:        null,
+            collected:  { $sum: { $cond: [{ $gte: ["$payments.amount", 0] }, "$payments.amount", 0] } },
+            refunded:   { $sum: { $cond: [{ $lt:  ["$payments.amount", 0] }, "$payments.amount", 0] } },
+          },
+        },
+      ]),
+      PatientBill.countDocuments({
+        paymentType: "TPA",
+        tpaClaimStatus: "PENDING",
+      }),
+    ]);
+
+    // R7ap-F3: $sum on Decimal128 returns Decimal128 — coerce to Number for
+    // the wire so the frontend doesn't render ₹NaN.
+    const { toNum } = require("../../utils/money");
+    const collected = toNum(paidAgg[0]?.collected);
+    const refunded  = toNum(paidAgg[0]?.refunded);   // refunded is already negative
 
     return {
-      todayBills: todayCount,
+      todayBills:   todayCount,
       pendingBills: pendingCount,
-      todayRevenue: paidToday[0]?.total || 0,
+      todayRevenue: collected + refunded,            // net cash collected today
+      todayCollected: collected,
+      todayRefunded:  -refunded,                     // positive number for UI
       tpaPending,
     };
   }

@@ -338,7 +338,7 @@ function ReceptionDashboard({ user }) {
             { icon: "pi-search",     label: "Patient Search",     sub: "Find by UHID / name / phone",   color: C.amber,   onClick: () => navigate("/patient-search") },
             { icon: "pi-sign-out",   label: "Discharge Queue",    sub: "Bills + clearance",             color: C.green,   onClick: () => navigate("/discharge-queue") },
             { icon: "pi-id-card",    label: "Visitor Pass",       sub: "Issue attendant pass",          color: C.amber,   onClick: () => navigate("/visitor-passes") },
-            { icon: "pi-receipt",    label: "Billing",            sub: "Generate bill · payment",       color: C.amber,   onClick: () => navigate("/billing") },
+            { icon: "pi-receipt",    label: "Billing",            sub: "Generate bill · payment",       color: C.amber,   onClick: () => navigate("/reception-billing") },
             { icon: "pi-briefcase",  label: "TPA / Cashless",     sub: "Pre-auth + claim",              color: C.purple,  onClick: () => navigate("/tpa-cases") },
           ]} />
         </Card>
@@ -474,7 +474,7 @@ function AccountantDashboard({ user }) {
             { icon: "pi-percentage",   label: "GST Returns",       sub: "CGST / SGST / IGST bucket-wise",              color: C.purple,  onClick: () => navigate("/accounts?tab=gst") },
             { icon: "pi-clock",        label: "Outstanding",       sub: "TPA pending · IPD advance",                   color: C.teal,    onClick: () => navigate("/accounts?tab=outstanding") },
             { icon: "pi-undo",         label: "Refunds & Cancels", sub: "Process / review refund queue",               color: C.red,     onClick: () => navigate("/accounts?tab=refunds") },
-            { icon: "pi-receipt",      label: "Generate Bill",     sub: "Patient bill · payment recording",            color: C.blue,    onClick: () => navigate("/billing") },
+            { icon: "pi-receipt",      label: "Generate Bill",     sub: "Patient bill · payment recording",            color: C.blue,    onClick: () => navigate("/reception-billing") },
             { icon: "pi-briefcase",    label: "TPA / Cashless",    sub: "Insurance claims",                            color: C.purple,  onClick: () => navigate("/tpa-cases") },
             { icon: "pi-shield",       label: "Audit Trail",       sub: "Every billing action logged",                 color: C.teal,    onClick: () => navigate("/billing-audit-trail") },
           ]} />

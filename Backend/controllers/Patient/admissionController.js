@@ -623,14 +623,26 @@ class AdmissionController {
     if (req.body.finalBillAmount !== undefined) {
       set["dischargeWorkflow.finalBillAmount"] = Number(req.body.finalBillAmount) || 0;
     }
+    // R7ab: gate on status:"Active" too. Previously a Cancelled or
+    // Transferred admission whose `dischargeWorkflow.stage` happened to
+    // be DoctorApproved (from a half-completed earlier discharge attempt)
+    // could still be flipped to BillCleared, which then cascades into
+    // issueGatePass flipping the bed to Available — corrupting whatever
+    // patient is currently in that bed.
     const adm = await Admission.findOneAndUpdate(
-      { _id: req.params.id, "dischargeWorkflow.stage": "DoctorApproved" },
+      { _id: req.params.id, status: "Active", "dischargeWorkflow.stage": "DoctorApproved" },
       { $set: set },
       { new: true, runValidators: true },
     );
     if (!adm) {
-      const probe = await Admission.findById(req.params.id).select("dischargeWorkflow").lean();
+      const probe = await Admission.findById(req.params.id).select("dischargeWorkflow status").lean();
       if (!probe) return res.status(404).json({ success: false, message: "Admission not found" });
+      if (probe.status && probe.status !== "Active") {
+        return res.status(409).json({
+          success: false,
+          message: `Cannot clear final bill — admission is currently '${probe.status}', not 'Active'.`,
+        });
+      }
       const stage = probe.dischargeWorkflow?.stage || "NotRequested";
       if (stage === "NotRequested") {
         return res.status(400).json({ success: false, message: "Doctor has not yet approved discharge" });
@@ -703,8 +715,12 @@ class AdmissionController {
     const seq = await nextSequence(`gatepass:${dateStr}`);
     const passNumber = `GP-${dateStr}-${String(seq).padStart(4, "0")}`;
     const now = new Date();
+    // R7ab: also gate on status:"Active" so a Cancelled/Transferred
+    // admission can't be flipped to "Discharged" via this path. The
+    // bed-release block below relies on the admission still being
+    // Active at this CAS instant.
     const adm = await Admission.findOneAndUpdate(
-      { _id: req.params.id, "dischargeWorkflow.stage": "BillCleared" },
+      { _id: req.params.id, status: "Active", "dischargeWorkflow.stage": "BillCleared" },
       { $set: {
         "dischargeWorkflow.stage":            "Completed",
         "dischargeWorkflow.gatePassNumber":   passNumber,

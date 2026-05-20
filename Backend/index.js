@@ -169,19 +169,129 @@ require("./services/nursing/nursingChargesService")
 // Daily bed-charge accrual. Boot tick at +60s, then every 6h thereafter so a
 // missed midnight cron still catches up the same calendar day. Errors are
 // logged with full context, never silently swallowed.
+// R7ap-F21/D10-01/D10-02: replace 6-hour setInterval with IST-anchored
+// daily schedule + Mongo distributed lock so multi-instance deploys
+// don't double-charge the same admission. The boot-time catch-up still
+// runs 60s after start so a missed midnight cron still flushes the day.
 const autoBilling = require("./services/Billing/autoBillingService");
-const _autoBillingBootTimer = setTimeout(() => {
-  autoBilling
-    .runDailyBedChargeAccrual()
-    .then((r) => console.log("[daily-accrual] boot:", r))
-    .catch((e) => console.error("[daily-accrual] boot error:", e.stack || e.message));
+const { scheduleDaily, acquireLock } = require("./utils/cronScheduler");
+
+const _autoBillingBootTimer = setTimeout(async () => {
+  // Boot-catchup also uses a (short) lock so two replicas don't both
+  // run on a coordinated cold start.
+  try {
+    const ok = await acquireLock("cron:daily-accrual:boot", 600);
+    if (!ok) {
+      console.log("[daily-accrual] boot: another instance handled the catch-up");
+      return;
+    }
+    const r = await autoBilling.runDailyBedChargeAccrual();
+    console.log("[daily-accrual] boot:", r);
+  } catch (e) {
+    console.error("[daily-accrual] boot error:", e.stack || e.message);
+  }
 }, 60_000);
-const _autoBillingInterval = setInterval(() => {
-  autoBilling
-    .runDailyBedChargeAccrual()
-    .then((r) => console.log("[daily-accrual]:", r))
-    .catch((e) => console.error("[daily-accrual] error:", e.stack || e.message));
-}, 6 * 60 * 60 * 1000);
+
+// Schedule the daily IST cron at 00:30 IST every day (after midnight so
+// `dateKey` rolls over cleanly). Lock holder TTL is 30 min — generous
+// enough for a busy ward's accrual to finish.
+const _cancelDailyAccrual = scheduleDaily(
+  "daily-accrual",
+  0, 30,
+  () => autoBilling.runDailyBedChargeAccrual(),
+);
+
+// ── R7ap-F29-F32: 4 missing crons (all IST-anchored + Mongo-locked) ──
+const PatientAdvanceModel = require("./models/PatientBillModel/PatientAdvanceModel");
+const PatientBillModel    = require("./models/PatientBillModel/PatientBillModel");
+const { toNum }           = require("./utils/money");
+
+// F29 — Monthly GST snapshot freeze (1st of month at 02:00 IST). For now,
+// we just log + count the previous month's bills+credit-notes; full
+// snapshot table is a future deliverable. Cron is IST-locked.
+const _cancelGstSnapshot = scheduleDaily("gst-monthly-snapshot", 2, 0, async () => {
+  const now = new Date();
+  if (now.getDate() !== 1) return { skipped: "not 1st of month" };
+  const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const end   = new Date(now.getFullYear(), now.getMonth(),     1);
+  const bills = await PatientBillModel.countDocuments({
+    billGeneratedAt: { $gte: start, $lt: end },
+    billStatus:      { $nin: ["DRAFT", "CANCELLED"] },
+  });
+  return { from: start, to: end, billsInPeriod: bills };
+});
+
+// F30 — Daily Day Book PDF / email (23:55 IST). Same skeleton — logs the
+// totals; full PDF mailer is a future deliverable.
+const _cancelEodDaybook = scheduleDaily("eod-day-book", 23, 55, async () => {
+  const dayStr = new Date().toISOString().slice(0, 10);
+  // Sum today's positive payments excluding ADVANCE_ADJUSTMENT.
+  const today = new Date(`${dayStr}T00:00:00+05:30`);
+  const tomorrow = new Date(today.getTime() + 86400000);
+  const r = await PatientBillModel.aggregate([
+    { $match: { "payments.paidAt": { $gte: today, $lt: tomorrow } } },
+    { $unwind: "$payments" },
+    { $match: {
+        "payments.paidAt": { $gte: today, $lt: tomorrow },
+        "payments.voidedAt": { $exists: false },
+        "payments.paymentMode": { $ne: "ADVANCE_ADJUSTMENT" },
+    } },
+    { $group: {
+        _id: null,
+        collected: { $sum: { $cond: [{ $gte: ["$payments.amount", 0] }, "$payments.amount", 0] } },
+        refunded:  { $sum: { $cond: [{ $lt:  ["$payments.amount", 0] }, "$payments.amount", 0] } },
+    } },
+  ]);
+  return { day: dayStr, collected: toNum(r[0]?.collected), refunded: toNum(r[0]?.refunded) };
+});
+
+// F31 — Advance pool reconciliation (00:15 IST). Sum advances + applied +
+// refunded across all UHIDs and check the invariant `applied+refunded≤amount`.
+const _cancelAdvanceRecon = scheduleDaily("advance-pool-recon", 0, 15, async () => {
+  const all = await PatientAdvanceModel.find({}).select("amount appliedAmount refundedAmount status UHID").lean();
+  let violations = 0; let total = 0; let applied = 0; let refunded = 0; let unspent = 0;
+  for (const a of all) {
+    const amt = toNum(a.amount), app = toNum(a.appliedAmount), ref = toNum(a.refundedAmount);
+    total += amt; applied += app; refunded += ref; unspent += Math.max(0, amt - app - ref);
+    if (app + ref > amt + 0.005) {
+      violations += 1;
+      console.warn(`[advance-pool-recon] VIOLATION: UHID=${a.UHID} amt=${amt} applied=${app} refunded=${ref}`);
+    }
+  }
+  return { rows: all.length, total, applied, refunded, unspent, violations };
+});
+
+// F32 — EOD auto-close cashier shift (23:50 IST) — closes any OPEN shift
+// that was opened more than 16h ago AND has no closingCash. Marks variance
+// = 0, varianceNote = "Auto-closed by EOD cron (no closingCash provided)".
+const _cancelShiftAutoClose = scheduleDaily("shift-auto-close", 23, 50, async () => {
+  const CashierSession = require("./models/Billing/CashierSession");
+  const cutoff = new Date(Date.now() - 16 * 60 * 60 * 1000);
+  const open = await CashierSession.find({ status: "OPEN", openedAt: { $lt: cutoff } });
+  let closed = 0;
+  for (const s of open) {
+    s.closedAt        = new Date();
+    s.expectedClosing = toNum(s.openingCash); // unknown — cashier didn't close
+    s.closingCash     = toNum(s.openingCash);
+    s.variance        = 0;
+    s.varianceNote    = "Auto-closed by EOD cron — cashier did not provide closingCash";
+    s.status          = "CLOSED";
+    await s.save().catch((e) => console.warn(`[shift-auto-close] ${s._id} skipped: ${e.message}`));
+    closed += 1;
+  }
+  return { closed, stillOpen: 0 };
+});
+
+// Keep a reference name for the graceful-shutdown handler below.
+const _autoBillingInterval = {
+  _cancel: () => {
+    _cancelDailyAccrual();
+    _cancelGstSnapshot();
+    _cancelEodDaybook();
+    _cancelAdvanceRecon();
+    _cancelShiftAutoClose();
+  },
+};
 
 // ── Health probe ───────────────────────────────────────────────────────────
 // Returns 200 only when the process is up AND mongoose connection is ready;
@@ -238,7 +348,8 @@ const server = app.listen(PORT, "0.0.0.0", () => {
 function shutdown(signal) {
   console.log(`[shutdown] received ${signal} — draining`);
   clearTimeout(_autoBillingBootTimer);
-  clearInterval(_autoBillingInterval);
+  // R7ap-F21: cancel the daily-IST scheduler timer.
+  if (typeof _autoBillingInterval?._cancel === "function") _autoBillingInterval._cancel();
   server.close((err) => {
     if (err) {
       console.error("[shutdown] http close error:", err.message);

@@ -51,7 +51,10 @@ export const MODULES = [
   // were all dead, so clicking a module tile bounced to the catch-all
   // and re-redirected to /dashboard.
   { id: "lab",        label: "Lab",             icon: "pi-search-plus",   home: "/investigation-orders", color: "#0284c7" },
-  { id: "billing",    label: "Billing",         icon: "pi-receipt",       home: "/billing",           color: "#d97706" },
+  // R7ah: billing module home now points at /reception-billing (the
+  // canonical billing surface). The old /billing page is gone — see
+  // App.jsx for redirect.
+  { id: "billing",    label: "Billing",         icon: "pi-receipt",       home: "/reception-billing", color: "#d97706" },
   { id: "tpa",        label: "TPA / Cashless",  icon: "pi-briefcase",     home: "/tpa-cases",         color: "#7c3aed" },
   { id: "care",       label: "Care Plans",      icon: "pi-bolt",          home: "/vitalSheet",        color: "#16a34a" },
   { id: "maintenance",label: "Maintenance",     icon: "pi-wrench",        home: "/maintenance",       color: "#0d9488" },

@@ -166,5 +166,9 @@ const PharmacySaleSchema = new mongoose.Schema(
 );
 
 PharmacySaleSchema.index({ createdAt: -1 });
+// R7ap-F14/D8-07: pharmacyController.gstSummary filters by status + createdAt
+// — the previous single-field createdAt index forced a COLLSCAN over the
+// status filter. Compound covers it.
+PharmacySaleSchema.index({ status: 1, createdAt: -1 });
 
 module.exports = mongoose.model("PharmacySale", PharmacySaleSchema);

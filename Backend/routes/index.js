@@ -35,6 +35,8 @@ const hospitalChargesRoutes = require("../routes/charges/hospitalChargesRoutes")
 
 const serviceMasterRoutes = require("../routes/ServiceMasterRoute/serviceMasterRoutes");
 const newBillingRoutes = require("./Billing/billingRoutes");
+// R7ap-F20: CashierSession backend (replaces localStorage in ShiftTab)
+const cashierSessionRoutes = require("./Billing/cashierSessionRoutes");
 
 const investigationRoutes = require("./Investigation/Investigationmasterroutes");
 const investigationOrderRoutes = require("./Investigation/investigationOrderRoutes");
@@ -132,6 +134,7 @@ router.use("/hospital-charges", hospitalChargesRoutes);
 // New Billing System (billing-v3)
 router.use("/services", serviceMasterRoutes);
 router.use("/billing", newBillingRoutes);
+router.use("/cashier-sessions", cashierSessionRoutes);   // R7ap-F20
 
 // nursing-notes alias (NABH Initial Assessment page uses /api/nursing-notes)
 router.use("/nursing-notes", nurseRoutes);

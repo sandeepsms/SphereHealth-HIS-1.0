@@ -75,12 +75,10 @@ const HospitalChargesList = lazy(() => import("./pages/charges/HospitalChargesLi
 const CreateHospitalCharges = lazy(() => import("./pages/charges/CreateHospitalCharges"));
 const EditHospitalCharges = lazy(() => import("./pages/charges/EditHospitalCharges"));
 
-// Old Billing
-const BillsList = lazy(() => import("./pages/billing/BillsList"));
-const BillGeneration = lazy(() => import("./pages/billing/Billgeneration"));
+// R7ah: BillsList, BillGeneration, PatientBilling lazy imports removed
+// — their routes (/billing, /billing/create/..., /patient-billing, etc.)
+// were dropped in favour of /reception-billing + /billing/ipd.
 
-// New Billing System
-const PatientBilling = lazy(() => import("./Components/billing/PatientBilling"));
 const ServiceMasterManager = lazy(() => import("./Components/ServiceMaster/ServiceMasterManager"));
 const ChargeableServices = lazy(() => import("./pages/services/ChargeableServices"));
 // BillingIntelligencePage removed — receptionist Billing Counter is now
@@ -411,31 +409,18 @@ function AppLayout({ collapsed, setCollapsed }) {
               <RoleGuard action="departments.write"><EditHospitalCharges /></RoleGuard>
             } />
 
-            {/* ── Old Billing (existing) ──────────────────────────
-                Anyone who can read billing (Admin, Accountant, Receptionist,
-                TPA Coordinator) may view. Refunds inside the page are gated
-                separately by billing.refund on the API. */}
-            <Route path="/billing" element={
-              <RoleGuard action="billing.read"><BillsList /></RoleGuard>
-            } />
-            <Route path="/billing/create/:prescriptionId" element={
-              <RoleGuard action="billing.write"><BillGeneration /></RoleGuard>
-            } />
-            <Route path="/billing/view/:billId" element={
-              <RoleGuard action="billing.read"><BillGeneration /></RoleGuard>
-            } />
-            <Route path="/billing/edit/:billId" element={
-              <RoleGuard action="billing.write"><BillGeneration /></RoleGuard>
-            } />
-            <Route path="/bills" element={<Navigate to="/billing" replace />} />
-
-            {/* ── New Billing System ──────────────── */}
-            <Route path="/patient-billing" element={
-              <RoleGuard action="billing.read"><PatientBilling /></RoleGuard>
-            } />
-            <Route path="/patient-billing/:uhid" element={
-              <RoleGuard action="billing.read"><PatientBilling /></RoleGuard>
-            } />
+            {/* R7ah: routes /billing, /billing/create/..., /billing/view/...,
+                /billing/edit/..., /bills, /patient-billing, /patient-billing/:uhid
+                were all removed. The canonical billing surfaces are now:
+                  • /reception-billing  — bill list + collection counter
+                  • /billing/ipd/:admissionId — live IPD ledger
+                  • /billing/ipd          — admission picker for the ledger
+                Stray external links that still point at the old paths land
+                on the dashboard via the catch-all route below. */}
+            <Route path="/billing" element={<Navigate to="/reception-billing" replace />} />
+            <Route path="/bills"   element={<Navigate to="/reception-billing" replace />} />
+            <Route path="/patient-billing"       element={<Navigate to="/reception-billing" replace />} />
+            <Route path="/patient-billing/:uhid" element={<Navigate to="/reception-billing" replace />} />
             <Route path="/service-master" element={
               <RoleGuard action="departments.write"><ServiceMasterManager /></RoleGuard>
             } />

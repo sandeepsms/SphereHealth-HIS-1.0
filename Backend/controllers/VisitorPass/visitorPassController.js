@@ -16,15 +16,24 @@ async function nextPassNumber() {
 
 /* POST /api/visitor-passes
    Body: { admissionId, attendantName, attendantRelation, attendantPhone,
-           idProofType, idProofNumber, validHours, issuedBy } */
+           idProofType, idProofNumber, validHours, notes }
+   R7ab: issuedBy / issuedByRole are now derived from req.user — they
+   used to be trusted from req.body, so any Receptionist could attribute
+   a pass to "Dr. X". */
 exports.issuePass = handle(async (req, res) => {
   const {
     admissionId, attendantName, attendantRelation, attendantPhone,
-    idProofType, idProofNumber, validHours = 24, issuedBy, notes,
+    idProofType, idProofNumber, validHours = 24, notes,
   } = req.body;
 
-  if (!admissionId || !attendantName || !attendantRelation || !issuedBy)
-    return res.status(400).json({ success: false, message: "admissionId, attendantName, attendantRelation, issuedBy required" });
+  if (!admissionId || !attendantName || !attendantRelation)
+    return res.status(400).json({ success: false, message: "admissionId, attendantName, attendantRelation required" });
+
+  // R7ab: identity comes from the auth context, NOT the request body.
+  // requireAction("reception.visitor-pass") on the route guarantees
+  // req.user is populated; this fallback is for emergency dev paths.
+  const issuedBy     = req.user?.fullName || req.user?.email || "Receptionist";
+  const issuedByRole = req.user?.role     || "Receptionist";
 
   // FIX (audit P8-B3): reject negative / non-numeric validHours before
   // computing validUntil — old code created already-expired passes.
@@ -53,24 +62,39 @@ exports.issuePass = handle(async (req, res) => {
   const validFrom  = new Date();
   const validUntil = new Date(validFrom.getTime() + hours * 60 * 60 * 1000);
 
-  const pass = await VisitorPass.create({
-    passNumber:    await nextPassNumber(),
-    admissionId,
-    patientName:   adm.patientName || adm.patientId?.fullName || "Patient",
-    patientUHID:   adm.UHID || adm.patientId?.UHID,
-    bedNumber:     adm.bedNumber || "",
-    wardName:      adm.wardName || "",
-    attendantName,
-    attendantRelation,
-    attendantPhone,
-    idProofType,
-    idProofNumber,
-    validFrom,
-    validUntil,
-    issuedBy,
-    issuedByRole: req.body.issuedByRole || "Receptionist",
-    notes,
-  });
+  // R7ab: passNumber retry on E11000 — the counter is atomic but if a
+  // legacy seed clash or manual import collides, gracefully bump and
+  // retry rather than 500-ing the desk.
+  let pass = null;
+  let lastErr = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      pass = await VisitorPass.create({
+        passNumber:    await nextPassNumber(),
+        admissionId,
+        patientName:   adm.patientName || adm.patientId?.fullName || "Patient",
+        patientUHID:   adm.UHID || adm.patientId?.UHID,
+        bedNumber:     adm.bedNumber || "",
+        wardName:      adm.wardName || "",
+        attendantName,
+        attendantRelation,
+        attendantPhone,
+        idProofType,
+        idProofNumber,
+        validFrom,
+        validUntil,
+        issuedBy,
+        issuedByRole,
+        notes,
+      });
+      break;
+    } catch (e) {
+      lastErr = e;
+      if (e?.code !== 11000) throw e;
+      // E11000 on passNumber — burn next sequence and retry.
+    }
+  }
+  if (!pass) throw lastErr || new Error("Failed to issue pass after retries");
 
   return res.status(201).json({ success: true, data: pass });
 });

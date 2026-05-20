@@ -19,11 +19,24 @@ const Counter = require("../models/CounterModel");
  */
 async function nextSequence(key, seed) {
   if (!key) throw new Error("nextSequence: key is required");
-  const update = { $inc: { seq: 1 } };
-  if (seed != null) update.$setOnInsert = { seq: seed };
+  // R7ag: when a seed is supplied, do a two-step upsert. Mongo rejects
+  // a single op that both $setOnInsert and $inc the same field path
+  // ("Updating the path 'seq' would create a conflict at 'seq'"). So we
+  // (1) ensure the doc exists with seq = seed via $setOnInsert (this is
+  // a no-op if the doc already exists), then (2) atomically $inc and
+  // return. The two-step has a tiny race window only on the FIRST seed
+  // attempt — concurrent first-callers all succeed because
+  // $setOnInsert is idempotent and the subsequent $inc serialises.
+  if (seed != null) {
+    await Counter.updateOne(
+      { _id: key },
+      { $setOnInsert: { seq: seed } },
+      { upsert: true, setDefaultsOnInsert: true },
+    );
+  }
   const doc = await Counter.findOneAndUpdate(
     { _id: key },
-    update,
+    { $inc: { seq: 1 } },
     { upsert: true, new: true, setDefaultsOnInsert: true },
   );
   return doc.seq;

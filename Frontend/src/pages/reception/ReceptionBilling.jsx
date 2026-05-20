@@ -68,6 +68,35 @@ function printAdvanceReceipt(advance, patient) {
   });
 }
 
+/* R7ao: Refund slip for an advance deposit — printed after the receptionist
+   returns the unspent portion of a deposit to the patient (e.g. discharge
+   with leftover credit). Uses the RefundReceipt print template — field
+   names (sourceReceiptNo, sourceMethod, sourceAmount) mirror the bill-
+   refund flow so the slip looks identical across both refund types. */
+function printAdvanceRefundReceipt(advance, patient) {
+  if (!advance || !patient) return;
+  const refunded  = Number(advance.refundedAmount?.$numberDecimal ?? advance.refundedAmount) || 0;
+  const original  = Number(advance.amount?.$numberDecimal ?? advance.amount) || 0;
+  const applied   = Number(advance.appliedAmount?.$numberDecimal ?? advance.appliedAmount) || 0;
+  openPrint("refund-receipt", {
+    receiptNo:        `${advance.receiptNumber}-RF`,
+    patientName:      [patient.title, patient.fullName].filter(Boolean).join(" "),
+    uhid:             patient.UHID,
+    ipdNo:            advance.admission?.admissionNumber || null,
+    date:             advance.refundedAt || new Date().toISOString(),
+    amount:           refunded,
+    method:           advance.refundMode || "CASH",
+    refNo:            advance.refundTransactionId || "",
+    reason:           advance.refundReason || "Patient discharge — unspent advance returned",
+    refundedBy:       advance.refundedBy || "Reception",
+    approvedBy:       advance.refundedBy || "Reception",
+    sourceReceiptNo:  advance.receiptNumber,
+    sourceMethod:     advance.paymentMode,
+    sourceAmount:     original,
+    runningBalance:   Math.max(0, +(original - applied - refunded).toFixed(2)),
+  });
+}
+
 export default function ReceptionBilling() {
   const { uhid: paramUhid } = useParams();
   const navigate = useNavigate();
@@ -84,6 +113,7 @@ export default function ReceptionBilling() {
   // Consumed exactly once per query-param value so reopening the page
   // doesn't keep popping the modal.
   const [searchParams, setSearchParams] = useSearchParams();
+  const { can } = useAuth();
   const [uhid, setUhid] = useState(paramUhid || "");
   const [patient, setPatient] = useState(null);
   const [bills, setBills] = useState([]);
@@ -92,6 +122,8 @@ export default function ReceptionBilling() {
   const [billLoading, setBillLoading] = useState(false);
   const [payTarget, setPayTarget] = useState(null);
   const [refundTarget, setRefundTarget] = useState(null);
+  // R7ao: refund target for an advance-deposit row (separate from bill refund target).
+  const [advanceRefundTarget, setAdvanceRefundTarget] = useState(null);
   const [cancelTarget, setCancelTarget] = useState(null);
   const [addSvcTarget, setAddSvcTarget] = useState(null);   // DRAFT bill currently being amended
   const [settleTarget, setSettleTarget] = useState(null);   // GENERATED/PARTIAL bill being adjusted at counter
@@ -169,10 +201,22 @@ export default function ReceptionBilling() {
     if (action === "opd-payment") {
       // Prefer a DRAFT OPD bill (just-created), else any GENERATED/PARTIAL
       // OPD bill with balance > 0, else the most recent OPD bill at all.
+      //
+      // R7aa: a bill whose recalcTotals never ran reports balanceAmount=0
+      // even when items hold real money. Fall back to summing billItems
+      // when balanceAmount is stale, so we still pick that bill for
+      // collection instead of skipping past it.
       const opdBills = (bills || []).filter(b => b.visitType === "OPD");
+      const effectiveBalance = (b) => {
+        const bal = Number(b.balanceAmount || 0);
+        if (bal > 0) return bal;
+        const itemsNet = (b.billItems || []).reduce((s, i) => s + Number(i.netAmount || 0), 0);
+        const paid     = (b.payments   || []).reduce((s, p) => s + Number(p.amount    || 0), 0);
+        return Math.max(0, itemsNet - paid);
+      };
       const target =
         opdBills.find(b => b.billStatus === "DRAFT") ||
-        opdBills.find(b => ["GENERATED","PARTIAL"].includes(b.billStatus) && Number(b.balanceAmount) > 0) ||
+        opdBills.find(b => ["GENERATED","PARTIAL"].includes(b.billStatus) && effectiveBalance(b) > 0) ||
         opdBills[0];
       if (target) setPayTarget(target);
       else toast.info("No OPD bill found yet — try again in a moment");
@@ -236,12 +280,50 @@ export default function ReceptionBilling() {
   // Helper — load a patient row when the user clicks anywhere in the
   // search dropdown or directory grid. Updates URL too so a refresh
   // re-loads the same patient.
-  const pickPatient = (p) => {
+  //
+  // R7ae: context-aware routing. If the patient has an ACTIVE inpatient
+  // admission (IPD / Emergency / Day Care), the correct destination is
+  // their live billing ledger — that's where per-day charges, package
+  // accruals, advance pool, and final-bill generation live. Only pure
+  // OPD / Services patients (or anyone whose admission is already
+  // discharged) stay on this counter for cash-bill collection. The
+  // decision uses the live Admission collection rather than the
+  // directory row's `registrationType` (which is only the INITIAL type
+  // set at first registration and doesn't reflect later admissions).
+  const pickPatient = async (p) => {
     if (!p?.UHID) return;
     setUhid(p.UHID);
     setSearchQ("");
     setSearchOpen(false);
     setSearchResults([]);
+
+    // Probe for an active inpatient admission. The endpoint
+    // /admissions/patient/:patientId returns the admission history;
+    // we pick the first row with status: "Active" and an inpatient
+    // admissionType. (Note: `/admissions/patient-by-uhid/:uhid`
+    // returns the PATIENT, not admissions — so we use patientId.)
+    let activeIpd = null;
+    if (p._id) {
+      try {
+        const r = await axios.get(`${API_ENDPOINTS.BASE}/admissions/patient/${encodeURIComponent(p._id)}`);
+        const list = r?.data?.admissions || r?.data?.data || r?.data || [];
+        const arr = Array.isArray(list) ? list : [];
+        activeIpd = arr.find((a) => a && a.status === "Active" && (
+          a.admissionType === "IPD"
+          || a.admissionType === "Emergency"
+          || a.admissionType === "Day Care"
+          || a.admissionType === "Daycare"
+        ));
+      } catch (_) { /* network/scope failure → fall through to billing counter */ }
+    }
+
+    if (activeIpd?._id) {
+      // Live ledger — IPD / ER / Day Care all use the same per-admission
+      // ledger page.
+      navigate(`/billing/ipd/${activeIpd._id}`);
+      return;
+    }
+    // Stay on the billing counter for OPD / Services / discharged.
     load(p.UHID);
     navigate(`/reception-billing/${encodeURIComponent(p.UHID)}`, { replace: true });
   };
@@ -305,6 +387,260 @@ export default function ReceptionBilling() {
     } catch (e) {
       toast.error(e?.response?.data?.message || "Could not generate bill");
     }
+  };
+
+  /* R7an: One-click "Generate Final Bill" for OPD / Day Care / Emergency
+     / Services patients. IPD admissions have their own /billing/ipd
+     final-bill flow (locks the ledger, marks discharge complete). For
+     everyone else this:
+       1. Finalizes every DRAFT bill (POST /:billId/generate)
+       2. Applies any unspent advance FIFO across the just-generated
+          + already-open bills
+       3. Opens a print window with a CONSOLIDATED Final Bill — every
+          line item, every payment row, every advance receipt, totals
+          at the bottom.
+     Receptionist no longer has to repeat the same three clicks per bill
+     on a multi-visit day. */
+  const generateFinalBill = async () => {
+    if (!uhid || !patient) return;
+    // Scope to NON-IPD bills. An active IPD admission has its own
+    // discharge-billing flow on /billing/ipd/:id — we don't want this
+    // button to interfere with that.
+    const NON_IPD_TYPES = new Set(["OPD", "Day Care", "Daycare", "Emergency", "ER", "Services"]);
+    const scoped = (bills || []).filter(
+      (b) => NON_IPD_TYPES.has(b.visitType) && b.billStatus !== "CANCELLED" && b.billStatus !== "REFUNDED",
+    );
+    if (scoped.length === 0) {
+      return toast.warn("No OPD / Day Care / ER / Services bills to finalize for this patient.");
+    }
+
+    const drafts   = scoped.filter((b) => b.billStatus === "DRAFT");
+    const openable = scoped.filter((b) => ["GENERATED", "PARTIAL"].includes(b.billStatus));
+    if (!window.confirm(
+      `Finalize ${scoped.length} bill${scoped.length === 1 ? "" : "s"} ` +
+      `(${drafts.length} draft → generated)` +
+      (unspentAdv > 0 ? ` and apply ${fmtCur(unspentAdv)} advance pool first.` : "") +
+      `\nProceed?`,
+    )) return;
+
+    try {
+      // ── 1. Finalize every DRAFT bill ──
+      for (const d of drafts) {
+        await axios.post(`${API_ENDPOINTS.BILLING}/${d._id}/generate`, { generatedBy: "Reception" });
+      }
+
+      // ── 2. Apply unspent advance to any open balance (FIFO oldest-bill,
+      //    newest-advance). Backend's /apply does the heavy lifting and
+      //    R7am made it safe against stale parent totals. ──
+      if (unspentAdv > 0 && advances?.length) {
+        const advLeft = advances
+          .filter((a) => Number(a.remainingAmount || 0) > 0)
+          .sort((a, b) => new Date(b.paidAt || 0) - new Date(a.paidAt || 0));
+        // Refresh the scoped bills so we have the post-generate state
+        const refreshed = await axios.get(`${API_ENDPOINTS.BASE}/billing/uhid/${encodeURIComponent(uhid)}`);
+        const refreshedBills = (refreshed?.data?.data?.bills || refreshed?.data?.bills || [])
+          .filter((b) => NON_IPD_TYPES.has(b.visitType)
+            && ["GENERATED", "PARTIAL"].includes(b.billStatus))
+          .sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+        let advIdx = 0;
+        let advRem = Number(advLeft[advIdx]?.remainingAmount || 0);
+        for (const b of refreshedBills) {
+          const itemsNet = (b.billItems || []).reduce((s, i) => s + Number(i.netAmount || 0), 0);
+          const paidPos  = (b.payments   || []).reduce((s, p) => s + Math.max(0, Number(p.amount || 0)), 0);
+          const refNet   = Math.max(Number(b.patientPayableAmount || 0), Number(b.netAmount || 0), itemsNet);
+          let billOwed   = Math.max(0, refNet - paidPos);
+          while (billOwed > 0.005 && advIdx < advLeft.length) {
+            if (advRem <= 0.005) {
+              advIdx += 1;
+              advRem = Number(advLeft[advIdx]?.remainingAmount || 0);
+              continue;
+            }
+            const useThis = Math.min(advRem, billOwed);
+            try {
+              await axios.post(`${API_ENDPOINTS.BILLING}/advance/${advLeft[advIdx]._id}/apply`,
+                { billId: b._id, amount: useThis });
+              advRem   -= useThis;
+              billOwed -= useThis;
+            } catch (e) {
+              console.warn(`[generateFinalBill] advance apply failed on ${b.billNumber}: ${e?.message}`);
+              break;
+            }
+          }
+          if (advIdx >= advLeft.length) break;
+        }
+      }
+
+      // ── 3. Refresh + print the consolidated final bill ──
+      await load(uhid);
+      const fresh   = await axios.get(`${API_ENDPOINTS.BASE}/billing/uhid/${encodeURIComponent(uhid)}`);
+      const freshBills = (fresh?.data?.data?.bills || fresh?.data?.bills || [])
+        .filter((b) => NON_IPD_TYPES.has(b.visitType) && b.billStatus !== "CANCELLED");
+      const freshAdv = await axios.get(`${API_ENDPOINTS.BILLING}/advance/uhid/${encodeURIComponent(uhid)}`);
+      const advList  = (freshAdv?.data?.data?.advances || freshAdv?.data?.advances || []);
+      printConsolidatedFinalBill(freshBills, advList);
+      toast.success(`Final bill ready — ${freshBills.length} bill${freshBills.length === 1 ? "" : "s"} consolidated`);
+    } catch (e) {
+      toast.error(e?.response?.data?.message || `Generate Final Bill failed: ${e?.message}`);
+    }
+  };
+
+  /* R7an: print the consolidated Final Bill — one document covering every
+     bill on this UHID (OPD / Day Care / ER / Services). Layout mirrors the
+     IPD final-bill print but flattens across multiple bills instead of
+     daily breakdown. */
+  const printConsolidatedFinalBill = (billsIn, advancesIn) => {
+    const list = billsIn || [];
+    const adv  = advancesIn || [];
+    const _num = (v) => {
+      if (v == null) return 0;
+      if (typeof v === "object" && v.toString) v = v.toString();
+      const n = Number(v); return Number.isFinite(n) ? n : 0;
+    };
+    // Aggregate totals across every bill, using the same effective-balance
+    // fallback as the modal (R7am) so stale parent totals don't lie.
+    let gross = 0, disc = 0, tax = 0, net = 0, paid = 0, due = 0, advApplied = 0;
+    const billRows = list.map((b) => {
+      const itemsNet = (b.billItems || []).reduce((s, i) => s + _num(i.netAmount), 0);
+      const itemsGross = (b.billItems || []).reduce((s, i) => s + _num(i.unitPrice) * _num(i.quantity || 1), 0);
+      const itemsDisc  = (b.billItems || []).reduce((s, i) => s + _num(i.discountAmount), 0);
+      const itemsTax   = (b.billItems || []).reduce((s, i) => s + _num(i.taxAmount), 0);
+      const paidPos    = (b.payments  || []).reduce((s, p) => s + Math.max(0, _num(p.amount)), 0);
+      const refNet     = Math.max(_num(b.patientPayableAmount), _num(b.netAmount), itemsNet);
+      const bGross     = _num(b.grossAmount)   || itemsGross;
+      const bDisc      = _num(b.totalDiscount) || itemsDisc;
+      const bTax       = _num(b.taxAmount)     || itemsTax;
+      const bNet       = refNet;
+      const bPaid      = paidPos;
+      const bDue       = Math.max(0, bNet - bPaid);
+      gross += bGross; disc += bDisc; tax += bTax; net += bNet; paid += bPaid; due += bDue;
+      // Advance-adjustment payments contribute to advApplied AND to paid
+      for (const p of (b.payments || [])) {
+        if (p.paymentMode === "ADVANCE_ADJUSTMENT") advApplied += Math.max(0, _num(p.amount));
+      }
+      return { b, bGross, bDisc, bTax, bNet, bPaid, bDue };
+    });
+    const win = window.open("", "_blank", "width=900,height=1100");
+    if (!win) return toast.error("Pop-up blocked — allow pop-ups to print the final bill");
+    const esc = (s = "") => String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+    const itemsHtml = billRows.map(({ b, bGross, bDisc, bTax, bNet, bPaid, bDue }) => {
+      const itemsRows = (b.billItems || []).map((it) => `
+        <tr>
+          <td>${esc(it.serviceName || it.name || "")}</td>
+          <td style="text-align:right">${it.quantity || 1}</td>
+          <td style="text-align:right">₹${_num(it.unitPrice).toFixed(2)}</td>
+          <td style="text-align:right">₹${_num(it.netAmount).toFixed(2)}</td>
+        </tr>`).join("");
+      const paysRows = (b.payments || []).map((p) => `
+        <tr>
+          <td>${new Date(p.paidAt || p.createdAt || Date.now()).toLocaleString("en-IN")}</td>
+          <td>${esc(p.paymentMode || "")}</td>
+          <td>${esc(p.transactionId || "—")}</td>
+          <td style="text-align:right">₹${_num(p.amount).toFixed(2)}</td>
+        </tr>`).join("");
+      return `
+        <div class="bill-block">
+          <div class="bill-head">
+            <strong>${esc(b.billNumber || "DRAFT")}</strong>
+            <span class="pill pill-${esc((b.visitType || "").toLowerCase())}">${esc(b.visitType || "")}</span>
+            <span class="pill pill-${esc((b.billStatus || "").toLowerCase())}">${esc(b.billStatus || "")}</span>
+            <span class="meta">${new Date(b.billDate || b.createdAt).toLocaleString("en-IN")}</span>
+          </div>
+          <table>
+            <thead><tr><th>Service</th><th style="text-align:right">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Net</th></tr></thead>
+            <tbody>${itemsRows || '<tr><td colspan="4" style="text-align:center;color:#999">— no items —</td></tr>'}</tbody>
+          </table>
+          <div class="bill-sub">
+            Gross ₹${bGross.toFixed(2)} · Discount ₹${bDisc.toFixed(2)} · Tax ₹${bTax.toFixed(2)} ·
+            <strong>Net ₹${bNet.toFixed(2)}</strong> · Paid ₹${bPaid.toFixed(2)} ·
+            <strong style="color:${bDue > 0 ? "#b91c1c" : "#15803d"}">Due ₹${bDue.toFixed(2)}</strong>
+          </div>
+          ${paysRows ? `
+            <div class="pay-head">Payments</div>
+            <table>
+              <thead><tr><th>Date</th><th>Mode</th><th>Reference</th><th style="text-align:right">Amount</th></tr></thead>
+              <tbody>${paysRows}</tbody>
+            </table>` : ""}
+        </div>`;
+    }).join("");
+    const advHtml = adv.length === 0 ? "" : `
+      <div class="bill-block">
+        <div class="bill-head"><strong>ADVANCE DEPOSITS</strong></div>
+        <table>
+          <thead><tr><th>Receipt #</th><th>Date</th><th>Mode</th><th>Status</th><th style="text-align:right">Amount</th><th style="text-align:right">Applied</th><th style="text-align:right">Remaining</th></tr></thead>
+          <tbody>${adv.map((a) => `
+            <tr>
+              <td>${esc(a.receiptNumber || "ADV")}</td>
+              <td>${new Date(a.paidAt || a.createdAt).toLocaleString("en-IN")}</td>
+              <td>${esc(a.paymentMode || "")}</td>
+              <td>${esc(a.status || "")}</td>
+              <td style="text-align:right">₹${_num(a.amount).toFixed(2)}</td>
+              <td style="text-align:right">₹${_num(a.appliedAmount).toFixed(2)}</td>
+              <td style="text-align:right">₹${_num(a.remainingAmount).toFixed(2)}</td>
+            </tr>`).join("")}</tbody>
+        </table>
+      </div>`;
+    win.document.write(`<!doctype html><html><head>
+      <title>Final Bill — ${esc(patient?.fullName || uhid)}</title>
+      <style>
+        body { font-family: Arial, sans-serif; padding: 24px; color:#0f172a; font-size:13px; }
+        h1 { font-size: 22px; margin: 0; }
+        .meta { color: #64748b; font-size: 11px; margin-bottom: 14px; }
+        .hdr { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px; padding-bottom:10px; border-bottom:1.5px solid #cbd5e1; }
+        .bill-block { margin: 18px 0; padding-bottom: 12px; border-bottom: 1px dashed #e2e8f0; page-break-inside: avoid; }
+        .bill-head { display:flex; gap:10px; align-items:center; margin-bottom:8px; }
+        .pill { padding:2px 8px; border-radius:10px; font-size:10px; font-weight:700; background:#f1f5f9; color:#475569; }
+        .pill-opd { background:#ecfeff; color:#0e7490; }
+        .pill-emergency, .pill-er { background:#fef2f2; color:#b91c1c; }
+        .pill-daycare, .pill-day { background:#fef3c7; color:#92400e; }
+        .pill-services { background:#f3e8ff; color:#6b21a8; }
+        .pill-paid { background:#dcfce7; color:#15803d; }
+        .pill-generated { background:#ecfeff; color:#0369a1; }
+        .pill-partial { background:#fef3c7; color:#a16207; }
+        .pill-draft { background:#f1f5f9; color:#64748b; }
+        .bill-sub { color:#475569; font-size:12px; margin: 6px 0 4px; }
+        .pay-head { font-weight:700; font-size:11px; color:#475569; margin: 10px 0 4px; text-transform:uppercase; letter-spacing:.5px; }
+        table { width:100%; border-collapse: collapse; margin: 4px 0 6px; font-size:12px; }
+        th, td { padding: 5px 8px; border-bottom: 1px solid #e2e8f0; text-align:left; }
+        th { background:#f8fafc; font-weight:700; }
+        .grand { margin-top: 20px; padding-top: 12px; border-top: 2px solid #0f172a; }
+        .grand-row { display:flex; justify-content:space-between; padding: 4px 0; }
+        .grand-row.major { font-size:16px; font-weight:900; padding-top:8px; border-top:1px dashed #cbd5e1; margin-top:4px; }
+        .footer { margin-top: 24px; padding-top: 10px; border-top: 1px dashed #cbd5e1; font-size: 10px; color:#94a3b8; text-align:center; }
+      </style></head><body>
+      <div class="hdr">
+        <div>
+          <h1>SphereHealth Hospital</h1>
+          <div class="meta">NABH Accredited · Final Consolidated Bill</div>
+        </div>
+        <div style="text-align:right">
+          <strong>${esc(patient?.fullName || "Patient")}</strong><br>
+          <span class="meta">UHID: ${esc(uhid)} · ${patient?.age ? patient.age + "y" : ""} · ${esc(patient?.gender || "")}</span><br>
+          <span class="meta">Phone: ${esc(patient?.contactNumber || "—")}</span><br>
+          <span class="meta">Printed: ${new Date().toLocaleString("en-IN")}</span>
+        </div>
+      </div>
+      ${itemsHtml}
+      ${advHtml}
+      <div class="grand">
+        <div class="grand-row"><span>Total Gross</span><strong>₹${gross.toFixed(2)}</strong></div>
+        <div class="grand-row"><span>Total Discount</span><strong>− ₹${disc.toFixed(2)}</strong></div>
+        <div class="grand-row"><span>Total Tax</span><strong>₹${tax.toFixed(2)}</strong></div>
+        <div class="grand-row"><span>Total Net Payable</span><strong>₹${net.toFixed(2)}</strong></div>
+        <div class="grand-row" style="color:#15803d"><span>Paid (cash + advance)</span><strong>₹${paid.toFixed(2)}</strong></div>
+        ${advApplied > 0 ? `<div class="grand-row" style="color:#7c3aed"><span>&nbsp;&nbsp;↳ via Advance Adjustment</span><strong>₹${advApplied.toFixed(2)}</strong></div>` : ""}
+        <div class="grand-row major" style="color:${due > 0 ? "#b91c1c" : "#15803d"}">
+          <span>${due > 0 ? "BALANCE DUE" : "PATIENT ACCOUNT SETTLED"}</span>
+          <strong>₹${due.toFixed(2)}</strong>
+        </div>
+      </div>
+      <div class="footer">
+        Final consolidated bill generated by Reception · ${new Date().toLocaleString("en-IN")}<br>
+        ${list.length} bill${list.length === 1 ? "" : "s"} across OPD / Day Care / ER / Services for this patient.
+        Thank you for choosing SphereHealth.
+      </div>
+      <script>window.onload = () => { setTimeout(() => window.print(), 200); };</script>
+      </body></html>`);
+    win.document.close();
   };
 
   /* Print a per-payment receipt — fires after EVERY payment recorded so
@@ -508,7 +844,16 @@ export default function ReceptionBilling() {
         setPayTarget(activeBill);
         return;
       }
-      if (k === "v" && ["GENERATED","PARTIAL"].includes(status) && unspentAdv > 0 && Number(activeBill.balanceAmount) > 0) {
+      // R7aa: effective-balance fallback for the V (apply advance)
+      // shortcut. If balanceAmount is stale (0 on a bill with real items)
+      // we still want the user to be able to apply an advance.
+      const _vBal = Number(activeBill.balanceAmount || 0)
+        || Math.max(
+             0,
+             (activeBill.billItems || []).reduce((s, i) => s + Number(i.netAmount || 0), 0)
+               - (activeBill.payments || []).reduce((s, p) => s + Number(p.amount || 0), 0),
+           );
+      if (k === "v" && ["GENERATED","PARTIAL"].includes(status) && unspentAdv > 0 && _vBal > 0) {
         // V — apply adVance to bill (FIFO oldest first). Mirrors the
         // onApplyAdvance click handler on the BillDetail toolbar.
         e.preventDefault();
@@ -537,11 +882,26 @@ export default function ReceptionBilling() {
   }, [patient, activeBill, advances, unspentAdv, uhid, searchOpen, showShortcuts, clearPatient, load]);
 
   const totals = useMemo(() => {
-    const sum = (k) => bills.reduce((s, b) => s + (b[k] || 0), 0);
+    // R7aa: fall back to summing billItems when a bill's parent totals
+    // are stale (recalcTotals never ran). Keeps the patient-level summary
+    // strip honest even when individual bill rows have ₹0 grossAmount.
+    const _eff = (b) => {
+      const net = Number(b.netAmount || 0);
+      if (net > 0) return { net, bal: Number(b.balanceAmount || 0) };
+      const itemsNet = (b.billItems || []).reduce((s, i) => s + Number(i.netAmount || 0), 0);
+      const paid     = (b.payments   || []).reduce((s, p) => s + Number(p.amount    || 0), 0);
+      return { net: itemsNet, bal: Math.max(0, itemsNet - paid) };
+    };
+    const agg = bills.reduce((acc, b) => {
+      const { net, bal } = _eff(b);
+      acc.gross += net;
+      acc.due   += bal;
+      return acc;
+    }, { gross: 0, due: 0 });
     return {
-      gross:    sum("netAmount"),
-      due:      sum("balanceAmount"),
-      paid:     sum("netAmount") - sum("balanceAmount"),
+      gross:    agg.gross,
+      due:      agg.due,
+      paid:     agg.gross - agg.due,
       bills:    bills.length,
       open:     bills.filter(b => ["GENERATED", "PARTIAL"].includes(b.billStatus)).length,
       drafts:   bills.filter(b => b.billStatus === "DRAFT").length,
@@ -693,6 +1053,19 @@ export default function ReceptionBilling() {
                 <i className="pi pi-wallet" /> Take Advance
                 <kbd className="rx-kbd">T</kbd>
               </button>
+              {/* R7an: one-click consolidated Final Bill for OPD / Day Care / ER / Services.
+                  Only renders when there's at least one active non-IPD bill on this UHID. */}
+              {(bills || []).some((b) =>
+                ["OPD", "Day Care", "Daycare", "Emergency", "ER", "Services"].includes(b.visitType)
+                && b.billStatus !== "CANCELLED" && b.billStatus !== "REFUNDED",
+              ) && (
+                <button className="rx-action-btn"
+                        style={{ background: "#7c3aed", color: "#fff", borderColor: "#7c3aed" }}
+                        onClick={generateFinalBill}
+                        title="Finalize all DRAFT bills, apply any remaining advance, and print one consolidated Final Bill across OPD / Day Care / ER / Services for this patient">
+                  <i className="pi pi-file-pdf" /> Generate Final Bill
+                </button>
+              )}
               <button className="rx-action-btn"
                       onClick={() => navigate(`/visit-history/${patient.UHID}`)}
                       title="Visit history for this patient">
@@ -796,6 +1169,30 @@ export default function ReceptionBilling() {
                           <i className="pi pi-print" style={{ fontSize: 12 }} />
                         </button>
                       )}
+                      {/* R7ao: Refund the unspent portion of this advance.
+                          Visible only when the row has remaining balance AND the
+                          user has billing.refund permission. ACTIVE and
+                          PARTIALLY_APPLIED rows are both refundable. */}
+                      {!isVoid && Number(a.remainingAmount || 0) > 0 && can("billing.refund") && (
+                        <button
+                          type="button"
+                          onClick={() => setAdvanceRefundTarget(a)}
+                          title={`Refund ${fmtCur(Number(a.remainingAmount || 0))} unspent — patient discharge / cancellation`}
+                          style={{ height: 28, padding: "0 10px", borderRadius: 6, border: "1px solid #dc2626", background: "#fff", color: "#dc2626", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700 }}
+                        >
+                          <i className="pi pi-undo" style={{ fontSize: 11 }} /> Refund
+                        </button>
+                      )}
+                      {a.status === "REFUNDED" && Number(a.refundedAmount?.$numberDecimal ?? a.refundedAmount ?? 0) > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => printAdvanceRefundReceipt(a, patient)}
+                          title={`Reprint refund slip — ${fmtCur(Number(a.refundedAmount?.$numberDecimal ?? a.refundedAmount ?? 0))} refunded ${a.refundedAt ? `on ${new Date(a.refundedAt).toLocaleDateString("en-IN")}` : ""}`}
+                          style={{ height: 28, padding: "0 10px", borderRadius: 6, border: "1px solid #94a3b8", background: "#f8fafc", color: "#475569", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700 }}
+                        >
+                          <i className="pi pi-print" style={{ fontSize: 11 }} /> Refund Slip
+                        </button>
+                      )}
                     </div>
                     <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 3, paddingLeft: 4 }}>
                       {new Date(a.paidAt).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
@@ -803,6 +1200,16 @@ export default function ReceptionBilling() {
                       {a.appliedTo?.length > 0 && ` · applied to ${a.appliedTo.map((x) => x.billNumber).join(", ")}`}
                       {a.remarks && ` · ${a.remarks}`}
                     </div>
+                    {/* R7ao: show refund trail under the row when REFUNDED. */}
+                    {a.status === "REFUNDED" && Number(a.refundedAmount?.$numberDecimal ?? a.refundedAmount ?? 0) > 0 && (
+                      <div style={{ fontSize: 11, color: "#b91c1c", marginTop: 2, paddingLeft: 4, fontWeight: 700 }}>
+                        ↩ Refunded {fmtCur(Number(a.refundedAmount?.$numberDecimal ?? a.refundedAmount ?? 0))}
+                        {a.refundMode  && ` via ${a.refundMode}`}
+                        {a.refundedBy  && ` by ${a.refundedBy}`}
+                        {a.refundedAt  && ` on ${new Date(a.refundedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}`}
+                        {a.refundReason && ` — ${a.refundReason}`}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -840,6 +1247,15 @@ export default function ReceptionBilling() {
               ) : bills.map(b => {
                 const isActive = activeBill?._id === b._id;
                 const cls = STATUS_CLASS[b.billStatus] || "pending";
+                // R7aa: derive effective Total/Paid/Due from billItems when
+                // the parent fields are stale (recalcTotals didn't run).
+                const _itemsNet = (b.billItems || []).reduce((s, i) => s + Number(i.netAmount || 0), 0);
+                const _paidSum  = (b.payments   || []).reduce((s, p) => s + Number(p.amount    || 0), 0);
+                const rowNet    = Number(b.netAmount || 0) || _itemsNet;
+                const rowBal    = Number(b.netAmount || 0) > 0
+                  ? Number(b.balanceAmount || 0)
+                  : Math.max(0, _itemsNet - _paidSum);
+                const rowPaid   = Math.max(0, rowNet - rowBal);
                 return (
                   <div key={b._id} className={`rx-bill-row ${isActive ? "rx-bill-row--active" : ""}`}
                        onClick={() => loadBill(b._id)}>
@@ -850,9 +1266,9 @@ export default function ReceptionBilling() {
                         {b.visitType && <span className="rx-mono-tag rx-mono-tag--subtle">{b.visitType}</span>}
                       </div>
                       <div className="rx-bill-amounts">
-                        <span>Total: <strong>{fmtCur(b.netAmount)}</strong></span>
-                        <span className="paid">Paid: <strong>{fmtCur((b.netAmount || 0) - (b.balanceAmount || 0))}</strong></span>
-                        {b.balanceAmount > 0 && <span className="due">Due: <strong>{fmtCur(b.balanceAmount)}</strong></span>}
+                        <span>Total: <strong>{fmtCur(rowNet)}</strong></span>
+                        <span className="paid">Paid: <strong>{fmtCur(rowPaid)}</strong></span>
+                        {rowBal > 0 && <span className="due">Due: <strong>{fmtCur(rowBal)}</strong></span>}
                       </div>
                       <div className="rx-bill-row-meta">
                         Created: {fmtDate(b.createdAt)} · {(b.billItems || []).length} item{(b.billItems || []).length === 1 ? "" : "s"}
@@ -950,8 +1366,26 @@ export default function ReceptionBilling() {
         <BulkCollectModal
           uhid={uhid}
           patient={patient}
-          bills={bills.filter(b => ["GENERATED", "PARTIAL"].includes(b.billStatus) && Number(b.balanceAmount) > 0)}
+          /* R7am: filter on EFFECTIVE balance (items - positive payments)
+              instead of stored bill.balanceAmount. Some bills have stale
+              balanceAmount=0 even though billItems hold real money
+              (R7aa root cause). Without this, the modal showed "0 bills"
+              in the FIFO preview and the apply loop was a no-op while
+              the toast lied "success". */
+          bills={bills
+            .filter((b) => ["GENERATED", "PARTIAL"].includes(b.billStatus))
+            .map((b) => {
+              const itemsNet = (b.billItems || []).reduce((s, i) => s + Number(i.netAmount || 0), 0);
+              const paidPos  = (b.payments   || []).reduce((s, p) => s + Math.max(0, Number(p.amount || 0)), 0);
+              const stored   = Number(b.balanceAmount || 0);
+              const refNet   = Math.max(Number(b.patientPayableAmount || 0), Number(b.netAmount || 0), itemsNet);
+              const effBal   = stored > 0 ? stored : Math.max(0, refNet - paidPos);
+              return { ...b, _effectiveBalance: effBal };
+            })
+            .filter((b) => b._effectiveBalance > 0)}
           totalDue={totals.due}
+          advances={advances}
+          unspentAdv={unspentAdv}
           onClose={() => setShowBulkCollect(false)}
           onDone={async () => { setShowBulkCollect(false); await load(uhid); }}
         />
@@ -1073,6 +1507,26 @@ export default function ReceptionBilling() {
           }}
         />
       )}
+
+      {/* R7ao: Refund the unspent portion of an advance deposit. Opens
+          from the Advance Deposits ledger row when remaining > 0 and the
+          user has billing.refund permission. After success: refresh, print
+          refund slip, toast. */}
+      {advanceRefundTarget && (
+        <RefundAdvanceModal
+          advance={advanceRefundTarget}
+          patient={patient}
+          onClose={() => setAdvanceRefundTarget(null)}
+          onDone={async (refundedAdv) => {
+            setAdvanceRefundTarget(null);
+            await load(uhid);
+            if (refundedAdv && patient) {
+              try { printAdvanceRefundReceipt(refundedAdv, patient); }
+              catch (_) { /* receipt is best-effort */ }
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1086,7 +1540,43 @@ function BillDetail({ bill, unspentAdv = 0, onGenerate, onPay, onSettle, onPrint
   const items     = bill.billItems || [];
   const payments  = bill.payments || [];
   const paidTotal = payments.reduce((s, p) => s + (p.amount || 0), 0);
-  const canApply  = canPay && unspentAdv > 0 && Number(bill.balanceAmount) > 0;
+
+  // R7aa: defensive fallback for the totals strip.
+  //
+  // Some legacy bills (and any bill whose save path bypassed the pre-save
+  // recalcTotals hook — e.g. raw findOneAndUpdate that mutated billItems[]
+  // but never re-saved through the schema) end up with billItems holding
+  // real amounts while bill.grossAmount / netAmount / balanceAmount stay
+  // at 0. The Reception strip used to read the parent fields verbatim,
+  // which then displayed ₹0 on a bill that visibly had ₹300 of items.
+  //
+  // If the bill's own gross is zero but the line items sum to a positive
+  // number, fall back to the line-item aggregate. We DO NOT silently
+  // overwrite a non-zero parent gross — that would mask a real
+  // discount/override change. The fallback only fires for stale rows.
+  const _num = (v) => {
+    if (v == null) return 0;
+    if (typeof v === "object" && v.toString) v = v.toString();
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const itemGross    = items.reduce((s, i) => s + _num(i.unitPrice) * _num(i.quantity || 1), 0);
+  const itemDiscount = items.reduce((s, i) => s + _num(i.discountAmount), 0);
+  const itemTax      = items.reduce((s, i) => s + _num(i.taxAmount), 0);
+  const itemNet      = items.reduce((s, i) => s + _num(i.netAmount), 0);
+
+  const grossDisplay    = _num(bill.grossAmount)    || itemGross;
+  const discountDisplay = _num(bill.totalDiscount)  || itemDiscount;
+  const taxDisplay      = _num(bill.taxAmount)      || itemTax;
+  const netDisplay      = _num(bill.netAmount)      || itemNet;
+  // Balance: prefer the bill's own (post-payment) field; fall back to
+  // net − paid (which equals net when nothing collected yet).
+  const balanceDisplay  = _num(bill.netAmount) > 0
+    ? _num(bill.balanceAmount)
+    : Math.max(0, netDisplay - paidTotal);
+  const paidDisplay     = Math.max(0, netDisplay - balanceDisplay);
+
+  const canApply  = canPay && unspentAdv > 0 && balanceDisplay > 0;
   // Receptionist may collect payments but NOT issue refunds or cancel a
   // finalized bill — those need Accountant/Admin (billing.refund).
   // Backend already 403s the call; this hides the button so the UX matches.
@@ -1194,15 +1684,17 @@ function BillDetail({ bill, unspentAdv = 0, onGenerate, onPay, onSettle, onPrint
         )}
       </div>
 
-      {/* Totals */}
+      {/* Totals — R7aa: fall back to line-item aggregate when the parent
+          bill's totals are stale (item rows were edited without firing
+          recalcTotals on save). See grossDisplay / netDisplay / etc. */}
       <div className="rx-detail-totals">
         <div className="rx-grid-fit-120">
-          <div>Gross: <strong>{fmtCur(bill.grossAmount)}</strong></div>
-          <div>Discount: <strong className="rx-text-discount">{fmtCur(bill.totalDiscount)}</strong></div>
-          <div>Tax: <strong>{fmtCur(bill.taxAmount)}</strong></div>
-          <div>Net: <strong className="rx-text-strong">{fmtCur(bill.netAmount)}</strong></div>
-          <div>Paid: <strong className="rx-text-success">{fmtCur((bill.netAmount || 0) - (bill.balanceAmount || 0))}</strong></div>
-          <div>Balance: <strong className={bill.balanceAmount > 0 ? "rx-text-danger" : "rx-text-success"}>{fmtCur(bill.balanceAmount)}</strong></div>
+          <div>Gross: <strong>{fmtCur(grossDisplay)}</strong></div>
+          <div>Discount: <strong className="rx-text-discount">{fmtCur(discountDisplay)}</strong></div>
+          <div>Tax: <strong>{fmtCur(taxDisplay)}</strong></div>
+          <div>Net: <strong className="rx-text-strong">{fmtCur(netDisplay)}</strong></div>
+          <div>Paid: <strong className="rx-text-success">{fmtCur(paidDisplay)}</strong></div>
+          <div>Balance: <strong className={balanceDisplay > 0 ? "rx-text-danger" : "rx-text-success"}>{fmtCur(balanceDisplay)}</strong></div>
         </div>
       </div>
 
@@ -1874,7 +2366,7 @@ function NewBillModal({ uhid, patient, existingBills = [], onClose, onCreated })
    modal shows the cashier the projected allocation BEFORE submit so
    they can sanity-check what each bill will receive.                  */
 
-function BulkCollectModal({ uhid, patient, bills, totalDue, onClose, onDone }) {
+function BulkCollectModal({ uhid, patient, bills, totalDue, advances = [], unspentAdv = 0, onClose, onDone }) {
   const [amount, setAmount] = useState(totalDue || 0);
   const [mode, setMode] = useState("CASH");
   const [txnId, setTxnId] = useState("");
@@ -1882,15 +2374,25 @@ function BulkCollectModal({ uhid, patient, bills, totalDue, onClose, onDone }) {
   const [remarks, setRemarks] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // R7ak: live list of advance receipts with money still available.
+  // Newest-first so the receptionist sees the most recent deposit at top
+  // — easier to confirm with the patient ("the ₹50,000 you gave today").
+  const availableAdvances = (advances || [])
+    .filter((a) => Number(a.remainingAmount || 0) > 0)
+    .sort((a, b) => new Date(b.paidAt || 0) - new Date(a.paidAt || 0));
+
   // FIFO preview — mirrors the backend's distribution logic so the
   // cashier sees exactly which bills will get how much before saving.
+  // R7am: use the EFFECTIVE balance (parent-injected `_effectiveBalance`)
+  // so bills whose stored balanceAmount is stale (R7aa root) still
+  // appear in the FIFO with their true outstanding.
   const allocation = useMemo(() => {
     const amt = Number(amount) || 0;
     const sorted = [...bills].sort((a, b) =>
       new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
     let remaining = amt;
     return sorted.map((b) => {
-      const bal = Number(b.balanceAmount) || 0;
+      const bal = Number(b._effectiveBalance ?? b.balanceAmount) || 0;
       const leg = Math.min(remaining, bal);
       remaining = Math.max(0, remaining - leg);
       return {
@@ -1910,7 +2412,9 @@ function BulkCollectModal({ uhid, patient, bills, totalDue, onClose, onDone }) {
     const amt = Number(amount);
     if (!amt || amt <= 0)        return toast.error("Enter a valid amount");
     if (amt > totalDue + 0.5)    return toast.error(`Cannot collect more than total due (${fmtCur(totalDue)})`);
-    if (["UPI", "CARD", "CHEQUE", "ONLINE"].includes(mode) && !txnId.trim()) {
+    // R7ak: CHEQUE removed from the bulk picker — wasn't used in practice
+    // and cheque collections need a dedicated reconciliation flow.
+    if (["UPI", "CARD", "ONLINE"].includes(mode) && !txnId.trim()) {
       if (!window.confirm(`No transaction reference for ${mode} payment. Record anyway?`)) return;
     }
     setSaving(true);
@@ -1930,6 +2434,87 @@ function BulkCollectModal({ uhid, patient, bills, totalDue, onClose, onDone }) {
       onDone();
     } catch (e) {
       toast.error(e?.response?.data?.message || "Collection failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // R7ak: settle outstanding bills by applying the patient's advance
+  // pool. Loops over availableAdvances (newest first) and over the FIFO
+  // billable allocation, posting /advance/:id/apply for each bill until
+  // either the amount field is satisfied or advances run dry. Each leg
+  // gets its own receipt-style audit entry on the bill + advance row.
+  const applyAdvance = async () => {
+    const amt = Math.min(Number(amount) || 0, unspentAdv, totalDue);
+    if (!amt || amt <= 0) {
+      return toast.warn("Nothing to apply — check the amount and that the patient has unspent advance.");
+    }
+    if (availableAdvances.length === 0) {
+      return toast.warn("No unspent advance available to apply.");
+    }
+    if (!window.confirm(
+      `Apply ${fmtCur(amt)} from advance pool to outstanding bill${bills.length === 1 ? "" : "s"}?\n` +
+      `(${fmtCur(unspentAdv)} available · FIFO across ${bills.length} bill${bills.length === 1 ? "" : "s"})`,
+    )) return;
+
+    // R7am: guard against the "no bills" case — if allocation is empty
+    // we'd silently no-op the loop and toast success. That's the bug
+    // the user hit. Now we abort with a clear error.
+    if (allocation.length === 0 || allocation.every((l) => l.leg <= 0.005)) {
+      return toast.error("No open bills to apply against. Check that bills have balance > 0.");
+    }
+
+    setSaving(true);
+    let totalApplied = 0;
+    let lastError = null;
+    try {
+      // Walk the FIFO allocation and apply each bill leg from the
+      // advance pool. We now pass an EXPLICIT `amount` per call so the
+      // backend doesn't fall back to its own (stale) balance calc.
+      // Each call's response carries the actual appliedAmount — we sum
+      // those instead of the optimistic local counter so the toast
+      // tells the truth even if the backend partially-applied.
+      let advIdx = 0;
+      let advLeft = Number(availableAdvances[advIdx]?.remainingAmount || 0);
+      for (const leg of allocation) {
+        if (leg.leg <= 0.005) continue;
+        let billOwed = leg.leg;
+        while (billOwed > 0.005 && advIdx < availableAdvances.length) {
+          if (advLeft <= 0.005) {
+            advIdx += 1;
+            advLeft = Number(availableAdvances[advIdx]?.remainingAmount || 0);
+            continue;
+          }
+          const adv = availableAdvances[advIdx];
+          const requestThisLeg = Math.min(advLeft, billOwed);
+          try {
+            const { data } = await axios.post(
+              `${API_ENDPOINTS.BILLING}/advance/${adv._id}/apply`,
+              { billId: leg.billId, amount: requestThisLeg },
+            );
+            const applied = Number(data?.appliedAmount || requestThisLeg) || 0;
+            totalApplied += applied;
+            advLeft  -= applied;
+            billOwed -= applied;
+          } catch (apiErr) {
+            // Surface the failure rather than continuing silently. Keep
+            // looping is dangerous — we might apply some legs and skip
+            // others without telling the cashier.
+            lastError = apiErr;
+            throw apiErr;
+          }
+        }
+        if (advIdx >= availableAdvances.length) break;
+      }
+      if (totalApplied <= 0.005) {
+        toast.warn("Nothing was applied — backend returned ₹0 for every leg. Check bill status.");
+      } else {
+        toast.success(`Applied ${fmtCur(totalApplied)} from advance pool`);
+      }
+      onDone();
+    } catch (e) {
+      const msg = e?.response?.data?.message || lastError?.response?.data?.message || e?.message || "Apply advance failed";
+      toast.error(`${msg}${totalApplied > 0 ? ` — only ${fmtCur(totalApplied)} got through before the error` : ""}`);
     } finally {
       setSaving(false);
     }
@@ -1956,22 +2541,57 @@ function BulkCollectModal({ uhid, patient, bills, totalDue, onClose, onDone }) {
                    value={amount} onChange={e => setAmount(e.target.value)} autoFocus />
           </div>
 
+          {/* R7al: when patient has unspent advance, CASH/UPI/CARD/ONLINE
+              are HARD-LOCKED. The receptionist must adjust from the
+              deposit pool first — only after the advance is exhausted
+              do the other payment modes unlock. This enforces the
+              hospital rule that pre-deposited money MUST be applied
+              before taking fresh payment. */}
+          {unspentAdv > 0 && (
+            <div className="rx-banner" style={{ background:"#fef3c7", borderColor:"#f59e0b", color:"#78350f", fontWeight: 600 }}>
+              <i className="pi pi-lock" />{" "}
+              <strong>Advance pool must be applied first.</strong> Patient has{" "}
+              <strong style={{ color:"#0f172a" }}>{fmtCur(unspentAdv)}</strong> on deposit
+              {availableAdvances.length > 1 && ` (across ${availableAdvances.length} receipts)`}.
+              {" "}Other payment modes are locked until this is fully adjusted.
+              Click <strong>Apply Advance</strong> below first.
+            </div>
+          )}
+
           <div className="his-field-group">
             <label className="his-label">Payment Mode *</label>
+            {/* R7ak: CHEQUE removed — bulk cheque collections never settle
+                cleanly here (cheque needs bank-clearance reconciliation
+                separately).
+                R7al: every non-CASH mode is disabled while the patient
+                still has unspent advance. CASH stays visually selected
+                (default) but the Collect button is also disabled, so
+                the receptionist can't accidentally double-charge. */}
             <div className="rx-grid-5">
-              {PAYMENT_MODES.filter(m => m !== "TPA_CLAIM").map(m => (
-                <button key={m} type="button"
-                        className={`rx-slot ${mode === m ? "rx-slot--selected" : ""}`}
-                        onClick={() => setMode(m)}>{m}</button>
-              ))}
+              {PAYMENT_MODES
+                .filter(m => m !== "TPA_CLAIM" && m !== "CHEQUE")
+                .map(m => {
+                  const locked = unspentAdv > 0;
+                  return (
+                    <button key={m} type="button"
+                            className={`rx-slot ${mode === m ? "rx-slot--selected" : ""}`}
+                            onClick={() => { if (!locked) setMode(m); }}
+                            disabled={locked}
+                            title={locked ? `Locked — apply ${fmtCur(unspentAdv)} advance pool first` : ""}
+                            style={locked ? { opacity: 0.45, cursor: "not-allowed" } : {}}>
+                      {locked && <i className="pi pi-lock" style={{ fontSize: 10, marginRight: 4 }} />}
+                      {m}
+                    </button>
+                  );
+                })}
             </div>
           </div>
 
-          {mode !== "CASH" && (
+          {mode !== "CASH" && unspentAdv === 0 && (
             <div className="his-field-group">
-              <label className="his-label">{mode === "UPI" ? "UPI Reference / VPA" : mode === "CHEQUE" ? "Cheque Number" : "Transaction ID"}</label>
+              <label className="his-label">{mode === "UPI" ? "UPI Reference / VPA" : "Transaction ID"}</label>
               <input className="his-field" value={txnId} onChange={e => setTxnId(e.target.value)}
-                     placeholder={mode === "UPI" ? "e.g. 412345678901" : mode === "CHEQUE" ? "e.g. 000123" : "Auth / approval code"} />
+                     placeholder={mode === "UPI" ? "e.g. 412345678901" : "Auth / approval code"} />
             </div>
           )}
 
@@ -2013,9 +2633,35 @@ function BulkCollectModal({ uhid, patient, bills, totalDue, onClose, onDone }) {
         </div>
         <div className="rx-modal-foot">
           <button className="rx-modal-btn-cancel" onClick={onClose}>Cancel</button>
+          {/* R7ak/R7al: Apply Advance is the PRIMARY action when the
+              patient has unspent advance. Settles outstanding bills
+              from the deposit pool — FIFO across advance receipts
+              (newest-first) and bills (oldest-first). When advance is
+              exhausted this button hides and the cash Collect button
+              becomes primary. */}
+          {unspentAdv > 0 && (
+            <button className="rx-modal-btn-primary"
+                    style={{ background: "#7c3aed", borderColor: "#7c3aed" }}
+                    onClick={applyAdvance}
+                    disabled={saving || !Number(amount) || Number(amount) <= 0}
+                    title={`Adjust ${fmtCur(Math.min(Number(amount) || 0, unspentAdv, totalDue))} from advance pool (₹${unspentAdv} available)`}>
+              <i className={`pi ${saving ? "pi-spin pi-spinner" : "pi-arrow-circle-down"}`} />{" "}
+              Apply Advance ({fmtCur(Math.min(Number(amount) || 0, unspentAdv, totalDue))})
+            </button>
+          )}
+          {/* R7al: Collect button is LOCKED while unspent advance > 0
+              — the receptionist must run Apply Advance first. After
+              that, this button becomes the primary cash-collection
+              affordance for whatever balance remains. */}
           <button className="rx-modal-btn-primary rx-modal-btn-primary--success"
-                  onClick={submit} disabled={saving}>
-            <i className={`pi ${saving ? "pi-spin pi-spinner" : "pi-check"}`} /> Collect {fmtCur(amount)}
+                  onClick={submit}
+                  disabled={saving || unspentAdv > 0}
+                  title={unspentAdv > 0
+                    ? `Locked — apply ${fmtCur(unspentAdv)} advance pool first`
+                    : ""}
+                  style={unspentAdv > 0 ? { opacity: 0.45, cursor: "not-allowed" } : {}}>
+            <i className={`pi ${saving ? "pi-spin pi-spinner" : (unspentAdv > 0 ? "pi-lock" : "pi-check")}`} />{" "}
+            Collect {fmtCur(amount)}
           </button>
         </div>
       </div>
@@ -2215,6 +2861,151 @@ function BulkSettleModal({ uhid, patient, bills, totalDue, onClose, onDone }) {
 
 /* ───────────────────────────────────────────────────────────── */
 
+/* R7ao: Refund the unspent portion of an advance deposit. Triggered from
+   the Advance Deposits ledger row's "Refund" button when a patient is
+   leaving with leftover credit. Backend only refunds remainingAmount —
+   any portion already applied to bills stays untouched in the audit
+   trail. */
+function RefundAdvanceModal({ advance, patient, onClose, onDone }) {
+  const total    = Number(advance?.amount?.$numberDecimal ?? advance?.amount ?? 0);
+  const applied  = Number(advance?.appliedAmount?.$numberDecimal ?? advance?.appliedAmount ?? 0);
+  const refunded = Number(advance?.refundedAmount?.$numberDecimal ?? advance?.refundedAmount ?? 0);
+  const remaining = Math.max(0, +(total - applied - refunded).toFixed(2));
+
+  const [mode,         setMode]         = useState("CASH");
+  const [reason,       setReason]       = useState("");
+  const [refundedBy,   setRefundedBy]   = useState("");
+  const [txnId,        setTxnId]        = useState("");
+  const [saving,       setSaving]       = useState(false);
+
+  const MODES = ["CASH", "UPI", "BANK_TRANSFER", "CARD", "ONLINE"];
+
+  const submit = async () => {
+    if (remaining <= 0) return toast.error("No remaining balance to refund");
+    if (!reason.trim()) return toast.error("Refund reason is mandatory for audit");
+    setSaving(true);
+    try {
+      const { data: resp } = await axios.post(
+        `${API_ENDPOINTS.BILLING}/advance/${advance._id}/refund`,
+        {
+          mode,
+          reason: reason.trim(),
+          refundReason: reason.trim(),
+          refundedBy: refundedBy || undefined,
+          transactionId: txnId || undefined,
+        },
+      );
+      toast.success(`Refunded ${fmtCur(remaining)} from advance ${advance.receiptNumber}`);
+      onDone(resp?.data || resp?.advance || advance);
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Refund failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="rx-modal-backdrop" onClick={onClose}>
+      <div className="rx-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="rx-modal-head rx-modal-head--danger">
+          <i className="pi pi-undo" />
+          <span className="rx-modal-title">
+            Refund Advance — {advance?.receiptNumber}
+          </span>
+          <button className="rx-modal-close" onClick={onClose}>×</button>
+        </div>
+        <div className="rx-modal-body">
+          <div className="rx-banner rx-banner--danger">
+            ⚠ Refunding the <strong>unspent</strong> portion of this deposit.
+            {applied > 0
+              ? ` ${fmtCur(applied)} already applied to bills stays untouched in the audit trail.`
+              : " No portion of this deposit has been applied to any bill yet."}
+          </div>
+
+          {/* Quick summary card */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, margin: "8px 0 14px" }}>
+            <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: 10 }}>
+              <div style={{ fontSize: 11, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>Deposited</div>
+              <div style={{ fontFamily: "'DM Mono', monospace", fontWeight: 800, fontSize: 16, color: "#0f172a" }}>{fmtCur(total)}</div>
+            </div>
+            <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: 10 }}>
+              <div style={{ fontSize: 11, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>Applied</div>
+              <div style={{ fontFamily: "'DM Mono', monospace", fontWeight: 800, fontSize: 16, color: "#0f172a" }}>{fmtCur(applied)}</div>
+            </div>
+            <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: 10 }}>
+              <div style={{ fontSize: 11, color: "#b91c1c", textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>To Refund</div>
+              <div style={{ fontFamily: "'DM Mono', monospace", fontWeight: 800, fontSize: 16, color: "#dc2626" }}>{fmtCur(remaining)}</div>
+            </div>
+          </div>
+
+          <div className="his-field-group">
+            <label className="his-label">Refund Mode *</label>
+            <div className="rx-grid-5">
+              {MODES.map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  className={`rx-slot ${mode === m ? "rx-slot--selected" : ""}`}
+                  onClick={() => setMode(m)}
+                >
+                  {m === "BANK_TRANSFER" ? "BANK" : m}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="his-field-group">
+            <label className="his-label">Reason *</label>
+            <textarea
+              className="his-textarea"
+              rows={3}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="e.g. Patient discharged with leftover credit, admission cancelled, duplicate deposit…"
+            />
+          </div>
+
+          <div className="rx-grid-2">
+            <div className="his-field-group">
+              <label className="his-label">Refunded By</label>
+              <input
+                className="his-field"
+                value={refundedBy}
+                onChange={(e) => setRefundedBy(e.target.value)}
+                placeholder="Reception staff name"
+              />
+            </div>
+            {mode !== "CASH" && (
+              <div className="his-field-group">
+                <label className="his-label">
+                  {mode === "UPI" ? "UPI Ref" : mode === "BANK_TRANSFER" ? "Transfer Ref" : "Transaction ID"}
+                </label>
+                <input
+                  className="his-field"
+                  value={txnId}
+                  onChange={(e) => setTxnId(e.target.value)}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="rx-modal-foot">
+          <button className="rx-modal-btn" onClick={onClose}>Cancel</button>
+          <button
+            className="rx-modal-btn rx-modal-btn--danger"
+            disabled={saving || remaining <= 0}
+            onClick={submit}
+          >
+            <i className="pi pi-undo" /> {saving ? "Refunding…" : `Refund ${fmtCur(remaining)}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ───────────────────────────────────────────────────────────── */
+
 function CancelBillModal({ bill, onClose, onDone }) {
   const [reason, setReason] = useState("");
   const [cancelledBy, setCancelledBy] = useState("");
@@ -2288,6 +3079,30 @@ function receiptHTML(bill, patient) {
       <td style="text-align:right">${fmtCur(p.amount)}</td>
     </tr>`).join("");
 
+  // R7aa: same line-item fallback as the live BillDetail tile — guards
+  // the print receipt against legacy bills whose parent totals never
+  // got recomputed. Don't show a printed bill with ₹0 net under a list
+  // of paid items.
+  const _num = (v) => {
+    if (v == null) return 0;
+    if (typeof v === "object" && v.toString) v = v.toString();
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const _itemGross    = (bill.billItems || []).reduce((s, i) => s + _num(i.unitPrice) * _num(i.quantity || 1), 0);
+  const _itemDiscount = (bill.billItems || []).reduce((s, i) => s + _num(i.discountAmount), 0);
+  const _itemTax      = (bill.billItems || []).reduce((s, i) => s + _num(i.taxAmount), 0);
+  const _itemNet      = (bill.billItems || []).reduce((s, i) => s + _num(i.netAmount), 0);
+  const _paidFromRows = (bill.payments || []).reduce((s, p) => s + _num(p.amount), 0);
+  const grossPrint    = _num(bill.grossAmount)   || _itemGross;
+  const discountPrint = _num(bill.totalDiscount) || _itemDiscount;
+  const taxPrint      = _num(bill.taxAmount)     || _itemTax;
+  const netPrint      = _num(bill.netAmount)     || _itemNet;
+  const balancePrint  = _num(bill.netAmount) > 0
+    ? _num(bill.balanceAmount)
+    : Math.max(0, netPrint - _paidFromRows);
+  const paidPrint     = Math.max(0, netPrint - balancePrint);
+
   return `<!doctype html><html><head><title>Receipt ${bill.billNumber}</title>
   <style>
     body { font-family: Arial, sans-serif; padding: 20px; color: #0f172a; font-size: 13px; }
@@ -2323,12 +3138,12 @@ function receiptHTML(bill, patient) {
     <tbody>${items}</tbody></table>
 
     <div class="totals">
-      <div class="row"><span>Gross:</span><strong>${fmtCur(bill.grossAmount)}</strong></div>
-      <div class="row"><span>Discount:</span><strong>− ${fmtCur(bill.totalDiscount)}</strong></div>
-      <div class="row"><span>Tax:</span><strong>${fmtCur(bill.taxAmount)}</strong></div>
-      <div class="row"><span><strong>Net Payable:</strong></span><strong>${fmtCur(bill.netAmount)}</strong></div>
-      <div class="row" style="color:#15803d"><span>Paid:</span><strong>${fmtCur((bill.netAmount || 0) - (bill.balanceAmount || 0))}</strong></div>
-      <div class="row" style="color:#b91c1c"><span><strong>Balance Due:</strong></span><strong>${fmtCur(bill.balanceAmount)}</strong></div>
+      <div class="row"><span>Gross:</span><strong>${fmtCur(grossPrint)}</strong></div>
+      <div class="row"><span>Discount:</span><strong>− ${fmtCur(discountPrint)}</strong></div>
+      <div class="row"><span>Tax:</span><strong>${fmtCur(taxPrint)}</strong></div>
+      <div class="row"><span><strong>Net Payable:</strong></span><strong>${fmtCur(netPrint)}</strong></div>
+      <div class="row" style="color:#15803d"><span>Paid:</span><strong>${fmtCur(paidPrint)}</strong></div>
+      <div class="row" style="color:#b91c1c"><span><strong>Balance Due:</strong></span><strong>${fmtCur(balancePrint)}</strong></div>
     </div>
 
     ${payments ? `<h3 style="margin-top:18px; font-size:13px;">Payments</h3>

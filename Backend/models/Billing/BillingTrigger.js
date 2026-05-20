@@ -107,6 +107,28 @@ const BillingTriggerSchema = new mongoose.Schema({
   timestamps: true });
 
 // Compound index for daily dedup
+// R7ap-F10/D7-04/D10-02: PARTIAL UNIQUE on (admissionId, serviceCode, dateKey)
+// for active daily charges. Previously this index was non-unique so the
+// `dailyDedup` helper had a read-then-write race — cron + manual at the
+// same instant could both pass findOne and both create, double-charging
+// the patient's bed/nursing for that day. Multi-instance deploy made it
+// worse — N replicas would N-times-charge.
+//
+// The partial filter limits the unique constraint to "live" rows so that
+// cancelled/voided/skipped triggers can coexist on the same dedup key
+// without blocking a legitimate re-creation.
+BillingTriggerSchema.index(
+  { admissionId: 1, serviceCode: 1, dateKey: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      dateKey: { $exists: true, $type: "string" },
+      status:  { $in: ["completed", "billed", "pending", "pending-review"] },
+    },
+    name: "uniq_daily_charge",
+  },
+);
+// Legacy index kept for the query shape used elsewhere (status filter inside).
 BillingTriggerSchema.index({ admissionId: 1, serviceCode: 1, dateKey: 1, status: 1 });
 BillingTriggerSchema.index({ admissionId: 1, sourceType: 1, createdAt: -1 });
 // R7t: speeds up "pending review" sweeps + per-admission status queries.

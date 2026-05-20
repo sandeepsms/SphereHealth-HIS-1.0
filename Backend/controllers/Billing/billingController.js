@@ -357,19 +357,20 @@ exports.getSummary = async (req, res) => {
 exports.getRevenueBreakdown = async (req, res) => {
   try {
     const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+    const { toNum } = require("../../utils/money");        // R7ap-F1: Decimal128 unwrap
     const from = req.query.from ? new Date(`${req.query.from}T00:00:00`) : new Date(Date.now() - 30 * 86400000);
     const to   = req.query.to   ? new Date(`${req.query.to}T23:59:59.999`) : new Date();
     const bills = await PatientBill.find({
       createdAt: { $gte: from, $lte: to },
-      billStatus: { $nin: ["DRAFT"] },
+      billStatus: { $nin: ["DRAFT", "CANCELLED"] },        // R7ap-D5-12: also exclude cancelled
     }).lean();
 
     const inc = (map, key, paid, gross = 0) => {
       const k = (key || "Other").toString();
       if (!map[k]) map[k] = { count: 0, paid: 0, gross: 0 };
       map[k].count += 1;
-      map[k].paid  += Number(paid || 0);
-      map[k].gross += Number(gross || 0);
+      map[k].paid  += toNum(paid);
+      map[k].gross += toNum(gross);
     };
     const byCategory = {};
     const byVisitType = {};
@@ -379,8 +380,9 @@ exports.getRevenueBreakdown = async (req, res) => {
 
     let grandPaid = 0, grandGross = 0, txnCount = 0;
     for (const b of bills) {
-      const paid  = Number(b.advancePaid ?? b.totalPaid ?? b.amountPaid ?? 0);
-      const gross = Number(b.netAmount ?? b.netPayable ?? b.grossAmount ?? b.totalAmount ?? 0);
+      // R7ap-F1: toNum() unwraps Decimal128 objects (which Number() would NaN on).
+      const paid  = toNum(b.advancePaid ?? b.totalPaid ?? b.amountPaid ?? 0);
+      const gross = toNum(b.netAmount ?? b.netPayable ?? b.grossAmount ?? b.totalAmount ?? 0);
       grandPaid += paid; grandGross += gross; txnCount += 1;
       inc(byVisitType, b.visitType || b.patientType || "Other", paid, gross);
       inc(byPayer,     b.paymentType || "Cash",                  paid, gross);
@@ -396,16 +398,23 @@ exports.getRevenueBreakdown = async (req, res) => {
       // (so a Pharmacy line that's 30% of the bill's gross gets credited
       // with 30% of the bill's paid amount). For bills where gross is 0
       // (corner case: fully discounted), we fall back to per-item count.
-      const billItemsGross = (b.billItems || []).reduce(
-        (s, it) => s + Number(it.grossAmount || it.unitPrice * (it.quantity || 1) || 0),
+      // R7ap-F36/D5-08: skip items that have been excluded by an ANH
+      // package attachment. Pre-R7ap the byCategory chart double-counted
+      // room/nursing line items AND the package bundle for the same bill.
+      const _items = (b.billItems || []).filter((it) => !it.excludedByPackage);
+      const billItemsGross = _items.reduce(
+        (s, it) => s + toNum(it.grossAmount || toNum(it.unitPrice) * (toNum(it.quantity) || 1)),
         0,
       );
-      for (const it of (b.billItems || [])) {
-        const itGross = Number(it.grossAmount || it.unitPrice * (it.quantity || 1) || 0);
+      for (const it of _items) {
+        const itGross = toNum(it.grossAmount || toNum(it.unitPrice) * (toNum(it.quantity) || 1));
         const itPaidShare = billItemsGross > 0
           ? (itGross / billItemsGross) * paid
           : paid / Math.max(1, (b.billItems || []).length); // equal split fallback
-        const cat = (it.category || it.serviceName || "Other").toString();
+        // R7ap-D2-15: drop serviceName fallback — was exploding chart into slivers.
+        // Missing-category lines now aggregate into "Uncategorized" so the
+        // cleanup signal sticks out instead of polluting the bar chart.
+        const cat = (it.category || "Uncategorized").toString();
         if (!byCategory[cat]) byCategory[cat] = { count: 0, paid: 0, gross: 0 };
         byCategory[cat].count += 1;
         byCategory[cat].gross += itGross;
@@ -453,20 +462,27 @@ exports.getRevenueBreakdown = async (req, res) => {
 exports.getAging = async (req, res) => {
   try {
     const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+    const { toNum } = require("../../utils/money");        // R7ap-F1: Decimal128 unwrap
     const asOf = req.query.asOf ? new Date(`${req.query.asOf}T23:59:59.999`) : new Date();
 
     const open = await PatientBill.find({
       billStatus: { $in: ["GENERATED", "PARTIAL"] },
-    }).select("billNumber UHID patientName netAmount netPayable grossAmount advancePaid totalPaid amountPaid paymentType billStatus createdAt").lean();
+    }).select("billNumber UHID patientName netAmount netPayable grossAmount balanceAmount patientPayableAmount advancePaid totalPaid amountPaid paymentType tpaClaimStatus billStatus createdAt billItems").lean();
 
     const buckets = { "0-30": { count: 0, amount: 0 }, "31-60": { count: 0, amount: 0 }, "61-90": { count: 0, amount: 0 }, "90+": { count: 0, amount: 0 } };
     const patientCredit = [];
     const tpaCredit     = [];
 
     for (const b of open) {
-      const paid    = Number(b.advancePaid ?? b.totalPaid ?? b.amountPaid ?? 0);
-      const gross   = Number(b.netAmount ?? b.netPayable ?? b.grossAmount ?? 0);
-      const due     = Math.max(gross - paid, 0);
+      // R7ap-D2-06: prefer bill.balanceAmount (authoritative) — refunds inflate
+      // (gross−paid) when applied to PARTIAL bills via negative rows. Fall back
+      // to items-net (R7am pattern) when balanceAmount is stale-zero.
+      const itemsNet = (b.billItems || []).reduce((s, it) => s + toNum(it.netAmount), 0);
+      const refNet   = Math.max(toNum(b.patientPayableAmount), toNum(b.netAmount), itemsNet);
+      const stored   = toNum(b.balanceAmount);
+      const paid     = toNum(b.advancePaid ?? b.totalPaid ?? b.amountPaid ?? 0);
+      const gross    = toNum(b.netAmount ?? b.netPayable ?? b.grossAmount ?? 0);
+      const due      = stored > 0 ? stored : Math.max(refNet - Math.max(0, paid), 0);
       if (due <= 0) continue;
       const ageDays = Math.floor((asOf - new Date(b.createdAt)) / 86400000);
       const bucket  = ageDays <= 30 ? "0-30" : ageDays <= 60 ? "31-60" : ageDays <= 90 ? "61-90" : "90+";
@@ -534,7 +550,14 @@ exports.listBills = async (req, res) => {
         .lean(),
       PatientBill.countDocuments(query),
     ]);
-    bills.forEach(b => { if (!b.patientName) b.patientName = b.patient?.fullName || ""; });
+    // R7ap-F1: .lean() bypasses the toJSON decimalToNumber transform — money
+    // fields arrive as raw Decimal128 objects that Number() coerces to NaN.
+    // Walk every doc and unwrap before sending to the wire.
+    const { decimalToNumber } = require("../../utils/money");
+    bills.forEach((b) => {
+      decimalToNumber(null, b);
+      if (!b.patientName) b.patientName = b.patient?.fullName || "";
+    });
     return res.json({
       success: true,
       data: bills,
@@ -755,12 +778,18 @@ exports.cancelTrigger = async (req, res, next) => {
 exports.getTPACases = async (req, res, next) => {
   try {
     const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+    const { safeRegex } = require("../../utils/queryGuards");
+    const { decimalToNumber } = require("../../utils/money");
+    // R7ap-D3-08: gate on active states only so DRAFT/CANCELLED/REFUNDED
+    // bills don't pollute the TPA receivables count + outstanding total.
     const filter = {
       paymentType: { $in: ["TPA", "CORPORATE"] },
+      billStatus:  { $in: ["GENERATED", "PARTIAL", "PAID"] },
     };
     if (req.query.status) filter.tpaClaimStatus = req.query.status;
+    // R7ap-D3-11: escape user-supplied regex to prevent ReDoS / dump-all.
     if (req.query.q) {
-      const q = new RegExp(req.query.q, "i");
+      const q = safeRegex(req.query.q);
       filter.$or = [{ patientName: q }, { UHID: q }, { billNumber: q }, { tpaClaimNumber: q }];
     }
     const list = await PatientBill.find(filter)
@@ -769,9 +798,15 @@ exports.getTPACases = async (req, res, next) => {
       .sort({ updatedAt: -1 })
       .limit(500)
       .lean();
-    // Denormalise patientName for the UI so the row labels are filled in.
-    list.forEach(b => { if (!b.patientName) b.patientName = b.patient?.fullName || ""; });
-    res.json({ success: true, count: list.length, data: list });
+    // R7ap-F1: .lean() bypasses Decimal128→Number transform; unwrap before wire.
+    list.forEach((b) => {
+      decimalToNumber(null, b);
+      if (!b.patientName) b.patientName = b.patient?.fullName || "";
+    });
+    // R7ap-F23/D3-08: standardise to {success, data, meta} shape across
+    // all billing endpoints. Frontend `r.data?.data || r.data?.bills` chain
+    // becomes a clean `r.data.data` access.
+    res.json({ success: true, data: list, meta: { count: list.length } });
   } catch (e) { next(e); }
 };
 
@@ -839,12 +874,40 @@ exports.tpaApprove = async (req, res, next) => {
         message: "Approval is only valid for TPA or Corporate bills",
       });
     }
-    bill.tpaClaimStatus    = "APPROVED";
-    bill.tpaApprovedAmount = Number(req.body.approvedAmount) || bill.tpaPayableAmount || 0;
-    bill.tpaApprovedAt     = new Date();
-    bill.tpaApprovedBy     = req.body.approvedBy || req.user?.fullName || "TPA Desk";
-    bill.markModified("tpaClaimStatus");
-    await bill.save();
+    const _priorTpa     = bill.tpaClaimStatus;
+    const _priorApprAmt = Number(bill.tpaApprovedAmount || 0);
+    // R7ap-F26/D7-10: VersionError retry — concurrent cashier-payment vs
+    // TPA-approval on the same bill no longer 500s; second writer retries.
+    const PatientBillM = require("../../models/PatientBillModel/PatientBillModel");
+    const retryVE = require("../../utils/retryVersionError");
+    const updatedBill = await retryVE(async (attempt) => {
+      const b = attempt === 0 ? bill : await PatientBillM.findById(req.params.billId);
+      b.tpaClaimStatus    = "APPROVED";
+      b.tpaApprovedAmount = Number(req.body.approvedAmount) || b.tpaPayableAmount || 0;
+      b.tpaApprovedAt     = new Date();
+      b.tpaApprovedBy     = req.body.approvedBy || req.user?.fullName || "TPA Desk";
+      b.markModified("tpaClaimStatus");
+      await b.save();
+      return b;
+    }, { label: "tpaApprove" });
+    bill.tpaClaimStatus    = updatedBill.tpaClaimStatus;
+    bill.tpaApprovedAmount = updatedBill.tpaApprovedAmount;
+    // R7ap-F15: TPA approve audit
+    try {
+      const { emit } = require("../../models/Billing/BillingAudit");
+      await emit({
+        event:        "TPA_APPROVED",
+        UHID:         bill.UHID,
+        patientId:    bill.patient,
+        billId:       bill._id,
+        billNumber:   bill.billNumber,
+        amount:       bill.tpaApprovedAmount,
+        actorName:    bill.tpaApprovedBy,
+        reason:       req.body.notes || "TPA claim approved",
+        before:       { tpaClaimStatus: _priorTpa, tpaApprovedAmount: _priorApprAmt },
+        after:        { tpaClaimStatus: "APPROVED", tpaApprovedAmount: bill.tpaApprovedAmount },
+      }, { req });
+    } catch (_) { /* audit best-effort */ }
     res.json({ success: true, data: bill });
   } catch (e) { next(e); }
 };
@@ -891,7 +954,24 @@ exports.cancelBill = async (req, res, next) => {
     const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
     const bill = await PatientBill.findById(req.params.billId);
     if (!bill) return res.status(404).json({ success: false, message: "Bill not found" });
-    const paid = (bill.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
+
+    // R7ab: state-machine guard. Terminal statuses (CANCELLED / REFUNDED
+    // / PAID) cannot be cancelled — previously a REFUNDED bill could be
+    // re-cancelled because the `paid` aggregate (negatives + positives)
+    // summed to 0 and bypassed the guard, leaving the bill double-
+    // labelled in the audit register.
+    if (["CANCELLED", "REFUNDED", "PAID"].includes(bill.billStatus)) {
+      return res.status(409).json({
+        success: false,
+        message: `Cannot cancel — bill is already in '${bill.billStatus}' state.`,
+      });
+    }
+    // R7ab: compute "paid" from positive rows only — a refund row is a
+    // negative entry, so the simple sum lets a fully-refunded bill look
+    // unpaid. Cashier-intent collection is what we want to gate on.
+    const paid = (bill.payments || []).reduce(
+      (s, p) => s + Math.max(0, Number(p.amount || 0)), 0,
+    );
     if (paid > 0) {
       return res.status(400).json({
         success: false,
@@ -903,6 +983,9 @@ exports.cancelBill = async (req, res, next) => {
     }
     const reason     = String(req.body.reason).trim();
     const cancelledBy = req.body.cancelledBy || req.user?.fullName || "Reception";
+    // R7ap-F15: capture before-state for the BillingAudit emit at the end.
+    const _priorBillStatus = bill.billStatus;
+    const _priorTpaStatus  = bill.tpaClaimStatus;
 
     bill.billStatus = "CANCELLED";
     bill.remarks    = (bill.remarks || "") + ` | Cancelled: ${reason} (by ${cancelledBy})`;
@@ -933,6 +1016,21 @@ exports.cancelBill = async (req, res, next) => {
     }
 
     await bill.save();
+    // R7ap-F15: cancel-bill audit
+    try {
+      const { emit } = require("../../models/Billing/BillingAudit");
+      await emit({
+        event:        "BILL_CANCELLED",
+        UHID:         bill.UHID,
+        patientId:    bill.patient,
+        billId:       bill._id,
+        billNumber:   bill.billNumber,
+        actorName:    cancelledBy,
+        reason:       reason,
+        before:       { billStatus: _priorBillStatus, tpaClaimStatus: _priorTpaStatus },
+        after:        { billStatus: "CANCELLED", tpaClaimStatus: bill.tpaClaimStatus },
+      }, { req });
+    } catch (_) { /* audit best-effort */ }
     return res.json({ success: true, data: bill });
   } catch (e) { next(e); }
 };
@@ -1036,23 +1134,46 @@ exports.tpaSettle = async (req, res, next) => {
 
     bill.payments = bill.payments || [];
     if (settledAmount > 0) {
+      // R7ap-F28/D6-17: capture TDS deducted by TPA at settlement time
+      // (typically 10% u/s 194J for professional fees, 2% u/s 194C for
+      // contractual). Hospital books need it for 26AS reconciliation.
+      const tdsAmount   = Number(req.body.tdsAmount || 0);
+      const tdsCertNo   = String(req.body.tdsCertificateNo || "").trim() || null;
+      const tdsSection  = String(req.body.tdsSection || "").trim() || null;
       bill.payments.push({
         amount:        settledAmount,
         paymentMode:   "TPA_CLAIM",
         transactionId: String(req.body.transactionId).trim(),
         paidAt:        settledOn,
         receivedBy:    settledBy,
-        remarks:       req.body.remarks || `TPA settlement against approved ₹${approved}`,
+        remarks:       req.body.remarks || `TPA settlement against approved ₹${approved}` + (tdsAmount > 0 ? ` (TDS ₹${tdsAmount} ${tdsSection || ""})` : ""),
+        tdsAmount,
+        tdsCertificateNo: tdsCertNo,
+        tdsSection,
       });
     }
 
     // Reconcile shortfall.
+    //
+    // R7ab CRITICAL fix: the previous R7z version of this block mutated
+    // `bill.patientPayableAmount` directly, but the bill's pre-save
+    // recalcTotals() ALWAYS overwrites that field from sum(item.tpaPay) /
+    // billing-type — so the bump never persisted and the patient was
+    // never charged for the TPA shortfall. We now route the shortfall
+    // through fields the hook respects:
+    //   • PATIENT (default) — flip every line item's tpaPayableAmount to
+    //     0 + patientPayableAmount to its gross share. The hook re-sums
+    //     and `patientPayableAmount` ends up = net (sans extraDiscount).
+    //   • WRITEOFF — add to extraDiscount + reason. The hook subtracts
+    //     extraDiscount from netAmount + patientPayableAmount in place,
+    //     collapsing the bill to whatever the TPA actually paid.
     const priorStatus  = bill.tpaClaimStatus;
     const priorPatient = toN(bill.patientPayableAmount);
+    const priorExtra   = toN(bill.extraDiscount);
     if (shortfall > 0) {
       if (shortfallTo === "WRITEOFF") {
-        // Treat as additional discount — collapses the bill.
-        const priorExtra = toN(bill.extraDiscount);
+        // Write-off — fold the shortfall into extraDiscount so recalcTotals
+        // collapses the bill (net shrinks to what was actually paid).
         bill.extraDiscount = priorExtra + shortfall;
         bill.extraDiscountReason = (bill.extraDiscountReason || "") +
           ` | TPA short-pay write-off ₹${shortfall.toFixed(2)} on UTR ${req.body.transactionId}`;
@@ -1061,15 +1182,45 @@ exports.tpaSettle = async (req, res, next) => {
         bill.remarks = (bill.remarks || "") +
           ` | TPA settled ₹${settledAmount} of approved ₹${approved}; ₹${shortfall.toFixed(2)} written off`;
       } else {
-        // Default — bump patient liability by the shortfall.
-        bill.patientPayableAmount = priorPatient + shortfall;
+        // Patient liability bump — re-tag each TPA line item so the hook
+        // recomputes patientPayableAmount upward. We move the shortfall's
+        // worth of per-line tpaPayableAmount onto patientPayableAmount,
+        // proportional to each item's net contribution.
+        const totalTpaShare = (bill.billItems || []).reduce(
+          (s, i) => s + toN(i.tpaPayableAmount), 0);
+        if (totalTpaShare > 0) {
+          let remaining = shortfall;
+          for (const item of bill.billItems) {
+            const itemTpa = toN(item.tpaPayableAmount);
+            if (itemTpa <= 0) continue;
+            const moveRaw = (itemTpa / totalTpaShare) * shortfall;
+            const move = Math.min(moveRaw, itemTpa, remaining);
+            const itemPt = toN(item.patientPayableAmount);
+            item.tpaPayableAmount     = Number((itemTpa - move).toFixed(2));
+            item.patientPayableAmount = Number((itemPt + move).toFixed(2));
+            remaining -= move;
+            if (remaining <= 0.005) break;
+          }
+          bill.markModified("billItems");
+        } else {
+          // Lump-sum TPA bill with no per-line split (older data) — fold
+          // shortfall into extraDiscount with a NEGATIVE sign equivalent:
+          // we instead bump extraDiscount by 0 and ride on the patient
+          // share via a manual line. Cleanest fallback: mirror WRITEOFF
+          // path so the bill closes correctly but flag the TPA status
+          // PARTIAL so the receptionist knows to collect ₹shortfall.
+          bill.extraDiscount = priorExtra + shortfall;
+          bill.extraDiscountReason = (bill.extraDiscountReason || "") +
+            ` | TPA short-pay ₹${shortfall.toFixed(2)} (no per-line split — collected from patient at desk)`;
+          bill.extraDiscountBy = settledBy;
+        }
         bill.tpaClaimStatus = "PARTIAL_APPROVED";
         bill.remarks = (bill.remarks || "") +
           ` | TPA settled ₹${settledAmount} of approved ₹${approved}; ₹${shortfall.toFixed(2)} → patient liability`;
       }
     } else {
-      // Fully settled — keep APPROVED (don't downgrade to SETTLED, the
-      // enum doesn't have it; APPROVED + payment row is the signal).
+      // Fully settled — keep APPROVED (the schema enum has no SETTLED
+      // value; APPROVED + a TPA_CLAIM payment row is the signal).
       bill.remarks = (bill.remarks || "") + ` | TPA fully settled ₹${settledAmount} on UTR ${req.body.transactionId}`;
     }
 
@@ -1080,14 +1231,32 @@ exports.tpaSettle = async (req, res, next) => {
       by:     settledBy,
       type:   "EXTRA_DISCOUNT",   // re-use existing enum bucket for any financial event
       reason: `TPA settlement: paid ₹${settledAmount} of approved ₹${approved} (shortfall ₹${shortfall.toFixed(2)} → ${shortfallTo}). UTR: ${req.body.transactionId}`,
-      before: { tpaClaimStatus: priorStatus, patientPayableAmount: priorPatient },
-      after:  { tpaClaimStatus: bill.tpaClaimStatus, patientPayableAmount: toN(bill.patientPayableAmount), settledAmount },
+      before: { tpaClaimStatus: priorStatus, patientPayableAmount: priorPatient, extraDiscount: priorExtra },
+      after:  { tpaClaimStatus: bill.tpaClaimStatus, settledAmount, shortfallTo },
     });
 
     bill.markModified("tpaClaimStatus");
     bill.markModified("payments");
 
     await bill.save();
+    // R7ap-F15: TPA settle audit
+    try {
+      const { emit } = require("../../models/Billing/BillingAudit");
+      await emit({
+        event:        "TPA_SETTLED",
+        UHID:         bill.UHID,
+        patientId:    bill.patient,
+        billId:       bill._id,
+        billNumber:   bill.billNumber,
+        amount:       settledAmount,
+        paymentMode:  "TPA_CLAIM",
+        transactionId:req.body.transactionId,
+        actorName:    settledBy,
+        reason:       `TPA settled ₹${settledAmount} of approved ₹${approved} (shortfall ₹${shortfall.toFixed(2)} → ${shortfallTo}). UTR: ${req.body.transactionId}`,
+        before:       { tpaClaimStatus: priorStatus, patientPayableAmount: priorPatient, extraDiscount: priorExtra },
+        after:        { tpaClaimStatus: bill.tpaClaimStatus, settledAmount, shortfallTo },
+      }, { req });
+    } catch (_) { /* audit best-effort */ }
     return res.json({
       success: true,
       data: bill,
@@ -1107,30 +1276,41 @@ exports.tpaSettle = async (req, res, next) => {
      • Outstanding (advance dues + TPA pending)
      • Per-receptionist breakdown
 ───────────────────────────────────────────────────────────── */
+// R7ap-F24/D8-01: 30s LRU cache for Day Book — 5 cashiers refreshing the
+// dashboard no longer translates into 5 collection scans of PatientBill.
+const _collectionSummaryCache = require("../../utils/lruCache")({ max: 30, ttlMs: 30_000 });
+
 exports.getCollectionSummary = async (req, res, next) => {
   try {
-    const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
-    const Doctor      = require("../../models/Doctor/doctorModel");
+    const dateStr  = req.query.date || new Date().toISOString().slice(0, 10);
+    const cacheKey = `daybook:${dateStr}`;
+    const payload  = await _collectionSummaryCache.get(cacheKey, () => computeCollectionSummary(dateStr));
+    res.json(payload);
+  } catch (e) { next(e); }
+};
 
-    // Parse date or default to today
-    const dateStr = req.query.date || new Date().toISOString().slice(0, 10);
+async function computeCollectionSummary(dateStr) {
+  const PatientBill     = require("../../models/PatientBillModel/PatientBillModel");
+  const PatientAdvance  = require("../../models/PatientBillModel/PatientAdvanceModel");
+  const { toNum }       = require("../../utils/money");
+  {
     const dayStart = new Date(`${dateStr}T00:00:00`);
     const dayEnd   = new Date(`${dateStr}T23:59:59.999`);
 
-    // All bills created/updated today (cast a wide net — bill mutation captures the work)
-    // NOTE: PatientBill has no `doctor` ref field — populating it would throw
-    // StrictPopulateError on Mongoose 8 and 500 the entire endpoint. The
-    // per-doctor breakdown below correctly returns empty when bill.doctor is
-    // absent (documented system debt).
+    // R7ap-F1/F2/F12: switch attribution from bill.updatedAt to payments[].paidAt
+    // — fixes wrong-day attribution (D2-02, D5-04/06). DRAFT excluded (D2-01).
     const bills = await PatientBill.find({
+      billStatus: { $nin: ["DRAFT"] },
       $or: [
+        // Bills with at least one payment in window OR bills created in window
+        { "payments.paidAt": { $gte: dayStart, $lte: dayEnd } },
         { createdAt: { $gte: dayStart, $lte: dayEnd } },
-        { updatedAt: { $gte: dayStart, $lte: dayEnd } },
       ],
     }).lean();
 
     // Aggregators
     let totalCollected = 0, totalGross = 0, totalPending = 0, advanceDue = 0, tpaPending = 0;
+    let advancesApplied = 0, advanceDepositsIn = 0, advanceRefundsOut = 0, billRefundsOut = 0;
     let txnCount = 0;
     const byVisitType = { OPD: 0, IPD: 0, DC: 0, ER: 0, Services: 0, Other: 0 };
     const byVisitTxn  = { OPD: 0, IPD: 0, DC: 0, ER: 0, Services: 0, Other: 0 };
@@ -1139,18 +1319,47 @@ exports.getCollectionSummary = async (req, res, next) => {
     const byReceptionist = {};
 
     for (const b of bills) {
-      // PatientBillModel exposes paid as `advancePaid` (the pre-save hook
-      // sums the payments[] array). Older bills used `totalPaid`/`amountPaid`
-      // — keep them as fallbacks for compatibility.
-      const paid    = Number(b.advancePaid ?? b.totalPaid ?? b.amountPaid ?? 0);
-      const gross   = Number(b.netAmount ?? b.netPayable ?? b.grossAmount ?? b.totalAmount ?? 0);
-      const pending = Math.max(gross - paid, 0);
-      totalCollected += paid;
-      totalGross     += gross;
-      totalPending   += pending;
-      txnCount       += 1;
+      // R7ap-F1: toNum() unwraps Decimal128. R7ap-D2-02: today-only attribution.
+      const gross = toNum(b.netAmount ?? b.netPayable ?? b.grossAmount ?? b.totalAmount);
+      txnCount += 1;
+      // Per-payment attribution: only sum payment rows that landed today.
+      // Refunds (negative rows) net into today's collection on the refund date.
+      const payments = Array.isArray(b.payments) ? b.payments : [];
+      let billPaidToday = 0;
+      for (const p of payments) {
+        if (p.voidedAt) continue;                                          // R7ap-D2-03: skip voided
+        const pAt = p.paidAt ? new Date(p.paidAt) : null;
+        if (!pAt || pAt < dayStart || pAt > dayEnd) continue;
+        const amt = toNum(p.amount);
+        const m   = (p.mode || p.paymentMode || "Other").toString();
+        // R7ap-F2/D5-03: ADVANCE_ADJUSTMENT is an INTERNAL transfer, not new
+        // cash. Track separately so the accountant sees what was "applied
+        // from pool" without confusing it with cash inflow.
+        if (m === "ADVANCE_ADJUSTMENT") {
+          if (amt > 0) advancesApplied += amt;
+          billPaidToday += amt; // counts toward bill-level paid (it's still a payment)
+          continue;
+        }
+        // Separate refund (negative payment) totals from gross collection so
+        // Day Book can show "Cash In" / "Refund Out" cleanly.
+        if (amt < 0) {
+          billRefundsOut += -amt;
+        } else {
+          totalCollected += amt;
+        }
+        if (byMode[m] === undefined) byMode[m] = 0;
+        byMode[m] += amt;
+        billPaidToday += amt;
+      }
+      // Bill-level pending derived from authoritative balance (R7am pattern).
+      const itemsNet  = (b.billItems || []).reduce((s, it) => s + toNum(it.netAmount), 0);
+      const refNet    = Math.max(toNum(b.patientPayableAmount), gross, itemsNet);
+      const positive  = payments.reduce((s, p) => { const v = toNum(p.amount); return s + (v > 0 ? v : 0); }, 0);
+      const pending   = Math.max(0, refNet - positive);
+      totalGross   += gross;
+      totalPending += pending;
 
-      // Visit type
+      // Visit type bucket — credit each bill's TODAY paid amount.
       const vt = (b.visitType || b.patientType || "Other").toString().toUpperCase();
       const key = vt.startsWith("OPD")        ? "OPD"
                 : vt.startsWith("IPD")        ? "IPD"
@@ -1158,23 +1367,8 @@ exports.getCollectionSummary = async (req, res, next) => {
                 : vt.startsWith("ER") || vt.includes("EMERGENCY") ? "ER"
                 : vt.startsWith("SERV")       ? "Services"
                 : "Other";
-      byVisitType[key] += paid;
+      byVisitType[key] += Math.max(0, billPaidToday);
       byVisitTxn[key]  += 1;
-
-      // Payment mode (each bill may have multiple payment rows)
-      const payments = Array.isArray(b.payments) ? b.payments : [];
-      if (payments.length === 0 && paid > 0) {
-        // Fallback to single paymentType on bill
-        const m = (b.paymentType || "Cash").toString();
-        byMode[m] = (byMode[m] || 0) + paid;
-      } else {
-        for (const p of payments) {
-          const m = (p.mode || p.paymentMode || "Other").toString();
-          const amt = Number(p.amount || 0);
-          if (byMode[m] === undefined) byMode[m] = 0;
-          byMode[m] += amt;
-        }
-      }
 
       // Doctor (consultation only — OPD/ER)
       if (b.doctor) {
@@ -1187,14 +1381,14 @@ exports.getCollectionSummary = async (req, res, next) => {
           amount:   0,
         };
         byDoctor[did].count += 1;
-        byDoctor[did].amount += paid;
+        byDoctor[did].amount += Math.max(0, billPaidToday);
       }
 
       // Per-receptionist (createdBy or last updater)
       const recId = String(b.createdBy || b.updatedBy || "unknown");
       if (!byReceptionist[recId]) byReceptionist[recId] = { id: recId, name: b.createdByName || "Unknown", count: 0, amount: 0 };
       byReceptionist[recId].count += 1;
-      byReceptionist[recId].amount += paid;
+      byReceptionist[recId].amount += Math.max(0, billPaidToday);
 
       // Outstanding categorization
       if (pending > 0) {
@@ -1204,24 +1398,50 @@ exports.getCollectionSummary = async (req, res, next) => {
       }
     }
 
-    res.json({
+    // R7ap-F12/D5-02: include advance DEPOSITS taken today (real cash inflow).
+    // PatientAdvance.create is the first cash-touch — bills only see the
+    // money later via ADVANCE_ADJUSTMENT (which we explicitly exclude above).
+    const advancesToday = await PatientAdvance.find({
+      paidAt: { $gte: dayStart, $lte: dayEnd },
+    }).lean();
+    for (const a of advancesToday) {
+      const amt = toNum(a.amount);
+      const m   = (a.paymentMode || "Cash").toString();
+      advanceDepositsIn += amt;
+      totalCollected   += amt;
+      if (byMode[m] === undefined) byMode[m] = 0;
+      byMode[m] += amt;
+    }
+
+    // R7ap-F11/D5-01: include advance REFUNDS issued today (cash OUTflow).
+    const refundsToday = await PatientAdvance.find({
+      status:     "REFUNDED",
+      refundedAt: { $gte: dayStart, $lte: dayEnd },
+    }).lean();
+    for (const a of refundsToday) {
+      const amt  = toNum(a.refundedAmount);
+      const mode = (a.refundMode || "Cash").toString();
+      advanceRefundsOut += amt;
+      if (byMode[mode] === undefined) byMode[mode] = 0;
+      byMode[mode] -= amt; // refund out reduces mode net
+    }
+
+    // R7ap-F11/F12: net cash flow = collections − bill refunds − advance refunds.
+    const netCashFlow = totalCollected - billRefundsOut - advanceRefundsOut;
+    return {
       success: true,
       date: dateStr,
       summary: {
-        totalCollected,
-        totalGross,
-        totalPending,
-        txnCount,
-        advanceDue,
-        tpaPending,
+        totalCollected, totalGross, totalPending, txnCount, advanceDue, tpaPending,
+        advancesApplied, advanceDepositsIn, advanceRefundsOut, billRefundsOut, netCashFlow,
       },
       byVisitType: Object.entries(byVisitType).map(([type, amount]) => ({ type, amount, count: byVisitTxn[type] || 0 })),
-      byMode:      Object.entries(byMode).filter(([, v]) => v > 0).map(([mode, amount]) => ({ mode, amount })),
+      byMode:      Object.entries(byMode).filter(([, v]) => v !== 0).map(([mode, amount]) => ({ mode, amount })),
       byDoctor:    Object.values(byDoctor).sort((a, b) => b.amount - a.amount),
       byReceptionist: Object.values(byReceptionist),
-    });
-  } catch (e) { next(e); }
-};
+    };
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────
 // PATIENT ADVANCE — UHID-level prepayment ledger
@@ -1252,9 +1472,268 @@ exports.listAdvancesByUHID = async (req, res) => {
     const unspentOnly = String(req.query?.unspentOnly || "").toLowerCase() === "true";
     const rows = await svc.listAdvancesForUHID(req.params.UHID, { unspentOnly });
     const totalUnspent = await svc.getUnspentBalance(req.params.UHID);
-    res.json({ success: true, data: { advances: rows, totalUnspent } });
+    // R7ap-F23/D3-08: dual shape during migration — new clients can use
+    // top-level `data` (array) + `meta.totalUnspent`, old clients still
+    // get `data.advances` and `data.totalUnspent`. Frontend should
+    // migrate to the new shape and the legacy nested form can be
+    // removed in a future cleanup.
+    res.json({
+      success: true,
+      data:    { advances: rows, totalUnspent },   // legacy
+      advances: rows,                              // new (top-level alias)
+      meta:    { totalUnspent, count: rows.length },
+    });
   } catch (e) {
     res.status(500).json({ success: false, message: e?.message || "Advance list failed" });
+  }
+};
+
+// R7ap-F34/D6-10: GET /api/billing/sequence-audit?year=YYYY
+// Detect gaps in BILL-* / ADV-* / CN-* sequences (Income-Tax §44AB
+// requires gap-less invoice + receipt sequences). Returns the list of
+// MISSING numbers per series, so accountant can investigate (typically
+// a save that failed AFTER the counter incremented).
+exports.sequenceAudit = async (req, res, next) => {
+  try {
+    const year = Number(req.query.year) || new Date().getFullYear();
+    const PatientBill    = require("../../models/PatientBillModel/PatientBillModel");
+    const PatientAdvance = require("../../models/PatientBillModel/PatientAdvanceModel");
+    const CreditNote     = require("../../models/Billing/CreditNote");
+
+    const checkGaps = async (Model, field, prefix, padLen) => {
+      const rows = await Model.find({ [field]: { $regex: `^${prefix}` } }).select(field).lean();
+      const nums = rows.map((r) => parseInt(r[field].slice(-padLen), 10)).filter(Number.isFinite).sort((a, b) => a - b);
+      if (nums.length === 0) return { prefix, total: 0, max: 0, missing: [] };
+      const max = nums[nums.length - 1];
+      const present = new Set(nums);
+      const missing = [];
+      for (let i = 1; i <= max; i++) if (!present.has(i)) missing.push(`${prefix}${String(i).padStart(padLen, "0")}`);
+      return { prefix, total: nums.length, max, missing };
+    };
+
+    const [bills, advances, creditNotes] = await Promise.all([
+      checkGaps(PatientBill,    "billNumber",     `BILL-${year}-`, 6),
+      checkGaps(PatientAdvance, "receiptNumber",  `ADV-${year}-`,  6),
+      checkGaps(CreditNote,     "creditNoteNumber", `CN-${year}-`, 6),
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        year,
+        bills,
+        advances,
+        creditNotes,
+        anyGaps: bills.missing.length + advances.missing.length + creditNotes.missing.length > 0,
+      },
+    });
+  } catch (e) { next(e); }
+};
+
+// R7ap-F17/D9-13: GET /api/billing/uhid/:UHID/summary
+// Single canonical totals endpoint for a UHID — used by ReceptionBilling,
+// PatientLookupPage, IPDBillingLedger, DischargeQueue. Pre-R7ap each page
+// computed its own totals from /billing/uhid/:UHID with different field
+// fallbacks (some used `b.totalPaid ?? b.paidAmount`, others `gross - due`)
+// and got different numbers for the same patient. Centralising the math.
+exports.getUhidSummary = async (req, res, next) => {
+  try {
+    const PatientBill    = require("../../models/PatientBillModel/PatientBillModel");
+    const PatientAdvance = require("../../models/PatientBillModel/PatientAdvanceModel");
+    const { toNum }      = require("../../utils/money");
+    const UHID = String(req.params.UHID || "").toUpperCase();
+    if (!UHID) return res.status(400).json({ success: false, message: "UHID required" });
+
+    const [bills, advances] = await Promise.all([
+      PatientBill.find({ UHID }).select("billNumber billDate billStatus visitType paymentType netAmount patientPayableAmount balanceAmount advancePaid grossAmount billItems payments tpaClaimStatus").lean(),
+      PatientAdvance.find({ UHID }).lean(),
+    ]);
+
+    // Same eff() formula as Frontend/src/utils/money.js
+    const eff = (b) => {
+      const itemsNet = (b.billItems || []).reduce((s, it) => s + toNum(it.netAmount), 0);
+      const refNet   = Math.max(toNum(b.patientPayableAmount), toNum(b.netAmount), itemsNet);
+      const paidPos  = (b.payments || []).reduce((s, p) => { const v = toNum(p.amount); return s + (v > 0 ? v : 0); }, 0);
+      const stored   = toNum(b.balanceAmount);
+      const due      = stored > 0 ? stored : Math.max(0, refNet - paidPos);
+      return { gross: refNet, paid: Math.max(0, refNet - due), due };
+    };
+
+    const totals       = { bills: 0, drafts: 0, open: 0, gross: 0, paid: 0, due: 0 };
+    const byVisitType  = {};
+    const byBillList   = [];
+
+    for (const b of bills) {
+      if (b.billStatus === "CANCELLED") continue;
+      const e = eff(b);
+      totals.bills += 1;
+      if (b.billStatus === "DRAFT") totals.drafts += 1;
+      if (b.billStatus === "GENERATED" || b.billStatus === "PARTIAL") totals.open += 1;
+      totals.gross += e.gross;
+      totals.paid  += e.paid;
+      totals.due   += e.due;
+
+      const key = (b.visitType || "Other").toString();
+      if (!byVisitType[key]) byVisitType[key] = { count: 0, gross: 0, paid: 0, due: 0 };
+      byVisitType[key].count += 1;
+      byVisitType[key].gross += e.gross;
+      byVisitType[key].paid  += e.paid;
+      byVisitType[key].due   += e.due;
+
+      byBillList.push({
+        _id:         b._id,
+        billNumber:  b.billNumber,
+        billDate:    b.billDate,
+        visitType:   b.visitType,
+        paymentType: b.paymentType,
+        billStatus:  b.billStatus,
+        gross:       e.gross,
+        paid:        e.paid,
+        due:         e.due,
+      });
+    }
+
+    // Advance pool: UHID-level refundable credit (deposits minus applied minus refunded).
+    const advance = {
+      total:           0,
+      applied:         0,
+      refunded:        0,
+      unspent:         0,
+      activeCount:     0,
+    };
+    for (const a of advances) {
+      advance.total    += toNum(a.amount);
+      advance.applied  += toNum(a.appliedAmount);
+      advance.refunded += toNum(a.refundedAmount);
+      if (a.status === "ACTIVE" || a.status === "PARTIALLY_APPLIED") advance.activeCount += 1;
+    }
+    advance.unspent = Math.max(0, advance.total - advance.applied - advance.refunded);
+
+    res.json({
+      success: true,
+      data: {
+        UHID,
+        totals,
+        byVisitType: Object.entries(byVisitType).map(([visitType, v]) => ({ visitType, ...v })),
+        byBill: byBillList.sort((a, b) => new Date(b.billDate || 0) - new Date(a.billDate || 0)),
+        advance,
+      },
+    });
+  } catch (e) { next(e); }
+};
+
+// R7ap-F15: GET /api/billing/audit?from&to&event&UHID&billId&limit
+// Single chronological view of every billing audit event (the BillingAudit
+// collection added by R7ap). Accountant uses this to reconstruct refund
+// history, payment audit, cancel chain, TPA settlements for NABH AAC.7.
+exports.listBillingAudit = async (req, res, next) => {
+  try {
+    const BillingAudit = require("../../models/Billing/BillingAudit");
+    const filter = {};
+    if (req.query.event)  filter.event  = req.query.event;
+    if (req.query.UHID)   filter.UHID   = String(req.query.UHID).toUpperCase();
+    if (req.query.billId) filter.billId = req.query.billId;
+    if (req.query.from || req.query.to) {
+      filter.createdAt = {};
+      if (req.query.from) filter.createdAt.$gte = new Date(`${req.query.from}T00:00:00`);
+      if (req.query.to)   filter.createdAt.$lte = new Date(`${req.query.to}T23:59:59.999`);
+    }
+    const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 100));
+    const rows = await BillingAudit.find(filter).sort({ createdAt: -1 }).limit(limit).lean();
+    res.json({ success: true, data: rows, meta: { count: rows.length, limit } });
+  } catch (e) { next(e); }
+};
+
+// R7ap-F13/C-08/D5-10/D6-04: GET /api/billing/gst-register?from&to
+// Hospital-service GST aggregator. Pre-R7ap the GSTTab only saw pharmacy
+// GST; hospital service GST (consultation/room/procedure/investigation)
+// was data-resident but no endpoint exposed it. Buckets by tax rate +
+// returns CGST/SGST split (50/50 of taxAmount — IGST cross-state split
+// requires placeOfSupply work, tracked as D6-04).
+exports.getHospitalGstRegister = async (req, res, next) => {
+  try {
+    const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+    const { toNum }   = require("../../utils/money");
+    const from = req.query.from ? new Date(`${req.query.from}T00:00:00`) : new Date(Date.now() - 30 * 86400000);
+    const to   = req.query.to   ? new Date(`${req.query.to}T23:59:59.999`) : new Date();
+
+    // Aggregate over GENERATED/PARTIAL/PAID/REFUNDED bills only (DRAFT/CANCELLED
+    // not yet finalised). For each line item, bucket by taxPercent.
+    const pipeline = [
+      { $match: {
+          billStatus: { $nin: ["DRAFT", "CANCELLED"] },
+          billDate:   { $gte: from, $lte: to },
+      }},
+      { $unwind: "$billItems" },
+      { $match: { "billItems.isTaxable": true, "billItems.taxPercent": { $gt: 0 } } },
+      { $group: {
+          _id:           "$billItems.taxPercent",
+          bills:         { $addToSet: "$_id" },
+          itemCount:     { $sum: 1 },
+          taxableValue:  { $sum: { $toDouble: "$billItems.taxableAmount" } },
+          taxAmount:     { $sum: { $toDouble: "$billItems.taxAmount" } },
+      }},
+      { $project: {
+          _id: 0,
+          rate:         "$_id",
+          billCount:    { $size: "$bills" },
+          itemCount:    1,
+          taxableValue: 1,
+          taxAmount:    1,
+          // 50/50 intra-state split. Inter-state IGST handling deferred (D6-04).
+          cgst:         { $divide: ["$taxAmount", 2] },
+          sgst:         { $divide: ["$taxAmount", 2] },
+      }},
+      { $sort: { rate: 1 } },
+    ];
+    const buckets = await PatientBill.aggregate(pipeline);
+    const totals = buckets.reduce(
+      (acc, b) => ({
+        taxableValue: acc.taxableValue + toNum(b.taxableValue),
+        cgst:         acc.cgst         + toNum(b.cgst),
+        sgst:         acc.sgst         + toNum(b.sgst),
+        taxAmount:    acc.taxAmount    + toNum(b.taxAmount),
+        billCount:    acc.billCount    + (b.billCount || 0),
+        itemCount:    acc.itemCount    + (b.itemCount || 0),
+      }),
+      { taxableValue: 0, cgst: 0, sgst: 0, taxAmount: 0, billCount: 0, itemCount: 0 },
+    );
+
+    res.json({
+      success: true,
+      data: {
+        from: from.toISOString().slice(0, 10),
+        to:   to.toISOString().slice(0, 10),
+        buckets,
+        totals,
+      },
+    });
+  } catch (e) { next(e); }
+};
+
+// R7ap-F11/D5-01/D6-08/D9-13: GET /api/billing/advance/refunds?from&to
+// Surfaces every PatientAdvance refunded within the date window. Pre-R7ap
+// the Accounts → Refunds tab queried only PatientBill.status=REFUNDED, so
+// advance refunds (the cash-out path introduced by R7ao) were invisible
+// to the accountant. Cashier-drawer reconciliation impossible without this.
+exports.listAdvanceRefunds = async (req, res) => {
+  try {
+    const PatientAdvance = require("../../models/PatientBillModel/PatientAdvanceModel");
+    const { decimalToNumber } = require("../../utils/money");
+    const from = req.query.from ? new Date(`${req.query.from}T00:00:00`) : new Date(Date.now() - 30 * 86400000);
+    const to   = req.query.to   ? new Date(`${req.query.to}T23:59:59.999`) : new Date();
+    const rows = await PatientAdvance.find({
+      status: "REFUNDED",
+      refundedAt: { $gte: from, $lte: to },
+    })
+      .populate("patientId", "fullName UHID contactNumber")
+      .sort({ refundedAt: -1 })
+      .lean();
+    rows.forEach((r) => decimalToNumber(null, r));
+    const total = rows.reduce((s, r) => s + Number(r.refundedAmount || 0), 0);
+    res.json({ success: true, data: rows, meta: { count: rows.length, total } });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e?.message || "Advance refund list failed" });
   }
 };
 
@@ -1285,8 +1764,10 @@ exports.refundAdvance = async (req, res) => {
   try {
     const svc = require("../../services/Billing/patientAdvanceService");
     const adv = await svc.refundAdvance(req.params.advanceId, {
-      refundedBy:   req.body?.refundedBy   || req.user?.fullName || req.user?.employeeId,
-      refundReason: req.body?.refundReason || "Refund at patient request",
+      refundedBy:    req.body?.refundedBy   || req.user?.fullName || req.user?.employeeId,
+      refundReason:  req.body?.refundReason || "Refund at patient request",
+      mode:          req.body?.mode          || req.body?.refundMode,
+      transactionId: req.body?.transactionId || req.body?.refundTransactionId || null,
     });
     res.json({ success: true, data: adv });
   } catch (e) {

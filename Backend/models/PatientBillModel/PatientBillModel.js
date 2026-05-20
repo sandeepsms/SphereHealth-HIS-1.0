@@ -71,6 +71,24 @@ const BillItemSchema = new mongoose.Schema(
       },
     },
     taxAmount: { type: Dec, default: () => toDec(0) },
+    // R7ap-F18/D6-03/D6-04: GST Act §31 requires HSN/SAC code on every
+    // tax invoice line. 9993 is the SAC for "human-health services"
+    // (default for clinical services). Pharmacy lines override with their
+    // drug-class HSN. Field is optional so legacy line items don't fail
+    // validation; new emitters set it.
+    hsnSacCode:    { type: String, trim: true, default: null },
+    // R7ap-F18: CGST/SGST/IGST split needed for GSTR-1 inter-state vs
+    // intra-state reporting. Default to taxAmount/2 (intra-state) at save
+    // time. IGST populated only when placeOfSupply != hospital state.
+    cgstAmount:    { type: Dec, default: () => toDec(0) },
+    sgstAmount:    { type: Dec, default: () => toDec(0) },
+    igstAmount:    { type: Dec, default: () => toDec(0) },
+    // R7ap-F36/D5-08: when an ANH package is attached mid-stay, the
+    // per-line bed/nursing/etc. items existing on the bill must NOT be
+    // double-counted alongside the package bundle. Set this flag at
+    // attach time; the revenue aggregator + receipt totals skip excluded
+    // items. The attach action is the only thing that should set this.
+    excludedByPackage: { type: Boolean, default: false },
 
     appliedTariff: {
       type: String,
@@ -173,7 +191,15 @@ const PaymentSchema = new mongoose.Schema(
     voidedAt:     { type: Date },
     voidedBy:     { type: String, trim: true },
     voidedByRole: { type: String, trim: true },
-    voidReason:   { type: String, trim: true } },
+    voidReason:   { type: String, trim: true },
+    // R7ap-F28/D6-17: TDS deducted at source on TPA / corporate remittances.
+    // Hospital books need the GROSS approved amount + the TDS deducted +
+    // the NET amount actually received in the account to reconcile 26AS at
+    // year-end. Pre-R7ap only the net was captured.
+    tdsAmount:           { type: Dec, default: () => toDec(0) },
+    tdsCertificateNo:    { type: String, trim: true },
+    tdsSection:          { type: String, trim: true, default: null },  // 194J / 194I / etc.
+  },
   { _id: true },
 );
 
@@ -231,6 +257,22 @@ const PatientBillSchema = new mongoose.Schema(
     patientPayableAmount: { type: Dec, default: () => toDec(0) },
     advancePaid:          { type: Dec, default: () => toDec(0) },
     balanceAmount:        { type: Dec, default: () => toDec(0) },
+
+    // R7ap-F18/D6-04/D6-05: GST Act §31 + GSTR-1 schema fields. Pre-R7ap
+    // hospital service GST couldn't be filed via the HIS — no field for
+    // customer GSTIN (B2B / corporate panel ITC claim), no placeOfSupply
+    // (intra-state vs IGST disambiguation), no split between CGST/SGST/IGST.
+    // Default placeOfSupply to the hospital state (intra-state assumption);
+    // emitters that detect inter-state patients override.
+    placeOfSupply:    { type: String, trim: true, default: null }, // state code (e.g. "29" for KA)
+    customerGstin:    { type: String, trim: true, default: null, uppercase: true },
+    customerLegalName:{ type: String, trim: true, default: null },
+    customerAddress:  { type: String, trim: true, default: null },
+    // Bill-level CGST/SGST/IGST aggregates (sum across billItems[]). Pre-save
+    // computes them by summing item-level fields so they stay in sync.
+    cgstAmount:       { type: Dec, default: () => toDec(0) },
+    sgstAmount:       { type: Dec, default: () => toDec(0) },
+    igstAmount:       { type: Dec, default: () => toDec(0) },
 
     // Sum of net+tax for line items still in Ordered / InProgress state —
     // i.e. work the doctor has booked but the executing team hasn't yet
@@ -351,6 +393,21 @@ PatientBillSchema.methods.recalcTotals = function () {
       item.discountAmount = toDec(dAmt);
       item.netAmount      = toDec(nAmt);
       item.taxAmount      = toDec(tAmt);
+      // R7ap-F35/D6-04/D6-16: CGST/SGST/IGST split. Default intra-state
+      // (placeOfSupply blank or matches hospital state) → 50/50 CGST+SGST.
+      // Inter-state (placeOfSupply differs) → 100% IGST. Bill-level
+      // placeOfSupply is the single source — items inherit from parent.
+      const _hosp = (this.constructor?.HOSPITAL_STATE_CODE || process.env.HOSPITAL_STATE_CODE || "").trim();
+      const _isInterState = _hosp && this.placeOfSupply && String(this.placeOfSupply).trim() !== _hosp;
+      if (_isInterState) {
+        item.cgstAmount = toDec(0);
+        item.sgstAmount = toDec(0);
+        item.igstAmount = toDec(tAmt);
+      } else {
+        item.cgstAmount = toDec(tAmt / 2);
+        item.sgstAmount = toDec(tAmt / 2);
+        item.igstAmount = toDec(0);
+      }
 
       let tpaShare = 0;
       let ptShare = lineTotal;
@@ -403,6 +460,19 @@ PatientBillSchema.methods.recalcTotals = function () {
     this.netAmount            = toDec(gross - disc + tax - extra);
     this.tpaPayableAmount     = toDec(tpaPay);
     this.patientPayableAmount = toDec(ptPay - extra);
+    // R7ap-F35: aggregate item-level CGST/SGST/IGST into bill-level fields.
+    // Driven by placeOfSupply (set above per-item). Used by GSTR-1 export.
+    const _hosp = process.env.HOSPITAL_STATE_CODE || "";
+    const _isInter = _hosp && this.placeOfSupply && String(this.placeOfSupply).trim() !== _hosp;
+    if (_isInter) {
+      this.cgstAmount = toDec(0);
+      this.sgstAmount = toDec(0);
+      this.igstAmount = toDec(tax);
+    } else {
+      this.cgstAmount = toDec(tax / 2);
+      this.sgstAmount = toDec(tax / 2);
+      this.igstAmount = toDec(0);
+    }
   }
 
   // Recalculate balance. Payment rows can be negative (refunds), so totalPaid
@@ -441,6 +511,20 @@ PatientBillSchema.index({ tpa: 1 });
 // "today's bills" feed.
 PatientBillSchema.index({ billStatus: 1, createdAt: -1 });
 PatientBillSchema.index({ UHID: 1, billStatus: 1, createdAt: -1 });
+
+// R7ap-F14/D1-12/D8-01/D8-05: compound indexes for dashboard hot paths.
+//   {paidAt, billStatus}        — todayRevenue (`$unwind payments` aggregate)
+//   {billStatus, paymentType, billDate} — listBills filter+sort
+//   {paymentType, tpaClaimStatus, updatedAt} — getTPACases
+// Previously these queries did in-memory sorts / picked partial indexes;
+// at 10k bills/mo the All Bills tab took 800ms-2s, TPA tab 500ms-2s.
+PatientBillSchema.index({ paidAt: -1, billStatus: 1 });
+PatientBillSchema.index({ billStatus: 1, paymentType: 1, billDate: -1 });
+PatientBillSchema.index({ paymentType: 1, tpaClaimStatus: 1, updatedAt: -1 });
+// payments.paidAt is the new attribution field for getCollectionSummary.
+// Multikey index lets the query pick up bills with any payment row in the
+// day window without scanning the full collection.
+PatientBillSchema.index({ "payments.paidAt": -1 });
 
 // FIX (audit P6-B1): partial unique index that prevents two concurrent
 // getOrCreateDraftBill() callers from materialising two DRAFT rows for the

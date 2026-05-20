@@ -27,10 +27,13 @@ import {
 } from "../../Components/admin-theme";
 
 import { API_BASE_URL as API } from "../../config/api";
+// R7ap-F16: shared Decimal128-safe money helpers — replaces ad-hoc Number()
+// coercion that NaN'd on raw {$numberDecimal} payloads.
+import { toMoney, fmtINR0 as fmtINR, fmtINR2 } from "../../utils/money";
+// R7ap-F22/D4-16: per-tab error boundary so one component crash doesn't
+// blank the whole Accounts page.
+import ErrorBoundary from "../../Components/ErrorBoundary";
 const authHdr = () => ({ headers: { Authorization: `Bearer ${(sessionStorage.getItem("his_token") || localStorage.getItem("his_token"))}` } });
-
-const fmtINR = (n) => `₹${Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
-const fmtINR2 = (n) => `₹${Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const firstOfMonth = () => { const d = new Date(); d.setDate(1); return d.toISOString().slice(0, 10); };
 
@@ -73,13 +76,15 @@ export default function AccountsConsole() {
       />
 
       <div style={{ marginTop: 16 }}>
-        {tab === "daybook"     && <DayBookTab />}
-        {tab === "revenue"     && <RevenueTab />}
-        {tab === "gst"         && <GSTTab />}
-        {tab === "outstanding" && <OutstandingTab />}
-        {tab === "bills"       && <AllBillsTab />}
-        {tab === "refunds"     && <RefundsTab />}
-        {tab === "shift"       && <ShiftTab />}
+        {/* R7ap-F22: wrap each tab in its own ErrorBoundary so an exception
+            (e.g. a Decimal128 reduce NaN) doesn't unmount the tab strip. */}
+        {tab === "daybook"     && <ErrorBoundary label="Day Book"><DayBookTab /></ErrorBoundary>}
+        {tab === "revenue"     && <ErrorBoundary label="Revenue"><RevenueTab /></ErrorBoundary>}
+        {tab === "gst"         && <ErrorBoundary label="GST Returns"><GSTTab /></ErrorBoundary>}
+        {tab === "outstanding" && <ErrorBoundary label="Outstanding"><OutstandingTab /></ErrorBoundary>}
+        {tab === "bills"       && <ErrorBoundary label="All Bills"><AllBillsTab /></ErrorBoundary>}
+        {tab === "refunds"     && <ErrorBoundary label="Refunds & Audit"><RefundsTab /></ErrorBoundary>}
+        {tab === "shift"       && <ErrorBoundary label="Shift / Cashier"><ShiftTab /></ErrorBoundary>}
       </div>
     </AdminPage>
   );
@@ -299,7 +304,8 @@ function RevenueTab() {
       </div>
 
       <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <PrimaryButton label="Open Bills List"          icon="pi-list"    color={C.amber}  onClick={() => navigate("/billing")} />
+        {/* R7ah: "Open Bills List" button removed — was wired to the deleted
+            /billing route. Billing Counter covers the same flow. */}
         <PrimaryButton label="Billing Counter"          icon="pi-credit-card" color={C.purple} onClick={() => navigate("/reception-billing")} />
         <PrimaryButton label="Pharmacy Sales Register"  icon="pi-receipt" color={C.orange} onClick={() => navigate("/pharmacy?tab=registers")} />
       </div>
@@ -346,30 +352,40 @@ function GSTTab() {
   const [from, setFrom] = useState(firstOfMonth());
   const [to, setTo]     = useState(todayISO());
   const [data, setData] = useState(null);
+  const [hospitalData, setHospitalData] = useState(null);   // R7ap-F13
   const [loading, setLoading] = useState(false);
 
   const refresh = async () => {
     setLoading(true);
     try {
-      const r = await axios.get(`${API}/pharmacy/registers/gst?from=${from}&to=${to}`, authHdr());
-      setData(r.data || {});
+      // R7ap-F13: fetch pharmacy + hospital GST in parallel.
+      const [pharmaR, hospR] = await Promise.all([
+        axios.get(`${API}/pharmacy/registers/gst?from=${from}&to=${to}`, authHdr()).catch(() => null),
+        axios.get(`${API}/billing/gst-register?from=${from}&to=${to}`, authHdr()).catch(() => null),
+      ]);
+      setData(pharmaR?.data || {});
+      setHospitalData(hospR?.data?.data || null);
     } catch (e) { toast.error("GST register load failed"); }
     setLoading(false);
   };
-  useEffect(() => { refresh(); }, [from, to]);
+  useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [from, to]);
 
   const buckets = data?.data?.buckets || data?.buckets || [];
-  // Pharmacy GST endpoint only computes CGST + SGST (intra-state supplies).
-  // IGST would require inter-state ship-to addresses which the pharmacy
-  // POS doesn't capture — left as a placeholder when that data becomes
-  // available. For now the column is dropped from the UI to avoid showing
-  // a misleading ₹0.
+  const hospitalBuckets = hospitalData?.buckets || [];
+  const hospitalTotals  = hospitalData?.totals  || { taxableValue: 0, cgst: 0, sgst: 0, taxAmount: 0 };
+  // Pharmacy + Hospital combined view: union both bucket arrays by rate.
   const totals  = buckets.reduce((acc, b) => ({
     taxable: acc.taxable + (b.netTaxable ?? b.taxable ?? 0),
     cgst:    acc.cgst    + (b.cgst ?? 0),
     sgst:    acc.sgst    + (b.sgst ?? 0),
     total:   acc.total   + (b.netTax ?? b.tax ?? 0),
   }), { taxable: 0, cgst: 0, sgst: 0, total: 0 });
+  const grandTotals = {
+    taxable: totals.taxable + hospitalTotals.taxableValue,
+    cgst:    totals.cgst    + hospitalTotals.cgst,
+    sgst:    totals.sgst    + hospitalTotals.sgst,
+    total:   totals.total   + hospitalTotals.taxAmount,
+  };
 
   return (
     <>
@@ -390,16 +406,17 @@ function GSTTab() {
         </div>
       </Card>
 
+      {/* R7ap-F13: grand totals = pharmacy + hospital */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, margin: "12px 0" }}>
-        <KPI label="Taxable value"  value={fmtINR(totals.taxable)} color={C.blue}   icon="pi-receipt" />
-        <KPI label="CGST"           value={fmtINR(totals.cgst)}    color={C.amber}  icon="pi-percentage" />
-        <KPI label="SGST"           value={fmtINR(totals.sgst)}    color={C.amber}  icon="pi-percentage" />
-        <KPI label="Net tax"        value={fmtINR(totals.total)}   color={C.green}  icon="pi-money-bill" />
+        <KPI label="Taxable value"  value={fmtINR(grandTotals.taxable)} color={C.blue}   icon="pi-receipt" />
+        <KPI label="CGST"           value={fmtINR(grandTotals.cgst)}    color={C.amber}  icon="pi-percentage" />
+        <KPI label="SGST"           value={fmtINR(grandTotals.sgst)}    color={C.amber}  icon="pi-percentage" />
+        <KPI label="Net tax"        value={fmtINR(grandTotals.total)}   color={C.green}  icon="pi-money-bill" />
       </div>
 
-      <Card title="Bucket-wise GST breakdown" color={C.purple} icon="pi-list">
+      <Card title="Pharmacy GST · bucket-wise" color={C.purple} icon="pi-list">
         {buckets.length === 0 ? (
-          <div style={{ padding: 18, textAlign: "center", color: C.muted, fontSize: 12.5 }}>No GST data in the selected range.</div>
+          <div style={{ padding: 18, textAlign: "center", color: C.muted, fontSize: 12.5 }}>No pharmacy GST in the selected range.</div>
         ) : (
           <Table cols={[
             { label: "Rate" },
@@ -425,10 +442,41 @@ function GSTTab() {
         )}
       </Card>
 
+      {/* R7ap-F13/C-08/D5-10: hospital-service GST aggregator — was a known gap,
+          consultation/room/procedure/investigation GST is now surfaced. */}
+      <div style={{ marginTop: 12 }}>
+        <Card title="Hospital service GST · bucket-wise" color={C.purple} icon="pi-list">
+          {hospitalBuckets.length === 0 ? (
+            <div style={{ padding: 18, textAlign: "center", color: C.muted, fontSize: 12.5 }}>No hospital-service GST in the selected range.</div>
+          ) : (
+            <Table cols={[
+              { label: "Rate" },
+              { label: "Items", align: "right" },
+              { label: "Bills", align: "right" },
+              { label: "Net Taxable", align: "right" },
+              { label: "CGST", align: "right" },
+              { label: "SGST", align: "right" },
+              { label: "Net Tax", align: "right" },
+            ]}>
+              {hospitalBuckets.map((b, i) => (
+                <tr key={i}>
+                  <td><Badge value={`${b.rate}%`} palette={C.purple} /></td>
+                  <td style={{ textAlign: "right" }}>{b.itemCount}</td>
+                  <td style={{ textAlign: "right" }}>{b.billCount}</td>
+                  <td style={{ textAlign: "right", fontWeight: 700 }}>{fmtINR2(b.taxableValue)}</td>
+                  <td style={{ textAlign: "right" }}>{fmtINR2(b.cgst)}</td>
+                  <td style={{ textAlign: "right" }}>{fmtINR2(b.sgst)}</td>
+                  <td style={{ textAlign: "right", fontWeight: 800, color: C.green }}>{fmtINR2(b.taxAmount)}</td>
+                </tr>
+              ))}
+            </Table>
+          )}
+        </Card>
+      </div>
+
       <div style={{ marginTop: 12, fontSize: 11.5, color: C.muted, padding: "0 4px" }}>
         <i className="pi pi-info-circle" style={{ marginRight: 6 }} />
-        Hospital-service GST (consultation, room, procedures) wiring to this view is pending a unified aggregator on the billing side.
-        Pharmacy GST shown above is GST-Act compliant (Sale + supplement debit notes − refund credit notes).
+        R7ap: Hospital-service GST now aggregated alongside Pharmacy. CGST/SGST 50/50 split assumes intra-state supplies; IGST handling for inter-state patients requires place-of-supply on bills (R7ap-D6-04, pending).
       </div>
     </>
   );
@@ -545,7 +593,10 @@ function OutstandingTab() {
                   <td style={{ textAlign: "right" }}>{fmtINR2(b.paid)}</td>
                   <td style={{ textAlign: "right", fontWeight: 800, color: C.red }}>{fmtINR2(b.due)}</td>
                   <td>
-                    <button onClick={() => navigate(`/billing/view/${b.billNumber.length === 8 ? b.UHID : b._id || b.UHID}`)}
+                    {/* R7ap-F4: route /billing/view/:id was deleted in R7ah.
+                        Open the workflow page (Reception Billing Counter) so
+                        the accountant can drill into payments, refund, print. */}
+                    <button onClick={() => navigate(`/reception-billing/${b.UHID}`)}
                       style={{ padding: "4px 10px", borderRadius: 5, border: `1px solid ${C.blue}40`, background: "#fff", color: C.blue, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
                       Open
                     </button>
@@ -659,7 +710,8 @@ function AllBillsTab() {
                   <td style={{ textAlign: "right" }}>{fmtINR2(b.netAmount ?? b.totalAmount ?? 0)}</td>
                   <td style={{ textAlign: "right", fontWeight: 700 }}>{fmtINR2(b.advancePaid ?? b.totalPaid ?? 0)}</td>
                   <td>
-                    <button onClick={() => navigate(`/billing/view/${b._id}`)}
+                    {/* R7ap-F4: route /billing/view/:id deleted — use UHID workflow page */}
+                    <button onClick={() => navigate(`/reception-billing/${b.UHID}`)}
                       style={{ padding: "4px 10px", borderRadius: 5, border: `1px solid ${C.blue}40`, background: "#fff", color: C.blue, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
                       Open
                     </button>
@@ -835,18 +887,27 @@ function ShiftHistory() {
 function RefundsTab() {
   const navigate = useNavigate();
   const [bills, setBills] = useState([]);
+  const [advanceRefunds, setAdvanceRefunds] = useState([]);  // R7ap-F11
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState("REFUNDED");
+  // R7ap-F11: default 30-day window for the advance-refund register.
+  const [from, setFrom] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10); });
+  const [to,   setTo]   = useState(() => new Date().toISOString().slice(0, 10));
 
   const refresh = async () => {
     setLoading(true);
     try {
-      const r = await axios.get(`${API}/billing?status=${filter}&limit=50`, authHdr());
-      setBills(r.data?.data || r.data?.bills || r.data || []);
-    } catch (e) {}
+      // Parallel fetch — bill refunds + advance refunds.
+      const [billRes, advRes] = await Promise.all([
+        axios.get(`${API}/billing?status=${filter}&limit=50`, authHdr()).catch(() => null),
+        axios.get(`${API}/billing/advance/refunds?from=${from}&to=${to}`, authHdr()).catch(() => null),
+      ]);
+      setBills(billRes?.data?.data || billRes?.data?.bills || billRes?.data || []);
+      setAdvanceRefunds(advRes?.data?.data || []);
+    } catch (e) { toast.error("Refunds load failed"); }
     setLoading(false);
   };
-  useEffect(() => { refresh(); }, [filter]);
+  useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [filter, from, to]);
 
   return (
     <>
@@ -895,7 +956,56 @@ function RefundsTab() {
                   <td style={{ textAlign: "right" }}>{fmtINR2(b.netAmount ?? b.totalAmount ?? 0)}</td>
                   <td style={{ textAlign: "right" }}>{fmtINR2(b.advancePaid ?? b.totalPaid ?? 0)}</td>
                   <td>
-                    <button onClick={() => navigate(`/billing/view/${b._id}`)}
+                    {/* R7ap-F4: dead /billing/view/:id route — route to UHID workflow page */}
+                    <button onClick={() => navigate(`/reception-billing/${b.UHID}`)}
+                      style={{ padding: "4px 10px", borderRadius: 5, border: `1px solid ${C.blue}40`, background: "#fff", color: C.blue, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                      Open
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </Table>
+          )}
+        </Card>
+      </div>
+
+      {/* R7ap-F11: Advance refund register — surfaces R7ao refunds that
+          were previously invisible to Accounts. Cashier-drawer reconciliation
+          requires this list (NABH ROM.3 refund register). */}
+      <div style={{ marginTop: 12 }}>
+        <Card title={`Advance refunds · ${from} → ${to}`} color={C.red} icon="pi-wallet"
+          right={
+            <div style={{ display: "flex", gap: 6 }}>
+              <input type="date" value={from} onChange={e => setFrom(e.target.value)}
+                style={{ padding: "4px 8px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }} />
+              <input type="date" value={to}   onChange={e => setTo(e.target.value)}
+                style={{ padding: "4px 8px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }} />
+            </div>
+          }>
+          {!Array.isArray(advanceRefunds) || advanceRefunds.length === 0 ? (
+            <Empty icon="pi-inbox" text={`No advance refunds in ${from} → ${to}.`} />
+          ) : (
+            <Table cols={[
+              { label: "Receipt #" },
+              { label: "Patient" },
+              { label: "Refunded At" },
+              { label: "Mode" },
+              { label: "Refunded By" },
+              { label: "Reason" },
+              { label: "Amount", align: "right" },
+              { label: "Action" },
+            ]}>
+              {advanceRefunds.map((a, i) => (
+                <tr key={a._id || i}>
+                  <td style={{ fontFamily: "monospace", fontSize: 11.5 }}>{a.receiptNumber}</td>
+                  <td style={{ fontWeight: 700 }}>{a.patientId?.fullName || a.UHID}</td>
+                  <td style={{ color: C.muted, fontSize: 12 }}>{a.refundedAt ? new Date(a.refundedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—"}</td>
+                  <td><Badge value={a.refundMode || "CASH"} palette={C.purple} /></td>
+                  <td style={{ fontSize: 12 }}>{a.refundedBy || "—"}</td>
+                  <td style={{ color: C.muted, fontSize: 11.5, maxWidth: 260, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={a.refundReason}>{a.refundReason || "—"}</td>
+                  <td style={{ textAlign: "right", fontFamily: "'DM Mono', monospace", fontWeight: 800, color: C.red }}>{fmtINR2(a.refundedAmount)}</td>
+                  <td>
+                    <button onClick={() => navigate(`/reception-billing/${a.UHID}`)}
                       style={{ padding: "4px 10px", borderRadius: 5, border: `1px solid ${C.blue}40`, background: "#fff", color: C.blue, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
                       Open
                     </button>
@@ -909,7 +1019,7 @@ function RefundsTab() {
 
       <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
         <PrimaryButton label="Billing Audit Trail" icon="pi-shield" color={C.teal} onClick={() => navigate("/billing-audit-trail")} />
-        <PrimaryButton label="All Bills" icon="pi-list" color={C.amber} onClick={() => navigate("/billing")} />
+        <PrimaryButton label="Billing Counter"     icon="pi-list"   color={C.amber} onClick={() => navigate("/reception-billing")} />
       </div>
     </>
   );

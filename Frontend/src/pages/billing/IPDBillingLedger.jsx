@@ -358,6 +358,21 @@ export default function IPDBillingLedger() {
   const [pickerList,   setPickerList]   = useState([]);
   const [pickerLoading, setPickerLoading] = useState(false);
   const [pickerSearch, setPickerSearch] = useState("");
+
+  // R7af: the IPD Live Ledger only makes sense for INPATIENT admissions.
+  // The /admissions/active endpoint legacy-returns OPD/Services rows
+  // alongside real inpatient admissions (the Admission model has them
+  // in its enum: "Emergency","Planned","Transfer","Day Care","OPD",
+  // "Daycare","Services"). Filter to just the inpatient subset so the
+  // picker doesn't surface OPD visits that don't belong on a ledger.
+  const INPATIENT_TYPES = new Set([
+    "IPD", "Emergency", "Planned", "Transfer", "Day Care", "Daycare",
+  ]);
+  const isInpatient = (a) =>
+    INPATIENT_TYPES.has(a?.admissionType)
+    // Also require an admissionNumber so legacy rows without one are skipped.
+    && !!(a?.admissionNumber);
+
   useEffect(() => {
     if (admissionId) return; // ledger mode — skip picker fetch
     let cancelled = false;
@@ -366,7 +381,10 @@ export default function IPDBillingLedger() {
       try {
         const { data: r } = await axios.get(`${API_ENDPOINTS.BASE}/admissions/active`);
         const arr = Array.isArray(r) ? r : r?.data || [];
-        if (!cancelled) setPickerList(arr);
+        // R7af: filter out OPD/Services rows at fetch time so the picker
+        // count + search both reflect inpatient-only.
+        const inpatientOnly = arr.filter(isInpatient);
+        if (!cancelled) setPickerList(inpatientOnly);
       } catch (e) {
         if (!cancelled) toast.error("Could not load admissions: " + (e?.response?.data?.message || e?.message));
       } finally {
@@ -374,6 +392,7 @@ export default function IPDBillingLedger() {
       }
     })();
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [admissionId]);
   // Live filter — search by name / UHID / IPD No / bed / doctor / dept.
   const filteredPicker = (() => {
@@ -941,7 +960,7 @@ export default function IPDBillingLedger() {
       }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, marginRight: 6 }}>ACTIONS:</div>
         {can("billing.write") && (
-          <button onClick={() => navigate(`/reception/billing?UHID=${admission.UHID}&admissionId=${admissionId}`)} style={{
+          <button onClick={() => navigate(`/reception-billing/${admission.UHID}?admissionId=${admissionId}`)} style={{
             padding: "7px 14px", background: C.primary, color: "#fff", border: "none",
             borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 12,
           }}>
@@ -950,7 +969,7 @@ export default function IPDBillingLedger() {
           </button>
         )}
         {can("billing.write") && (
-          <button onClick={() => navigate(`/reception/billing?UHID=${admission.UHID}&advance=1`)} style={{
+          <button onClick={() => navigate(`/reception-billing/${admission.UHID}?action=advance`)} style={{
             padding: "7px 14px", background: C.success, color: "#fff", border: "none",
             borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 12,
           }}>

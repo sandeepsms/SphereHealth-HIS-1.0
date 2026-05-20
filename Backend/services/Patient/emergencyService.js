@@ -301,9 +301,18 @@ class EmergencyService {
         try {
           const Admission = require("../../models/Patient/admissionModel");
           const Counter   = require("../../utils/counter");
-          const year      = new Date().getFullYear();
-          const seq       = await Counter.nextSequence(`admission:${year}`);
-          const admissionNumber = `IPD-${year}-${String(seq).padStart(6, "0")}`;
+          const CounterModel = require("../../models/CounterModel");
+          // R7ag: use the same global IPD counter as admissionService
+          // (format IPD-YY-NN, continuous sequence). ER→IPD bridge admissions
+          // shouldn't have their own number space — they're real inpatient
+          // admissions and belong in the same series as planned IPDs.
+          const yy  = new Date().getFullYear().toString().slice(-2);
+          const key = "admission:ipd:global";
+          let seed = null;
+          const existing = await CounterModel.findOne({ _id: key }).lean();
+          if (!existing) seed = await Admission.countDocuments();
+          const seq = await Counter.nextSequence(key, seed);
+          const admissionNumber = `IPD-${yy}-${String(seq).padStart(2, "0")}`;
           const stub = await Admission.create({
             admissionNumber,
             patientId:           visit.patientId,

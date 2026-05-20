@@ -47,8 +47,9 @@ const MODULE_NAMES = {
   "/discharge-summary":      "Discharge Summary",
   "/consent-forms":          "Consent Forms",
   "/mar":                    "MAR — Medication Administration Record",
-  "/patient-billing":        "Patient Billing",
-  "/billing":                "Billing",
+  // R7ah: /patient-billing and /billing routes removed — kept the
+  // entries below commented so the title map history is searchable, but
+  // any visitor lands on /reception-billing via the redirect in App.jsx.
   "/hospital-charges":       "Hospital Charges",
   "/service-master":         "Service Master",
   "/beds":                   "Bed Management",

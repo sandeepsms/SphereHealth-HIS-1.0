@@ -18,10 +18,15 @@ const consultGuard = validateObjectIdParam("consultId");
 router.get("/statistics", ctrl.getAdmissionStatistics);
 
 // ── NABH discharge clearance workflow ─────────────────────────
+// R7ab: every write here is now action-gated. Pre-R7ab any authenticated
+// role could approve discharge, clear the final bill, or issue a gate pass
+// — including the Lab Tech / Dietician. doctor-approve is a clinical
+// decision (ipd.discharge); the two reception steps stay on
+// reception.discharge.
 router.get("/discharge-queue",                    ctrl.getDischargeQueue);
-router.post("/:id/doctor-approve-discharge",      idGuard, ctrl.doctorApproveDischarge);
-router.post("/:id/clear-final-bill",              idGuard, ctrl.clearFinalBill);
-router.post("/:id/issue-gate-pass",               idGuard, ctrl.issueGatePass);
+router.post("/:id/doctor-approve-discharge",      idGuard, authenticate, requireAction("ipd.discharge"), ctrl.doctorApproveDischarge);
+router.post("/:id/clear-final-bill",              idGuard, authenticate, requireAction("reception.discharge"), ctrl.clearFinalBill);
+router.post("/:id/issue-gate-pass",               idGuard, authenticate, requireAction("reception.discharge"), ctrl.issueGatePass);
 
 // R7i: Same-day discharge undo — Admin only, time-gated by the controller
 // (≤ 24h since actualDischargeDate). The action permission is the trust

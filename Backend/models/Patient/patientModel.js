@@ -113,35 +113,57 @@ PatientSchema.index({ contactNumber: 1 });
 PatientSchema.index({ paymentType: 1 });
 PatientSchema.index({ tpa: 1 });
 
+// R7ab: use atomic Counter for UHID + patientId. The previous
+// implementation used `countDocuments` inside pre-save which races
+// catastrophically — two receptionists registering at the same instant
+// computed the same count, produced the same UHID, and the loser saw a
+// 11000 duplicate-key error at the desk. The codebase already has
+// `utils/counter.js` (atomic findOneAndUpdate $inc) used by billNumber,
+// admissionNumber, mlcNumber. Patient was just never migrated.
+//
+// We seed the Counter from the existing collection count the FIRST time
+// the key is touched (via $setOnInsert), so existing UHIDs aren't
+// re-issued. Subsequent calls ignore the seed and just $inc.
+const { nextSequence: nextSeqPatient } = require("../../utils/counter");
+const CounterModel = require("../CounterModel");
+
+async function ensureSeed(key, seedFn) {
+  const existing = await CounterModel.findOne({ _id: key }).lean();
+  if (existing) return null;
+  return await seedFn();
+}
+
 // Pre-save middleware
 PatientSchema.pre("save", async function (next) {
   if (this.isNew) {
     try {
       const Patient = this.constructor;
-
-      // Generate patientId
+      const year = new Date().getFullYear();
+      const prefix =
+        this.registrationType === "OPD"
+          ? "OPD"
+          : this.registrationType === "Emergency"
+            ? "EMG"
+            : this.registrationType === "Daycare"
+              ? "DAY"
+              : this.registrationType === "Services"
+                ? "SVC"
+                : "IPD";
       if (!this.patientId) {
-        const count = await Patient.countDocuments({
-          registrationType: this.registrationType,
-        });
-        const year = new Date().getFullYear();
-        const prefix =
-          this.registrationType === "OPD"
-            ? "OPD"
-            : this.registrationType === "Emergency"
-              ? "EMG"
-              : this.registrationType === "Daycare"
-                ? "DAY"
-                : this.registrationType === "Services"
-                  ? "SVC"
-                  : "IPD";
-        this.patientId = `${prefix}-${year}-${String(count + 1).padStart(6, "0")}`;
+        const idKey = `patientId:${prefix}:${year}`;
+        const seed  = await ensureSeed(idKey, async () =>
+          Patient.countDocuments({ registrationType: this.registrationType }),
+        );
+        const seq = await nextSeqPatient(idKey, seed);
+        this.patientId = `${prefix}-${year}-${String(seq).padStart(6, "0")}`;
       }
-
-      // Generate UHID
       if (!this.UHID) {
-        const count = await Patient.countDocuments();
-        this.UHID = `UH${String(count + 1).padStart(8, "0")}`;
+        const uhidKey = "uhid:global";
+        const seed    = await ensureSeed(uhidKey, async () =>
+          Patient.countDocuments(),
+        );
+        const seq = await nextSeqPatient(uhidKey, seed);
+        this.UHID = `UH${String(seq).padStart(8, "0")}`;
       }
     } catch (error) {
       return next(error);

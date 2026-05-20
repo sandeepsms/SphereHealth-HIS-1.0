@@ -508,6 +508,45 @@
 }
 
 /* ═══════════ BILLING body ═══════════ */
+/* R7ac: by-type summary strip — at-a-glance "what does this patient
+   owe across each visit type" before drilling into individual bills. */
+.pl-bills-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.pl-bills-summary-card {
+  background: linear-gradient(180deg, #f8fafc 0%, #fff 100%);
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pl-bills-summary-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+}
+.pl-bills-summary-count {
+  font-size: 11px;
+  color: #64748b;
+  font-weight: 600;
+}
+.pl-bills-summary-amts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 12px;
+  color: #334155;
+}
+.pl-bills-summary-amts strong { color: #0f172a; font-weight: 700; margin-left: 4px; }
+.pl-bills-summary-amts .paid strong { color: #15803d; }
+.pl-bills-summary-amts .due  strong { color: #b91c1c; }
+
 .pl-bills {
   display: flex;
   flex-direction: column;

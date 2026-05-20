@@ -39,7 +39,7 @@ const ALL_MODULES = [
   { label: "Emergency",            icon: "pi-exclamation-circle",   path: "/reception", color: C.red,    roles: ["Admin","Receptionist","Nurse","Doctor"] },
   { label: "Daycare",              icon: "pi-sun",                  path: "/reception",   color: C.orange, roles: ["Admin","Receptionist"] },
   { label: "Bed Visual",           icon: "pi-th-large",             path: "/bed-visual",             color: C.purple, roles: ["Admin","Doctor","Nurse","Receptionist"] },
-  { label: "Patient Billing",      icon: "pi-receipt",              path: "/patient-billing",        color: C.green,  roles: ["Admin","Receptionist","TPA Coordinator"] },
+  { label: "Patient Billing",      icon: "pi-receipt",              path: "/reception-billing",        color: C.green,  roles: ["Admin","Receptionist","TPA Coordinator"] },
   // Doctor
   { label: "Emergency Assessment", icon: "pi-exclamation-triangle", path: "/emergency-assessment",   color: C.red,    roles: ["Admin","Doctor"] },
   { label: "IPD Initial Assessment",icon: "pi-clipboard",           path: "/ipd-assessment",         color: C.pink,   roles: ["Admin","Doctor","Nurse"] },
@@ -65,7 +65,7 @@ const QUICK_ACCESS_MAP = {
     { label: "IPD Admission",    icon: "pi-building",          path: "/reception",          color: C.accent },
     { label: "Emergency",        icon: "pi-exclamation-circle",path: "/reception", color: C.red    },
     { label: "Patient Search",   icon: "pi-search",            path: "/allpatient",             color: C.purple },
-    { label: "Patient Billing",  icon: "pi-receipt",           path: "/patient-billing",        color: C.green  },
+    { label: "Patient Billing",  icon: "pi-receipt",           path: "/reception-billing",        color: C.green  },
     { label: "User Management",  icon: "pi-users",             path: "/admin/users",            color: C.purple },
   ],
   Receptionist:     [
@@ -73,7 +73,7 @@ const QUICK_ACCESS_MAP = {
     { label: "IPD Admission",    icon: "pi-building",          path: "/reception",          color: C.accent },
     { label: "Emergency",        icon: "pi-exclamation-circle",path: "/reception", color: C.red    },
     { label: "Patient Search",   icon: "pi-search",            path: "/allpatient",             color: C.purple },
-    { label: "Patient Billing",  icon: "pi-receipt",           path: "/patient-billing",        color: C.green  },
+    { label: "Patient Billing",  icon: "pi-receipt",           path: "/reception-billing",        color: C.green  },
     { label: "Bed Layout",       icon: "pi-th-large",          path: "/bed-visual",             color: C.amber  },
   ],
   Doctor:           [
@@ -89,8 +89,8 @@ const QUICK_ACCESS_MAP = {
     { label: "Handover Notes",   icon: "pi-arrow-right-arrow-left",path: "/nursing-handover-notes",color: C.teal},
   ],
   "TPA Coordinator":[
-    { label: "Patient Billing",  icon: "pi-receipt",           path: "/patient-billing",        color: C.green  },
-    { label: "Bills List",       icon: "pi-list",              path: "/billing",                color: C.amber  },
+    { label: "Patient Billing",  icon: "pi-receipt",           path: "/reception-billing",        color: C.green  },
+    { label: "Billing Counter",  icon: "pi-list",              path: "/reception-billing",      color: C.amber  },
     { label: "Patient Search",   icon: "pi-search",            path: "/allpatient",             color: C.purple },
     { label: "TPA Services",     icon: "pi-plus-circle",       path: "/addservice",             color: C.teal   },
   ],
