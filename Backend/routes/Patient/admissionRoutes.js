@@ -25,8 +25,18 @@ router.use(attemptAuth, attachDoctorProfile, restrictToOwnDoctorPatients, restri
 const idGuard = validateObjectIdParam("id");
 const consultGuard = validateObjectIdParam("consultId");
 
+// ── R7bb-B/D4-CRIT-S1: every GET below is now gated on `ipd.read` ──
+// Admin / Doctor / Nurse / Receptionist. Pre-R7bb any authenticated role
+// (Pharmacist, Lab Tech, Ward Boy, Housekeeping, Security) could pull
+// the full active-IPD list, today's discharges, the discharge queue,
+// per-doctor admission rosters and individual admission detail — all of
+// which expose PHI + bed + diagnosis fields. NABH AAC.7 / DPDP
+// purpose-limitation violation. The `attemptAuth` + `attachDoctorProfile`
+// + scope-filter chain stays mounted at router.use() so a Doctor still
+// gets auto-restricted to their own attendingDoctorId set.
+
 // ── Statistics ───────────────────────────────────────────────
-router.get("/statistics", ctrl.getAdmissionStatistics);
+router.get("/statistics", requireAction("ipd.read"), ctrl.getAdmissionStatistics);
 
 // ── NABH discharge clearance workflow ─────────────────────────
 // R7ab: every write here is now action-gated. Pre-R7ab any authenticated
@@ -34,7 +44,7 @@ router.get("/statistics", ctrl.getAdmissionStatistics);
 // — including the Lab Tech / Dietician. doctor-approve is a clinical
 // decision (ipd.discharge); the two reception steps stay on
 // reception.discharge.
-router.get("/discharge-queue",                    ctrl.getDischargeQueue);
+router.get("/discharge-queue",                    requireAction("ipd.read"), ctrl.getDischargeQueue);
 router.post("/:id/doctor-approve-discharge",      idGuard, authenticate, requireAction("ipd.discharge"), ctrl.doctorApproveDischarge);
 router.post("/:id/clear-final-bill",              idGuard, authenticate, requireAction("reception.discharge"), ctrl.clearFinalBill);
 router.post("/:id/issue-gate-pass",               idGuard, authenticate, requireAction("reception.discharge"), ctrl.issueGatePass);
@@ -45,34 +55,39 @@ router.post("/:id/issue-gate-pass",               idGuard, authenticate, require
 router.post("/:id/reactivate",                    idGuard, authenticate, requireAction("admission.reactivate"), ctrl.reactivate);
 
 // ── Lists ────────────────────────────────────────────────────
-router.get("/active", ctrl.getActiveAdmissions);
-router.get("/today", ctrl.getTodayAdmissions);
-router.get("/search", ctrl.searchAdmissions);
+router.get("/active",  requireAction("ipd.read"), ctrl.getActiveAdmissions);
+router.get("/today",   requireAction("ipd.read"), ctrl.getTodayAdmissions);
+router.get("/search",  requireAction("ipd.read"), ctrl.searchAdmissions);
 
 // ── Discharge lists ──────────────────────────────────────────
-router.get("/discharges/today", ctrl.getTodayDischarges);
-router.get("/discharges/expected", ctrl.getExpectedDischarges);
+router.get("/discharges/today",    requireAction("ipd.read"), ctrl.getTodayDischarges);
+router.get("/discharges/expected", requireAction("ipd.read"), ctrl.getExpectedDischarges);
 
 // ── Doctor filter ────────────────────────────────────────────
-router.get("/doctor/:doctorName", ctrl.getAdmissionsByDoctor);
+router.get("/doctor/:doctorName", requireAction("ipd.read"), ctrl.getAdmissionsByDoctor);
 
 // ── Doctor's own IPD patients (auth required) ────────────────
 // Both /my-patients and /my-team-patients MUST come BEFORE the /:id
 // param routes — otherwise Express matches "/:id" first and runs
 // findById("my-patients") which throws CastError.
-router.get("/my-patients", authenticate, attachDoctorProfile, authorize("Doctor", "Admin"), ctrl.getMyPatients);
-router.get("/my-team-patients", authenticate, attachDoctorProfile, authorize("Doctor", "Admin"), ctrl.getMyTeamPatients);
+// R7bb-B/D4-CRIT-S1: inline authorize("Doctor","Admin") replaced with
+// requireAction("ipd.read") so the gate is centrally managed in
+// permissions.js and the audit map keeps a single source of truth.
+// `attachDoctorProfile` is still needed because the controller reads
+// req.doctorProfile to scope to the logged-in doctor's own roster.
+router.get("/my-patients",      authenticate, attachDoctorProfile, requireAction("ipd.read"), ctrl.getMyPatients);
+router.get("/my-team-patients", authenticate, attachDoctorProfile, requireAction("ipd.read"), ctrl.getMyTeamPatients);
 
 // ── Patient lookups ──────────────────────────────────────────
-router.get("/patient-by-uhid/:uhid", ctrl.getPatientByUHID);
-router.get("/patient/:patientId/history", ctrl.getPatientAdmissionHistory); // ✅ history
-router.get("/patient/:patientId", ctrl.getPatientAdmissionHistory); // ✅ alias
+router.get("/patient-by-uhid/:uhid",       requireAction("ipd.read"), ctrl.getPatientByUHID);
+router.get("/patient/:patientId/history",  requireAction("ipd.read"), ctrl.getPatientAdmissionHistory); // ✅ history
+router.get("/patient/:patientId",          requireAction("ipd.read"), ctrl.getPatientAdmissionHistory); // ✅ alias
 
 // ── CRUD ─────────────────────────────────────────────────────
 router.post("/", authenticate, requireAction("ipd.assign-bed"), ctrl.createAdmission);
-router.get("/", ctrl.getAllAdmissions);
-router.get("/:id/access", idGuard, authenticate, ctrl.checkAccess);
-router.get("/:id", idGuard, ctrl.getAdmissionById);
+router.get("/",  requireAction("ipd.read"), ctrl.getAllAdmissions);
+router.get("/:id/access", idGuard, authenticate, requireAction("ipd.read"), ctrl.checkAccess);
+router.get("/:id",        idGuard, requireAction("ipd.read"), ctrl.getAdmissionById);
 router.put("/:id", idGuard, authenticate, requireAction("ipd.assign-bed"), ctrl.updateAdmission);
 router.delete("/:id", idGuard, authenticate, requireAction("ipd.delete"), ctrl.deleteAdmission);
 
@@ -99,7 +114,10 @@ router.post("/:id/nurse-assessment",   idGuard, requireAction("mar.write"), ctrl
 // (Admin/Doctor) so Nurse / Receptionist can't manipulate the team.
 // Controller still enforces "you are the primary or admin" inside.
 router.post  ("/:id/consultation",                  idGuard,               requireAction("consultation.write"), ctrl.addConsultation);
-router.get   ("/:id/consultation",                  idGuard,                                                    ctrl.getConsultations);
+// R7bb-B/D4-CRIT-S1: GET consultations now gated on `ipd.read`
+// (Admin/Doctor/Nurse/Receptionist) — pre-R7bb the treatment-team
+// roster + consultant fee history was ungated.
+router.get   ("/:id/consultation",                  idGuard,               requireAction("ipd.read"),           ctrl.getConsultations);
 router.put   ("/:id/consultation/:consultId",       idGuard, consultGuard, requireAction("consultation.write"), ctrl.updateConsultation);
 router.delete("/:id/consultation/:consultId",       idGuard, consultGuard, requireAction("consultation.write"), ctrl.removeConsultation);
 

@@ -43,6 +43,11 @@ const investigationOrderRoutes = require("./Investigation/investigationOrderRout
 
 const nurseRoutes=require("./Nurse/nurseNotesRoutes");
 const nurseStaffRoutes = require("./Nurse/nurseStaffRoutes");
+// R7bb-B/D4-HIGH-S1: shift-handover routes existed since R7au but were
+// never mounted in index.js, so the entire /api/shift-handover surface
+// was dead code. The routes already carry `mar.write` / `nurse-notes.read`
+// gates — just need the mount to make them reachable.
+const shiftHandoverRoutes = require("./Nurse/shiftHandoverRoutes");
 const doctorNotesRoutes = require("./Doctor/doctorNotesRoutes");
 const doctorOrderRoutes = require("./Doctor/doctorOrderRoutes");
 const nursingChargesRoutes = require("./nursing/nursingChargesRoutes");
@@ -135,6 +140,7 @@ router.use("/emergency", emergencyRoutes);
 router.use("/doctors", doctorRoutes);
 router.use("/nurse-notes",nurseRoutes);
 router.use("/nurse-staff", nurseStaffRoutes);
+router.use("/shift-handover", shiftHandoverRoutes);
 router.use("/doctor-notes", doctorNotesRoutes);
 router.use("/doctor-orders", doctorOrderRoutes);
 

@@ -25,7 +25,11 @@ router.get("/employee/:employeeId",          requireAction("users.read"), userCo
 // MUST be declared BEFORE the param routes — otherwise Express matches
 // `/:id` first and runs updateUser with id="change-password". The
 // controller reads req.user.id, so authentication is the only gate.
-router.put("/change-password",               authenticate, userController.changePassword);
+// R7bb-B/D4-HIGH-S1: gated on `users.change-password-self` so the audit
+// map has an explicit token for the surface (the action permits every
+// role, mirroring "any authenticated user" — but the explicit gate keeps
+// the route grep-able alongside the other users.* permissions).
+router.put("/change-password",               authenticate, requireAction("users.change-password-self"), userController.changePassword);
 
 // ─── Read-by-id ────────────────────────────────────────────────
 router.get("/:id",                           requireAction("users.read"), userController.getUserById);

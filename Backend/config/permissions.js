@@ -120,7 +120,9 @@ const ACTIONS = {
   "lab.cancel":            ["Admin", "Doctor"],
   // Manual lab data entry — trend sheets + imaging / micro / histopath
   // reports (everything outsourced labs send back as paper/PDF).
-  "lab.records.read":      ["Admin", "Doctor", "Nurse", "Lab Technician"],
+  // R7bb-B/D4-CRIT-investigation-orders: Radiologist + MRD added so they
+  // can read lab + imaging records on the investigation-orders surface.
+  "lab.records.read":      ["Admin", "Doctor", "Nurse", "Lab Technician", "Radiologist", "MRD"],
   "lab.records.write":     ["Admin", "Lab Technician"],
   "lab.records.verify":    ["Admin", "Doctor"],
 
@@ -246,6 +248,22 @@ const ACTIONS = {
   "services.read":             ["Admin", "Doctor", "Nurse", "Receptionist", "Pharmacist", "Lab Technician"],
   // Appointment confirm flow — explicitly desk-staff-only, audit point.
   "appointment.confirm":       ["Admin", "Receptionist"],
+
+  // ── R7bb-B/D4 (S1: 38 ungated routes) — new tokens ───────────
+  // Presence heartbeat list (who's online). Admin-only since the
+  // active-user roster is operational telemetry, not clinical.
+  "presence.read":             ["Admin"],
+  // Self-service password change — every authenticated user can
+  // rotate their own password. The controller scopes to req.user.id
+  // so this action gate exists for symmetry with the frontend
+  // sidebar entry and so the route-middleware sweep audit can flag
+  // any handler accidentally exposing it without authentication.
+  "users.change-password-self": [
+    "Admin", "Receptionist", "Doctor", "Nurse", "Dietician",
+    "TPA Coordinator", "Pharmacist", "Lab Technician", "Radiologist",
+    "Physiotherapist", "Accountant", "Ward Boy", "Housekeeping",
+    "Security", "MRD",
+  ],
 };
 
 function roleCan(role, action) {

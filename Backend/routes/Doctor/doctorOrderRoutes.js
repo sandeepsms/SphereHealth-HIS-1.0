@@ -116,7 +116,11 @@ router.post("/bulk", requireAction("doctor-orders.write"), async (req, res) => {
 });
 
 // GET / — list orders. Query: UHID, visitId, status (comma-sep), orderType
-router.get("/", async (req, res) => {
+// R7bb-B/D4-CRIT-S1: gated on `doctor-notes.read` (Admin / Doctor / Nurse /
+// MRD). Pre-R7bb any authenticated role could pull every active doctor
+// order (medication name + dose + HAM flag + administration record) for
+// any patient.
+router.get("/", requireAction("doctor-notes.read"), async (req, res) => {
   try {
     const { UHID, visitId, status, orderType } = req.query;
     const filter = {};
@@ -132,7 +136,7 @@ router.get("/", async (req, res) => {
 });
 
 // GET /:id — single order
-router.get("/:id", async (req, res) => {
+router.get("/:id", requireAction("doctor-notes.read"), async (req, res) => {
   try {
     const order = await DoctorOrder.findById(req.params.id);
     if (!order) return res.status(404).json({ ok: false, message: "Not found" });

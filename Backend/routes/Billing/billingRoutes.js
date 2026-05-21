@@ -161,10 +161,12 @@ router.patch("/:billId/items/:itemId/cancel-order", vBill, vItem, requireAction(
 router.post("/backfill-registration", requireAction("billing.refund"), ctrl.backfillRegistrationBills);
 
 // ── ANH package management ───────────────────────────────────────────
-// Preview is a safe read — any authenticated user can call it. Attach
-// and Detach change ledger state, so gated to billing.refund tier
+// R7bb-B/D4-CRIT-S1: even though Preview is read-only logic, it returns
+// package match details + tariffs that drive billing decisions. Gated on
+// `billing.read` so the same set of roles that can pull bills can preview.
+// Attach and Detach change ledger state, so gated to billing.refund tier
 // (Accountant / Admin / Receptionist with elevated permission).
-router.post("/packages/preview", ctrl.previewPackageMatch);
+router.post("/packages/preview", requireAction("billing.read"), ctrl.previewPackageMatch);
 router.post("/admissions/:admissionId/attach-package",
   requireAction("billing.refund"), ctrl.attachPackageToAdmission);
 router.post("/admissions/:admissionId/detach-package",

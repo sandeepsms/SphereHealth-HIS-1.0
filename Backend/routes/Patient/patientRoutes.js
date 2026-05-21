@@ -12,22 +12,27 @@ const { validateObjectIdParam } = require("../../utils/queryGuards");
 // middleware in Backend/routes/index.js, so req.user is always present
 // when these handlers run.
 
+// R7bb-B/D4-CRIT-S1: every GET on /api/patients now requires `patient.read`
+// (mirror of frontend gate). Pre-R7bb any authenticated user — Pharmacist /
+// Ward Boy / Housekeeping / Security — could pull the full patient list or
+// any UHID demographics + clinical fields.
+
 // Search route - GET /api/patients/search?q=rahul&limit=10
-router.get("/search", patientController.searchPatients);
+router.get("/search", requireAction("patient.read"), patientController.searchPatients);
 
 // Stats route
-router.get("/stats", patientController.getPatientStats);
+router.get("/stats", requireAction("patient.read"), patientController.getPatientStats);
 
 // UHID se patient dhundho
-router.get("/uhid/:uhid", patientController.getPatientByUHID);
+router.get("/uhid/:uhid", requireAction("patient.read"), patientController.getPatientByUHID);
 
 // TPA patients
-router.get("/tpa/:tpaId", patientController.getPatientsByTPA);
+router.get("/tpa/:tpaId", requireAction("patient.read"), patientController.getPatientsByTPA);
 
 // CRUD routes
-router.get("/", patientController.getAllPatients);
+router.get("/", requireAction("patient.read"), patientController.getAllPatients);
 router.post("/", requireAction("reception.register"), patientController.createPatient);
-router.get("/:id", validateObjectIdParam("id"), patientController.getPatientById);
+router.get("/:id", validateObjectIdParam("id"), requireAction("patient.read"), patientController.getPatientById);
 // PUT split into two actions in the controller. The route itself accepts any
 // authenticated user; the controller redirects clinical-field edits
 // (bloodGroup, knownAllergies, dateOfBirth, gender) through the

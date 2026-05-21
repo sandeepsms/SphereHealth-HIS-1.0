@@ -8,8 +8,14 @@ const ctrl    = require("../../controllers/nursing/nursingChargesController");
 // in routes/index.js makes the per-route `authenticate` redundant.
 const { requireAction } = require("../../middleware/auth");
 
+// R7bb-B/D4-HIGH-S1: all reads now gated on `billing.read` (Admin /
+// Accountant / Receptionist / TPA Coordinator). Pre-R7bb any
+// authenticated role could pull the nursing-charges catalogue + every
+// patient's running charges total — exposes tariff data + per-admission
+// money trail.
+
 // ── Master catalogue ───────────────────────────────────────
-router.get   ("/items",            ctrl.getItems);
+router.get   ("/items",            requireAction("billing.read"), ctrl.getItems);
 router.post  ("/items",            requireAction("departments.write"), ctrl.createItem);
 router.put   ("/items/:id",        requireAction("departments.write"), ctrl.updateItem);
 router.delete("/items/:id",        requireAction("departments.write"), ctrl.deleteItem);
@@ -19,8 +25,8 @@ router.post  ("/log",              requireAction("billing.manual-charge"), ctrl.
 router.delete("/entry/:entryId",   requireAction("billing.manual-charge"), ctrl.voidEntry);
 
 // ── Per-admission queries ─────────────────────────────────────
-router.get("/:admissionId/today",        ctrl.getTodayCharges);
-router.get("/:admissionId/history",      ctrl.getAllCharges);
-router.get("/:admissionId/daily-totals", ctrl.getDailyTotals);
+router.get("/:admissionId/today",        requireAction("billing.read"), ctrl.getTodayCharges);
+router.get("/:admissionId/history",      requireAction("billing.read"), ctrl.getAllCharges);
+router.get("/:admissionId/daily-totals", requireAction("billing.read"), ctrl.getDailyTotals);
 
 module.exports = router;

@@ -12,12 +12,18 @@ router.use(attemptAuth, attachDoctorProfile);
 // the parent /api/patients gate was bypassable by hitting these routes
 // directly on an existing patient.
 router.post("/", requireAction("reception.register"), emergencyController.createEmergencyVisit);
-router.get("/", emergencyController.getAllEmergencyVisits);
-router.get("/active", emergencyController.getActiveEmergencies);
-router.get("/today", emergencyController.getTodayEmergencies);
-router.get("/mlc", emergencyController.getMLCCases);
+// R7bb-B/D4-CRIT-S1: all GET reads now gated on `patient.read`. Pre-R7bb
+// any authenticated role could pull the ER queue / triage list / MLC
+// register — exposes triage category, complaint, MLC details (police
+// case PHI). Pharmacist / Ward Boy / Housekeeping / Security all had
+// silent read access.
+router.get("/", requireAction("patient.read"), emergencyController.getAllEmergencyVisits);
+router.get("/active", requireAction("patient.read"), emergencyController.getActiveEmergencies);
+router.get("/today", requireAction("patient.read"), emergencyController.getTodayEmergencies);
+router.get("/mlc",   requireAction("patient.read"), emergencyController.getMLCCases);
 router.get(
   "/triage/:triageCategory",
+  requireAction("patient.read"),
   emergencyController.getEmergenciesByTriage
 );
 // `/patient/:patientId` MUST be BEFORE `/:emergencyNumber` — else Express
@@ -25,9 +31,10 @@ router.get(
 // emergencyNumber="patient" → 404.
 router.get(
   "/patient/:patientId",
+  requireAction("patient.read"),
   emergencyController.getPatientEmergencyHistory
 );
-router.get("/:emergencyNumber", emergencyController.getEmergencyVisitById);
+router.get("/:emergencyNumber", requireAction("patient.read"), emergencyController.getEmergencyVisitById);
 router.put("/:emergencyNumber", requireAction("reception.register"), emergencyController.updateEmergencyVisit);
 router.delete("/:emergencyNumber", requireAction("reception.register"), emergencyController.deleteEmergencyVisit);
 router.post(

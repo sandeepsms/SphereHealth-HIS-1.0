@@ -8,9 +8,12 @@ router.get("/",                                requireAction("doctors.read"), do
 router.get("/active",                          requireAction("doctors.read"), doctorController.getActiveDoctors);
 router.get("/search",                          requireAction("doctors.read"), doctorController.searchDoctors);
 
-// Doctor profile for the logged-in user (role=Doctor) — must remain open
-// to any authenticated user; controller scopes to req.user.id.
-router.get("/me",                              authenticate, doctorController.getMyDoctorProfile);
+// Doctor profile for the logged-in user (role=Doctor). Controller scopes
+// to req.user.id so a Doctor only gets their own row.
+// R7bb-B/D4-HIGH-S1: gated on `doctor.self.write` (Admin / Doctor) so a
+// logged-in non-doctor role (Pharmacist / Ward Boy / Security) cannot
+// probe `/me` to see if a doctor profile exists for their user id.
+router.get("/me",                              authenticate, requireAction("doctor.self.write"), doctorController.getMyDoctorProfile);
 
 router.get("/department/:department",          requireAction("doctors.read"), doctorController.getDoctorsByDepartment);
 router.get("/specialization/:specialization",  requireAction("doctors.read"), doctorController.getDoctorsBySpecialization);

@@ -19,10 +19,10 @@ const vId    = validateObjectIdParam("id");
 const vTpaId = validateObjectIdParam("tpaId");
 const vRoom  = validateObjectIdParam("roomCategoryId");
 
-// Test endpoint
-router.get("/test", (req, res) => {
-  res.json({ message: "TPA routes working perfectly!" });
-});
+// R7bb-B/D4-HIGH-S1: removed the `/test` debug endpoint. Pre-R7bb it was
+// reachable as `GET /api/tpa/test` to any authenticated user and returned
+// "TPA routes working perfectly!" — leftover dev probe shipped to prod
+// that confirmed the API surface to any attacker with a stolen JWT.
 
 // Reads — any role allowed to file pre-auth or read billing
 router.get("/active",                                  requireAction("billing.read"), getAllTPAs);

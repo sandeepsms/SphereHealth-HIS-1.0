@@ -1,23 +1,29 @@
 const express = require("express");
 const router = express.Router();
 const opdController = require("../../controllers/Patient/OPDController");
-const { attemptAuth, attachDoctorProfile, requireAction } = require("../../middleware/auth");
+const { attachDoctorProfile, requireAction } = require("../../middleware/auth");
 
-// Soft-auth + doctorProfile resolver on all list/read endpoints so we can
-// auto-restrict OPD visibility to "only this doctor's patients" when the
-// caller is a Doctor (non-doctors keep full visibility).
-router.use(attemptAuth, attachDoctorProfile);
+// R7bb-B/D4-CRIT-S1: `attemptAuth` removed — this router sits under the
+// global `authenticate` mount in routes/index.js so req.user is already
+// guaranteed populated. `attachDoctorProfile` stays so OPD list endpoints
+// can auto-restrict to "only this doctor's patients" when role === Doctor.
+router.use(attachDoctorProfile);
+
+// R7bb-B/D4-CRIT-S1: every GET on /api/opd now requires `patient.read`
+// (same gate as parent /api/patients). Pre-R7bb any authenticated role
+// (Ward Boy, Housekeeping, Security) could pull the OPD queue / followup
+// list / per-department visit roster — exposes diagnosis + complaint text.
 
 // ── Specific non-param routes FIRST ──────────────────────────────
-router.get("/today",        opdController.getTodayVisits);
-router.get("/followup-due", opdController.getFollowUpDue);
+router.get("/today",        requireAction("patient.read"), opdController.getTodayVisits);
+router.get("/followup-due", requireAction("patient.read"), opdController.getFollowUpDue);
 
 // ── Filtered list routes ──────────────────────────────────────────
-router.get("/department/:departmentId", opdController.getVisitsByDepartment);
-router.get("/doctor/:doctorId",         opdController.getVisitsByDoctor);
+router.get("/department/:departmentId", requireAction("patient.read"), opdController.getVisitsByDepartment);
+router.get("/doctor/:doctorId",         requireAction("patient.read"), opdController.getVisitsByDoctor);
 
 // ── Patient history ───────────────────────────────────────────────
-router.get("/patient/:patientId", opdController.getPatientOPDHistory);
+router.get("/patient/:patientId", requireAction("patient.read"), opdController.getPatientOPDHistory);
 
 // ── CRUD ─────────────────────────────────────────────────────────
 // R7ab: visit creation/edit/delete now gated. Previously every
@@ -25,8 +31,8 @@ router.get("/patient/:patientId", opdController.getPatientOPDHistory);
 // because only the parent /api/patients had reception.register. Adding
 // visits on an existing patient bypassed that gate.
 router.post("/",    requireAction("reception.register"), opdController.createOPDVisit);
-router.get("/",     opdController.getAllOPDVisits);
-router.get("/:visitNumber",   opdController.getOPDVisitById);
+router.get("/",     requireAction("patient.read"), opdController.getAllOPDVisits);
+router.get("/:visitNumber",   requireAction("patient.read"), opdController.getOPDVisitById);
 router.put("/:visitNumber",   requireAction("reception.register"), opdController.updateOPDVisit);
 router.delete("/:visitNumber", requireAction("reception.register"), opdController.deleteOPDVisit);
 
@@ -36,7 +42,7 @@ router.patch("/:visitNumber/status",  requireAction("reception.register"), opdCo
 
 // ── Doctor OPD Assessment + Audit Trail ──────────────────────────
 router.post("/:visitNumber/assessment",  requireAction("rx.write"), opdController.saveAssessment);
-router.get ("/:visitNumber/audit-trail", opdController.getOPDauditTrail);
+router.get ("/:visitNumber/audit-trail", requireAction("patient.read"), opdController.getOPDauditTrail);
 
 // ── Investigations & prescriptions ───────────────────────────────
 router.post("/:visitNumber/investigation",         requireAction("lab.order"), opdController.addInvestigation);

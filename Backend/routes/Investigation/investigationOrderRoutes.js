@@ -6,11 +6,16 @@ const { attemptAuth, requireAction } = require("../../middleware/auth");
 // Soft-auth so lab/radiology results carry the technician's user record.
 router.use(attemptAuth);
 
-// Reads — any clinical role
-router.get("/summary",        ctrl.getSummary);
-router.get("/patient/:UHID",  ctrl.getByUHID);
-router.get("/",               ctrl.getAll);
-router.get("/:id",            ctrl.getById);
+// R7bb-B/D4-CRIT-S1: every GET on investigation orders now requires
+// `lab.records.read` (Admin / Doctor / Nurse / Lab Technician /
+// Radiologist / MRD). Pre-R7bb the reads were behind global authenticate
+// but had NO per-action gate — Pharmacist / Ward Boy / Housekeeping /
+// Security / Receptionist / Accountant could pull every lab + imaging
+// order, sample status, and external report for any UHID.
+router.get("/summary",        requireAction("lab.records.read"), ctrl.getSummary);
+router.get("/patient/:UHID",  requireAction("lab.records.read"), ctrl.getByUHID);
+router.get("/",               requireAction("lab.records.read"), ctrl.getAll);
+router.get("/:id",            requireAction("lab.records.read"), ctrl.getById);
 
 // Writes — gated by action.
 // Order entry: Doctor / Receptionist (per ACTIONS.lab.order).

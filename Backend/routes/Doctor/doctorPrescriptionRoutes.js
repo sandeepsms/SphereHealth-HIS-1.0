@@ -13,27 +13,34 @@ const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 // Create prescription
 router.post("/uhid/:uhid", requireAction("rx.write"), prescriptionController.createPrescription);
-router.get("/checkByuhid/:uhid", prescriptionController.checkCreateOrUpdate);
+// R7bb-B/D4-CRIT-S1: every GET on prescriptions now requires `rx.read`
+// (Admin / Doctor / Nurse / Pharmacist / Accountant). Pre-R7bb the routes
+// were unauthenticated-by-default behind global authenticate but had NO
+// per-action gate, so any non-clinical role (Ward Boy / Security / TPA
+// Coordinator / Lab Tech) could pull every prescription, medicine list
+// and dose for any UHID — full medication PHI surface.
+router.get("/checkByuhid/:uhid",  requireAction("rx.read"), prescriptionController.checkCreateOrUpdate);
 
-// Get all prescriptions (with filters) — read open to any clinical role
-// already covered by the routes/index.js global authenticate.
-router.get("/", prescriptionController.getAllPrescriptions);
+// Get all prescriptions (with filters)
+router.get("/", requireAction("rx.read"), prescriptionController.getAllPrescriptions);
 
 // Get prescription statistics
-router.get("/stats", prescriptionController.getPrescriptionStats);
+router.get("/stats", requireAction("rx.read"), prescriptionController.getPrescriptionStats);
 
 // Get prescription by ID and UHID
-router.get("/:id", validateObjectIdParam("id"), prescriptionController.getPrescriptionById);
-router.get("/uhid/:uhid", prescriptionController.getPrescriptionByUHID);
+router.get("/:id", validateObjectIdParam("id"), requireAction("rx.read"), prescriptionController.getPrescriptionById);
+router.get("/uhid/:uhid",                       requireAction("rx.read"), prescriptionController.getPrescriptionByUHID);
 // Get prescriptions by patient (UHID or ID)
 router.get(
   "/patient/:patientIdentifier",
+  requireAction("rx.read"),
   prescriptionController.getPrescriptionsByPatient,
 );
 
 // Get prescriptions by doctor
 router.get(
   "/doctor/:doctorId",
+  requireAction("rx.read"),
   prescriptionController.getPrescriptionsByDoctor,
 );
 

@@ -6,11 +6,15 @@ const router = express.Router();
 const ctrl = require("../../controllers/Nurse/nursingCarePlanController");
 const { requireAction } = require("../../middleware/auth");
 
-router.get   ("/uhid/:uhid",                          ctrl.getByUHID);
-router.get   ("/ipd/:ipdNo",                          ctrl.getByIPD);
-router.get   ("/admission/:admissionId",              ctrl.getByAdmission);
+// R7bb-B/D4-CRIT-S1: nursing-care-plan reads now gated on `nurse-notes.read`
+// (Admin / Doctor / Nurse / MRD). Pre-R7bb any authenticated role could
+// pull NABH-IPSG nursing care plans (problem list + interventions + plan
+// of care = full clinical narrative).
+router.get   ("/uhid/:uhid",                          requireAction("nurse-notes.read"), ctrl.getByUHID);
+router.get   ("/ipd/:ipdNo",                          requireAction("nurse-notes.read"), ctrl.getByIPD);
+router.get   ("/admission/:admissionId",              requireAction("nurse-notes.read"), ctrl.getByAdmission);
 router.post  ("/",                                    requireAction("mar.write"), ctrl.create);
-router.get   ("/:id",                                 ctrl.getById);
+router.get   ("/:id",                                 requireAction("nurse-notes.read"), ctrl.getById);
 router.put   ("/:id",                                 requireAction("mar.write"), ctrl.update);
 router.patch ("/:id/problem/:problemId/status",       requireAction("mar.write"), ctrl.updateProblemStatus);
 router.patch ("/:id/complete",                        requireAction("mar.write"), ctrl.complete);

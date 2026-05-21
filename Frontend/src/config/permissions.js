@@ -173,7 +173,9 @@ export const ACTIONS = {
   // a clinician's order (cancel also reverses billing). Sample rejection
   // stays a Lab Tech action under lab.result-entry.
   "lab.cancel":            ["Admin", "Doctor"],
-  "lab.records.read":      ["Admin", "Doctor", "Nurse", "Lab Technician"],
+  // R7bb-B/D4-CRIT: Radiologist + MRD added so they can read lab + imaging
+  // records on the investigation-orders surface (mirror of backend).
+  "lab.records.read":      ["Admin", "Doctor", "Nurse", "Lab Technician", "Radiologist", "MRD"],
   "lab.records.write":     ["Admin", "Lab Technician"],
   "lab.records.verify":    ["Admin", "Doctor"],
 
@@ -256,6 +258,15 @@ export const ACTIONS = {
   "doctor.self.write":         ["Admin", "Doctor"],
   "services.read":             ["Admin", "Doctor", "Nurse", "Receptionist", "Pharmacist", "Lab Technician"],
   "appointment.confirm":       ["Admin", "Receptionist"],
+
+  // ── R7bb-B/D4 (S1: 38 ungated routes) — new tokens (mirror) ──
+  "presence.read":             ["Admin"],
+  "users.change-password-self": [
+    "Admin", "Receptionist", "Doctor", "Nurse", "Dietician",
+    "TPA Coordinator", "Pharmacist", "Lab Technician", "Radiologist",
+    "Physiotherapist", "Accountant", "Ward Boy", "Housekeeping",
+    "Security", "MRD",
+  ],
 };
 
 /* ── Helpers ─────────────────────────────────────────────────────── */

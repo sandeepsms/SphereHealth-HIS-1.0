@@ -8,7 +8,11 @@ const router = require("express").Router();
 const ctrl = require("../../controllers/Clinical/medReconciliationController");
 const { requireAction } = require("../../middleware/auth");
 
-router.get  ("/admission/:admissionId",                  ctrl.getReconciliation);
+// R7bb-B/D4-CRIT-S1: med-reconciliation read now gated on `rx.read`
+// (Admin / Doctor / Nurse / Pharmacist / Accountant). Pre-R7bb any
+// authenticated role could pull the home-meds vs admission-orders
+// reconciliation = patient's full med history including outside Rx.
+router.get  ("/admission/:admissionId",                  requireAction("rx.read"), ctrl.getReconciliation);
 router.post ("/admission/:admissionId/seed",             requireAction("rx.write"), ctrl.seedReconciliation);
 router.put  ("/admission/:admissionId",                  requireAction("rx.write"), ctrl.updateReconciliation);
 router.patch("/admission/:admissionId/row/:rowId",       requireAction("rx.write"), ctrl.updateRow);

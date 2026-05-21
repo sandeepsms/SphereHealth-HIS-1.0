@@ -6,10 +6,14 @@ const router = express.Router();
 const ctrl = require("../../controllers/Clinical/diabeticChartController");
 const { requireAction } = require("../../middleware/auth");
 
+// R7bb-B/D4-MED-S1: diabetic-chart reads now gated on `mar.read`
+// (Admin / Doctor / Nurse / MRD). Pre-R7bb any authenticated role could
+// pull every BG entry + insulin dose chart for any UHID — full medication
+// administration record subset.
 // List of dates for a patient
-router.get("/:uhid",        ctrl.listByUhid);
+router.get("/:uhid",        requireAction("mar.read"), ctrl.listByUhid);
 // Get sheet for a date
-router.get("/:uhid/:date",  ctrl.getByUhidDate);
+router.get("/:uhid/:date",  requireAction("mar.read"), ctrl.getByUhidDate);
 
 // Upsert sheet (admissionId + date)
 router.post("/",                            requireAction("mar.write"), ctrl.upsertSheet);
@@ -27,6 +31,6 @@ router.put   ("/:id/entry/:entryId",        requireAction("mar.write"), ctrl.pat
 router.delete("/:id/entry/:entryId",        requireAction("mar.write"), ctrl.deleteEntry);
 
 // Helper — given a sheet and a BG value, return recommended dose
-router.get("/:id/recommend",                ctrl.recommendDose);
+router.get("/:id/recommend",                requireAction("mar.read"), ctrl.recommendDose);
 
 module.exports = router;
