@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { getVitalSheet, deleteVitalSheet } from "../../Services/vital/vitalService";
 import { Button } from "primereact/button";
+import { confirm } from "../common/ConfirmDialog";
 
 function VitalsView() {
   const { uhid } = useParams();
@@ -39,10 +40,14 @@ function VitalsView() {
   };
 
   const handleDelete = async (record) => {
+    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
     if (
-      !window.confirm(
-        `Are you sure you want to delete record dated ${record.date}?`,
-      )
+      !(await confirm({
+        title: "Delete vitals record?",
+        body: `The vitals entry dated ${record.date} will be permanently removed from this patient's chart.`,
+        danger: true,
+        confirmLabel: "Delete",
+      }))
     )
       return;
 

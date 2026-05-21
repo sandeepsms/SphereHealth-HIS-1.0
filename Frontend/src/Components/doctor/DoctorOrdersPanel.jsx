@@ -11,6 +11,7 @@ import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import SharedDrugAutocomplete, { parseStrength, drugDisplayName } from "../clinical/DrugAutocomplete";
+import { confirm } from "../common/ConfirmDialog";
 
 /* ── Design tokens ── */
 const C = {
@@ -654,7 +655,17 @@ function OrderCard({ order, onCancel }) {
           <AuditTrail order={order}/>
           {order.status !== "Completed" && order.status !== "Cancelled" && (
             <button
-              onClick={(e) => { e.stopPropagation(); if (window.confirm("Cancel this order?")) onCancel(order._id); }}
+              onClick={async (e) => {
+                e.stopPropagation();
+                // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+                if (await confirm({
+                  title: "Cancel this order?",
+                  body: "The order will be marked Cancelled and will no longer appear in the active worklist.",
+                  danger: true,
+                  confirmLabel: "Cancel order",
+                  cancelLabel: "Keep",
+                })) onCancel(order._id);
+              }}
               style={{ marginTop: 10, padding: "5px 12px", border: `1px solid ${C.redB}`, borderRadius: 7, background: C.redL, color: C.red, fontSize: 11, fontWeight: 700, cursor: "pointer" }}
             >
               <i className="pi pi-times" style={{ marginRight: 5 }}/> Cancel Order

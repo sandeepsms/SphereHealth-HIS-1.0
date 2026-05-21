@@ -14,6 +14,7 @@ import {
   AdminPage, Hero, KPI, Card, Table, EmptyRow, RowAction, Badge,
   Modal, Field, Check, SearchInput, PrimaryButton, C,
 } from "../../Components/admin-theme";
+import { confirm } from "../../Components/common/ConfirmDialog";
 
 const CATEGORIES = ["Clinical", "Surgical", "Diagnostic", "Support Services", "Emergency", "Critical Care"];
 const EMPTY = {
@@ -54,7 +55,13 @@ const DepartmentManagement = () => {
   }, [rows]);
 
   const remove = async (dept) => {
-    if (!window.confirm(`Deactivate ${dept.departmentName}?`)) return;
+    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+    if (!(await confirm({
+      title: "Deactivate department?",
+      body: `"${dept.departmentName}" will be marked inactive and hidden from new visits and admissions. Existing records are preserved.`,
+      danger: true,
+      confirmLabel: "Deactivate",
+    }))) return;
     try {
       await departmentService.deleteDepartment(dept._id);
       toast.success(`${dept.departmentName} deactivated`);

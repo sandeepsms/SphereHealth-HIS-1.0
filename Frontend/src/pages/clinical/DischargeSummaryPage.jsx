@@ -18,6 +18,7 @@ import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
 import SignaturePad from "../../Components/signature/SignaturePad";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import MLCAutoStamp from "../../Components/mlc/MLCAutoStamp";
+import { confirm } from "../../Components/common/ConfirmDialog";
 import "../../Components/clinical/clinical-forms.css";
 
 const API = `${API_ENDPOINTS.BASE}/discharge-summary`;
@@ -1125,7 +1126,13 @@ function DischargeSummaryPageContent({ selectedPatient }) {
       toast.warn("Save the summary as a draft first, then click Finalize");
       return;
     }
-    if (!window.confirm("Finalize this discharge summary?\n\nThis will:\n  • Mark the admission as Discharged\n  • Release the bed back to Available\n  • Lock the summary against further edits")) return;
+    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+    if (!(await confirm({
+      title: "Finalize discharge summary?",
+      body: "This will mark the admission as Discharged, release the bed back to Available, and lock the summary against further edits.",
+      danger: true,
+      confirmLabel: "Finalize discharge",
+    }))) return;
 
     setFinalizing(true);
     try {

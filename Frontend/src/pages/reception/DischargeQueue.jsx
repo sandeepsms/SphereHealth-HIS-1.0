@@ -21,6 +21,7 @@ import "../../Components/clinical/clinical-forms.css";
 // final-bill display. Pre-R7av the local `Number(n)` shim NaN'd
 // silently on the new Decimal128 fields from the backend.
 import { toMoney } from "../../utils/money";
+import { confirm } from "../../Components/common/ConfirmDialog";
 
 const fmtCur  = (n) => `₹${(toMoney(n) || 0).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
@@ -275,7 +276,13 @@ function ClearBillModal({ admission, onClose, onCleared, userName }) {
       return toast.error("Enter the final amount settled");
     }
     if (["UPI", "CARD", "CHEQUE", "ONLINE", "TPA_CLAIM"].includes(paymentMode) && !transactionId.trim()) {
-      if (!window.confirm(`No transaction reference for ${paymentMode}. Record anyway?`)) return;
+      // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+      if (!(await confirm({
+        title: "No transaction reference",
+        body: `No transaction reference was entered for ${paymentMode}. Record this payment anyway?`,
+        danger: true,
+        confirmLabel: "Record anyway",
+      }))) return;
     }
     setSaving(true);
     try {

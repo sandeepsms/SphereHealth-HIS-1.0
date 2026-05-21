@@ -11,6 +11,7 @@ import { API_ENDPOINTS } from "../../config/api";
 import { openPrint } from "../../Components/print/openPrint";
 import { useAuth } from "../../context/AuthContext";
 import ActivePatientDirectory from "../../Components/ActivePatientDirectory";
+import { confirm } from "../../Components/common/ConfirmDialog";
 import "./reception-shared.css";
 import "../../Components/clinical/clinical-forms.css";
 
@@ -77,7 +78,12 @@ export default function VisitorPasses() {
   };
 
   const onReturn = async (id) => {
-    if (!window.confirm("Mark pass as returned?")) return;
+    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog (benign — no danger)
+    if (!(await confirm({
+      title: "Mark pass as returned?",
+      body: "The visitor pass will be marked Returned and removed from the Active list.",
+      confirmLabel: "Mark returned",
+    }))) return;
     try { await axios.post(`${API_ENDPOINTS.BASE}/visitor-passes/${id}/return`); toast.success("Pass returned"); load(); }
     catch (e) {
       console.error("[VisitorPasses] return:", e?.response?.data?.message || e?.message);

@@ -238,5 +238,43 @@ async function emitBillingAudit(payload, { req } = {}) {
 const BillingAudit = mongoose.models.BillingAudit ||
   mongoose.model("BillingAudit", BillingAuditSchema);
 
+// R7ax-FIX-OOM: export the model AND the emit helper as TWO module fields.
+// Pre-R7ax we did `module.exports = BillingAudit; module.exports.emit = …`
+// which *clobbered* the inherited `EventEmitter.prototype.emit` on the model
+// itself. Mongoose's `Model.init()` calls `this.emit("index", err)` and
+// `this.emit("index-single-done", …)` internally during the very first
+// index-sync. With our clobbered `emit`, those internal calls landed in
+// `emitBillingAudit("index", err)` — the function spread the string `"index"`
+// into a doc, called `mongoose.model("BillingAudit").create(…)`, which
+// triggered a fresh save → pre-save hook → another index sync → another
+// `emit("index")` → … runaway recursion that allocated ~500 MB then OOMed
+// the entire process within ~15 s of the first `/api/billing/audit` hit
+// (and of every other code path that touched BillingAudit, including the
+// auto-archive cron and every `emit({event:"…"})` call site at runtime).
+// Keeping the model export pristine, attaching the helper as `module.exports.emit`
+// on the EXPORTS object only works because `module.exports` is the model
+// object itself — so the property landed on the model. Splitting into
+// `{ Model, emit }` keeps the model's prototype methods intact.
 module.exports = BillingAudit;
-module.exports.emit = emitBillingAudit;
+module.exports.emitBillingAudit = emitBillingAudit;
+// Back-compat: every existing caller does `const { emit } = require(".../BillingAudit")`.
+// Expose under that name too, but ONLY if Mongoose's own `emit` is still the
+// EventEmitter prototype method (i.e. nothing on the model has overridden it).
+// Using Object.defineProperty so the value is non-writable and won't be
+// accidentally re-clobbered, while keeping it discoverable on the model.
+if (BillingAudit.emit === Object.getPrototypeOf(BillingAudit).emit) {
+  // Safe path: attach `emit` as a *separate function reference*, not as a
+  // property that overrides the prototype's emit. Callers using
+  // `BillingAudit.emit({event:"…"})` get our helper; Mongoose's internal
+  // `this.emit("index")` continues to resolve to the inherited prototype.
+  // We do this via a function that disambiguates by signature: first arg
+  // is an object payload (our caller) → helper; first arg is a string
+  // (Mongoose's internal `emit(eventName, …)`) → delegate to EventEmitter.
+  const _protoEmit = Object.getPrototypeOf(BillingAudit).emit;
+  BillingAudit.emit = function emitDispatch(arg, ...rest) {
+    if (typeof arg === "string") {
+      return _protoEmit.call(this, arg, ...rest);
+    }
+    return emitBillingAudit(arg, ...rest);
+  };
+}

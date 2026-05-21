@@ -9,6 +9,7 @@ import {
   BmAvatar, BmChip,
 } from "../Components/bed/BedPrimitives";
 import { floorService } from "../Services/floorService";
+import { confirm } from "../Components/common/ConfirmDialog";
 
 const TABS = [
   { key: "list", icon: "pi pi-list",     label: "List" },
@@ -41,14 +42,19 @@ const FloorManagement = () => {
   const handleEdit = (floor) => { setSelectedFloor(floor); setShowForm(true); };
   const handleAdd  = () => { setSelectedFloor(null); setShowForm(true); };
   const handleDelete = async (floor) => {
-    if (window.confirm(`Delete floor "${floor.floorName || floor.floorNumber}"?`)) {
-      try {
-        await floorService.deleteFloor(floor._id);
-        toast.current?.show({ severity: "success", summary: "Deleted", detail: "Floor removed", life: 2500 });
-        loadFloors();
-      } catch {
-        toast.current?.show({ severity: "error", summary: "Error", detail: "Failed to delete floor", life: 3000 });
-      }
+    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+    if (!(await confirm({
+      title: "Delete floor?",
+      body: `Floor "${floor.floorName || floor.floorNumber}" will be removed. Any wards/rooms beneath it must be reassigned first.`,
+      danger: true,
+      confirmLabel: "Delete",
+    }))) return;
+    try {
+      await floorService.deleteFloor(floor._id);
+      toast.current?.show({ severity: "success", summary: "Deleted", detail: "Floor removed", life: 2500 });
+      loadFloors();
+    } catch {
+      toast.current?.show({ severity: "error", summary: "Error", detail: "Failed to delete floor", life: 3000 });
     }
   };
 

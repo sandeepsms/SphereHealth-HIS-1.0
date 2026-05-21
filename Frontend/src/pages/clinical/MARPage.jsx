@@ -7,6 +7,7 @@ import { useDigitalSignature } from "../../hooks/useDigitalSignature";
 import { useUhidFromLocation } from "../../hooks/useUhidFromLocation";
 import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
 import SignaturePad from "../../Components/signature/SignaturePad";
+import { confirm } from "../../Components/common/ConfirmDialog";
 
 const API = API_ENDPOINTS.MAR;
 
@@ -288,8 +289,14 @@ function PharmacyIndentModal({ mar, scheduleData, admDate, onClose }) {
     setCfName(""); setCfDose(""); setCfQty(1); setCfUnit(""); setCfNote(""); setCfStat(false);
     setShowDrawer(false);
   }
-  function resetDay() {
-    if(!window.confirm(`Reset Day ${indentDay} indent to auto-generated values? All manual changes will be lost.`)) return;
+  async function resetDay() {
+    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+    if(!(await confirm({
+      title: `Reset Day ${indentDay} indent?`,
+      body: "All manual changes to today's indent will be discarded and the list will revert to the auto-generated values from the MAR schedule.",
+      danger: true,
+      confirmLabel: "Reset",
+    }))) return;
     const items = buildAutoItems(mar.medications || [], scheduleData, indentDay);
     setIndentState(prev => ({ ...prev, [indentDay]: { ...prev[indentDay], items } }));
     flash();

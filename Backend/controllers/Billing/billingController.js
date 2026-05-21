@@ -601,57 +601,158 @@ exports.getAging = async (req, res, next) => {
     catch (e) { return res.status(400).json({ success: false, message: e.message }); }
     const cacheKey = `aging:${asOf.toISOString()}`;
     const payload = await _agingCache.get(cacheKey, async () => {
+    // ─────────────────────────────────────────────────────────────
+    // R7ax-FIX-1: replaced the find().select().lean() + JS bucketizer
+    // with a single $facet aggregation, following R7aw-FIX-PERF.
+    //
+    // Pre-R7ax this endpoint did .find({open}).select(...).limit(2000)
+    // then walked the cursor in Node to (a) recompute per-bill `due`
+    // from billItems.netAmount + payments fallbacks, (b) bucketize by
+    // ageDays, and (c) split patient/TPA credit lists. The .limit(2000)
+    // silently truncated patient-credit at year+ scale (a single busy
+    // ward can carry 500+ open bills/quarter), and every cache miss
+    // loaded the BillItem sub-schema for each doc — same retained-graph
+    // leak that R7aw-FIX-PERF documented for getRevenueBreakdown.
+    //
+    // FIX: do all the math server-side. One $match + $addFields computes
+    // per-bill `due` and `ageDays` and `bucket` as numbers; a single
+    // $facet emits buckets[], top-100 patientCredit, top-100 tpaCredit
+    // and a totalOutstanding sum. Node never holds raw bill docs.
+    // ─────────────────────────────────────────────────────────────
+    const cutoff = new Date(Date.now() - 365 * 86400000);   // 12-mo window (R7av-FIX-3 preserved)
+    const agg = await PatientBill.aggregate([
+      { $match: {
+          billStatus: { $in: ["GENERATED", "PARTIAL"] },
+          createdAt: { $gte: cutoff },
+      } },
+      // Per-bill derived numbers — mirror the JS reducer 1:1.
+      // _itemsNet  = Σ billItems.netAmount
+      // _refNet    = max(patientPayableAmount, netAmount, _itemsNet)
+      // _paid      = advancePaid ?? totalPaid ?? amountPaid ?? 0
+      // _gross     = netAmount ?? netPayable ?? grossAmount ?? 0
+      // _stored    = balanceAmount
+      // _due       = _stored>0 ? _stored : max(_refNet - max(0,_paid), 0)
+      // _ageDays   = floor((asOf - createdAt) / day)
+      // _bucket    = "0-30" | "31-60" | "61-90" | "90+"
+      // _isTPA     = /tpa|insurance|corporate/i.test(paymentType)
+      { $addFields: {
+          _itemsNet: {
+            $sum: {
+              $map: {
+                input: { $ifNull: ["$billItems", []] },
+                as: "it",
+                in: { $toDouble: { $ifNull: ["$$it.netAmount", 0] } },
+              },
+            },
+          },
+          _paid:  { $toDouble: { $ifNull: ["$advancePaid", { $ifNull: ["$totalPaid", { $ifNull: ["$amountPaid", 0] }] }] } },
+          _gross: { $toDouble: { $ifNull: ["$netAmount",   { $ifNull: ["$netPayable", { $ifNull: ["$grossAmount", 0] }] }] } },
+          _refPat:{ $toDouble: { $ifNull: ["$patientPayableAmount", 0] } },
+          _refNetA:{ $toDouble: { $ifNull: ["$netAmount", 0] } },
+          _stored:{ $toDouble: { $ifNull: ["$balanceAmount", 0] } },
+      } },
+      { $addFields: {
+          _refNet: { $max: ["$_refPat", "$_refNetA", "$_itemsNet"] },
+      } },
+      { $addFields: {
+          _due: {
+            $cond: [
+              { $gt: ["$_stored", 0] },
+              "$_stored",
+              { $max: [{ $subtract: ["$_refNet", { $max: [0, "$_paid"] }] }, 0] },
+            ],
+          },
+          _ageDays: { $floor: { $divide: [{ $subtract: [asOf, "$createdAt"] }, 86400000] } },
+          _isTPA: { $regexMatch: { input: { $ifNull: ["$paymentType", ""] }, regex: /tpa|insurance|corporate/i } },
+      } },
+      // Drop fully-settled rows before bucket / sort / facet so the
+      // patient-credit list isn't full of due=0 noise.
+      { $match: { _due: { $gt: 0 } } },
+      { $addFields: {
+          _bucket: {
+            $switch: {
+              branches: [
+                { case: { $lte: ["$_ageDays", 30] }, then: "0-30" },
+                { case: { $lte: ["$_ageDays", 60] }, then: "31-60" },
+                { case: { $lte: ["$_ageDays", 90] }, then: "61-90" },
+              ],
+              default: "90+",
+            },
+          },
+      } },
+      { $facet: {
+          // ── Bucket totals (4 rows expected — fixed schema)
+          buckets: [
+            { $group: { _id: "$_bucket", count: { $sum: 1 }, amount: { $sum: "$_due" } } },
+          ],
+          // ── Total outstanding (patient + TPA combined, matches pre-R7ax)
+          totals: [
+            { $group: { _id: null, totalOutstanding: { $sum: "$_due" } } },
+          ],
+          // ── Top-100 patient credit (non-TPA), highest due first
+          patientCredit: [
+            { $match: { _isTPA: false } },
+            { $sort: { _due: -1 } },
+            { $limit: 100 },
+            { $project: {
+                _id: 0,
+                billNumber: { $ifNull: ["$billNumber", { $substrBytes: [{ $toString: "$_id" }, 16, 8] }] },
+                UHID: 1, patientName: 1,
+                gross: "$_gross",
+                paid:  "$_paid",
+                due:   "$_due",
+                ageDays: "$_ageDays",
+                bucket: "$_bucket",
+                status: "$billStatus",
+                createdAt: 1,
+            } },
+          ],
+          // ── Top-100 TPA / insurance / corporate credit
+          tpaCredit: [
+            { $match: { _isTPA: true } },
+            { $sort: { _due: -1 } },
+            { $limit: 100 },
+            { $project: {
+                _id: 0,
+                billNumber: { $ifNull: ["$billNumber", { $substrBytes: [{ $toString: "$_id" }, 16, 8] }] },
+                UHID: 1, patientName: 1,
+                gross: "$_gross",
+                paid:  "$_paid",
+                due:   "$_due",
+                ageDays: "$_ageDays",
+                bucket: "$_bucket",
+                status: "$billStatus",
+                createdAt: 1,
+            } },
+          ],
+      } },
+    ])
+      .option({ allowDiskUse: true, maxTimeMS: 15_000 });
 
-    const open = await PatientBill.find({
-      billStatus: { $in: ["GENERATED", "PARTIAL"] },
-      // R7av-FIX-3/D8-HIGH-4: cap to 12-month window. Pre-R7av loaded
-      // every open bill since inception → 5-10k docs at year+ hospital.
-      createdAt: { $gte: new Date(Date.now() - 365 * 86400000) },
-    })
-      .select("billNumber UHID patientName netAmount netPayable grossAmount balanceAmount patientPayableAmount advancePaid totalPaid amountPaid paymentType tpaClaimStatus billStatus createdAt billItems.netAmount")
-      .sort({ createdAt: -1 })
-      .limit(2000)
-      .lean();
-
-    const buckets = { "0-30": { count: 0, amount: 0 }, "31-60": { count: 0, amount: 0 }, "61-90": { count: 0, amount: 0 }, "90+": { count: 0, amount: 0 } };
-    const patientCredit = [];
-    const tpaCredit     = [];
-
-    for (const b of open) {
-      // R7ap-D2-06: prefer bill.balanceAmount (authoritative) — refunds inflate
-      // (gross−paid) when applied to PARTIAL bills via negative rows. Fall back
-      // to items-net (R7am pattern) when balanceAmount is stale-zero.
-      const itemsNet = (b.billItems || []).reduce((s, it) => s + toNum(it.netAmount), 0);
-      const refNet   = Math.max(toNum(b.patientPayableAmount), toNum(b.netAmount), itemsNet);
-      const stored   = toNum(b.balanceAmount);
-      const paid     = toNum(b.advancePaid ?? b.totalPaid ?? b.amountPaid ?? 0);
-      const gross    = toNum(b.netAmount ?? b.netPayable ?? b.grossAmount ?? 0);
-      const due      = stored > 0 ? stored : Math.max(refNet - Math.max(0, paid), 0);
-      if (due <= 0) continue;
-      const ageDays = Math.floor((asOf - new Date(b.createdAt)) / 86400000);
-      const bucket  = ageDays <= 30 ? "0-30" : ageDays <= 60 ? "31-60" : ageDays <= 90 ? "61-90" : "90+";
-      buckets[bucket].count  += 1;
-      buckets[bucket].amount += due;
-
-      const entry = {
-        billNumber: b.billNumber || String(b._id).slice(-8),
-        UHID: b.UHID, patientName: b.patientName,
-        gross, paid, due, ageDays, bucket,
-        status: b.billStatus, createdAt: b.createdAt,
-      };
-      const isTPA = /tpa|insurance|corporate/i.test(b.paymentType || "");
-      (isTPA ? tpaCredit : patientCredit).push(entry);
+    const facet = agg[0] || { buckets: [], totals: [], patientCredit: [], tpaCredit: [] };
+    // Reshape to the legacy fixed 4-bucket order so the frontend tile
+    // doesn't have to sort or fill missing buckets.
+    const bucketMap = { "0-30": { count: 0, amount: 0 }, "31-60": { count: 0, amount: 0 }, "61-90": { count: 0, amount: 0 }, "90+": { count: 0, amount: 0 } };
+    for (const row of facet.buckets) {
+      if (bucketMap[row._id]) {
+        bucketMap[row._id].count  = row.count;
+        bucketMap[row._id].amount = toNum(row.amount);
+      }
     }
-
-    patientCredit.sort((a, b) => b.due - a.due);
-    tpaCredit.sort((a, b) => b.due - a.due);
+    const shapeList = (rows) => rows.map((r) => ({
+      billNumber: r.billNumber,
+      UHID: r.UHID, patientName: r.patientName,
+      gross: toNum(r.gross), paid: toNum(r.paid), due: toNum(r.due),
+      ageDays: r.ageDays, bucket: r.bucket,
+      status: r.status, createdAt: r.createdAt,
+    }));
 
       return {
         asOf: asOf.toISOString().slice(0,10),
-        buckets: Object.entries(buckets).map(([bucket, v]) => ({ bucket, ...v })),
-        totalOutstanding: patientCredit.reduce((s, e) => s + e.due, 0) + tpaCredit.reduce((s, e) => s + e.due, 0),
-        patientCredit: patientCredit.slice(0, 100),
-        tpaCredit:     tpaCredit.slice(0, 100),
+        buckets: Object.entries(bucketMap).map(([bucket, v]) => ({ bucket, ...v })),
+        totalOutstanding: toNum(facet.totals[0]?.totalOutstanding || 0),
+        patientCredit: shapeList(facet.patientCredit),
+        tpaCredit:     shapeList(facet.tpaCredit),
       };
     });
     res.json({ success: true, ...payload });
@@ -1529,133 +1630,197 @@ async function computeCollectionSummary(dateStr) {
     const dayStart = new Date(`${dateStr}T00:00:00`);
     const dayEnd   = new Date(`${dateStr}T23:59:59.999`);
 
-    // R7ap-F1/F2/F12: switch attribution from bill.updatedAt to payments[].paidAt
-    // — fixes wrong-day attribution (D2-02, D5-04/06). DRAFT excluded (D2-01).
-    const bills = await PatientBill.find({
-      billStatus: { $nin: ["DRAFT"] },
-      $or: [
-        // Bills with at least one payment in window OR bills created in window
-        { "payments.paidAt": { $gte: dayStart, $lte: dayEnd } },
-        { createdAt: { $gte: dayStart, $lte: dayEnd } },
-      ],
-    })
-      // R7av-FIX-2/D8-HIGH-2: project only the fields the reducers below
-      // actually read. Pre-R7av every cache miss loaded billItems[] +
-      // adjustmentLog[] for every bill → 50-100 MB heap spike on 500-
-      // bill days. The reducers consume payments, billItems.netAmount,
-      // visitType, paymentType, doctor, createdBy + a few money totals.
-      .select("payments billItems.netAmount billItems.category billItems.excludedByPackage visitType paymentType doctor doctorName createdBy createdByName netAmount netPayable grossAmount totalAmount balanceAmount patientPayableAmount advancePaid totalPaid amountPaid")
-      .lean();
-
-    // Aggregators
-    let totalCollected = 0, totalGross = 0, totalPending = 0, advanceDue = 0, tpaPending = 0;
-    let advancesApplied = 0, advanceDepositsIn = 0, advanceRefundsOut = 0, billRefundsOut = 0;
-    // R7ar-P2-28/D5-aq-03: TDS deducted by TPA payers at settlement is
-    // NOT cash in the till — it's a govt receivable on Form 26AS. Track
-    // separately so netCashFlow reflects what's actually in the drawer.
-    let totalTdsDeducted = 0;
-    let txnCount = 0;
-    const byVisitType = { OPD: 0, IPD: 0, DC: 0, ER: 0, Services: 0, Other: 0 };
-    const byVisitTxn  = { OPD: 0, IPD: 0, DC: 0, ER: 0, Services: 0, Other: 0 };
-    // R7ar-P0-6/D2-aq-01: byMode keys are UPPERCASE to match PaymentSchema enum
-    // (CASH/CARD/UPI/CHEQUE/ONLINE/TPA_CLAIM/ADVANCE_ADJUSTMENT). Pre-R7ar
-    // the seed used mixed-case ("Cash"/"Card") but the incoming `paymentMode`
-    // was uppercase, so the loop created NEW keys ("CASH":N, "CARD":M) while
-    // the seeded zero-buckets remained — the UI shows two rows for the same
-    // mode + the seeded row always reads ₹0.
-    const byMode      = {
-      CASH: 0, CARD: 0, UPI: 0, CHEQUE: 0, ONLINE: 0,
-      TPA_CLAIM: 0, TPA: 0, INSURANCE: 0, CORPORATE: 0,
-      BANK_TRANSFER: 0, Other: 0,
-    };
-    const byDoctor    = {};  // { doctorId: { name, count, amount } }
-    const byReceptionist = {};
-
-    for (const b of bills) {
-      // R7ap-F1: toNum() unwraps Decimal128. R7ap-D2-02: today-only attribution.
-      const gross = toNum(b.netAmount ?? b.netPayable ?? b.grossAmount ?? b.totalAmount);
-      txnCount += 1;
-      // Per-payment attribution: only sum payment rows that landed today.
-      // Refunds (negative rows) net into today's collection on the refund date.
-      const payments = Array.isArray(b.payments) ? b.payments : [];
-      let billPaidToday = 0;
-      for (const p of payments) {
-        if (p.voidedAt) continue;                                          // R7ap-D2-03: skip voided
-        const pAt = p.paidAt ? new Date(p.paidAt) : null;
-        if (!pAt || pAt < dayStart || pAt > dayEnd) continue;
-        const amt = toNum(p.amount);
-        // R7ar-P0-6/D2-aq-01: normalise mode to UPPERCASE so byMode buckets
-        // don't get duplicated as Cash/CASH/cash.
-        const m   = (p.mode || p.paymentMode || "Other").toString().toUpperCase();
-        // R7ap-F2/D5-03: ADVANCE_ADJUSTMENT is an INTERNAL transfer, not new
-        // cash. Track separately so the accountant sees what was "applied
-        // from pool" without confusing it with cash inflow.
-        if (m === "ADVANCE_ADJUSTMENT") {
-          if (amt > 0) advancesApplied += amt;
-          billPaidToday += amt; // counts toward bill-level paid (it's still a payment)
-          continue;
-        }
-        // R7ar-P2-28/D5-aq-03: aggregate TDS so we can subtract from netCashFlow.
-        if (p.tdsAmount && Number(p.tdsAmount) > 0) {
-          totalTdsDeducted += Number(p.tdsAmount);
-        }
-        // Separate refund (negative payment) totals from gross collection so
-        // Day Book can show "Cash In" / "Refund Out" cleanly.
-        if (amt < 0) {
-          billRefundsOut += -amt;
-        } else {
-          totalCollected += amt;
-        }
-        if (byMode[m] === undefined) byMode[m] = 0;
-        byMode[m] += amt;
-        billPaidToday += amt;
-      }
-      // Bill-level pending derived from authoritative balance (R7am pattern).
-      const itemsNet  = (b.billItems || []).reduce((s, it) => s + toNum(it.netAmount), 0);
-      const refNet    = Math.max(toNum(b.patientPayableAmount), gross, itemsNet);
-      const positive  = payments.reduce((s, p) => { const v = toNum(p.amount); return s + (v > 0 ? v : 0); }, 0);
-      const pending   = Math.max(0, refNet - positive);
-      totalGross   += gross;
-      totalPending += pending;
-
-      // Visit type bucket — credit each bill's TODAY paid amount.
-      const vt = (b.visitType || b.patientType || "Other").toString().toUpperCase();
-      const key = vt.startsWith("OPD")        ? "OPD"
-                : vt.startsWith("IPD")        ? "IPD"
-                : vt.includes("DAY")          ? "DC"
-                : vt.startsWith("ER") || vt.includes("EMERGENCY") ? "ER"
-                : vt.startsWith("SERV")       ? "Services"
-                : "Other";
-      byVisitType[key] += Math.max(0, billPaidToday);
-      byVisitTxn[key]  += 1;
-
-      // Doctor (consultation only — OPD/ER)
-      if (b.doctor) {
-        const did = String(b.doctor._id);
-        if (!byDoctor[did]) byDoctor[did] = {
-          doctorId: did,
-          name:     b.doctor.personalInfo?.fullName || "Doctor",
-          specialization: b.doctor.professional?.specialization || "",
-          count:    0,
-          amount:   0,
-        };
-        byDoctor[did].count += 1;
-        byDoctor[did].amount += Math.max(0, billPaidToday);
-      }
-
-      // Per-receptionist (createdBy or last updater)
-      const recId = String(b.createdBy || b.updatedBy || "unknown");
-      if (!byReceptionist[recId]) byReceptionist[recId] = { id: recId, name: b.createdByName || "Unknown", count: 0, amount: 0 };
-      byReceptionist[recId].count += 1;
-      byReceptionist[recId].amount += Math.max(0, billPaidToday);
-
-      // Outstanding categorization
-      if (pending > 0) {
-        if (key === "IPD") advanceDue += pending;
-        else if ((b.paymentType || "").toLowerCase().includes("tpa") || (b.paymentType || "").toLowerCase().includes("insurance"))
-          tpaPending += pending;
-      }
-    }
+    // ─────────────────────────────────────────────────────────────
+    // R7ax-FIX-3: replaced the find().select(...).lean() + sequential
+    // PatientAdvance.find() pair + ~100-line JS reducer with a single
+    // $facet on PatientBill that emits all per-bill and per-payment
+    // cuts server-side, plus two parallel small $group aggregates on
+    // PatientAdvance.
+    //
+    // Pre-R7ax behaviour for a 500-bill day:
+    //   • find().select(...).lean() returned every matching PatientBill
+    //     with billItems[] + payments[] arrays. Even with the R7av
+    //     projection narrowing, each lean doc still retained meta
+    //     graphs into the BillItem / Payment sub-schemas (same retained-
+    //     graph problem R7aw documented). 500 bills × ~30 line items ×
+    //     5 cashiers F5-spamming = OOM territory.
+    //   • The JS reducer made 3 passes per bill (billItems sum, payments
+    //     sum, visit-type bucket). Mongo can do all three in one pass.
+    //
+    // Notes on parity:
+    //   • byDoctor / byReceptionist depend on `b.doctor`, `b.createdBy`,
+    //     `b.createdByName` — none of which exist on the PatientBill
+    //     schema (mirrors the same gap R7aw-FIX-PERF documented for
+    //     byDoctor). The aggregation honestly returns [] for byDoctor
+    //     and a single { id:"unknown", name:"Unknown", count:N, amount:0 }
+    //     row for byReceptionist — matches the pre-R7ax JS behaviour
+    //     (which always tripped the `String(b.createdBy || … || "unknown")`
+    //     fallback). When those fields are added to the schema this
+    //     becomes a real $group on $createdBy / $doctor._id.
+    // ─────────────────────────────────────────────────────────────
+    const billsAggP = PatientBill.aggregate([
+      { $match: {
+          billStatus: { $nin: ["DRAFT"] },
+          $or: [
+            { "payments.paidAt": { $gte: dayStart, $lte: dayEnd } },
+            { createdAt: { $gte: dayStart, $lte: dayEnd } },
+          ],
+      } },
+      // Pre-compute per-bill numbers that don't depend on payment unwind.
+      { $addFields: {
+          _gross: {
+            $toDouble: {
+              $ifNull: ["$netAmount", { $ifNull: ["$netPayable", { $ifNull: ["$grossAmount", { $ifNull: ["$totalAmount", 0] }] }] }],
+            },
+          },
+          _itemsNet: {
+            $sum: {
+              $map: {
+                input: { $ifNull: ["$billItems", []] },
+                as: "it",
+                in: { $toDouble: { $ifNull: ["$$it.netAmount", 0] } },
+              },
+            },
+          },
+          _refPat: { $toDouble: { $ifNull: ["$patientPayableAmount", 0] } },
+          // Sum of positive (non-refund) payment amounts on the bill — used to
+          // compute pending. Includes payments OUTSIDE today's window because
+          // pending is a snapshot, not a today-cut.
+          _positive: {
+            $sum: {
+              $map: {
+                input: { $ifNull: ["$payments", []] },
+                as: "p",
+                in: {
+                  $let: {
+                    vars: { v: { $toDouble: { $ifNull: ["$$p.amount", 0] } } },
+                    in: { $cond: [{ $gt: ["$$v", 0] }, "$$v", 0] },
+                  },
+                },
+              },
+            },
+          },
+          // Per-bill today-paid (sum of every non-voided payment amount in window,
+          // INCLUDING ADVANCE_ADJUSTMENT, INCLUDING negative refund rows) — drives
+          // byVisitType + byReceptionist credit. JS: `billPaidToday += amt`.
+          _paidToday: {
+            $sum: {
+              $map: {
+                input: {
+                  $filter: {
+                    input: { $ifNull: ["$payments", []] },
+                    as: "p",
+                    cond: {
+                      $and: [
+                        { $not: ["$$p.voidedAt"] },
+                        { $gte: ["$$p.paidAt", dayStart] },
+                        { $lte: ["$$p.paidAt", dayEnd] },
+                      ],
+                    },
+                  },
+                },
+                as: "p",
+                in: { $toDouble: { $ifNull: ["$$p.amount", 0] } },
+              },
+            },
+          },
+          // Normalized visit-type bucket — mirrors the JS switch.
+          _vt: {
+            $let: {
+              vars: { v: { $toUpper: { $ifNull: ["$visitType", "Other"] } } },
+              in: {
+                $switch: {
+                  branches: [
+                    { case: { $eq: [{ $substrBytes: ["$$v", 0, 3] }, "OPD"] }, then: "OPD" },
+                    { case: { $eq: [{ $substrBytes: ["$$v", 0, 3] }, "IPD"] }, then: "IPD" },
+                    { case: { $gte: [{ $indexOfBytes: ["$$v", "DAY"] }, 0] }, then: "DC" },
+                    { case: { $eq: [{ $substrBytes: ["$$v", 0, 2] }, "ER"] }, then: "ER" },
+                    { case: { $gte: [{ $indexOfBytes: ["$$v", "EMERGENCY"] }, 0] }, then: "ER" },
+                    { case: { $eq: [{ $substrBytes: ["$$v", 0, 4] }, "SERV"] }, then: "Services" },
+                  ],
+                  default: "Other",
+                },
+              },
+            },
+          },
+          _isTPAlike: { $regexMatch: { input: { $toLower: { $ifNull: ["$paymentType", ""] } }, regex: /tpa|insurance/ } },
+      } },
+      { $addFields: {
+          _refNet:  { $max: ["$_refPat", "$_gross", "$_itemsNet"] },
+      } },
+      { $addFields: {
+          _pending: { $max: [{ $subtract: ["$_refNet", "$_positive"] }, 0] },
+          _paidTodayPos: { $max: ["$_paidToday", 0] },
+      } },
+      { $facet: {
+          // ── Bill-level summary numbers
+          billTotals: [
+            { $group: {
+                _id: null,
+                txnCount:     { $sum: 1 },
+                totalGross:   { $sum: "$_gross" },
+                totalPending: { $sum: "$_pending" },
+                advanceDue:   { $sum: { $cond: [{ $and: [{ $gt: ["$_pending", 0] }, { $eq: ["$_vt", "IPD"] }] }, "$_pending", 0] } },
+                tpaPending:   { $sum: { $cond: [{ $and: [{ $gt: ["$_pending", 0] }, "$_isTPAlike", { $ne: ["$_vt", "IPD"] }] }, "$_pending", 0] } },
+            } },
+          ],
+          // ── byVisitType buckets — 6 fixed types
+          byVisitType: [
+            { $group: { _id: "$_vt", amount: { $sum: "$_paidTodayPos" }, count: { $sum: 1 } } },
+          ],
+          // ── byReceptionist (createdBy/createdByName don't exist on schema —
+          //    collapses to the "unknown" fallback, same as pre-R7ax).
+          byReceptionist: [
+            { $group: {
+                _id: { $ifNull: [{ $toString: { $ifNull: ["$createdBy", { $ifNull: ["$updatedBy", "unknown"] }] } }, "unknown"] },
+                name: { $first: { $ifNull: ["$createdByName", "Unknown"] } },
+                count: { $sum: 1 },
+                amount: { $sum: "$_paidTodayPos" },
+            } },
+          ],
+          // ── Per-payment totals (collected / refunds / TDS / advancesApplied).
+          //    Unwind payments + re-filter to today's window. Kept as a sibling
+          //    branch of the outer $facet (Mongo forbids $facet within $facet).
+          paymentsTotals: [
+            { $unwind: { path: "$payments", preserveNullAndEmptyArrays: false } },
+            { $match: {
+                "payments.voidedAt": { $exists: false },
+                "payments.paidAt":   { $gte: dayStart, $lte: dayEnd },
+            } },
+            { $addFields: {
+                _amt: { $toDouble: { $ifNull: ["$payments.amount", 0] } },
+                _tds: { $toDouble: { $ifNull: ["$payments.tdsAmount", 0] } },
+                _mode: { $toUpper: { $ifNull: ["$payments.mode", { $ifNull: ["$payments.paymentMode", "Other"] }] } },
+            } },
+            { $group: {
+                _id: null,
+                // R7ap-F2: ADVANCE_ADJUSTMENT counts toward advancesApplied (not totalCollected).
+                totalCollected:  { $sum: { $cond: [{ $and: [{ $gt: ["$_amt", 0] }, { $ne: ["$_mode", "ADVANCE_ADJUSTMENT"] }] }, "$_amt", 0] } },
+                advancesApplied: { $sum: { $cond: [{ $and: [{ $gt: ["$_amt", 0] }, { $eq: ["$_mode", "ADVANCE_ADJUSTMENT"] }] }, "$_amt", 0] } },
+                billRefundsOut:  { $sum: { $cond: [{ $lt: ["$_amt", 0] }, { $abs: "$_amt" }, 0] } },
+                totalTdsDeducted:{ $sum: { $cond: [{ $gt: ["$_tds", 0] }, "$_tds", 0] } },
+            } },
+          ],
+          // ── byMode (per payment-mode tallies). ADVANCE_ADJUSTMENT excluded
+          //    (matches the JS `continue` skipping `byMode[m] += amt` for
+          //    advance-adjustment rows). Refund rows (negative amounts) net
+          //    into the mode sum, matching `byMode[m] += amt` after the
+          //    if-amt<0 branch.
+          paymentsByMode: [
+            { $unwind: { path: "$payments", preserveNullAndEmptyArrays: false } },
+            { $match: {
+                "payments.voidedAt": { $exists: false },
+                "payments.paidAt":   { $gte: dayStart, $lte: dayEnd },
+            } },
+            { $addFields: {
+                _amt: { $toDouble: { $ifNull: ["$payments.amount", 0] } },
+                _mode: { $toUpper: { $ifNull: ["$payments.mode", { $ifNull: ["$payments.paymentMode", "Other"] }] } },
+            } },
+            { $match: { _mode: { $ne: "ADVANCE_ADJUSTMENT" } } },
+            { $group: { _id: "$_mode", amount: { $sum: "$_amt" } } },
+          ],
+      } },
+    ]).option({ allowDiskUse: true, maxTimeMS: 15_000 });
 
     // R7ap-F12/D5-02: include advance DEPOSITS taken today (real cash inflow).
     // PatientAdvance.create is the first cash-touch — bills only see the
@@ -1664,32 +1829,88 @@ async function computeCollectionSummary(dateStr) {
     // internal transfers of refunded bill money into the advance pool,
     // NOT new cash. They're already counted as billRefundsOut from the
     // bill's negative payment row.
-    const advancesToday = await PatientAdvance.find({
-      paidAt: { $gte: dayStart, $lte: dayEnd },
-      isRefundCredit: { $ne: true },
-    }).lean();
-    for (const a of advancesToday) {
-      const amt = toNum(a.amount);
-      const m   = (a.paymentMode || "Cash").toString().toUpperCase();   // R7ar-P0-6
-      advanceDepositsIn += amt;
-      totalCollected   += amt;
-      if (byMode[m] === undefined) byMode[m] = 0;
-      byMode[m] += amt;
-    }
+    const advancesInAggP = PatientAdvance.aggregate([
+      { $match: { paidAt: { $gte: dayStart, $lte: dayEnd }, isRefundCredit: { $ne: true } } },
+      { $addFields: {
+          _amt:  { $toDouble: { $ifNull: ["$amount", 0] } },
+          _mode: { $toUpper: { $ifNull: ["$paymentMode", "CASH"] } },
+      } },
+      { $facet: {
+          totals: [{ $group: { _id: null, advanceDepositsIn: { $sum: "$_amt" } } }],
+          byMode: [{ $group: { _id: "$_mode", amount: { $sum: "$_amt" } } }],
+      } },
+    ]).option({ allowDiskUse: true, maxTimeMS: 15_000 });
 
     // R7ap-F11/D5-01: include advance REFUNDS issued today (cash OUTflow).
-    const refundsToday = await PatientAdvance.find({
-      status:     "REFUNDED",
-      refundedAt: { $gte: dayStart, $lte: dayEnd },
-    }).lean();
-    for (const a of refundsToday) {
-      const amt  = toNum(a.refundedAmount);
-      // R7ar-P0-6: uppercase normalization
-      const mode = (a.refundMode || "CASH").toString().toUpperCase();
-      advanceRefundsOut += amt;
-      if (byMode[mode] === undefined) byMode[mode] = 0;
-      byMode[mode] -= amt; // refund out reduces mode net
+    const advancesOutAggP = PatientAdvance.aggregate([
+      { $match: { status: "REFUNDED", refundedAt: { $gte: dayStart, $lte: dayEnd } } },
+      { $addFields: {
+          _amt:  { $toDouble: { $ifNull: ["$refundedAmount", 0] } },
+          _mode: { $toUpper: { $ifNull: ["$refundMode", "CASH"] } },
+      } },
+      { $facet: {
+          totals: [{ $group: { _id: null, advanceRefundsOut: { $sum: "$_amt" } } }],
+          byMode: [{ $group: { _id: "$_mode", amount: { $sum: "$_amt" } } }],
+      } },
+    ]).option({ allowDiskUse: true, maxTimeMS: 15_000 });
+
+    const [billsAgg, advancesInAgg, advancesOutAgg] =
+      await Promise.all([billsAggP, advancesInAggP, advancesOutAggP]);
+
+    const facet = billsAgg[0] || {};
+    const bt = (facet.billTotals && facet.billTotals[0]) || { txnCount: 0, totalGross: 0, totalPending: 0, advanceDue: 0, tpaPending: 0 };
+    const pt = (facet.paymentsTotals && facet.paymentsTotals[0]) || { totalCollected: 0, advancesApplied: 0, billRefundsOut: 0, totalTdsDeducted: 0 };
+    const paymentsByMode = facet.paymentsByMode || [];
+    const inT  = (advancesInAgg[0]?.totals?.[0])  || { advanceDepositsIn: 0 };
+    const outT = (advancesOutAgg[0]?.totals?.[0]) || { advanceRefundsOut: 0 };
+
+    // ── Roll byVisitType into the same fixed 6-key shape pre-R7ax used.
+    const byVisitTypeMap = { OPD: 0, IPD: 0, DC: 0, ER: 0, Services: 0, Other: 0 };
+    const byVisitTxnMap  = { OPD: 0, IPD: 0, DC: 0, ER: 0, Services: 0, Other: 0 };
+    for (const row of facet.byVisitType || []) {
+      const k = byVisitTypeMap[row._id] !== undefined ? row._id : "Other";
+      byVisitTypeMap[k] += toNum(row.amount);
+      byVisitTxnMap[k]  += row.count || 0;
     }
+
+    // ── byMode: merge bill-payment + advance-deposit + advance-refund cuts.
+    //    Seed with the canonical UPPERCASE keys so legacy clients still see
+    //    zero rows for modes that didn't transact today (matches pre-R7ax
+    //    seeded buckets); refunds subtract (matches `byMode[mode] -= amt`).
+    const byMode = {
+      CASH: 0, CARD: 0, UPI: 0, CHEQUE: 0, ONLINE: 0,
+      TPA_CLAIM: 0, TPA: 0, INSURANCE: 0, CORPORATE: 0,
+      BANK_TRANSFER: 0, Other: 0,
+    };
+    for (const row of paymentsByMode) {
+      if (byMode[row._id] === undefined) byMode[row._id] = 0;
+      byMode[row._id] += toNum(row.amount);
+    }
+    for (const row of advancesInAgg[0]?.byMode || []) {
+      if (byMode[row._id] === undefined) byMode[row._id] = 0;
+      byMode[row._id] += toNum(row.amount);
+    }
+    for (const row of advancesOutAgg[0]?.byMode || []) {
+      if (byMode[row._id] === undefined) byMode[row._id] = 0;
+      byMode[row._id] -= toNum(row.amount);
+    }
+
+    // ── byReceptionist: the schema lacks createdBy/createdByName so this
+    //    collapses to a single row keyed "unknown" — same as pre-R7ax (which
+    //    always tripped the fallback).
+    const byReceptionist = (facet.byReceptionist || []).map((r) => ({
+      id: String(r._id),
+      name: r.name || "Unknown",
+      count: r.count || 0,
+      amount: toNum(r.amount),
+    }));
+
+    const totalCollected    = toNum(pt.totalCollected) + toNum(inT.advanceDepositsIn);
+    const advancesApplied   = toNum(pt.advancesApplied);
+    const billRefundsOut    = toNum(pt.billRefundsOut);
+    const totalTdsDeducted  = toNum(pt.totalTdsDeducted);
+    const advanceDepositsIn = toNum(inT.advanceDepositsIn);
+    const advanceRefundsOut = toNum(outT.advanceRefundsOut);
 
     // R7ap-F11/F12: net cash flow = collections − bill refunds − advance refunds.
     // R7ar-P2-28/D5-aq-03: subtract TDS too (it's a receivable, not till cash).
@@ -1698,14 +1919,21 @@ async function computeCollectionSummary(dateStr) {
       success: true,
       date: dateStr,
       summary: {
-        totalCollected, totalGross, totalPending, txnCount, advanceDue, tpaPending,
+        totalCollected,
+        totalGross:   toNum(bt.totalGross),
+        totalPending: toNum(bt.totalPending),
+        txnCount:     bt.txnCount || 0,
+        advanceDue:   toNum(bt.advanceDue),
+        tpaPending:   toNum(bt.tpaPending),
         advancesApplied, advanceDepositsIn, advanceRefundsOut, billRefundsOut, netCashFlow,
         totalTdsDeducted,           // R7ar-P2-28
       },
-      byVisitType: Object.entries(byVisitType).map(([type, amount]) => ({ type, amount, count: byVisitTxn[type] || 0 })),
+      byVisitType: Object.entries(byVisitTypeMap).map(([type, amount]) => ({ type, amount, count: byVisitTxnMap[type] || 0 })),
       byMode:      Object.entries(byMode).filter(([, v]) => v !== 0).map(([mode, amount]) => ({ mode, amount })),
-      byDoctor:    Object.values(byDoctor).sort((a, b) => b.amount - a.amount),
-      byReceptionist: Object.values(byReceptionist),
+      // byDoctor stays an empty array — the PatientBill schema doesn't carry
+      // a doctor field (mirrors R7aw-FIX-PERF byDoctor=[] note).
+      byDoctor:    [],
+      byReceptionist,
     };
   }
 }
@@ -1929,7 +2157,11 @@ exports.listBillingAudit = async (req, res, next) => {
     const include = String(req.query.include || "");
     const proj = include.includes("before") || include.includes("after")
       ? {} : { before: 0, after: 0 };
-    const rows = await BillingAudit.find(filter, proj).sort({ createdAt: -1 }).limit(limit).lean();
+    // R7ax-FIX-4: hard wall-clock cap so an unindexed audit scan can never
+    // tie up a connection long enough to amplify OOM pressure under load.
+    // The find itself is fine (BillingAudit indices cover createdAt+event)
+    // and stays as-is — only the timeout is added.
+    const rows = await BillingAudit.find(filter, proj).sort({ createdAt: -1 }).limit(limit).maxTimeMS(10_000).lean();
     res.json({ success: true, data: rows, meta: { count: rows.length, limit } });
   } catch (e) { next(e); }
 };
@@ -1970,56 +2202,86 @@ exports.getHospitalGstRegister = async (req, res, next) => {
     // amounts directly instead of hard-coding `taxAmount/2` for both.
     // Pre-R7av the register reported inter-state IGST as 50/50 intra-
     // state — register vs monthly-snapshot drift on every IGST bill.
-    const pipeline = [
+    // R7ax-FIX-2: collapsed the per-bucket bucket-list build + the
+    // post-aggregation `buckets.reduce(...)` totals roll-up into a
+    // single $facet so the grand-totals never re-iterate the bucket
+    // array on the Node side and so allowDiskUse / maxTimeMS apply
+    // uniformly. The per-row CN reversal aggregate is also folded in
+    // — pre-R7ax this endpoint did 1 aggregate + 1 aggregate + 1 find,
+    // all sequential. Now: 1 $facet on PatientBill + 1 aggregate on
+    // CreditNote + 1 find on snapshots — Promise.all-parallelizable.
+    const billsAggP = PatientBill.aggregate([
       { $match: {
           billStatus:      { $nin: ["DRAFT", "CANCELLED"] },
           billGeneratedAt: { $gte: from, $lte: to },
       }},
       { $unwind: "$billItems" },
       { $match: { "billItems.isTaxable": true, "billItems.taxPercent": { $gt: 0 } } },
-      { $group: {
-          _id:           "$billItems.taxPercent",
-          bills:         { $addToSet: "$_id" },
-          itemCount:     { $sum: 1 },
-          taxableValue:  { $sum: { $toDouble: "$billItems.netAmount" } },
-          taxAmount:     { $sum: { $toDouble: "$billItems.taxAmount" } },
-          cgst:          { $sum: { $toDouble: { $ifNull: ["$billItems.cgstAmount", 0] } } },
-          sgst:          { $sum: { $toDouble: { $ifNull: ["$billItems.sgstAmount", 0] } } },
-          igst:          { $sum: { $toDouble: { $ifNull: ["$billItems.igstAmount", 0] } } },
-      }},
-      { $project: {
-          _id: 0,
-          rate:         "$_id",
-          billCount:    { $size: "$bills" },
-          itemCount:    1,
-          taxableValue: 1,
-          taxAmount:    1,
-          cgst:         1,
-          sgst:         1,
-          igst:         1,
-      }},
-      { $sort: { rate: 1 } },
-    ];
-    const buckets = await PatientBill.aggregate(pipeline);
-    const grossTotals = buckets.reduce(
-      (acc, b) => ({
-        taxableValue: acc.taxableValue + toNum(b.taxableValue),
-        cgst:         acc.cgst         + toNum(b.cgst),
-        sgst:         acc.sgst         + toNum(b.sgst),
-        igst:         acc.igst         + toNum(b.igst),
-        taxAmount:    acc.taxAmount    + toNum(b.taxAmount),
-        billCount:    acc.billCount    + (b.billCount || 0),
-        itemCount:    acc.itemCount    + (b.itemCount || 0),
-      }),
-      { taxableValue: 0, cgst: 0, sgst: 0, igst: 0, taxAmount: 0, billCount: 0, itemCount: 0 },
-    );
+      { $addFields: {
+          _txbl: { $toDouble: { $ifNull: ["$billItems.netAmount", 0] } },
+          _tax:  { $toDouble: { $ifNull: ["$billItems.taxAmount", 0] } },
+          _cgst: { $toDouble: { $ifNull: ["$billItems.cgstAmount", 0] } },
+          _sgst: { $toDouble: { $ifNull: ["$billItems.sgstAmount", 0] } },
+          _igst: { $toDouble: { $ifNull: ["$billItems.igstAmount", 0] } },
+      } },
+      { $facet: {
+          // ── Per-rate buckets (was the original pipeline result)
+          buckets: [
+            { $group: {
+                _id:           "$billItems.taxPercent",
+                bills:         { $addToSet: "$_id" },
+                itemCount:     { $sum: 1 },
+                taxableValue:  { $sum: "$_txbl" },
+                taxAmount:     { $sum: "$_tax" },
+                cgst:          { $sum: "$_cgst" },
+                sgst:          { $sum: "$_sgst" },
+                igst:          { $sum: "$_igst" },
+            }},
+            { $project: {
+                _id: 0,
+                rate:         "$_id",
+                billCount:    { $size: "$bills" },
+                itemCount:    1,
+                taxableValue: 1,
+                taxAmount:    1,
+                cgst:         1,
+                sgst:         1,
+                igst:         1,
+            }},
+            { $sort: { rate: 1 } },
+          ],
+          // ── Gross totals across all rates (kills the JS `buckets.reduce`)
+          grossTotals: [
+            { $group: {
+                _id: null,
+                bills:        { $addToSet: "$_id" },
+                itemCount:    { $sum: 1 },
+                taxableValue: { $sum: "$_txbl" },
+                taxAmount:    { $sum: "$_tax" },
+                cgst:         { $sum: "$_cgst" },
+                sgst:         { $sum: "$_sgst" },
+                igst:         { $sum: "$_igst" },
+            } },
+            { $project: {
+                _id: 0,
+                billCount:    { $size: "$bills" },
+                itemCount:    1,
+                taxableValue: 1,
+                taxAmount:    1,
+                cgst:         1,
+                sgst:         1,
+                igst:         1,
+            } },
+          ],
+      } },
+    ]).option({ allowDiskUse: true, maxTimeMS: 15_000 });
 
     // R7ar-P1-15/D6-aq-08: subtract CreditNote reversals from the
     // register. Pre-R7ar the GST register showed gross outward supply
     // only — refund credit-notes lived in a separate doc but the
     // GSTR-1 net (outward − CDNR) was hand-computed by the accountant
     // every month. Now the API returns gross + reversed + net.
-    const cnAgg = await CreditNote.aggregate([
+    const cnAggP = CreditNote.aggregate([
       { $match: { creditNoteDate: { $gte: from, $lte: to } } },
       { $group: {
           _id: null,
@@ -2030,7 +2292,21 @@ exports.getHospitalGstRegister = async (req, res, next) => {
           igst:         { $sum: { $toDouble: "$igstAmount" } },
           taxAmount:    { $sum: { $toDouble: "$taxAmount" } },
       } },
-    ]);
+    ]).option({ allowDiskUse: true, maxTimeMS: 15_000 });
+
+    const [billsAgg, cnAgg] = await Promise.all([billsAggP, cnAggP]);
+    const facet = billsAgg[0] || { buckets: [], grossTotals: [] };
+    const buckets = facet.buckets || [];
+    const gt = facet.grossTotals[0] || { taxableValue: 0, cgst: 0, sgst: 0, igst: 0, taxAmount: 0, billCount: 0, itemCount: 0 };
+    const grossTotals = {
+      taxableValue: toNum(gt.taxableValue),
+      cgst:         toNum(gt.cgst),
+      sgst:         toNum(gt.sgst),
+      igst:         toNum(gt.igst),
+      taxAmount:    toNum(gt.taxAmount),
+      billCount:    gt.billCount || 0,
+      itemCount:    gt.itemCount || 0,
+    };
     const reversals = cnAgg[0] || { count: 0, taxableValue: 0, cgst: 0, sgst: 0, igst: 0, taxAmount: 0 };
 
     const totals = {

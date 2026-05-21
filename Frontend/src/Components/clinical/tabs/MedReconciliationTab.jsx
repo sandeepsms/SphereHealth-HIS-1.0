@@ -17,6 +17,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../../config/api";
+import { confirm } from "../../common/ConfirmDialog";
 
 const BASE = API_ENDPOINTS.BASE;
 const ACTIONS = ["CONTINUE", "MODIFY", "STOP", "NEW", "HOLD"];
@@ -75,7 +76,13 @@ export default function MedReconciliationTab({ admission, patient }) {
     if (phase === "discharge") {
       const unsigned = (doc?.rows || []).filter((r) => !r.action || (r.action !== "CONTINUE" && !r.actionReason));
       if (unsigned.length > 0) {
-        if (!window.confirm(`${unsigned.length} row(s) lack an explicit action/reason. Sign anyway?`)) return;
+        // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+        if (!(await confirm({
+          title: "Sign discharge reconciliation?",
+          body: `${unsigned.length} row(s) lack an explicit action/reason. Signing now will lock the reconciliation as reviewed despite the missing fields.`,
+          danger: true,
+          confirmLabel: "Sign anyway",
+        }))) return;
       }
     }
     setLoading(true);

@@ -27,6 +27,7 @@ import {
   RBSMonitoringTab,
   HandoverNotesTab,
 } from "../../Components/clinical/PatientPanelTabs";
+import { confirm } from "../../Components/common/ConfirmDialog";
 
 import { API_BASE_URL as BASE } from "../../config/api";
 
@@ -2064,7 +2065,14 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
 
   /* ── Cancel pending transfer ── */
   const cancelTransfer = async (transferId) => {
-    if (!window.confirm("Cancel this bed transfer? The reserved bed will be released.")) {
+    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+    if (!(await confirm({
+      title: "Cancel bed transfer?",
+      body: "The pending transfer will be cancelled and the reserved bed will be released back to Available.",
+      danger: true,
+      confirmLabel: "Cancel transfer",
+      cancelLabel: "Keep",
+    }))) {
       audit.click("shift-bed.cancel-dismissed", { summary: "Doctor dismissed cancel confirmation" });
       return;
     }

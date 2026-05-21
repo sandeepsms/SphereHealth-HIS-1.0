@@ -13,6 +13,7 @@ import {
   AdminPage, Hero, KPI, Card, Table, EmptyRow, RowAction, Badge,
   Modal, Field, SearchInput, PrimaryButton, C,
 } from "../../Components/admin-theme";
+import { confirm } from "../../Components/common/ConfirmDialog";
 
 const fmtINR = (n) => `₹${Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 
@@ -53,7 +54,13 @@ const HospitalChargesList = () => {
   };
 
   const remove = async (id, name) => {
-    if (!window.confirm(`Delete charge sheet for ${name}? This cannot be undone.`)) return;
+    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+    if (!(await confirm({
+      title: "Delete charge sheet?",
+      body: `This will permanently remove the "${name}" charge sheet and all its line items. This cannot be undone.`,
+      danger: true,
+      confirmLabel: "Delete",
+    }))) return;
     try {
       await hospitalChargesService.deleteHospitalCharges(id);
       toast.success("Charge sheet deleted");

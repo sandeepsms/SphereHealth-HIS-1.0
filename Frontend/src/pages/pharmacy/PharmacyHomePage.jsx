@@ -30,6 +30,7 @@ import {
   getScheduleHRegister, getExpiryRegister, getGstSummary,
   DRUG_FORMS, DRUG_CATEGORIES, PAYMENT_MODES, SALE_TYPES,
 } from "../../Services/pharmacyService";
+import { confirm } from "../../Components/common/ConfirmDialog";
 
 /* HIS UHID bridge — call this with a UHID and get back a normalised
    { patientId, patientName, age, gender, contact, doctorName, admissionId,
@@ -332,7 +333,13 @@ function DrugsTab() {
   useEffect(() => { refresh(); }, [q, category]);
 
   const remove = async (d) => {
-    if (!window.confirm(`Deactivate ${d.name}?`)) return;
+    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+    if (!(await confirm({
+      title: "Deactivate drug?",
+      body: `"${d.name}" will be marked inactive and removed from new prescriptions. Existing dispense history is preserved.`,
+      danger: true,
+      confirmLabel: "Deactivate",
+    }))) return;
     try { await deleteDrug(d._id); toast.success(`${d.name} deactivated`); refresh(); }
     catch (e) { toast.error(e.message); }
   };
@@ -918,7 +925,14 @@ function SalesTab() {
   useEffect(() => { refresh(); }, [q, from, to]);
 
   const cancel = async (s) => {
-    if (!window.confirm(`Cancel bill ${s.billNumber}? Stock will be restored.`)) return;
+    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+    if (!(await confirm({
+      title: "Cancel pharmacy bill?",
+      body: `Bill ${s.billNumber} will be voided and all dispensed stock will be returned to inventory. This cannot be undone.`,
+      danger: true,
+      confirmLabel: "Cancel bill",
+      cancelLabel: "Keep",
+    }))) return;
     try { await cancelSale(s._id); toast.success("Sale cancelled · stock restored"); refresh(); }
     catch (e) { toast.error(e.message); }
   };
@@ -2486,7 +2500,13 @@ function SuppliersTab() {
   };
   useEffect(() => { refresh(); }, []);
   const remove = async (s) => {
-    if (!window.confirm(`Deactivate ${s.name}?`)) return;
+    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+    if (!(await confirm({
+      title: "Deactivate supplier?",
+      body: `"${s.name}" will be marked inactive and removed from new GRN dropdowns. Existing purchase history is preserved.`,
+      danger: true,
+      confirmLabel: "Deactivate",
+    }))) return;
     try { await deleteSupplier(s._id); toast.success("Supplier deactivated"); refresh(); }
     catch (e) { toast.error(e.message); }
   };

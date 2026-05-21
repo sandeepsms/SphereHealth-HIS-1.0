@@ -15,6 +15,7 @@ import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import { departmentService } from "../../Services/departmentService";
 import { doctorService } from "../../Services/doctors/doctorService";
+import { confirm } from "../common/ConfirmDialog";
 
 /* ── Design tokens ── */
 const C = {
@@ -208,7 +209,13 @@ export default function TreatmentTeamPanel({ admissionId, patientName, UHID, ref
 
   /* ── Remove consultant ── */
   const removeConsultant = async (consultId, name) => {
-    if (!window.confirm(`Remove ${name} from the treatment team?`)) return;
+    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+    if (!(await confirm({
+      title: "Remove from treatment team?",
+      body: `${name} will be removed from this admission's multi-disciplinary team and will no longer see this patient in their worklist.`,
+      danger: true,
+      confirmLabel: "Remove",
+    }))) return;
     try {
       await axios.delete(`${API_ENDPOINTS.ADMISSIONS}/${admissionId}/consultation/${consultId}`);
       loadTeam();

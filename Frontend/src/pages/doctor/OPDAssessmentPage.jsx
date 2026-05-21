@@ -23,6 +23,7 @@ import { useDigitalSignature } from "../../hooks/useDigitalSignature";
 import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
 import SignaturePad from "../../Components/signature/SignaturePad";
 import SignatureStamp from "../../Components/signature/SignatureStamp";
+import { confirm } from "../../Components/common/ConfirmDialog";
 
 const C = {
   doctor: "#7c3aed", nurse: "#db2777", primary: "#1e40af",
@@ -597,7 +598,13 @@ export default function OPDAssessmentPage() {
   const removeMed = async (idx) => {
     const m = meds[idx];
     if (!m) return;
-    if (!window.confirm(`Remove ${m.name || "this medication"} from the prescription?`)) return;
+    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+    if (!(await confirm({
+      title: "Remove medication?",
+      body: `${m.name || "This medication"} will be removed from the prescription and any pending pharmacy indent.`,
+      danger: true,
+      confirmLabel: "Remove",
+    }))) return;
     try {
       await axios.delete(`${API_ENDPOINTS.OPD}/${visitNumber}/prescription/${m._id || idx}`);
     } catch (_) { /* backend may not expose DELETE — fail silently, UI still updates */ }
@@ -608,7 +615,13 @@ export default function OPDAssessmentPage() {
   const removeInvestigation = async (idx) => {
     const i = invests[idx];
     if (!i) return;
-    if (!window.confirm(`Remove ${i.name || "this investigation"} from the order list?`)) return;
+    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+    if (!(await confirm({
+      title: "Remove investigation?",
+      body: `${i.name || "This investigation"} will be removed from the order list and won't be sent to the lab.`,
+      danger: true,
+      confirmLabel: "Remove",
+    }))) return;
     try {
       await axios.delete(`${API_ENDPOINTS.OPD}/${visitNumber}/investigation/${i._id || idx}`);
     } catch (_) { /* same as above */ }
@@ -628,10 +641,16 @@ export default function OPDAssessmentPage() {
     setNewInfusion({ name: "", totalVolume: "", rate: "", duration: "", route: "IV Infusion", additives: "", instructions: "" });
     toast.success("Infusion added");
   };
-  const removeInfusion = (idx) => {
+  const removeInfusion = async (idx) => {
     const f = infusions[idx];
     if (!f) return;
-    if (!window.confirm(`Remove ${f.name || "this infusion"} from the order list?`)) return;
+    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+    if (!(await confirm({
+      title: "Remove infusion?",
+      body: `${f.name || "This infusion"} will be removed from the order list and won't appear in the nurse's infusion tab.`,
+      danger: true,
+      confirmLabel: "Remove",
+    }))) return;
     setInfusions(p => p.filter((_, x) => x !== idx));
     toast.success("Infusion removed");
   };
@@ -701,7 +720,13 @@ export default function OPDAssessmentPage() {
 
   const removeOrderFromBill = async (item) => {
     if (!orderBillId || !item?._id) return;
-    if (!window.confirm(`Remove ${item.serviceName} from the bill?`)) return;
+    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+    if (!(await confirm({
+      title: "Remove from bill?",
+      body: `"${item.serviceName}" will be removed from the draft bill. If the lab has already started this order, ask reception before removing.`,
+      danger: true,
+      confirmLabel: "Remove",
+    }))) return;
     try {
       const { data } = await axios.delete(
         `${API_ENDPOINTS.BASE}/billing/${orderBillId}/items/${item._id}`,

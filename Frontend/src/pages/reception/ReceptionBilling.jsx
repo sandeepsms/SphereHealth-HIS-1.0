@@ -26,6 +26,7 @@ import ActivePatientDirectory from "../../Components/ActivePatientDirectory";
 import "./reception-shared.css";
 // R7ar-P1-14/D4-aq-02: centralised Decimal128 unwrap.
 import { toMoney } from "../../utils/money";
+import { confirm } from "../../Components/common/ConfirmDialog";
 
 const fmtCur  = (n) => `₹${(toMoney(n) || 0).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
@@ -397,7 +398,12 @@ export default function ReceptionBilling() {
   };
 
   const generateBill = async (billId) => {
-    if (!window.confirm("Generate (finalize) this draft bill? After this, items cannot be removed.")) return;
+    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+    if (!(await confirm({
+      title: "Generate this bill?",
+      body: "The draft bill will be finalised. Once generated, line items can no longer be removed and the bill becomes the receipt-of-record.",
+      confirmLabel: "Generate",
+    }))) return;
     try {
       await axios.post(`${API_ENDPOINTS.BILLING}/${billId}/generate`, { generatedBy: "Reception" });
       toast.success("Bill generated");
@@ -435,12 +441,16 @@ export default function ReceptionBilling() {
 
     const drafts   = scoped.filter((b) => b.billStatus === "DRAFT");
     const openable = scoped.filter((b) => ["GENERATED", "PARTIAL"].includes(b.billStatus));
-    if (!window.confirm(
-      `Finalize ${scoped.length} bill${scoped.length === 1 ? "" : "s"} ` +
-      `(${drafts.length} draft → generated)` +
-      (unspentAdv > 0 ? ` and apply ${fmtCur(unspentAdv)} advance pool first.` : "") +
-      `\nProceed?`,
-    )) return;
+    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+    if (!(await confirm({
+      title: "Finalize all non-IPD bills?",
+      body:
+        `${scoped.length} bill${scoped.length === 1 ? "" : "s"} will be finalised ` +
+        `(${drafts.length} draft → generated)` +
+        (unspentAdv > 0 ? `, then ${fmtCur(unspentAdv)} from the advance pool will be applied FIFO.` : ".") +
+        ` A consolidated final bill will be opened for printing.`,
+      confirmLabel: "Finalize all",
+    }))) return;
 
     try {
       // ── 1. Finalize every DRAFT bill ──
@@ -1763,10 +1773,22 @@ function PaymentModal({ bill, onClose, onDone }) {
     const amt = Number(amount);
     if (!amt || amt <= 0) return toast.error("Enter a valid amount");
     if (amt > (bill.balanceAmount || 0) + 0.5) {
-      if (!window.confirm(`Amount ${fmtCur(amt)} exceeds balance ${fmtCur(bill.balanceAmount)}. Proceed anyway?`)) return;
+      // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+      if (!(await confirm({
+        title: "Amount exceeds balance",
+        body: `Amount ${fmtCur(amt)} exceeds the bill balance of ${fmtCur(bill.balanceAmount)}. The overage will be held as advance on the patient account.`,
+        danger: true,
+        confirmLabel: "Proceed",
+      }))) return;
     }
     if (["UPI", "CARD", "CHEQUE", "ONLINE"].includes(mode) && !txnId.trim()) {
-      if (!window.confirm(`No transaction reference for ${mode} payment. Record anyway?`)) return;
+      // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+      if (!(await confirm({
+        title: "No transaction reference",
+        body: `No transaction reference was entered for the ${mode} payment. Record this payment anyway?`,
+        danger: true,
+        confirmLabel: "Record anyway",
+      }))) return;
     }
     setSaving(true);
     try {
@@ -2434,7 +2456,13 @@ function BulkCollectModal({ uhid, patient, bills, totalDue, advances = [], unspe
     // R7ak: CHEQUE removed from the bulk picker — wasn't used in practice
     // and cheque collections need a dedicated reconciliation flow.
     if (["UPI", "CARD", "ONLINE"].includes(mode) && !txnId.trim()) {
-      if (!window.confirm(`No transaction reference for ${mode} payment. Record anyway?`)) return;
+      // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+      if (!(await confirm({
+        title: "No transaction reference",
+        body: `No transaction reference was entered for the ${mode} payment. Record this bulk collection anyway?`,
+        danger: true,
+        confirmLabel: "Record anyway",
+      }))) return;
     }
     setSaving(true);
     try {
@@ -2471,10 +2499,14 @@ function BulkCollectModal({ uhid, patient, bills, totalDue, advances = [], unspe
     if (availableAdvances.length === 0) {
       return toast.warn("No unspent advance available to apply.");
     }
-    if (!window.confirm(
-      `Apply ${fmtCur(amt)} from advance pool to outstanding bill${bills.length === 1 ? "" : "s"}?\n` +
-      `(${fmtCur(unspentAdv)} available · FIFO across ${bills.length} bill${bills.length === 1 ? "" : "s"})`,
-    )) return;
+    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+    if (!(await confirm({
+      title: "Apply advance to outstanding bills?",
+      body:
+        `${fmtCur(amt)} from the patient's advance pool will be applied FIFO across ${bills.length} outstanding bill${bills.length === 1 ? "" : "s"}. ` +
+        `${fmtCur(unspentAdv)} is available in total.`,
+      confirmLabel: "Apply",
+    }))) return;
 
     // R7am: guard against the "no bills" case — if allocation is empty
     // we'd silently no-op the loop and toast success. That's the bug

@@ -8,6 +8,7 @@ import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
+import { confirm } from "../../Components/common/ConfirmDialog";
 import "./reception-shared.css";
 import "../../Components/clinical/clinical-forms.css";
 
@@ -71,7 +72,12 @@ export default function Appointments() {
   }, {});
 
   const checkIn = async (apt) => {
-    if (!window.confirm(`Check in ${apt.patientName} and create OPD visit?`)) return;
+    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog (benign action)
+    if (!(await confirm({
+      title: "Check in patient?",
+      body: `${apt.patientName} will be checked in and an OPD visit will be created for the appointment.`,
+      confirmLabel: "Check in",
+    }))) return;
     try {
       await axios.post(`${API_ENDPOINTS.BASE}/appointments/${apt._id}/check-in`, {});
       toast.success("Checked in — OPD visit created");
