@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
+import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
@@ -276,11 +277,9 @@ function PatientEducationContent({ patient }) {
 
   const handleSave = async () => {
     if (!patient || sessions.length===0) return;
+    // R7az-D5-CRIT-1 — POST first, only clearDraft + setSaved on 2xx.
     setSaving(true);
-    const newSessions = [...sessions.map(s=>({...s, savedAt:new Date().toISOString()})), ...savedSessions];
-    localStorage.setItem(`nabh_patient_education_${patient._id}`, JSON.stringify({ sessions:newSessions }));
-    setSavedSessions(newSessions);
-    setSessions([]);
+    const newSessions = [...sessions.map(s => ({ ...s, savedAt: new Date().toISOString() })), ...savedSessions];
     try {
       await axios.post(`${API}/nursing-assessments/education`, {
         patientId: patient._id,
@@ -289,10 +288,17 @@ function PatientEducationContent({ patient }) {
         nurseEmployeeId: user?.employeeId || "",
         nurseSignature: signature || undefined,
       });
-    } catch {}
-    clearDraft();
-    setSaving(false); setSaved(true);
-    setTimeout(()=>setSaved(false),2500);
+      localStorage.setItem(`nabh_patient_education_${patient._id}`, JSON.stringify({ sessions: newSessions }));
+      setSavedSessions(newSessions);
+      setSessions([]);
+      clearDraft();
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (err) {
+      toast.error("Save failed: " + (err.response?.data?.message || err.message) + " — your draft is preserved, please retry.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (!patient) {

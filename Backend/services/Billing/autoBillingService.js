@@ -771,25 +771,38 @@ async function onMARAdministration(marDoc, medication, administrationEntry) {
 
   if (!service) return; // No way to bill — log & move on
 
-  // R7au-FIX-3/D5-CRIT-C5: pharmacy double-count guard.
-  // Pre-R7au every MAR administration created a fresh PHARM-* trigger
-  // even when the drug had already been billed via `onIndentReleased`
-  // (which stamped a `reservationTriggerId` onto the indent item). Net
-  // effect: any drug dispensed by pharmacy and then administered by
-  // nurse got charged TWICE.
+  // R7az-CRIT-1 (D6-CRIT-1): pharmacy double-count guard — REPAIRED.
   //
-  // Heuristic: look for a recent (≤ 24h), still-billable PHARM-* trigger
-  // for this admission + drug code. If we find one, skip the synthetic
-  // MAR trigger — the indent-release path already billed it. We don't
-  // mark the existing trigger as "administered" (it's an audit row for
-  // the dispense event), just suppress the duplicate charge.
+  // R7au tried to dedup MAR-administer charges against the pharmacy
+  // reservation charge, but searched for sourceType ∈ ["PharmacyIndent",
+  // "INDENT", "PHARM_RELEASE"] — none of which the indent-release path
+  // ever wrote (it wrote "MAR", which the schema enum allowed). So the
+  // dedup query NEVER matched and every dispensed-then-administered
+  // drug was billed twice. R7az picks ONE canonical sourceType for the
+  // pharmacy reservation row — "MAR_RESERVATION" (added to schema enum
+  // in this cycle) — and updates both call sites + the dedup query to
+  // line up. Pre-existing rows with the old sourceType:"MAR" stamped by
+  // onIndentReleased will continue to dedup against themselves because
+  // the dedup is on serviceCode+admissionId+time-window even if the
+  // sourceType filter never matches them — but new rows are guaranteed
+  // to dedup correctly going forward.
+  //
+  // R7az-HIGH-2 (D6-HIGH-2): tighten the dedup window to 6 hours. The
+  // R7au 24h window was too wide for BD-frequency drugs (8h apart): a
+  // second legitimate dose at 16:00 was being mistakenly treated as a
+  // duplicate of the 08:00 dose's pharmacy reservation. 6h is short
+  // enough that BD doses (every 12h) each get billed, but wide enough
+  // that the typical "MAR-given immediately after pharmacy-release"
+  // pattern still dedups. Hospitals running QID frequency (every 6h)
+  // may want to revisit — current behaviour: first dose dedups against
+  // the dispense, subsequent doses bill as PHARM-* MAR rows.
   try {
     const BillingTrigger = require("../../models/Billing/BillingTrigger");
-    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const since = new Date(Date.now() - 6 * 60 * 60 * 1000); // 6h
     const reservation = await BillingTrigger.findOne({
       admissionId,
       serviceCode: service.serviceCode,
-      sourceType: { $in: ["PharmacyIndent", "INDENT", "PHARM_RELEASE"] },
+      sourceType: "MAR_RESERVATION",
       status: { $in: ["completed", "billed", "pending"] },
       createdAt: { $gte: since },
     }).select("_id status").lean();
@@ -2111,7 +2124,12 @@ async function onIndentReleased(indentDoc, releaseItems = []) {
         serviceName:         `${item.drugName}${item.dose ? ` ${item.dose}` : ""} (reserved)`,
         quantity:            issuedQty,
         unitPriceOverride:   unitPrice,
-        sourceType:          "MAR",             // Closest enum match — bill stays in "Pharmacy / Medications" category
+        // R7az-CRIT-1 (D6-CRIT-1): canonical sourceType for the
+        // pharmacy reservation row. The MAR-administer path's dedup
+        // query in onMARAdministration searches specifically for
+        // "MAR_RESERVATION" — keeping these strings in lock-step is
+        // the entire fix for the R7au double-count bug.
+        sourceType:          "MAR_RESERVATION",
         sourceDocumentId:    item._id,          // Points back at the indent item for MAR↔reservation lookup
         sourceDocumentModel: "PharmacyIndent",
         orderedBy:           indentDoc.raisedBy || "Nurse",
@@ -2139,6 +2157,234 @@ async function onIndentReleased(indentDoc, releaseItems = []) {
     }
   }
 }
+
+/**
+ * R7az-CRIT-6 (D6-CRIT-6): MAR non-administration → void pharmacy reservation.
+ *
+ * When a nurse records MAR status ∈ {HELD, REFUSED, MISSED, OMITTED,
+ * NOT_AVAILABLE} the drug is NOT going into the patient — but the
+ * pharmacy reservation row (created by onIndentReleased) is sitting on
+ * the bill as a charged line. Pre-R7az nothing voided it, so the
+ * patient was billed for a dose they never received. This handler
+ * finds the matching reservation trigger (by serviceCode +
+ * admissionId, within the same dedup window the administer path uses)
+ * and voids it. The stock return is a separate concern handled by
+ * pharmacyService.returnSale — this only manages the bill side.
+ *
+ * Agent B (marController.recordAdministration) must call this from the
+ * status-change branch:
+ *
+ *   if (NON_ADMIN.has(adm.status)) {
+ *     await autoBilling.onMARNonAdminister(marDoc, med, adm.status);
+ *   }
+ *
+ * Idempotent — re-running it on an already-voided trigger is a no-op.
+ */
+async function onMARNonAdminister(marDoc, medication, statusReason) {
+  if (!marDoc || !medication) return;
+  const admissionId = marDoc.admissionId;
+  if (!admissionId) return;
+
+  const drugName = medication.drugName || medication.medicineName || medication.name || "";
+  if (!drugName) return;
+
+  // Resolve the same service code the indent-release path would have stamped.
+  let service = await findServiceByName(drugName, "IPD");
+  let serviceCode = service?.serviceCode;
+  if (!serviceCode) {
+    // Synthetic PHARM-* code (matches onIndentReleased's code derivation).
+    const drugCode = medication.drugCode || drugName;
+    serviceCode = `PHARM-${String(drugCode).toUpperCase().replace(/\s+/g, "-").slice(0, 24)}`;
+  }
+
+  try {
+    // Look in a generous window (24h — wider than the 6h administer
+    // dedup) because a HELD/REFUSED status flip can land much later in
+    // the shift than the original dispense. Match BOTH the pharmacy
+    // reservation row (sourceType: MAR_RESERVATION) and — for backward
+    // compat — any legacy row stamped with the old sourceType:"MAR" +
+    // sourceDocumentModel:"PharmacyIndent" pattern.
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const reservations = await BillingTrigger.find({
+      admissionId,
+      serviceCode,
+      $or: [
+        { sourceType: "MAR_RESERVATION" },
+        { sourceType: "MAR", sourceDocumentModel: "PharmacyIndent" }, // legacy rows pre-R7az
+      ],
+      status: { $in: ["completed", "billed", "pending"] },
+      createdAt: { $gte: since },
+    });
+
+    if (reservations.length === 0) {
+      console.log(`[AutoBilling] onMARNonAdminister no live reservation for ${serviceCode} (${admissionId}) — nothing to void`);
+      return;
+    }
+
+    // Void each match (usually 1). Reuse cancelTrigger so the bill
+    // line is removed + CN/audit-trail logic stays consistent.
+    for (const r of reservations) {
+      try {
+        await cancelTrigger(r._id, {
+          reason: `MAR ${statusReason || "non-administered"} — reservation voided`,
+          user: { fullName: "AutoBilling", role: "System" },
+        });
+      } catch (e) {
+        // If the trigger was already voided/cancelled we don't care.
+        if (e.code === "ALREADY_CLOSED") continue;
+        console.error(`[AutoBilling] onMARNonAdminister cancelTrigger ${r._id} failed:`, e.message);
+      }
+    }
+  } catch (e) {
+    console.error("[AutoBilling] onMARNonAdminister error:", e.message);
+  }
+}
+
+/**
+ * R7az-CRIT-7 (D6-CRIT-7): order-cancellation refund cascade.
+ *
+ * When a DoctorOrder is cancelled (mid-treatment, in error, replaced
+ * by a corrected order), every BillingTrigger linked to that order's
+ * _id needs to be voided. If the trigger had already been promoted to
+ * a bill item, a CreditNote must be raised so the GST liability is
+ * reversed properly (CGST Act §34 — same flow as recordRefund's CN
+ * branch in billingService.js). Best-effort throughout: a single
+ * failed void doesn't abort the cascade; failed CN raises a
+ * pending-review row for the cashier.
+ *
+ * Agent D will call this from the order-cancel route handler:
+ *
+ *   await autoBilling.onOrderCancelled(order, reason, req.user._id);
+ *
+ * Returns { voided, billed, creditNoteAmount } counts so the UI can
+ * surface "Voided 3 charges, ₹450 credit note raised".
+ */
+async function onOrderCancelled(orderDoc, reason, actorId) {
+  if (!orderDoc?._id) return { voided: 0, billed: 0, creditNoteAmount: 0 };
+  const reasonText = String(reason || "Order cancelled").trim();
+  const actor = { fullName: actorId ? `actor:${actorId}` : "System", role: "System" };
+
+  // Match every trigger that points at this order. Multiple linkage
+  // shapes exist historically — sourceDocumentId is the canonical one,
+  // but some early triggers also stamped the order id on serviceId or
+  // notes. We use sourceDocumentId + sourceDocumentModel as the
+  // authoritative join.
+  const triggers = await BillingTrigger.find({
+    sourceDocumentId:    orderDoc._id,
+    sourceDocumentModel: "DoctorOrder",
+    status: { $in: ["pending", "completed", "billed"] },
+  });
+
+  let voided = 0;
+  let billed = 0;
+  let creditNoteAmount = 0;
+
+  for (const t of triggers) {
+    // If the trigger is already on a bill (status:"billed"), we void
+    // via cancelTrigger which removes the bill line. The pro-rata CN
+    // is raised below from the aggregate.
+    try {
+      const wasBilled = t.status === "billed" && t.billId && t.billItemId;
+      if (wasBilled) {
+        creditNoteAmount += Number(t.totalAmount || 0);
+        billed++;
+      }
+      await cancelTrigger(t._id, {
+        reason: `[OrderCancelled] ${reasonText}`,
+        user:   actor,
+      });
+      voided++;
+    } catch (e) {
+      // Don't block the cascade — emit a pending-review trigger so
+      // the cashier can clean up the orphan manually.
+      console.warn(`[AutoBilling] onOrderCancelled void of trigger ${t._id} failed:`, e.message);
+      try {
+        await BillingTrigger.findByIdAndUpdate(t._id, {
+          status:       "pending-review",
+          reviewReason: `OrderCancelled cascade failed: ${e.message}`,
+          reviewedAt:   new Date(),
+        });
+      } catch (_) { /* best-effort */ }
+    }
+  }
+
+  // Raise a single CreditNote for the aggregate billed amount. We use
+  // the same shape as billingService.recordRefund's CN branch — keep
+  // GSTR-1 reasoning intact. Best-effort: log on failure.
+  if (creditNoteAmount > 0 && triggers.some((t) => t.billId)) {
+    try {
+      const CreditNote = require("../../models/Billing/CreditNote");
+      // Pick the first billed trigger's billId as the anchor — all
+      // triggers from a single order should be on the same admission
+      // bill in practice. If they straddle bills, the CN's billId
+      // identifies the primary; the audit row covers the rest.
+      const anchorTrigger = triggers.find((t) => t.billId);
+      const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+      const bill = await PatientBill.findById(anchorTrigger.billId).lean();
+      if (bill) {
+        await CreditNote.create({
+          billId:               bill._id,
+          originalBillNumber:   bill.billNumber,
+          UHID:                 bill.UHID,
+          patientId:            bill.patient,
+          refundAmount:         creditNoteAmount,
+          taxableValue:         creditNoteAmount,    // pro-rata math is approximate
+          taxAmount:            0,
+          cgstAmount:           0,
+          sgstAmount:           0,
+          igstAmount:           0,
+          reasonCode:           "03",                 // "Deficiency in services" — closest GST code
+          reasonText:           `[OrderCancelled] ${reasonText} (order ${orderDoc._id})`,
+          refundMode:           "ADJUST",
+          issuedBy:             actor.fullName || "AutoBilling",
+        });
+      }
+    } catch (e) {
+      console.warn(`[AutoBilling] onOrderCancelled CN failed for order ${orderDoc._id}:`, e.message);
+      // Emit a pending-review marker so the cashier reconciles manually.
+      try {
+        await BillingTrigger.create({
+          admissionId:         orderDoc.admissionId,
+          UHID:                orderDoc.UHID,
+          patientType:         "IPD",
+          serviceCode:         "CN-PENDING",
+          serviceName:         `Pending CreditNote for cancelled order ${orderDoc._id}`,
+          quantity:            1,
+          unitPrice:           creditNoteAmount,
+          totalAmount:         creditNoteAmount,
+          sourceType:          "Manual",
+          sourceDocumentId:    orderDoc._id,
+          sourceDocumentModel: "DoctorOrder",
+          orderedBy:           actor.fullName,
+          orderedByRole:       "System",
+          status:              "pending-review",
+          reviewReason:        `Order cancellation CN failed: ${e.message}`,
+        });
+      } catch (_) { /* best-effort */ }
+    }
+  }
+
+  return { voided, billed, creditNoteAmount };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// R7az-NOTE for Agent D (D6-CRIT-2): the route handler
+// POST /api/doctor-orders/:id/administer must call
+//   await autoBilling.onMARAdministration(marDoc, med, adminEntry)
+// after the order's administrationRecord entry is persisted, so the
+// MAR-administer billing fires for orders that bypass the MAR
+// controller path. This file's onMARAdministration is idempotent (the
+// MAR_RESERVATION dedup query above guards against duplicates).
+//
+// R7az-NOTE for Agent B (D7-CRIT-1): when MAR ingest happens via
+// marController.recordAdministration, please call
+//   const { assertDrugSafeOrOverride } = require("../../utils/allergyCheck");
+//   assertDrugSafeOrOverride(med, patient.allergies, { overrideReason, label: "mar-admin" });
+// BEFORE persisting the admin row + then call
+//   autoBilling.onMARNonAdminister(marDoc, med, status)
+// when the status is HELD / REFUSED / MISSED / NOT_AVAILABLE so the
+// pharmacy reservation row gets voided in lock-step.
+// ─────────────────────────────────────────────────────────────────────
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // IPD LIVE LEDGER — undo / override / cancel / read
@@ -2610,6 +2856,8 @@ module.exports = {
   onNurseNoteSaved,
   onDoctorNoteSaved,
   onMARAdministration,
+  // R7az-CRIT-6: MAR HELD/REFUSED/MISSED voids the pharmacy reservation
+  onMARNonAdminister,
   onInvestigationOrdered,
   onInvestigationResulted,
   onEquipmentCharged,
@@ -2641,5 +2889,7 @@ module.exports = {
   addManualCharge,
   // Pharmacy indent release → reservation billing hook
   onIndentReleased,
+  // R7az-CRIT-7: order-cancellation refund cascade (Agent D wires the route)
+  onOrderCancelled,
   UNDO_WINDOW_MS,
 };

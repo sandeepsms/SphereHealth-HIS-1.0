@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
+import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
@@ -121,11 +122,14 @@ function DailyNursingContent({ patient }) {
 
   const handleSave = async () => {
     if (!patient) return;
+    // R7az-D5-CRIT-1 — Pre-fix order was: write to localStorage → POST
+    // (catch-all silent) → clearDraft → setSaved(true). A 4xx/5xx (or
+    // network error) was swallowed so the nurse saw the green check
+    // while the data only existed on the local laptop. Now: POST first,
+    // only clearDraft + setSaved on 2xx. On failure, keep the draft and
+    // surface the error so the nurse can retry.
     setSaving(true);
     const entry = { ...form, gcsTotal: gcsTotal(), savedAt: new Date().toISOString() };
-    const newEntries = [entry, ...entries];
-    localStorage.setItem(`nabh_daily_nursing_${patient._id}`, JSON.stringify({ entries:newEntries }));
-    setEntries(newEntries);
     try {
       await axios.post(`${API}/nursing-assessments/daily`, {
         patientId: patient._id, ...entry,
@@ -133,10 +137,20 @@ function DailyNursingContent({ patient }) {
         nurseEmployeeId: user?.employeeId || "",
         nurseSignature: signature || undefined,
       });
-    } catch {}
-    clearDraft();
-    setSaving(false); setSaved(true);
-    setTimeout(()=>setSaved(false),2500);
+      // Server ack received — now persist locally and mark saved.
+      const newEntries = [entry, ...entries];
+      localStorage.setItem(`nabh_daily_nursing_${patient._id}`, JSON.stringify({ entries: newEntries }));
+      setEntries(newEntries);
+      clearDraft();
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (err) {
+      // Keep the auto-saved draft (useAutoSave already stashed `form`),
+      // surface the failure to the nurse so she can retry.
+      toast.error("Save failed: " + (err.response?.data?.message || err.message) + " — your draft is preserved, please retry.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (!patient) {

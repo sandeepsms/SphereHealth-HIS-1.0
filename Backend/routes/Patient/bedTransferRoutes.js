@@ -13,8 +13,12 @@ const { validateObjectIdParam } = require("../../utils/queryGuards");
 const vId = validateObjectIdParam("id");
 
 router.post("/",                   requireAction("ipd.transfer"), ctrl.createTransfer);   // Doctor initiates
-router.get("/",                                                   ctrl.getTransfers);     // List (filter by UHID/status)
-router.put("/:id/handover", vId,   requireAction("ipd.transfer"), ctrl.completeHandover); // Nurse completes
-router.put("/:id/cancel",   vId,   requireAction("ipd.transfer"), ctrl.cancelTransfer);   // Doctor cancels
+// R7az-A/D1-CRIT: list GET was ungated pre-R7az — Pharmacist /
+// Housekeeping / Ward Boy could enumerate bed transfers (PHI: who is
+// being moved where and why). Gated on `ipd.read` (new, mirrors
+// ipd.write minus the strict write set).
+router.get ("/",                   requireAction("ipd.read"),     ctrl.getTransfers);     // List
+router.put ("/:id/handover", vId,  requireAction("ipd.transfer"), ctrl.completeHandover); // Nurse completes
+router.put ("/:id/cancel",   vId,  requireAction("ipd.transfer"), ctrl.cancelTransfer);   // Doctor cancels
 
 module.exports = router;

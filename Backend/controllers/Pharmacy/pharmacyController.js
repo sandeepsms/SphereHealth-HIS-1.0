@@ -26,7 +26,9 @@ const Supplier    = require("../../models/Pharmacy/SupplierModel");
 const Sale        = require("../../models/Pharmacy/PharmacySaleModel");
 const Settings    = require("../../models/Pharmacy/PharmacySettingsModel");
 const Counter     = require("../../models/CounterModel");
+const Patient     = require("../../models/Patient/patientModel");
 const mongoose    = require("mongoose");
+const { assertDrugSafeOrOverride } = require("../../utils/allergyCheck");
 
 const todayISO  = () => new Date().toISOString().slice(0, 10);
 const isOid     = (v) => mongoose.Types.ObjectId.isValid(v);
@@ -390,6 +392,43 @@ exports.dispense = async (req, res) => {
       const q = Number(it.quantity);
       if (!Number.isFinite(q) || q <= 0) {
         return res.status(400).json({ success: false, message: `Invalid quantity for "${it.drugName || it.drugId}" — must be > 0` });
+      }
+    }
+
+    // R7az-CRIT-1 (D7-CRIT-1): drug-allergy gate at the counter.
+    // Walk-in sales are anonymous (no patient record); for every other
+    // sale-type we look the patient up by UHID, hydrate the unified
+    // `allergies` virtual (which merges legacy knownAllergies + the new
+    // typed allergyList[]), and run the substring-match gate from
+    // utils/allergyCheck. Per-line `_allergyOverrideReason` allows a
+    // senior pharmacist to dispense against a known allergy with a
+    // documented clinical reason (mirrors the Rx-side hook).
+    if (saleType !== "Walk-in" && String(patientUHID || "").trim()) {
+      try {
+        const pat = await Patient.findOne({ UHID: String(patientUHID).trim() })
+          .select("knownAllergies allergyList")
+          .lean({ virtuals: true });
+        if (pat) {
+          const allergyPool = pat.allergies || pat.allergyList || pat.knownAllergies || [];
+          for (const it of items) {
+            assertDrugSafeOrOverride(
+              { drugName: it.drugName, genericName: it.genericName, brandName: it.brandName },
+              allergyPool,
+              { overrideReason: it._allergyOverrideReason, label: "counter-dispense" },
+            );
+          }
+        }
+      } catch (allergyErr) {
+        if (allergyErr.code === "ALLERGY_COLLISION") {
+          return res.status(409).json({
+            success: false,
+            message: allergyErr.message,
+            allergen: allergyErr.allergen,
+            drugName: allergyErr.drugName,
+          });
+        }
+        // Non-allergy errors fall through to the outer catch.
+        throw allergyErr;
       }
     }
 

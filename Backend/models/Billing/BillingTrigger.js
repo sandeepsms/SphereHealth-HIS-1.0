@@ -23,9 +23,20 @@ const BillingTriggerSchema = new mongoose.Schema({
   // "Admission", "BedCharge", "Emergency" are fired by autoBillingService
   // for registration / bed-day / ER-triage charges — without them, those
   // events silently fail validation and patients are billed nothing.
+  //
+  // R7az-CRIT-1 (D6-CRIT-1): "MAR_RESERVATION" is the canonical sourceType
+  // for the pharmacy-side reservation row written by onIndentReleased.
+  // Pre-R7az that path wrote sourceType:"MAR" (same enum the MAR-admin
+  // path wrote) and the dedup query in onMARAdministration searched for
+  // ["PharmacyIndent","INDENT","PHARM_RELEASE"] — none of which matched,
+  // so every MAR-given dose was billed a second time on top of the indent
+  // release. New rule: pharmacy reservation → "MAR_RESERVATION"; the
+  // MAR administration path → "MAR"; the dedup query specifically looks
+  // for "MAR_RESERVATION" to detect "this drug was already billed at
+  // dispense".
   sourceType: {
     type: String,
-    enum: ["NurseNote","DoctorNote","DoctorAssessment","MAR","InvestigationOrder",
+    enum: ["NurseNote","DoctorNote","DoctorAssessment","MAR","MAR_RESERVATION","InvestigationOrder",
            "Equipment","CarePlan","Discharge","Procedure","DoctorVisit","Manual","AutoCharge",
            "Admission","BedCharge","Emergency"],
     required: true },

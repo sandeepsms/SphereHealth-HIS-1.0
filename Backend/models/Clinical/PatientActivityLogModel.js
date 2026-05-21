@@ -37,6 +37,19 @@ const ALLOWED_ACTIONS = [
   "field-edit", // free-text field saved
   "form-submit",
   "navigation", // route change inside the patient panel
+  // R7az-D10 hash-chain coverage: prescription lifecycle gets first-class
+  // action names so the hash chain isn't broken by parallel writes via
+  // PatientActivityLog.create() bypassing activityLogger.log().
+  "PRESCRIPTION_UPDATE",
+  "PRESCRIPTION_DELETE",
+  "PRESCRIPTION_STATUS_CHANGE",
+  "PRESCRIPTION_SIGN",
+  // Read-event capture for sensitive routes (MLC / patient-file)
+  // R7az-D10/D9 NABH AAC.7 — surveyors expect read trails for legal docs.
+  "READ",
+  // Workflow-specific action verbs surfaced from inferAction route-suffix
+  // detection (D10-HIGH-3): /finalize, /refuse, /revoke etc.
+  "finalize", "refuse", "revoke",
   "other",
 ];
 
@@ -100,6 +113,19 @@ const PatientActivityLogSchema = new mongoose.Schema(
     // that was modified or inserted between two existing rows.
     prevHash: { type: String, default: "" },
     rowHash:  { type: String, default: "" },
+
+    // ── Retention (R7az-D10-HIGH-1: NABH HIC.5 record retention) ─────
+    // Per-tenant default lifetime varies by jurisdiction; we encode the
+    // NABH baseline here:
+    //   • Clinical events (sign / amend / print / cancel / READ on patient
+    //     file / MLC) → 7 years from createdAt
+    //   • MLC / paediatric records → 12 years (medico-legal & POCSO)
+    //   • Routine UI events (select / click / navigation) → 1 year
+    // A `legalHoldUntil` later than `retainUntil` keeps the row past
+    // expiry (e.g. open court case). The TTL index uses retainUntil itself
+    // (expireAfterSeconds: 0 → delete when retainUntil < now).
+    retainUntil:    { type: Date, default: null, index: { expireAfterSeconds: 0 } },
+    legalHoldUntil: { type: Date, default: null },
   },
   {
     timestamps: true,
@@ -117,10 +143,93 @@ PatientActivityLogSchema.index({ UHID: 1, createdAt: -1 });
 PatientActivityLogSchema.index({ admissionId: 1, createdAt: -1 });
 // Per-actor view (who did what across patients).
 PatientActivityLogSchema.index({ userId: 1, createdAt: -1 });
-// TTL safety: nothing here is ever deleted, but if a tenant ever needs
-// 7-year retention they can add a TTL via `db.collection.createIndex({...}, { expireAfterSeconds: 7*365*86400 })`
-// — we deliberately don't auto-set one because NABH retention rules vary
-// per jurisdiction.
+
+// ── R7az-D10-HIGH-1: pre-save retention defaults ─────────────────────
+// Compute retainUntil from action + tags when not already set. We never
+// overwrite a caller-supplied retainUntil (lets ops force a longer hold
+// per row) but we always honour legalHoldUntil if it extends past expiry.
+const RET_7Y  = 7  * 365 * 86400 * 1000;
+const RET_12Y = 12 * 365 * 86400 * 1000;
+const RET_1Y  = 1  * 365 * 86400 * 1000;
+PatientActivityLogSchema.pre("save", function (next) {
+  try {
+    if (!this.retainUntil) {
+      const base = (this.createdAt || new Date()).getTime();
+      const isMlc = (this.module || "").toUpperCase().includes("MLC")
+        || (Array.isArray(this.tags) && this.tags.some((t) => /mlc|paeds|paediatric|pocso/i.test(String(t))));
+      const clinicalActions = new Set([
+        "create","update","delete","sign","amend","cancel","void",
+        "print","export","READ",
+        "PRESCRIPTION_UPDATE","PRESCRIPTION_DELETE",
+        "PRESCRIPTION_STATUS_CHANGE","PRESCRIPTION_SIGN",
+        "finalize","refuse","revoke",
+      ]);
+      let ms = RET_1Y;
+      if (isMlc) ms = RET_12Y;
+      else if (clinicalActions.has(this.action)) ms = RET_7Y;
+      this.retainUntil = new Date(base + ms);
+    }
+    // Honour a longer legal hold if set
+    if (this.legalHoldUntil && this.retainUntil && this.legalHoldUntil > this.retainUntil) {
+      this.retainUntil = this.legalHoldUntil;
+    }
+  } catch (e) {
+    // Don't block writes on a retention bug — log and continue.
+    console.warn("[PatientActivityLog] retention default failed:", e.message);
+  }
+  next();
+});
+
+// ── R7az-D10-CRIT-5: schema-level append-only enforcement ────────────
+// Audit rows MUST NOT be deleted or updated via the application layer
+// except for two well-defined paths:
+//   1. TTL expiry — Mongo handles this server-side, bypasses these hooks.
+//   2. Setting legalHoldUntil / retainUntil — explicit ops override that
+//      changes ONLY those two fields (e.g. "this row is now under court
+//      hold, extend retention to 2035").
+// Anything else throws — including 'save'-driven $set, deleteOne /
+// deleteMany / findOneAndDelete / findOneAndUpdate / updateMany /
+// findByIdAndUpdate / findByIdAndDelete.
+const RETENTION_WHITELIST = new Set(["retainUntil", "legalHoldUntil"]);
+function _appendOnlyError() {
+  return new Error(
+    "PatientActivityLog is append-only — use TTL via retainUntil. " +
+    "Updates allowed only when changing retainUntil / legalHoldUntil.",
+  );
+}
+function _isRetentionOnlyUpdate(update) {
+  if (!update || typeof update !== "object") return false;
+  // Accept either flat fields or { $set: {...} } shape.
+  const top = Object.keys(update).filter((k) => k !== "$set" && k !== "$setOnInsert");
+  if (top.length) {
+    if (!top.every((k) => RETENTION_WHITELIST.has(k))) return false;
+  }
+  if (update.$set) {
+    const setKeys = Object.keys(update.$set);
+    if (!setKeys.every((k) => RETENTION_WHITELIST.has(k))) return false;
+  }
+  if (update.$setOnInsert) return false; // upserts not permitted on audit table
+  return true;
+}
+function _appendOnlyUpdateHook(next) {
+  try {
+    if (_isRetentionOnlyUpdate(this.getUpdate())) return next();
+  } catch (_) { /* fallthrough to refuse */ }
+  return next(_appendOnlyError());
+}
+PatientActivityLogSchema.pre("findOneAndUpdate", _appendOnlyUpdateHook);
+PatientActivityLogSchema.pre("findByIdAndUpdate", _appendOnlyUpdateHook);
+PatientActivityLogSchema.pre("updateOne",        _appendOnlyUpdateHook);
+PatientActivityLogSchema.pre("updateMany",       _appendOnlyUpdateHook);
+function _appendOnlyDeleteHook(next) { return next(_appendOnlyError()); }
+PatientActivityLogSchema.pre("findOneAndDelete", _appendOnlyDeleteHook);
+PatientActivityLogSchema.pre("findByIdAndDelete", _appendOnlyDeleteHook);
+PatientActivityLogSchema.pre("deleteOne",        { document: false, query: true }, _appendOnlyDeleteHook);
+PatientActivityLogSchema.pre("deleteMany",       _appendOnlyDeleteHook);
+// Document.deleteOne (called on a loaded doc instance) — block too.
+PatientActivityLogSchema.pre("deleteOne",        { document: true, query: false }, function (next) {
+  return next(_appendOnlyError());
+});
 
 module.exports =
   mongoose.models.PatientActivityLog ||

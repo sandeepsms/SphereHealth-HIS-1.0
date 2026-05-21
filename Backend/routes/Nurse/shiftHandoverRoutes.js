@@ -25,8 +25,11 @@ router.post(
   ]),
   ctrl.createHandover,
 );
-router.get  ("/by-admission",          validate(["admissionId"]), ctrl.getByAdmission);
-router.get  ("/latest",                validate(["uhid"]),        ctrl.getLatest);
+// R7az-A/D1-CRIT: read endpoints were ungated pre-R7az — any role
+// could pull NABH MOM.2 handover narratives (PHI + clinical context).
+// Gated on `nurse-notes.read` (Admin/Doctor/Nurse/MRD).
+router.get  ("/by-admission",          requireAction("nurse-notes.read"), validate(["admissionId"]), ctrl.getByAdmission);
+router.get  ("/latest",                requireAction("nurse-notes.read"), validate(["uhid"]),        ctrl.getLatest);
 router.patch("/:id/verify",            requireAction("mar.write"), ctrl.verifyHandover);
 
 module.exports = router;

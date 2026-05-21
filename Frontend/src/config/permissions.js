@@ -237,6 +237,25 @@ export const ACTIONS = {
   "mrd.list":              ["Admin", "Doctor", "MRD"],
   // Same-day discharge undo — Admin only, controller gates 24h window.
   "admission.reactivate":  ["Admin"],
+
+  // ── R7az-A/D1+D9 — new PHI/clinical read tokens + write splits ──
+  // Mirror of Backend/config/permissions.js. Frontend `can()` helper
+  // hides UI buttons / sidebar items the API will reject.
+  "patient-file.read":         ["Admin", "Doctor", "Nurse", "MRD"],
+  "doctor-notes.read":         ["Admin", "Doctor", "Nurse", "MRD"],
+  "nurse-notes.read":          ["Admin", "Doctor", "Nurse", "MRD"],
+  "mar.read":                  ["Admin", "Doctor", "Nurse", "MRD"],
+  "discharge-summary.read":    ["Admin", "Doctor", "Nurse", "MRD"],
+  "discharge-summary.write":   ["Admin", "Doctor"],
+  "mlc.write":                 ["Admin", "Doctor"],
+  "mlc.read":                  ["Admin", "Doctor", "Nurse"],
+  "ipd.read":                  ["Admin", "Doctor", "Nurse", "Receptionist"],
+  "consultation.write":        ["Admin", "Doctor"],
+  "safety.write":              ["Admin", "Doctor", "Nurse"],
+  "diabetic.scale.write":      ["Admin", "Doctor"],
+  "doctor.self.write":         ["Admin", "Doctor"],
+  "services.read":             ["Admin", "Doctor", "Nurse", "Receptionist", "Pharmacist", "Lab Technician"],
+  "appointment.confirm":       ["Admin", "Receptionist"],
 };
 
 /* ── Helpers ─────────────────────────────────────────────────────── */

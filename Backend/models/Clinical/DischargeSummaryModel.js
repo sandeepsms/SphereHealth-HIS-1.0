@@ -141,6 +141,45 @@ DischargeSummarySchema.index({ UHID: 1, createdAt: -1 });
 DischargeSummarySchema.index({ admissionId: 1 });
 DischargeSummarySchema.index({ status: 1, createdAt: -1 });
 
+// ── R7az-D2-CRIT-2: schema-level guard against overwriting a finalized
+// discharge summary. Once status=finalized the document is a legal
+// record (insurance / medico-legal / NABH AAC.5). The only legitimate
+// edits at that point are minor amendments via a dedicated
+// "createAmendment" path (controller-owned by Agent D). Both
+// findOneAndUpdate and findByIdAndUpdate are intercepted here so
+// even bypass attempts via the model layer are blocked.
+//
+// Whitelist: if the caller is explicitly toggling status (e.g.
+// finalized → finalized with the same value) or adding metadata fields
+// the law allows post-finalize (mlrNumberSnapshot for stamp updates),
+// we allow that — anything else is refused.
+const FINALIZED_WHITELIST = new Set(["mlrNumberSnapshot"]);
+async function _refuseIfFinalized(next) {
+  try {
+    const query = this.getQuery();
+    const update = this.getUpdate() || {};
+    // Look up the target doc's current status.
+    const doc = await this.model.findOne(query).select("status").lean();
+    if (!doc || doc.status !== "finalized") return next();
+
+    // Allow no-op writes that only touch whitelisted fields.
+    const setKeys = Object.keys((update.$set) || {}).concat(
+      Object.keys(update).filter((k) => !k.startsWith("$")),
+    );
+    if (setKeys.length && setKeys.every((k) => FINALIZED_WHITELIST.has(k))) return next();
+
+    return next(new Error(
+      `Discharge summary ${doc._id || query._id} is finalized — refusing overwrite. ` +
+      `Create an amendment via the dedicated controller path instead (NABH AAC.5).`,
+    ));
+  } catch (e) {
+    return next(e);
+  }
+}
+DischargeSummarySchema.pre("findOneAndUpdate", _refuseIfFinalized);
+DischargeSummarySchema.pre("findByIdAndUpdate", _refuseIfFinalized);
+DischargeSummarySchema.pre("updateOne",         _refuseIfFinalized);
+
 module.exports =
   mongoose.models.DischargeSummary ||
   mongoose.model("DischargeSummary", DischargeSummarySchema);

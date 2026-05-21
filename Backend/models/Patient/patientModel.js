@@ -54,7 +54,38 @@ const PatientSchema = new mongoose.Schema(
     },
     // Receptionist enters as either a comma string or a list of allergens;
     // we accept both — stored as String for backward-compat with old reports.
+    //
+    // R7az-CRIT-2 (D7-CRIT-2): `knownAllergies` is DEPRECATED in favour
+    // of the typed `allergyList[]` below. Keep accepting the legacy
+    // string so old reports / imports don't break, but new code should
+    // read `patient.allergies` (the virtual) which prefers the typed
+    // list and falls back to parsing the legacy string. The drug-allergy
+    // gate (utils/allergyCheck.js) consumes the virtual.
     knownAllergies: { type: mongoose.Schema.Types.Mixed, default: "" },
+
+    // R7az-CRIT-2 (D7-CRIT-2): typed allergy ledger. Each row is a
+    // discrete allergen with severity + type so the clinician UI can
+    // group DRUG vs FOOD vs OTHER and so the dispense gate matches only
+    // on DRUG-typed entries when callers narrow the list (default: all
+    // types are checked — safer baseline).
+    allergyList: [
+      {
+        allergen: { type: String, required: true, trim: true },
+        severity: {
+          type: String,
+          enum: ["MILD", "MODERATE", "SEVERE", "ANAPHYLAXIS", "UNKNOWN", ""],
+          default: "UNKNOWN",
+        },
+        type: {
+          type: String,
+          enum: ["DRUG", "FOOD", "OTHER"],
+          default: "DRUG",
+        },
+        recordedAt: { type: Date, default: Date.now },
+        recordedBy: { type: String, default: "" },
+        notes:      { type: String, default: "" },
+      },
+    ],
 
     // Department / doctor are picked at registration for OPD/IPD but are
     // optional for walk-in Emergency and lab Services.
@@ -189,6 +220,45 @@ PatientSchema.pre("save", async function (next) {
 
   next();
 });
+
+// R7az-CRIT-2 (D7-CRIT-2): unified `allergies` virtual. Prefers the
+// new typed `allergyList[]` when present; falls back to parsing the
+// legacy `knownAllergies` string (comma/semicolon/newline-delimited)
+// so that records imported before the migration still flow through the
+// drug-allergy gate. utils/allergyCheck.js consumes this virtual.
+//
+// Returns: Array<{ allergen, severity, type }>
+PatientSchema.virtual("allergies").get(function () {
+  if (Array.isArray(this.allergyList) && this.allergyList.length > 0) {
+    return this.allergyList.map((row) => ({
+      allergen: row.allergen,
+      severity: row.severity || "UNKNOWN",
+      type:     row.type     || "DRUG",
+    }));
+  }
+  const legacy = this.knownAllergies;
+  if (legacy == null || legacy === "") return [];
+  // Mixed → coerce. Array preserved as-is; string split on separators.
+  let tokens = [];
+  if (Array.isArray(legacy)) {
+    tokens = legacy.map((x) => (typeof x === "string" ? x : x?.allergen || "")).filter(Boolean);
+  } else if (typeof legacy === "string") {
+    tokens = legacy.split(/[,;\n|/]/).map((s) => s.trim()).filter(Boolean);
+  } else if (typeof legacy === "object" && legacy.allergen) {
+    tokens = [String(legacy.allergen)];
+  }
+  // Filter NKA/none/nil sentinel rows so the gate doesn't false-positive.
+  const NEG = /^\s*(none|nil|nka|no known|n\/a|na)\s*$/i;
+  return tokens
+    .filter((t) => !NEG.test(t))
+    .map((t) => ({ allergen: t, severity: "UNKNOWN", type: "DRUG" }));
+});
+
+// Ensure virtuals serialise when the patient doc is JSON-ified for the
+// dispense gate (some call sites use .lean() — those need to read the
+// raw allergyList/knownAllergies and call normaliseAllergies themselves).
+PatientSchema.set("toJSON",   { virtuals: true });
+PatientSchema.set("toObject", { virtuals: true });
 
 module.exports =
   mongoose.models.Patient || mongoose.model("Patient", PatientSchema);

@@ -5,6 +5,13 @@ const DoctorNotes = require("../../models/Doctor/DoctorNotesModel");
 const Patient = require("../../models/Patient/patientModel");
 const Doctor = require("../../models/Doctor/doctorModel");
 const TreatmentChart = require("../../models/Doctor/treatmentChartModel");
+// R7az-D10: addendum / amend audit rows flow through the hash chain.
+const activityLogger = require("../Clinical/activityLogger");
+
+// R7az-D2-CRIT-6 / D10-MED-3: 4-hour window enforcing late-entry flag.
+// Anything older needs lateEntry=true AND a non-empty lateEntryReason
+// per NABH HIC.6 (backdated documentation justification).
+const LATE_ENTRY_WINDOW_MS = 4 * 60 * 60 * 1000;
 
 const VISIT_FIELD_MAP = {
   OPD: "totalOPDVisits",
@@ -55,6 +62,27 @@ const createDoctorNote = async (data, doctorUserId) => {
   const patRef = patientRef || patientId;
   const noteStatus = status || "draft";
 
+  // R7az-D2-CRIT-6: late-entry gate (NABH HIC.6). If the clinical
+  // visitDate is more than 4 hours behind the wall clock, the caller
+  // MUST flag this as a retroactive entry with a documented reason.
+  // Server-side derivation — never trust the client to set lateEntry.
+  const clinicalTs = visitDate ? new Date(visitDate).getTime() : Date.now();
+  const ageMs = Date.now() - clinicalTs;
+  let lateEntry       = !!data.lateEntry;
+  let lateEntryReason = (data.lateEntryReason || "").trim();
+  let lateEntryAt     = null;
+  if (ageMs > LATE_ENTRY_WINDOW_MS) {
+    lateEntry = true;
+    if (!lateEntryReason) {
+      const err = new Error(
+        `Late-entry note (visit >4h ago) requires lateEntryReason — NABH HIC.6 backdated-entry justification`,
+      );
+      err.statusCode = 400;
+      throw err;
+    }
+    lateEntryAt = new Date();
+  }
+
   // Resolve doctor info from User model (app uses User, not old Doctor model)
   let doctorName = dn || "";
   let doctorRegNo = drn || "";
@@ -98,6 +126,10 @@ const createDoctorNote = async (data, doctorUserId) => {
     signedByName,
     signedByReg,
     createdBy: doctorObjectId || doctorUserId || undefined,
+    // Late-entry stamps (R7az-D2-CRIT-6)
+    lateEntry,
+    lateEntryReason: lateEntry ? lateEntryReason : undefined,
+    lateEntryAt:     lateEntry ? lateEntryAt     : undefined,
   });
 
   return note;
@@ -250,18 +282,18 @@ const getNoteById = async (id) => {
 };
 
 // ─────────────────────────────────────────────────────────────
-// Update draft note
+// Update note — drafts mutate in place; SIGNED notes spawn an
+// append-only ADDENDUM document (R7az-D2-HIGH-4 / NABH HIC.7).
+// The original signed doc stays untouched; the new addendum carries
+// originalNoteId + supersedesNoteId so a UI consumer can walk the
+// chain forward and present the "latest version" while preserving
+// the legal history.
 // ─────────────────────────────────────────────────────────────
 const updateDoctorNote = async (id, data, doctorUserId) => {
   const note = await DoctorNotes.findById(id);
   if (!note) {
     const error = new Error("Note not found");
     error.statusCode = 404;
-    throw error;
-  }
-  if (note.status === "signed") {
-    const error = new Error("Cannot edit signed note");
-    error.statusCode = 400;
     throw error;
   }
   if (note.doctor && doctorUserId && note.doctor.toString() !== doctorUserId.toString()) {
@@ -282,6 +314,49 @@ const updateDoctorNote = async (id, data, doctorUserId) => {
     "icd10Description",
     "shift",
   ];
+
+  if (note.status === "signed") {
+    // ── ADDENDUM path: clone the signed note, apply changes, link.
+    const base = note.toObject();
+    delete base._id;
+    delete base.__v;
+    delete base.createdAt;
+    delete base.updatedAt;
+    delete base.signedAt; // addendum signs later if/when the doctor signs it
+    // Strip fields that must not be cloned wholesale
+    base.signature = undefined;
+    // Apply mutations
+    allowed.forEach((f) => {
+      if (data[f] !== undefined) base[f] = data[f];
+    });
+    base.status         = "amended";
+    base.noteType       = base.noteType || "amendment";
+    base.isAddendum     = true;
+    base.originalNoteId = note.originalNoteId || note._id;
+    base.supersedesNoteId = note._id;
+    base.createdBy      = doctorUserId || base.createdBy;
+    base.updatedBy      = doctorUserId || base.updatedBy;
+    const addendum = await DoctorNotes.create(base);
+
+    // Audit row for the amend so the chain captures it.
+    activityLogger.log({
+      UHID: note.patientUHID || "",
+      patientId: note.patient || null,
+      ipdNo: note.ipdNo || "",
+      action: "amend",
+      module: "DoctorNote",
+      sourceModel: "DoctorNotes",
+      sourceId: addendum._id,
+      summary: `Addendum to doctor note ${note._id} (signed → amended)`,
+      userId: doctorUserId || null,
+      before: { _id: note._id, status: note.status },
+      after:  { _id: addendum._id, supersedesNoteId: note._id, originalNoteId: addendum.originalNoteId, status: "amended" },
+    }).catch((e) => console.error("[doctorNotes] amend audit-log failed:", e.message));
+
+    return addendum;
+  }
+
+  // ── DRAFT path: mutate in place
   allowed.forEach((f) => {
     if (data[f] !== undefined) note[f] = data[f];
   });
@@ -291,22 +366,61 @@ const updateDoctorNote = async (id, data, doctorUserId) => {
 };
 
 // ─────────────────────────────────────────────────────────────
-// Update diagnosis fields only (works on signed notes too — NABH amendment)
+// Update diagnosis fields only — works on signed notes too (NABH amendment).
+// R7az-D2-CRIT-3: replace findByIdAndUpdate with load + .save() so the
+// status guard fires. Signed notes are flipped to "amended" and an
+// audit row is appended; this matches the existing addendum pattern
+// but without spawning a fresh document (callers explicitly ask for
+// in-place diagnosis revisions per NABH HIC.7 minor-correction rules).
 // ─────────────────────────────────────────────────────────────
-const updateDiagnosis = async (id, data) => {
-  const diagFields = ["provisionalDiagnosis", "workingDiagnosis", "finalDiagnosis", "icd10Code", "icd10Description"];
-  const update = {};
-  diagFields.forEach(f => { if (data[f] !== undefined) update[f] = data[f]; });
-  const note = await DoctorNotes.findByIdAndUpdate(
-    id,
-    { $set: update },
-    { new: true }
-  );
+const updateDiagnosis = async (id, data, actor = {}) => {
+  const note = await DoctorNotes.findById(id);
   if (!note) {
     const error = new Error("Note not found");
     error.statusCode = 404;
     throw error;
   }
+  const before = note.toObject();
+  const diagFields = ["provisionalDiagnosis", "workingDiagnosis", "finalDiagnosis", "icd10Code", "icd10Description"];
+  diagFields.forEach((f) => { if (data[f] !== undefined) note[f] = data[f]; });
+
+  if (note.status === "signed") {
+    note.status = "amended";
+  }
+  note.updatedBy = actor?.id || actor || note.updatedBy;
+  await note.save();
+
+  activityLogger.log({
+    UHID: note.patientUHID || "",
+    patientId: note.patient || null,
+    ipdNo: note.ipdNo || "",
+    action: "amend",
+    module: "DoctorNote",
+    area: "diagnosis",
+    sourceModel: "DoctorNotes",
+    sourceId: note._id,
+    summary: `Diagnosis amended on note ${note._id}`,
+    userId: actor?.id || null,
+    userName: actor?.name || "",
+    userRole: actor?.role || "",
+    before: {
+      provisionalDiagnosis: before.provisionalDiagnosis,
+      workingDiagnosis:     before.workingDiagnosis,
+      finalDiagnosis:       before.finalDiagnosis,
+      icd10Code:            before.icd10Code,
+      icd10Description:     before.icd10Description,
+      status:               before.status,
+    },
+    after: {
+      provisionalDiagnosis: note.provisionalDiagnosis,
+      workingDiagnosis:     note.workingDiagnosis,
+      finalDiagnosis:       note.finalDiagnosis,
+      icd10Code:            note.icd10Code,
+      icd10Description:     note.icd10Description,
+      status:               note.status,
+    },
+  }).catch((e) => console.error("[doctorNotes] updateDiagnosis audit failed:", e.message));
+
   return note;
 };
 

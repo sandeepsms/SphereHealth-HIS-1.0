@@ -22,7 +22,36 @@ const NursingAssessmentSchema = new mongoose.Schema(
 
     // Free-form payload — vitals, scores, notes, signoff. Different per
     // assessment type; Mixed keeps the controller dumb.
-    data: { type: mongoose.Schema.Types.Mixed, default: {} },
+    //
+    // R7az-D2-MED-1: per-type bounds validator. Pain ≤ 10 on NRS, fall-risk
+    // Morse-style 0–125, pressure-area Braden 6–23. Wide enough to admit
+    // every clinical scale we ship today; narrow enough to catch a
+    // copy-paste fat-finger that would otherwise propagate to the chart.
+    data: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+      validate: {
+        validator: function (val) {
+          if (val == null || typeof val !== "object") return true;
+          const type = this.type;
+          const checks = {
+            pain:           { painScale: [0, 10] },
+            "fall-risk":    { morseScore: [0, 125] },
+            "pressure-area":{ bradenScore: [6, 23] },
+            nutrition:      { mustScore: [0, 10] },
+          };
+          const rules = checks[type] || {};
+          for (const [k, [lo, hi]] of Object.entries(rules)) {
+            const v = val[k];
+            if (v == null || v === "") continue;
+            const n = Number(v);
+            if (!Number.isFinite(n) || n < lo || n > hi) return false;
+          }
+          return true;
+        },
+        message: (props) => `NursingAssessment.data violates the per-type bounds for the chosen assessment type`,
+      },
+    },
 
     recordedBy:     { type: String, default: "" },     // nurse name / employeeId
     recordedByUser: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },

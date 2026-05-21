@@ -326,7 +326,9 @@ export default function IntegratedVitalsPanel({ UHID, nurseName = "", onVitalsCh
   const [loading,   setLoading]   = useState(false);
   const [histDate,  setHistDate]  = useState(todayDate()); // date filter for history view
 
-  // Keep a ref so field handlers always call the latest callback without stale closures
+  // Keep a ref so field handlers always call the latest parent callback
+  // without stale closures (parent may pass a new `onVitalsChange`
+  // identity on every render).
   const onVitalsChangeRef = React.useRef(onVitalsChange);
   React.useEffect(() => { onVitalsChangeRef.current = onVitalsChange; }, [onVitalsChange]);
 
@@ -356,22 +358,29 @@ export default function IntegratedVitalsPanel({ UHID, nurseName = "", onVitalsCh
 
   useEffect(() => { fetchHistory(); }, [fetchHistory]);
 
-  // Update entry state AND notify parent synchronously from the same event handler.
-  // Calling parent setters (setVitals, setMews) from a child onChange is valid React —
-  // React batches all setState calls within the same event tick.
+  // Update entry state AND notify parent. R7az-D4-MED-10 — Read the
+  // freshest entry from the functional updater, not the closed-over
+  // value. This avoids a stale-state bug where rapid sequential edits
+  // (BP-sys then BP-dia within the same tick) sent the parent a payload
+  // built from the previous render's entry.
   const setE = (k, v) => {
-    setEntry(p => ({ ...p, [k]: v }));
-    if (onVitalsChangeRef.current) {
-      const synth = { ...entry, [k]: v };
-      onVitalsChangeRef.current({
-        bp_sys: synth.bp_sys, bp_dia: synth.bp_dia,
-        pulse: synth.pulse, temp: synth.temp,
-        spo2: synth.spo2, rr: synth.rr, gcs: synth.gcs,
-        bsl: synth.bsl, painScore: synth.pain,
-        weight: synth.weight, o2Device: synth.o2Device, o2Flow: synth.o2Flow,
-        position: "Supine",
-      });
-    }
+    setEntry(p => {
+      const next = { ...p, [k]: v };
+      if (onVitalsChangeRef.current) {
+        // Fire the parent callback with the fully-fresh entry. Doing it
+        // inside the functional updater guarantees `next` reflects every
+        // intermediate setE call from the same event tick.
+        onVitalsChangeRef.current({
+          bp_sys: next.bp_sys, bp_dia: next.bp_dia,
+          pulse: next.pulse, temp: next.temp,
+          spo2: next.spo2, rr: next.rr, gcs: next.gcs,
+          bsl: next.bsl, painScore: next.pain,
+          weight: next.weight, o2Device: next.o2Device, o2Flow: next.o2Flow,
+          position: "Supine",
+        });
+      }
+      return next;
+    });
   };
 
   /* ── Save to VitalSheet API ── */

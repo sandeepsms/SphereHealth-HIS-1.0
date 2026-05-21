@@ -153,16 +153,51 @@ const attachDoctorProfile = async (req, _res, next) => {
 };
 
 /* ── Doctor-scope filter helper ──
-   Given the existing filters object (Mongo query), inject the appropriate
-   doctor predicate when the caller is a Doctor user, so list endpoints
-   only return that doctor's patients. Returns the (possibly mutated)
-   filters. NO-OP for any other role. */
-const restrictToOwnDoctorPatients = (req, filters = {}, opts = {}) => {
-  const { field = "doctorId" } = opts;
+   R7az-A/D3-CRIT: doctor list-endpoint scope. Dual-mode: when called as a
+   plain middleware (`router.use(restrictToOwnDoctorPatients)`) it attaches
+   `req.scopeFilter = { attendingDoctorId: req.doctorProfile._id }` for
+   downstream controllers to merge into their Mongo query. When called as
+   a helper from inside a controller, `restrictToOwnDoctorPatients(req,
+   filters, opts)` mutates and returns the filters object directly (legacy
+   call shape used by admissionController). Both shapes NO-OP for non-
+   Doctor roles. Default field is `attendingDoctorId` (the Admission/IPD
+   convention) — pass `{ field: "doctorId" }` to scope an OPD/ER list. */
+const restrictToOwnDoctorPatients = (...args) => {
+  // Middleware shape: (req, res, next)
+  if (args.length >= 2 && typeof args[args.length - 1] === "function") {
+    const [req, _res, next] = args;
+    if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
+      req.scopeFilter = Object.assign({}, req.scopeFilter, {
+        attendingDoctorId: req.doctorProfile._id,
+      });
+    }
+    return next();
+  }
+  // Helper shape: (req, filters, opts)
+  const [req, filters = {}, opts = {}] = args;
+  const { field = "attendingDoctorId" } = opts;
   if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
     filters[field] = req.doctorProfile._id;
   }
   return filters;
+};
+
+/* ── Nurse-ward scope filter ──
+   R7az-A/D9-CRIT: nurse list-endpoint scope. Attaches
+   `req.nurseWard = req.user.ward` and `req.scopeFilter = { "bed.ward":
+   req.user.ward }` for downstream controllers that page through
+   admissions / MAR / vitals / nursing notes. NO-OP for non-Nurse roles
+   and when the Nurse user has no `ward` set (legacy users — controller
+   should fail open until that's backfilled). User.ward field already
+   exists per D3-CRIT-5. */
+const restrictToOwnNurseWard = (req, _res, next) => {
+  if (req.user?.role === "Nurse" && req.user?.ward) {
+    req.nurseWard = req.user.ward;
+    req.scopeFilter = Object.assign({}, req.scopeFilter, {
+      "bed.ward": req.user.ward,
+    });
+  }
+  return next();
 };
 
 /* ── R7i: Read-only role write-blocker ──
@@ -212,6 +247,152 @@ const blockReadOnlyRoleWrites = (req, res, next) => {
   });
 };
 
+/* ── R7az-A/D9-HIGH: Block Doctor/Nurse on financial write paths ──
+   Defense-in-depth wall. Doctor and Nurse have legitimate read access to
+   billing surfaces (price-on-bill, advance balance shown on the patient
+   header, charge-trigger feed) but should never POST money. Adding
+   action-level gates everywhere is brittle — this single mount in
+   routes/index.js after authenticate covers every existing money-write
+   plus the next one a controller author forgets to gate. Reads remain
+   allowed.
+   Path matching is suffix-aware against req.originalUrl (preserves /api
+   prefix). Each rule narrows on method too so a Doctor can still GET
+   the cashier session list / refund history. */
+const BLOCK_DOCTOR_NURSE_FINANCIAL_ROLES = new Set(["Doctor", "Nurse"]);
+const BLOCK_DOCTOR_NURSE_FINANCIAL_RULES = [
+  // POST /api/billing/* writes
+  { method: "POST",   regex: /\/billing\/[^?]*\/payment(\/|$)/ },
+  { method: "POST",   regex: /\/billing\/[^?]*\/payment\/[^/]+\/void(\/|$)/ },
+  { method: "POST",   regex: /\/billing\/[^?]*\/refund(\/|$)/ },
+  { method: "POST",   regex: /\/billing\/[^?]*\/cancel(\/|$)/ },
+  { method: "POST",   regex: /\/billing\/[^?]*\/settlement-adjust(\/|$)/ },
+  { method: "POST",   regex: /\/billing\/credit-notes(\/|$)/ },
+  // Advance pool: only refund + apply are money-moving — list/read remain open.
+  { method: "POST",   regex: /\/billing\/advance(\/|$)/ },                  // create new advance
+  { method: "POST",   regex: /\/billing\/advance\/[^/]+\/apply(\/|$)/ },
+  { method: "POST",   regex: /\/billing\/advance\/[^/]+\/refund(\/|$)/ },
+  // Cashier session write surface — open/close/etc.
+  { method: "POST",   regex: /\/cashier-sessions(\/|$)/ },
+  { method: "POST",   regex: /\/cashier-sessions\/[^/]+\/close(\/|$)/ },
+  // Bulk UHID money paths
+  { method: "POST",   regex: /\/billing\/uhid\/[^/]+\/collect-all(\/|$)/ },
+  { method: "POST",   regex: /\/billing\/uhid\/[^/]+\/bulk-settle(\/|$)/ },
+];
+const blockNonClinicalForDoctorNurse = (req, res, next) => {
+  if (!req.user) return next();
+  if (!BLOCK_DOCTOR_NURSE_FINANCIAL_ROLES.has(req.user.role)) return next();
+  // Only POST/PUT/PATCH/DELETE — GET stays unblocked so the patient
+  // header can still display amount-due, advance balance, etc.
+  if (!WRITE_METHODS.has(req.method)) return next();
+  const url = req.originalUrl.split("?")[0];
+  for (const rule of BLOCK_DOCTOR_NURSE_FINANCIAL_RULES) {
+    if (rule.method === req.method && rule.regex.test(url)) {
+      return res.status(403).json({
+        success: false,
+        message: `Access denied. Financial writes are not permitted for role '${req.user.role}'. Contact the cashier desk.`,
+        role: req.user.role,
+        method: req.method,
+        url,
+      });
+    }
+  }
+  return next();
+};
+
+/* ── R7az-A/D9-HIGH-10: enforceActivePatientForClinicalWrites ──
+   Clinical write paths (doctor-notes / nurse-notes / MAR / vitals /
+   consent-forms / discharge-summary) must reject POST/PUT/PATCH when
+   the linked admission has `status === "Discharged"`. Discharged
+   admissions are NABH MOI.1 sealed records — late edits silently
+   corrupt the audit trail and unbalance any retroactive billing.
+   Exception: header `X-Late-Entry: true` lets a dedicated ADDENDUM
+   action through (the controller still records it as a late entry).
+   Lookup priority: admissionId in body > ipdNo in body > admissionId
+   in :params > UHID-based latest-active-admission lookup.
+   Failures: 409 with code `PATIENT_DISCHARGED`.
+   Soft-fail: if no admission can be located the middleware NOOPs (the
+   controller's own validation handles missing-link errors). */
+const ENFORCE_DISCHARGE_WRITE_RULES = [
+  { method: "POST",   regex: /\/doctor-notes(\/|$|\?)/ },
+  { method: "PUT",    regex: /\/doctor-notes\/[^/]+(\/|$|\?)/ },
+  { method: "PATCH",  regex: /\/doctor-notes\/[^/]+\/[^/]+(\/|$|\?)/ },
+  { method: "POST",   regex: /\/nurse-notes(\/|$|\?)/ },
+  { method: "PUT",    regex: /\/nurse-notes\/[^/]+(\/|$|\?)/ },
+  { method: "PATCH",  regex: /\/nurse-notes\/[^/]+\/[^/]+(\/|$|\?)/ },
+  { method: "POST",   regex: /\/nursing-notes(\/|$|\?)/ },
+  { method: "POST",   regex: /\/mar(\/|$|\?)/ },
+  { method: "PUT",    regex: /\/mar\/[^/]+(\/|$|\?)/ },
+  { method: "PATCH",  regex: /\/mar\/[^/]+\/[^/]+(\/|$|\?)/ },
+  { method: "POST",   regex: /\/vitalsheet(\/|$|\?)/ },
+  { method: "PUT",    regex: /\/vitalsheet\/[^/]+(\/|$|\?)/ },
+  { method: "POST",   regex: /\/consent-forms(\/|$|\?)/ },
+  { method: "PUT",    regex: /\/consent-forms\/[^/]+(\/|$|\?)/ },
+  { method: "POST",   regex: /\/discharge-summary(\/|$|\?)/ },
+  { method: "PUT",    regex: /\/discharge-summary\/[^/]+(\/|$|\?)/ },
+];
+const enforceActivePatientForClinicalWrites = async (req, res, next) => {
+  try {
+    if (!WRITE_METHODS.has(req.method)) return next();
+    const url = req.originalUrl.split("?")[0];
+    const matched = ENFORCE_DISCHARGE_WRITE_RULES.some(
+      (r) => r.method === req.method && r.regex.test(url),
+    );
+    if (!matched) return next();
+    // Late-entry escape hatch — controller must still record the addendum
+    // explicitly. Per spec, an "ADDENDUM" action with X-Late-Entry: true.
+    if (String(req.headers["x-late-entry"] || "").toLowerCase() === "true") {
+      return next();
+    }
+
+    const body = req.body || {};
+    const params = req.params || {};
+    const Admission = require("../models/Patient/admissionModel");
+
+    let admission = null;
+    const admId = body.admissionId || params.admissionId || params.id;
+    const ipdNo = body.ipdNo || params.ipdNo;
+    const uhid  = body.UHID || body.uhid || params.uhid;
+
+    // Prefer the most specific identifier the request actually carries.
+    if (admId && typeof admId === "string" && /^[a-f0-9]{24}$/i.test(admId)) {
+      admission = await Admission.findById(admId).select("status").lean();
+    }
+    if (!admission && ipdNo) {
+      admission = await Admission.findOne({ admissionNumber: ipdNo })
+        .select("status").lean();
+    }
+    if (!admission && uhid) {
+      // Fall back to the most recent admission on this UHID — if it's
+      // discharged we still block (per design, late edits on the last
+      // admission are exactly the case D9-HIGH-10 was raised for).
+      admission = await Admission.findOne({ UHID: String(uhid).toUpperCase() })
+        .sort({ admissionDate: -1 })
+        .select("status").lean();
+    }
+    // Soft-fail when nothing matched — controller-level validation will
+    // catch the missing reference and the gate stays out of the way for
+    // truly UHID-less clinical surfaces (e.g. OPD that doesn't carry an
+    // admission link).
+    if (!admission) return next();
+
+    if (admission.status === "Discharged") {
+      return res.status(409).json({
+        success: false,
+        code: "PATIENT_DISCHARGED",
+        message:
+          "This admission is Discharged — clinical writes are sealed. " +
+          "Use an ADDENDUM with header X-Late-Entry: true if a correction is required.",
+      });
+    }
+    return next();
+  } catch (e) {
+    // Never block the request on a middleware lookup failure — the
+    // controller's own checks will still gate the write.
+    console.warn("[enforceActivePatientForClinicalWrites] skipped:", e.message);
+    return next();
+  }
+};
+
 module.exports = {
   authenticate,
   authorize,
@@ -220,5 +401,8 @@ module.exports = {
   attemptAuth,
   attachDoctorProfile,
   restrictToOwnDoctorPatients,
+  restrictToOwnNurseWard,
   blockReadOnlyRoleWrites,
+  blockNonClinicalForDoctorNurse,
+  enforceActivePatientForClinicalWrites,
 };

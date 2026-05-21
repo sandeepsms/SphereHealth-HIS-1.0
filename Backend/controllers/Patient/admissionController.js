@@ -57,8 +57,29 @@ class AdmissionController {
     return res.json({ success: true, ...result });
   });
 
+  // R7az-D9-HIGH-6: Doctor-scope ownership check. Pre-R7az ANY logged-in
+  // Doctor could fetch /admissions/:id for any patient — even cases
+  // they had nothing to do with. Now we fetch then 403 on mismatch
+  // (both attendingDoctorId and treatmentTeam[].doctorId allowed).
+  // Admin / Receptionist / Nurse pass through.
   getAdmissionById = handle(async (req, res) => {
     const admission = await AdmissionService.getAdmissionById(req.params.id);
+    if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
+      const callerDoctorId = String(req.doctorProfile._id);
+      const attendingId    = String(admission.attendingDoctorId?._id || admission.attendingDoctorId || "");
+      const teamIds        = (admission.treatmentTeam || [])
+        .map(m => String(m.doctorId?._id || m.doctorId || ""))
+        .filter(Boolean);
+      const isAttending = !!attendingId    && callerDoctorId === attendingId;
+      const isOnTeam    = teamIds.includes(callerDoctorId);
+      if (!isAttending && !isOnTeam) {
+        return res.status(403).json({
+          success: false,
+          message: "You are not on the care team for this admission.",
+          code: "NOT_ON_CARE_TEAM",
+        });
+      }
+    }
     return res.json({ success: true, data: admission });
   });
 
@@ -94,33 +115,66 @@ class AdmissionController {
     return res.json({ success: true, data: admissions });
   });
 
+  // R7az-D9-HIGH-6: Doctor-scope post-filter. The service methods don't
+  // currently take a doctor filter so we filter the result list. Fast
+  // enough — these endpoints return a single day's worth of
+  // discharges, never thousands of rows. Cross-check against
+  // attendingDoctorId AND treatmentTeam[].doctorId.
   getTodayDischarges = handle(async (req, res) => {
-    const admissions = await AdmissionService.getTodayDischarges();
+    let admissions = await AdmissionService.getTodayDischarges();
+    if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
+      const docId = String(req.doctorProfile._id);
+      admissions = admissions.filter(a =>
+        String(a.attendingDoctorId || "") === docId ||
+        (a.treatmentTeam || []).some(m => String(m.doctorId || "") === docId),
+      );
+    }
     return res.json({ success: true, data: admissions });
   });
 
   getExpectedDischarges = handle(async (req, res) => {
     const { date } = req.query;
-    const admissions = await AdmissionService.getExpectedDischarges(date);
+    let admissions = await AdmissionService.getExpectedDischarges(date);
+    if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
+      const docId = String(req.doctorProfile._id);
+      admissions = admissions.filter(a =>
+        String(a.attendingDoctorId || "") === docId ||
+        (a.treatmentTeam || []).some(m => String(m.doctorId || "") === docId),
+      );
+    }
     return res.json({ success: true, data: admissions });
   });
 
+  // R7az-D3-MED-2: Doctor-scope statistics. Pre-R7az every Doctor saw
+  // the global admission counts (whole-hospital census, every dept).
+  // Now we pass attendingDoctorId so a Doctor's dashboard reflects
+  // only their own clinical load. Admin/Accountant see global.
   getAdmissionStatistics = handle(async (req, res) => {
     const { startDate, endDate } = req.query;
+    const doctorFilter = (req.user?.role === "Doctor" && req.doctorProfile?._id)
+      ? String(req.doctorProfile._id)
+      : null;
     const stats = await AdmissionService.getAdmissionStatistics(
       startDate,
       endDate,
+      { attendingDoctorId: doctorFilter },
     );
     return res.json({ success: true, data: stats });
   });
 
+  // R7az-D9-HIGH-6: Doctor-scope search. Pre-R7az the search endpoint
+  // was wide-open to any logged-in clinician. Now the service filters
+  // by attendingDoctorId for Doctor callers.
   searchAdmissions = handle(async (req, res) => {
     const { q } = req.query;
     if (!q)
       return res
         .status(400)
         .json({ success: false, message: "Search term q is required" });
-    const admissions = await AdmissionService.searchAdmissions(q);
+    const doctorFilter = (req.user?.role === "Doctor" && req.doctorProfile?._id)
+      ? String(req.doctorProfile._id)
+      : null;
+    const admissions = await AdmissionService.searchAdmissions(q, { attendingDoctorId: doctorFilter });
     return res.json({ success: true, data: admissions });
   });
 
@@ -164,9 +218,19 @@ class AdmissionController {
   });
 
   // GET /api/admissions/:id/access  — check if current doctor owns the admission
+  // R7az-D3-CRIT-1: pass the doctorProfile._id (the Doctor model's _id, NOT
+  // User._id) — pre-R7az this passed req.user.id which is the User._id and
+  // could never match attendingDoctorId. Result was isOwner:false for every
+  // logged-in doctor, even on their own patients.
   checkAccess = handle(async (req, res) => {
     if (!req.user?.id) return res.status(401).json({ success: false, message: "Not authenticated" });
-    const { admission, isOwner } = await AdmissionService.checkDoctorAccess(req.params.id, req.user.id);
+    const { admission, isOwner } = await AdmissionService.checkDoctorAccess(
+      req.params.id,
+      {
+        userId: req.user.id,
+        doctorProfileId: req.doctorProfile?._id,
+      },
+    );
     return res.json({ success: true, isOwner, data: admission });
   });
 
@@ -245,6 +309,12 @@ class AdmissionController {
    * POST /:id/consultation
    * Add a consulting doctor to an admission's treatment team.
    * RULE: Only the primary consultant (attendingDoctorId) may add consultants.
+   *
+   * R7az-D3-CRIT-2: pre-R7az compared `req.user._id` (User._id) against
+   * `admission.attendingDoctorId` (Doctor._id). User._id never matches
+   * Doctor._id directly — the comparison was always false and EVERY
+   * Doctor request was 403'd except Admins. Now compares the resolved
+   * doctorProfile._id (attached by attachDoctorProfile middleware).
    */
   addConsultation = handle(async (req, res) => {
     const Admission = require("../../models/Patient/admissionModel");
@@ -252,14 +322,16 @@ class AdmissionController {
     if (!admission) return res.status(404).json({ success: false, message: "Admission not found" });
 
     // Auth check: only primary consultant or Admin can add
-    const callerId = req.user?._id?.toString() || req.user?.id?.toString();
-    const primaryId = admission.attendingDoctorId?.toString();
-    if (req.user?.role !== "Admin" && callerId !== primaryId) {
+    const callerDoctorId = req.doctorProfile?._id?.toString() || "";
+    const primaryId      = admission.attendingDoctorId?.toString() || "";
+    const isPrimary      = !!callerDoctorId && !!primaryId && callerDoctorId === primaryId;
+    if (req.user?.role !== "Admin" && !isPrimary) {
       return res.status(403).json({
         success: false,
         message: "Only the primary consultant can appoint additional doctors.",
       });
     }
+    const callerId = req.user?._id?.toString() || req.user?.id?.toString();
 
     const {
       doctorId, doctorName, department, departmentId, specialization,
@@ -355,12 +427,15 @@ class AdmissionController {
     const member = admission.treatmentTeam.id(req.params.consultId);
     if (!member) return res.status(404).json({ success: false, message: "Consultation not found" });
 
-    const callerId = req.user?._id?.toString() || req.user?.id?.toString();
-    const primaryId = admission.attendingDoctorId?.toString();
-    const consultingId = member.doctorId?.toString();
-    const isAdmin = req.user?.role === "Admin";
-    const isPrimary = callerId === primaryId;
-    const isConsulting = callerId === consultingId;
+    // R7az-D3-CRIT-2: compare doctorProfile._id (Doctor model _id) — not
+    // User._id — against attendingDoctorId / treatmentTeam[].doctorId.
+    // Same null-on-mismatch bug as addConsultation; see note there.
+    const callerDoctorId = req.doctorProfile?._id?.toString() || "";
+    const primaryId      = admission.attendingDoctorId?.toString() || "";
+    const consultingId   = member.doctorId?.toString() || "";
+    const isAdmin        = req.user?.role === "Admin";
+    const isPrimary      = !!callerDoctorId && !!primaryId    && callerDoctorId === primaryId;
+    const isConsulting   = !!callerDoctorId && !!consultingId && callerDoctorId === consultingId;
 
     if (!isAdmin && !isPrimary && !isConsulting) {
       return res.status(403).json({ success: false, message: "You do not have permission to update this consultation." });
@@ -398,9 +473,11 @@ class AdmissionController {
     const admission = await Admission.findById(req.params.id);
     if (!admission) return res.status(404).json({ success: false, message: "Admission not found" });
 
-    const callerId = req.user?._id?.toString() || req.user?.id?.toString();
-    const primaryId = admission.attendingDoctorId?.toString();
-    if (req.user?.role !== "Admin" && callerId !== primaryId) {
+    // R7az-D3-CRIT-2: doctorProfile._id, not User._id. See addConsultation.
+    const callerDoctorId = req.doctorProfile?._id?.toString() || "";
+    const primaryId      = admission.attendingDoctorId?.toString() || "";
+    const isPrimary      = !!callerDoctorId && !!primaryId && callerDoctorId === primaryId;
+    if (req.user?.role !== "Admin" && !isPrimary) {
       return res.status(403).json({ success: false, message: "Only the primary consultant can remove team members." });
     }
 
@@ -538,10 +615,16 @@ class AdmissionController {
   //   • DoctorApproved + BillCleared + GatePassIssued → all returned
   //   • Completed → only those gate-passed today (so the "Discharged Today"
   //     tab doesn't grow unbounded over weeks of history).
+  // R7az-D8-HIGH-3: Doctor-scope. Pre-R7az every Doctor saw the entire
+  // hospital's discharge queue — including patients of other doctors.
+  // Now we filter by attendingDoctorId OR treatmentTeam[].doctorId so
+  // a Doctor only sees their own clinical work. Reception/Admin keep
+  // the full view to coordinate gate-pass issuance.
   getDischargeQueue = handle(async (req, res) => {
     const Admission = require("../../models/Patient/admissionModel");
     const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
-    const list = await Admission.find({
+
+    const baseQuery = {
       status: { $in: ["Active", "Discharged"] },
       $or: [
         { "dischargeWorkflow.stage": { $in: ["DoctorApproved", "BillCleared", "GatePassIssued"] } },
@@ -550,7 +633,22 @@ class AdmissionController {
           "dischargeWorkflow.gatePassIssuedAt": { $gte: startOfToday },
         },
       ],
-    })
+    };
+
+    // Doctor scope (additive AND on top of the stage/date filter).
+    if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
+      const docId = req.doctorProfile._id;
+      baseQuery.$and = [
+        {
+          $or: [
+            { attendingDoctorId: docId },
+            { "treatmentTeam.doctorId": docId },
+          ],
+        },
+      ];
+    }
+
+    const list = await Admission.find(baseQuery)
       .populate("patientId",     "fullName UHID dateOfBirth age gender contactNumber")
       .populate("attendingDoctorId", "firstName lastName fullName doctorDetails.specialization")
       .populate("departmentId",      "departmentName")
@@ -569,6 +667,35 @@ class AdmissionController {
     // returns 200, the other gets a clean 409. No double-fire of the
     // approval timestamp / approver name.
     const Admission = require("../../models/Patient/admissionModel");
+
+    // R7az-D8-CRIT-5: primary-consultant OR treatment-team gate. Pre-R7az
+    // any logged-in Doctor could approve any admission's discharge — a
+    // dermatologist with no involvement in the case could discharge an
+    // ICU patient. Now we require the caller to be either the primary
+    // attending OR a member of the treatment team (NABH consultation
+    // model). Admin bypasses.
+    if (req.user?.role === "Doctor") {
+      const probeAdmission = await Admission.findById(req.params.id)
+        .select("attendingDoctorId treatmentTeam.doctorId").lean();
+      if (!probeAdmission) {
+        return res.status(404).json({ success: false, message: "Admission not found" });
+      }
+      const callerDoctorId = String(req.doctorProfile?._id || "");
+      const attendingId    = String(probeAdmission.attendingDoctorId || "");
+      const teamIds        = (probeAdmission.treatmentTeam || [])
+        .map(m => String(m.doctorId || ""))
+        .filter(Boolean);
+      const isAttending = !!callerDoctorId && !!attendingId && callerDoctorId === attendingId;
+      const isOnTeam    = !!callerDoctorId && teamIds.includes(callerDoctorId);
+      if (!isAttending && !isOnTeam) {
+        return res.status(403).json({
+          success: false,
+          message: "Only the primary attending consultant or a treatment-team member may approve discharge.",
+          code: "NOT_ON_CARE_TEAM",
+        });
+      }
+    }
+
     const set = {
       "dischargeWorkflow.stage":              "DoctorApproved",
       "dischargeWorkflow.doctorApprovedAt":   new Date(),
@@ -911,6 +1038,14 @@ class AdmissionController {
     // Re-occupy the bed. CAS on Available/Cleaning so we never steal an
     // already-allocated bed. If the bed was taken between our pre-check
     // and now, we ROLLBACK the admission flip and return 409.
+    //
+    // R7az-D8-HIGH-6: ALSO clear housekeeping flags + close the auto-
+    // created CleaningTask. Pre-R7az reactivation re-occupied the bed
+    // but left `housekeeping.state="CleaningPending"` from the
+    // discharge cascade — the bed showed as "Cleaning" on the live
+    // bed map even though a live patient was in it. Worse, the open
+    // CleaningTask kept appearing in housekeeping's queue and a
+    // janitor could be sent to clean an occupied bed.
     let bedRestored = false;
     if (updatedAdm.bedId) {
       const restored = await Bed.findOneAndUpdate(
@@ -920,6 +1055,10 @@ class AdmissionController {
             status: "Occupied",
             patient: updatedAdm.patientId,
             currentAdmission: updatedAdm._id,
+            "housekeeping.state":      null,
+            "housekeeping.startedAt":  null,
+            "housekeeping.finishedAt": null,
+            "housekeeping.assignedTo": "",
           },
         },
         { new: true, runValidators: true },
@@ -950,6 +1089,29 @@ class AdmissionController {
         });
       }
       bedRestored = true;
+    }
+
+    // R7az-D8-HIGH-6: Cancel the still-open CleaningTask spawned by
+    // the original discharge so housekeeping doesn't dispatch a janitor
+    // to an occupied bed. Non-fatal — log + continue if the task model
+    // is missing or the update throws; the bed flags above are the
+    // primary correctness signal. CleaningTask status enum is
+    // ["open","assigned","in-progress","done","cancelled"] — we use
+    // "cancelled" with cancelReason="REACTIVATED" for the audit trail.
+    try {
+      const { CleaningTask } = require("../../models/Clinical/housekeepingModels");
+      await CleaningTask.findOneAndUpdate(
+        { admissionId: req.params.id, status: { $nin: ["cancelled", "done"] } },
+        {
+          $set: {
+            status:        "cancelled",
+            cancelReason:  `REACTIVATED — ${reason}`.slice(0, 500),
+            cancelledAt:   new Date(),
+          },
+        },
+      );
+    } catch (e) {
+      console.warn("[Reactivate] CleaningTask cancel skipped:", e.message);
     }
 
     return res.json({

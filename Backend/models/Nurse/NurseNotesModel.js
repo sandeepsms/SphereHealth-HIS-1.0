@@ -143,13 +143,36 @@ const NurseNotesSchema = new mongoose.Schema(
     // ── Tags / flags ──
     tags: [{ type: String }],
     isCriticalEvent: { type: Boolean, default: false },
-    signature: { type: String },        // base64 nurse digital signature
+    // R7az-D2-MED-7: cap signature payload (~150KB).
+    signature: { type: String, maxlength: [200000, "signature too large (max 200,000 chars ≈ 150KB)"] },
     signedByName: { type: String },
+
+    // R7az-D2-MED-8: append-only nurse confirmation history for the
+    // "doctor's order confirmed by nurse" flow on this note. Each
+    // confirmSingleOrder push lands here instead of overwriting prior
+    // confirmations (which used to lose the trail entirely).
+    nurseConfirmations: [{
+      _id:       false,
+      nurseId:   { type: mongoose.Schema.Types.ObjectId, ref: "NurseStaff" },
+      nurseName: { type: String, trim: true },
+      orderId:   { type: mongoose.Schema.Types.ObjectId },
+      doctorNoteId: { type: mongoose.Schema.Types.ObjectId, ref: "DoctorNotes" },
+      ts:        { type: Date, default: Date.now },
+      status:    { type: String },
+      remarks:   { type: String, trim: true },
+    }],
 
     status: { type: String, enum: ["draft", "submitted"], default: "draft" },
     submittedAt: { type: Date },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "NurseStaff" },
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "NurseStaff" },
+
+    // ── Addendum chain (R7az-D2-HIGH-4, NABH HIC.7) ──────────────────
+    // SUBMITTED notes are append-only — corrections create a new doc
+    // with originalNoteId + supersedesNoteId set instead of mutating.
+    originalNoteId:    { type: mongoose.Schema.Types.ObjectId, ref: "NurseNotes", default: null, index: true },
+    supersedesNoteId:  { type: mongoose.Schema.Types.ObjectId, ref: "NurseNotes", default: null },
+    isAddendum:        { type: Boolean, default: false, index: true },
 
     // ── Late-entry / retroactive note (NABH HIC.6 — backdated entries) ──
     // When a nurse note is added AFTER the admission has been discharged

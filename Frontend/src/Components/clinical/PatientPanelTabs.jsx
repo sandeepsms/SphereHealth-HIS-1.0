@@ -361,22 +361,39 @@ function isAbnormal(r) {
    Daily I/O summary aggregated from nursing notes' `intakeOutput`.
 */
 export function IntakeOutputChartTab({ nursingNotes = [] }) {
+  // R7az-D5-MED-2 / D5-MED-9 — Match the full set of intake & output
+  // buckets that NursingNotes.jsx actually writes:
+  //   intake : oral, ivFluids, ivMedFluids, bloodProducts
+  //   output : urineOutput, otherOutput, nasogastricOutput
+  // Pre-fix the chart only added oral+ivFluids on the intake side and
+  // urineOutput+otherOutput on the output side — so IV-med volumes and
+  // NGT drainage silently disappeared from the daily totals + net
+  // balance row.
   const rows = useMemo(() => {
     return nursingNotes
-      .filter((n) => n.intakeOutput && (n.intakeOutput.oral || n.intakeOutput.ivFluids || n.intakeOutput.urineOutput || n.intakeOutput.otherOutput))
+      .filter((n) => n.intakeOutput && (
+        n.intakeOutput.oral || n.intakeOutput.ivFluids || n.intakeOutput.ivMedFluids ||
+        n.intakeOutput.bloodProducts || n.intakeOutput.urineOutput ||
+        n.intakeOutput.otherOutput || n.intakeOutput.nasogastricOutput
+      ))
       .map((n) => {
         const io = n.intakeOutput || {};
-        const intake = (io.oral || 0) + (io.ivFluids || 0);
-        const output = (io.urineOutput || 0) + (io.otherOutput || 0);
+        const oral   = Number(io.oral)            || 0;
+        const iv     = Number(io.ivFluids)        || 0;
+        const ivMed  = Number(io.ivMedFluids)     || 0;
+        const blood  = Number(io.bloodProducts)   || 0;
+        const urine  = Number(io.urineOutput)     || 0;
+        const ngt    = Number(io.nasogastricOutput) || 0;
+        const other  = Number(io.otherOutput)     || 0;
+        const intake = oral + iv + ivMed + blood;
+        const output = urine + ngt + other;
         return {
           _id: n._id,
           when: n.noteDate || n.createdAt,
           by:   n.nurseName || "—",
           shift: n.shift || "—",
-          oral: io.oral || 0,
-          iv:   io.ivFluids || 0,
-          urine:io.urineOutput || 0,
-          other:io.otherOutput || 0,
+          oral, iv, ivMed, blood,
+          urine, ngt, other,
           intake, output,
           balance: intake - output,
           notes: io.notes,

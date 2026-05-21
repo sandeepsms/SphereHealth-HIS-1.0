@@ -205,6 +205,47 @@ const ACTIONS = {
   // controller (≤ 24h since actualDischargeDate) and bed
   // must still be free.
   "admission.reactivate":  ["Admin"],
+
+  // ── R7az-A/D1+D9 — new PHI/clinical read tokens + write splits ──
+  // Read tokens for clinical surfaces that were ungated pre-R7az.
+  // MRD is included on every read action that maps to a discharged-
+  // patient file element so the MRD console remains functional.
+  "patient-file.read":         ["Admin", "Doctor", "Nurse", "MRD"],
+  "doctor-notes.read":         ["Admin", "Doctor", "Nurse", "MRD"],
+  "nurse-notes.read":          ["Admin", "Doctor", "Nurse", "MRD"],
+  "mar.read":                  ["Admin", "Doctor", "Nurse", "MRD"],
+  "discharge-summary.read":    ["Admin", "Doctor", "Nurse", "MRD"],
+  "discharge-summary.write":   ["Admin", "Doctor"],
+  // MLC reads include Nurse (treatment-team awareness) but writes
+  // are clinician-only — police-relevant document, the nurse cannot
+  // author or amend an MLR.
+  "mlc.write":                 ["Admin", "Doctor"],
+  "mlc.read":                  ["Admin", "Doctor", "Nurse"],
+  // IPD list reads — mirror of ipd.write but allows Receptionist
+  // (transfer-board read) on top of clinicians.
+  "ipd.read":                  ["Admin", "Doctor", "Nurse", "Receptionist"],
+  // Consultation add/update on an admission's treatment team —
+  // separated from ipd.transfer because Nurse should NOT add a
+  // consultant (clinical decision).
+  "consultation.write":        ["Admin", "Doctor"],
+  // Safety surface (break-glass, two-ID confirm, surgical checklist,
+  // pain reassessment). Previously routed through mar.write which
+  // excluded Doctor — now its own permission so Doctor can confirm.
+  "safety.write":              ["Admin", "Doctor", "Nurse"],
+  // Sliding-scale insulin scale edits — a prescribing decision (mar
+  // entries against the scale are still mar.write for Nurse).
+  "diabetic.scale.write":      ["Admin", "Doctor"],
+  // Doctor-self mutations on the doctor master row (availability,
+  // serve-next, etc.). Controller-level "you're editing your own row"
+  // check remains; this action gate keeps non-doctors out entirely.
+  "doctor.self.write":         ["Admin", "Doctor"],
+  // ServiceMaster reads (catalogue lookup for ServiceAutocomplete).
+  // Doctor/Nurse/Pharmacist/Lab Tech all legitimately need the
+  // catalogue to attach an order — pre-R7az the gate was billing.read
+  // which excluded clinicians.
+  "services.read":             ["Admin", "Doctor", "Nurse", "Receptionist", "Pharmacist", "Lab Technician"],
+  // Appointment confirm flow — explicitly desk-staff-only, audit point.
+  "appointment.confirm":       ["Admin", "Receptionist"],
 };
 
 function roleCan(role, action) {

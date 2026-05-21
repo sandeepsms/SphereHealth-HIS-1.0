@@ -6,7 +6,7 @@
  *
  * Every save creates a BillingTrigger automatically (DoctorAssessment type).
  */
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-toastify";
@@ -24,6 +24,9 @@ import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
 import SignaturePad from "../../Components/signature/SignaturePad";
 import SignatureStamp from "../../Components/signature/SignatureStamp";
 import { confirm } from "../../Components/common/ConfirmDialog";
+// R7az-D4-HIGH-3: themed input dialog replaces window.prompt for the
+// cancel-order reason flow (and any future reason-capturing UI).
+import { promptInput } from "../../Components/common/InputDialog";
 
 const C = {
   doctor: "#7c3aed", nurse: "#db2777", primary: "#1e40af",
@@ -158,7 +161,11 @@ function AuditItem({ trigger }) {
         <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2, display: "flex", gap: 8 }}>
           <span>{trigger.orderedByRole} — {trigger.orderedBy}</span>
           <span>·</span><span>{when}</span>
-          {trigger.totalAmount > 0 && <><span>·</span><span>₹{trigger.totalAmount.toLocaleString("en-IN")}</span></>}
+          {/* R7az-D4-CRIT-1: trigger.totalAmount can be a Decimal128 wire
+              shape — call toMoney() before formatting so we don't render
+              "[object Object]" or "₹NaN" when the trigger came back
+              un-transformed. */}
+          {toMoney(trigger.totalAmount) > 0 && <><span>·</span><span>₹{toMoney(trigger.totalAmount).toLocaleString("en-IN")}</span></>}
         </div>
       </div>
     </div>
@@ -343,6 +350,19 @@ export default function OPDAssessmentPage() {
   const [orderBillNum,  setOrderBillNum]  = useState("");     // human-readable bill number
   const [orderSaving,   setOrderSaving]   = useState(false);
 
+  // R7az-D4-HIGH-2 — Per-button double-tap guards. Pre-fix, fast double
+  // clicks on "Add Medication" / "Add Investigation" / "Add Infusion"
+  // pushed duplicate rows into the local arrays and fired duplicate POSTs.
+  const [isAddingMed,   setIsAddingMed]   = useState(false);
+  const [isAddingInv,   setIsAddingInv]   = useState(false);
+  const [isAddingInfusion, setIsAddingInfusion] = useState(false);
+
+  // R7az-D4-CRIT-2 — Abort controllers for loadVisit + loadAudit so a
+  // navigation away from the page (or visitNumber change) doesn't leave
+  // a late axios setState-ing on an unmounted component.
+  const loadVisitAbortRef = useRef(null);
+  const loadAuditAbortRef = useRef(null);
+
   /* ── Auto-save draft ── */
   const draftKey = visitNumber ? `sphere_draft_opd_${visitNumber}` : null;
   // R7v: infusions added to the autosaved snapshot so they restore across
@@ -358,8 +378,16 @@ export default function OPDAssessmentPage() {
 
   const loadVisit = useCallback(async () => {
     if (!visitNumber) { setLoading(false); return; }
+    // R7az-D4-CRIT-2 — Abort any stale loadVisit before issuing a new one
+    // (visitNumber switch while the previous fetch is still in flight).
+    if (loadVisitAbortRef.current) {
+      try { loadVisitAbortRef.current.abort(); } catch (_) { /* noop */ }
+    }
+    const ctrl = new AbortController();
+    loadVisitAbortRef.current = ctrl;
     try {
-      const { data } = await axios.get(`${API_ENDPOINTS.OPD}/${visitNumber}`);
+      const { data } = await axios.get(`${API_ENDPOINTS.OPD}/${visitNumber}`, { signal: ctrl.signal });
+      if (ctrl.signal.aborted) return;
       const v = data.data || data;
       setVisit(v);
       // Functional setSoap so we can merge new visit data into the
@@ -456,21 +484,35 @@ export default function OPDAssessmentPage() {
         } catch (_) {}
       }
     } catch (err) {
+      if (axios.isCancel?.(err) || ctrl.signal.aborted) return;
       toast.error("Could not load visit: " + (err.response?.data?.message || err.message));
     } finally {
-      setLoading(false);
+      if (!ctrl.signal.aborted) setLoading(false);
     }
   }, [visitNumber]);
 
   const loadAudit = useCallback(async () => {
     if (!visitNumber) return;
+    // R7az-D4-CRIT-2 — same abort pattern.
+    if (loadAuditAbortRef.current) {
+      try { loadAuditAbortRef.current.abort(); } catch (_) { /* noop */ }
+    }
+    const ctrl = new AbortController();
+    loadAuditAbortRef.current = ctrl;
     try {
-      const { data } = await axios.get(`${API_ENDPOINTS.OPD}/${visitNumber}/audit-trail`);
-      setAudit(data.data?.triggers || []);
-    } catch (_) {}
+      const { data } = await axios.get(`${API_ENDPOINTS.OPD}/${visitNumber}/audit-trail`, { signal: ctrl.signal });
+      if (!ctrl.signal.aborted) setAudit(data.data?.triggers || []);
+    } catch (_) { /* silent — audit refresh is non-critical */ }
   }, [visitNumber]);
 
   useEffect(() => { loadVisit(); loadAudit(); }, [loadVisit, loadAudit]);
+
+  // R7az-D4-CRIT-2 — Abort any in-flight loadVisit / loadAudit when this
+  // page unmounts so we don't setState on a dead component.
+  useEffect(() => () => {
+    if (loadVisitAbortRef.current) { try { loadVisitAbortRef.current.abort(); } catch (_) {} }
+    if (loadAuditAbortRef.current) { try { loadAuditAbortRef.current.abort(); } catch (_) {} }
+  }, []);
 
   const handleSave = async () => {
     if (!soap.provisionalDiagnosis.trim()) return toast.warn("Please enter a provisional diagnosis");
@@ -556,8 +598,26 @@ export default function OPDAssessmentPage() {
         consentStatus: "NotRequired",
       }));
       const allOrders = [...medOrders, ...invOrders, ...infOrders];
+      // R7az-D4-CRIT-3 — Pre-fix: this POST was wrapped in `try { … } catch (_) {}`
+      // so a 500 / 401 / network error on the bulk-orders endpoint was
+      // swallowed and the doctor saw "Assessment saved" even though the
+      // pharmacy never got the meds. We now surface the failure with a
+      // partial-save warning and keep the local meds / invests / infusions
+      // arrays so the doctor can retry rather than re-typing them from
+      // scratch. clearDraft() is only called on full success.
       if (allOrders.length > 0) {
-        try { await axios.post(`${API_ENDPOINTS.BASE}/doctor-orders/bulk`, { orders: allOrders }); } catch (_) {}
+        try {
+          await axios.post(`${API_ENDPOINTS.BASE}/doctor-orders/bulk`, { orders: allOrders });
+        } catch (bulkErr) {
+          toast.error(
+            "Assessment saved, but orders did NOT reach pharmacy/lab: "
+            + (bulkErr.response?.data?.message || bulkErr.message)
+            + " — please click Save again to retry."
+          );
+          loadVisit();              // refresh server-side fields
+          setTimeout(loadAudit, 1500);
+          return;                   // exit before clearDraft / success toast
+        }
       }
       clearDraft(); // clear auto-saved draft on successful submit
       toast.success("Assessment saved — audit trail updated");
@@ -571,21 +631,47 @@ export default function OPDAssessmentPage() {
   };
 
   const addMed = async () => {
+    if (isAddingMed) return;                       // R7az-D4-HIGH-2: double-tap guard
     if (!newMed.name.trim()) return toast.warn("Medicine name required");
-    try { await axios.post(`${API_ENDPOINTS.OPD}/${visitNumber}/prescription`, newMed); } catch (_) {}
-    setMeds(p => [...p, { ...newMed }]);
-    // Reset must mirror the initial state — including mealStatus, else
-    // the new field stays sticky across rows.
-    setNewMed({ name: "", dose: "", frequency: "", mealStatus: "", duration: "", route: "Oral" });
-    toast.success("Medication added");
+    setIsAddingMed(true);
+    try {
+      // Note: the legacy POST /prescription endpoint may not always be
+      // available — the final source-of-truth is the bulk POST in
+      // handleSave(). Keep the optimistic UI; surface failures via toast
+      // (R7az-D4-HIGH-5: was silently swallowed pre-fix).
+      try { await axios.post(`${API_ENDPOINTS.OPD}/${visitNumber}/prescription`, newMed); }
+      catch (e) {
+        if (e.response?.status && e.response?.status >= 500) {
+          toast.warn("Could not sync to server immediately — will save on next Save click.");
+        }
+      }
+      setMeds(p => [...p, { ...newMed }]);
+      // Reset must mirror the initial state — including mealStatus, else
+      // the new field stays sticky across rows.
+      setNewMed({ name: "", dose: "", frequency: "", mealStatus: "", duration: "", route: "Oral" });
+      toast.success("Medication added");
+    } finally {
+      setIsAddingMed(false);
+    }
   };
 
   const addInvestigation = async () => {
+    if (isAddingInv) return;                       // R7az-D4-HIGH-2: double-tap guard
     if (!newInvest.name.trim()) return toast.warn("Investigation name required");
-    try { await axios.post(`${API_ENDPOINTS.OPD}/${visitNumber}/investigation`, { ...newInvest, status: "Ordered" }); } catch (_) {}
-    setInvests(p => [...p, { ...newInvest, status: "Ordered" }]);
-    setNewInvest({ name: "", urgency: "Routine", instructions: "" });
-    toast.success("Investigation ordered");
+    setIsAddingInv(true);
+    try {
+      try { await axios.post(`${API_ENDPOINTS.OPD}/${visitNumber}/investigation`, { ...newInvest, status: "Ordered" }); }
+      catch (e) {
+        if (e.response?.status && e.response?.status >= 500) {
+          toast.warn("Could not sync to server immediately — will save on next Save click.");
+        }
+      }
+      setInvests(p => [...p, { ...newInvest, status: "Ordered" }]);
+      setNewInvest({ name: "", urgency: "Routine", instructions: "" });
+      toast.success("Investigation ordered");
+    } finally {
+      setIsAddingInv(false);
+    }
   };
 
   // Row-level remove handlers. Doctor sometimes mis-picks (e.g. wrong
@@ -635,11 +721,17 @@ export default function OPDAssessmentPage() {
   // it into the nurse's Infusion tab. Doctor still gets immediate visual
   // confirmation in the row table below.
   const addInfusion = () => {
+    if (isAddingInfusion) return;                  // R7az-D4-HIGH-2: double-tap guard
     if (!newInfusion.name.trim()) return toast.warn("Fluid / infusion name required");
     if (!newInfusion.rate.trim())  return toast.warn("Rate (ml/hr) required");
-    setInfusions(p => [...p, { ...newInfusion }]);
-    setNewInfusion({ name: "", totalVolume: "", rate: "", duration: "", route: "IV Infusion", additives: "", instructions: "" });
-    toast.success("Infusion added");
+    setIsAddingInfusion(true);
+    try {
+      setInfusions(p => [...p, { ...newInfusion }]);
+      setNewInfusion({ name: "", totalVolume: "", rate: "", duration: "", route: "IV Infusion", additives: "", instructions: "" });
+      toast.success("Infusion added");
+    } finally {
+      setIsAddingInfusion(false);
+    }
   };
   const removeInfusion = async (idx) => {
     const f = infusions[idx];
@@ -767,8 +859,20 @@ export default function OPDAssessmentPage() {
      instead. */
   const cancelOrderItem = async (item) => {
     if (!orderBillId || !item?._id) return;
-    const reason = window.prompt(`Cancel order "${item.serviceName}"? Enter reason:`, "");
-    if (reason == null) return;       // user pressed Cancel on the prompt
+    // R7az-D4-HIGH-3 — Replaced native window.prompt with the themed
+    // InputDialog so this looks like every other dialog in the HIS and
+    // doesn't break out of the modal layer / steal browser focus.
+    const reason = await promptInput({
+      title: `Cancel order "${item.serviceName}"?`,
+      body:  "Enter a brief reason. This goes into the bill's audit trail and is visible to reception.",
+      placeholder: "e.g. Doctor advised to defer — repeat next visit",
+      required: true,
+      multiline: false,
+      confirmLabel: "Cancel order",
+      cancelLabel: "Keep order",
+      danger: true,
+    });
+    if (reason == null) return;       // user pressed Cancel / ESC
     try {
       const { data } = await axios.patch(
         `${API_ENDPOINTS.BASE}/billing/${orderBillId}/items/${item._id}/cancel-order`,
@@ -2086,8 +2190,10 @@ export default function OPDAssessmentPage() {
                   <option value="Local infiltration">Local infiltration</option>
                 </optgroup>
               </select>
-              <button onClick={addMed} style={{ background: C.warn, color: "#fff", border: "none", borderRadius: 7, padding: "8px 14px", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
-                + Add
+              {/* R7az-D4-HIGH-2: disable while a previous Add is in flight to
+                  block double-tap duplicates. */}
+              <button onClick={addMed} disabled={isAddingMed} style={{ background: C.warn, color: "#fff", border: "none", borderRadius: 7, padding: "8px 14px", cursor: isAddingMed ? "wait" : "pointer", fontWeight: 600, fontSize: 12, opacity: isAddingMed ? 0.6 : 1 }}>
+                {isAddingMed ? "Adding…" : "+ Add"}
               </button>
             </div>
             {meds.length === 0 ? (
@@ -2210,11 +2316,13 @@ export default function OPDAssessmentPage() {
                 placeholder="Additives / instructions (e.g. + KCl 20 mEq)"
                 style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark }}
               />
+              {/* R7az-D4-HIGH-2: disable while in-flight to block dup rows. */}
               <button
                 onClick={addInfusion}
-                style={{ background: "#0d9488", color: "#fff", border: "none", borderRadius: 7, padding: "8px 14px", cursor: "pointer", fontWeight: 600, fontSize: 12 }}
+                disabled={isAddingInfusion}
+                style={{ background: "#0d9488", color: "#fff", border: "none", borderRadius: 7, padding: "8px 14px", cursor: isAddingInfusion ? "wait" : "pointer", fontWeight: 600, fontSize: 12, opacity: isAddingInfusion ? 0.6 : 1 }}
               >
-                + Add
+                {isAddingInfusion ? "Adding…" : "+ Add"}
               </button>
             </div>
             {infusions.length === 0 ? (
@@ -2600,9 +2708,15 @@ export default function OPDAssessmentPage() {
         procedure={consentModal.order?.orderDetails}
         patient={{ patientName: visit?.patientName, UHID: visit?.UHID || uhid, age: visit?.age, gender: visit?.gender }}
         onConfirm={async (consentData) => {
+          // R7az-D4-CRIT-4 — Pre-fix: the PATCH error was silently swallowed
+          // and we still flipped local state to "Obtained" + showed a success
+          // toast. A 4xx/5xx left the order's consent status stale on the
+          // server while the UI lied to the doctor. Now: only mutate local
+          // state + close modal + show success on 2xx. On error, surface the
+          // toast and keep the modal open so the doctor can retry.
           if (consentModal.order?._id) {
             try {
-              await axios.patch(`${API_ENDPOINTS.BASE}/doctor-orders/${consentModal.order._id}`, {
+              const resp = await axios.patch(`${API_ENDPOINTS.BASE}/doctor-orders/${consentModal.order._id}`, {
                 consentStatus: "Obtained",
                 "consentData.obtainedAt": consentData.obtainedAt,
                 "consentData.obtainedBy": consentData.obtainedBy,
@@ -2613,7 +2727,14 @@ export default function OPDAssessmentPage() {
                 "consentData.guardianRelation": consentData.guardianRelation,
                 "consentData.notes": consentData.notes,
               });
-            } catch (_) {}
+              if (resp.status !== 200 && resp.status !== 204) {
+                toast.error("Consent could not be saved (unexpected response). Please retry.");
+                return;
+              }
+            } catch (err) {
+              toast.error("Consent save failed: " + (err.response?.data?.message || err.message));
+              return;
+            }
           }
           setProcedures(p => p.map(proc =>
             proc._id === consentModal.order?._id ? { ...proc, consentStatus: "Obtained" } : proc

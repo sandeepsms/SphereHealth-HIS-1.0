@@ -44,8 +44,12 @@ router.post("/:type", requireAction("vitals.write"), async (req, res) => {
 });
 
 /* GET /api/nursing-assessments?type=&admissionId=&UHID=
-   List recent assessments for a patient/admission. */
-router.get("/", requireAction("vitals.write"), async (req, res) => {
+   List recent assessments for a patient/admission.
+   R7az-A/D1-CRIT: read gated on `mar.read` (Admin/Doctor/Nurse/MRD) so
+   the NABH IPSG assessment trail surfaces on MRD's discharged-patient
+   view + cross-cover doctors see fall/pain assessments. Pre-R7az this
+   was on `vitals.write` which conflated read+write into a write gate. */
+router.get("/", requireAction("mar.read"), async (req, res) => {
   try {
     const filter = {};
     if (req.query.type)        filter.type        = req.query.type;
@@ -62,7 +66,7 @@ router.get("/", requireAction("vitals.write"), async (req, res) => {
 });
 
 /* GET /api/nursing-assessments/:id — single record */
-router.get("/:id", requireAction("vitals.write"), async (req, res) => {
+router.get("/:id", requireAction("mar.read"), async (req, res) => {
   try {
     const doc = await NursingAssessment.findById(req.params.id).lean();
     if (!doc) return res.status(404).json({ success: false, message: "Not found" });

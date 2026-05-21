@@ -274,13 +274,17 @@ function DoctorNotesContent({ selectedPatient }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* Fetch patients on mount — primary IPD list + consulting list */
+  /* Fetch patients on mount — primary IPD list + consulting list.
+     R7az-D4-HIGH-1 — Abort the fetch on unmount so we don't setState
+     against a dead component when the user navigates away mid-request. */
   useEffect(() => {
+    const ctrl = new AbortController();
     (async () => {
       setRecentLoading(true);
       try {
         // Try to load role-specific team patients first
-        const teamRes = await axios.get(`${API_ENDPOINTS.ADMISSIONS}/my-team-patients`).catch(() => null);
+        const teamRes = await axios.get(`${API_ENDPOINTS.ADMISSIONS}/my-team-patients`, { signal: ctrl.signal }).catch(() => null);
+        if (ctrl.signal.aborted) return;
         if (teamRes?.data?.success) {
           const { asPrimary = [], asConsulting = [] } = teamRes.data.data;
           setRecentPatients(asPrimary.sort((a, b) => new Date(b.admissionDate || b.createdAt) - new Date(a.admissionDate || a.createdAt)));
@@ -290,13 +294,15 @@ function DoctorNotesContent({ selectedPatient }) {
           // hasBed=true filters out OPD/Daycare/Services stubs that share the
           // collection — without it the doctor's notes board showed every
           // OPD visit as if it were an IPD patient.
-          const { data } = await axios.get(`${API_ENDPOINTS.ADMISSIONS}/active?hasBed=true`);
+          const { data } = await axios.get(`${API_ENDPOINTS.ADMISSIONS}/active?hasBed=true`, { signal: ctrl.signal });
+          if (ctrl.signal.aborted) return;
           const arr = Array.isArray(data) ? data : (data.data || []);
           setRecentPatients(arr.sort((a, b) => new Date(b.admissionDate || b.createdAt) - new Date(a.admissionDate || a.createdAt)));
         }
-      } catch { /* silent */ }
-      finally { setRecentLoading(false); }
+      } catch { /* silent — abort or transient network */ }
+      finally { if (!ctrl.signal.aborted) setRecentLoading(false); }
     })();
+    return () => ctrl.abort();
   }, []);
 
   /* ── Module form state ── */
@@ -432,7 +438,12 @@ function DoctorNotesContent({ selectedPatient }) {
     setActiveModal(id);
     setSelectedTags([]); setIsCritical(false); setShowOrderRow(false);
     setSoap(initSoap()); setVitals(initVitals());
-    setDiag({ provisional: "", final: "", icd10: "", status: "Stable" });
+    // R7az-D4-CRIT-5 — Pre-fix this reset dropped working / icd10Code /
+    // icd10Description, leaving them undefined in the modal so the JSX
+    // crashed (Cannot read properties of undefined). The shape must
+    // match the initial useState shape declared at the top of the
+    // component.
+    setDiag({ provisional: "", working: "", final: "", icd10Code: "", icd10Description: "", status: "Stable" });
     setInvx(""); setOrders([]);
     setOrderRow({ type: "medication", instruction: "", dose: "", route: "Oral", frequency: "TDS", duration: "3 days", notes: "", priority: "ROUTINE" });
     if (id === "medication") setMedOrders([emptyMedRow()]);
@@ -516,10 +527,26 @@ function DoctorNotesContent({ selectedPatient }) {
         // ── Create new note ──
         const res = await axios.post(API_ENDPOINTS.DOCTOR_NOTES, payload, { headers });
         savedId = res.data?._id || res.data?.data?._id;
+        // R7az-D4-CRIT-3 — Pre-fix: the PATCH /sign failure was silently
+        // swallowed with the comment "signed inline" — but the backend
+        // /sign endpoint stamps the signedBy / signedAt / status fields
+        // and triggers the locked-note workflow. If it fails, the note
+        // is left as a draft on the server while we toast "signed". Now
+        // we surface the failure and DO NOT claim the note was signed.
+        let signedOk = true;
         if (status === "signed" && savedId) {
-          try { await axios.patch(`${API_ENDPOINTS.DOCTOR_NOTES}/${savedId}/sign`, {}, { headers }); } catch { /* signed inline */ }
+          try {
+            await axios.patch(`${API_ENDPOINTS.DOCTOR_NOTES}/${savedId}/sign`, {}, { headers });
+          } catch (signErr) {
+            signedOk = false;
+            toast.error("Note saved as DRAFT — could not sign: "
+              + (signErr.response?.data?.message || signErr.message)
+              + " — open it from the timeline and click Sign to retry.");
+          }
         }
-        toast.success(status === "signed" ? "Note signed & submitted ✓" : "Draft saved");
+        if (signedOk) {
+          toast.success(status === "signed" ? "Note signed & submitted ✓" : "Draft saved");
+        }
 
         /* ── Mark admission initialAssessment.doctorCompleted = true ──────────
            Runs whenever the initial assessment note is saved (draft or signed).
@@ -651,11 +678,19 @@ function DoctorNotesContent({ selectedPatient }) {
       });
     } else { setVitals({ bp_sys:"", bp_dia:"", pulse:"", temp:"", rr:"", spo2:"", bsl:"", gcs:"", urine:"" }); }
 
+    // R7az-D4-CRIT-5 — Pre-fix this restore read `noteDetails?.icd10`
+    // which was never written by saveNote() (saveNote writes top-level
+    // icd10Code / icd10Description and a separate workingDiagnosis).
+    // It also lost `working`, so editing a draft and saving again
+    // silently blanked the working diagnosis. Restore from the same
+    // fields saveNote() writes.
     setDiag({
-      provisional: note.provisionalDiagnosis || "",
-      final:       note.finalDiagnosis       || "",
-      icd10:       note.noteDetails?.icd10   || "",
-      status:      note.noteDetails?.status  || "Stable",
+      provisional:      note.provisionalDiagnosis || "",
+      working:          note.workingDiagnosis     || "",
+      final:            note.finalDiagnosis       || "",
+      icd10Code:        note.icd10Code            || "",
+      icd10Description: note.icd10Description     || "",
+      status:           note.noteDetails?.status  || "Stable",
     });
     setInvx((note.investigations || []).join(", "));
     setOrders(note.orders || []);

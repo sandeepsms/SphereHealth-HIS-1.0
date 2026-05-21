@@ -53,6 +53,14 @@ const DrugSchema = new mongoose.Schema(
     isHighAlert:  { type: Boolean, default: false },    // insulin, opioids, anti-coagulants
     isLASA:       { type: Boolean, default: false },    // look-alike-sound-alike
     isNarcotic:   { type: Boolean, default: false },
+    // R7az-MED-1 (D7-MED-1): cold-chain flag. Vaccines, insulin, biologics,
+    // and certain antibiotics must stay at 2–8 °C end-to-end. Pre-R7az
+    // pharmacy had no way to flag this, so a nurse could legitimately
+    // requisition rapid-acting insulin in a Routine indent that would
+    // sit unrefrigerated for hours before delivery. Frontend / indent
+    // queue will surface a "❄ Cold-chain" badge and force-promote the
+    // urgency to at least Urgent on display when this is true.
+    requiresRefrigeration: { type: Boolean, default: false, index: true },
     isActive:     { type: Boolean, default: true, index: true },
 
     createdBy:    { type: String, default: "" },

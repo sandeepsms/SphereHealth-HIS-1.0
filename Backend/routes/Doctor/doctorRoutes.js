@@ -21,9 +21,13 @@ router.get("/:doctorId/stats",                 requireAction("doctors.read"), do
 
 // ─── Doctor-self availability (Doctor can update own state) ────
 // Controller already validates that the caller owns this doctor record.
-// We still let Admin pass through. No higher gate needed here.
-router.patch("/:doctorId/availability",        doctorController.setAvailability);
-router.post("/:doctorId/serve-next",           doctorController.serveNextToken);
+// R7az-A/D9-CRIT: pre-R7az these endpoints had NO action gate — any
+// authenticated user (Pharmacist, Receptionist) could flip a doctor's
+// availability or skip the queue. Now gated on doctor.self.write
+// (Admin/Doctor). Controller still enforces "this is my record" so a
+// Doctor can't flip someone else's availability.
+router.patch("/:doctorId/availability", requireAction("doctor.self.write"), doctorController.setAvailability);
+router.post ("/:doctorId/serve-next",   requireAction("doctor.self.write"), doctorController.serveNextToken);
 
 // ─── Writes (master data) — Admin only ─────────────────────────
 router.post("/",                               requireAction("doctors.write"), doctorController.createDoctor);

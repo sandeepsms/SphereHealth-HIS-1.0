@@ -26,6 +26,13 @@ import {
 } from "../../Components/clinical/PatientPanelTabs";
 
 import { API_BASE_URL as BASE } from "../../config/api";
+// R7az-D5-CRIT-4 / D5-HIGH-1 — centralised vital reference bands so
+// every surface in the HIS classifies vitals the same way (and respects
+// the patient's age band). Local RANGES below is kept as a back-compat
+// fallback / alias map for legacy callers using "sbp"/"dbp" keys.
+import { tier as vitalTier } from "../../utils/vitalRanges";
+// R7az-D4-CRIT-1 — Decimal128 unwrap for the billing rendering paths.
+import { toMoney } from "../../utils/money";
 
 /* ── Design tokens — teal/green theme matching NursingNotes ── */
 const C = {
@@ -65,7 +72,9 @@ const TABS = [
 /* ── Helpers ── */
 const fmtDT   = d => { try { return d ? new Date(d).toLocaleString("en-IN",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}) : "—"; } catch { return "—"; }};
 const fmtDate = d => { try { return d ? new Date(d).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"}) : "—"; } catch { return "—"; }};
-const fmtCur  = n => `₹${(Number(n)||0).toLocaleString("en-IN",{minimumFractionDigits:2})}`;
+// R7az-D4-CRIT-1: route through toMoney() so Decimal128 wire shapes don't
+// render as "₹NaN" (parity with DoctorPatientPanel).
+const fmtCur  = n => `₹${toMoney(n).toLocaleString("en-IN",{minimumFractionDigits:2})}`;
 const bpStr   = bp => bp && typeof bp==="object" ? `${bp.systolic||"—"}/${bp.diastolic||"—"}` : (bp||"—");
 
 /* ── Shared UI ── */
@@ -138,8 +147,22 @@ function Sparkline({data,color=C.primary,width=120,height=40}) {
   );
 }
 
-/* ── Abnormal checkers ── */
-const RANGES = {sbp:{lo:90,hi:140},dbp:{lo:60,hi:90},pulse:{lo:60,hi:100},temp:{lo:97,hi:99.5},spo2:{lo:95,hi:100},rr:{lo:12,hi:20},bsl:{lo:70,hi:140}};
+/* ── Abnormal checkers — R7az-D5-CRIT-4 / D5-HIGH-1
+   Canonical keys mirror the centralised vitalRanges.js module so callers
+   don't have to translate (`bp_sys` not `sbp`). The legacy `sbp`/`dbp`
+   keys are kept as ALIASES so existing callers (line 396 etc) still work
+   while we migrate. The shared three-tier `tier()` helper from
+   utils/vitalRanges.js drives the danger/warn/ok colouring everywhere
+   else on this page — see vitalState() below. */
+const RANGES = {
+  bp_sys: { lo: 90, hi: 140 }, bp_dia: { lo: 60, hi: 90 },
+  // Aliases retained for back-compat — both `isAbn("sbp", v)` and
+  // `isAbn("bp_sys", v)` now return the same result. Remove once all
+  // call-sites migrate to the canonical key.
+  sbp: { lo: 90, hi: 140 }, dbp: { lo: 60, hi: 90 },
+  pulse: { lo: 60, hi: 100 }, temp: { lo: 97, hi: 99.5 },
+  spo2: { lo: 95, hi: 100 }, rr: { lo: 12, hi: 20 }, bsl: { lo: 70, hi: 140 },
+};
 const isAbn = (key,val) => { const n=Number(val); if(isNaN(n)||!val) return false; const r=RANGES[key]; return r?(n<r.lo||n>r.hi):false; };
 
 /* ══════════════════════════════════════════════════ TAB: OVERVIEW */
@@ -150,16 +173,17 @@ function OverviewTab({patient,admission,nursingNotes=[],billing,doctorNotes=[]})
   const todayOrders = doctorNotes.flatMap(n=>n.orders||[]).filter(o=>!o.nurseStatus||o.nurseStatus==="pending");
   const hasAllergy = patient?.knownAllergies && !["NKDA","None","—",""].includes(patient.knownAllergies);
 
-  // Same vital classifier as Doctor panel — green/amber/red tile tints.
+  // R7az-D5-CRIT-4 / D5-HIGH-1 — delegate to the centralised vitalRanges
+  // tier() so the three-tier classifier is identical across NursePanel,
+  // DoctorPanel, IntegratedVitalsPanel, etc. Pre-fix this local copy
+  // disagreed with RANGES below on the pulse warn band (RANGES warned at
+  // <60/>100, vitalState warned at <60/>100 too, but the danger threshold
+  // was different from IntegratedVitalsPanel's hardcoded adult band).
+  // Now: same band for everyone, and the band auto-shifts for paeds /
+  // neonates based on patient.dob.
   const vitalState = (k, v) => {
-    const n = Number(v);
-    if (!Number.isFinite(n)) return "neutral";
-    if (k === "pulse") return (n < 50 || n > 120) ? "danger" : (n < 60 || n > 100) ? "warn" : "ok";
-    if (k === "temp")  return (n >= 101)            ? "danger" : (n >= 99.5)         ? "warn" : "ok";
-    if (k === "spo2")  return (n < 90)              ? "danger" : (n < 95)            ? "warn" : "ok";
-    if (k === "rr")    return (n < 10 || n > 24)    ? "danger" : (n < 12 || n > 20)  ? "warn" : "ok";
-    if (k === "bp_sys") return (n < 90 || n > 160)  ? "danger" : (n < 100 || n > 140) ? "warn" : "ok";
-    return "neutral";
+    const t = vitalTier(patient, k, v);
+    return t === "unknown" ? "neutral" : t === "danger" ? "danger" : t === "warn" ? "warn" : "ok";
   };
   const bpSys = lv.bp?.systolic;
 

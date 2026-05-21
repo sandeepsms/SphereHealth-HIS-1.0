@@ -22,8 +22,11 @@ router.get("/room/:roomId/capacity", BedController.checkRoomCapacity);
 router.get("/ward/:wardId/capacity", BedController.checkWardCapacity);
 
 // Housekeeping queue + state transitions — Housekeeping/WardBoy/Admin/Nurse.
-router.get("/housekeeping/queue",    BedController.getHousekeepingQueue);
-router.patch("/:id/housekeeping",    BedController.updateHousekeeping);
+// R7az-A/D8-HIGH-3: pre-R7az both endpoints accepted any authenticated
+// role. Gated on ipd.assign-bed (Admin/Receptionist/Doctor) since they
+// directly flip bed occupancy state.
+router.get  ("/housekeeping/queue", requireAction("ipd.assign-bed"), BedController.getHousekeepingQueue);
+router.patch("/:id/housekeeping",   requireAction("ipd.assign-bed"), BedController.updateHousekeeping);
 
 // Reservation auto-expiry — Admin only (semi-cron operation).
 router.post("/reservations/expire-stale", requireAction("departments.write"), BedController.expireStaleReservations);
@@ -33,7 +36,10 @@ router.get("/predict/los", BedController.predictLOS);
 
 // Real-time event stream (Server-Sent Events) — used by Live Bed Map
 // and Dashboard for instant refresh on bed mutations.
-router.get("/events", BedController.streamBedEvents);
+// R7az-A/D8-HIGH-4: SSE was ungated pre-R7az; any logged-in role could
+// subscribe to the bed-mutation firehose (room numbers + patient
+// movement = PHI). Gated on ipd.assign-bed.
+router.get("/events", requireAction("ipd.assign-bed"), BedController.streamBedEvents);
 
 // NABH MOI.2 monthly bed-utilization report (P3 #16)
 const BedReport = require("../../controllers/bedMgmt/bedReportController");

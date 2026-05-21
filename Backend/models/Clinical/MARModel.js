@@ -18,7 +18,11 @@ const AdministrationEntrySchema = new mongoose.Schema(
     nurseStaffId: { type: String },
     batchNumber: { type: String, trim: true },
     reason: { type: String, trim: true },
-    remarks: { type: String } },
+    remarks: { type: String },
+    // R7az-D7-HIGH-4: per-administration signature (capped 150KB) so the
+    // MAR row carries the authoritative actor signature, not just a name.
+    // Pulled server-side from req.user.signature in marController.
+    signatureUrl: { type: String, maxlength: [200000, "signatureUrl too large (max 200,000 chars ≈ 150KB)"] } },
   { _id: true }
 );
 

@@ -10,7 +10,12 @@ const { requireAction } = require("../../middleware/auth");
 router.post("/",                  requireAction("reception.register"), ctrl.book);
 router.get ("/",                  ctrl.list);
 router.get ("/slots",             ctrl.getSlots);
-router.post("/:id/check-in",      requireAction("reception.register"), ctrl.checkIn);
-router.post("/:id/cancel",        requireAction("reception.register"), ctrl.cancel);
+// R7az-A/audit point: check-in is the explicit appointment-confirm flow —
+// gated on `appointment.confirm` (Admin/Receptionist) which is identical
+// to reception.register in practice but flagged separately so the audit
+// surface can distinguish "the receptionist confirmed appointment #X" from
+// "the receptionist created a new walk-in registration".
+router.post("/:id/check-in",      requireAction("appointment.confirm"), ctrl.checkIn);
+router.post("/:id/cancel",        requireAction("reception.register"),  ctrl.cancel);
 
 module.exports = router;

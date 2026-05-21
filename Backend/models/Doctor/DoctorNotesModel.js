@@ -141,14 +141,67 @@ const DoctorNotesSchema = new mongoose.Schema(
     patientStatus:{ type: String },
 
     // Digital signature
-    signature:    { type: String },                             // base64 PNG
+    // R7az-D2-MED-7: cap signature payload at ~150KB (200KB base64) so a
+    // pasted full-page image can't bloat the doctor_notes collection.
+    // A genuine signature stroke encodes well under 50KB.
+    signature:    { type: String, maxlength: [200000, "signature too large (max 200,000 chars ≈ 150KB)"] },
     signedByName: { type: String },
     signedByReg:  { type: String },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" } },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+
+    // ── Late-entry metadata (R7az-D2-CRIT-6, NABH HIC.6) ─────────────
+    // Set server-side in doctorNotesService when (now - visitDate) > 4h.
+    // Reason is required; lateEntryAt is the wall-clock typing time.
+    lateEntry:        { type: Boolean, default: false, index: true },
+    lateEntryReason:  { type: String,  trim: true },
+    lateEntryAt:      { type: Date },
+
+    // ── Addendum chain (R7az-D2-HIGH-4, NABH HIC.7) ──────────────────
+    // SIGNED notes are immutable. An "edit" creates a new document
+    // pointing back to the original via originalNoteId (root of the
+    // chain) and the doc it directly supersedes (supersedesNoteId).
+    // isAddendum lets list queries filter the latest revision.
+    originalNoteId:    { type: mongoose.Schema.Types.ObjectId, ref: "DoctorNotes", default: null, index: true },
+    supersedesNoteId:  { type: mongoose.Schema.Types.ObjectId, ref: "DoctorNotes", default: null },
+    isAddendum:        { type: Boolean, default: false, index: true },
+
+    // ── Verbal-order scaffold (R7az-D10-MED-3) ─────────────────────────
+    // Out-of-scope for this round (24h co-sign enforcement deferred —
+    // belongs on DoctorOrder which is owned by Agent C). These fields
+    // exist on DoctorNotes so verbal-order doctor notes can be marked
+    // and a co-sign workflow added later without a schema migration.
+    // TODO(verbal-order): enforce 24h co-sign window in a follow-up.
+    isVerbal:    { type: Boolean, default: false },
+    coSignedBy:  { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    coSignedAt:  { type: Date, default: null } },
   { timestamps: true, collection: "doctor_notes" },
 );
+
+// R7az-D2-CRIT-6 validator: visitDate older than the late-entry window
+// (4h) without lateEntry=true + reason is rejected at the schema layer.
+// Defence-in-depth — the service also enforces this, but a direct
+// .save() path (tests, scripts) must not slip past either.
+DoctorNotesSchema.pre("validate", function (next) {
+  try {
+    if (!this.isNew) return next();
+    const vt = this.visitDate ? new Date(this.visitDate).getTime() : null;
+    if (!vt) return next();
+    const ageMs = Date.now() - vt;
+    if (ageMs > 4 * 60 * 60 * 1000 && !this.lateEntry) {
+      return next(new Error(
+        "DoctorNote visitDate is more than 4h in the past — set lateEntry=true + lateEntryReason (NABH HIC.6)",
+      ));
+    }
+    if (this.lateEntry && !(this.lateEntryReason && String(this.lateEntryReason).trim())) {
+      return next(new Error("lateEntryReason is required when lateEntry=true (NABH HIC.6)"));
+    }
+  } catch (e) {
+    return next(e);
+  }
+  next();
+});
 
 DoctorNotesSchema.index({ patient: 1, visitDate: -1 });
 DoctorNotesSchema.index({ ipdNo: 1, visitDate: -1 });

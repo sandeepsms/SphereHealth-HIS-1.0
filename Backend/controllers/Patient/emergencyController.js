@@ -1,9 +1,33 @@
 const emergencyService = require("../../services/Patient/emergencyService");
 
-/* ── Role-scope helper ───────────────────────────────────────────
-   Restrict ER list output to the logged-in doctor's own cases. ER records
-   carry `attendingDoctorId` (ObjectId) and `consultantIncharge` (name) —
-   match either so legacy rows without the ObjectId still resolve.        */
+/* ── Role-scope helpers ──────────────────────────────────────────────────
+   ER records carry `attendingDoctorId` (ObjectId, populated on disposition
+   → admission) and `consultantIncharge` (String, set on triage). A Doctor
+   matches either signal — ObjectId for the canonical link, name for legacy
+   rows that pre-date attendingDoctorId. */
+
+// R7az-D3-HIGH-3: build a DB-side $or filter so MongoDB can narrow the
+// result set BEFORE pagination is applied. Pre-R7az we post-filtered
+// in-memory after paginating — so pagination totals reflected the
+// global pool, not the doctor's slice, and clicking page-2 sometimes
+// showed an empty page even though there were more matching records.
+function scopeFilterForDoctor(req) {
+  if (!(req.user?.role === "Doctor" && req.doctorProfile?._id)) return null;
+  const docId   = req.doctorProfile._id;
+  const docName = req.doctorProfile.personalInfo?.fullName || "";
+  const clauses = [{ attendingDoctorId: docId }];
+  if (docName) {
+    // Escape regex specials in the name so a doctor named "Dr. R.K." doesn't
+    // turn into a broken regex pattern.
+    const safe = docName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    clauses.push({ consultantIncharge: { $regex: safe, $options: "i" } });
+  }
+  return { $or: clauses };
+}
+
+// Legacy post-filter retained for endpoints that don't yet pass filters
+// through to the service layer (active/today/triage/MLC lists). Same
+// matching rules as scopeFilterForDoctor.
 function scopeERByDoctor(req, list) {
   if (!(req.user?.role === "Doctor" && req.doctorProfile?._id)) return list;
   const docId   = String(req.doctorProfile._id);
@@ -12,6 +36,18 @@ function scopeERByDoctor(req, list) {
     String(e.attendingDoctorId || "") === docId ||
     (docName && e.consultantIncharge && e.consultantIncharge.includes(docName))
   );
+}
+
+// R7az-D9-HIGH-7: ownership check on single-visit reads. Doctor must own
+// the visit (either as attendingDoctorId or named consultantIncharge).
+function doctorOwnsVisit(req, visit) {
+  if (req.user?.role !== "Doctor") return true;
+  if (!req.doctorProfile?._id) return false;
+  const docId   = String(req.doctorProfile._id);
+  const docName = req.doctorProfile.personalInfo?.fullName || "";
+  if (String(visit.attendingDoctorId || "") === docId) return true;
+  if (docName && visit.consultantIncharge && visit.consultantIncharge.includes(docName)) return true;
+  return false;
 }
 
 class EmergencyController {
@@ -47,16 +83,20 @@ class EmergencyController {
   async getAllEmergencyVisits(req, res) {
     try {
       const { page = 1, limit = 10, ...filters } = req.query;
+      // R7az-D3-HIGH-3: push Doctor-scope into the DB query so the
+      // count + pagination reflect ONLY the doctor's slice. Pre-R7az we
+      // post-filtered the page in memory — pagination totals were the
+      // whole-hospital count, so page-2 could come back empty.
+      const scope = scopeFilterForDoctor(req);
+      if (scope) Object.assign(filters, scope);
       const result = await emergencyService.getAllEmergencyVisits(
         parseInt(page),
         parseInt(limit),
         filters
       );
-      // Doctor-scope: only the logged-in doctor's own ER cases
-      const visits = scopeERByDoctor(req, result.visits || []);
       res.status(200).json({
         success: true,
-        data: visits,
+        data: result.visits || [],
         pagination: result.pagination,
       });
     } catch (error) {
@@ -67,6 +107,7 @@ class EmergencyController {
     }
   }
 
+  // R7az-D9-HIGH-7: Doctor-scope ownership check on single-visit reads.
   async getEmergencyVisitById(req, res) {
     try {
       const visit = await emergencyService.getEmergencyVisitById(
@@ -76,6 +117,13 @@ class EmergencyController {
         return res.status(404).json({
           success: false,
           message: "Emergency visit not found",
+        });
+      }
+      if (!doctorOwnsVisit(req, visit)) {
+        return res.status(403).json({
+          success: false,
+          message: "Not your ER visit — you can only view cases you attended.",
+          code: "NOT_YOUR_VISIT",
         });
       }
       res.status(200).json({
@@ -90,11 +138,15 @@ class EmergencyController {
     }
   }
 
+  // R7az-D9-HIGH-7: Doctor-scope filter on patient ER history.
   async getPatientEmergencyHistory(req, res) {
     try {
-      const history = await emergencyService.getPatientEmergencyHistory(
+      let history = await emergencyService.getPatientEmergencyHistory(
         req.params.patientId
       );
+      if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
+        history = (history || []).filter(v => doctorOwnsVisit(req, v));
+      }
       res.status(200).json({
         success: true,
         data: history,

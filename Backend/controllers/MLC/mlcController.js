@@ -8,9 +8,16 @@
 const mlcService = require("../../services/MLC/mlcService");
 const Doctor = require("../../models/Doctor/doctorModel");
 
+// R7az-D9-HIGH-4: Doctor users cannot override the doctorId scope by
+// passing `?doctorId=<some-other-doctor>` in the query string — we
+// always force their own profile _id. The previous spread order
+// already overwrote whatever was in `filters`, but be explicit + drop
+// the override key first so future readers can't accidentally re-order
+// and reintroduce the bypass.
 const scopeFilters = (req, filters = {}) => {
   if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
-    return { ...filters, doctorId: String(req.doctorProfile._id) };
+    const { doctorId: _ignoredQueryDoctorId, ...rest } = filters;
+    return { ...rest, doctorId: String(req.doctorProfile._id) };
   }
   return filters;
 };

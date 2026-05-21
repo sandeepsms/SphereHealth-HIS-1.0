@@ -72,7 +72,12 @@ const vitalSheetRoutes = require("./Vitals/vitalSheetRoutes");
 // Every other mount below this line gets `authenticate` as a baseline so
 // no controller is reachable by anonymous traffic. Individual routes can
 // still demand specific roles via `authorize(...)`.
-const { authenticate, blockReadOnlyRoleWrites } = require("../middleware/auth");
+const {
+  authenticate,
+  blockReadOnlyRoleWrites,
+  blockNonClinicalForDoctorNurse,
+  enforceActivePatientForClinicalWrites,
+} = require("../middleware/auth");
 
 router.use("/auth", authRoutes);
 
@@ -88,6 +93,22 @@ router.use(authenticate);
 // feature router below (so it intercepts before the controller).
 // Allow-list (audit logging) lives inside the middleware itself.
 router.use(blockReadOnlyRoleWrites);
+
+// ── R7az-A/D9-HIGH: Doctor/Nurse cannot POST money ──────────
+// Even with mar.write etc, a Doctor or Nurse must not be able to
+// record a payment, refund, void, advance write, settlement
+// adjustment, or open/close a cashier session. Reads still flow
+// through so the patient header keeps showing amount due. Mounted
+// after authenticate so req.user is populated and before feature
+// routers so it intercepts at the gateway.
+router.use(blockNonClinicalForDoctorNurse);
+
+// ── R7az-A/D9-HIGH-10: clinical writes on discharged admissions ─
+// Block POST/PUT/PATCH on doctor-notes, nurse-notes, mar, vitals,
+// consent-forms, discharge-summary when the linked admission has
+// status === "Discharged". Header `X-Late-Entry: true` opens a
+// narrow ADDENDUM path. 409 with code PATIENT_DISCHARGED otherwise.
+router.use(enforceActivePatientForClinicalWrites);
 
 // ── Patient-file activity audit (auto-capture POST/PUT/PATCH/DELETE) ─
 // Mounted right after authenticate so req.user is populated and BEFORE

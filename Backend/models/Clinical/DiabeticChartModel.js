@@ -57,14 +57,19 @@ const ENTRY_SCHEMA = new mongoose.Schema(
     scheduledTime:    { type: String, default: "" },   // "07:00"
 
     // BG reading
-    bgValue:          { type: Number, default: null }, // mg/dL
+    // R7az-D2-MED-1: bound to physiological window. 0 = explicit "no
+    // reading", upper bound 1500 mg/dL matches NurseVitalsSchema's
+    // bloodSugar — anything above is a typo or sensor fault.
+    bgValue:          { type: Number, default: null, min: 0, max: 1500 }, // mg/dL
     bgTime:           { type: String, default: "" },
     bgRecordedBy:     { type: String, default: "" },
     bgRecordedById:   { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
 
     // Insulin
-    recommendedDose:  { type: Number, default: null }, // units
-    actualDose:       { type: Number, default: null }, // units
+    // R7az-D2-MED-2: actualDose bounded — 500 IU is a realistic ceiling
+    // for accidental DKA boluses; anything beyond is a fat-finger error.
+    recommendedDose:  { type: Number, default: null, min: 0, max: 500 }, // units
+    actualDose:       { type: Number, default: null, min: 0, max: 500 }, // units
     insulinType:      { type: String, default: "" },
     route:            { type: String, enum: ["SC", "IV", "IM", ""], default: "" },
     administeredAt:   { type: String, default: "" },   // "07:30"

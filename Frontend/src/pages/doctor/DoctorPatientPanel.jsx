@@ -28,6 +28,11 @@ import {
   HandoverNotesTab,
 } from "../../Components/clinical/PatientPanelTabs";
 import { confirm } from "../../Components/common/ConfirmDialog";
+// R7az-D4-CRIT-1: toMoney() unwraps Decimal128/{$numberDecimal:"…"} wire
+// values into JS numbers. The old `Number()` cast silently produced NaN on
+// Decimal128 objects and rendered "₹NaN" in the bill panel.
+import { toMoney } from "../../utils/money";
+import { toast } from "react-toastify";
 
 import { API_BASE_URL as BASE } from "../../config/api";
 
@@ -76,7 +81,9 @@ const TABS = [
 /* ── Formatters ─────────────────────────────────────────────────────────────── */
 const fmtDT = d => { try { return d ? new Date(d).toLocaleString("en-IN",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}) : "—"; } catch { return "—"; } };
 const fmtDate = d => { try { return d ? new Date(d).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"}) : "—"; } catch { return "—"; } };
-const fmtCur = n => `₹${(Number(n)||0).toLocaleString("en-IN",{minimumFractionDigits:2})}`;
+// R7az-D4-CRIT-1: route through toMoney() so Decimal128 / {$numberDecimal}
+// wire shapes don't render as "₹NaN".
+const fmtCur = n => `₹${toMoney(n).toLocaleString("en-IN",{minimumFractionDigits:2})}`;
 const bpStr = bp => bp && typeof bp === "object" ? `${bp.systolic||"—"}/${bp.diastolic||"—"}` : (bp || "—");
 
 /* ── Shared UI ──────────────────────────────────────────────────────────────── */
@@ -1881,6 +1888,14 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
   const [shiftForm,         setShiftForm]         = useState({ toBedId:"", reason:"", shiftingNotes:"" });
   const [shiftSaving,       setShiftSaving]       = useState(false);
 
+  // R7az-D4-CRIT-2 — Abort the in-flight 9-parallel-axios fan-out when the
+  // patient (UHID) switches. Pre-fix, switching admissions while loadAll was
+  // still racing left late responses overwriting the new patient's state
+  // (chart-flicker → wrong allergies → wrong meds). We also guard against
+  // re-entering loadAll for the same UHID while one is already pending.
+  const loadAbortRef = useRef(null);
+  const loadInFlightRef = useRef(null);
+
   /* ── Activity logger — every shift-bed UI event lands in the audit feed.
        The backend middleware already captures the actual POST /bed-transfers,
        but the user wants the intermediate clicks/dropdown selects too.   */
@@ -1893,6 +1908,18 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
   const loadAll = useCallback(async (uhid) => {
     if (!uhid?.trim()) return;
     const u = uhid.trim().toUpperCase();
+    // R7az-D4-CRIT-2: in-flight guard — duplicate clicks on the same UHID
+    // (e.g. sidebar list re-renders) used to issue 9 parallel axios per
+    // click. Skip if the same UHID is already pending.
+    if (loadInFlightRef.current === u) return;
+    // Abort the prior load (different UHID still running) so its responses
+    // don't overwrite the newer patient's state.
+    if (loadAbortRef.current) {
+      try { loadAbortRef.current.abort(); } catch (_) { /* noop */ }
+    }
+    const ctrl = new AbortController();
+    loadAbortRef.current = ctrl;
+    loadInFlightRef.current = u;
     setLoading(true); setError(""); setLoaded(false);
     setPatient(null); setAdmission(null); setDoctorNotes([]); setNursingNotes([]);
     setBilling(null); setOpdVisits([]); setVitalSheet([]); setEmergency([]); setDoctorOrders([]);
@@ -1900,9 +1927,10 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
     try {
       // Core patient + admission
       const [admRes, patRes] = await Promise.all([
-        axios.get(`${BASE}/admissions?uhid=${u}`).catch(()=>({data:[]})),
-        axios.get(`${BASE}/patients?UHID=${u}`).catch(()=>({data:[]})),
+        axios.get(`${BASE}/admissions?uhid=${u}`, { signal: ctrl.signal }).catch(()=>({data:[]})),
+        axios.get(`${BASE}/patients?UHID=${u}`, { signal: ctrl.signal }).catch(()=>({data:[]})),
       ]);
+      if (ctrl.signal.aborted) return;
       const admList = Array.isArray(admRes.data?.admissions)?admRes.data.admissions:Array.isArray(admRes.data)?admRes.data:[];
       const patList = Array.isArray(patRes.data?.data)?patRes.data.data:Array.isArray(patRes.data)?patRes.data:[];
       const adm = admList.find(a=>["active","admitted"].includes((a.status||"").toLowerCase()))||admList[0]||null;
@@ -1912,63 +1940,81 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
       if (!adm && !pat) { setError(`No patient found for UHID: ${u}`); return; }
 
       const ipdNo = adm?.admissionNumber;
-      const admId = adm?._id;
       const patId = pat?._id||adm?.patientId;
 
-      // Parallel data fetches
+      // Parallel data fetches — every axios carries the same signal so a
+      // late patient switch aborts the in-flight tail.
       await Promise.all([
         // OPD
-        axios.get(`${BASE}/opd?UHID=${u}&limit=10`).then(r=>{
+        axios.get(`${BASE}/opd?UHID=${u}&limit=10`, { signal: ctrl.signal }).then(r=>{
+          if (ctrl.signal.aborted) return;
           const l = Array.isArray(r.data?.data)?r.data.data:Array.isArray(r.data)?r.data:[];
           setOpdVisits(l);
         }).catch(()=>{}),
 
         // Doctor notes
-        ipdNo ? axios.get(`${BASE}/doctor-notes/ipd/${ipdNo}`).then(r=>{
+        ipdNo ? axios.get(`${BASE}/doctor-notes/ipd/${ipdNo}`, { signal: ctrl.signal }).then(r=>{
+          if (ctrl.signal.aborted) return;
           const l = r.data?.data||r.data?.notes||(Array.isArray(r.data)?r.data:[]);
           setDoctorNotes(Array.isArray(l)?l.sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)):[]);
         }).catch(()=>{}) : Promise.resolve(),
 
         // Nursing notes
-        ipdNo ? axios.get(`${BASE}/nursing-notes/ipd/${ipdNo}`).catch(()=>
-          axios.get(`${BASE}/nurse-notes/ipd/${ipdNo}`).catch(()=>({data:[]}))
+        ipdNo ? axios.get(`${BASE}/nursing-notes/ipd/${ipdNo}`, { signal: ctrl.signal }).catch(()=>
+          axios.get(`${BASE}/nurse-notes/ipd/${ipdNo}`, { signal: ctrl.signal }).catch(()=>({data:[]}))
         ).then(r=>{
+          if (ctrl.signal.aborted) return;
           const l = r.data?.data||r.data?.notes||(Array.isArray(r.data)?r.data:[]);
           setNursingNotes(Array.isArray(l)?l.sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)):[]);
         }).catch(()=>{}) : Promise.resolve(),
 
         // Billing
-        axios.get(`${BASE}/billing/uhid/${u}`).then(r=>{
+        axios.get(`${BASE}/billing/uhid/${u}`, { signal: ctrl.signal }).then(r=>{
+          if (ctrl.signal.aborted) return;
           const bills = Array.isArray(r.data?.data?.bills)?r.data.data.bills:Array.isArray(r.data?.bills)?r.data.bills:Array.isArray(r.data?.data)?r.data.data:Array.isArray(r.data)?r.data:[];
           setBilling(bills[0]||null);
         }).catch(()=>{}),
 
         // Vital sheet
-        axios.get(`${BASE}/vitalsheet`, {params:{uhid:u}}).then(r=>{
+        axios.get(`${BASE}/vitalsheet`, {params:{uhid:u}, signal: ctrl.signal}).then(r=>{
+          if (ctrl.signal.aborted) return;
           const d = Array.isArray(r.data?.data)?r.data.data:Array.isArray(r.data)?r.data:[];
           setVitalSheet(d);
         }).catch(()=>{}),
 
         // Emergency
-        patId ? axios.get(`${BASE}/emergency/patient/${patId}`).catch(()=>
-          axios.get(`${BASE}/emergency?UHID=${u}`).catch(()=>({data:[]}))
+        patId ? axios.get(`${BASE}/emergency/patient/${patId}`, { signal: ctrl.signal }).catch(()=>
+          axios.get(`${BASE}/emergency?UHID=${u}`, { signal: ctrl.signal }).catch(()=>({data:[]}))
         ).then(r=>{
+          if (ctrl.signal.aborted) return;
           const l = Array.isArray(r.data?.data)?r.data.data:Array.isArray(r.data)?r.data:[];
           setEmergency(l);
         }).catch(()=>{}) : Promise.resolve(),
 
         // Doctor orders
-        axios.get(`${BASE}/doctor-orders?UHID=${u}`).then(r=>{
+        axios.get(`${BASE}/doctor-orders?UHID=${u}`, { signal: ctrl.signal }).then(r=>{
+          if (ctrl.signal.aborted) return;
           const l = Array.isArray(r.data)?r.data:(r.data?.data||[]);
           setDoctorOrders(l);
         }).catch(()=>{}),
       ]);
 
-      setLoaded(true);
+      if (!ctrl.signal.aborted) setLoaded(true);
     } catch(e) {
-      setError("Failed to load patient data. Check the UHID and try again.");
+      if (!axios.isCancel?.(e) && !ctrl.signal.aborted) {
+        setError("Failed to load patient data. Check the UHID and try again.");
+      }
     } finally {
-      setLoading(false);
+      if (!ctrl.signal.aborted) setLoading(false);
+      if (loadInFlightRef.current === u) loadInFlightRef.current = null;
+    }
+  }, []);
+
+  // R7az-D4-CRIT-2: abort any in-flight loadAll when the panel unmounts so
+  // we don't setState on an unmounted component.
+  useEffect(() => () => {
+    if (loadAbortRef.current) {
+      try { loadAbortRef.current.abort(); } catch (_) { /* noop */ }
     }
   }, []);
 
@@ -2028,15 +2074,17 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
 
   /* ── Submit shift request ── */
   const submitShift = async () => {
-    if (!shiftForm.toBedId)               { audit.click("shift-bed.submit-blocked", { summary: "Submit blocked — no target bed" }); alert("Please select a target bed."); return; }
-    if (!shiftForm.shiftingNotes?.trim()) { audit.click("shift-bed.submit-blocked", { summary: "Submit blocked — shifting notes empty" }); alert("Shifting notes are required."); return; }
+    // R7az-D4-HIGH-3: replaced native alert() with themed toast feedback so
+    // the modal flow no longer steals focus + blocks the page.
+    if (!shiftForm.toBedId)               { audit.click("shift-bed.submit-blocked", { summary: "Submit blocked — no target bed" }); toast.warn("Please select a target bed."); return; }
+    if (!shiftForm.shiftingNotes?.trim()) { audit.click("shift-bed.submit-blocked", { summary: "Submit blocked — shifting notes empty" }); toast.warn("Shifting notes are required."); return; }
     audit.submit("shift-bed.submit", {
       summary: `Doctor submitted bed transfer — target ${shiftForm.toBedId}`,
       after: { toBedId: shiftForm.toBedId, reason: shiftForm.reason, hasNotes: !!shiftForm.shiftingNotes?.trim() },
     });
     // Fix: compare as strings to handle ObjectId vs string mismatch
     const targetBed = availableBeds.find(b => String(b._id) === String(shiftForm.toBedId));
-    if (!targetBed) { alert("Selected bed not found. Please close and reopen the modal."); return; }
+    if (!targetBed) { toast.error("Selected bed not found. Please close and reopen the modal."); return; }
     setShiftSaving(true);
     try {
       await axios.post(`${BASE}/bed-transfers`, {
@@ -2057,9 +2105,9 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
       });
       setShowShiftModal(false);
       fetchPendingTransfer(admission._id);
-      alert("✅ Bed transfer initiated. Nurse must write handover notes to complete.");
+      toast.success("Bed transfer initiated. Nurse must write handover notes to complete.");
     } catch (e) {
-      alert("Error: " + (e.response?.data?.message || e.message));
+      toast.error("Error: " + (e.response?.data?.message || e.message));
     } finally { setShiftSaving(false); }
   };
 
@@ -2080,9 +2128,10 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
     try {
       await axios.put(`${BASE}/bed-transfers/${transferId}/cancel`);
       setPendingTransfer(null);
-      alert("Transfer cancelled. Bed has been released.");
+      // R7az-D4-HIGH-3: native alert() -> toast.
+      toast.success("Transfer cancelled. Bed has been released.");
     } catch (e) {
-      alert("Error: " + (e.response?.data?.message || e.message));
+      toast.error("Error: " + (e.response?.data?.message || e.message));
     }
   };
 

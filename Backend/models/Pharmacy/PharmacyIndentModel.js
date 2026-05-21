@@ -35,10 +35,30 @@ const IndentItemSchema = new mongoose.Schema({
   // what the pharmacist actually dispensed (may be less if low stock,
   // or after a substitution). Both are simple Number counts of units
   // (tablets, ampoules, sachets) — granular split happens at the
-  // PharmacyBatch level via FIFO.
+  // PharmacyBatch level via FIFO/FEFO.
   requestedQty:  { type: Number, required: true, min: 1 },
   issuedQty:     { type: Number, default: 0, min: 0 },
-  batchNumber:   { type: String, trim: true },   // set on release
+  // R7az-MED-6 (D7-MED-6): typed batch reference for traceability +
+  // recall queries. `batchNumber` (string mirror) kept for display so
+  // print receipts / older clients keep working without a join.
+  batchId:       { type: mongoose.Schema.Types.ObjectId, ref: "PharmacyDrugBatch" },
+  batchNumber:   { type: String, trim: true },   // set on release (display mirror)
+
+  // R7az-CRIT-5/D7-CRIT-3: per-batch dispense ledger. When the release
+  // path splits a single requested quantity across multiple FEFO-ordered
+  // batches (earliest expiry first), each batch's contribution lands as
+  // a `picked` row so the audit trail can prove FEFO compliance and so
+  // a future recall can reach every patient who received a specific
+  // batch. populated only on release.
+  picked: [
+    {
+      batchId:    { type: mongoose.Schema.Types.ObjectId, ref: "PharmacyDrugBatch", required: true },
+      batchNo:    { type: String, trim: true },
+      qty:        { type: Number, required: true, min: 0 },
+      expiryDate: { type: Date },
+      pickedAt:   { type: Date, default: Date.now },
+    },
+  ],
 
   // Where the indent line came from. Doctor-prescribed lines link back
   // to the prescription so the audit trail can prove the nurse didn't

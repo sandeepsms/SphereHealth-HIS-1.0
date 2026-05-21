@@ -5,18 +5,23 @@
 // path requires admin. Pre-R7as any authenticated user could POST a new
 // service, mutate pricing, or DELETE the catalogue — the financial blast
 // radius of "any Pharmacist can wipe the chargeable services table" is
-// the highest in the audit. Reads remain `billing.read` so cashiers /
-// accountants can still see the catalogue.
+// the highest in the audit.
+//
+// R7az-A/D9-HIGH: reads moved from `billing.read` (Admin/Accountant/
+// Receptionist/TPA Coordinator) to `services.read` so Doctor/Nurse/
+// Pharmacist/Lab Tech can pull the catalogue for ServiceAutocomplete
+// when attaching an order line. Pre-R7az these roles 403'd on every
+// service lookup which broke the order-entry surface.
 const express = require("express");
 const router = express.Router();
 const ctrl = require("../../controllers/ServiceMaster/serviceMasterController");
 const { requireAction, adminOnly } = require("../../middleware/auth");
 
 // ── Service catalog routes ────────────────────────────────────
-router.get("/grouped",        requireAction("billing.read"), ctrl.getGrouped); // GET  /api/services/grouped?domain=IPD&applicableTo=IPD
-router.get("/",               requireAction("billing.read"), ctrl.getAll); // GET  /api/services?category=ROOM&domain=IPD
-router.get("/:id/pricing",    requireAction("billing.read"), ctrl.getPricing); // GET  /api/services/:id/pricing
-router.get("/:id",            requireAction("billing.read"), ctrl.getById); // GET  /api/services/:id
+router.get("/grouped",        requireAction("services.read"), ctrl.getGrouped); // GET  /api/services/grouped?domain=IPD&applicableTo=IPD
+router.get("/",               requireAction("services.read"), ctrl.getAll); // GET  /api/services?category=ROOM&domain=IPD
+router.get("/:id/pricing",    requireAction("services.read"), ctrl.getPricing); // GET  /api/services/:id/pricing
+router.get("/:id",            requireAction("services.read"), ctrl.getById); // GET  /api/services/:id
 // Write gates — tariff mutation is admin-only.
 router.post("/seed",          adminOnly,                          ctrl.seed); // POST /api/services/seed  ← initial data
 router.post("/:id/pricing",   requireAction("departments.write"), ctrl.setPricing); // POST /api/services/:id/pricing

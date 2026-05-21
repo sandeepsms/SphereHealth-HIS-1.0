@@ -1,12 +1,22 @@
 // controllers/Clinical/dischargeSummaryController.js
 const DischargeSummary = require("../../models/Clinical/DischargeSummaryModel");
 const Admission = require("../../models/Patient/admissionModel");
+const admissionService = require("../../services/Patient/admissionService");
 
 const handle = (fn) => async (req, res) => {
   try {
     return await fn(req, res);
   } catch (err) {
-    const status = err.statusCode || (err.message?.includes("not found") ? 404 : 400);
+    // R7az-D8: honour explicit err.status / err.statusCode from the
+    // service layer (admissionService.dischargePatient now sets 409
+    // for stage-gates, 403 for actor-role mismatches). Without this,
+    // every domain error fell through to the 400/404 heuristic and the
+    // caller lost the distinction between "wrong precondition" and
+    // "validation failure".
+    const explicit = Number(err.status || err.statusCode);
+    const status = Number.isInteger(explicit) && explicit >= 400 && explicit < 600
+      ? explicit
+      : (err.message?.includes("not found") ? 404 : 400);
     return res.status(status).json({ success: false, message: err.message });
   }
 };
@@ -33,12 +43,44 @@ class DischargeSummaryController {
 
     let summary;
     if (data.admissionId) {
-      // Upsert — second save overwrites the draft instead of orphaning it.
-      summary = await DischargeSummary.findOneAndUpdate(
-        { admissionId: data.admissionId },
-        { $set: data },
-        { new: true, upsert: true, setDefaultsOnInsert: true, runValidators: true },
-      );
+      // R7az-D2-CRIT-2: Block the create upsert from clobbering a
+      // finalized record. Pre-R7az `findOneAndUpdate({admissionId}, …,
+      // {upsert:true})` would overwrite a discharge-summary already
+      // marked status:"finalized" if a careless POST hit the endpoint
+      // again — silently mutating signed-off legal content. The
+      // schema-level guard (Agent B's pre-save hook on the model)
+      // catches the persisted write; this controller-level early-out
+      // gives the caller a clean 409 instead of a generic validator
+      // error AND avoids the wasted DB round trip.
+      const existing = await DischargeSummary.findOne({
+        admissionId: data.admissionId,
+      }).select("status finalizedByName finalizedAt").lean();
+      if (existing && existing.status === "finalized") {
+        return res.status(409).json({
+          success: false,
+          message: `Discharge summary already finalized by ${existing.finalizedByName || "another user"} at ${existing.finalizedAt}. Create a new addendum instead.`,
+          code: "FINALIZED_IMMUTABLE",
+        });
+      }
+      if (existing) {
+        // Update-only — never upsert when the record already exists.
+        summary = await DischargeSummary.findOneAndUpdate(
+          { admissionId: data.admissionId, status: { $ne: "finalized" } },
+          { $set: data },
+          { new: true, runValidators: true },
+        );
+        if (!summary) {
+          // Race: someone finalized between our pre-check and update.
+          return res.status(409).json({
+            success: false,
+            message: "Discharge summary was finalized by another user — refresh and try again.",
+            code: "FINALIZED_IMMUTABLE",
+          });
+        }
+      } else {
+        // True insert — first record for this admission.
+        summary = await DischargeSummary.create(data);
+      }
     } else {
       summary = await DischargeSummary.create(data);
     }
@@ -76,12 +118,36 @@ class DischargeSummaryController {
       const diff = new Date(data.dischargeDate) - new Date(data.admissionDate);
       data.totalDaysAdmitted = Math.ceil(diff / (1000 * 60 * 60 * 24));
     }
-    const summary = await DischargeSummary.findByIdAndUpdate(
-      req.params.id,
+    // R7az-D8/D2-CRIT-2: friendly early-out when the summary is already
+    // finalized. The model-level pre-save guard (Agent B) is the source
+    // of truth, but a controller-side check returns a clean 409 with a
+    // human message instead of letting the schema validator surface a
+    // less-actionable error.
+    const existing = await DischargeSummary.findById(req.params.id)
+      .select("status finalizedByName finalizedAt").lean();
+    if (!existing) {
+      return res.status(404).json({ success: false, message: "Discharge summary not found" });
+    }
+    if (existing.status === "finalized") {
+      return res.status(409).json({
+        success: false,
+        message: `Discharge summary is finalized by ${existing.finalizedByName || "doctor"} at ${existing.finalizedAt} — edits are immutable. Create a new addendum instead.`,
+        code: "FINALIZED_IMMUTABLE",
+      });
+    }
+    const summary = await DischargeSummary.findOneAndUpdate(
+      { _id: req.params.id, status: { $ne: "finalized" } },
       data,
       { new: true, runValidators: true }
     );
-    if (!summary) return res.status(404).json({ success: false, message: "Discharge summary not found" });
+    if (!summary) {
+      // Race: finalized between our pre-check and update.
+      return res.status(409).json({
+        success: false,
+        message: "Discharge summary was finalized by another user — refresh and try again.",
+        code: "FINALIZED_IMMUTABLE",
+      });
+    }
     return res.json({ success: true, data: summary });
   });
 
@@ -167,7 +233,7 @@ class DischargeSummaryController {
     if (!summary) {
       // Either summary missing OR already finalized — disambiguate with a
       // probe so the caller knows whether to retry or accept.
-      const probe = await DischargeSummary.findById(req.params.id).select("status finalizedAt finalizedByName").lean();
+      const probe = await DischargeSummary.findById(req.params.id).select("status finalizedAt finalizedByName admissionId").lean();
       if (!probe) return res.status(404).json({ success: false, message: "Discharge summary not found" });
       return res.status(409).json({
         success: false,
@@ -176,66 +242,119 @@ class DischargeSummaryController {
       });
     }
 
-    // Also update the admission record status AND release the bed.
-    // Audit-Pass-17 found the bed was never released on finalize — the bed
-    // stayed Occupied forever, blocking new admissions. Now we free it
-    // atomically (Available + clear patient + clear currentAdmission).
+    // R7az-D8-CRIT-1..5: Discharge fast-path now flows through the SAME
+    // service the receptionist workflow uses. Pre-R7az this controller
+    // did inline `findByIdAndUpdate` on the admission + bed — bypassing
+    // LEGAL_STATUS_TRANSITIONS (could resurrect a Cancelled admission),
+    // the `_dischargingFlush` daily-charge flush (lost discharge-day
+    // bed + nursing fees), CleaningTask auto-create (HK queue empty),
+    // dischargeOverage detection (refunds skipped), housekeeping flag
+    // (live bed map stale), and BillingAudit emit. It also stamped
+    // billClearedBy=doctorName even though the doctor never cleared
+    // anything — corrupted the audit trail.
     //
-    // R7h-FIX: Also flip dischargeWorkflow.stage to "Completed" so the
-    // patient surfaces in /discharge-queue → "Discharged Today" tab.
-    // Previously a doctor-driven finalize left dischargeWorkflow.stage
-    // as "NotRequested", so the discharge was invisible in the
-    // receptionist queue — status was already Discharged but the
-    // workflow stage never advanced. The clinical fast-path counts as a
-    // complete discharge: doctor approved + nursing handover gate
-    // passed + bed released, equivalent to the 3-stage receptionist
-    // flow. We stamp the timestamps the queue page expects so the
-    // "Discharged Today" filter ($gte: startOfToday on
-    // gatePassIssuedAt) picks it up.
+    // New behaviour:
+    //   1. Primary-consultant check — only the attending doctor (or
+    //      Admin) may finalize. Compares against doctorProfile._id, not
+    //      User._id (User._id NEVER matches a Doctor _id directly).
+    //   2. If bill stage ∈ {BillCleared, GatePassIssued, Completed} →
+    //      invoke admissionService.dischargePatient. It does the
+    //      proper full flow with transaction safety.
+    //   3. Otherwise → advance stage to "DoctorApproved" but DO NOT
+    //      discharge / release the bed. Cashier still owns the final
+    //      BedReleased / Completed flip via clearFinalBill + issueGatePass.
+    //   4. billClearedBy / billClearedAt remain null/undefined; only
+    //      the cashier's explicit clearFinalBill action stamps them.
     if (summary.admissionId) {
+      const admission = await Admission.findById(summary.admissionId)
+        .select("attendingDoctorId status dischargeWorkflow bedId admissionNumber")
+        .lean();
+      if (!admission) {
+        return res.status(404).json({ success: false, message: "Linked admission not found" });
+      }
+
+      // 1. Primary-consultant gate. Pre-R7az anybody with a Doctor role
+      //    could finalize any admission's discharge summary — including
+      //    a doctor who had nothing to do with the case.
+      if (req.user?.role === "Doctor") {
+        const callerDoctorId = String(req.doctorProfile?._id || "");
+        const attendingId    = String(admission.attendingDoctorId || "");
+        if (!callerDoctorId || !attendingId || callerDoctorId !== attendingId) {
+          return res.status(403).json({
+            success: false,
+            message: "Only the primary attending consultant (or an Admin) may finalize this discharge.",
+            code: "NOT_PRIMARY_CONSULTANT",
+          });
+        }
+      }
+
       const now = new Date();
       const finalizedBy = finalizedByName || req.user?.fullName || "Doctor";
-      const admission = await Admission.findByIdAndUpdate(
-        summary.admissionId,
-        {
-          status: "Discharged",
-          actualDischargeDate: summary.dischargeDate || now,
-          conditionOnDischarge: summary.conditionOnDischarge,
-          dischargeSummary: summary._id.toString(),
-          followUpInstructions: summary.followUpInstructions,
-          "dischargeWorkflow.stage":              "Completed",
-          "dischargeWorkflow.doctorApprovedAt":   now,
-          "dischargeWorkflow.doctorApprovedBy":   finalizedBy,
-          "dischargeWorkflow.billClearedAt":      now,
-          "dischargeWorkflow.billClearedBy":      finalizedBy,
-          "dischargeWorkflow.gatePassIssuedAt":   now,
-          "dischargeWorkflow.gatePassIssuedBy":   finalizedBy,
-        },
-        { new: true, runValidators: true },
-      );
-      if (admission?.bedId) {
+      const stage = admission.dischargeWorkflow?.stage || "NotRequested";
+      const billAlreadyCleared = ["BillCleared", "GatePassIssued", "Completed"].includes(stage);
+
+      if (billAlreadyCleared) {
+        // Bill already cleared — fully discharge via the canonical service
+        // path so the bed is released, daily-charges flushed, CleaningTask
+        // created, overage refunded, and BillingAudit emitted.
         try {
-          const Bed = require("../../models/bedMgmt/bedsModel");
-          // runValidators added per R9 re-audit — without it, the bed
-          // status enum wasn't enforced on the update path, so a future
-          // typo upstream could persist an invalid status silently.
-          await Bed.findByIdAndUpdate(
-            admission.bedId,
-            {
-              $set: {
-                status: "Available",
-                patient: null,
-                currentAdmission: null,
-                lastDischargedAt: new Date(),
-              },
+          await admissionService.dischargePatient(summary.admissionId, {
+            actualDischargeDate:   summary.dischargeDate || now,
+            conditionOnDischarge:  summary.conditionOnDischarge,
+            dischargeSummary:      summary._id.toString(),
+            followUpInstructions:  summary.followUpInstructions,
+            dischargeNotes:        summary.dischargeNotes || "",
+            actor: { role: req.user?.role, id: req.user?.id || req.user?._id },
+          });
+        } catch (e) {
+          // dischargePatient surfaces typed errors — log + re-throw so
+          // handle() returns the right status. Discharge summary is
+          // already marked finalized; rolling that back risks creating
+          // an inconsistent state where the bed is released but the
+          // summary isn't signed. Let the operator/admin investigate.
+          console.error("[Discharge fast-path] dischargePatient failed after summary finalized:", e.message);
+          throw e;
+        }
+      } else {
+        // Bill NOT cleared yet — advance workflow stage to DoctorApproved
+        // ONLY. Status stays "Active"; bed stays Occupied. Cashier owns
+        // the final BedReleased / Completed flip. billClearedBy stays
+        // null — only the cashier's explicit clearFinalBill stamps it.
+        //
+        // CAS — only flip if the stage is currently NotRequested. If a
+        // cashier has already advanced it past DoctorApproved (e.g.
+        // BillCleared) between our pre-check and now, we noop and let
+        // the next finalize attempt route through the cleared-path branch.
+        await Admission.findOneAndUpdate(
+          {
+            _id: summary.admissionId,
+            status: "Active",
+            $or: [
+              { "dischargeWorkflow.stage": { $in: ["NotRequested", "DoctorApproved"] } },
+              { "dischargeWorkflow.stage": { $exists: false } },
+              { dischargeWorkflow: { $exists: false } },
+            ],
+          },
+          {
+            $set: {
+              "dischargeWorkflow.stage":            "DoctorApproved",
+              "dischargeWorkflow.doctorApprovedAt": now,
+              "dischargeWorkflow.doctorApprovedBy": finalizedBy,
+              dischargeSummary:                     summary._id.toString(),
+              ...(summary.conditionOnDischarge && { conditionOnDischarge: summary.conditionOnDischarge }),
+              ...(summary.followUpInstructions  && { followUpInstructions:  summary.followUpInstructions  }),
             },
-            { runValidators: true },
-          );
-        } catch (e) { /* non-fatal — surface in admin alerts */ }
+          },
+          { runValidators: true },
+        );
       }
     }
 
-    return res.json({ success: true, data: summary, message: "Discharge summary finalized" });
+    return res.json({
+      success: true,
+      data: summary,
+      message: "Discharge summary finalized",
+    });
   });
 
   // DELETE /api/discharge-summary/:id

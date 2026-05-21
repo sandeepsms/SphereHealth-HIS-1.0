@@ -861,12 +861,18 @@ class AdmissionService {
     return admission;
   }
 
-  async getAdmissionStatistics(startDate, endDate) {
+  async getAdmissionStatistics(startDate, endDate, opts = {}) {
     const match = {};
     if (startDate || endDate) {
       match.admissionDate = {};
       if (startDate) match.admissionDate.$gte = new Date(startDate);
       if (endDate) match.admissionDate.$lte = new Date(endDate);
+    }
+    // R7az-D3-MED-2: optional Doctor-scope filter — controller passes
+    // this when the caller is a Doctor user, so the stats reflect only
+    // that doctor's clinical load instead of the whole hospital census.
+    if (opts.attendingDoctorId && mongoose.isValidObjectId(String(opts.attendingDoctorId))) {
+      match.attendingDoctorId = new mongoose.Types.ObjectId(String(opts.attendingDoctorId));
     }
     const [
       total,
@@ -909,10 +915,10 @@ class AdmissionService {
     };
   }
 
-  async searchAdmissions(searchTerm) {
+  async searchAdmissions(searchTerm, opts = {}) {
     if (!searchTerm?.trim()) throw new Error("Search term is required");
     const regex = { $regex: searchTerm.trim(), $options: "i" };
-    return Admission.find({
+    const query = {
       $or: [
         { UHID: regex },
         { patientName: regex },
@@ -920,7 +926,15 @@ class AdmissionService {
         { contactNumber: regex },
         { attendingDoctor: regex },
       ],
-    })
+    };
+    // R7az-D3-MED-2: optional Doctor-scope filter. Controller passes
+    // attendingDoctorId when the caller is a Doctor user — search
+    // results are restricted to that doctor's patients. AND-combine
+    // with the $or text-match so the regex still applies.
+    if (opts.attendingDoctorId && mongoose.isValidObjectId(String(opts.attendingDoctorId))) {
+      query.attendingDoctorId = new mongoose.Types.ObjectId(String(opts.attendingDoctorId));
+    }
+    return Admission.find(query)
       .populate("patientId", "fullName UHID")
       .populate("bedId", "bedNumber")
       .limit(20)
@@ -950,14 +964,47 @@ class AdmissionService {
       .sort({ admissionDate: -1 });
   }
 
-  /* ── Verify doctor access to an admission ── */
-  async checkDoctorAccess(admissionId, doctorUserId) {
+  /* ── Verify doctor access to an admission ──
+     R7az-D3-CRIT-1: pre-R7az this compared `admission.attendingDoctorId`
+     (which is the Doctor model's _id) against the caller's User._id.
+     User._id NEVER matches a Doctor._id directly — the comparison was
+     a permanent `false` and every Doctor saw `isOwner:false` for their
+     OWN admissions. UI badges that surfaced "Not your patient" warnings
+     on the doctor's own bedside view were a symptom of this bug.
+     Now the caller passes either the User._id (legacy) OR the resolved
+     doctorProfile._id; we accept both and resolve the Doctor._id from
+     loginUserId when only a User._id is supplied. */
+  async checkDoctorAccess(admissionId, callerOrUserId) {
     const admission = await Admission.findById(admissionId)
       .select("attendingDoctorId attendingDoctor patientName UHID status")
       .populate("attendingDoctorId", "fullName firstName lastName");
     if (!admission) throw new Error("Admission not found");
-    const ownerId = admission.attendingDoctorId?._id || admission.attendingDoctorId;
-    const isOwner = ownerId?.toString() === doctorUserId?.toString();
+    const ownerId = String(admission.attendingDoctorId?._id || admission.attendingDoctorId || "");
+
+    // Accept both call shapes:
+    //   checkDoctorAccess(id, userId)                           — legacy
+    //   checkDoctorAccess(id, { userId, doctorProfileId })      — preferred
+    //   checkDoctorAccess(id, { _id, role, doctorProfile? })    — pass req.user
+    let doctorProfileId = "";
+    let userId          = "";
+    if (callerOrUserId && typeof callerOrUserId === "object") {
+      doctorProfileId = String(callerOrUserId.doctorProfileId || callerOrUserId.doctorProfile?._id || "");
+      userId          = String(callerOrUserId.userId || callerOrUserId._id || callerOrUserId.id || "");
+    } else {
+      userId = String(callerOrUserId || "");
+    }
+
+    // If we don't have a resolved doctorProfileId yet, look it up by
+    // loginUserId — the Doctor row whose loginUserId is this User._id.
+    if (!doctorProfileId && userId) {
+      try {
+        const Doctor = require("../../models/Doctor/doctorModel");
+        const doc = await Doctor.findOne({ loginUserId: userId }).select("_id").lean();
+        if (doc) doctorProfileId = String(doc._id);
+      } catch (_) { /* leave isOwner=false on lookup failure */ }
+    }
+
+    const isOwner = !!ownerId && !!doctorProfileId && ownerId === doctorProfileId;
     return { admission, isOwner };
   }
 

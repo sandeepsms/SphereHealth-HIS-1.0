@@ -57,20 +57,42 @@ class ConsentFormController {
   });
 
   // PUT /api/consent-forms/:id
+  // R7az-D2-CRIT-1: refuse edits on any non-PENDING consent. Once a
+  // patient signs (or refuses / revokes), the form becomes a legal
+  // record and the only legitimate edits are status transitions via
+  // the dedicated PATCH endpoints (which also append to auditTrail).
   update = handle(async (req, res) => {
-    const form = await ConsentForm.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-      runValidators: true,
-    });
+    const form = await ConsentForm.findById(req.params.id);
     if (!form) return res.status(404).json({ success: false, message: "Consent form not found" });
+    if (form.status !== "PENDING") {
+      return res.status(409).json({
+        success: false,
+        code: "CONSENT_LOCKED",
+        message: `Cannot edit a ${form.status} consent form — only PENDING consents accept body updates`,
+      });
+    }
+    // Reject any attempt to overwrite the audit trail in the body.
+    const body = { ...(req.body || {}) };
+    delete body.auditTrail;
+    delete body.status; // status is moved via /sign /refuse /revoke
+    delete body.signedAt;
+    delete body.signedByName;
+    delete body.signedByRole;
+    for (const [k, v] of Object.entries(body)) form.set(k, v);
+    form.auditTrail = form.auditTrail || [];
+    form.auditTrail.push(auditEntry(req, "UPDATED"));
+    await form.save();
     return res.json({ success: true, data: form });
   });
 
   // PATCH /api/consent-forms/:id/sign
+  // R7az-D2-CRIT-1 / D2-HIGH-7: CAS — only flip PENDING → SIGNED. If the
+  // status changed underneath (e.g. another tab refused the consent), we
+  // return 409 instead of silently overwriting a refusal with a sign.
   sign = handle(async (req, res) => {
     const { guardianName, guardianRelation, witnessName } = req.body;
-    const form = await ConsentForm.findByIdAndUpdate(
-      req.params.id,
+    const form = await ConsentForm.findOneAndUpdate(
+      { _id: req.params.id, status: "PENDING" },
       {
         $set: {
           status: "SIGNED",
@@ -86,8 +108,31 @@ class ConsentFormController {
       },
       { new: true }
     );
-    if (!form) return res.status(404).json({ success: false, message: "Consent form not found" });
+    if (!form) {
+      // Distinguish "doesn't exist" from "wrong status".
+      const exists = await ConsentForm.findById(req.params.id).select("_id status").lean();
+      if (!exists) return res.status(404).json({ success: false, message: "Consent form not found" });
+      return res.status(409).json({
+        success: false,
+        code: "CONSENT_STATE_CHANGED",
+        message: `Consent is no longer PENDING (now ${exists.status}) — cannot sign`,
+      });
+    }
     return res.json({ success: true, data: form, message: "Consent form signed" });
+  });
+
+  // GET /api/consent-forms/:id/print — print-event capture (NABH PRE.4)
+  // R7az-D2-HIGH-7: every print of a consent emits a PRINTED audit row.
+  // Returns the form payload so the frontend can render the printable
+  // view; the side-effect is the auditTrail push, not the response shape.
+  printConsent = handle(async (req, res) => {
+    const form = await ConsentForm.findByIdAndUpdate(
+      req.params.id,
+      { $push: { auditTrail: auditEntry(req, "PRINTED") } },
+      { new: true }
+    );
+    if (!form) return res.status(404).json({ success: false, message: "Consent form not found" });
+    return res.json({ success: true, data: form });
   });
 
   // PATCH /api/consent-forms/:id/refuse

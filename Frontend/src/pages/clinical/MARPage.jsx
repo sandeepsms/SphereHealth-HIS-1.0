@@ -1,13 +1,18 @@
 import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
+import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import { useAutoSave } from "../../hooks/useAutoSave";
 import { useDigitalSignature } from "../../hooks/useDigitalSignature";
 import { useUhidFromLocation } from "../../hooks/useUhidFromLocation";
+import { useAuth } from "../../context/AuthContext";
 import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
 import SignaturePad from "../../Components/signature/SignaturePad";
 import { confirm } from "../../Components/common/ConfirmDialog";
+// R7az-D5-HIGH-5 — themed reason input replaces window.prompt for
+// medication discontinuation.
+import { promptInput } from "../../Components/common/InputDialog";
 
 const API = API_ENDPOINTS.MAR;
 
@@ -761,17 +766,36 @@ function MARChartView({ medications, scheduleData, viewDay, graceMin }) {
 // MAIN MAR PAGE CONTENT
 // ═══════════════════════════════════════════════════════════
 function MARPageContent({ selectedPatient }) {
+  // R7az-D5-HIGH-5 — Default the nurse name + signature from the logged-in
+  // user. Pre-fix the page hard-coded "Nurse" downstream which destroyed
+  // the audit trail's per-nurse accountability.
+  const { user } = useAuth() || {};
+  const defaultNurseName = (user?.fullName || user?.name || "").trim();
+  const defaultNurseSig  = user?.signature || "";
+
   const [searchIPD, setSearchIPD]   = useState("");
   const [searchDate, setSearchDate] = useState(new Date().toISOString().slice(0,10));
   const [mar, setMAR]               = useState(null);
   const [loading, setLoading]       = useState(false);
+  // R7az-D5-CRIT-2 — Isolated double-tap guard for recordAdmin so a
+  // slow PATCH doesn't let the nurse re-click and dupe the admin row.
+  const [isSubmittingAdmin, setIsSubmittingAdmin] = useState(false);
+  // R7az-D5-CRIT-2 — Inline validation errors for the admin dialog
+  // (scheduledTime + nurseName + late-reason).
+  const [adminErrors, setAdminErrors] = useState({});
   const [msg, setMsg]               = useState("");
   const [showAddMed, setShowAddMed] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [createForm, setCreateForm] = useState({ UHID:"", patientName:"", ipdNo:"", allergies:"" });
   const [newMed, setNewMed]         = useState({ medicineName:"", genericName:"", dose:"", unit:"", route:"Oral", frequency:"", scheduledTimes:"", startDate:searchDate, isHighAlert:false, isLASA:false, specialInstructions:"", prescribedByName:"" });
   const [adminDialog, setAdminDialog] = useState(null);
-  const [adminEntry, setAdminEntry] = useState({ scheduledTime:"", status:"GIVEN", nurseName:"", batchNumber:"", reason:"", remarks:"" });
+  const [adminEntry, setAdminEntry] = useState({ scheduledTime:"", status:"GIVEN", nurseName: defaultNurseName, batchNumber:"", reason:"", remarks:"", lateReason:"" });
+  // R7az-D5-CRIT-2 — When the dialog opens we need the scheduled-time
+  // value (HH:MM) to detect "late" admins; the open handler stores it
+  // alongside the medId so we can compute "minutes late".
+  const [adminScheduledFor, setAdminScheduledFor] = useState(null);
+  // R7az-D4-CRIT-2 / D5 — Abort cleanup for every MAR axios.
+  const marAbortRef = useRef(null);
 
   // Chart setup
   const today = new Date().toISOString().slice(0,10);
@@ -809,11 +833,25 @@ function MARPageContent({ selectedPatient }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uhidFromLocation]);
 
+  // R7az-D4-CRIT-2 / D5-MED-1 — Helper: spin a fresh abort controller for
+  // each MAR axios call and stash the latest in marAbortRef so a patient
+  // switch or unmount can cancel the in-flight tail.
+  function freshAbort() {
+    if (marAbortRef.current) {
+      try { marAbortRef.current.abort(); } catch (_) { /* noop */ }
+    }
+    const ctrl = new AbortController();
+    marAbortRef.current = ctrl;
+    return ctrl;
+  }
+
   async function search() {
     if(!searchIPD.trim()) return;
+    const ctrl = freshAbort();
     setLoading(true);
     try {
-      const res = await axios.get(`${API}/ipd/${searchIPD.trim()}/date/${searchDate}`);
+      const res = await axios.get(`${API}/ipd/${searchIPD.trim()}/date/${searchDate}`, { signal: ctrl.signal });
+      if (ctrl.signal.aborted) return;
       const marData = res.data.data;
       setMAR(marData);
       setMsg("");
@@ -831,61 +869,163 @@ function MARPageContent({ selectedPatient }) {
         } catch { /* ignore */ }
       }
     } catch {
+      if (ctrl.signal.aborted) return;
       setMAR(null);
       setMsg("No MAR found for this date. You can create one below.");
       setShowCreate(true);
     }
-    setLoading(false);
+    if (!ctrl.signal.aborted) setLoading(false);
   }
 
   async function createMAR() {
+    const ctrl = freshAbort();
     setLoading(true);
     try {
       const res = await axios.post(API, {
         ...createForm, ipdNo:searchIPD, date:searchDate,
         allergies: createForm.allergies ? createForm.allergies.split(",").map(s=>s.trim()).filter(Boolean) : [],
-      });
-      setMAR(res.data.data); setShowCreate(false); setMsg("MAR created.");
-    } catch(e) { setMsg(e.response?.data?.message || "Error creating MAR"); }
-    setLoading(false);
+      }, { signal: ctrl.signal });
+      if (!ctrl.signal.aborted) { setMAR(res.data.data); setShowCreate(false); setMsg("MAR created."); }
+    } catch(e) {
+      if (ctrl.signal.aborted) return;
+      setMsg(e.response?.data?.message || "Error creating MAR");
+    }
+    if (!ctrl.signal.aborted) setLoading(false);
   }
 
   async function addMedication() {
     if(!mar?._id) return;
+    const ctrl = freshAbort();
     setLoading(true);
     try {
       const med = { ...newMed, scheduledTimes: newMed.scheduledTimes ? newMed.scheduledTimes.split(",").map(s=>s.trim()).filter(Boolean) : [], startDate: newMed.startDate || searchDate };
-      const res = await axios.post(`${API}/${mar._id}/medication`, med);
+      const res = await axios.post(`${API}/${mar._id}/medication`, med, { signal: ctrl.signal });
+      if (ctrl.signal.aborted) return;
       setMAR(res.data.data); setShowAddMed(false);
       clearDraft();
       setNewMed({ medicineName:"", genericName:"", dose:"", unit:"", route:"Oral", frequency:"", scheduledTimes:"", startDate:searchDate, isHighAlert:false, isLASA:false, specialInstructions:"", prescribedByName:"" });
       setMsg("Medication added."); setChartBuilt(false);
-    } catch(e) { setMsg(e.response?.data?.message || "Error"); }
-    setLoading(false);
+    } catch(e) {
+      if (ctrl.signal.aborted) return;
+      setMsg(e.response?.data?.message || "Error");
+    }
+    if (!ctrl.signal.aborted) setLoading(false);
+  }
+
+  // R7az-D5-CRIT-2 — Compute how many minutes "late" we are vs the
+  // scheduled HH:MM slot. Returns 0 when on time or in the future,
+  // a positive number of minutes when behind schedule.
+  function lateMinutesFor(scheduledHHMM) {
+    if (!scheduledHHMM || !/^\d{1,2}:\d{2}$/.test(scheduledHHMM)) return 0;
+    const [h, m] = scheduledHHMM.split(":").map(Number);
+    const sched = new Date(searchDate + "T00:00:00");
+    sched.setHours(h, m, 0, 0);
+    const diffMin = Math.round((Date.now() - sched.getTime()) / 60000);
+    return diffMin > 0 ? diffMin : 0;
   }
 
   async function recordAdmin() {
     if(!adminDialog) return;
-    setLoading(true);
+    if (isSubmittingAdmin) return;                  // R7az-D5-CRIT-2: double-tap guard
+    // R7az-D5-CRIT-2 — Inline validation. Pre-fix, you could click Record
+    // with blank nurseName + blank scheduledTime and the backend silently
+    // saved a row attributed to "Nurse" with no timestamp.
+    const errs = {};
+    if (!adminEntry.scheduledTime?.trim()) errs.scheduledTime = "Scheduled time is required";
+    if (!adminEntry.nurseName?.trim())     errs.nurseName     = "Nurse name is required";
+    const lateMin = lateMinutesFor(adminEntry.scheduledTime);
+    if (lateMin > 30 && !adminEntry.lateReason?.trim() && adminEntry.status === "GIVEN") {
+      errs.lateReason = `You're recording ${lateMin} min late — reason is required.`;
+    }
+    if (Object.keys(errs).length) { setAdminErrors(errs); return; }
+    setAdminErrors({});
+    setIsSubmittingAdmin(true);
+    const ctrl = freshAbort();
     try {
-      const res = await axios.patch(`${API}/${mar._id}/medication/${adminDialog}/administer`, { ...adminEntry, ...(signature ? { nurseSignature: signature } : {}) });
-      setMAR(res.data.data); setAdminDialog(null);
-      setAdminEntry({ scheduledTime:"", status:"GIVEN", nurseName:"", batchNumber:"", reason:"", remarks:"" });
+      // Prefer the configured digital signature; fall back to the user's
+      // profile signature (set during user provisioning). signatureUrl is
+      // accepted by the backend as a second signature source.
+      const sigPayload = signature ? { nurseSignature: signature }
+                       : defaultNurseSig ? { signatureUrl: defaultNurseSig }
+                       : {};
+      // late reason appended to remarks if present.
+      const remarks = adminEntry.lateReason?.trim()
+        ? `${adminEntry.remarks ? adminEntry.remarks + " · " : ""}Late by ${lateMin}m — ${adminEntry.lateReason.trim()}`
+        : adminEntry.remarks;
+      const payload = { ...adminEntry, remarks, ...sigPayload };
+      delete payload.lateReason;
+      const res = await axios.patch(
+        `${API}/${mar._id}/medication/${adminDialog}/administer`,
+        payload,
+        { signal: ctrl.signal },
+      );
+      if (ctrl.signal.aborted) return;
+      setMAR(res.data.data); setAdminDialog(null); setAdminScheduledFor(null);
+      setAdminEntry({ scheduledTime:"", status:"GIVEN", nurseName: defaultNurseName, batchNumber:"", reason:"", remarks:"", lateReason:"" });
       setMsg("Administration recorded.");
-    } catch(e) { setMsg(e.response?.data?.message || "Error"); }
-    setLoading(false);
+    } catch(e) {
+      if (ctrl.signal.aborted) return;
+      setMsg(e.response?.data?.message || "Error");
+      toast.error(e.response?.data?.message || "Could not record administration");
+    } finally {
+      setIsSubmittingAdmin(false);
+    }
   }
 
   async function discontinue(medId) {
-    const reason = window.prompt("Reason for discontinuation:");
-    if(reason === null) return;
+    // R7az-D5-HIGH-5 — Themed input dialog replaces window.prompt so the
+    // reason capture matches the rest of the HIS chrome.
+    const reason = await promptInput({
+      title: "Discontinue medication?",
+      body:  "Enter a clinical reason. This goes into the patient's MAR audit trail.",
+      placeholder: "e.g. Adverse reaction — switching to alternative",
+      required: true,
+      multiline: false,
+      confirmLabel: "Discontinue",
+      cancelLabel: "Keep",
+      danger: true,
+    });
+    if(reason == null) return;
+    const ctrl = freshAbort();
     setLoading(true);
     try {
-      const res = await axios.patch(`${API}/${mar._id}/medication/${medId}/discontinue`, { discontinuedBy:"Nurse", discontinueReason:reason });
+      // R7az-D5-HIGH-5 — Don't hard-code "Nurse"; attribute to the logged-in
+      // user when available.
+      const res = await axios.patch(
+        `${API}/${mar._id}/medication/${medId}/discontinue`,
+        { discontinuedBy: defaultNurseName || "Nurse", discontinueReason: reason },
+        { signal: ctrl.signal },
+      );
+      if (ctrl.signal.aborted) return;
       setMAR(res.data.data); setMsg("Medication discontinued."); setChartBuilt(false);
-    } catch(e) { setMsg(e.response?.data?.message || "Error"); }
-    setLoading(false);
+    } catch(e) {
+      if (ctrl.signal.aborted) return;
+      setMsg(e.response?.data?.message || "Error");
+    }
+    if (!ctrl.signal.aborted) setLoading(false);
   }
+
+  // R7az-D4-CRIT-2 — Abort everything on unmount or when the IPD/UHID
+  // input changes (which is treated as a "different patient").
+  useEffect(() => () => {
+    if (marAbortRef.current) {
+      try { marAbortRef.current.abort(); } catch (_) { /* noop */ }
+    }
+  }, []);
+  useEffect(() => {
+    // Reset transient state on patient change.
+    if (marAbortRef.current) {
+      try { marAbortRef.current.abort(); } catch (_) { /* noop */ }
+    }
+    setAdminDialog(null);
+    setAdminScheduledFor(null);
+    setAdminEntry({ scheduledTime:"", status:"GIVEN", nurseName: defaultNurseName, batchNumber:"", reason:"", remarks:"", lateReason:"" });
+    setAdminErrors({});
+    // We intentionally don't include defaultNurseName in deps — it's a
+    // stable value sourced from useAuth, so the effect runs purely on
+    // ipd/date changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchIPD, searchDate]);
 
   function buildChart() {
     if(!admDate) { alert("Please enter admission date."); return; }
@@ -1251,34 +1391,52 @@ function MARPageContent({ selectedPatient }) {
             </>
           )}
 
-          {/* Nurse Signatures */}
-          <div style={sectionStyle}>
-            <h3 style={{ fontWeight:700, fontSize:14, marginBottom:14 }}>Nurse Verification &amp; Signatures</h3>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", gap:12 }}>
-              {[["Morning Shift (6 AM – 2 PM)"],["Evening Shift (2 PM – 10 PM)"],["Night Shift (10 PM – 6 AM)"]].map(([label]) => (
-                <div key={label} style={{ border:"1.5px dashed #d1d5db", borderRadius:8, padding:12 }}>
-                  <label style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:".6px", color:"#6b7280", display:"block", marginBottom:8 }}>{label}</label>
-                  <input style={{ width:"100%", padding:"8px 10px", border:"1.5px solid #e5e7eb", borderRadius:6, fontSize:12, outline:"none", fontFamily:"inherit" }}
-                    placeholder="Name + Employee ID" />
-                </div>
-              ))}
-            </div>
-          </div>
+          {/* R7az-D5-MED-8 — Removed: the three uncontrolled "Nurse
+              Verification & Signatures" inputs (Morning / Evening / Night
+              shift) were dead UI. They held no state, weren't persisted
+              with the MAR document, and gave NABH auditors a false
+              impression that shift attestation was being captured. Per-
+              admin attribution + signature now flows through the
+              recordAdmin() payload (nurseName + signature/signatureUrl).
+              If a per-shift attestation panel is brought back later,
+              wire it to mar.shiftAttestations[] and persist via PATCH. */}
 
-          {/* Administration Dialog */}
-          {adminDialog && (
+          {/* Administration Dialog
+              R7az-D5-CRIT-2: inline validation errors per field, surfaced
+              red text below the input. Late-admin warning + reason input
+              appear when the scheduled slot is > 30 min in the past. */}
+          {adminDialog && (() => {
+            const lateMin = lateMinutesFor(adminEntry.scheduledTime);
+            const isLate  = lateMin > 30 && adminEntry.status === "GIVEN";
+            const errStyle = { color: "#dc2626", fontSize: 10, marginTop: 4, fontWeight: 600 };
+            return (
             <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.4)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:500 }}>
               <div style={{ background:"white", borderRadius:14, boxShadow:"0 20px 60px rgba(0,0,0,.25)", padding:28, width:"min(440px,94vw)" }}>
                 <h3 style={{ fontWeight:700, color:"#1e293b", marginBottom:18, fontSize:15 }}>Record Medication Administration</h3>
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
-                  {[["scheduledTime","Scheduled Time","text","08:00"],["nurseName","Nurse Name","text",""],["batchNumber","Batch / Lot No.","text",""]].map(([name,label,type,ph]) => (
-                    <div key={name}>
-                      <label style={lCls}>{label}</label>
-                      <input type={type} placeholder={ph}
-                        style={{ width:"100%", border:"1px solid #d1d5db", borderRadius:6, padding:"8px 12px", fontSize:13, outline:"none", fontFamily:"inherit" }}
-                        value={adminEntry[name]} onChange={e => setAdminEntry(p => ({...p, [name]:e.target.value}))} />
-                    </div>
-                  ))}
+                  <div>
+                    <label style={lCls}>Scheduled Time *</label>
+                    <input type="text" placeholder="08:00"
+                      style={{ width:"100%", border:`1px solid ${adminErrors.scheduledTime ? "#dc2626" : "#d1d5db"}`, borderRadius:6, padding:"8px 12px", fontSize:13, outline:"none", fontFamily:"inherit" }}
+                      value={adminEntry.scheduledTime}
+                      onChange={e => setAdminEntry(p => ({...p, scheduledTime:e.target.value}))} />
+                    {adminErrors.scheduledTime && <div style={errStyle}>{adminErrors.scheduledTime}</div>}
+                  </div>
+                  <div>
+                    <label style={lCls}>Nurse Name *</label>
+                    <input type="text" placeholder="Your name"
+                      style={{ width:"100%", border:`1px solid ${adminErrors.nurseName ? "#dc2626" : "#d1d5db"}`, borderRadius:6, padding:"8px 12px", fontSize:13, outline:"none", fontFamily:"inherit" }}
+                      value={adminEntry.nurseName}
+                      onChange={e => setAdminEntry(p => ({...p, nurseName:e.target.value}))} />
+                    {adminErrors.nurseName && <div style={errStyle}>{adminErrors.nurseName}</div>}
+                  </div>
+                  <div>
+                    <label style={lCls}>Batch / Lot No.</label>
+                    <input type="text"
+                      style={{ width:"100%", border:"1px solid #d1d5db", borderRadius:6, padding:"8px 12px", fontSize:13, outline:"none", fontFamily:"inherit" }}
+                      value={adminEntry.batchNumber}
+                      onChange={e => setAdminEntry(p => ({...p, batchNumber:e.target.value}))} />
+                  </div>
                   <div>
                     <label style={lCls}>Status *</label>
                     <select style={{ width:"100%", border:"1px solid #d1d5db", borderRadius:6, padding:"8px 12px", fontSize:13, outline:"none", fontFamily:"inherit" }}
@@ -1293,6 +1451,21 @@ function MARPageContent({ selectedPatient }) {
                         value={adminEntry.reason} onChange={e => setAdminEntry(p => ({...p, reason:e.target.value}))} />
                     </div>
                   )}
+                  {/* R7az-D5-CRIT-2 — Late-admin warning + required reason.
+                      Slot > 30 min behind clock → require an explanation. */}
+                  {isLate && (
+                    <div style={{ gridColumn:"1/-1", background:"#fef3c7", border:"1px solid #fcd34d", borderRadius:8, padding:"10px 12px" }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color:"#a16207", marginBottom: 6 }}>
+                        ⚠ You're recording {lateMin} min late — reason is required for the audit trail.
+                      </div>
+                      <input
+                        style={{ width:"100%", border:`1px solid ${adminErrors.lateReason ? "#dc2626" : "#fcd34d"}`, borderRadius:6, padding:"8px 12px", fontSize:13, outline:"none", fontFamily:"inherit", background:"#fff" }}
+                        value={adminEntry.lateReason}
+                        onChange={e => setAdminEntry(p => ({...p, lateReason: e.target.value}))}
+                        placeholder="e.g. Patient was in radiology, returned to ward at 09:15" />
+                      {adminErrors.lateReason && <div style={errStyle}>{adminErrors.lateReason}</div>}
+                    </div>
+                  )}
                   <div style={{ gridColumn:"1/-1" }}>
                     <label style={lCls}>Remarks</label>
                     <textarea style={{ width:"100%", border:"1px solid #d1d5db", borderRadius:6, padding:"8px 12px", fontSize:13, outline:"none", fontFamily:"inherit", resize:"vertical", minHeight:60 }}
@@ -1300,12 +1473,19 @@ function MARPageContent({ selectedPatient }) {
                   </div>
                 </div>
                 <div style={{ display:"flex", gap:10, justifyContent:"flex-end", marginTop:18 }}>
-                  <button onClick={() => setAdminDialog(null)} style={{ padding:"9px 18px", background:"white", border:"1px solid #d1d5db", borderRadius:8, fontSize:13, cursor:"pointer" }}>Cancel</button>
-                  <button onClick={recordAdmin} disabled={loading} style={{ padding:"9px 22px", background:"#1e40af", color:"white", border:"none", borderRadius:8, fontSize:13, fontWeight:600, cursor:"pointer" }}>Record</button>
+                  <button onClick={() => { setAdminDialog(null); setAdminErrors({}); }} style={{ padding:"9px 18px", background:"white", border:"1px solid #d1d5db", borderRadius:8, fontSize:13, cursor:"pointer" }}>Cancel</button>
+                  {/* R7az-D5-CRIT-2: use isSubmittingAdmin (isolated flag)
+                      instead of the shared `loading` so concurrent search /
+                      addMed / discontinue don't grey out Record (and vice
+                      versa). */}
+                  <button onClick={recordAdmin} disabled={isSubmittingAdmin} style={{ padding:"9px 22px", background:"#1e40af", color:"white", border:"none", borderRadius:8, fontSize:13, fontWeight:600, cursor:isSubmittingAdmin ? "wait" : "pointer", opacity: isSubmittingAdmin ? 0.6 : 1 }}>
+                    {isSubmittingAdmin ? "Recording…" : "Record"}
+                  </button>
                 </div>
               </div>
             </div>
-          )}
+            );
+          })()}
         </>
       )}
 
