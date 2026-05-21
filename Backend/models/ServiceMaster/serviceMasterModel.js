@@ -89,6 +89,15 @@ const ServiceMasterSchema = new mongoose.Schema(
     isTaxable: { type: Boolean, default: false },
     taxPercentage: { type: Number, default: 0, min: 0, max: 28 },
 
+    // R7aw-FIX-2/D6-MED-5: HSN/SAC code per service. GST Act §31 (and
+    // GSTR-1 reporting) requires this on every taxable line. We surface
+    // it on ServiceMaster so the rate-card import pipeline can supply
+    // per-service codes (pharmacy lines often have drug-class HSN);
+    // when absent, autoBilling falls back to SAC "9993" (human-health
+    // services) on bill-item create. Optional — legacy rows stay null
+    // and the bill-item populator handles the default.
+    hsnSacCode: { type: String, trim: true, default: null },
+
     availableForTPA: { type: Boolean, default: true },
     displayOrder: { type: Number, default: 999 },
     isActive: { type: Boolean, default: true },

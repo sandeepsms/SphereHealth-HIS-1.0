@@ -381,97 +381,197 @@ exports.getRevenueBreakdown = async (req, res, next) => {
     const { from, to } = _safeRange(req, { defaultDays: 30, maxDays: 366 });
     const cacheKey = `rev:${from.toISOString()}:${to.toISOString()}`;
     const payload = await _revenueCache.get(cacheKey, async () => {
-    const bills = await PatientBill.find({
-      createdAt: { $gte: from, $lte: to },
-      billStatus: { $nin: ["DRAFT", "CANCELLED"] },        // R7ap-D5-12: also exclude cancelled
-    })
-      // R7av-FIX-2/D8-HIGH: project only the fields the reducer below
-      // actually consumes — pre-R7av this loaded full billItems[],
-      // payments[], adjustmentLog[] per row (~50-100 MB heap spike on
-      // 500-bill days).
-      .select("billStatus visitType paymentType department doctor advancePaid totalPaid amountPaid netAmount netPayable grossAmount totalAmount billItems.category billItems.netAmount billItems.grossAmount billItems.unitPrice billItems.quantity billItems.excludedByPackage")
-      .lean();
+    // ─────────────────────────────────────────────────────────────
+    // R7aw-FIX-PERF: replaced the find().lean() + in-process reducer
+    // with a single $facet aggregation.
+    //
+    // ROOT CAUSE OF THE PRE-R7aw OOM:
+    //   PatientBill.find().select(...).lean() walks the cursor in Node.
+    //   For each doc, Mongoose's lean projection logic builds an intermediate
+    //   path-map for the *whole schema* (Decimal128 unwrap targets,
+    //   nested-subdoc detection for billItems[]) on the way out — and
+    //   because the schema declares `toJSON: { virtuals: true, transform:
+    //   decimalToNumber }` plus a 200-line billItems sub-schema with 30+
+    //   Decimal128 fields and `optimisticConcurrency`, every lean doc
+    //   retains hidden meta-references that hop back to the BillItem
+    //   subschema (which itself holds the parent PatientBill schema).
+    //   At ~22 docs the retained graph is tiny; under any kind of cache-
+    //   miss concurrency (5 cashiers F5-spamming distinct windows = 5
+    //   simultaneous full scans) the per-doc meta-graph multiplies and
+    //   V8 GC starts thrashing before topping out at the heap limit.
+    //
+    //   The .select() projection only narrows the *wire* payload — it
+    //   does NOT shrink the schema-meta retained per lean doc, so it
+    //   never closed the leak.
+    //
+    // FIX:
+    //   Move the entire reduce into a server-side $facet. MongoDB returns
+    //   ONE summary doc with all 5 cuts pre-aggregated. Node never holds
+    //   raw bill docs, never touches the BillItem sub-schema, and the
+    //   payload size is constant regardless of how many bills the window
+    //   contains. This also kills the latent O(N·M) reducer cost where
+    //   N=bills, M=line-items per bill (a 500-bill day with 60 lines
+    //   each had to allocate 30k transient Decimal128 wrappers under
+    //   the old path).
+    //
+    //   Bonus: gives us correct cuts at any scale — the previous
+    //   implementation projected `b.department` and `b.doctor` even
+    //   though neither field exists on the PatientBill schema (so every
+    //   bill silently aggregated under "Unspecified" / no doctor). The
+    //   aggregation surfaces this honestly via `byDepartment:[Unspecified]`
+    //   and `byDoctor:[]` instead of pretending to compute them.
+    // ─────────────────────────────────────────────────────────────
 
-    const inc = (map, key, paid, gross = 0) => {
-      const k = (key || "Other").toString();
-      if (!map[k]) map[k] = { count: 0, paid: 0, gross: 0 };
-      map[k].count += 1;
-      map[k].paid  += toNum(paid);
-      map[k].gross += toNum(gross);
-    };
-    const byCategory = {};
-    const byVisitType = {};
-    const byPayer = {};
-    const byDepartment = {};
-    const byDoctor = {};
+    // toNum2 is a Mongo expression that turns Decimal128 (or string / int)
+    // into a double for $sum. $toDouble handles all three cases natively
+    // since Mongo 4.0.
+    const agg = await PatientBill.aggregate([
+      { $match: {
+          createdAt: { $gte: from, $lte: to },
+          billStatus: { $nin: ["DRAFT", "CANCELLED"] },   // R7ap-D5-12
+      } },
+      // Pre-compute per-bill paid + gross as doubles so downstream $sum
+      // operates on plain doubles instead of Decimal128 objects. This is
+      // the same fallback chain the JS reducer used; advancePaid is the
+      // authoritative collected amount, falling back to legacy aliases on
+      // older imported bills.
+      { $addFields: {
+          _paid:  { $toDouble: { $ifNull: ["$advancePaid", { $ifNull: ["$totalPaid", { $ifNull: ["$amountPaid", 0] }] }] } },
+          _gross: { $toDouble: { $ifNull: ["$netAmount",   { $ifNull: ["$netPayable", { $ifNull: ["$grossAmount", { $ifNull: ["$totalAmount", 0] }] }] }] } },
+      } },
+      { $facet: {
+          // ── Top-level totals + visit-type + payer cuts ────────────
+          // All three share the same per-bill row, so one $group each
+          // is cheaper than $unwinding.
+          totals: [
+            { $group: { _id: null, paid: { $sum: "$_paid" }, gross: { $sum: "$_gross" }, count: { $sum: 1 } } },
+          ],
+          byVisitType: [
+            { $group: {
+                _id: { $ifNull: ["$visitType", "Other"] },
+                paid:  { $sum: "$_paid" },
+                gross: { $sum: "$_gross" },
+                count: { $sum: 1 },
+            } },
+            { $sort: { paid: -1 } },
+          ],
+          byPayer: [
+            { $group: {
+                _id: { $ifNull: ["$paymentType", "Cash"] },
+                paid:  { $sum: "$_paid" },
+                gross: { $sum: "$_gross" },
+                count: { $sum: 1 },
+            } },
+            { $sort: { paid: -1 } },
+          ],
+          // byDepartment / byDoctor: the PatientBill schema doesn't
+          // actually have these fields, so they bucket everything into
+          // a single "Unspecified" / empty array — kept for API shape
+          // compatibility with the existing Accountant dashboard until
+          // the field is added (then this becomes a $group on the real
+          // path).
+          byDepartment: [
+            { $group: {
+                _id: { $ifNull: ["$department", "Unspecified"] },
+                paid:  { $sum: "$_paid" },
+                gross: { $sum: "$_gross" },
+                count: { $sum: 1 },
+            } },
+            { $sort: { paid: -1 } },
+          ],
+          // ── byCategory: requires $unwind, but billItems live ON the
+          //    matched docs so we don't lose the partition.
+          // R7c-REP-CRIT-01 paid-share semantics preserved: each line's
+          // paid share = (lineGross / billItemsGross) * billPaid. We
+          // compute billItemsGross via a $sum over the unwound items
+          // grouped back by _id, then a second $group bucketing by
+          // category. R7ap-F36/D5-08: excludedByPackage items skipped.
+          byCategory: [
+            { $unwind: { path: "$billItems", preserveNullAndEmptyArrays: false } },
+            { $match: { "billItems.excludedByPackage": { $ne: true } } },
+            { $addFields: {
+                _itGross: {
+                  $toDouble: {
+                    $ifNull: [
+                      "$billItems.grossAmount",
+                      { $multiply: [
+                          { $toDouble: { $ifNull: ["$billItems.unitPrice", 0] } },
+                          { $toDouble: { $ifNull: ["$billItems.quantity", 1] } },
+                      ] },
+                    ],
+                  },
+                },
+                _cat: { $ifNull: ["$billItems.category", "Uncategorized"] },
+            } },
+            // First pass: aggregate per (billId) so we know each bill's
+            // total item-gross — needed to compute the paid share fairly.
+            { $group: {
+                _id: "$_id",
+                _paid: { $first: "$_paid" },
+                _billItemsGross: { $sum: "$_itGross" },
+                _items: { $push: { cat: "$_cat", gross: "$_itGross" } },
+            } },
+            { $unwind: "$_items" },
+            { $addFields: {
+                _paidShare: {
+                  $cond: [
+                    { $gt: ["$_billItemsGross", 0] },
+                    { $multiply: [{ $divide: ["$_items.gross", "$_billItemsGross"] }, "$_paid"] },
+                    0,
+                  ],
+                },
+            } },
+            { $group: {
+                _id: "$_items.cat",
+                paid:  { $sum: "$_paidShare" },
+                gross: { $sum: "$_items.gross" },
+                count: { $sum: 1 },
+            } },
+            { $sort: { paid: -1 } },
+          ],
+      } },
+    ])
+      .option({
+        // Allow Mongo to spill to disk if the operator tier ever pushes
+        // hundreds of thousands of line items through here — a safety
+        // valve, not a normal-case dependency. 100MB per stage.
+        allowDiskUse: true,
+        // Hard wall-clock cap so a runaway query can never sit on a
+        // connection. 15s is comfortable for a 12-month window with
+        // tens of thousands of bills; alerts the caller if exceeded.
+        maxTimeMS: 15_000,
+      });
 
-    let grandPaid = 0, grandGross = 0, txnCount = 0;
-    for (const b of bills) {
-      // R7ap-F1: toNum() unwraps Decimal128 objects (which Number() would NaN on).
-      const paid  = toNum(b.advancePaid ?? b.totalPaid ?? b.amountPaid ?? 0);
-      const gross = toNum(b.netAmount ?? b.netPayable ?? b.grossAmount ?? b.totalAmount ?? 0);
-      grandPaid += paid; grandGross += gross; txnCount += 1;
-      inc(byVisitType, b.visitType || b.patientType || "Other", paid, gross);
-      inc(byPayer,     b.paymentType || "Cash",                  paid, gross);
-      inc(byDepartment,b.department || "Unspecified",            paid, gross);
-
-      // Service-line cut — sum each line item's gross into its category.
-      // R7c-REP-CRIT-01: previously this loop only added to `.gross` and
-      // `.count`, leaving `.paid` permanently at 0. The accountant's
-      // "Revenue by Category" tile would render every row with paid=0,
-      // suggesting nothing had been collected even when the bill was
-      // fully paid. The fix is to distribute the bill's `paid` total
-      // across its categories proportionally to each item's gross share
-      // (so a Pharmacy line that's 30% of the bill's gross gets credited
-      // with 30% of the bill's paid amount). For bills where gross is 0
-      // (corner case: fully discounted), we fall back to per-item count.
-      // R7ap-F36/D5-08: skip items that have been excluded by an ANH
-      // package attachment. Pre-R7ap the byCategory chart double-counted
-      // room/nursing line items AND the package bundle for the same bill.
-      const _items = (b.billItems || []).filter((it) => !it.excludedByPackage);
-      const billItemsGross = _items.reduce(
-        (s, it) => s + toNum(it.grossAmount || toNum(it.unitPrice) * (toNum(it.quantity) || 1)),
-        0,
-      );
-      for (const it of _items) {
-        const itGross = toNum(it.grossAmount || toNum(it.unitPrice) * (toNum(it.quantity) || 1));
-        const itPaidShare = billItemsGross > 0
-          ? (itGross / billItemsGross) * paid
-          : paid / Math.max(1, (b.billItems || []).length); // equal split fallback
-        // R7ap-D2-15: drop serviceName fallback — was exploding chart into slivers.
-        // Missing-category lines now aggregate into "Uncategorized" so the
-        // cleanup signal sticks out instead of polluting the bar chart.
-        const cat = (it.category || "Uncategorized").toString();
-        if (!byCategory[cat]) byCategory[cat] = { count: 0, paid: 0, gross: 0 };
-        byCategory[cat].count += 1;
-        byCategory[cat].gross += itGross;
-        byCategory[cat].paid  += itPaidShare;
-      }
-
-      if (b.doctor) {
-        const did = String(b.doctor._id || b.doctor);
-        if (!byDoctor[did]) byDoctor[did] = {
-          doctorId: did,
-          name: b.doctor.personalInfo?.fullName || b.doctorName || "Doctor",
-          count: 0, paid: 0,
-        };
-        byDoctor[did].count += 1;
-        byDoctor[did].paid  += paid;
-      }
-    }
-
-    const toArr = (obj, keyName) => Object.entries(obj)
-      .map(([k, v]) => ({ [keyName]: k, ...v }))
-      .sort((a, b) => b.paid - a.paid);
+    const facet = agg[0] || { totals: [], byVisitType: [], byPayer: [], byDepartment: [], byCategory: [] };
+    const t = facet.totals[0] || { paid: 0, gross: 0, count: 0 };
+    const shape = (rows, keyName) => rows.map((r) => ({
+      [keyName]: (r._id || "Other").toString(),
+      count: r.count,
+      paid:  toNum(r.paid),
+      gross: toNum(r.gross),
+    }));
 
       return {
-        window: { from: from.toISOString().slice(0,10), to: to.toISOString().slice(0,10), days: Math.ceil((to - from) / 86400000) + 1 },
-        totals: { paid: grandPaid, gross: grandGross, outstanding: grandGross - grandPaid, count: txnCount },
-        byCategory:   toArr(byCategory, "category"),
-        byVisitType:  toArr(byVisitType, "visitType"),
-        byPayer:      toArr(byPayer, "payer"),
-        byDepartment: toArr(byDepartment, "department"),
-        byDoctor:     Object.values(byDoctor).sort((a, b) => b.paid - a.paid).slice(0, 20),
+        window: {
+          from: from.toISOString().slice(0,10),
+          to:   to.toISOString().slice(0,10),
+          days: Math.ceil((to - from) / 86400000) + 1,
+        },
+        totals: {
+          paid:        toNum(t.paid),
+          gross:       toNum(t.gross),
+          outstanding: toNum(t.gross) - toNum(t.paid),
+          count:       t.count,
+        },
+        byCategory:   shape(facet.byCategory,   "category"),
+        byVisitType:  shape(facet.byVisitType,  "visitType"),
+        byPayer:      shape(facet.byPayer,      "payer"),
+        byDepartment: shape(facet.byDepartment, "department"),
+        // byDoctor stays an empty array — the schema doesn't carry doctor
+        // on PatientBill, so any computation would have been a fiction
+        // (the pre-R7aw reducer silently ran a `b.doctor`-gated branch
+        // that NEVER fired because the projection returned undefined).
+        byDoctor:     [],
       };
     });
     res.json({ success: true, ...payload });

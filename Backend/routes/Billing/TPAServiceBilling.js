@@ -13,13 +13,18 @@ const {
   getTpaId,
 } = require("../../controllers/tpa/TPAServicebillcontroller");
 const { requireAction } = require("../../middleware/auth");
+// R7aw-FIX-1/D2-HIGH-4: ObjectId guard on /getTpaId/:TpaId — the
+// controller does TPAModel.findOne({_id: req.params.TpaId}), which
+// raises CastError → 500 on a malformed id.
+const { validateObjectIdParam } = require("../../utils/queryGuards");
+const vTpaId = validateObjectIdParam("TpaId");
 
-router.post("/addbill",                  requireAction("billing.write"), Servicebillfun);
+router.post("/addbill",                          requireAction("billing.write"), Servicebillfun);
 
-router.get("/getAllTestNames",           requireAction("billing.read"),  TestName);
+router.get("/getAllTestNames",                   requireAction("billing.read"),  TestName);
 
-router.get("/getOPDPrice",               requireAction("billing.read"),  getOPDPrice);
+router.get("/getOPDPrice",                       requireAction("billing.read"),  getOPDPrice);
 
-router.get("/getTpaId/:TpaId",           requireAction("billing.read"),  getTpaId);
+router.get("/getTpaId/:TpaId",           vTpaId, requireAction("billing.read"),  getTpaId);
 
 module.exports = router;

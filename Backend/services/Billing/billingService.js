@@ -196,6 +196,9 @@ class BillingService {
   }
 
   // ── 6. Add service to bill ────────────────────────────────────
+  // R7aw-FIX-7/D7-LOW: full body now wrapped in retryVersionError so a
+  // concurrent cron / cashier writer doesn't 500 the addService request.
+  // Matches the recordPayment / voidPayment retry pattern.
   async addServiceToBill(
     billId,
     serviceId,
@@ -231,112 +234,123 @@ class BillingService {
       orderedByRole,
     } = opts;
 
-    const bill = await PatientBill.findById(billId);
-    if (!bill) throw new Error("Bill not found");
-    // Bill-edit freeze (business audit F-05). Originally only PAID /
-    // CANCELLED bills were locked — that left PARTIAL bills (some payment
-    // already received) editable, so a receptionist could add new line
-    // items and inflate what the patient still owed AFTER the cashier
-    // had counted money. Locking from GENERATED onward stops the leak;
-    // legitimate "patient consumed more services" goes through the
-    // dedicated `recordPayment` / `amendItem` (Accountant) path instead.
-    if (["GENERATED", "PARTIAL", "PAID", "CANCELLED", "REFUNDED"].includes(bill.billStatus)) {
-      const err = new Error(
-        `Cannot modify a ${bill.billStatus} bill — use the amendment workflow.`,
-      );
-      err.status = 409;
-      throw err;
-    }
-
+    // ServiceMaster lookup is bill-independent, run once outside the retry.
     const service = await ServiceMaster.findById(serviceId);
     if (!service) throw new Error("Service not found");
 
-    const pricing = await ServicePricing.getPriceFor(
-      serviceId,
-      bill.paymentType,
-      bill.tpa,
-    );
+    // R7aw-FIX-7/D7-LOW: VersionError retry around the load-mutate-save.
+    // Pricing depends on bill.paymentType so it lives inside the retry —
+    // a concurrent TPA-flip would otherwise stale-price the line.
+    const retryVE = require("../../utils/retryVersionError");
+    return retryVE(async () => {
+      const bill = await PatientBill.findById(billId);
+      if (!bill) throw new Error("Bill not found");
+      // Bill-edit freeze (business audit F-05). Originally only PAID /
+      // CANCELLED bills were locked — that left PARTIAL bills (some payment
+      // already received) editable, so a receptionist could add new line
+      // items and inflate what the patient still owed AFTER the cashier
+      // had counted money. Locking from GENERATED onward stops the leak;
+      // legitimate "patient consumed more services" goes through the
+      // dedicated `recordPayment` / `amendItem` (Accountant) path instead.
+      // R7aw-FIX-8/D7: include GENERATING — a parallel finalize is in
+      // flight and the bill is frozen for the duration of the CAS claim.
+      if (["GENERATING", "GENERATED", "PARTIAL", "PAID", "CANCELLED", "REFUNDED"].includes(bill.billStatus)) {
+        const err = new Error(
+          `Cannot modify a ${bill.billStatus} bill — use the amendment workflow.`,
+        );
+        err.status = 409;
+        throw err;
+      }
 
-    // R2: money fields are Decimal128 at rest. `pricing.finalPrice` and
-    // `tpaApprovedLimit` may arrive as Decimal128 objects from ServicePricing;
-    // multiplying a Decimal128 by a Number gives a garbled
-    // `{$numberDecimal: "..."}` shape that breaks downstream display and
-    // bill-total recalc. Unwrap with toNum() before any arithmetic.
-    const unitPrice = toNum(pricing?.finalPrice ?? service.defaultPrice);
-    const grossAmount = unitPrice * quantity;
-    const discountPct = toNum(pricing?.discount) || 0;
-    const discountAmt = (grossAmount * discountPct) / 100;
-    const netAmount = grossAmount - discountAmt;
-    const taxAmount = service.isTaxable
-      ? (netAmount * toNum(service.taxPercentage)) / 100
-      : 0;
-    const lineTotal = netAmount + taxAmount;
+      const pricing = await ServicePricing.getPriceFor(
+        serviceId,
+        bill.paymentType,
+        bill.tpa,
+      );
 
-    let tpaPayableAmount = 0;
-    if (bill.paymentType === "TPA") {
-      const tpaCap = toNum(pricing?.tpaApprovedLimit);
-      tpaPayableAmount = tpaCap > 0
-        ? Math.min(tpaCap * quantity, lineTotal)
-        : lineTotal;
-    }
+      // R2: money fields are Decimal128 at rest. `pricing.finalPrice` and
+      // `tpaApprovedLimit` may arrive as Decimal128 objects from ServicePricing;
+      // multiplying a Decimal128 by a Number gives a garbled
+      // `{$numberDecimal: "..."}` shape that breaks downstream display and
+      // bill-total recalc. Unwrap with toNum() before any arithmetic.
+      const unitPrice = toNum(pricing?.finalPrice ?? service.defaultPrice);
+      const grossAmount = unitPrice * quantity;
+      const discountPct = toNum(pricing?.discount) || 0;
+      const discountAmt = (grossAmount * discountPct) / 100;
+      const netAmount = grossAmount - discountAmt;
+      const taxAmount = service.isTaxable
+        ? (netAmount * toNum(service.taxPercentage)) / 100
+        : 0;
+      const lineTotal = netAmount + taxAmount;
 
-    // Decide order lifecycle. Clinical sources (Doctor / Nurse / Lab /
-    // Radiology) open the line as "Ordered" — it stays pending in the
-    // executing team's queue and DOES NOT charge the patient until the
-    // executing team marks it complete via the /complete endpoint.
-    // Front-desk + automated sources skip the order workflow and write
-    // the line directly as Completed so existing flows (walk-in cash,
-    // bed-day cron, doctor-visit auto-charge) keep working unchanged.
-    const CLINICAL_ORDER_SOURCES = ["Doctor", "Nurse", "Lab", "Radiology"];
-    const resolvedOrderStatus =
-      orderStatus ||
-      (CLINICAL_ORDER_SOURCES.includes(addedBySource) ? "Ordered" : "Completed");
-    const now = new Date();
+      let tpaPayableAmount = 0;
+      if (bill.paymentType === "TPA") {
+        const tpaCap = toNum(pricing?.tpaApprovedLimit);
+        tpaPayableAmount = tpaCap > 0
+          ? Math.min(tpaCap * quantity, lineTotal)
+          : lineTotal;
+      }
 
-    bill.billItems.push({
-      serviceId: service._id,
-      serviceCode: service.serviceCode,
-      serviceName: service.serviceName,
-      category: service.category,
-      billingType: service.billingType,
-      quantity,
-      unitPrice,
-      grossAmount,
-      discountPercent: discountPct,
-      discountAmount: discountAmt,
-      netAmount,
-      tpaPayableAmount,
-      patientPayableAmount: lineTotal - tpaPayableAmount,
-      isTaxable: service.isTaxable,
-      // R7d-CRIT: BillItem.taxPercent now has enum [0, 0.25, 3, 5, 12, 18, 28].
-      // ServiceMaster.taxPercentage is min:0/max:28 with no enum, so an
-      // off-slab value (e.g. 9, 13, 20) from older seeds would crash
-      // bill.save() with ValidationError. Sanitize to nearest valid slab
-      // when isTaxable is true; otherwise 0. Future cleanup: tighten
-      // ServiceMaster enum to match.
-      taxPercent: sanitizeTaxPct(service.isTaxable ? service.taxPercentage : 0),
-      taxAmount,
-      appliedTariff: bill.paymentType,
-      chargeDate,
-      remarks,
-      addedBySource,
-      addedBy,
-      addedByRole,
-      // Order lifecycle stamps. We capture orderedAt/By for every line so
-      // even Completed-on-create items (walk-in / auto-charge) carry a
-      // creation timestamp for the audit trail. completedAt fires for
-      // Completed-on-create OR later via the /complete endpoint.
-      orderStatus: resolvedOrderStatus,
-      orderedAt: now,
-      orderedBy: orderedBy || addedBy || "",
-      orderedByRole: orderedByRole || addedByRole || addedBySource || "",
-      completedAt: resolvedOrderStatus === "Completed" ? now : undefined,
-      completedBy: resolvedOrderStatus === "Completed" ? (addedBy || "") : undefined,
-      completedByRole: resolvedOrderStatus === "Completed" ? (addedByRole || addedBySource || "") : undefined,
-    });
+      // Decide order lifecycle. Clinical sources (Doctor / Nurse / Lab /
+      // Radiology) open the line as "Ordered" — it stays pending in the
+      // executing team's queue and DOES NOT charge the patient until the
+      // executing team marks it complete via the /complete endpoint.
+      // Front-desk + automated sources skip the order workflow and write
+      // the line directly as Completed so existing flows (walk-in cash,
+      // bed-day cron, doctor-visit auto-charge) keep working unchanged.
+      const CLINICAL_ORDER_SOURCES = ["Doctor", "Nurse", "Lab", "Radiology"];
+      const resolvedOrderStatus =
+        orderStatus ||
+        (CLINICAL_ORDER_SOURCES.includes(addedBySource) ? "Ordered" : "Completed");
+      const now = new Date();
 
-    await bill.save();
-    return bill;
+      bill.billItems.push({
+        serviceId: service._id,
+        serviceCode: service.serviceCode,
+        serviceName: service.serviceName,
+        category: service.category,
+        billingType: service.billingType,
+        quantity,
+        unitPrice,
+        grossAmount,
+        discountPercent: discountPct,
+        discountAmount: discountAmt,
+        netAmount,
+        tpaPayableAmount,
+        patientPayableAmount: lineTotal - tpaPayableAmount,
+        isTaxable: service.isTaxable,
+        // R7aw-FIX-2/D6-MED-5: HSN/SAC on every line for GSTR-1 compliance.
+        hsnSacCode: service.hsnSacCode || "9993",
+        // R7d-CRIT: BillItem.taxPercent now has enum [0, 0.25, 3, 5, 12, 18, 28].
+        // ServiceMaster.taxPercentage is min:0/max:28 with no enum, so an
+        // off-slab value (e.g. 9, 13, 20) from older seeds would crash
+        // bill.save() with ValidationError. Sanitize to nearest valid slab
+        // when isTaxable is true; otherwise 0. Future cleanup: tighten
+        // ServiceMaster enum to match.
+        taxPercent: sanitizeTaxPct(service.isTaxable ? service.taxPercentage : 0),
+        taxAmount,
+        appliedTariff: bill.paymentType,
+        chargeDate,
+        remarks,
+        addedBySource,
+        addedBy,
+        addedByRole,
+        // Order lifecycle stamps. We capture orderedAt/By for every line so
+        // even Completed-on-create items (walk-in / auto-charge) carry a
+        // creation timestamp for the audit trail. completedAt fires for
+        // Completed-on-create OR later via the /complete endpoint.
+        orderStatus: resolvedOrderStatus,
+        orderedAt: now,
+        orderedBy: orderedBy || addedBy || "",
+        orderedByRole: orderedByRole || addedByRole || addedBySource || "",
+        completedAt: resolvedOrderStatus === "Completed" ? now : undefined,
+        completedBy: resolvedOrderStatus === "Completed" ? (addedBy || "") : undefined,
+        completedByRole: resolvedOrderStatus === "Completed" ? (addedByRole || addedBySource || "") : undefined,
+      });
+
+      await bill.save();
+      return bill;
+    }, { label: "addServiceToBill" });
   }
 
   /* ─── Mark an Active Order as Completed ─────────────────────────────
@@ -346,45 +360,51 @@ class BillingService {
      recalc — at which point the item lands on grossAmount / balance and
      becomes payable. */
   async completeBillItemOrder(billId, itemId, opts = {}) {
-    const bill = await PatientBill.findById(billId);
-    if (!bill) {
-      const e = new Error("Bill not found");
-      e.status = 404;
-      throw e;
-    }
-    // R7au-FIX-5/D5-CRIT-C7: PAID is now also rejected — pre-R7au a late
-    // "Ordered → Completed" flip on a PAID bill bumped grossAmount but
-    // pre-save did NOT auto-flip PAID→PARTIAL, leaving the bill in an
-    // inconsistent state (status=PAID with balance > 0). Cashier never
-    // saw the new due. Now refuse the operation explicitly with a
-    // clear message so the clinician knows the bill is sealed.
-    if (["CANCELLED", "REFUNDED", "PAID"].includes(bill.billStatus)) {
-      const e = new Error(`Cannot complete orders on a ${bill.billStatus} bill — use accountant adjust/refund flow instead`);
-      e.status = 409;
-      throw e;
-    }
-    const item = bill.billItems.id(itemId);
-    if (!item) {
-      const e = new Error("Bill item not found");
-      e.status = 404;
-      throw e;
-    }
-    if (item.orderStatus === "Completed") {
-      // Idempotent — already completed, just return the bill so the
-      // frontend can refresh without surfacing a confusing error.
+    // R7aw-FIX-7/D7-LOW: retry on VersionError — a concurrent payment /
+    // settlementAdjust landing between fetch and save would 500 the
+    // clinician's complete-order click.
+    const retryVE = require("../../utils/retryVersionError");
+    return retryVE(async () => {
+      const bill = await PatientBill.findById(billId);
+      if (!bill) {
+        const e = new Error("Bill not found");
+        e.status = 404;
+        throw e;
+      }
+      // R7au-FIX-5/D5-CRIT-C7: PAID is now also rejected — pre-R7au a late
+      // "Ordered → Completed" flip on a PAID bill bumped grossAmount but
+      // pre-save did NOT auto-flip PAID→PARTIAL, leaving the bill in an
+      // inconsistent state (status=PAID with balance > 0). Cashier never
+      // saw the new due. Now refuse the operation explicitly with a
+      // clear message so the clinician knows the bill is sealed.
+      if (["CANCELLED", "REFUNDED", "PAID"].includes(bill.billStatus)) {
+        const e = new Error(`Cannot complete orders on a ${bill.billStatus} bill — use accountant adjust/refund flow instead`);
+        e.status = 409;
+        throw e;
+      }
+      const item = bill.billItems.id(itemId);
+      if (!item) {
+        const e = new Error("Bill item not found");
+        e.status = 404;
+        throw e;
+      }
+      if (item.orderStatus === "Completed") {
+        // Idempotent — already completed, just return the bill so the
+        // frontend can refresh without surfacing a confusing error.
+        return bill;
+      }
+      if (item.orderStatus === "Cancelled") {
+        const e = new Error("Order was cancelled — cannot mark it complete");
+        e.status = 409;
+        throw e;
+      }
+      item.orderStatus = "Completed";
+      item.completedAt = new Date();
+      item.completedBy = opts.completedBy || "";
+      item.completedByRole = opts.completedByRole || "";
+      await bill.save();
       return bill;
-    }
-    if (item.orderStatus === "Cancelled") {
-      const e = new Error("Order was cancelled — cannot mark it complete");
-      e.status = 409;
-      throw e;
-    }
-    item.orderStatus = "Completed";
-    item.completedAt = new Date();
-    item.completedBy = opts.completedBy || "";
-    item.completedByRole = opts.completedByRole || "";
-    await bill.save();
-    return bill;
+    }, { label: "completeBillItemOrder" });
   }
 
   /* ─── Cancel an Active Order ───────────────────────────────────────
@@ -395,121 +415,137 @@ class BillingService {
      Throws if the line is already Completed (use the standard
      /items/:itemId DELETE path or accountant cancel for those). */
   async cancelBillItemOrder(billId, itemId, opts = {}) {
-    const bill = await PatientBill.findById(billId);
-    if (!bill) {
-      const e = new Error("Bill not found");
-      e.status = 404;
-      throw e;
-    }
-    // R7au-FIX-5/D5-CRIT-C7: pre-R7au this had NO bill-level state guard.
-    // Cancelling an Active order on a PAID / CANCELLED / REFUNDED bill
-    // silently mutated billItems → the audit log drifted from reality.
-    // Now refuse the operation explicitly.
-    if (["CANCELLED", "REFUNDED", "PAID"].includes(bill.billStatus)) {
-      const e = new Error(`Cannot cancel orders on a ${bill.billStatus} bill — use accountant refund/cancel flow instead`);
-      e.status = 409;
-      throw e;
-    }
-    const item = bill.billItems.id(itemId);
-    if (!item) {
-      const e = new Error("Bill item not found");
-      e.status = 404;
-      throw e;
-    }
-    if (item.orderStatus === "Completed") {
-      const e = new Error("Cannot cancel an order that's already been completed — use accountant refund instead");
-      e.status = 409;
-      throw e;
-    }
-    item.orderStatus = "Cancelled";
-    item.cancelledAt = new Date();
-    item.cancelReason = (opts.cancelReason || "").trim() || "Cancelled by clinician";
-    await bill.save();
-    return bill;
+    // R7aw-FIX-7/D7-LOW: retry on VersionError — mirror completeBillItemOrder.
+    const retryVE = require("../../utils/retryVersionError");
+    return retryVE(async () => {
+      const bill = await PatientBill.findById(billId);
+      if (!bill) {
+        const e = new Error("Bill not found");
+        e.status = 404;
+        throw e;
+      }
+      // R7au-FIX-5/D5-CRIT-C7: pre-R7au this had NO bill-level state guard.
+      // Cancelling an Active order on a PAID / CANCELLED / REFUNDED bill
+      // silently mutated billItems → the audit log drifted from reality.
+      // Now refuse the operation explicitly.
+      if (["CANCELLED", "REFUNDED", "PAID"].includes(bill.billStatus)) {
+        const e = new Error(`Cannot cancel orders on a ${bill.billStatus} bill — use accountant refund/cancel flow instead`);
+        e.status = 409;
+        throw e;
+      }
+      const item = bill.billItems.id(itemId);
+      if (!item) {
+        const e = new Error("Bill item not found");
+        e.status = 404;
+        throw e;
+      }
+      if (item.orderStatus === "Completed") {
+        const e = new Error("Cannot cancel an order that's already been completed — use accountant refund instead");
+        e.status = 409;
+        throw e;
+      }
+      item.orderStatus = "Cancelled";
+      item.cancelledAt = new Date();
+      item.cancelReason = (opts.cancelReason || "").trim() || "Cancelled by clinician";
+      await bill.save();
+      return bill;
+    }, { label: "cancelBillItemOrder" });
   }
 
   // ── 7. Remove item from bill ──────────────────────────────────
   async removeItemFromBill(billId, itemId) {
-    const bill = await PatientBill.findById(billId);
-    if (!bill) throw new Error("Bill not found");
-    // Bill-edit freeze (business audit F-05). Originally only PAID /
-    // CANCELLED bills were locked — that left PARTIAL bills (some payment
-    // already received) editable, so a receptionist could add new line
-    // items and inflate what the patient still owed AFTER the cashier
-    // had counted money. Locking from GENERATED onward stops the leak;
-    // legitimate "patient consumed more services" goes through the
-    // dedicated `recordPayment` / `amendItem` (Accountant) path instead.
-    if (["GENERATED", "PARTIAL", "PAID", "CANCELLED", "REFUNDED"].includes(bill.billStatus)) {
-      const err = new Error(
-        `Cannot modify a ${bill.billStatus} bill — use the amendment workflow.`,
-      );
-      err.status = 409;
-      throw err;
-    }
+    // R7aw-FIX-7/D7-LOW: retry on VersionError so concurrent writers
+    // don't 500 a DRAFT-bill line removal.
+    const retryVE = require("../../utils/retryVersionError");
+    return retryVE(async () => {
+      const bill = await PatientBill.findById(billId);
+      if (!bill) throw new Error("Bill not found");
+      // Bill-edit freeze (business audit F-05). Originally only PAID /
+      // CANCELLED bills were locked — that left PARTIAL bills (some payment
+      // already received) editable, so a receptionist could add new line
+      // items and inflate what the patient still owed AFTER the cashier
+      // had counted money. Locking from GENERATED onward stops the leak;
+      // legitimate "patient consumed more services" goes through the
+      // dedicated `recordPayment` / `amendItem` (Accountant) path instead.
+      // R7aw-FIX-8/D7: include GENERATING — parallel finalize in flight.
+      if (["GENERATING", "GENERATED", "PARTIAL", "PAID", "CANCELLED", "REFUNDED"].includes(bill.billStatus)) {
+        const err = new Error(
+          `Cannot modify a ${bill.billStatus} bill — use the amendment workflow.`,
+        );
+        err.status = 409;
+        throw err;
+      }
 
-    bill.billItems = bill.billItems.filter(
-      (i) => i._id.toString() !== itemId.toString(),
-    );
-    await bill.save();
-    return bill;
+      bill.billItems = bill.billItems.filter(
+        (i) => i._id.toString() !== itemId.toString(),
+      );
+      await bill.save();
+      return bill;
+    }, { label: "removeItemFromBill" });
   }
 
   // ── 8. Update item quantity ───────────────────────────────────
   async updateItemQuantity(billId, itemId, quantity) {
     if (quantity <= 0) throw new Error("Quantity must be greater than 0");
 
-    const bill = await PatientBill.findById(billId);
-    if (!bill) throw new Error("Bill not found");
-    // Bill-edit freeze (business audit F-05). Originally only PAID /
-    // CANCELLED bills were locked — that left PARTIAL bills (some payment
-    // already received) editable, so a receptionist could add new line
-    // items and inflate what the patient still owed AFTER the cashier
-    // had counted money. Locking from GENERATED onward stops the leak;
-    // legitimate "patient consumed more services" goes through the
-    // dedicated `recordPayment` / `amendItem` (Accountant) path instead.
-    if (["GENERATED", "PARTIAL", "PAID", "CANCELLED", "REFUNDED"].includes(bill.billStatus)) {
-      const err = new Error(
-        `Cannot modify a ${bill.billStatus} bill — use the amendment workflow.`,
-      );
-      err.status = 409;
-      throw err;
-    }
+    // R7aw-FIX-7/D7-LOW: retry on VersionError — a concurrent addService
+    // / payment on the same DRAFT bill would otherwise 500 the qty edit.
+    const retryVE = require("../../utils/retryVersionError");
+    return retryVE(async () => {
+      const bill = await PatientBill.findById(billId);
+      if (!bill) throw new Error("Bill not found");
+      // Bill-edit freeze (business audit F-05). Originally only PAID /
+      // CANCELLED bills were locked — that left PARTIAL bills (some payment
+      // already received) editable, so a receptionist could add new line
+      // items and inflate what the patient still owed AFTER the cashier
+      // had counted money. Locking from GENERATED onward stops the leak;
+      // legitimate "patient consumed more services" goes through the
+      // dedicated `recordPayment` / `amendItem` (Accountant) path instead.
+      // R7aw-FIX-8/D7: include GENERATING — parallel finalize in flight.
+      if (["GENERATING", "GENERATED", "PARTIAL", "PAID", "CANCELLED", "REFUNDED"].includes(bill.billStatus)) {
+        const err = new Error(
+          `Cannot modify a ${bill.billStatus} bill — use the amendment workflow.`,
+        );
+        err.status = 409;
+        throw err;
+      }
 
-    const item = bill.billItems.id(itemId);
-    if (!item) throw new Error("Bill item not found");
+      const item = bill.billItems.id(itemId);
+      if (!item) throw new Error("Bill item not found");
 
-    // Money fields are Decimal128 — do the math in Number space, then assign.
-    // Mongoose auto-casts Number → Decimal128 on assignment, and the bill
-    // pre-save hook will recompute everything (so even if we missed a field
-    // here, the persisted state stays consistent).
-    const unit = toNum(item.unitPrice);
-    const grossAmount = unit * quantity;
-    const discountAmount = (grossAmount * (toNum(item.discountPercent) || 0)) / 100;
-    const netAmount = grossAmount - discountAmount;
-    const taxAmount = item.isTaxable
-      ? (netAmount * (toNum(item.taxPercent) || 0)) / 100
-      : 0;
-    const lineTotal = netAmount + taxAmount;
+      // Money fields are Decimal128 — do the math in Number space, then assign.
+      // Mongoose auto-casts Number → Decimal128 on assignment, and the bill
+      // pre-save hook will recompute everything (so even if we missed a field
+      // here, the persisted state stays consistent).
+      const unit = toNum(item.unitPrice);
+      const grossAmount = unit * quantity;
+      const discountAmount = (grossAmount * (toNum(item.discountPercent) || 0)) / 100;
+      const netAmount = grossAmount - discountAmount;
+      const taxAmount = item.isTaxable
+        ? (netAmount * (toNum(item.taxPercent) || 0)) / 100
+        : 0;
+      const lineTotal = netAmount + taxAmount;
 
-    item.quantity = quantity;
-    item.grossAmount = grossAmount;
-    item.discountAmount = discountAmount;
-    item.netAmount = netAmount;
-    item.taxAmount = taxAmount;
+      item.quantity = quantity;
+      item.grossAmount = grossAmount;
+      item.discountAmount = discountAmount;
+      item.netAmount = netAmount;
+      item.taxAmount = taxAmount;
 
-    if (bill.paymentType === "TPA") {
-      const tpaLimit = item.tpaApprovedLimitPerUnit
-        ? toNum(item.tpaApprovedLimitPerUnit) * quantity
-        : lineTotal;
-      item.tpaPayableAmount = Math.min(tpaLimit, lineTotal);
-      item.patientPayableAmount = lineTotal - item.tpaPayableAmount;
-    } else {
-      item.tpaPayableAmount = 0;
-      item.patientPayableAmount = lineTotal;
-    }
+      if (bill.paymentType === "TPA") {
+        const tpaLimit = item.tpaApprovedLimitPerUnit
+          ? toNum(item.tpaApprovedLimitPerUnit) * quantity
+          : lineTotal;
+        item.tpaPayableAmount = Math.min(tpaLimit, lineTotal);
+        item.patientPayableAmount = lineTotal - item.tpaPayableAmount;
+      } else {
+        item.tpaPayableAmount = 0;
+        item.patientPayableAmount = lineTotal;
+      }
 
-    await bill.save();
-    return bill;
+      await bill.save();
+      return bill;
+    }, { label: "updateItemQuantity" });
   }
 
   // ── 8a. Settlement-time adjustment (GENERATED / PARTIAL bills) ─
@@ -985,43 +1021,112 @@ class BillingService {
   async generateFinalBill(billId, generatedBy = "Staff") {
     const retryVE = require("../../utils/retryVersionError");
     let reservedBillNumber = null;          // burned once at most
-    return retryVE(async () => {
-      const bill = await PatientBill.findById(billId);
-      if (!bill) {
+
+    // R7aw-FIX-8/D7: atomic CAS claim. Two concurrent generate calls used
+    // to BOTH pass the `=== "DRAFT"` guard before either save() fired —
+    // first save flipped DRAFT → GENERATED + assigned billNumber, second
+    // save then VersionError'd, the retry hit the idempotent GENERATED
+    // branch and returned the first writer's bill (correct outcome but
+    // burned a second nextSequence() if the first save was slow). The
+    // CAS narrows the race to a single atomic op:
+    //   • If status=DRAFT → flip to GENERATING (claim), return doc; we own it.
+    //   • If status=GENERATING → another caller is mid-flight; spin once
+    //     in the retry loop (VersionError-style) and hit the idempotent
+    //     GENERATED branch on the next attempt.
+    //   • If status=GENERATED → already done; return idempotently.
+    const claim = await PatientBill.findOneAndUpdate(
+      { _id: billId, billStatus: "DRAFT" },
+      { $set: { billStatus: "GENERATING" } },
+      { new: true },
+    );
+    // claim is null if (a) bill missing, (b) status != DRAFT.
+    if (!claim) {
+      // Disambiguate the null — re-read so we can return the correct
+      // idempotent result or surface the proper state error.
+      const existing = await PatientBill.findById(billId);
+      if (!existing) {
         const err = new Error("Bill not found"); err.status = 404; throw err;
       }
-      // R7as: the retry can land on a bill that ALREADY transitioned to
-      // GENERATED on a prior attempt (rare but possible if save throws
-      // post-commit). Treat as success and return.
-      // R7at-FIX-9/D5-NEW: tightened to `=== "GENERATED"` — pre-R7at the
-      // permissive `!= "DRAFT" && billNumber` branch let CANCELLED /
-      // REFUNDED / PAID bills slip through as successful generates on
-      // replay. Now only an already-GENERATED bill returns idempotently.
-      if (bill.billStatus === "GENERATED" && bill.billNumber) {
+      if (existing.billStatus === "GENERATED" && existing.billNumber) {
+        return existing;
+      }
+      if (existing.billStatus === "GENERATING") {
+        // Another caller is mid-flight. Surface a 409 rather than block —
+        // the caller should retry after a short backoff. The eventual
+        // GENERATED state is reached by the in-flight caller.
+        const err = new Error("Bill is currently being generated by another request — retry in a moment");
+        err.status = 409; err.code = "GENERATE_IN_FLIGHT"; throw err;
+      }
+      const err = new Error(`Only DRAFT bills can be generated (current: ${existing.billStatus})`);
+      err.status = 409; throw err;
+    }
+    if (!claim.billItems || claim.billItems.length === 0) {
+      // Roll the claim back so the next addService call still finds DRAFT.
+      try {
+        await PatientBill.updateOne({ _id: billId, billStatus: "GENERATING" }, { $set: { billStatus: "DRAFT" } });
+      } catch (_) { /* rollback best-effort */ }
+      const err = new Error("Cannot generate empty bill — pehle services add karo");
+      err.status = 400; throw err;
+    }
+
+    // R7aw-FIX-8/D7: we already hold the GENERATING claim. If anything
+    // throws past this point we must release the claim back to DRAFT so
+    // the next addService doesn't see a permanently-stuck bill.
+    let generatedBill;
+    try {
+      generatedBill = await retryVE(async () => {
+        const bill = await PatientBill.findById(billId);
+        if (!bill) {
+          const err = new Error("Bill not found"); err.status = 404; throw err;
+        }
+        // R7as: the retry can land on a bill that ALREADY transitioned to
+        // GENERATED on a prior attempt (rare but possible if save throws
+        // post-commit). Treat as success and return.
+        // R7at-FIX-9/D5-NEW: tightened to `=== "GENERATED"` — pre-R7at the
+        // permissive `!= "DRAFT" && billNumber` branch let CANCELLED /
+        // REFUNDED / PAID bills slip through as successful generates on
+        // replay. Now only an already-GENERATED bill returns idempotently.
+        if (bill.billStatus === "GENERATED" && bill.billNumber) {
+          return bill;
+        }
+        // R7aw-FIX-8/D7: GENERATING is the CAS-claimed intermediate state.
+        // Our own claim landed us here — proceed with the flip.
+        if (bill.billStatus !== "DRAFT" && bill.billStatus !== "GENERATING") {
+          const err = new Error(`Only DRAFT bills can be generated (current: ${bill.billStatus})`); err.status = 409; throw err;
+        }
+        if (!bill.billItems || bill.billItems.length === 0) {
+          const err = new Error("Cannot generate empty bill — pehle services add karo"); err.status = 400; throw err;
+        }
+
+        if (!reservedBillNumber) {
+          reservedBillNumber = await generateBillNumber();
+        }
+        bill.billNumber = reservedBillNumber;
+        bill.billStatus = "GENERATED";
+        bill.billGeneratedAt = new Date();
+        bill.generatedBy = generatedBy;
+
+        if (bill.paymentType === "TPA") {
+          bill.tpaClaimStatus = "PENDING";
+        }
+
+        await bill.save();
         return bill;
-      }
-      if (bill.billStatus !== "DRAFT") {
-        const err = new Error(`Only DRAFT bills can be generated (current: ${bill.billStatus})`); err.status = 409; throw err;
-      }
-      if (!bill.billItems || bill.billItems.length === 0) {
-        const err = new Error("Cannot generate empty bill — pehle services add karo"); err.status = 400; throw err;
-      }
-
-      if (!reservedBillNumber) {
-        reservedBillNumber = await generateBillNumber();
-      }
-      bill.billNumber = reservedBillNumber;
-      bill.billStatus = "GENERATED";
-      bill.billGeneratedAt = new Date();
-      bill.generatedBy = generatedBy;
-
-      if (bill.paymentType === "TPA") {
-        bill.tpaClaimStatus = "PENDING";
-      }
-
-      await bill.save();
-      return bill;
-    }, { label: "generateFinalBill" }).then(async (bill) => {
+      }, { label: "generateFinalBill" });
+    } catch (err) {
+      // R7aw-FIX-8/D7: release the GENERATING claim on outright failure
+      // so the bill returns to DRAFT and the cashier can retry cleanly.
+      // Best-effort — if the rollback itself fails, the stuck-trigger
+      // sweeper / next addService will surface the inconsistent state.
+      try {
+        await PatientBill.updateOne(
+          { _id: billId, billStatus: "GENERATING" },
+          { $set: { billStatus: "DRAFT" } },
+        );
+      } catch (_) { /* swallow */ }
+      throw err;
+    }
+    return Promise.resolve(generatedBill).then(async (bill) => {
       // R7ap-F15: emit BILL_GENERATED audit row — outside the retry so
       // a VersionError retry doesn't double-emit.
       try {
@@ -1066,6 +1171,13 @@ class BillingService {
         throw new Error(
           "Bill abhi DRAFT hai — pehle generateFinalBill() karo, tab payment lo",
         );
+      }
+      // R7aw-FIX-8/D7: GENERATING is the CAS-claimed intermediate state used
+      // by generateFinalBill to serialise concurrent generate calls. Brief
+      // (typically <100ms) — payment must wait for the flip to GENERATED.
+      if (bill.billStatus === "GENERATING") {
+        const err = new Error("Bill is currently being finalized — retry payment in a moment");
+        err.code = "GENERATE_IN_FLIGHT"; err.status = 409; throw err;
       }
       if (bill.billStatus === "PAID") throw new Error("Bill already fully paid");
       if (bill.billStatus === "CANCELLED")
@@ -1276,7 +1388,7 @@ class BillingService {
   // pool credit so both ledger sides have audit paper.
   async recordRefund(
     billId,
-    { amount, reason, mode, refundedBy, transactionId, creditToAdvance = false } = {},
+    { amount, reason, mode, refundedBy, transactionId, creditToAdvance = false, reasonCode } = {},
   ) {
     const amt = Number(amount);
     if (!amt || amt <= 0) {
@@ -1287,6 +1399,31 @@ class BillingService {
       const err = new Error("Refund reason is required for audit trail");
       err.code = "REASON_REQUIRED"; err.status = 400; throw err;
     }
+    // R7aw-FIX-4/D6-MED-4: optional reasonCode classifies the CN beyond
+    // the free-text reason — drives the GSTR-1 CDNR row's reason code.
+    // We accept the business-domain enum (REFUND/WRITE_OFF/…) and map to
+    // the GST "01"–"07" codes the CreditNote schema enforces. Default
+    // stays "REFUND" → "03 deficiency in services" (the prior hard-coded
+    // value), so legacy callers keep their previous behaviour.
+    const REASON_ENUM = ["REFUND", "WRITE_OFF", "DISCOUNT_AFTER", "CANCELLATION", "CORRECTION", "OTHER"];
+    const REASON_TO_GST = {
+      REFUND:         "03", // deficiency in services
+      WRITE_OFF:      "07", // other
+      DISCOUNT_AFTER: "02", // post-sale discount
+      CANCELLATION:   "01", // sales return
+      CORRECTION:     "04", // correction in invoice
+      OTHER:          "07", // other
+    };
+    const reasonClass = reasonCode == null
+      ? "REFUND"
+      : String(reasonCode).trim().toUpperCase();
+    if (!REASON_ENUM.includes(reasonClass)) {
+      const err = new Error(
+        `Invalid reasonCode "${reasonCode}" — expected one of ${REASON_ENUM.join(", ")}`,
+      );
+      err.code = "INVALID_REASON_CODE"; err.status = 400; throw err;
+    }
+    const gstReasonCode = REASON_TO_GST[reasonClass];
     // Allowed payment modes (must match PaymentSchema enum exactly)
     const ALLOWED = ["CASH", "CARD", "UPI", "CHEQUE", "ONLINE", "TPA_CLAIM"];
     const reqMode = String(mode || "CASH").toUpperCase();
@@ -1457,7 +1594,11 @@ class BillingService {
             cgstAmount:           cgstShare,
             sgstAmount:           sgstShare,
             igstAmount:           igstShare,
-            reasonCode:           "03",      // deficiency in services (closest match for hospital refunds)
+            // R7aw-FIX-4/D6-MED-4: caller-supplied reasonClass (REFUND/
+            // WRITE_OFF/…) → GSTR-1 reasonCode ("01"–"07"). Default of
+            // "REFUND" maps to "03" (deficiency in services) — same as
+            // the prior hard-coded value, so legacy callers are unaffected.
+            reasonCode:           gstReasonCode,
             reasonText:           cnReasonNote,
             refundMode:           payMode,
             refundTransactionId:  transactionId || null,
@@ -1750,16 +1891,6 @@ class BillingService {
   // nursing. A GENERATED bill (printed for the patient) or anything
   // beyond must go through the amendment workflow.
   async addNurseCharge(billId, serviceId, quantity, { nurseName, shift, remarks } = {}) {
-    const bill = await PatientBill.findById(billId);
-    if (!bill) throw new Error("Bill not found");
-    if (["GENERATED", "PARTIAL", "PAID", "CANCELLED", "REFUNDED"].includes(bill.billStatus)) {
-      const err = new Error(
-        `Cannot add a nurse charge to a ${bill.billStatus} bill — use the amendment workflow.`,
-      );
-      err.status = 409;
-      throw err;
-    }
-
     const service = await ServiceMaster.findById(serviceId);
     if (!service) throw new Error("Service not found");
     if (!service.chargeableBy?.includes("Nurse")) {
@@ -1768,38 +1899,58 @@ class BillingService {
 
     const pricing = await ServicePricing.getPriceFor(
       serviceId,
-      bill.paymentType,
-      bill.tpa?.toString(),
+      // paymentType resolved inside the retry once we have the bill
+      "CASH",
+      null,
     );
     // R2: Decimal128 unwrap before arithmetic — see addServiceToBill.
     const unitPrice = toNum(pricing?.finalPrice ?? service.defaultPrice);
     const gross = unitPrice * (quantity || 1);
 
-    const item = {
-      serviceId: service._id,
-      serviceCode: service.serviceCode,
-      serviceName: service.serviceName,
-      category: service.category,
-      billingType: service.billingType,
-      quantity: quantity || 1,
-      unitPrice,
-      grossAmount: gross,
-      discountPercent: 0,
-      discountAmount: 0,
-      netAmount: gross,
-      tpaPayableAmount: bill.paymentType === "TPA" ? gross : 0,
-      patientPayableAmount: bill.paymentType === "TPA" ? 0 : gross,
-      chargeDate: new Date(),
-      appliedTariff: bill.paymentType,
-      remarks: remarks || `Added by nurse: ${shift || ""}`,
-      addedBySource: "Nurse",
-      addedBy: nurseName || "Nursing Staff",
-      addedByRole: "Nurse",
-    };
+    // R7aw-FIX-7/D7-LOW: retryVersionError wrap on bare bill.save(). Pre-fix
+    // a concurrent cron / cashier writer bumped __v and the nurse charge
+    // was silently dropped with a 500. Same pattern as recordPayment/voidPayment.
+    const retryVE = require("../../utils/retryVersionError");
+    return retryVE(async () => {
+      const bill = await PatientBill.findById(billId);
+      if (!bill) throw new Error("Bill not found");
+      // R7aw-FIX-8/D7: GENERATING included — parallel finalize in flight.
+      if (["GENERATING", "GENERATED", "PARTIAL", "PAID", "CANCELLED", "REFUNDED"].includes(bill.billStatus)) {
+        const err = new Error(
+          `Cannot add a nurse charge to a ${bill.billStatus} bill — use the amendment workflow.`,
+        );
+        err.status = 409;
+        throw err;
+      }
 
-    bill.billItems.push(item);
-    await bill.save();
-    return bill;
+      const item = {
+        serviceId: service._id,
+        serviceCode: service.serviceCode,
+        serviceName: service.serviceName,
+        category: service.category,
+        billingType: service.billingType,
+        quantity: quantity || 1,
+        unitPrice,
+        grossAmount: gross,
+        discountPercent: 0,
+        discountAmount: 0,
+        netAmount: gross,
+        tpaPayableAmount: bill.paymentType === "TPA" ? gross : 0,
+        patientPayableAmount: bill.paymentType === "TPA" ? 0 : gross,
+        chargeDate: new Date(),
+        appliedTariff: bill.paymentType,
+        remarks: remarks || `Added by nurse: ${shift || ""}`,
+        addedBySource: "Nurse",
+        addedBy: nurseName || "Nursing Staff",
+        addedByRole: "Nurse",
+        // R7aw-FIX-2/D6-MED-5: HSN/SAC on nurse-added lines for GSTR-1.
+        hsnSacCode: service.hsnSacCode || "9993",
+      };
+
+      bill.billItems.push(item);
+      await bill.save();
+      return bill;
+    }, { label: "addNurseCharge" });
   }
 
   // ── 17. Get services a nurse can add ─────────────────────────

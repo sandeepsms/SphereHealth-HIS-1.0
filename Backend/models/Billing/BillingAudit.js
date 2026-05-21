@@ -92,12 +92,73 @@ const BillingAuditSchema = new mongoose.Schema(
     // 5-yr clinical / 7-yr accounts retention. `retainUntil` lets a
     // quarterly archiver migrate rows older than the floor into cold
     // storage without breaking audit chains in the meantime.
-    retainUntil: { type: Date, default: () => new Date(Date.now() + 7 * 365 * 86400000) }, // 7 years default
+    // R7aw-FIX-5/D6-MED-6: default is the floor (7y) but the pre-save
+    // hook below trims it per-event-class so non-financial rows don't
+    // bloat the hot collection. Payment/refund stay at 7y (GST Act §35);
+    // routine/system rows drop to 1y/3y respectively.
+    retainUntil: { type: Date, default: () => new Date(Date.now() + 7 * 365 * 86400000) }, // 7 years default (max)
   },
   {
     timestamps: { createdAt: true, updatedAt: false }, // append-only — no updatedAt
   },
 );
+
+// R7aw-FIX-5/D6-MED-6: per-event-class retention. Pre-fix every audit row
+// sat 7 years regardless of class — the routine/system events (lookups,
+// cron reconciliations, shift open/close) bloated the hot collection
+// although they're not GST-Act §35 mandated.
+//   • Payment / refund / generation     → 7y (GST Act §35 + IT Rule 46)
+//   • Admin / system events             → 3y (NABH internal-audit floor)
+//   • Routine reads / lookups / lifecycle → 1y (operational only)
+const _FINANCIAL_EVENTS = new Set([
+  "BILL_PAYMENT_RECORDED",
+  "BILL_REFUND_ISSUED",
+  "BILL_REFUND_TO_ADVANCE",
+  "BILL_CANCELLED",
+  "BILL_GENERATED",
+  "BILL_FINALIZED",
+  "BILL_ITEM_VOIDED",
+  "ADVANCE_CREATED",
+  "ADVANCE_APPLIED",
+  "ADVANCE_REFUNDED",
+  "TPA_PREAUTH_SUBMITTED",
+  "TPA_APPROVED",
+  "TPA_DENIED",
+  "TPA_SETTLED",
+  "SETTLEMENT_ADJUSTED",
+  "ITEM_PRICE_OVERRIDDEN",
+  "ITEM_CANCELLED",
+]);
+const _ADMIN_EVENTS = new Set([
+  "SHIFT_OPENED",
+  "SHIFT_CLOSED",
+  "SHIFT_AUTO_CLOSED",
+  "CRON_RECONCILED",
+  "OVERAGE_DETECTED",
+]);
+function _retainYearsFor(event) {
+  if (_FINANCIAL_EVENTS.has(event)) return 7;
+  if (_ADMIN_EVENTS.has(event))     return 3;
+  return 1; // routine / unknown — default to 1y so the hot collection stays lean
+}
+BillingAuditSchema.pre("save", function (next) {
+  // Only adjust retainUntil for new docs that didn't get an explicit
+  // override (the default schema timestamp). A caller-supplied future
+  // date (e.g. an extended-retention legal hold) is preserved.
+  if (this.isNew) {
+    const years = _retainYearsFor(this.event);
+    const target = new Date(Date.now() + years * 365 * 86400000);
+    // Tolerance: if a caller passed a value within 5 minutes of "now+7y"
+    // (i.e. the default fired), we override; otherwise we keep theirs.
+    const defaultDriftMs = 5 * 60 * 1000;
+    const defaultTarget  = Date.now() + 7 * 365 * 86400000;
+    const curr = this.retainUntil?.getTime?.() ?? 0;
+    if (!this.retainUntil || Math.abs(curr - defaultTarget) < defaultDriftMs) {
+      this.retainUntil = target;
+    }
+  }
+  next();
+});
 
 // Tax/audit query indexes
 BillingAuditSchema.index({ createdAt: -1 });

@@ -314,9 +314,14 @@ const PatientBillSchema = new mongoose.Schema(
     payments: [PaymentSchema],
 
     // ── Status ────────────────────────────────────────────
+    // R7aw-FIX-8/D7: GENERATING is a short-lived intermediate state used
+    // by generateFinalBill to serialise concurrent generate calls via a
+    // findOneAndUpdate(DRAFT → GENERATING) CAS claim. Always flips to
+    // GENERATED inside the same request (or rolls back to DRAFT on
+    // validation failure). Reads ignore it (treated as a pending DRAFT).
     billStatus: {
       type: String,
-      enum: ["DRAFT", "GENERATED", "PARTIAL", "PAID", "CANCELLED", "REFUNDED"],
+      enum: ["DRAFT", "GENERATING", "GENERATED", "PARTIAL", "PAID", "CANCELLED", "REFUNDED"],
       default: "DRAFT" },
 
     // ── TPA Claim tracking ────────────────────────────────

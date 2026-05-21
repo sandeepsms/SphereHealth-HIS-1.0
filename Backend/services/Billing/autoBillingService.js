@@ -284,6 +284,13 @@ async function addItemToBill(bill, service, quantity, source, trigger) {
       addedBy:         source.addedBy || "System",
       addedByRole:     source.addedByRole || "System",
       isAutoCharged:   true,
+      // R7aw-FIX-2/D6-MED-5: stamp HSN/SAC on every auto-billed line.
+      // Precedence: ServiceMaster.hsnSacCode (per-service override,
+      // typically set for pharmacy/consumables) → "9993" SAC for
+      // human-health services (clinical default). GST Act §31 + GSTR-1
+      // need this on every taxable line; empty HSN cells block monthly
+      // filing.
+      hsnSacCode:      service.hsnSacCode || "9993",
       // Round-trip link — every auto-billed line carries the trigger _id
       // back so the IPD Live Billing ledger can undo/override the exact
       // bill row without scanning by serviceCode. Manual line items added

@@ -98,15 +98,28 @@ function DayBookTab() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  const refresh = async () => {
+  // R7aw-FIX-F2/D4: wire AbortController to the Day Book date-change effect
+  // so rapid date scrubbing doesn't pile stale 200ms-old responses on top
+  // of the fresh one. Pre-fix, jumping from 2026-05-19 → 20 → 21 in quick
+  // succession could land on the YYYY-05-19 payload because that request
+  // returned last. The `signal` is passed to axios and the cleanup calls
+  // `ctrl.abort()` to cancel in-flight requests.
+  const refresh = async (signal) => {
     setLoading(true);
     try {
-      const r = await axios.get(`${API}/billing/collection-summary?date=${date}`, authHdr());
-      setData(r.data || {});
-    } catch (e) { toast.error("Day Book load failed"); }
-    setLoading(false);
+      const r = await axios.get(`${API}/billing/collection-summary?date=${date}`, { ...authHdr(), signal });
+      if (!signal || !signal.aborted) setData(r.data || {});
+    } catch (e) {
+      if (!axios.isCancel(e) && !(signal && signal.aborted)) toast.error("Day Book load failed");
+    }
+    if (!signal || !signal.aborted) setLoading(false);
   };
-  useEffect(() => { refresh(); }, [date]);
+  useEffect(() => {
+    const ctrl = new AbortController();
+    refresh(ctrl.signal);
+    return () => ctrl.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [date]);
 
   const s = data?.summary || {};
   const byMode    = data?.byMode || [];
@@ -121,7 +134,7 @@ function DayBookTab() {
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <input type="date" value={date} max={todayISO()} onChange={(e) => setDate(e.target.value)}
               style={{ padding: "6px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 12.5, fontWeight: 700, color: C.text }} />
-            <PrimaryButton label="Refresh" icon="pi-refresh" color={C.amber} onClick={refresh} busy={loading} />
+            <PrimaryButton label="Refresh" icon="pi-refresh" color={C.amber} onClick={() => refresh()} busy={loading} />
           </div>
         }>
         <div style={{ fontSize: 12.5, color: C.muted }}>
@@ -236,21 +249,30 @@ function RevenueTab() {
   const [pharmacy, setPharmacy] = useState(null);    // /pharmacy/stats
   const [loading, setLoading] = useState(false);
 
-  const refresh = async () => {
+  // R7aw-FIX-F2/D4: AbortController wired through the 3 parallel calls so
+  // a quick `from`/`to` change cancels the previous trio instead of letting
+  // the stale set overwrite the fresh state.
+  const refresh = async (signal) => {
     setLoading(true);
     try {
       const [bd, snap, ph] = await Promise.all([
-        axios.get(`${API}/billing/revenue-breakdown?from=${from}&to=${to}`, authHdr()).then(r => r.data).catch(() => null),
-        axios.get(`${API}/billing/summary`, authHdr()).then(r => r.data?.data).catch(() => null),
-        axios.get(`${API}/pharmacy/stats`, authHdr()).then(r => r.data?.data).catch(() => null),
+        axios.get(`${API}/billing/revenue-breakdown?from=${from}&to=${to}`, { ...authHdr(), signal }).then(r => r.data).catch(() => null),
+        axios.get(`${API}/billing/summary`, { ...authHdr(), signal }).then(r => r.data?.data).catch(() => null),
+        axios.get(`${API}/pharmacy/stats`, { ...authHdr(), signal }).then(r => r.data?.data).catch(() => null),
       ]);
+      if (signal && signal.aborted) return;
       setBreakdown(bd);
       setSnapshot(snap);
       setPharmacy(ph);
     } catch (e) {}
-    setLoading(false);
+    if (!signal || !signal.aborted) setLoading(false);
   };
-  useEffect(() => { refresh(); }, [from, to]);
+  useEffect(() => {
+    const ctrl = new AbortController();
+    refresh(ctrl.signal);
+    return () => ctrl.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [from, to]);
   const t = breakdown?.totals || {};
 
   return (
@@ -263,7 +285,7 @@ function RevenueTab() {
             <span style={{ color: C.muted }}>to</span>
             <input type="date" value={to} max={todayISO()} onChange={(e) => setTo(e.target.value)}
               style={{ padding: "6px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 12.5, fontWeight: 700 }} />
-            <PrimaryButton label="Refresh" icon="pi-refresh" color={C.blue} onClick={refresh} busy={loading} />
+            <PrimaryButton label="Refresh" icon="pi-refresh" color={C.blue} onClick={() => refresh()} busy={loading} />
           </div>
         }>
         <div style={{ fontSize: 12.5, color: C.muted }}>
@@ -368,20 +390,30 @@ function GSTTab() {
   const [hospitalData, setHospitalData] = useState(null);   // R7ap-F13
   const [loading, setLoading] = useState(false);
 
-  const refresh = async () => {
+  // R7aw-FIX-F2/D4: GST tab's from/to picker cancels in-flight requests on
+  // change. Both calls share the signal so a stale pair can't half-update.
+  const refresh = async (signal) => {
     setLoading(true);
     try {
       // R7ap-F13: fetch pharmacy + hospital GST in parallel.
       const [pharmaR, hospR] = await Promise.all([
-        axios.get(`${API}/pharmacy/registers/gst?from=${from}&to=${to}`, authHdr()).catch(() => null),
-        axios.get(`${API}/billing/gst-register?from=${from}&to=${to}`, authHdr()).catch(() => null),
+        axios.get(`${API}/pharmacy/registers/gst?from=${from}&to=${to}`, { ...authHdr(), signal }).catch(() => null),
+        axios.get(`${API}/billing/gst-register?from=${from}&to=${to}`, { ...authHdr(), signal }).catch(() => null),
       ]);
+      if (signal && signal.aborted) return;
       setData(pharmaR?.data || {});
       setHospitalData(hospR?.data?.data || null);
-    } catch (e) { toast.error("GST register load failed"); }
-    setLoading(false);
+    } catch (e) {
+      if (!axios.isCancel(e) && !(signal && signal.aborted)) toast.error("GST register load failed");
+    }
+    if (!signal || !signal.aborted) setLoading(false);
   };
-  useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [from, to]);
+  useEffect(() => {
+    const ctrl = new AbortController();
+    refresh(ctrl.signal);
+    return () => ctrl.abort();
+    /* eslint-disable-next-line */
+  }, [from, to]);
 
   const buckets = data?.data?.buckets || data?.buckets || [];
   const hospitalBuckets = hospitalData?.buckets || [];
@@ -410,7 +442,7 @@ function GSTTab() {
             <span style={{ color: C.muted }}>to</span>
             <input type="date" value={to} max={todayISO()} onChange={(e) => setTo(e.target.value)}
               style={{ padding: "6px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 12.5, fontWeight: 700 }} />
-            <PrimaryButton label="Refresh" icon="pi-refresh" color={C.purple} onClick={refresh} busy={loading} />
+            <PrimaryButton label="Refresh" icon="pi-refresh" color={C.purple} onClick={() => refresh()} busy={loading} />
           </div>
         }>
         <div style={{ fontSize: 12.5, color: C.muted }}>
@@ -505,21 +537,30 @@ function OutstandingTab() {
   const [aging, setAging] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  const refresh = async () => {
+  // R7aw-FIX-F2/D4: AbortController wired for consistency — Outstanding tab
+  // refreshes on mount and on demand. Without abort, a user clicking the
+  // tab and immediately switching away leaves three in-flight calls that
+  // setState on an unmounted tree.
+  const refresh = async (signal) => {
     setLoading(true);
     try {
       const [t, c, a] = await Promise.all([
-        axios.get(`${API}/billing/tpa-cases`, authHdr()).catch(() => null),
-        axios.get(`${API}/billing/collection-summary?date=${todayISO()}`, authHdr()).catch(() => null),
-        axios.get(`${API}/billing/aging`, authHdr()).catch(() => null),
+        axios.get(`${API}/billing/tpa-cases`, { ...authHdr(), signal }).catch(() => null),
+        axios.get(`${API}/billing/collection-summary?date=${todayISO()}`, { ...authHdr(), signal }).catch(() => null),
+        axios.get(`${API}/billing/aging`, { ...authHdr(), signal }).catch(() => null),
       ]);
+      if (signal && signal.aborted) return;
       setTpaCases(t?.data?.data || t?.data?.cases || t?.data || []);
       setCollection(c?.data?.summary || null);
       setAging(a?.data || null);
     } catch (e) {}
-    setLoading(false);
+    if (!signal || !signal.aborted) setLoading(false);
   };
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => {
+    const ctrl = new AbortController();
+    refresh(ctrl.signal);
+    return () => ctrl.abort();
+  }, []);
 
   const tpaTotal = useMemo(() => (Array.isArray(tpaCases) ? tpaCases.reduce((s, c) => s + Number(c.outstanding ?? c.balance ?? c.netAmount ?? 0), 0) : 0), [tpaCases]);
   const bucketColor = { "0-30": C.green, "31-60": C.amber, "61-90": C.orange || C.amber, "90+": C.red };
@@ -534,7 +575,7 @@ function OutstandingTab() {
       </div>
 
       <Card title="TPA / Insurance cases — outstanding" color={C.purple} icon="pi-briefcase"
-        right={<PrimaryButton label="Refresh" icon="pi-refresh" color={C.purple} onClick={refresh} busy={loading} />}>
+        right={<PrimaryButton label="Refresh" icon="pi-refresh" color={C.purple} onClick={() => refresh()} busy={loading} />}>
         {!Array.isArray(tpaCases) || tpaCases.length === 0 ? (
           <Empty icon="pi-briefcase" text="No open TPA cases. Pre-auth submissions appear here once filed." />
         ) : (
@@ -645,7 +686,11 @@ function AllBillsTab() {
   const [from, setFrom] = useState(ninetyAgo());
   const [to, setTo]     = useState(todayISO());
 
-  const refresh = async () => {
+  // R7aw-FIX-F2/D4: AllBills has the busiest filter set (5 deps —
+   // from/to/status/visitType/payer). Pre-fix, toggling pills rapidly
+  // showed the wrong bill list because the older response landed last.
+  // AbortController solves the race.
+  const refresh = async (signal) => {
     setLoading(true);
     try {
       const qs = new URLSearchParams({
@@ -653,13 +698,18 @@ function AllBillsTab() {
         ...(status ? { status } : {}), ...(visitType ? { visitType } : {}),
         ...(payer ? { paymentType: payer } : {}), ...(q ? { UHID: q } : {}),
       });
-      const r = await axios.get(`${API}/billing?${qs}`, authHdr());
+      const r = await axios.get(`${API}/billing?${qs}`, { ...authHdr(), signal });
+      if (signal && signal.aborted) return;
       setBills(r.data?.data || r.data?.bills || []);
       setTotal(r.data?.pagination?.total ?? (r.data?.data?.length || 0));
     } catch (e) {}
-    setLoading(false);
+    if (!signal || !signal.aborted) setLoading(false);
   };
-  useEffect(() => { refresh(); }, [from, to, status, visitType, payer]);
+  useEffect(() => {
+    const ctrl = new AbortController();
+    refresh(ctrl.signal);
+    return () => ctrl.abort();
+  }, [from, to, status, visitType, payer]);
 
   const Pill = ({ label, value, current, setCurrent, color = C.amber }) => (
     <button onClick={() => setCurrent(value === current ? "" : value)}
@@ -675,7 +725,7 @@ function AllBillsTab() {
   return (
     <>
       <Card title="Filter bills" color={C.amber} icon="pi-filter"
-        right={<PrimaryButton label="Refresh" icon="pi-refresh" color={C.amber} onClick={refresh} busy={loading} />}>
+        right={<PrimaryButton label="Refresh" icon="pi-refresh" color={C.amber} onClick={() => refresh()} busy={loading} />}>
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
           <input type="date" value={from} onChange={(e) => setFrom(e.target.value)}
             style={{ padding: "6px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 12.5, fontWeight: 700 }} />
@@ -762,24 +812,28 @@ function ShiftTab() {
   const [today,        setToday]        = useState(null);
   const [busy,         setBusy]         = useState(false);
 
-  const refreshSession = async () => {
+  // R7aw-FIX-F2/D4: ShiftTab uses signals so a quick tab-switch on mount
+  // cancels both the session lookup and today's collection summary.
+  const refreshSession = async (signal) => {
     setLoadingSess(true);
     try {
-      const r = await axios.get(`${API}/cashier-sessions/current`, authHdr());
-      setSession(r.data?.data || null);
+      const r = await axios.get(`${API}/cashier-sessions/current`, { ...authHdr(), signal });
+      if (!signal || !signal.aborted) setSession(r.data?.data || null);
     } catch (e) {
       // 401/403 surface clean — no session shown
-      setSession(null);
+      if (!signal || !signal.aborted) setSession(null);
     } finally {
-      setLoadingSess(false);
+      if (!signal || !signal.aborted) setLoadingSess(false);
     }
   };
 
   useEffect(() => {
-    refreshSession();
-    axios.get(`${API}/billing/collection-summary?date=${todayISO()}`, authHdr())
-      .then(r => setToday(r.data?.summary))
+    const ctrl = new AbortController();
+    refreshSession(ctrl.signal);
+    axios.get(`${API}/billing/collection-summary?date=${todayISO()}`, { ...authHdr(), signal: ctrl.signal })
+      .then(r => { if (!ctrl.signal.aborted) setToday(r.data?.summary); })
       .catch(() => {});
+    return () => ctrl.abort();
   }, []);
 
   const openShift = async () => {
@@ -965,7 +1019,10 @@ function RefundsTab() {
   const [from, setFrom] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10); });
   const [to,   setTo]   = useState(() => new Date().toISOString().slice(0, 10));
 
-  const refresh = async () => {
+  // R7aw-FIX-F2/D4: 3-parallel fetch needs a shared signal so a fast
+  // filter pivot (REFUNDED → CANCELLED → PARTIAL) doesn't interleave
+  // stale and fresh sets in the table.
+  const refresh = async (signal) => {
     setLoading(true);
     try {
       // Parallel fetch — bill refunds + advance refunds + credit notes.
@@ -974,10 +1031,11 @@ function RefundsTab() {
       // refunded bills alongside today's CNs". The accountant reconciling
       // 2026-05-21 EOD now sees just that day's outflow.
       const [billRes, advRes, cnRes] = await Promise.all([
-        axios.get(`${API}/billing?status=${filter}&limit=200&from=${from}&to=${to}`, authHdr()).catch(() => null),
-        axios.get(`${API}/billing/advance/refunds?from=${from}&to=${to}`, authHdr()).catch(() => null),
-        axios.get(`${API}/billing/credit-notes?from=${from}&to=${to}`, authHdr()).catch(() => null),
+        axios.get(`${API}/billing?status=${filter}&limit=200&from=${from}&to=${to}`, { ...authHdr(), signal }).catch(() => null),
+        axios.get(`${API}/billing/advance/refunds?from=${from}&to=${to}`, { ...authHdr(), signal }).catch(() => null),
+        axios.get(`${API}/billing/credit-notes?from=${from}&to=${to}`, { ...authHdr(), signal }).catch(() => null),
       ]);
+      if (signal && signal.aborted) return;
       setBills(billRes?.data?.data || billRes?.data?.bills || billRes?.data || []);
       setAdvanceRefunds(advRes?.data?.data || []);
       setCreditNotes(cnRes?.data?.data || []);
@@ -985,15 +1043,22 @@ function RefundsTab() {
         total:    Number(cnRes?.data?.meta?.total || 0),
         totalTax: Number(cnRes?.data?.meta?.totalTax || 0),
       });
-    } catch (e) { toast.error("Refunds load failed"); }
-    setLoading(false);
+    } catch (e) {
+      if (!axios.isCancel(e) && !(signal && signal.aborted)) toast.error("Refunds load failed");
+    }
+    if (!signal || !signal.aborted) setLoading(false);
   };
-  useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [filter, from, to]);
+  useEffect(() => {
+    const ctrl = new AbortController();
+    refresh(ctrl.signal);
+    return () => ctrl.abort();
+    /* eslint-disable-next-line */
+  }, [filter, from, to]);
 
   return (
     <>
       <Card title="Filter" color={C.red} icon="pi-filter"
-        right={<PrimaryButton label="Refresh" icon="pi-refresh" color={C.red} onClick={refresh} busy={loading} />}>
+        right={<PrimaryButton label="Refresh" icon="pi-refresh" color={C.red} onClick={() => refresh()} busy={loading} />}>
         <div style={{ display: "flex", gap: 8 }}>
           {[
             { id: "REFUNDED",  label: "Refunded bills",   color: C.red },

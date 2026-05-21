@@ -217,6 +217,13 @@ export default function PatientLookupPage({ initialView = "auto" }) {
   const [timelineFilter, setTimelineFilter] = useState("ALL");
   const [detailTab, setDetailTab] = useState("profile"); // profile · visits · billing
 
+  // R7aw-FIX-F1/D4: AbortController is created locally for in-function
+  // `ac.signal.aborted` checks that guard against stale setState after
+  // unmount. The earlier `return () => ac.abort()` was dead code — async
+  // functions return a Promise, so the returned cleanup was never callable
+  // by the caller (useEffect saw Promise<Function>, not a function).
+  // Signals are still threaded to every axios.get so callers can abort if
+  // they wire one in from outside.
   const loadPatientDetail = useCallback(async (uhidOrId) => {
     if (!uhidOrId) return;
     setDetailLoading(true);
@@ -254,7 +261,6 @@ export default function PatientLookupPage({ initialView = "auto" }) {
     } finally {
       if (!ac.signal.aborted) setDetailLoading(false);
     }
-    return () => ac.abort();
   }, []);
 
   useEffect(() => {
@@ -304,6 +310,12 @@ export default function PatientLookupPage({ initialView = "auto" }) {
   const [dirLoading,  setDirLoading]  = useState(false);
   const DIR_LIMIT = 15;
 
+  // R7aw-FIX-F1/D4: dead-code removal — same pattern as loadPatientDetail.
+  // The earlier `cleanup = loadDirectory(); return () => if (typeof cleanup
+  // === "function") cleanup()` was broken: `loadDirectory()` returns a
+  // Promise (it's async), so `typeof Promise === "object"` and the guard
+  // never fires. AbortController lives inside for the `aborted` checks
+  // that prevent setState after unmount.
   const loadDirectory = useCallback(async () => {
     if (view !== "directory") return;
     setDirLoading(true);
@@ -325,12 +337,10 @@ export default function PatientLookupPage({ initialView = "auto" }) {
     } finally {
       if (!ac.signal.aborted) setDirLoading(false);
     }
-    return () => ac.abort();
   }, [view, dirPage, dirType, dirSearch]);
 
   useEffect(() => {
-    const cleanup = loadDirectory();
-    return () => { if (typeof cleanup === "function") cleanup(); };
+    loadDirectory();
   }, [loadDirectory]);
 
   /* ─── Unified timeline rows ───────────────────────────────── */

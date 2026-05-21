@@ -198,10 +198,17 @@ export default function ReceptionDashboard() {
   };
 
   /* ─── Derived ─── */
-  const totalCollected = collection?.summary?.totalCollected || 0;
+  // R7aw-FIX-F3/D4: unwrap Decimal128 wire shape via `toMoney` instead of
+  // `|| 0`. Pre-fix, when /billing/collection-summary returned amounts as
+  // `{$numberDecimal:"…"}` (Mongo Decimal128) the `|| 0` left the object
+  // intact — every downstream `fmtCur(totalCollected)` and the
+  // `modes.reduce(…+m.amount, 0)` total in the Payment-Mode card showed
+  // ₹NaN. The KPI tiles (totalCollected, advanceDue, tpaPending) and the
+  // by-visit/by-mode amounts all flow through this now-safe coercion.
+  const totalCollected = toMoney(collection?.summary?.totalCollected);
   const txnCount       = collection?.summary?.txnCount || 0;
-  const advanceDue     = collection?.summary?.advanceDue || 0;
-  const tpaPending     = collection?.summary?.tpaPending || 0;
+  const advanceDue     = toMoney(collection?.summary?.advanceDue);
+  const tpaPending     = toMoney(collection?.summary?.tpaPending);
 
   const byVisitMap = useMemo(() => {
     const m = {};
@@ -210,7 +217,10 @@ export default function ReceptionDashboard() {
   }, [collection]);
 
   const modes = collection?.byMode || [];
-  const totalForPct = modes.reduce((s, m) => s + m.amount, 0) || 1;
+  // R7aw-FIX-F3: same Decimal128 trap on per-mode amounts feeding the
+  // percentage strip (m.amount/totalForPct). `toMoney(m.amount)` keeps the
+  // reduce numeric instead of NaN.
+  const totalForPct = modes.reduce((s, m) => s + toMoney(m.amount), 0) || 1;
 
   const isToday = date === today();
   const isFuture = date > today();
@@ -384,7 +394,10 @@ export default function ReceptionDashboard() {
             visual noise. OPD/IPD/DC/ER always render even at zero so
             the layout stays predictable shift-to-shift. */}
         {["OPD","IPD","DC","ER","Services"]
-          .filter(t => t !== "Services" || (byVisitMap[t]?.amount || 0) > 0 || (byVisitMap[t]?.count || 0) > 0)
+          // R7aw-FIX-F3/D4: `byVisitMap[t]?.amount` is Decimal128 — compare
+          // against 0 via `toMoney(…) > 0`, else the bare object compared
+          // > 0 is always falsey and the Services tile never shows.
+          .filter(t => t !== "Services" || toMoney(byVisitMap[t]?.amount) > 0 || (byVisitMap[t]?.count || 0) > 0)
           .map(t => (
             <div key={t} className={`rd-stat rd-stat--${t.toLowerCase()}`}>
               <span className="rd-stat-label">{t === "DC" ? "Day Care" : t}</span>
@@ -467,7 +480,9 @@ export default function ReceptionDashboard() {
                 No payments recorded
               </div>
             ) : modes.map(m => {
-              const pct = ((m.amount / totalForPct) * 100).toFixed(0);
+              // R7aw-FIX-F3/D4: same Decimal128 unwrap so the percentage
+              // calc doesn't render "NaN%" when the wire shape is raw.
+              const pct = ((toMoney(m.amount) / totalForPct) * 100).toFixed(0);
               const cls = m.mode.toLowerCase();
               return (
                 <div key={m.mode} className="rd-mode">

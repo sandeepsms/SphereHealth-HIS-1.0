@@ -590,7 +590,24 @@ const _cancelStuckTrigger = scheduleDaily("stuck-trigger-sweeper", 1, 0, async (
     status:    "pending-review",
     updatedAt: { $lt: cutoff },
   }).limit(50).select("_id UHID patientId admissionId serviceCode triggerType createdAt updatedAt remarks").lean();
-  if (stuck.length === 0) return { alerted: 0 };
+  // R7aw-FIX-6/R7at-backlog: in addition to the pending-review backlog,
+  // emit a one-line health view counting EVERY long-stuck row across
+  // statuses so the operator sees at-a-glance whether the sweeper is
+  // tackling a small flicker or a systemic outage. Light aggregation
+  // (status-only count, cutoff filter) — single round-trip.
+  let perStatus = {};
+  let totalStuck = 0;
+  try {
+    const grouped = await BillingTrigger.aggregate([
+      { $match: { updatedAt: { $lt: cutoff }, status: { $in: ["pending", "pending-review", "error", "skipped"] } } },
+      { $group: { _id: "$status", c: { $sum: 1 } } },
+    ]);
+    grouped.forEach((g) => { perStatus[g._id] = g.c; totalStuck += g.c; });
+  } catch (e) {
+    // Health-summary aggregation is best-effort — the alert path still runs.
+    console.warn(`[stuck-trigger-sweeper] health aggregation failed: ${e.message}`);
+  }
+  if (stuck.length === 0) return { alerted: 0, totalStuck, perStatus };
   // Single aggregated audit row — flooding the audit feed with N rows per
   // tick is noisy and the operator just needs the count + the worst case.
   try {
@@ -600,9 +617,11 @@ const _cancelStuckTrigger = scheduleDaily("stuck-trigger-sweeper", 1, 0, async (
     await emit({
       event:        "CRON_RECONCILED",
       actorName:    "System (stuck-trigger-sweeper)",
-      reason:       `${stuck.length} BillingTrigger row(s) stuck in pending-review > 60 min. Oldest: trigger ${oldest._id} (admission ${oldest.admissionId}, code ${oldest.serviceCode}, last touched ${new Date(oldest.updatedAt).toISOString()}). Review via /billing-audit-trail.`,
+      reason:       `${stuck.length} BillingTrigger row(s) stuck in pending-review > 60 min (totalStuck across statuses: ${totalStuck}). Oldest: trigger ${oldest._id} (admission ${oldest.admissionId}, code ${oldest.serviceCode}, last touched ${new Date(oldest.updatedAt).toISOString()}). Review via /billing-audit-trail.`,
       after:        {
         stuckCount:    stuck.length,
+        totalStuck,                  // R7aw-FIX-6: at-a-glance health metric
+        perStatus,                   // R7aw-FIX-6: per-status breakdown
         oldestTriggerId: oldest._id,
         oldestUpdatedAt: oldest.updatedAt,
         sampleTriggers:  stuck.slice(0, 5).map((t) => ({
@@ -613,7 +632,7 @@ const _cancelStuckTrigger = scheduleDaily("stuck-trigger-sweeper", 1, 0, async (
   } catch (e) {
     console.warn(`[stuck-trigger-sweeper] audit emit failed: ${e.message}`);
   }
-  return { alerted: stuck.length };
+  return { alerted: stuck.length, totalStuck, perStatus };
 });
 
 // R7ar-P1-20/D6-aq-05: BillingAudit retention archiver.
